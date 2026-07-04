@@ -1,0 +1,27 @@
+# Secrets / creds — never commit
+*.env
+.env
+*.kubeconfig
+*credentials*
+*secret*
+oauth.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Big-plan server sidecars (belong with the .projects working copies, not the repo)
+*.snapshot
+*.comments.json
+
+# OS / editor
+.DS_Store
+*.swp
