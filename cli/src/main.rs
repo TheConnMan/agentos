@@ -1,11 +1,14 @@
 //! The `agentos` binary: init/start/send/eval a plugin against a local runner,
-//! plus stop/status for the container lifecycle and deploy for the platform
-//! API. Task I1; contracts are frozen in packages/aci-protocol and
+//! stop/status/steer/interrupt for the container lifecycle, chat to drive the
+//! whole system with the CLI acting as the Slack service, and deploy for the
+//! platform API. Task I1; contracts are frozen in packages/aci-protocol and
 //! packages/plugin-format.
 
 use std::path::PathBuf;
 
+use agentos::chat::{self, ChatOpts};
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
+use agentos::slack_sim::{self, SlackSimOpts};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -56,11 +59,19 @@ enum Command {
         /// ACI budget JSON for the session.
         #[arg(long, default_value = commands::DEFAULT_BUDGET)]
         budget: String,
+        /// Model id, forwarded as AGENTOS_MODEL. Omit for the SDK default.
+        /// Setting it makes token usage attributable in Langfuse traces.
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Stop and remove the local runner container.
     Stop,
     /// Show the local runner's session status.
-    Status,
+    Status {
+        /// Runner base URL (defaults to the started runner, then localhost).
+        #[arg(long)]
+        url: Option<String>,
+    },
     /// Send a synthetic event to the local runner and stream the reply.
     Send {
         /// The message text.
@@ -81,6 +92,79 @@ enum Command {
         /// bundle's).
         #[arg(long)]
         cases: Option<PathBuf>,
+        /// Runner base URL (defaults to the started runner, then localhost).
+        #[arg(long)]
+        url: Option<String>,
+    },
+    /// Real-Slack egress without Socket Mode: post a synthetic thread as the bot
+    /// in a real channel, enqueue the dispatcher's event onto Valkey, and poll
+    /// conversations.replies until the worker edits the placeholder. For the
+    /// no-Slack variant use `chat`.
+    SlackSim {
+        /// The simulated user message text.
+        text: String,
+        /// Slack channel id to post into.
+        #[arg(long, env = "AGENTOS_SLACK_CHANNEL")]
+        channel: String,
+        /// Slack bot token (xoxb-...). Never printed.
+        #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
+        bot_token: String,
+        /// Valkey connection URL.
+        #[arg(long, env = "VALKEY_URL", default_value = slack_sim::DEFAULT_VALKEY_URL)]
+        valkey_url: String,
+        /// Stream the dispatcher enqueues onto.
+        #[arg(long, env = "AGENTOS_STREAM", default_value = slack_sim::DEFAULT_STREAM)]
+        stream: String,
+        /// Synthetic Slack user id for the enqueued event.
+        #[arg(long, default_value = slack_sim::DEFAULT_USER)]
+        user: String,
+        /// How long to wait for the worker's reply before printing diagnostics.
+        #[arg(long, default_value_t = slack_sim::DEFAULT_TIMEOUT_SECS)]
+        timeout_secs: u64,
+    },
+    /// Drive the whole system end to end with no Slack: the CLI runs a local
+    /// Slack Web API stub, enqueues the dispatcher's event onto Valkey, and waits
+    /// for the worker to finalize the turn at the stub. Run the worker with
+    /// SLACK_API_BASE_URL pointing at the stub URL this prints.
+    Chat {
+        /// The user message text.
+        text: String,
+        /// Valkey connection URL.
+        #[arg(long, env = "VALKEY_URL", default_value = chat::DEFAULT_VALKEY_URL)]
+        valkey_url: String,
+        /// Stream the dispatcher enqueues onto.
+        #[arg(long, env = "AGENTOS_STREAM", default_value = chat::DEFAULT_STREAM)]
+        stream: String,
+        /// Synthetic Slack user id for the enqueued event.
+        #[arg(long, default_value = chat::DEFAULT_USER)]
+        user: String,
+        /// How long to wait for the worker's reply before printing diagnostics.
+        #[arg(long, default_value_t = chat::DEFAULT_TIMEOUT_SECS)]
+        timeout_secs: u64,
+        /// Host the Slack stub binds. Use a routable host when the worker runs
+        /// off-box (e.g. in-cluster).
+        #[arg(long, default_value = chat::DEFAULT_LISTEN_HOST)]
+        listen_host: String,
+        /// Port the Slack stub binds; 0 picks an ephemeral port.
+        #[arg(long, default_value_t = chat::DEFAULT_LISTEN_PORT)]
+        listen_port: u16,
+    },
+    /// Inject a follow-up into the runner's live turn (POST /v1/steer).
+    Steer {
+        /// The follow-up message text.
+        text: String,
+        /// Synthetic Slack user id.
+        #[arg(long, default_value = "U-local")]
+        user: String,
+        /// Runner base URL (defaults to the started runner, then localhost).
+        #[arg(long)]
+        url: Option<String>,
+    },
+    /// Hard-stop the runner's live turn (POST /v1/interrupt).
+    Interrupt {
+        /// Reason recorded with the interrupt.
+        #[arg(long, default_value = "user interrupt")]
+        reason: String,
         /// Runner base URL (defaults to the started runner, then localhost).
         #[arg(long)]
         url: Option<String>,
@@ -121,6 +205,7 @@ async fn main() -> Result<()> {
             network,
             otel_endpoint,
             budget,
+            model,
         } => {
             commands::start(StartOpts {
                 plugin_dir,
@@ -131,11 +216,12 @@ async fn main() -> Result<()> {
                 network,
                 otel_endpoint,
                 budget,
+                model,
             })
             .await
         }
         Command::Stop => commands::stop().await,
-        Command::Status => commands::status().await,
+        Command::Status { url } => commands::status(url).await,
         Command::Send {
             text,
             user,
@@ -143,6 +229,48 @@ async fn main() -> Result<()> {
             url,
         } => commands::send(&text, &user, event_type.into(), url).await,
         Command::Eval { cases, url } => commands::eval(cases, url).await,
+        Command::SlackSim {
+            text,
+            channel,
+            bot_token,
+            valkey_url,
+            stream,
+            user,
+            timeout_secs,
+        } => {
+            slack_sim::slack_sim(SlackSimOpts {
+                text,
+                channel,
+                bot_token,
+                valkey_url,
+                stream,
+                user,
+                timeout_secs,
+            })
+            .await
+        }
+        Command::Chat {
+            text,
+            valkey_url,
+            stream,
+            user,
+            timeout_secs,
+            listen_host,
+            listen_port,
+        } => {
+            chat::chat(ChatOpts {
+                text,
+                valkey_url,
+                stream,
+                user,
+                timeout_secs,
+                listen_host,
+                listen_port,
+            })
+            .await
+        }
+        Command::Steer { text, user, url } => commands::steer(&text, &user, url).await,
+        Command::Interrupt { reason, url } => commands::interrupt(&reason, url).await,
         Command::Deploy {
             plugin_dir,
             api_url,
