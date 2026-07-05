@@ -66,3 +66,19 @@ def test_no_named_env_without_bundle_ref() -> None:
     entries = _env_entries(api)
     assert entries  # the main-container env is still present
     assert all("containerName" not in e for e in entries)
+
+
+def test_credential_is_never_written_to_the_claim() -> None:
+    # The SandboxClaim env is value-only, so the secret must not be persisted on
+    # the claim; the template's secretKeyRef supplies it to the runner instead.
+    api = _FakeApi()
+    _client(api).create_claim(
+        "claim-1",
+        pool="pool",
+        env={"AGENTOS_BUDGET": "{}", "AGENTOS_CREDENTIALS": "super-secret-token"},
+    )
+    entries = _env_entries(api)
+    assert all(e.get("name") != "AGENTOS_CREDENTIALS" for e in entries)
+    assert all("super-secret-token" not in e.get("value", "") for e in entries)
+    # The rest of the boot env is still written.
+    assert {"name": "AGENTOS_BUDGET", "value": "{}"} in entries

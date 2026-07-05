@@ -188,13 +188,23 @@ class DockerSandboxClient:
         if inspected is None:
             return None
         status, _labels = inspected
+        # Only a running or paused container is a live/suspended sandbox. An
+        # exited/dead/created/restarting container is NOT live: report it gone
+        # (None) so the substrate evicts the stale route and re-claims rather than
+        # handing back a route that keeps dialing a dead runner until TTL expiry.
+        if status == "paused":
+            operating_mode = "Suspended"
+        elif status == "running":
+            operating_mode = "Running"
+        else:
+            return None
         port = self._published_port(name)
         return SandboxView(
             name=name,
             ready=status == "running",
             # Dial target is ready only once the host port is published.
             service_fqdn=self._host if port is not None else None,
-            operating_mode="Suspended" if status == "paused" else "Running",
+            operating_mode=operating_mode,
             port=port,
         )
 

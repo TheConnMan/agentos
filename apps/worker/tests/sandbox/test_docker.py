@@ -141,6 +141,15 @@ def test_get_sandbox_none_when_container_absent() -> None:
     assert client.get_sandbox("gone") is None
 
 
+def test_get_sandbox_treats_dead_container_as_gone() -> None:
+    # An exited/dead/created container is NOT a live sandbox: report it gone so
+    # the substrate evicts the stale route instead of dialing a dead runner.
+    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    for dead in ("exited", "dead", "created", "restarting"):
+        client.outputs = {"inspect": f"{dead}\t{{}}", "port": ""}
+        assert client.get_sandbox("t1") is None, dead
+
+
 def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
     import tempfile
 
