@@ -1,0 +1,4 @@
+{
+  "name": "Demo Plugin",
+  "description": "Manifest whose name is not kebab-case."
+}

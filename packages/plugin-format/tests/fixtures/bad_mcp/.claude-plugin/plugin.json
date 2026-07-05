@@ -1,0 +1,4 @@
+{
+  "name": "bad-mcp-plugin",
+  "description": "Manifest is fine; the .mcp.json has a server with neither command nor url."
+}
