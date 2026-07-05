@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use agentos::chat::SlackStub;
+use agentos::chat::{resolve_targets, SlackStub};
 use agentos::queue::{diagnostics, entry_acked, xadd, QueuedSlackEvent, WORKER_GROUP};
 
 const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:56379";
@@ -116,6 +116,117 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
     assert!(
         decoded.slack_event_id.starts_with("EvSIM-"),
         "synthetic id keeps its collision-proof prefix on the wire"
+    );
+}
+
+#[tokio::test]
+async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
+    // --channel must reach the worker byte-for-byte (its binding is exact
+    // equality on agents.slack_channel) and --thread must become the event's
+    // thread_ts so a follow-up continues the same thread.
+    let Some(mut conn) =
+        valkey_or_skip("explicit_channel_and_thread_land_verbatim_on_the_wire").await
+    else {
+        return;
+    };
+    let stream = unique_stream();
+
+    let (channel, thread_ts, placeholder_ts) =
+        resolve_targets(Some("CSIM12345"), Some("1720000000.000100"));
+    assert_eq!(channel, "CSIM12345", "explicit channel is carried verbatim");
+    assert_eq!(
+        thread_ts, "1720000000.000100",
+        "explicit thread becomes thread_ts"
+    );
+
+    let event = QueuedSlackEvent::synthetic(
+        &channel,
+        "U-agentos-chat",
+        "hi",
+        &thread_ts,
+        &placeholder_ts,
+    );
+    let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
+
+    let entries: Vec<(String, Vec<(String, String)>)> = redis::cmd("XRANGE")
+        .arg(&stream)
+        .arg("-")
+        .arg("+")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let _: i64 = redis::cmd("DEL")
+        .arg(&stream)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+
+    assert!(!stream_id.is_empty(), "XADD returned an id");
+    assert_eq!(entries.len(), 1, "exactly one entry enqueued");
+    let decoded: QueuedSlackEvent = serde_json::from_str(&entries[0].1[0].1).unwrap();
+    assert_eq!(
+        decoded.channel, "CSIM12345",
+        "the XADD'd payload keeps the exact channel the worker binds on"
+    );
+    assert_eq!(
+        decoded.thread_ts, "1720000000.000100",
+        "the XADD'd payload keeps the exact thread_ts"
+    );
+}
+
+#[tokio::test]
+async fn absent_channel_and_thread_fall_back_to_synthetic() {
+    // With neither flag, resolve_targets mints a synthetic channel and a fresh
+    // slack-shaped thread ts, preserving the pre-flag behavior.
+    let Some(mut conn) = valkey_or_skip("absent_channel_and_thread_fall_back_to_synthetic").await
+    else {
+        return;
+    };
+    let stream = unique_stream();
+
+    let (channel, thread_ts, placeholder_ts) = resolve_targets(None, None);
+    assert!(
+        channel.starts_with("C-SIM-"),
+        "synthetic channel: {channel}"
+    );
+    assert_ne!(thread_ts, placeholder_ts, "thread and placeholder differ");
+    let (secs, micros) = thread_ts.split_once('.').expect("slack-shaped thread ts");
+    assert!(secs.parse::<u64>().is_ok(), "secs numeric: {thread_ts}");
+    assert_eq!(micros.len(), 6, "micros width: {thread_ts}");
+
+    let event = QueuedSlackEvent::synthetic(
+        &channel,
+        "U-agentos-chat",
+        "hi",
+        &thread_ts,
+        &placeholder_ts,
+    );
+    let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
+
+    let entries: Vec<(String, Vec<(String, String)>)> = redis::cmd("XRANGE")
+        .arg(&stream)
+        .arg("-")
+        .arg("+")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let _: i64 = redis::cmd("DEL")
+        .arg(&stream)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+
+    assert!(!stream_id.is_empty(), "XADD returned an id");
+    assert_eq!(entries.len(), 1, "exactly one entry enqueued");
+    let decoded: QueuedSlackEvent = serde_json::from_str(&entries[0].1[0].1).unwrap();
+    assert!(
+        decoded.channel.starts_with("C-SIM-"),
+        "synthetic channel on the wire: {}",
+        decoded.channel
+    );
+    assert_eq!(
+        decoded.thread_ts, thread_ts,
+        "synthetic thread_ts round-trips onto the stream"
     );
 }
 
