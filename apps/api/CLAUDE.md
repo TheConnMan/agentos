@@ -1,0 +1,69 @@
+# CLAUDE.md — apps/api
+
+FastAPI server: agents/versions/deployments CRUD, auth, the plugin bundle
+pipeline, the GitHub git-flow engine, and the Langfuse/pod-log observability
+proxies. Owning tasks: B1 (core), B2 (bundle pipeline), J1 (git-flow), OB1
+(observability). See `docs/architecture.md` for how this service fits between
+the worker, Postgres, MinIO/S3, Langfuse, and GitHub.
+
+## Load-bearing invariants
+
+- **Auth is one shared API key today.** `require_api_key` (`auth.py`) compares
+  the `X-API-Key` header against `Settings.api_key` with `hmac.compare_digest`.
+  This is explicitly MVP-only; J1's GitHub-App identity work is expected to
+  replace it eventually, but until that lands, do not add a second
+  auth scheme for a new router without checking with the orchestrator --
+  every router should share the one dependency.
+- **The GitHub webhook is authenticated differently, on purpose.** `/github/webhook`
+  verifies the HMAC signature GitHub sends (`x-hub-signature-256` against
+  `settings.github_webhook_secret`), not the API key -- GitHub cannot send an
+  `X-API-Key` header. It lives outside the `require_api_key` dependency
+  deliberately (`routers/github.py`); do not add the API-key dependency to it.
+- **Git-flow never calls the GitHub API.** `gitflow.py` builds the bundle by
+  archiving the pushed sha directly from the repo over the git protocol (bare
+  repos in tests, the real remote in production). This keeps the flow
+  independent of GitHub API rate limits and scopes. Do not introduce a GitHub
+  API client into `gitflow.py` for something the git protocol already gives
+  you.
+- **Prod push reuses the dev-built bundle; it does not rebuild.** A push to
+  the prod branch looks up the `Version` already created for that sha (from
+  the dev push) and only creates a new `Deployment` row. If you find yourself
+  rebuilding on promote, that is a bug, not a feature -- promotion is meant to
+  be "the exact artifact that passed on dev," not a fresh build.
+- **The plugin bundle validator (`plugin_format.validate_bundle`) is the only
+  gate a bundle passes through**, whether it arrives via the CLI's
+  `agentos deploy`, the UI's create-agent modal, or a git push. Do not
+  duplicate validation logic in a new entry point; route through
+  `bundles.py`.
+- **Observability endpoints are read-only proxies, not new stores.** The
+  `/observability/metrics/*` endpoints compute aggregates from Langfuse's
+  public API (`metrics.py` + `langfuse.py`); the runner-pod-log endpoint
+  proxies the K8s pod-logs API (`k8s.py`) for the sandbox that served a given
+  trace. Neither should grow a local cache or its own persistence -- Langfuse
+  and the cluster are the source of truth.
+- **The `/observability/runners/.../logs` endpoint has three distinct error
+  states by design**: 503 when no kubeconfig is configured, 404 when the pod
+  is gone, 502 for any other cluster error. The UI renders each differently
+  (`apps/ui/CLAUDE.md`); do not collapse these into a single error shape.
+
+## Config surface
+
+`Settings` (`config.py`, env-driven) covers the Postgres DSN, the bundle
+store (MinIO/S3 endpoint + bucket), the Langfuse public API base + keys, the
+GitHub webhook secret, `api_key`, `kube_config_path` (empty = no cluster
+configured, the 503 case above), and `metrics_default_window_hours`.
+
+## Verify
+
+```bash
+cd apps/api && uv run alembic upgrade head   # apply schema once against compose.dev.yaml
+uv run pytest apps/api/tests -q               # from repo root; needs the dev stack up
+uv run python -m agentos_api.export_openapi   # regenerate committed openapi.json; check for drift
+```
+
+`test_openapi_drift.py` fails if the committed OpenAPI spec is stale --
+regenerate it after any router signature change, don't hand-edit the JSON.
+Integration tests (`test_gitflow_integration.py`, `test_langfuse_integration.py`,
+`test_metrics_integration.py`) run against the real Postgres/MinIO from
+`compose.dev.yaml`; only Langfuse's own API responses and the GitHub webhook
+sender are faked.

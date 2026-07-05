@@ -1,6 +1,29 @@
 # CLAUDE.md — Relay (AgentOS)
 
-Guidance for agents implementing tasks in this repo. Relay is the project codename; `agentos` is the product-surface name (bot handle, CLI binary). The build is a fleet of individually-verifiable background jobs along the DAG in `docs/build-orchestration-plan.md` §4; read that file and `docs/mvp-build-plan.md` before starting a task. Every task owns one directory boundary and must verify its own work with no human in the loop.
+Guidance for agents implementing tasks in this repo. Relay is the project codename; `agentos` is the product-surface name (bot handle, CLI binary). The build is a fleet of individually-verifiable background jobs along the DAG in `docs/build-orchestration-plan.md` §4; read that file and `docs/mvp-build-plan.md` before starting a task on unfamiliar ground. Every task owns one directory boundary and must verify its own work with no human in the loop.
+
+## Architecture orientation
+
+Read [`docs/architecture.md`](docs/architecture.md) before touching a cross-component seam. It has the component diagram, a message-flow sequence diagram (Slack mention -> dispatcher -> worker -> sandbox -> runner -> Slack reply), a deploy-flow sequence diagram (git push -> webhook -> bundle pipeline -> deployment), and the current built-vs-in-progress split. The one-line version: a Slack message is answered by a versioned plugin running in an isolated Kubernetes sandbox, traced through Langfuse and steerable mid-turn; a git push deploys that plugin under a bot identity via the API's git-flow engine.
+
+## Directory map
+
+One task owns one directory; two agents never edit the same directory. Each area's own `CLAUDE.md` (linked below) carries the rules and verify commands specific to that area -- read it before editing there, in addition to this file.
+
+| Path | Language | Scoped rules | Owning task(s) |
+|---|---|---|---|
+| `packages/aci-protocol` | Python (Pydantic + codegen) | [`packages/CLAUDE.md`](packages/CLAUDE.md) | C1 |
+| `packages/plugin-format` | Python (Pydantic + codegen) | [`packages/CLAUDE.md`](packages/CLAUDE.md) | C1 |
+| `apps/api` | Python (FastAPI) | [`apps/api/CLAUDE.md`](apps/api/CLAUDE.md) | B1, B2, J1, OB1 |
+| `apps/dispatcher` | Python (Slack Bolt) | [`apps/dispatcher/CLAUDE.md`](apps/dispatcher/CLAUDE.md) | E1 |
+| `apps/worker` | Python (redis-py) | [`apps/worker/CLAUDE.md`](apps/worker/CLAUDE.md) | F1, G1, K1 |
+| `runner` | Python (claude-agent-sdk) | [`runner/CLAUDE.md`](runner/CLAUDE.md) | D1 |
+| `apps/ui` | React (Vite + TS) | [`apps/ui/CLAUDE.md`](apps/ui/CLAUDE.md) | H1a, H1b, OB1 |
+| `cli` | Rust (clap + tokio) | [`cli/CLAUDE.md`](cli/CLAUDE.md) | I1 |
+| `charts/agentos` | Helm | [`charts/agentos/CLAUDE.md`](charts/agentos/CLAUDE.md) | A1, A2 |
+| `tests/soak` | Python | -- | N1 |
+
+The Python packages are one **uv workspace** (root `pyproject.toml`); ruff, mypy, and pytest are configured at the root and run across all members.
 
 ## Worktree protocol (mandatory for every task agent)
 
@@ -13,25 +36,6 @@ cd /home/theconnman/git/curietech/agentos-<taskid> && uv sync
 ```
 
 Work exclusively in your worktree. Never run `git checkout`, `commit`, or `add` in the primary checkout. Stage only paths you own (never `git add -A`). If you changed dependencies, regenerate `uv.lock` in your own worktree (`uv lock`). The orchestrator merges your branch into main and removes your worktree; do not merge or delete branches yourself.
-
-## Monorepo layout and directory ownership
-
-One task owns one directory; two agents never edit the same directory.
-
-| Path | Language | Owning task(s) |
-|---|---|---|
-| `packages/aci-protocol` | Python (Pydantic + codegen) | C1 |
-| `packages/plugin-format` | Python (Pydantic + codegen) | C1 |
-| `apps/api` | Python (FastAPI) | B1, B2, J1, OB1 |
-| `apps/dispatcher` | Python (Slack Bolt) | E1 |
-| `apps/worker` | Python (redis-py) | F1, G1, K1 |
-| `runner` | Python (claude-agent-sdk) | D1 |
-| `apps/ui` | React (Vite + TS) | H1a, H1b, OB1 |
-| `cli` | Rust (clap + tokio) | I1 |
-| `charts/agentos` | Helm | A1, A2 |
-| `tests/soak` | Python | N1 |
-
-The Python packages are one **uv workspace** (root `pyproject.toml`); ruff, mypy, and pytest are configured at the root and run across all members.
 
 ## Verify commands (per package)
 
@@ -54,9 +58,9 @@ cargo test
 ```
 If `cargo fmt`/`clippy` report a missing component: `rustup component add rustfmt clippy`.
 
-**UI (once H1a scaffolds the Vite app):** `cd apps/ui && pnpm install && pnpm lint && pnpm test && pnpm exec playwright test`. Until then the CI `ui` job is an echo-skip placeholder.
+**UI:** `cd apps/ui && pnpm install && pnpm lint && pnpm typecheck && pnpm test && pnpm e2e`. The app is a real Vite + React + TS project (H1a/H1b/OB1 have landed) -- see `apps/ui/CLAUDE.md`. The top-level CI workflow's `ui` job is still an echo-skip placeholder pending its own wiring; do not read that job's silence as "no tests exist," run `pnpm test`/`pnpm e2e` directly.
 
-Test discipline (from the global AGENTS.md): test-first for behavior-bearing code; mock ONLY external services (Slack, Anthropic, GitHub); NEVER mock Postgres/Valkey/Langfuse — run integration tests against the dev stack below. A change that only makes tests pass by weakening assertions is a regression.
+Test discipline (from the global AGENTS.md): test-first for behavior-bearing code; mock ONLY external services (Slack, Anthropic, GitHub); NEVER mock Postgres/Valkey/Langfuse -- run integration tests against the dev stack below. A change that only makes tests pass by weakening assertions is a regression.
 
 ## The dev stack (verification tier V1): compose.dev.yaml
 
@@ -82,13 +86,13 @@ Host ports (chosen to avoid the CurieTech platform E2E stack, which uses 55432/5
 
 Config lives in `.env.example` (copy to the gitignored `.env` to override; the stack runs on the baked defaults without one). Load-bearing facts:
 
-- **ClickHouse is pinned to `:24.8`.** Newer ClickHouse needs AVX and SIGILLs with exit 132 on CPUs without it. This host has only `sse4_2` (no AVX), so the pin is required here. A1 turns this into a chart preflight.
+- **ClickHouse is pinned to `:24.8`.** Newer ClickHouse needs AVX and SIGILLs with exit 132 on CPUs without it. This host has only `sse4_2` (no AVX), so the pin is required here. A1 turns this into a chart preflight (`preflights.avxCheck` in `charts/agentos`).
 - **Langfuse OTLP ingest is HTTP-only** (gRPC is silently unsupported). Services may emit OTLP over gRPC or HTTP to the OTel Collector (4317/4318); the collector always exports to Langfuse over HTTP. Send app traces to the collector, not directly to Langfuse.
 - **Langfuse is bootstrapped headless** with a fixed dev project (`agentos-dev`) and keys `pk-lf-agentos-dev` / `sk-lf-agentos-dev`, so the OTel path authenticates on first boot with no manual key-minting. Read traces back via `curl -u pk-lf-agentos-dev:sk-lf-agentos-dev http://localhost:3001/api/public/...`.
 
 ## Frozen contracts: STOP and escalate
 
-`packages/aci-protocol` (the ACI session protocol + NDJSON events) and `packages/plugin-format` (the Claude Code plugin shape, verbatim) are **frozen interfaces**. Every lane compiles against them across three languages (Pydantic source of truth → committed JSON Schema → generated TS + Rust), and the schema-compat CI test fails any non-backwards-compatible change.
+`packages/aci-protocol` (the ACI session protocol + NDJSON events) and `packages/plugin-format` (the Claude Code plugin shape, verbatim) are **frozen interfaces**. Every lane compiles against them across three languages (Pydantic source of truth -> committed JSON Schema -> generated TS + Rust), and the schema-compat CI test fails any non-backwards-compatible change.
 
 If your task needs a change to either package: **stop, do not work around it, and escalate to the orchestrator.** The orchestrator lands the contract change as its own reviewed PR before dependent lanes proceed. This also applies whenever an adopted component (Langfuse, Agent Sandbox, Bolt) cannot do what a spec claims: stop and escalate with the evidence rather than silently diverging.
 
@@ -115,3 +119,11 @@ It is **disposable** (tear down what you create; leave it clean) and currently *
 - **Never mention any AI assistant (Claude, Codex, GPT, etc.) or AI in general in commit messages, and never add `Co-Authored-By` lines referencing AI.**
 - No dashes/emdashes in prose content; no emojis in code or docs.
 - Background `/implement` runs have standing approval to push their branch and open a PR against `main`; interactive runs wait for explicit approval.
+
+## Gotchas discovered during the build
+
+- **Deployment-to-runtime binding is not yet wired.** The worker's sandbox substrate claims a fixed runner image/plugin today (the walking-skeleton shape); it does not yet resolve a thread's `deployment_id` to the specific bundle version the API's git-flow engine (J1) produced. Treat this seam as in-progress, not a bug, until the SK walking-skeleton gate lands it -- see `docs/architecture.md`'s message-flow diagram for exactly where the gap sits.
+- **Suspend/resume is a cold rehydrate, not a live hibernate** (ADR-0003). A suspended sandbox's pod is deleted; resume creates a new pod and injects `AGENTOS_HISTORY_REF`. Never assume prompt-cache warmth survives a suspend, and never design a feature that needs a sandbox's in-process state to outlive a suspend.
+- **Warm-pool claims are fast only without per-claim env.** A claim that needs `AGENTOS_HISTORY_REF`/`AGENTOS_SESSION_ID` injected (the resume path) cannot bind a pre-warmed sandbox and cold-creates one instead (seconds, not the ~0.2s warm-pool bind). This is inherent to `agent-sandbox`'s `envVarsInjectionPolicy: Overrides`, not a bug to fix.
+- **A cluster's CNI must actually enforce NetworkPolicy** or the chart's egress lockdown is a silent false-pass. The chart ships a before/after enforcement probe (`preflights.networkPolicyProbe`) for exactly this reason -- never trust an egress policy without it.
+- **gVisor needs `runsc` on the node**, which the chart cannot install. On a cluster without it, use the ready-made `-f charts/agentos/values-e2e-nogvisor.yaml` overlay rather than hand-editing security values (see `charts/agentos/CLAUDE.md`).
