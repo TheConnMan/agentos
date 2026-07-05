@@ -35,6 +35,18 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     bundle_bucket: str = "agentos-bundles"
 
+    # Git flow (J1). The webhook secret authenticates inbound GitHub events; the
+    # two bot identities are the routing targets recorded on each deployment.
+    github_webhook_secret: str = "dev-webhook-secret"
+    dev_branch: str = "dev"
+    prod_branch: str = "main"
+    bot_identity_dev: str = "@agentos-dev"
+    bot_identity_prod: str = "@agentos"
+    # Clone-URL schemes the git-flow builder will fetch from. file:// supports
+    # the hermetic local-bare-repo tests; anything else (e.g. git ext::) is
+    # refused before a subprocess runs.
+    git_allowed_schemes: tuple[str, ...] = ("file://", "https://", "http://")
+
 
 @lru_cache
 def get_settings() -> Settings:

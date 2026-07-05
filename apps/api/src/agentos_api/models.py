@@ -1,8 +1,8 @@
 """SQLAlchemy models: agents, agent_versions, deployments.
 
-Kept deliberately minimal (see docs/build-orchestration-plan.md B1). B2 adds
-bundle columns and J1 adds branch/identity columns later; they are intentionally
-absent here.
+Kept deliberately minimal (see docs/build-orchestration-plan.md). B2 added the
+bundle columns; J1 added the git-flow columns (agents.repo_full_name,
+agent_versions.commit_sha, deployments.bot_identity/commit_sha).
 """
 
 import enum
@@ -29,6 +29,10 @@ class Agent(Base):
     )
     name: Mapped[str] = mapped_column(unique=True)
     slack_channel: Mapped[str]
+    # The GitHub repo (owner/name) whose pushes deploy this agent (J1).
+    repo_full_name: Mapped[str | None] = mapped_column(
+        default=None, unique=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     versions: Mapped[list["AgentVersion"]] = relationship(
@@ -48,6 +52,9 @@ class AgentVersion(Base):
     version_label: Mapped[str]
     bundle_ref: Mapped[str | None] = mapped_column(default=None)
     bundle_sha256: Mapped[str | None] = mapped_column(default=None)
+    # The git commit this version was built from (J1); lets promote reuse the
+    # already-built bundle instead of rebuilding.
+    commit_sha: Mapped[str | None] = mapped_column(default=None, index=True)
     created_by: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
@@ -69,5 +76,9 @@ class Deployment(Base):
     environment: Mapped[Environment] = mapped_column(
         Enum(Environment, name="environment", schema=SCHEMA)
     )
+    # The Slack bot identity this deployment routes to (J1): @agentos-dev for
+    # dev, @agentos for prod.
+    bot_identity: Mapped[str | None] = mapped_column(default=None)
+    commit_sha: Mapped[str | None] = mapped_column(default=None)
     status: Mapped[str] = mapped_column(server_default="active")
     deployed_at: Mapped[datetime] = mapped_column(server_default=func.now())
