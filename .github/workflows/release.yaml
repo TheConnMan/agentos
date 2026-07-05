@@ -6,9 +6,10 @@ name: Release images and binaries
 #                               strip, and attach the agentos CLI binaries to a
 #                               GitHub Release with generated notes.
 #
-# IMAGE SCOPE NOTE: only the runner currently has a Dockerfile (runner/Dockerfile)
-# and is the only first-party image the chart deploys. api/dispatcher/worker/ui
-# have no Dockerfile yet; they drop into the matrix as one entry each once built.
+# IMAGE SCOPE NOTE: all five first-party images are built here -- the runner
+# (runner/Dockerfile) plus the four app services. Every image builds from the
+# repo root: the Python images resolve the uv workspace, and the UI resolves the
+# frozen ACI generated TS its @aci alias points at (outside apps/ui).
 
 on:
   push:
@@ -30,11 +31,18 @@ jobs:
           - name: runner
             context: .
             dockerfile: runner/Dockerfile
-          # Add when their Dockerfiles exist (owned by the app tasks):
-          # - { name: api,        context: ., dockerfile: apps/api/Dockerfile }
-          # - { name: dispatcher, context: ., dockerfile: apps/dispatcher/Dockerfile }
-          # - { name: worker,     context: ., dockerfile: apps/worker/Dockerfile }
-          # - { name: ui,         context: apps/ui, dockerfile: apps/ui/Dockerfile }
+          - name: api
+            context: .
+            dockerfile: apps/api/Dockerfile
+          - name: dispatcher
+            context: .
+            dockerfile: apps/dispatcher/Dockerfile
+          - name: worker
+            context: .
+            dockerfile: apps/worker/Dockerfile
+          - name: ui
+            context: .
+            dockerfile: apps/ui/Dockerfile
     steps:
       - uses: actions/checkout@v4
         with:
