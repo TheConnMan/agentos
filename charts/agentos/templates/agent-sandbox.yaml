@@ -41,6 +41,10 @@ spec:
       {{- if $runner.runtimeClassName }}
       runtimeClassName: {{ $runner.runtimeClassName }}
       {{- end }}
+      {{- with $runner.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if $runner.hardening.enabled }}
       securityContext:
         runAsNonRoot: true
