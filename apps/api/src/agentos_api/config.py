@@ -47,11 +47,26 @@ class Settings(BaseSettings):
     # refused before a subprocess runs.
     git_allowed_schemes: tuple[str, ...] = ("file://", "https://", "http://")
 
+    # Valkey for the kill switch (L1): SET the flag + PUBLISH the kill event.
+    # The DSN is built from the parts so the compose VALKEY_PASSWORD override is
+    # honored; set valkey_url to override the whole DSN (e.g. TLS, other host).
+    valkey_password: str = "valkeypass"
+    valkey_host: str = "localhost"
+    valkey_port: int = 56379
+    valkey_url: str | None = None
+
     # Observability (OB1). kube_config_path points the runner-logs proxy at a
     # cluster; when unset the API tries in-cluster config, and if neither is
     # available the logs endpoint degrades to 503 rather than crashing.
     kube_config_path: str | None = None
     metrics_default_window_hours: int = 168  # 7 days
+
+    def valkey_dsn(self) -> str:
+        if self.valkey_url:
+            return self.valkey_url
+        return (
+            f"redis://:{self.valkey_password}@{self.valkey_host}:{self.valkey_port}/0"
+        )
 
 
 @lru_cache
