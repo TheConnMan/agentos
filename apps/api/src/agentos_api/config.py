@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # refused before a subprocess runs.
     git_allowed_schemes: tuple[str, ...] = ("file://", "https://", "http://")
 
+    # Valkey for the kill switch (L1): SET the flag + PUBLISH the kill event.
+    valkey_url: str = "redis://:valkeypass@localhost:56379/0"
+
     # Observability (OB1). kube_config_path points the runner-logs proxy at a
     # cluster; when unset the API tries in-cluster config, and if neither is
     # available the logs endpoint degrades to 503 rather than crashing.

@@ -49,6 +49,19 @@ async def get_agent(session: AsyncSession, agent_id: uuid.UUID) -> Agent | None:
     return await session.get(Agent, agent_id)
 
 
+async def update_budget(
+    session: AsyncSession,
+    agent: Agent,
+    max_usd_per_day: float | None,
+    max_output_tokens_per_run: int | None,
+) -> Agent:
+    agent.max_usd_per_day = max_usd_per_day
+    agent.max_output_tokens_per_run = max_output_tokens_per_run
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
 async def get_agent_by_repo(
     session: AsyncSession, repo_full_name: str
 ) -> Agent | None:
