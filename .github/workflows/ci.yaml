@@ -71,8 +71,38 @@ jobs:
         run: npx --yes -p typescript@5 tsc --noEmit -p packages/aci-protocol/generated/ts/tsconfig.json
 
   ui:
-    name: UI (placeholder until H1a)
+    name: UI (lint + vitest + build + Playwright)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ui
     steps:
-      - name: Skip
-        run: echo "apps/ui is reserved; H1a scaffolds the Vite app and its pnpm + Playwright jobs replace this step."
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Unit tests (vitest)
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+      # The stackless E2E project (route-interception fixtures, testIgnore
+      # integration) runs with no backend; the live-backend "integration" project
+      # only activates under PW_INTEGRATION=1, which CI does not set. Playwright's
+      # webServer builds and serves the preview for the run.
+      - name: E2E (Playwright, stackless)
+        run: pnpm exec playwright test
