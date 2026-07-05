@@ -77,9 +77,10 @@ enum Command {
     },
     /// Run the bundle's eval cases through the local runner.
     Eval {
-        /// Eval case file.
-        #[arg(long, default_value = "evals/cases.json")]
-        cases: PathBuf,
+        /// Eval case file (default: evals/cases.json here, then the running
+        /// bundle's).
+        #[arg(long)]
+        cases: Option<PathBuf>,
         /// Runner base URL (defaults to the started runner, then localhost).
         #[arg(long)]
         url: Option<String>,
@@ -141,7 +142,7 @@ async fn main() -> Result<()> {
             event_type,
             url,
         } => commands::send(&text, &user, event_type.into(), url).await,
-        Command::Eval { cases, url } => commands::eval(&cases, url).await,
+        Command::Eval { cases, url } => commands::eval(cases, url).await,
         Command::Deploy {
             plugin_dir,
             api_url,
