@@ -142,15 +142,17 @@ class _FakeK8s:
         pass
 
 
-def _cfg(stream: str, group: str) -> WorkerConfig:
-    return WorkerConfig(
-        valkey_host=_VH,
-        valkey_port=_VP,
-        valkey_password=_VPW,
-        eval_stream=stream,
-        eval_consumer_group=group,
-        read_block_ms=100,
-    )
+def _cfg(stream: str, group: str, **overrides: object) -> WorkerConfig:
+    base: dict[str, object] = {
+        "valkey_host": _VH,
+        "valkey_port": _VP,
+        "valkey_password": _VPW,
+        "eval_stream": stream,
+        "eval_consumer_group": group,
+        "read_block_ms": 100,
+    }
+    base.update(overrides)
+    return WorkerConfig(**base)
 
 
 def _item(
@@ -496,6 +498,72 @@ def test_provisioned_runner_end_to_end(make_eval_harness, bundles) -> None:
             if keys:
                 sync_client.delete(*keys)
             sync_client.close()
+            await client.aclose()
+
+    asyncio.run(go())
+
+
+def test_pending_entry_from_a_dead_consumer_is_reclaimed(make_eval_harness, bundles) -> None:
+    """An entry a crashed consumer took but never acked (still in the group PEL) is
+    reclaimed via XAUTOCLAIM and re-run, so the at-least-once promise holds -- a
+    crash before ack never strands the eval."""
+    store, upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, _client):
+            fake.responses = {"q": "ok"}
+            bundle_ref = upload(
+                EvalSuite(
+                    name="recl",
+                    cases=[
+                        EvalCase(id="1", input="q", grader=Grader(kind=CONTAINS, expected="ok"))
+                    ],
+                )
+            )
+            token = uuid.uuid4().hex[:8]
+            # Reclaim anything pending immediately, and tick the reclaim loop fast.
+            cfg = _cfg(
+                f"test:evals:{token}",
+                f"g-{token}",
+                reclaim_min_idle_ms=0,
+                reclaim_interval_s=0.05,
+            )
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=30.0) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                sha = f"sha-{token}"
+                item = _item(suite="recl", sha=sha, bundle_ref=bundle_ref, target_url=base_url)
+                await client.xadd(cfg.eval_stream, {"payload": item.model_dump_json()})
+
+                # A dead consumer takes the entry (moves it into the PEL) and never
+                # acks -- the read loop's ">" will never see it again.
+                await client.xreadgroup(
+                    cfg.eval_consumer_group,
+                    "dead-consumer",
+                    {cfg.eval_stream: ">"},
+                    count=10,
+                )
+                pending = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert pending["pending"] == 1  # stranded under the dead consumer
+
+                await _drain_one(consumer, reports)
+
+                # Reclaimed, re-run against the bundle, reported, and acked.
+                assert reports[0]["sha"] == sha
+                assert reports[0]["passed_count"] == 1
+                summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert summary["pending"] == 0
+
+            await client.delete(cfg.eval_stream)
             await client.aclose()
 
     asyncio.run(go())

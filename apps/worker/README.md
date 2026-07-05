@@ -115,10 +115,11 @@ Runtime rules (each has a provoking integration test in `tests/eval/test_stream.
   down in a `finally`. A provisioning failure is a failed run reported and acked.
 - **XACK only after the report POST attempt completes** (success, or terminally failed
   after bounded retries and logged). A worker crash before that leaves the entry
-  pending, so the next redelivery re-runs it -- **at-least-once** delivery of the eval
-  with a best-effort report. A malformed payload cannot be processed on any redelivery,
-  so it is logged and acked (a poison-pill drop). A failing eval case is a failed COUNT
-  in the report, not a consumer crash.
+  pending; a background reclaim loop (`XAUTOCLAIM` past an idle timeout, mirroring the
+  runs consumer) re-runs it, so delivery is **at-least-once** with a best-effort
+  report. A malformed payload cannot be processed on any redelivery, so it is logged
+  and acked (a poison-pill drop). A failing eval case is a failed COUNT in the report,
+  not a consumer crash.
 
 Config surface (added to `WorkerConfig.from_env`): `AGENTOS_EVAL_STREAM` /
 `AGENTOS_EVAL_CONSUMER_GROUP`; MinIO/S3 `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` /

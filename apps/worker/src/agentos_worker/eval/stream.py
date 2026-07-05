@@ -183,6 +183,10 @@ class EvalStreamConsumer:
         self._recorder = recorder
         self._repo_lookup = repo_lookup
         self._stop = asyncio.Event()
+        # Entry ids this consumer is handling right now. XAUTOCLAIM would
+        # otherwise reclaim our own still-pending (long-running) eval and
+        # re-run it in parallel; skipping these ids prevents that self-reclaim.
+        self._inflight_ids: set[str] = set()
 
     async def ensure_group(self) -> None:
         try:
@@ -201,6 +205,9 @@ class EvalStreamConsumer:
 
     async def run(self) -> None:
         await self.ensure_group()
+        await asyncio.gather(self._read_loop(), self._reclaim_loop())
+
+    async def _read_loop(self) -> None:
         while not self._stop.is_set():
             resp = await self._redis.xreadgroup(
                 self._config.eval_consumer_group,
@@ -216,23 +223,68 @@ class EvalStreamConsumer:
                 for entry_id, fields in entries:
                     await self._handle(entry_id, fields)
 
+    async def _reclaim_loop(self) -> None:
+        """Periodically reclaim entries a dead consumer left pending and re-run
+        them. Without this, an entry left pending by a crash before ``_ack``
+        would sit in the group's PEL forever -- the at-least-once promise the
+        ``_handle`` pending path relies on lives here."""
+        while not self._stop.is_set():
+            try:
+                await self._reclaim_once()
+            except Exception:
+                logger.exception("eval reclaim tick failed")
+            await self._sleep_or_stop(self._config.reclaim_interval_s)
+
+    async def _reclaim_once(self) -> int:
+        reclaimed = 0
+        cursor: str = "0-0"
+        while not self._stop.is_set():
+            raw = await self._redis.xautoclaim(
+                self._config.eval_stream,
+                self._config.eval_consumer_group,
+                self._config.eval_consumer_name,
+                min_idle_time=self._config.reclaim_min_idle_ms,
+                start_id=cursor,
+                count=self._config.read_count,
+            )
+            cursor = str(raw[0])
+            entries = cast("list[StreamEntry]", raw[1])
+            for entry_id, fields in entries:
+                if entry_id in self._inflight_ids:
+                    continue  # still being handled here; not an orphan
+                reclaimed += 1
+                await self._handle(entry_id, fields)
+            if cursor in ("0-0", "0"):
+                break
+        return reclaimed
+
     async def _handle(self, entry_id: str, fields: dict[str, str]) -> None:
+        self._inflight_ids.add(entry_id)
         try:
-            item = EvalWorkItem.from_stream_fields(fields)
-        except Exception:
-            # Poison pill: unprocessable on any redelivery, so ack and drop.
-            logger.exception("malformed eval work item %s; acking as poison", entry_id)
+            try:
+                item = EvalWorkItem.from_stream_fields(fields)
+            except Exception:
+                # Poison pill: unprocessable on any redelivery, so ack and drop.
+                logger.exception("malformed eval work item %s; acking as poison", entry_id)
+                await self._ack(entry_id)
+                return
+            try:
+                result = await self._run_and_report(item)
+                logger.info("eval %s @ %s: %s", item.suite, item.sha, result.summary())
+            except Exception:
+                # An unexpected error before the report attempt: leave pending so
+                # the reclaim loop re-runs it (an eval must not be lost to a crash).
+                logger.exception("eval processing failed for %s; left pending", entry_id)
+                return
             await self._ack(entry_id)
-            return
+        finally:
+            self._inflight_ids.discard(entry_id)
+
+    async def _sleep_or_stop(self, seconds: float) -> None:
         try:
-            result = await self._run_and_report(item)
-            logger.info("eval %s @ %s: %s", item.suite, item.sha, result.summary())
-        except Exception:
-            # An unexpected error before the report attempt: leave pending so a
-            # redelivery re-runs it (an eval must not be lost to a crash).
-            logger.exception("eval processing failed for %s; left pending", entry_id)
-            return
-        await self._ack(entry_id)
+            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
 
     async def _run_and_report(self, item: EvalWorkItem) -> EvalRunResult:
         repo = await self._repo_lookup.repo_full_name(item.agent_id)
