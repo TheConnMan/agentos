@@ -130,6 +130,22 @@ def _eval_entry_for(sha: str) -> dict[str, Any] | None:
     return None
 
 
+def _count_eval_entries_for_agent(agent_id: str) -> int:
+    # Scope by agent_id (a fresh UUID per test) rather than sha or total count:
+    # the shared agentos:evals stream is never cleaned between tests, and two
+    # tests building identical repo content can collide on sha.
+    sync = redis.from_url(get_settings().valkey_dsn())
+    try:
+        return sum(
+            1
+            for _id, fields in sync.xrevrange("agentos:evals", count=200)
+            if json.loads(fields[STREAM_PAYLOAD_FIELD.encode()]).get("agent_id")
+            == agent_id
+        )
+    finally:
+        sync.close()
+
+
 def test_dev_push_fans_out_prod_push_does_not(
     client: Any, auth_headers: dict[str, str], clean_db: None, tmp_path: Path
 ) -> None:
@@ -163,3 +179,27 @@ def test_dev_push_fans_out_prod_push_does_not(
     finally:
         sync.close()
     assert after == before
+
+
+def test_redelivered_dev_push_does_not_refan_out(
+    client: Any, auth_headers: dict[str, str], clean_db: None, tmp_path: Path
+) -> None:
+    agent = client.post(
+        "/agents",
+        json={"name": "k1-redeliver", "slack_channel": "#k", "repo_full_name": REPO},
+        headers=auth_headers,
+    ).json()
+    clone_url, sha = _build_bare_repo(tmp_path)
+
+    # First delivery builds the bundle and fans out exactly one eval job.
+    assert _post_push(client, "refs/heads/dev", sha, clone_url).json()["status"] == (
+        "deployed"
+    )
+    assert _count_eval_entries_for_agent(agent["id"]) == 1
+
+    # GitHub redelivers the same push. The version already has a stored bundle,
+    # so the build is skipped and no second eval job may be enqueued.
+    assert _post_push(client, "refs/heads/dev", sha, clone_url).json()["status"] == (
+        "deployed"
+    )
+    assert _count_eval_entries_for_agent(agent["id"]) == 1
