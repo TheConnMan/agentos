@@ -41,14 +41,18 @@ def verify_signature(secret: str, body: bytes, header: str | None) -> bool:
 
 
 def environment_for_ref(ref: str | None, settings: Settings) -> Environment | None:
-    """Map a git ref to an environment, or None if it is not a deploy branch."""
+    """Map a git ref to an environment, or None if it is not a deploy branch.
+
+    The full ref is matched (refs/heads/<branch>), never just the last path
+    segment, so a tag named `main` or a branch `feature/dev` cannot masquerade
+    as a deploy branch.
+    """
 
     if not ref:
         return None
-    branch = ref.rsplit("/", 1)[-1]
-    if branch == settings.dev_branch:
+    if ref == f"refs/heads/{settings.dev_branch}":
         return Environment.dev
-    if branch == settings.prod_branch:
+    if ref == f"refs/heads/{settings.prod_branch}":
         return Environment.prod
     return None
 
@@ -121,7 +125,11 @@ async def process_push(
         return WebhookResult(status="ignored")
 
     version = await crud.get_version_by_commit(session, agent.id, after)
-    if version is None:
+    # Only a version whose bundle is actually stored may be reused for promote.
+    # A row with bundle_ref still None is the residue of a prior attempt that
+    # failed after the row committed; rebuild and store into it rather than
+    # deploying a bundleless version.
+    if version is None or version.bundle_ref is None:
         try:
             data = await run_in_threadpool(
                 clone_and_archive, clone_url, after, settings
@@ -140,13 +148,14 @@ async def process_push(
         except deploy.BundleInvalid as exc:
             return WebhookResult(status="rejected", errors=exc.errors)
 
-        version = await crud.create_version_row(
-            session,
-            agent.id,
-            version_label=after[:12],
-            created_by="git-flow",
-            commit_sha=after,
-        )
+        if version is None:
+            version = await crud.create_version_row(
+                session,
+                agent.id,
+                version_label=after[:12],
+                created_by="git-flow",
+                commit_sha=after,
+            )
         await deploy.store_bundle(
             store, session, agent.id, version, data, extension, content_type
         )
