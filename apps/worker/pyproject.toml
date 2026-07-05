@@ -10,6 +10,7 @@ dependencies = [
     "agentos-dispatcher",
     "aiohttp>=3.11",
     "slack-sdk>=3.43",
+    "httpx>=0.28",
 ]
 
 [build-system]
