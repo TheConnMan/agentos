@@ -8,6 +8,7 @@ import { Metrics } from "./obs/Metrics";
 import { RealMetrics } from "./obs/RealMetrics";
 import { Logs } from "./obs/Logs";
 import { RealLogs } from "./obs/RealLogs";
+import { RealCost } from "./obs/RealCost";
 import { MemoryStub } from "./obs/MemoryStub";
 import { Usage } from "./obs/Usage";
 import { Cost } from "./obs/Cost";
@@ -61,7 +62,7 @@ export function Observability() {
       content = <Usage />;
       break;
     case "cost":
-      content = <Cost />;
+      content = isWired() ? <RealCost /> : <Cost />;
       break;
   }
 
