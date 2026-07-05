@@ -115,14 +115,22 @@ name = "agentos-worker"
 version = "0.0.0"
 source = { editable = "apps/worker" }
 dependencies = [
+    { name = "aci-protocol" },
+    { name = "agentos-dispatcher" },
+    { name = "aiohttp" },
     { name = "kubernetes" },
     { name = "redis" },
+    { name = "slack-sdk" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "agentos-dispatcher", editable = "apps/dispatcher" },
+    { name = "aiohttp", specifier = ">=3.11" },
     { name = "kubernetes", specifier = ">=31.0" },
     { name = "redis", specifier = ">=5.2" },
+    { name = "slack-sdk", specifier = ">=3.43" },
 ]
 
 [[package]]
