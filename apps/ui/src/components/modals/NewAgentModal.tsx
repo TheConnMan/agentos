@@ -52,7 +52,12 @@ export function NewAgentModal() {
   const [channel, setChannel] = useState("");
   const [skill, setSkill] = useState(SKILL);
   const lineCount = useMemo(() => skill.split("\n").length, [skill]);
-  const channelLooksOff = channel.trim() !== "" && !CHANNEL_ID_RE.test(channel.trim());
+  const channelValue = channel.trim();
+  const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
+  // A blank channel can never match a Slack mention, so wired deploy requires one.
+  // This is distinct from the format warning above, which never blocks: arbitrary
+  // non-ID strings (the CLI's synthetic channels) still deploy — empty does not.
+  const channelBlank = isWired() && channelValue === "";
 
   const deploy = async () => {
     if (state.deploying) return;
@@ -62,15 +67,18 @@ export function NewAgentModal() {
       setTimeout(() => dispatch({ type: "deployDone" }), 700);
       return;
     }
+    if (channelValue === "") return;
     dispatch({ type: "deployStart" });
     try {
-      const agent = await createAgent({ name, slack_channel: channel });
+      // Store the trimmed ID: a copied ID with surrounding spaces would silently
+      // drop every mention because the worker matches the channel value exactly.
+      const agent = await createAgent({ name, slack_channel: channelValue });
       const version = await createVersion(agent.id, { version_label: "v0.1.0", created_by: "ui" });
       const archive = await buildBundleZip({ agentName: name, versionLabel: version.version_label, skillMd: skill });
       await uploadBundle(agent.id, version.id, archive);
       // Backend-driven success: record the real next step, refresh the real agent
       // list, and fire confetti without the fixture level/success-panel machinery.
-      wired.markDeployed({ name, channel });
+      wired.markDeployed({ name, channel: channelValue });
       wired.refetch();
       dispatch({ type: "confettiFire" });
     } catch (e) {
@@ -280,7 +288,13 @@ export function NewAgentModal() {
               }}
             />
           ) : (
-            <Button label="Deploy" variant="primary" onClick={() => void deploy()} />
+            <Button
+              label="Deploy"
+              variant="primary"
+              disabled={channelBlank}
+              title={channelBlank ? "Enter the Slack channel ID first" : undefined}
+              onClick={() => void deploy()}
+            />
           )}
         </div>
       </div>

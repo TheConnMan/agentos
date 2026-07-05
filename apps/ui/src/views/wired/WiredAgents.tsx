@@ -1,5 +1,5 @@
 import { C } from "../../tokens";
-import { Card, SectionTitle, Button, Dot, Chip, EmptyState } from "../../primitives";
+import { Card, SectionTitle, Button, Dot, EmptyState } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 
@@ -69,9 +69,8 @@ export function WiredAgents() {
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Chip color={C.mutedStatus} border={C.border}>
-                live
-              </Chip>
+              {/* No status chip: GET /agents carries no bundle/deploy state, so we
+                  cannot honestly claim an agent is "live" from the list alone. */}
               <button
                 type="button"
                 onClick={() => {
