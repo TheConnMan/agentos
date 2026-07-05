@@ -67,15 +67,18 @@ async def _provision(base: URL, run_db: str) -> None:
                 "(ALTER ROLE ... CREATEDB) or run the suite as a superuser role."
             )
         # Self-heal: a suite that died mid-run leaves its database behind; drop
-        # any disposable DB older than a day before creating this run's.
+        # any disposable DB older than a day before creating this run's. The
+        # LIKE underscores are escaped (they are wildcards otherwise) and a
+        # literal startswith guard ensures we only ever drop our own databases.
         cutoff = datetime.now(UTC) - timedelta(days=1)
+        like = DB_PREFIX.replace("_", r"\_") + "%"
         for row in await conn.fetch(
-            "select datname from pg_database where datname like $1", f"{DB_PREFIX}%"
+            r"select datname from pg_database where datname like $1 escape '\'",
+            like,
         ):
-            if _stale(row["datname"], cutoff):
-                await conn.execute(
-                    f'DROP DATABASE IF EXISTS "{row["datname"]}" WITH (FORCE)'
-                )
+            name: str = row["datname"]
+            if name.startswith(DB_PREFIX) and _stale(name, cutoff):
+                await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
         await conn.execute(f'CREATE DATABASE "{run_db}"')
     finally:
         await conn.close()
@@ -89,8 +92,11 @@ async def _drop(base: URL, run_db: str) -> None:
         await conn.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _disposable_db() -> Any:
+    # Not autouse: pure unit tests (no client/db fixtures) still run without a
+    # database. Any db-touching fixture (client, migrated, clean_db) pulls this
+    # in, which sets DATABASE_URL before the app engine or alembic is created.
     base = make_url(get_settings().database_url)
     run_db = (
         f"{DB_PREFIX}{datetime.now(UTC).strftime(TS_FORMAT)}_{secrets.token_hex(3)}"
@@ -102,11 +108,11 @@ def _disposable_db() -> Any:
         hide_password=False
     )
     get_settings.cache_clear()
-
-    cfg = Config()
-    cfg.set_main_option("script_location", str(ALEMBIC_DIR))
-    command.upgrade(cfg, "head")
     try:
+        # Inside the try so a failed migration still drops the run's database.
+        cfg = Config()
+        cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+        command.upgrade(cfg, "head")
         yield run_db
     finally:
         asyncio.run(_drop(base, run_db))
@@ -139,7 +145,9 @@ def clean_db(migrated: None) -> None:
 
 
 @pytest.fixture
-def client() -> Any:
+def client(_disposable_db: Any) -> Any:
+    # Depends on _disposable_db so the app engine is built against the disposable
+    # DB (the app lifespan already requires the compose stack: MinIO, Valkey).
     with TestClient(create_app()) as test_client:
         yield test_client
 
