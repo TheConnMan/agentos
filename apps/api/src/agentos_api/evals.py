@@ -1,8 +1,10 @@
 """Eval matrix (K1): assemble the case-by-version grid from Langfuse.
 
-K1's recorder writes, per case, a trace tagged version:<sha> + suite:<name> with
-metadata.case_id, plus an eval_pass score (1.0/0.0). The matrix reads those back
-and pivots them into rows = cases, columns = the last N versions, cells =
+K1's recorder writes, per case, a trace tagged version:<sha> + suite:<name> whose
+metadata carries case_id and the pass/fail (mirrored by an eval_pass score). The
+matrix reads pass/fail straight off each suite trace's metadata -- scoping to the
+traces just fetched, rather than joining a globally-paginated scores query -- and
+pivots them into rows = cases, columns = the last N versions, cells =
 pass/fail/missing. Pure builder so the pivot is unit-testable off canned data.
 """
 
@@ -28,16 +30,9 @@ def _version_of(trace: dict[str, Any]) -> str | None:
 
 def build_matrix(
     traces: list[dict[str, Any]],
-    scores: list[dict[str, Any]],
     suite: str,
     limit_versions: int,
 ) -> EvalMatrix:
-    score_by_trace: dict[str, float] = {
-        s["traceId"]: float(s["value"])
-        for s in scores
-        if s.get("traceId") is not None and s.get("value") is not None
-    }
-
     # Latest trace per (version, case) so a re-run supersedes an older result.
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     version_last_seen: dict[str, str] = {}
@@ -66,10 +61,10 @@ def build_matrix(
         trace = latest.get((version, case))
         if trace is None:
             return "missing"
-        value = score_by_trace.get(trace["id"])
-        if value is None:
+        passed = (trace.get("metadata") or {}).get("passed")
+        if passed is None:
             return "missing"
-        return "pass" if value >= 0.5 else "fail"
+        return "pass" if passed else "fail"
 
     rows = [
         EvalMatrixRow(
