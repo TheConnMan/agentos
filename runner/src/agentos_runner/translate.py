@@ -59,8 +59,14 @@ def translate_message(
     if isinstance(message, ResultMessage):
         return _translate_result(message, state, gen)
     if isinstance(message, RateLimitEvent):
-        state.error_classification = "rate-limit"
-        return [ErrorEvent(message="model rate limit reached", classification="rate-limit")]
+        # status is one of allowed / allowed_warning / rejected; only a hard
+        # rejection is an ACI error. The warning states are advisory (the model
+        # is still allowed to continue) and must not inject a failure event into
+        # an otherwise-successful run.
+        if message.rate_limit_info.status == "rejected":
+            state.error_classification = "rate-limit"
+            return [ErrorEvent(message="model rate limit reached", classification="rate-limit")]
+        return []
     # UserMessage, SystemMessage, and StreamEvent carry no outbound-visible
     # content in the v0.1 contract; they are intentionally dropped.
     return []

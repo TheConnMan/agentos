@@ -75,8 +75,17 @@ def test_assistant_error_field_emits_error_event() -> None:
     assert events[0].classification == "rate_limit"
 
 
-def test_rate_limit_event_maps_to_error() -> None:
-    info = RateLimitInfo(status="allowed_warning")
+def test_rate_limit_rejected_maps_to_error() -> None:
+    info = RateLimitInfo(status="rejected")
     events = _translate(RateLimitEvent(rate_limit_info=info, uuid="u", session_id="s"))
     assert [e.type for e in events] == ["error"]
     assert events[0].classification == "rate-limit"
+
+
+def test_rate_limit_warning_is_dropped() -> None:
+    # allowed / allowed_warning are advisory; the run is still allowed to
+    # continue, so no failure event is injected.
+    for status in ("allowed", "allowed_warning"):
+        info = RateLimitInfo(status=status)
+        events = _translate(RateLimitEvent(rate_limit_info=info, uuid="u", session_id="s"))
+        assert events == []

@@ -33,7 +33,7 @@ from aci_protocol import (
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
-from .otel import RunTracer
+from .otel import RunTracer, _GenerationSpan
 from .side_effects import SideEffectClassifier
 from .translate import TurnState, translate_message
 
@@ -141,59 +141,105 @@ class SessionRunner:
             tracker = BudgetTracker(ceiling=self._ceiling)
 
             with self._tracer.run_span(self._trace_name, self._model) as gen:
-                await self._session.query(event.text)
-                async for message in self._session.receive_turn():
-                    tracker.add(getattr(message, "usage", None))
-                    budget_hit = tracker.exceeded
-                    events = translate_message(message, state, self._classifier, gen)
+                try:
+                    async for line in self._drive_turn(event, state, tracker, gen):
+                        yield line
+                except Exception as exc:  # noqa: BLE001 - the ACI stream must
+                    # always terminate in a final; a raised SDK/transport error
+                    # (CLI disconnect, auth expiry, model error) becomes a
+                    # classified failure rather than a truncated, final-less
+                    # stream. GeneratorExit (consumer disconnect) is a
+                    # BaseException and is intentionally not caught.
+                    self._status = SessionStatus.CLASSIFIED_FAILURE
+                    yield to_ndjson_line(
+                        ErrorEvent(message=f"runner error: {exc}", classification="runner-error")
+                    )
+                    yield to_ndjson_line(
+                        Final(text="run failed", status=SessionStatus.CLASSIFIED_FAILURE)
+                    )
 
-                    emitted_final = False
-                    for outbound in events:
-                        if isinstance(outbound, Final):
-                            final = self._finalize(outbound, budget_hit)
-                            self._status = final.status
-                            yield to_ndjson_line(final)
-                            emitted_final = True
-                            break
-                        yield to_ndjson_line(outbound)
-                    if emitted_final:
-                        return
+    async def _drive_turn(
+        self,
+        event: Event,
+        state: TurnState,
+        tracker: BudgetTracker,
+        gen: _GenerationSpan,
+    ) -> AsyncIterator[str]:
+        """Drive one turn to a terminal final (budget/interrupt overrides applied)."""
 
+        assert self._session is not None
+        await self._session.query(event.text)
+        async for message in self._session.receive_turn():
+            tracker.add(getattr(message, "usage", None))
+            budget_hit = tracker.exceeded
+            events = translate_message(message, state, self._classifier, gen)
+
+            for outbound in events:
+                if isinstance(outbound, Final):
                     if budget_hit:
-                        await self._session.interrupt()
-                        yield to_ndjson_line(
-                            ErrorEvent(
-                                message="output token budget exceeded",
-                                classification=BUDGET_CLASSIFICATION,
-                            )
-                        )
-                        final = Final(
-                            text="run halted: output token budget exceeded",
-                            status=SessionStatus.CLASSIFIED_FAILURE,
-                        )
-                        self._status = final.status
-                        yield to_ndjson_line(final)
+                        for line in self._budget_halt_lines():
+                            yield line
                         return
+                    final = self._reclassify(outbound)
+                    self._status = final.status
+                    yield to_ndjson_line(final)
+                    return
+                yield to_ndjson_line(outbound)
 
-                # The turn iterator ended without a terminal result (e.g. an
-                # interrupt aborted before the model produced one). Emit a final
-                # so the stream always terminates in a final event.
-                status = (
-                    SessionStatus.IDLE_AWAITING_INPUT
-                    if self._interrupt_requested
-                    else SessionStatus.DONE
+            if budget_hit:
+                # Budget crossed on a non-terminal message: stop the live run,
+                # then emit the same error+final pair.
+                await self._session.interrupt()
+                for line in self._budget_halt_lines():
+                    yield line
+                return
+
+        # The turn iterator ended without a terminal result (e.g. an interrupt
+        # aborted before the model produced one). Emit a final so the stream
+        # always terminates in a final event.
+        status = (
+            SessionStatus.IDLE_AWAITING_INPUT
+            if self._interrupt_requested
+            else SessionStatus.DONE
+        )
+        self._status = status
+        yield to_ndjson_line(Final(text="", status=status))
+
+    def _budget_halt_lines(self) -> list[str]:
+        """The error+final pair emitted whenever the output-token ceiling trips.
+
+        The error carries the budget classification so downstream retry rules can
+        tell a budget halt from any other classified failure.
+        """
+
+        self._status = SessionStatus.CLASSIFIED_FAILURE
+        return [
+            to_ndjson_line(
+                ErrorEvent(
+                    message="output token budget exceeded",
+                    classification=BUDGET_CLASSIFICATION,
                 )
-                self._status = status
-                yield to_ndjson_line(Final(text="", status=status))
+            ),
+            to_ndjson_line(
+                Final(
+                    text="run halted: output token budget exceeded",
+                    status=SessionStatus.CLASSIFIED_FAILURE,
+                )
+            ),
+        ]
 
-    def _finalize(self, final: Final, budget_hit: bool) -> Final:
-        """Apply budget and interrupt overrides to a model-produced final."""
+    def _reclassify(self, final: Final) -> Final:
+        """Apply the interrupt override to a model-produced terminal final.
 
-        if budget_hit:
+        A requested interrupt is an intentional stop, so the run is idle-awaiting-
+        input regardless of the SDK's terminal subtype (a real interrupt often
+        surfaces as an error result). Without the override an intentional stop
+        would look like a failure and could trip F1's escalation path.
+        """
+
+        if self._interrupt_requested:
             return Final(
-                text="run halted: output token budget exceeded",
-                status=SessionStatus.CLASSIFIED_FAILURE,
+                text=final.text or "run interrupted",
+                status=SessionStatus.IDLE_AWAITING_INPUT,
             )
-        if self._interrupt_requested and final.status == SessionStatus.DONE:
-            return Final(text=final.text, status=SessionStatus.IDLE_AWAITING_INPUT)
         return final

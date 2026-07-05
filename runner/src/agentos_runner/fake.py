@@ -54,11 +54,20 @@ class FakeModelSession:
 
     ``script_factory`` returns the messages for the next ``receive_turn``, so a
     test can vary the script across turns. ``interrupt`` truncates the current
-    turn's replay at the next boundary, emulating the SDK's native interrupt.
+    turn's replay at the next boundary (``truncate_on_interrupt=True``, the
+    default), emulating an SDK interrupt that aborts the iterator before a result;
+    set it False to model the other real shape, where the SDK still delivers a
+    terminal error result after the interrupt.
     """
 
-    def __init__(self, script_factory: Callable[[], list[Any]] | None = None) -> None:
+    def __init__(
+        self,
+        script_factory: Callable[[], list[Any]] | None = None,
+        *,
+        truncate_on_interrupt: bool = True,
+    ) -> None:
         self._script_factory = script_factory or default_turn
+        self._truncate_on_interrupt = truncate_on_interrupt
         self.connected = False
         self.queries: list[str] = []
         self.interrupts = 0
@@ -77,7 +86,7 @@ class FakeModelSession:
 
     async def receive_turn(self) -> AsyncIterator[Any]:
         for message in self._script_factory():
-            if self._interrupted:
+            if self._interrupted and self._truncate_on_interrupt:
                 return
             yield message
 

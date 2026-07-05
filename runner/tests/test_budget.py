@@ -9,14 +9,20 @@ from agentos_runner.session import SessionRunner
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 
-def test_tracker_uses_max_not_sum() -> None:
+def test_tracker_sums_per_message_output() -> None:
     tracker = BudgetTracker(ceiling=100)
     tracker.add({"output_tokens": 40})
-    tracker.add({"output_tokens": 90})  # cumulative-for-turn, not additive
-    assert tracker.used == 90
     assert not tracker.exceeded
-    tracker.add({"output_tokens": 101})
+    tracker.add({"output_tokens": 90})  # per-message output accumulates
+    assert tracker.used == 130
     assert tracker.exceeded
+
+
+def test_tracker_ignores_missing_usage() -> None:
+    tracker = BudgetTracker(ceiling=100)
+    tracker.add(None)
+    tracker.add({"input_tokens": 5})  # no output_tokens field
+    assert tracker.used == 0
 
 
 def test_zero_ceiling_disables_enforcement() -> None:
@@ -90,6 +96,9 @@ def test_budget_halt_when_usage_only_on_result() -> None:
     final = events[-1]
     assert final.type == "final"
     assert final.status == SessionStatus.CLASSIFIED_FAILURE
+    # The budget error must be present even when the ceiling is only crossed at
+    # the terminal result, so consumers can distinguish it from a model failure.
+    assert any(e.type == "error" and e.classification == BUDGET_CLASSIFICATION for e in events)
 
 
 def test_under_budget_completes_done() -> None:
