@@ -1,0 +1,302 @@
+{{- if and .Values.agentSandbox.deploy .Values.security.probe.enabled }}
+{{- $h := .Values.agentSandbox.runner.hardening }}
+{{/*
+The PT-3 security-boundary probe suite, re-run against the chart's rendered
+defaults as a `helm test`. Four claims:
+
+  1. default-deny egress + metadata endpoint blocked, WITH a before/after control
+     that proves the CNI actually enforces (not a silent false-pass).
+  2. cross-agent secret isolation via per-agent RBAC scoping.
+  3. runner containers are non-root with a read-only rootfs.
+  4. gVisor RuntimeClass enforced (reported testable / not-testable honestly;
+     enforcement itself is asserted by the preflight-gvisor hook).
+
+Claim 3 is a self-contained hardened Pod (the pod IS the test). Claims 1, 2, 4
+run from a kubectl-driven orchestrator with a scoped ServiceAccount.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentos.fullname" . }}-security-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentos.fullname" . }}-security-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete, get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete, get, list]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, delete, get]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete, get, list]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [create, delete, get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agentos.fullname" . }}-security-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agentos.fullname" . }}-security-probe
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentos.fullname" . }}-security-probe
+    namespace: {{ .Release.Namespace }}
+---
+{{/* Claim 3: non-root + read-only rootfs. The pod IS the test, hardened with the
+     SAME securityContext the chart applies to runner sandboxes. */}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "agentos.fullname" . }}-security-probe-hardening
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: {{ $h.runAsUser }}
+    runAsGroup: {{ $h.runAsGroup }}
+    fsGroup: {{ $h.fsGroup }}
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardening
+      image: {{ .Values.security.probe.busyboxImage }}
+      imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "== Claim 3: non-root + read-only rootfs =="
+          id
+          rc=0
+          if echo "$(id -u)" | grep -qx "{{ $h.runAsUser }}"; then
+            echo "PASS: running as uid {{ $h.runAsUser }} (non-root)"
+          else
+            echo "FAIL: expected uid {{ $h.runAsUser }}, got $(id -u)"; rc=1
+          fi
+          if touch /nope 2>/dev/null; then
+            echo "FAIL: wrote to / -- rootfs is NOT read-only"; rc=1
+          else
+            echo "PASS: write to / blocked (read-only rootfs)"
+          fi
+          exit $rc
+      resources:
+        {{- toYaml .Values.security.probe.resources | nindent 8 }}
+---
+{{/* Claims 1, 2, 4: kubectl-driven orchestrator (alpine/k8s ships kubectl). */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agentos.fullname" . }}-security-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "security-probe") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "agentos.fullname" . }}-security-probe
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: {{ .Values.security.probe.kubectlImage }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: NS
+              value: {{ .Release.Namespace | quote }}
+            - name: BLOCKED
+              value: {{ .Values.security.probe.blockedTarget | quote }}
+            - name: RC
+              value: {{ .Values.agentSandbox.runner.runtimeClassName | quote }}
+            - name: EGRESS_POD
+              value: {{ include "agentos.fullname" . }}-egress-probe
+            - name: NETSHOOT
+              value: {{ .Values.security.probe.netshootImage | quote }}
+            - name: ALLOW_ALL_NP
+              value: {{ include "agentos.fullname" . }}-security-probe-allow-all
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -u
+              fail=0
+              cleanup() {
+                kubectl delete pod "$EGRESS_POD" sp-gvisor-check -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete networkpolicy "$ALLOW_ALL_NP" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete secret sp-agent-a-creds sp-agent-b-creds -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete serviceaccount sp-agent-a -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete role sp-agent-a -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete rolebinding sp-agent-a -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+              }
+              trap cleanup EXIT
+
+              echo "###############################################"
+              echo "# AgentOS A2 security probe (claims 1, 2, 4)"
+              echo "###############################################"
+
+              # ================= Claim 1: egress + metadata (before/after) ==========
+              echo ""
+              echo "== Claim 1: default-deny egress + metadata, with before/after control =="
+              kubectl run "$EGRESS_POD" -n "$NS" --image="$NETSHOOT" --restart=Never \
+                --labels=app.kubernetes.io/component=runner-sandbox \
+                --command -- sleep 3600 >/dev/null
+              kubectl wait --for=condition=Ready "pod/$EGRESS_POD" -n "$NS" --timeout=120s >/dev/null
+
+              probe_rc() { # $1=url -> prints curl exit code from inside the labeled pod
+                kubectl exec -n "$NS" "$EGRESS_POD" -- sh -c "curl -m 6 -sS -o /dev/null '$1' >/dev/null 2>&1; echo rc=\$?" 2>/dev/null | sed -n 's/.*rc=//p'
+              }
+              classify() { case "$1" in 28|7|6|5|"") echo blocked;; *) echo reachable;; esac; }
+
+              # Baseline control: temporarily allow ALL egress on runner-sandbox pods.
+              cat <<EOF | kubectl apply -f - >/dev/null
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: ${ALLOW_ALL_NP}
+                namespace: ${NS}
+              spec:
+                podSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: runner-sandbox
+                policyTypes: [Egress]
+                egress:
+                  - {}
+              EOF
+              sleep 5
+              before=$(classify "$(probe_rc "https://${BLOCKED}/")")
+              echo "phase 1 (allow-all egress):  ${BLOCKED} -> ${before}"
+
+              # Remove the allow-all; now only the chart's default-deny + allow-dns apply.
+              kubectl delete networkpolicy "$ALLOW_ALL_NP" -n "$NS" --ignore-not-found >/dev/null
+              sleep 5
+              after_ext=$(classify "$(probe_rc "https://${BLOCKED}/")")
+              after_meta=$(classify "$(probe_rc "http://169.254.169.254/latest/meta-data/")")
+              dns_ok=no
+              kubectl exec -n "$NS" "$EGRESS_POD" -- sh -c "nslookup ${BLOCKED} >/dev/null 2>&1" && dns_ok=yes
+              echo "phase 2 (chart default-deny): ${BLOCKED} -> ${after_ext}   metadata(169.254.169.254) -> ${after_meta}   dns-resolves -> ${dns_ok}"
+              kubectl delete pod "$EGRESS_POD" -n "$NS" --ignore-not-found >/dev/null
+
+              if [ "$before" = reachable ] && [ "$after_ext" = blocked ] && [ "$after_meta" = blocked ] && [ "$dns_ok" = yes ]; then
+                echo "RESULT: PASS - CNI enforces (reachable->blocked flip); arbitrary egress AND the"
+                echo "        cloud metadata endpoint are denied; DNS still resolves."
+              else
+                echo "RESULT: FAIL - before=${before} after=${after_ext} metadata=${after_meta} dns=${dns_ok}"
+                echo "        (a non-enforcing CNI shows before=after=reachable: silent false-pass.)"
+                fail=1
+              fi
+
+              # ================= Claim 2: cross-agent secret isolation ==============
+              echo ""
+              echo "== Claim 2: cross-agent secret isolation (per-agent RBAC scoping) =="
+              kubectl create secret generic sp-agent-a-creds -n "$NS" --from-literal=token=AAA >/dev/null
+              kubectl create secret generic sp-agent-b-creds -n "$NS" --from-literal=token=BBB >/dev/null
+              kubectl create serviceaccount sp-agent-a -n "$NS" >/dev/null
+              kubectl create role sp-agent-a -n "$NS" --verb=get --resource=secrets --resource-name=sp-agent-a-creds >/dev/null
+              kubectl create rolebinding sp-agent-a -n "$NS" --role=sp-agent-a --serviceaccount="${NS}:sp-agent-a" >/dev/null
+              TOK=$(kubectl create token sp-agent-a -n "$NS")
+              a_get=$(kubectl --token="$TOK" -n "$NS" auth can-i get secret/sp-agent-a-creds 2>/dev/null || true)
+              b_get=$(kubectl --token="$TOK" -n "$NS" auth can-i get secret/sp-agent-b-creds 2>/dev/null || true)
+              lst=$(kubectl --token="$TOK" -n "$NS" auth can-i list secrets 2>/dev/null || true)
+              echo "agent-a get own secret: ${a_get}   get agent-b secret: ${b_get}   list secrets: ${lst}"
+              if [ "$a_get" = yes ] && [ "$b_get" = no ] && [ "$lst" = no ]; then
+                echo "RESULT: PASS - agent-a reads only its own credential; cannot read agent-b or list."
+              else
+                echo "RESULT: FAIL - expected yes/no/no, got ${a_get}/${b_get}/${lst}"
+                fail=1
+              fi
+
+              # ================= Claim 4: gVisor availability =======================
+              # Namespaced pod-admission probe (no cluster RBAC): try to schedule a
+              # pod UNDER the runtimeclass; admission tells us if it exists, and the
+              # kernel string tells us if it is actually enforced (vs downgraded).
+              echo ""
+              echo "== Claim 4: gVisor RuntimeClass =="
+              if [ -z "$RC" ]; then
+                echo "SKIP: agentSandbox.runner.runtimeClassName is empty (kernel isolation disabled)."
+              else
+                gpod="sp-gvisor-check"
+                kubectl delete pod "$gpod" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                admit=$(kubectl run "$gpod" -n "$NS" --image=busybox:1.36 --restart=Never \
+                  --overrides="{\"spec\":{\"runtimeClassName\":\"${RC}\"}}" \
+                  --command -- sh -c 'uname -a; sleep 3' 2>&1 || true)
+                if echo "$admit" | grep -qi 'not found'; then
+                  echo "NOT-TESTABLE: RuntimeClass '${RC}' absent on this cluster (admission: RuntimeClass"
+                  echo "  not found). Reported, not faked (PT-3 discipline). gVisor kernel isolation was"
+                  echo "  proven live in PT-3 (uname=4.19.0-gvisor); reinstall runsc to re-verify here."
+                else
+                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$gpod" -n "$NS" --timeout=30s >/dev/null 2>&1 || \
+                    kubectl wait --for=condition=Ready "pod/$gpod" -n "$NS" --timeout=30s >/dev/null 2>&1 || true
+                  gkernel=$(kubectl logs "$gpod" -n "$NS" 2>/dev/null || true)
+                  kubectl delete pod "$gpod" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                  if echo "$gkernel" | grep -qi gvisor; then
+                    echo "PASS: pod under RuntimeClass '${RC}' reports a gVisor kernel: ${gkernel}"
+                  else
+                    echo "FAIL: RuntimeClass '${RC}' exists but the pod kernel is NOT gVisor (downgraded"
+                    echo "  to runc?). kernel=${gkernel}"
+                    fail=1
+                  fi
+                fi
+              fi
+
+              echo ""
+              echo "== Claim 3 (non-root + read-only rootfs) runs as the separate hardening test pod =="
+              echo ""
+              [ "$fail" = 0 ] && echo "SECURITY PROBE: PASS" || echo "SECURITY PROBE: FAIL"
+              exit $fail
+{{- end }}

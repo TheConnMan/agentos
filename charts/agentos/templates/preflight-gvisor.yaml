@@ -1,0 +1,75 @@
+{{- if and .Values.agentSandbox.deploy .Values.agentSandbox.runner.runtimeClassName .Values.security.gvisorPreflight.enabled }}
+{{/*
+Rail 4 preflight: gVisor RuntimeClass is present AND enforced.
+
+A pre-install / pre-upgrade hook (also runnable via `helm test`) whose pod runs
+UNDER the runner's requested RuntimeClass. This makes the check RBAC-free and
+tests the real property:
+
+  - RuntimeClass missing  -> the pod is rejected at admission ("RuntimeClass
+    '<name>' not found"), the hook Job fails, and the install is blocked -- so a
+    runsc-less cluster never silently ships runner pods with no kernel isolation.
+  - RuntimeClass present but downgraded to runc -> the pod runs but /proc reports
+    the host kernel, and the script fails.
+  - gVisor actually enforced -> `uname` reports a gVisor sentry kernel
+    (e.g. 4.19.0-gvisor), distinct from the host, and the check passes.
+
+Disable by setting agentSandbox.runner.runtimeClassName="" (accepting no kernel
+isolation) or security.gvisorPreflight.enabled=false.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agentos.fullname" . }}-preflight-gvisor
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,test
+    "helm.sh/hook-weight": "-9"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "preflight-gvisor") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      runtimeClassName: {{ .Values.agentSandbox.runner.runtimeClassName }}
+      containers:
+        - name: gvisor-check
+          image: {{ .Values.security.gvisorPreflight.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "== AgentOS gVisor RuntimeClass preflight =="
+              echo "requested RuntimeClass: {{ .Values.agentSandbox.runner.runtimeClassName }}"
+              kernel=$(uname -a)
+              echo "pod kernel: ${kernel}"
+              if echo "${kernel}" | grep -qi gvisor; then
+                echo "RESULT: PASS - pod runs under a gVisor sentry kernel; kernel isolation enforced."
+                exit 0
+              fi
+              echo "RESULT: FAIL - the pod scheduled but its kernel is NOT gVisor. The RuntimeClass"
+              echo "        exists but is downgraded to runc, so runner pods would have no kernel"
+              echo "        isolation. Fix the containerd runsc handler on every node, or set"
+              echo "        agentSandbox.runner.runtimeClassName=\"\" to disable this rail knowingly."
+              exit 1
+          resources:
+            {{- toYaml .Values.security.gvisorPreflight.resources | nindent 12 }}
+{{- end }}
+{{- if and .Values.security.gvisor.installRuntimeClass .Values.agentSandbox.runner.runtimeClassName }}
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ .Values.agentSandbox.runner.runtimeClassName }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+handler: {{ .Values.security.gvisor.handler }}
+{{- end }}

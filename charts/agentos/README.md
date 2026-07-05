@@ -115,6 +115,49 @@ matches the build plan's anticipated resize: everything runs in 4 GB for
 chart/security verification, and a resize to >=8 vCPU / 16-20 GB gives
 comfortable headroom for the walking-skeleton and soak gates.
 
+## Security rails (A2)
+
+The four PT-3-proven rails ship **on by default** (ADR-0006). They attach to the
+agent-sandbox runner surface, so their NetworkPolicy / RBAC / probe resources
+render only when `agentSandbox.deploy: true` (there are no runner pods to protect
+otherwise). With the sandbox off, the rendered manifests are byte-identical to a
+chart without A2.
+
+| Rail | What ships | Values |
+|---|---|---|
+| 1. Default-deny egress + metadata block | NetworkPolicies selecting `component: runner-sandbox`: default-deny egress, allow-DNS, an operator-declared egress allowlist, and (optional) ingress lock. Arbitrary internet AND `169.254.169.254` are denied by construction. | `security.networkPolicy.*` |
+| 2. Per-agent secret isolation | Least-privilege runner ServiceAccount (no secret get/list, token not mounted). The per-agent `resourceNames`-scoped Role is bound by the control plane per agent. | `agentSandbox.runner.serviceAccount.*` |
+| 3. Non-root / read-only rootfs | Pod + container securityContext on the runner: `runAsNonRoot`, uid 1000, `readOnlyRootFilesystem`, drop ALL caps, no privilege escalation, RuntimeDefault seccomp, plus writable emptyDir scratch (`/tmp`, `/home/runner`) and `HOME`. | `agentSandbox.runner.hardening.*` |
+| 4. gVisor kernel isolation | `runtimeClassName` on runner pods (default `gvisor`) + a preflight that fails the install if the RuntimeClass is missing or downgraded to runc + an optional RuntimeClass object. | `agentSandbox.runner.runtimeClassName`, `security.gvisor.*`, `security.gvisorPreflight.*` |
+
+**Fail-closed egress.** `security.networkPolicy.allowedEgress` is EMPTY by
+default: a fresh install denies all egress except DNS until the operator declares
+where the model API and MCP endpoints live (`{cidr, ports}` entries). An unset
+allowlist never means allow-all.
+
+**gVisor needs runsc on the node.** `runtimeClassName: gvisor` is the secure
+default, but the NODE must have runsc + the containerd handler installed (a
+node-level op the chart cannot do). The `preflight-gvisor` hook blocks the
+install with a clear remediation if the runtimeclass is missing or downgraded,
+so runner pods never silently lose kernel isolation. On a cluster without runsc,
+set `agentSandbox.runner.runtimeClassName=""` to disable this rail knowingly (and
+`security.gvisorPreflight.enabled=false`).
+
+**Verifying the rails.** The PT-3 probe suite re-runs as a `helm test`:
+
+```bash
+helm test <release> -n <ns>
+kubectl logs -n <ns> job/<release>-security-probe            # claims 1, 2, 4
+kubectl logs -n <ns> <release>-security-probe-hardening      # claim 3
+```
+
+Claim 1 does a before/after egress control (reachable under a temporary allow-all
+-> blocked under the chart default-deny) so a non-enforcing CNI is caught as a
+false-pass rather than trusted. Claim 4 reports honestly: if the gvisor
+runtimeclass is absent it is marked NOT-TESTABLE (per PT-3, never faked), with
+enforcement asserted separately by the preflight and proven live in PT-3
+(`uname` = `4.19.0-gvisor`).
+
 ## What G1 (agent-sandbox subchart) needs to know
 
 - **Fullname/labels:** resources are `<release>-<component>` and carry
