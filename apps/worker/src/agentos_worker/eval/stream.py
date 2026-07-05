@@ -39,9 +39,23 @@ import httpx
 from aci_protocol import Budget
 from pydantic import BaseModel
 from redis.asyncio import Redis
-from redis.exceptions import ResponseError
+from redis.exceptions import (
+    ConnectionError as RedisConnectionError,
+)
+from redis.exceptions import (
+    ResponseError,
+)
+from redis.exceptions import (
+    TimeoutError as RedisTimeoutError,
+)
 
-from ..binding import BUDGET_ENV, BUNDLE_REF_ENV, PLUGIN_DIR_ENV, SESSION_ID_ENV
+from ..binding import (
+    BUDGET_ENV,
+    BUNDLE_REF_ENV,
+    PLUGIN_DIR_ENV,
+    SESSION_ID_ENV,
+    apply_model_env,
+)
 from ..bundle_store import BundleStore
 from ..config import WorkerConfig
 from ..sandbox import SandboxSubstrate
@@ -51,6 +65,9 @@ from .recorder import LangfuseEvalRecorder
 from .run import run_eval_suite
 
 logger = logging.getLogger(__name__)
+
+# Pause before retrying the blocking eval read after a transient transport error.
+_EVAL_READ_ERROR_BACKOFF_S = 0.5
 
 STREAM_PAYLOAD_FIELD = "payload"
 StreamEntry = tuple[str, dict[str, str]]
@@ -189,6 +206,12 @@ class EvalStreamConsumer:
         self._inflight_ids: set[str] = set()
 
     async def ensure_group(self) -> None:
+        # Deliberately created at id 0 (unlike the runs consumer, which uses $ to
+        # avoid replaying a backlog of stale Slack mentions). An eval work item is
+        # a requested CI check on a specific PR SHA, not conversational noise:
+        # dropping items produced while the worker was down would silently skip
+        # required checks, violating the "an eval is never lost" guarantee this
+        # consumer is built around. So a fresh group SHOULD pick up the backlog.
         try:
             await self._redis.xgroup_create(
                 self._config.eval_stream,
@@ -215,13 +238,20 @@ class EvalStreamConsumer:
             # leave the un-handled tail claimed-but-untracked, where the reclaim
             # loop could re-run one before the read loop reaches it (a duplicate
             # report). Peer replicas in the group provide the parallelism instead.
-            resp = await self._redis.xreadgroup(
-                self._config.eval_consumer_group,
-                self._config.eval_consumer_name,
-                {self._config.eval_stream: ">"},
-                count=1,
-                block=self._config.read_block_ms,
-            )
+            try:
+                resp = await self._redis.xreadgroup(
+                    self._config.eval_consumer_group,
+                    self._config.eval_consumer_name,
+                    {self._config.eval_stream: ">"},
+                    count=1,
+                    block=self._config.read_block_ms,
+                )
+            except (RedisTimeoutError, RedisConnectionError) as exc:
+                # Same transient-transport guard as the runs consumer: a blocking
+                # read timeout or connection blip must not kill the eval loop.
+                logger.warning("eval stream read failed transiently; retrying: %s", exc)
+                await self._sleep_or_stop(_EVAL_READ_ERROR_BACKOFF_S)
+                continue
             if not resp:
                 continue
             streams = cast("list[tuple[str, list[StreamEntry]]]", resp)
@@ -347,6 +377,7 @@ class EvalStreamConsumer:
         }
         if item.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = item.bundle_ref
+        apply_model_env(env, self._config)
         return env
 
     async def _report_failed(

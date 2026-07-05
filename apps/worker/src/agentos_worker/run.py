@@ -31,7 +31,9 @@ from .markers import Markers
 from .runner_client import RunnerClient
 from .sandbox import (
     AffinityStore,
+    DockerSandboxClient,
     KubernetesSandboxClient,
+    SandboxClient,
     SandboxSubstrate,
     SubstrateConfig,
 )
@@ -62,6 +64,27 @@ def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
     )
 
 
+def _sandbox_client(
+    config: WorkerConfig, env: Mapping[str, str], sub_config: SubstrateConfig
+) -> SandboxClient:
+    """The cluster/Docker seam, chosen by ``AGENTOS_SANDBOX_SUBSTRATE``.
+
+    ``kubernetes`` (default) claims agent-sandbox CRs; ``docker`` boots runner
+    containers locally (middle mode on a laptop, no cluster). The eval consumer
+    shares the substrate this client backs, so the choice applies to both lanes.
+    """
+    substrate = env.get("AGENTOS_SANDBOX_SUBSTRATE", "kubernetes").lower()
+    if substrate == "docker":
+        return DockerSandboxClient(
+            image=env.get("AGENTOS_RUNNER_IMAGE", "agentos-runner"),
+            bundle_store=BundleStore(config),
+            network=env.get("AGENTOS_DOCKER_NETWORK") or None,
+            otel_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
+            default_plugin_dir=config.bundle_plugin_dir,
+        )
+    return KubernetesSandboxClient(sub_config.namespace)
+
+
 def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     async_redis: AsyncRedis = AsyncRedis(
         host=config.valkey_host,
@@ -79,7 +102,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     )
     sub_config = _substrate_config(env)
     substrate = SandboxSubstrate(
-        KubernetesSandboxClient(sub_config.namespace),
+        _sandbox_client(config, env, sub_config),
         AffinityStore(sync_redis),
         sub_config,
     )
