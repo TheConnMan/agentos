@@ -120,10 +120,12 @@ dependencies = [
     { name = "aci-protocol" },
     { name = "agentos-dispatcher" },
     { name = "aiohttp" },
+    { name = "asyncpg" },
     { name = "httpx" },
     { name = "kubernetes" },
     { name = "redis" },
     { name = "slack-sdk" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
 [package.metadata]
@@ -131,10 +133,12 @@ requires-dist = [
     { name = "aci-protocol", editable = "packages/aci-protocol" },
     { name = "agentos-dispatcher", editable = "apps/dispatcher" },
     { name = "aiohttp", specifier = ">=3.11" },
+    { name = "asyncpg", specifier = ">=0.30" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "kubernetes", specifier = ">=31.0" },
     { name = "redis", specifier = ">=5.2" },
     { name = "slack-sdk", specifier = ">=3.43" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
 ]
 
 [[package]]

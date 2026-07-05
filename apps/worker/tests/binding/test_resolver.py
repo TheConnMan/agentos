@@ -1,0 +1,194 @@
+"""BindingResolver against the REAL compose Postgres (never mocked).
+
+Seeds agents / agent_versions / deployments in the agentos schema, then checks
+channel resolution, the prod-over-dev preference, unknown-channel -> None, and
+the budget/env construction. Rows are namespaced by a per-test token and cleaned
+up afterwards.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+
+import pytest
+from agentos_worker.binding import (
+    AGENT_ID_ENV,
+    BUDGET_ENV,
+    BUNDLE_REF_ENV,
+    BindingResolver,
+)
+from agentos_worker.config import WorkerConfig
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+_DB_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:55434/postgres"
+)
+_SCHEMA = os.environ.get("TEST_DB_SCHEMA", "agentos")
+
+
+async def _seed_agent(
+    engine: AsyncEngine,
+    *,
+    channel: str,
+    name: str,
+    max_usd: float | None,
+    max_tokens: int | None,
+) -> uuid.UUID:
+    agent_id = uuid.uuid4()
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                f"INSERT INTO {_SCHEMA}.agents "
+                "(id, name, slack_channel, max_usd_per_day, max_output_tokens_per_run) "
+                "VALUES (:id, :name, :channel, :usd, :tokens)"
+            ),
+            {
+                "id": agent_id,
+                "name": name,
+                "channel": channel,
+                "usd": max_usd,
+                "tokens": max_tokens,
+            },
+        )
+    return agent_id
+
+
+async def _seed_deployment(
+    engine: AsyncEngine,
+    *,
+    agent_id: uuid.UUID,
+    environment: str,
+    bundle_ref: str,
+    status: str = "active",
+) -> None:
+    version_id = uuid.uuid4()
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                f"INSERT INTO {_SCHEMA}.agent_versions "
+                "(id, agent_id, version_label, bundle_ref, created_by) "
+                "VALUES (:id, :agent_id, :label, :ref, :by)"
+            ),
+            {"id": version_id, "agent_id": agent_id, "label": f"v-{environment}",
+             "ref": bundle_ref, "by": "test"},
+        )
+        await conn.execute(
+            text(
+                f"INSERT INTO {_SCHEMA}.deployments "
+                "(id, agent_id, version_id, environment, status) "
+                "VALUES (:id, :agent_id, :version_id, "
+                f"CAST(:env AS {_SCHEMA}.environment), :status)"
+            ),
+            {"id": uuid.uuid4(), "agent_id": agent_id, "version_id": version_id,
+             "env": environment, "status": status},
+        )
+
+
+async def _cleanup(engine: AsyncEngine, agent_ids: list[uuid.UUID]) -> None:
+    async with engine.begin() as conn:
+        for agent_id in agent_ids:
+            await conn.execute(
+                text(f"DELETE FROM {_SCHEMA}.agents WHERE id = :id"), {"id": agent_id}
+            )
+
+
+def _resolver(engine: AsyncEngine) -> BindingResolver:
+    return BindingResolver(engine, WorkerConfig(db_schema=_SCHEMA))
+
+
+def test_resolves_channel_to_active_deployment_and_builds_env() -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable at {_DB_URL}: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine, channel=channel, name=f"agent-{token}", max_usd=3.5, max_tokens=4242
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref=f"bundles/{token}.zip"
+            )
+
+            resolved = await _resolver(engine).resolve(channel)
+            assert resolved is not None
+            assert resolved.agent_id == agent_id
+            assert resolved.bundle_ref == f"bundles/{token}.zip"
+            assert resolved.max_usd_per_day == 3.5
+            assert resolved.max_output_tokens_per_run == 4242
+
+            env = _resolver(engine).boot_env(resolved, "thread-1")
+            assert env[AGENT_ID_ENV] == str(agent_id)
+            assert env[BUNDLE_REF_ENV] == f"bundles/{token}.zip"
+            assert '"max_usd_per_day":3.5' in env[BUDGET_ENV]
+            assert '"max_output_tokens_per_run":4242' in env[BUDGET_ENV]
+
+            await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_prod_deployment_wins_over_dev() -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine, channel=channel, name=f"agent-{token}", max_usd=None, max_tokens=None
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="dev", bundle_ref="bundles/dev.zip"
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref="bundles/prod.zip"
+            )
+
+            resolved = await _resolver(engine).resolve(channel)
+            assert resolved is not None
+            assert resolved.bundle_ref == "bundles/prod.zip"  # prod wins
+
+            # NULL budget columns -> platform defaults in the env.
+            env = _resolver(engine).boot_env(resolved, "t")
+            cfg = WorkerConfig()
+            assert f'"max_usd_per_day":{cfg.default_max_usd_per_day}' in env[BUDGET_ENV]
+
+            await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_unknown_channel_resolves_to_none() -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable: {exc}")
+            resolved = await _resolver(engine).resolve(f"C-nonexistent-{uuid.uuid4().hex}")
+            assert resolved is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())

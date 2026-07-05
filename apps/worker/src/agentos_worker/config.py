@@ -39,6 +39,18 @@ class WorkerConfig(BaseModel):
     # no-Slack middle-mode e2e).
     slack_api_base_url: str = ""
 
+    # Postgres (read-only): resolve channel -> agent -> deployment -> version.
+    # Matches the API's DATABASE_URL / DB_SCHEMA so the worker reads the same DB.
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:55434/postgres"
+    db_schema: str = "agentos"
+
+    # Deployment-to-runtime binding. The plugin dir is the local path the runner
+    # reads; sandbox provisioning fetches AGENTOS_BUNDLE_REF into it. Platform
+    # default budget applies when an agent's budget columns are NULL.
+    bundle_plugin_dir: str = "/bundles/current"
+    default_max_usd_per_day: float = 10.0
+    default_max_output_tokens_per_run: int = 100000
+
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = "agentos:runs"
     consumer_group: str = "agentos-workers"
@@ -101,6 +113,9 @@ class WorkerConfig(BaseModel):
         _i(values, "valkey_db", env, "VALKEY_DB")
         _s(values, "slack_bot_token", env, "SLACK_BOT_TOKEN")
         _s(values, "slack_api_base_url", env, "SLACK_API_BASE_URL")
+        _s(values, "database_url", env, "DATABASE_URL")
+        _s(values, "db_schema", env, "DB_SCHEMA")
+        _s(values, "bundle_plugin_dir", env, "AGENTOS_PLUGIN_DIR")
         _s(values, "stream", env, "AGENTOS_STREAM")
         _s(values, "consumer_group", env, "AGENTOS_CONSUMER_GROUP")
         _s(values, "consumer_name", env, "AGENTOS_CONSUMER_NAME")

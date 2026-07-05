@@ -16,10 +16,13 @@ from collections.abc import Mapping
 
 import redis
 from redis.asyncio import Redis as AsyncRedis
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from .binding import BindingResolver
 from .config import WorkerConfig
 from .consumer import Consumer
 from .kernel import Kernel
+from .killswitch import KillSwitch
 from .markers import Markers
 from .runner_client import RunnerClient
 from .sandbox import (
@@ -42,7 +45,7 @@ def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
 
 def build(
     config: WorkerConfig, env: Mapping[str, str]
-) -> tuple[Consumer, RunnerClient, AsyncRedis]:
+) -> tuple[Consumer, KillSwitch, RunnerClient, AsyncRedis, AsyncEngine]:
     async_redis: AsyncRedis = AsyncRedis(
         host=config.valkey_host,
         port=config.valkey_port,
@@ -67,6 +70,7 @@ def build(
         connect_timeout_s=config.runner_connect_timeout_s,
         total_timeout_s=config.runner_total_timeout_s,
     )
+    engine = create_async_engine(config.database_url, pool_pre_ping=True)
     kernel = Kernel(
         substrate=substrate,
         runner=runner,
@@ -81,24 +85,33 @@ def build(
         ),
         markers=Markers(async_redis, config),
         config=config,
+        binding=BindingResolver(engine, config),
     )
+    killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
+    kernel.attach_killswitch(killswitch)
     consumer = Consumer(redis=async_redis, kernel=kernel, config=config)
-    return consumer, runner, async_redis
+    return consumer, killswitch, runner, async_redis, engine
 
 
 async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
-    consumer, runner, async_redis = build(config, env)
+    consumer, killswitch, runner, async_redis, engine = build(config, env)
 
     loop = asyncio.get_running_loop()
+
+    def _stop() -> None:
+        consumer.request_stop()
+        killswitch.request_stop()
+
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, consumer.request_stop)
+        loop.add_signal_handler(sig, _stop)
 
     logging.getLogger("agentos_worker").info("worker starting")
     try:
-        await consumer.run()
+        await asyncio.gather(consumer.run(), killswitch.run())
     finally:
         await runner.close()
         await async_redis.aclose()
+        await engine.dispose()
     logging.getLogger("agentos_worker").info("worker stopped")
 
 
