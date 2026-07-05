@@ -142,6 +142,26 @@ def test_sdk_credential_not_forwarded_when_absent() -> None:
     assert "ANTHROPIC_API_KEY" not in envs
 
 
+def test_agentos_credentials_forwarded_by_name_never_as_value() -> None:
+    # The ACI credential reference must reach the runner (which maps it) without
+    # its value ever appearing in the docker argv.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={"AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"},
+    )
+    # The worker also hands it in the boot env (from config.credentials); it must
+    # still never be emitted as a -e KEY=value pair.
+    client.create_claim(
+        "t1", pool="pool", env={"AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"}
+    )
+    argv = client.calls[0]
+    envs = _flag_values(argv, "-e")
+    assert "AGENTOS_CREDENTIALS" in envs  # forwarded by name
+    assert all("PLACEHOLDER-secret" not in a for a in argv)  # value never in argv
+    assert "AGENTOS_CREDENTIALS=sk-ant-PLACEHOLDER-secret" not in envs
+
+
 def test_get_sandbox_reports_published_port_and_mode() -> None:
     client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
     client.outputs = {

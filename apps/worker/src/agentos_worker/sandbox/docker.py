@@ -45,14 +45,14 @@ import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..binding import BUNDLE_REF_ENV, PLUGIN_DIR_ENV
+from ..binding import BUNDLE_REF_ENV, CREDENTIALS_ENV, PLUGIN_DIR_ENV
 from ..bundle_store import BundleStore, extract_bundle
 from .k8s import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
     OperatingMode,
 )
-from .types import ClaimView, SandboxView
+from .types import ClaimView, SandboxError, SandboxView
 
 logger = logging.getLogger(__name__)
 
@@ -60,18 +60,34 @@ logger = logging.getLogger(__name__)
 # is published to is Docker-assigned and read back per-container.
 RUNNER_CONTAINER_PORT = 8080
 
-# SDK credential env the runner's claude-agent-sdk authenticates with. Forwarded
-# into the container BY NAME (docker reads the value from the worker env, this
-# code never does), matching cli/src/docker.rs and cli/src/commands.rs.
-MODEL_CREDENTIAL_ENV = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
-# Env keys the worker owns on the Docker path and must not blindly forward into
-# the container: the plugin dir and sandbox id are set explicitly, and the bundle
-# ref named a MinIO object the worker already fetched (the runner never fetches).
-_WORKER_OWNED_ENV = frozenset({BUNDLE_REF_ENV, PLUGIN_DIR_ENV, "AGENTOS_SANDBOX_ID"})
+# Credentials the runner needs, all forwarded into the container BY NAME (docker
+# reads the value from the worker env; this code never does, and no secret ever
+# lands in the docker argv). AGENTOS_CREDENTIALS is the ACI reference the runner
+# maps onto an SDK var; the SDK vars authenticate directly. Mirrors the CLI
+# (cli/src/docker.rs, cli/src/commands.rs).
+CREDENTIAL_PASSTHROUGH_ENV = (
+    CREDENTIALS_ENV,
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+)
+# Env keys the worker sets explicitly or forwards specially, so the generic
+# value loop must not also emit them: the plugin dir and sandbox id are set
+# explicitly, the bundle ref named a MinIO object the worker already fetched
+# (the runner never fetches), and the credential is forwarded by name (never as
+# a value in the argv).
+_WORKER_OWNED_ENV = frozenset(
+    {BUNDLE_REF_ENV, PLUGIN_DIR_ENV, "AGENTOS_SANDBOX_ID", CREDENTIALS_ENV}
+)
 
 
-class DockerError(Exception):
-    """A ``docker`` CLI invocation failed."""
+class DockerError(SandboxError):
+    """A ``docker`` CLI invocation failed.
+
+    Subclasses ``SandboxError`` so a provisioning failure (missing runner image,
+    Docker daemon down) is handled by the kernel's runner-error retry path and
+    the eval consumer's provisioning-failure path, rather than escaping unhandled
+    and looping on reclaim.
+    """
 
 
 class DockerSandboxClient:
@@ -154,10 +170,11 @@ class DockerSandboxClient:
         for key, value in sorted(env.items()):
             if key not in _WORKER_OWNED_ENV:
                 args += ["-e", f"{key}={value}"]
-        # Forward the SDK credential(s) by name only (no value in the argv) when
-        # the worker has them set, so a real-model run authenticates without this
-        # code ever reading the token. Fake-model runs simply have none set.
-        for var in MODEL_CREDENTIAL_ENV:
+        # Forward every credential BY NAME only (no value in the argv) when the
+        # worker has it set, so a real-model run authenticates without this code
+        # ever reading the token and without the secret landing in the docker
+        # process arguments. Fake-model runs simply have none set.
+        for var in CREDENTIAL_PASSTHROUGH_ENV:
             if var in self._environ:
                 args += ["-e", var]
         args.append(self._image)

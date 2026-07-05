@@ -23,10 +23,21 @@ def test_docker_without_credential_or_fake_fails_loudly() -> None:
     assert "AGENTOS_FAKE_MODEL" in msg
 
 
-def test_docker_with_real_credential_builds_docker_client() -> None:
+def test_docker_with_sdk_credential_builds_docker_client() -> None:
     client = _sandbox_client(
         WorkerConfig(),
-        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER"},
+        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": "oauth-PLACEHOLDER"},
+        _SUB,
+    )
+    assert isinstance(client, DockerSandboxClient)
+
+
+def test_docker_with_agentos_credentials_reference_builds_docker_client() -> None:
+    # AGENTOS_CREDENTIALS alone is a valid credential: forwarded by name and
+    # mapped onto an SDK var by the runner, so the gate must accept it.
+    client = _sandbox_client(
+        WorkerConfig(credentials="sk-ant-PLACEHOLDER"),
+        {"AGENTOS_SANDBOX_SUBSTRATE": "docker"},
         _SUB,
     )
     assert isinstance(client, DockerSandboxClient)

@@ -79,6 +79,10 @@ def run_migrations_offline() -> None:
         version_table_schema=SCHEMA,
     )
     with context.begin_transaction():
+        # Emit the schema creation before anything else so the generated SQL
+        # creates agentos.alembic_version into an existing schema (Alembic writes
+        # the version table before migration 0001's CREATE SCHEMA would run).
+        context.execute(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
         context.run_migrations()
 
 
