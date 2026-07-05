@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent, AgentVersion, Deployment
+from .models import Agent, AgentVersion, Deployment, Environment
 from .schemas import AgentCreate, DeploymentCreate, VersionCreate
 
 
@@ -29,7 +29,11 @@ async def attach_bundle(
 
 
 async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
-    agent = Agent(name=data.name, slack_channel=data.slack_channel)
+    agent = Agent(
+        name=data.name,
+        slack_channel=data.slack_channel,
+        repo_full_name=data.repo_full_name,
+    )
     session.add(agent)
     await session.commit()
     await session.refresh(agent)
@@ -45,18 +49,57 @@ async def get_agent(session: AsyncSession, agent_id: uuid.UUID) -> Agent | None:
     return await session.get(Agent, agent_id)
 
 
-async def create_version(
-    session: AsyncSession, agent_id: uuid.UUID, data: VersionCreate
+async def get_agent_by_repo(
+    session: AsyncSession, repo_full_name: str
+) -> Agent | None:
+    agent: Agent | None = await session.scalar(
+        select(Agent).where(Agent.repo_full_name == repo_full_name)
+    )
+    return agent
+
+
+async def create_version_row(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    version_label: str,
+    created_by: str,
+    commit_sha: str | None = None,
+    bundle_ref: str | None = None,
 ) -> AgentVersion:
     version = AgentVersion(
         agent_id=agent_id,
-        version_label=data.version_label,
-        bundle_ref=data.bundle_ref,
-        created_by=data.created_by,
+        version_label=version_label,
+        created_by=created_by,
+        commit_sha=commit_sha,
+        bundle_ref=bundle_ref,
     )
     session.add(version)
     await session.commit()
     await session.refresh(version)
+    return version
+
+
+async def create_version(
+    session: AsyncSession, agent_id: uuid.UUID, data: VersionCreate
+) -> AgentVersion:
+    return await create_version_row(
+        session,
+        agent_id,
+        version_label=data.version_label,
+        created_by=data.created_by,
+        bundle_ref=data.bundle_ref,
+    )
+
+
+async def get_version_by_commit(
+    session: AsyncSession, agent_id: uuid.UUID, commit_sha: str
+) -> AgentVersion | None:
+    version: AgentVersion | None = await session.scalar(
+        select(AgentVersion).where(
+            AgentVersion.agent_id == agent_id,
+            AgentVersion.commit_sha == commit_sha,
+        )
+    )
     return version
 
 
@@ -71,19 +114,39 @@ async def list_versions(
     return list(result)
 
 
-async def create_deployment(
-    session: AsyncSession, data: DeploymentCreate
+async def create_deployment_row(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    version_id: uuid.UUID,
+    environment: Environment,
+    bot_identity: str | None = None,
+    commit_sha: str | None = None,
+    status: str = "active",
 ) -> Deployment:
     deployment = Deployment(
-        agent_id=data.agent_id,
-        version_id=data.version_id,
-        environment=data.environment,
-        status=data.status,
+        agent_id=agent_id,
+        version_id=version_id,
+        environment=environment,
+        bot_identity=bot_identity,
+        commit_sha=commit_sha,
+        status=status,
     )
     session.add(deployment)
     await session.commit()
     await session.refresh(deployment)
     return deployment
+
+
+async def create_deployment(
+    session: AsyncSession, data: DeploymentCreate
+) -> Deployment:
+    return await create_deployment_row(
+        session,
+        agent_id=data.agent_id,
+        version_id=data.version_id,
+        environment=data.environment,
+        status=data.status,
+    )
 
 
 async def list_deployments(
