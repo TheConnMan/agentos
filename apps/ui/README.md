@@ -54,7 +54,7 @@ can Connect Slack, create an agent, deploy, and reach the live state organically
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
-## Backend wiring (H1b + OB1)
+## Backend wiring (H1b + OB1 + L1)
 
 Several paths now run against the real API; everything else stays on fixtures.
 
@@ -74,6 +74,15 @@ Several paths now run against the real API; everything else stays on fixtures.
   `GET /observability/runners/{namespace}/{pod}/logs`, with designed distinct
   states for 503 (no cluster), 404 (pod not found), and 502 (other cluster
   error).
+- Cost tab (Observability > Cost, L1): agent-scoped (an agent selector, since
+  the L1 endpoints are per agent). Total spend + daily chart from
+  `GET /agents/{id}/cost` (honest empty state when the series is all zero, e.g. a
+  fresh agent); budget display + edit against `GET/PUT /agents/{id}/budget`
+  (client-side positive-number validation, server 422 surfaced inline); and the
+  kill switch over `GET/POST /agents/{id}/kill` + `POST /agents/{id}/resume` --
+  an emergency stop with confirm-before-kill and an unmistakable red killed-state
+  banner. The wired Cost view is per-agent panels rather than the fixture fleet
+  table (the API is per agent).
 
 **OB1 Metrics divergence (deliberate).** The design canon's Metrics tab is a
 Prometheus/PromQL surface (a `rate(...)` query bar, a request-rate hero, and
@@ -84,9 +93,9 @@ descriptor) and shows only the five API-backed metrics. The per-agent filter is 
 trace-name substring server-side, so it is presented as a plain "name contains"
 filter, not exact matching.
 
-**Still fixtures:** fleet, evals, versions, usage, cost, and states 4-6 for the
-non-wired demo. The fixture Metrics/Logs (the full canon design) still render
-without `?api=1`. Swap the rest by replacing the `src/fixtures` selectors.
+**Still fixtures:** fleet, evals, versions, usage, and states 4-6 for the
+non-wired demo. The fixture Metrics/Logs/Cost (the full canon design) still
+render without `?api=1`. Swap the rest by replacing the `src/fixtures` selectors.
 
 **How wiring is gated.** `src/api/config.ts` resolves the mode at runtime, so a
 single build serves both the fixture demo and the live run:
@@ -98,14 +107,16 @@ single build serves both the fixture demo and the live run:
   prefix. This avoids CORS: apps/api has no CORS middleware, so the browser must
   reach it same-origin.
 
-**Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`
-+ the observability calls `getMetricsSummary`/`getMetricSeries`/`getRunnerLogs`),
-`bundle.ts` (jszip packaging + the testable `bundleFileTree`), `hooks.ts`
-(`useTraces`/`useTrace`/`useMetricsSummary`/`useMetricSeries`), `config.ts` (the
-wiring gate). Deploy failures flow through the store reducer actions
-`deployFailedValidation` / `deployFailed`. Wired Observability lives in
-`src/views/obs/Real*.tsx` (`RealTraces`, `RealMetrics`, `RealLogs`), branched
-from the fixtures in `Observability.tsx` by `isWired()`.
+**Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`,
+the observability calls `getMetricsSummary`/`getMetricSeries`/`getRunnerLogs`,
+and the L1 calls `getCost`/`getBudget`/`putBudget`/`getKillState`/`killAgent`/
+`resumeAgent`/`getAgents`), `bundle.ts` (jszip packaging + the testable
+`bundleFileTree`), `hooks.ts` (`useTraces`/`useTrace`/`useMetricsSummary`/
+`useMetricSeries`/`useAgents`/`useCost`), `config.ts` (the wiring gate). Deploy
+failures flow through the store reducer actions `deployFailedValidation` /
+`deployFailed`. Wired Observability lives in `src/views/obs/Real*.tsx`
+(`RealTraces`, `RealMetrics`, `RealLogs`, `RealCost`), branched from the fixtures
+in `Observability.tsx` by `isWired()`.
 
 **Integration E2E (needs the live stack).** With the compose dev stack up and
 apps/api on 8000:
