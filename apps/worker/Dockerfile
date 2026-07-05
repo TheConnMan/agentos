@@ -1,0 +1,25 @@
+# AgentOS worker image (concurrency kernel + sandbox substrate + eval runner).
+#
+# BUILD FROM THE REPO ROOT (uv workspace); see runner/Dockerfile and
+# apps/api/Dockerfile for the shared pattern:
+#
+#   docker build -f apps/worker/Dockerfile -t agentos-worker .
+#
+# The worker drives the Kubernetes API to claim/manage sandboxes, so its
+# Deployment carries a ServiceAccount + RBAC (see the chart). No inbound HTTP.
+FROM python:3.13-slim AS builder
+RUN pip install --no-cache-dir uv==0.10.7
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+COPY . .
+RUN uv sync --frozen --no-dev --no-editable --package agentos-worker
+
+FROM python:3.13-slim
+RUN groupadd -g 1000 app && useradd -u 1000 -g app -m -d /home/app app
+WORKDIR /app
+COPY --from=builder --chown=app:app /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+USER 1000
+CMD ["python", "-m", "agentos_worker"]

@@ -188,6 +188,101 @@ otelCollector:
     limits: { cpu: 500m, memory: 512Mi }
 
 # ---------------------------------------------------------------------------
+# First-party app services (A4). The control plane the runner fleet serves:
+#   - api        FastAPI control-plane REST API (agents/versions/deployments,
+#                Langfuse proxy, bundle store, git-flow webhooks, kill switch)
+#   - dispatcher Slack Bolt Socket Mode ingress -> Valkey Streams
+#   - worker     concurrency kernel + sandbox substrate + eval runner
+#   - ui         static React SPA served by nginx, proxying /api to the API
+#
+# IMAGE DEFAULTS: every app image defaults to the GHCR package the Release
+# workflow publishes, pulled `Always` (the `latest` tag is mutable). The repo and
+# its packages are public, so NO imagePullSecret is needed by default; the
+# `imagePullSecrets` plumbing stays for private forks. For offline dev/e2e use
+# values-dev.yaml, which repoints each image at a locally-built, cluster-imported
+# image with imagePullPolicy Never (mirroring the runner pattern).
+# ---------------------------------------------------------------------------
+api:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/agentos-api
+    tag: latest
+    pullPolicy: Always
+  imagePullSecrets: []
+  # Single shared API key the UI and CLI authenticate with. Dev default; override
+  # (or point at an existingSecret) in any shared deployment.
+  apiKey: agentos-dev-key
+  # HMAC secret the GitHub git-flow webhook authenticates inbound events with.
+  githubWebhookSecret: dev-webhook-secret
+  service:
+    type: ClusterIP
+    port: 8000
+  # Run `alembic upgrade head` in an init container before the server starts, so
+  # a fresh Postgres gets the `agentos` schema + tables. Disable only when an
+  # external migration step owns the DB.
+  migrate:
+    enabled: true
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+dispatcher:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/agentos-dispatcher
+    tag: latest
+    pullPolicy: Always
+  imagePullSecrets: []
+  # Slack credentials. Socket Mode means the process dials out (no ingress), so
+  # there is no Service. Left empty the supervisor just backs off and retries, so
+  # the pod stays up without them; fill them (or an existingSecret) to connect.
+  # slackBotToken is shared with the worker (it edits the Slack placeholder).
+  slack:
+    appToken: ""
+    botToken: ""
+    signingSecret: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+worker:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/agentos-worker
+    tag: latest
+    pullPolicy: Always
+  imagePullSecrets: []
+  # The worker drives the Kubernetes API to claim/manage agent-sandbox CRDs, so
+  # it gets a ServiceAccount + a namespaced Role scoped to exactly those verbs
+  # (see templates/worker.yaml). Its token IS mounted (unlike the runner SA).
+  serviceAccount:
+    create: true
+  # The SandboxWarmPool the substrate claims from. Empty -> derived as
+  # `<release>-runner-pool` (the name templates/agent-sandbox.yaml gives it).
+  warmPool: ""
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+ui:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/agentos-ui
+    tag: latest
+    pullPolicy: Always
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# ---------------------------------------------------------------------------
 # Install-time preflights. Both are Helm hooks that block a broken install, and
 # both are re-runnable via `helm test`.
 # ---------------------------------------------------------------------------
@@ -273,6 +368,25 @@ agentSandbox:
     envVarsInjectionPolicy: Overrides
     # Extra env for the runner container, list of {name, value}.
     extraEnv: []
+    # --- Bundle-fetch provisioning ---
+    # AGENTOS_BUNDLE_REF is a MinIO object key the substrate injects per-claim
+    # (bound sandboxes carry it; warm/unbound pods do not). Before the runner
+    # starts, an init pair fetches that object and extracts it into the shared
+    # bundle volume at <mountPath>/current, which the worker points
+    # AGENTOS_PLUGIN_DIR at. Fail-closed: a set-but-unfetchable ref fails the pod
+    # rather than booting the wrong (empty) capability set; a clean no-op (empty
+    # plugin dir) when the ref is unset. Two images because no stock image ships
+    # both an authenticated S3 client and archive tools: mc fetches, busybox
+    # extracts (.tar.gz / .tar / .zip). The S3 endpoint + creds come from the
+    # minio block (BYO S3 via minio.deploy=false + minio.host).
+    bundleFetch:
+      enabled: true
+      bucket: agentos-bundles
+      fetchImage: minio/mc
+      extractImage: busybox:1.36
+      # Shared bundle volume mount point in the sandbox pod. The plugin dir the
+      # worker injects (AGENTOS_PLUGIN_DIR=/bundles/current) is `<mountPath>/current`.
+      mountPath: /bundles
     resources:
       requests: { cpu: 50m, memory: 192Mi }
       limits: { cpu: "1", memory: 768Mi }
