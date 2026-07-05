@@ -4,6 +4,8 @@ import {
   listTraces,
   getMetricsSummary,
   getMetricSeries,
+  getAgents,
+  getCost,
   type RawTrace,
   type TraceTree,
   type MetricsSummary,
@@ -11,6 +13,8 @@ import {
   type MetricKey,
   type Granularity,
   type MetricFilter,
+  type AgentOut,
+  type CostReport,
 } from "./client";
 
 interface Async<T> {
@@ -78,6 +82,40 @@ export function useMetricSeries(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, metric, granularity, key]);
+  return state;
+}
+
+// Fetch the agent list (for the Cost view's agent selector).
+export function useAgents(enabled: boolean): Async<AgentOut[]> {
+  const [state, setState] = useState<Async<AgentOut[]>>({ data: null, loading: enabled, error: null });
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    setState({ data: null, loading: true, error: null });
+    getAgents()
+      .then((data) => live && setState({ data, loading: false, error: null }))
+      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
+    return () => {
+      live = false;
+    };
+  }, [enabled]);
+  return state;
+}
+
+// Fetch the per-agent cost report (total + daily points).
+export function useCost(agentId: string | null): Async<CostReport> {
+  const [state, setState] = useState<Async<CostReport>>({ data: null, loading: !!agentId, error: null });
+  useEffect(() => {
+    if (!agentId) return;
+    let live = true;
+    setState({ data: null, loading: true, error: null });
+    getCost(agentId)
+      .then((data) => live && setState({ data, loading: false, error: null }))
+      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
+    return () => {
+      live = false;
+    };
+  }, [agentId]);
   return state;
 }
 

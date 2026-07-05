@@ -94,6 +94,13 @@ function describeError(body: unknown): string | null {
       const inner = (detail as { detail: unknown }).detail;
       if (typeof inner === "string") return inner;
     }
+    // FastAPI field-validation errors: detail is an array of {loc, msg, type}.
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0] as { loc?: unknown[]; msg?: unknown };
+      const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : undefined;
+      const msg = typeof first.msg === "string" ? first.msg : "invalid value";
+      return field ? `${field}: ${msg}` : msg;
+    }
   }
   return null;
 }
@@ -262,4 +269,64 @@ export async function getRunnerLogs(
     { headers: headers() },
   );
   return jsonOrThrow<PodLogs>(resp);
+}
+
+// ---- L1: per-agent cost, budget, and the kill switch ----
+
+export interface CostReport {
+  start: string;
+  end: string;
+  total_usd: number;
+  points: MetricPoint[];
+}
+
+// Both fields nullable; null means platform defaults. Values must be > 0.
+export interface BudgetConfig {
+  max_usd_per_day: number | null;
+  max_output_tokens_per_run: number | null;
+}
+
+export interface KillState {
+  killed: boolean;
+}
+
+export async function getAgents(): Promise<AgentOut[]> {
+  const resp = await fetch(url("/agents"), { headers: headers() });
+  return jsonOrThrow<AgentOut[]>(resp);
+}
+
+export async function getCost(agentId: string, range: { start?: string; end?: string } = {}): Promise<CostReport> {
+  const resp = await fetch(url(`/agents/${agentId}/cost${query({ ...range })}`), { headers: headers() });
+  return jsonOrThrow<CostReport>(resp);
+}
+
+export async function getBudget(agentId: string): Promise<BudgetConfig> {
+  const resp = await fetch(url(`/agents/${agentId}/budget`), { headers: headers() });
+  return jsonOrThrow<BudgetConfig>(resp);
+}
+
+// PUT the budget. A non-positive value 422s server-side (Field(gt=0)); the
+// ApiError message carries the field-level reason for inline display.
+export async function putBudget(agentId: string, budget: BudgetConfig): Promise<BudgetConfig> {
+  const resp = await fetch(url(`/agents/${agentId}/budget`), {
+    method: "PUT",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(budget),
+  });
+  return jsonOrThrow<BudgetConfig>(resp);
+}
+
+export async function getKillState(agentId: string): Promise<KillState> {
+  const resp = await fetch(url(`/agents/${agentId}/kill`), { headers: headers() });
+  return jsonOrThrow<KillState>(resp);
+}
+
+export async function killAgent(agentId: string): Promise<KillState> {
+  const resp = await fetch(url(`/agents/${agentId}/kill`), { method: "POST", headers: headers() });
+  return jsonOrThrow<KillState>(resp);
+}
+
+export async function resumeAgent(agentId: string): Promise<KillState> {
+  const resp = await fetch(url(`/agents/${agentId}/resume`), { method: "POST", headers: headers() });
+  return jsonOrThrow<KillState>(resp);
 }
