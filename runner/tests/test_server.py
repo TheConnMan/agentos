@@ -72,14 +72,19 @@ def test_interrupt_endpoint_acks() -> None:
     anyio.run(go)
 
 
-def test_steer_without_active_turn_is_conflict() -> None:
+def test_steer_takes_an_event_frame_and_conflicts_without_a_turn() -> None:
     runner, _ = _runner()
+    steer_frame = {"kind": "event", "type": "message", "text": "do X", "user": "U", "ts": "2"}
 
     async def go() -> None:
         await runner.start()
         async with TestClient(TestServer(create_app(runner))) as client:
-            # No /v1/event turn is open, so a steer has nowhere to land -> 409.
-            resp = await client.post("/v1/steer", json={"text": "actually do X"})
+            # A steer is an ACI event frame; with no live turn it has nowhere to
+            # land -> 409, so F1 falls back to opening a fresh /v1/event.
+            resp = await client.post("/v1/steer", json=steer_frame)
             assert resp.status == 409
+            # A non-event frame on the steer endpoint is a 400.
+            bad = await client.post("/v1/steer", json={"kind": "interrupt", "reason": "x"})
+            assert bad.status == 400
 
     anyio.run(go)

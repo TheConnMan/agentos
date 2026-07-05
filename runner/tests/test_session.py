@@ -156,3 +156,30 @@ def test_build_options_no_history_ref_is_none() -> None:
         max_budget_usd=1.0, resume=None,
     )
     assert options.resume is None
+    assert options.task_budget is None
+
+
+def test_build_options_carries_task_budget_hint() -> None:
+    # The ACI task_budget_hint (soft pacing) becomes the SDK task_budget.
+    options = build_options(
+        plugins=[], model=None, system_prompt=None, max_turns=20,
+        max_budget_usd=1.0, resume=None, task_budget_hint=64000,
+    )
+    assert options.task_budget == {"total": 64000}
+
+
+def test_steer_reaches_live_session() -> None:
+    # A steer injects into the live turn: its text lands on the session as a
+    # second query while the turn's stream is still open.
+    runner, fake = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        gen = runner.run_turn(Event(type="message", text="first", user="U", ts="1"))
+        await gen.__anext__()  # turn is now live
+        assert await runner.steer("steered follow-up") is True
+        async for _ in gen:
+            pass
+
+    anyio.run(go)
+    assert fake.queries == ["first", "steered follow-up"]

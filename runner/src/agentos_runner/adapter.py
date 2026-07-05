@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, SdkPluginConfig
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, SdkPluginConfig, TaskBudget
 
 
 class ModelSession(Protocol):
@@ -53,6 +53,7 @@ def build_options(
     max_turns: int,
     max_budget_usd: float | None,
     resume: str | None,
+    task_budget_hint: int | None = None,
     env: dict[str, str] | None = None,
 ) -> ClaudeAgentOptions:
     """Assemble ClaudeAgentOptions for the session.
@@ -60,11 +61,16 @@ def build_options(
     ``resume`` is the rehydrate path (ADR-0003, stateless-first): when a history
     ref is supplied it is passed as the SDK ``resume`` session id so a resumed
     thread reconstructs its history from the store rather than assuming a
-    surviving in-RAM process. ``max_budget_usd`` hands the daily USD cap to the
-    SDK's native enforcement; the per-run output-token ceiling is enforced by the
-    runner (see budget.py).
+    surviving in-RAM process.
+
+    The three ACI budget fields map to distinct SDK controls: ``max_budget_usd``
+    is the daily USD cap enforced natively; ``task_budget_hint`` becomes the SDK
+    ``task_budget`` so the model self-paces (ACI section 6b, a soft hint, not a
+    ceiling); and the hard per-run output-token ceiling is enforced by the runner
+    itself (see budget.py).
     """
 
+    task_budget = TaskBudget(total=task_budget_hint) if task_budget_hint else None
     return ClaudeAgentOptions(
         plugins=plugins,
         model=model,
@@ -72,6 +78,7 @@ def build_options(
         max_turns=max_turns,
         max_budget_usd=max_budget_usd,
         resume=resume,
+        task_budget=task_budget,
         permission_mode="bypassPermissions",
         env=env or {},
     )

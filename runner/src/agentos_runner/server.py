@@ -7,9 +7,10 @@ Productizes the prototype's aiohttp ``/run`` into the ACI session channel:
                          classified-failure, plus readiness and turn state
 - ``POST /v1/event``     open a turn: body is an ACI ``event`` frame; the
                          response streams outbound NDJSON, ending in a final
-- ``POST /v1/steer``     inject a follow-up into the live turn ({"text": ...});
-                         409 when no turn is active (the finish-race boundary F1
-                         owns), so the caller falls back to a fresh ``/v1/event``
+- ``POST /v1/steer``     inject a follow-up ACI ``event`` frame into the live
+                         turn (same frame type as ``/v1/event``); 409 when no turn
+                         is active (the finish-race boundary F1 owns), so the
+                         caller falls back to a fresh ``/v1/event``
 - ``POST /v1/interrupt`` hard-stop the live turn: body is an ACI ``interrupt``
                          frame; the open turn's final is reclassified to idle
 
@@ -99,12 +100,13 @@ async def _event(request: web.Request) -> web.StreamResponse:
 async def _steer(request: web.Request) -> web.Response:
     runner: SessionRunner = request.app[RUNNER]
     try:
-        payload = await request.json()
-        text = payload["text"]
+        frame = _parse(await request.json())
     except Exception as exc:  # noqa: BLE001
-        return web.json_response({"error": f"invalid steer payload: {exc}"}, status=400)
+        return web.json_response({"error": f"invalid steer frame: {exc}"}, status=400)
+    if not isinstance(frame, Event):
+        return web.json_response({"error": "expected an event frame"}, status=400)
 
-    delivered = await runner.steer(text)
+    delivered = await runner.steer(frame.text)
     if not delivered:
         return web.json_response(
             {"error": "no active turn to steer; open a new /v1/event"}, status=409

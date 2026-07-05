@@ -30,6 +30,7 @@ from aci_protocol import (
     SessionStatus,
     to_ndjson_line,
 )
+from claude_agent_sdk import ResultMessage
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
@@ -170,7 +171,14 @@ class SessionRunner:
         assert self._session is not None
         await self._session.query(event.text)
         async for message in self._session.receive_turn():
-            tracker.add(getattr(message, "usage", None))
+            usage = getattr(message, "usage", None)
+            # The terminal result carries the authoritative turn total; streaming
+            # assistant messages carry per-message output. Fold them differently
+            # so the same tokens are not counted twice (see BudgetTracker).
+            if isinstance(message, ResultMessage):
+                tracker.set_total(usage)
+            else:
+                tracker.add_increment(usage)
             budget_hit = tracker.exceeded
             events = translate_message(message, state, self._classifier, gen)
 
