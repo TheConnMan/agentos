@@ -45,8 +45,11 @@ class WorkerConfig(BaseModel):
     read_block_ms: int = 5000
 
     # Per-thread lock (serializes the routing decision + turn opening across
-    # workers so a thread never has two live sessions)
-    lock_ttl_ms: int = 60000
+    # workers so a thread never has two live sessions). The TTL must exceed the
+    # worst-case critical section (a cold claim can take up to the substrate's
+    # claim_timeout, ~30s) so the lock never lapses mid-section and lets a second
+    # worker open a concurrent turn.
+    lock_ttl_ms: int = 120000
     lock_acquire_timeout_s: float = 45.0
     lock_poll_interval_s: float = 0.02
 
@@ -58,9 +61,13 @@ class WorkerConfig(BaseModel):
     # Markers
     idempotency_ttl_s: int = 86400
 
-    # Crash recovery: reclaim stream entries pending longer than this from a dead
-    # consumer, and run the orphan-claim reaper, on this cadence.
-    reclaim_min_idle_ms: int = 60000
+    # Crash recovery: reclaim stream entries pending longer than this, and run
+    # the orphan-claim reaper, on this cadence. The idle threshold must exceed the
+    # longest legitimate in-flight time (a turn can stream up to
+    # runner_total_timeout_s, 600s) so the reaper never reclaims an entry a live
+    # turn is still processing; the consumer additionally skips its own in-flight
+    # entry ids as a second guard.
+    reclaim_min_idle_ms: int = 900000
     reclaim_interval_s: float = 30.0
 
     # Slack placeholder edits are throttled to avoid rate limits while streaming.

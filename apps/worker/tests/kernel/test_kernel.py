@@ -229,7 +229,7 @@ def test_duplicate_event_is_idempotent(make_harness) -> None:
     asyncio.run(go())
 
 
-def test_ordering_preserved_open_then_steer(make_harness) -> None:
+def test_ordering_preserved_under_concurrent_sends(make_harness) -> None:
     async def go() -> None:
         async with make_harness() as h:
             hold = asyncio.Event()
@@ -237,19 +237,59 @@ def test_ordering_preserved_open_then_steer(make_harness) -> None:
             h.runner.default_script = [TextDelta(text="w")]
             h.runner.tail = [Final(text="done", status=DONE)]
 
+            # Both events for the same thread are dispatched concurrently, with no
+            # pre-sequencing: the FIFO in-process lock must make the first-created
+            # event open the turn and the second steer into it. Without that lock
+            # the order (and whether a second turn is forked) would be a race, so
+            # this asserts the ordering guarantee, not just that steering works.
             e1 = _qevent("first", thread="tO", event_id="o1")
             e2 = _qevent("second", thread="tO", event_id="o2")
             t1 = asyncio.create_task(h.kernel.process_event(e1))
-            # Let the first event acquire the FIFO critical section and open the
-            # turn, so the concurrent second event steers rather than forking.
-            await _wait_until(lambda: h.runner.turn_active)
             t2 = asyncio.create_task(h.kernel.process_event(e2))
-            await _wait_until(lambda: bool(h.runner.steers))
+            await _wait_until(lambda: h.runner.turn_active and bool(h.runner.steers))
 
-            assert h.runner.opened == ["first"]
-            assert h.runner.steers == ["second"]
+            assert h.runner.opened == ["first"]  # exactly one turn, the first event
+            assert h.runner.steers == ["second"]  # the second folded in as a steer
 
             hold.set()
             await asyncio.gather(t1, t2)
+
+    asyncio.run(go())
+
+
+def test_prior_side_effect_marker_escalates_without_running(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            ev = _qevent("retry me", event_id="se-1")
+            # A prior attempt executed a side effect then the worker crashed: the
+            # marker is set but the event never reached done. It must escalate,
+            # never re-run the non-idempotent action.
+            await h.async_redis.set(h.config.side_effect_key(ev.slack_event_id), "1")
+
+            await h.kernel.process_event(ev)
+
+            assert h.runner.opened == []  # no turn was ever opened
+            assert h.sink.last_text is not None and "human" in h.sink.last_text.lower()
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+
+    asyncio.run(go())
+
+
+def test_suspended_thread_is_resumed_not_forked(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="one", status=DONE)]
+            await h.kernel.process_event(_qevent("first", thread="tR"))
+
+            # Suspend the thread (records a rehydrate ref on the route).
+            await asyncio.to_thread(h.substrate.suspend, "tR", history_ref="hist-1")
+
+            # A new event on a suspended thread must resume (carry the history)
+            # rather than silently fork a fresh, history-less session.
+            h.runner.default_script = [Final(text="resumed", status=DONE)]
+            await h.kernel.process_event(_qevent("second", thread="tR"))
+
+            assert h.runner.opened == ["first", "second"]
+            assert h.sink.last_text == "resumed"
 
     asyncio.run(go())
