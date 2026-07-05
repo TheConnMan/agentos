@@ -1,0 +1,23 @@
+{{- if and .Values.agentSandbox.deploy .Values.agentSandbox.runner.serviceAccount.create }}
+{{/*
+Rail 2 (secret isolation), part 1: the runner ServiceAccount.
+
+Least privilege by construction -- this SA is granted NOTHING (no Role/
+RoleBinding here), so a runner cannot list or read any Secret via the K8s API,
+and its token is not even mounted (automountServiceAccountToken: false on the
+pod). The per-agent credential Role -- a Role scoped with
+`resourceNames: [<that agent's Secret>]` and bound to a per-agent SA -- is
+created by the control plane when an agent is deployed, not by this chart: the
+chart ships the isolation MODEL and the least-privilege baseline; the control
+plane binds one narrowly-scoped Role per agent on top. The A2 probe proves that
+model holds (agent-a can get its own Secret, cannot get agent-b's, cannot list).
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+automountServiceAccountToken: {{ .Values.agentSandbox.runner.serviceAccount.automountToken }}
+{{- end }}

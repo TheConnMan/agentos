@@ -267,3 +267,103 @@ agentSandbox:
     resources:
       requests: { cpu: 50m, memory: 192Mi }
       limits: { cpu: "1", memory: 768Mi }
+    # --- A2 security rails on the runner surface ---
+    # Rail 3: container hardening. non-root + read-only rootfs + dropped caps +
+    # no privilege escalation + RuntimeDefault seccomp. readOnlyRootFilesystem
+    # needs writable scratch, so the chart mounts an emptyDir at each writablePath
+    # and points HOME at one of them (the runner/CLI must not write to `/`).
+    hardening:
+      enabled: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      # emptyDir mounts provided so a read-only rootfs container can still write.
+      writablePaths:
+        - /tmp
+        - /home/runner
+      # HOME for the non-root user (one of writablePaths). The Claude CLI and
+      # Python both write under HOME/tmp; pointing HOME at a writable emptyDir
+      # keeps the root filesystem read-only.
+      home: /home/runner
+    # Rail 4: run each sandbox pod under this RuntimeClass for kernel isolation.
+    # "gvisor" (runsc) is the secure default. The NODE must have runsc + the
+    # containerd handler installed (a node-level op the gVisor preflight checks);
+    # set to "" to disable kernel isolation on clusters without runsc.
+    runtimeClassName: gvisor
+    # Rail 2: the runner ServiceAccount. Least privilege: no secret list/get on
+    # its own. The per-agent secret Role (resourceNames-scoped to that agent's
+    # credential Secret) is created per agent by the control plane, not the chart
+    # -- the chart ships the isolation MODEL, the control plane binds it per SA.
+    serviceAccount:
+      create: true
+      # The runner does not call the K8s API, so its token is not mounted.
+      automountToken: false
+
+# ---------------------------------------------------------------------------
+# Security rails (A2). The four PT-3-proven rails shipped ON by default. They
+# attach to the agent-sandbox runner surface, so the NetworkPolicy / RBAC / probe
+# resources render only when agentSandbox.deploy is true (there are no runner
+# pods to protect otherwise) -- which keeps the default and dev renders identical
+# to a chart without A2. Each rail is individually toggleable, but the secure
+# posture is the default, per ADR-0006.
+# ---------------------------------------------------------------------------
+security:
+  # Rail 1: default-deny egress on runner sandboxes, with explicit allows for DNS
+  # + the model API + declared MCP endpoints. Everything else -- arbitrary
+  # internet AND the cloud metadata endpoint 169.254.169.254 -- is denied by
+  # construction (fail-closed).
+  networkPolicy:
+    enabled: true
+    # Allow DNS egress so the runner can resolve its allowed hosts.
+    allowDNS: true
+    dnsNamespace: kube-system
+    # Egress allowlist = model API + declared MCP endpoints. Each entry is
+    # {cidr, ports: [{protocol, port}]}. EMPTY by default: a fresh install denies
+    # ALL egress except DNS until the operator declares where the model API and
+    # MCP servers live. Deliberately fail-closed -- an unset allowlist must never
+    # mean "allow everything".
+    allowedEgress: []
+    #  - cidr: 160.79.104.0/23           # e.g. api.anthropic.com
+    #    ports: [{ protocol: TCP, port: 443 }]
+    # Also restrict ingress to the runner ACI port from inside the cluster. The
+    # worker dials the claimed sandbox, so ingress is allowed from the release
+    # namespace only. Egress policies do not affect ingress; this adds the lock.
+    lockIngress: true
+  # Rail 4: gVisor (runsc) kernel isolation. The pod runtimeClassName lives on
+  # agentSandbox.runner.runtimeClassName; these control the optional RuntimeClass
+  # object and the enforcement preflight.
+  gvisor:
+    # Optionally create the RuntimeClass object. The NODE must independently have
+    # runsc + the containerd runtime handler installed; the object alone does not
+    # install the runtime. Default false: assume the cluster already provides the
+    # runtimeclass, which the preflight verifies.
+    installRuntimeClass: false
+    handler: runsc
+  # Preflight: when the runner requests a RuntimeClass, verify it EXISTS and is
+  # actually ENFORCED (a pod under it reports a distinct gVisor kernel), so a
+  # missing or silently-downgraded runtime fails the install with remediation
+  # instead of shipping runner pods with no kernel isolation.
+  gvisorPreflight:
+    enabled: true
+    image: busybox:1.36
+    resources:
+      requests: { cpu: 50m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 64Mi }
+  # The PT-3 security-boundary probe suite as a helm test. Re-runs the four
+  # claims against the chart's rendered defaults: egress+metadata blocked (with a
+  # before/after control), cross-agent secret isolation, non-root/RO-rootfs, and
+  # gVisor enforcement. See README "Security rails".
+  probe:
+    enabled: true
+    # Orchestrator image (must carry kubectl + bash); drives all three claims.
+    kubectlImage: alpine/k8s:1.31.2
+    # Egress-probe pod image (must carry curl + nslookup) the orchestrator execs
+    # into to test egress under the chart's real NetworkPolicy.
+    netshootImage: nicolaka/netshoot
+    busyboxImage: busybox:1.36
+    # A public host the egress policy must BLOCK (reached on the baseline, denied
+    # under the policy -- the before/after control that proves the CNI enforces).
+    blockedTarget: example.com
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
