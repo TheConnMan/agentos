@@ -135,6 +135,40 @@ def test_sdk_exception_still_terminates_in_final() -> None:
     assert runner.status == SessionStatus.CLASSIFIED_FAILURE
 
 
+def test_steer_rejected_once_final_is_produced() -> None:
+    # Finish-race guard: the moment the terminal final is produced, the turn no
+    # longer accepts steers -- even though the generator has not fully closed.
+    runner, fake = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        gen = runner.run_turn(Event(type="message", text="go", user="U", ts="1"))
+        async for line in gen:
+            if parse_ndjson(line)[0].type == "final":
+                assert runner.turn_active is False
+                assert await runner.steer("too late") is False
+
+    anyio.run(go)
+    assert fake.queries == ["go"]  # the late steer never reached the session
+
+
+def test_abandoned_stream_interrupts_the_sdk() -> None:
+    # Consumer disconnect mid-turn (GeneratorExit via aclose) must stop the SDK so
+    # it does not keep running tools past the released turn.
+    runner, fake = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        gen = runner.run_turn(Event(type="message", text="go", user="U", ts="1"))
+        await gen.__anext__()  # turn live, mid-run
+        assert runner.turn_active
+        await gen.aclose()  # consumer walks away before the terminal final
+        assert runner.turn_active is False
+
+    anyio.run(go)
+    assert fake.interrupts >= 1
+
+
 def test_build_options_carries_resume_ref() -> None:
     # Rehydrate-from-history (ADR-0003): a history ref becomes the SDK resume id.
     options = build_options(

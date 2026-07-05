@@ -19,6 +19,7 @@ Responsibilities layered on the translation:
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator, Callable
 
 import anyio
@@ -66,6 +67,12 @@ class SessionRunner:
         self._interrupt_requested = False
         self._status = SessionStatus.IDLE_AWAITING_INPUT
         self._started = False
+        # True only while a turn can still accept a steer: from turn start until
+        # the terminal final is produced. It is cleared the instant a turn
+        # terminates -- before the lock releases -- so a steer landing in the
+        # finish-race window (final produced, lock not yet freed) is rejected
+        # instead of writing into an already-terminal stream.
+        self._turn_open = False
 
     @property
     def status(self) -> SessionStatus:
@@ -77,9 +84,9 @@ class SessionRunner:
 
     @property
     def turn_active(self) -> bool:
-        """True while a turn is consuming the SDK generator (a steer is deliverable)."""
+        """True while a turn can still accept a steer (open, pre-terminal)."""
 
-        return self._turn_lock.locked()
+        return self._turn_open
 
     async def start(self) -> None:
         """Create and connect the model session (rehydrating if configured)."""
@@ -101,7 +108,7 @@ class SessionRunner:
         on the already-open turn's NDJSON stream.
         """
 
-        if self._session is None or not self.turn_active:
+        if self._session is None or not self._turn_open:
             return False
         await self._session.query(text)
         return True
@@ -138,6 +145,7 @@ class SessionRunner:
 
         async with self._turn_lock:
             self._interrupt_requested = False
+            self._turn_open = True
             state = TurnState()
             tracker = BudgetTracker(ceiling=self._ceiling)
 
@@ -150,7 +158,9 @@ class SessionRunner:
                     # (CLI disconnect, auth expiry, model error) becomes a
                     # classified failure rather than a truncated, final-less
                     # stream. GeneratorExit (consumer disconnect) is a
-                    # BaseException and is intentionally not caught.
+                    # BaseException and is intentionally not caught here -- the
+                    # finally handles that abandonment case.
+                    self._turn_open = False
                     self._status = SessionStatus.CLASSIFIED_FAILURE
                     yield to_ndjson_line(
                         ErrorEvent(message=f"runner error: {exc}", classification="runner-error")
@@ -158,6 +168,16 @@ class SessionRunner:
                     yield to_ndjson_line(
                         Final(text="run failed", status=SessionStatus.CLASSIFIED_FAILURE)
                     )
+                finally:
+                    # If the turn never reached a terminal final (_turn_open still
+                    # set), the consumer abandoned the stream mid-run (client
+                    # disconnect -> GeneratorExit, or cancellation). Stop the SDK
+                    # so it does not keep executing tools past the released turn
+                    # lock and bleed into the next turn. Best-effort.
+                    if self._turn_open and self._session is not None:
+                        with contextlib.suppress(Exception):
+                            await self._session.interrupt()
+                    self._turn_open = False
 
     async def _drive_turn(
         self,
@@ -190,6 +210,7 @@ class SessionRunner:
                         return
                     final = self._reclassify(outbound)
                     self._status = final.status
+                    self._turn_open = False
                     yield to_ndjson_line(final)
                     return
                 yield to_ndjson_line(outbound)
@@ -211,6 +232,7 @@ class SessionRunner:
             else SessionStatus.DONE
         )
         self._status = status
+        self._turn_open = False
         yield to_ndjson_line(Final(text="", status=status))
 
     def _budget_halt_lines(self) -> list[str]:
@@ -220,6 +242,7 @@ class SessionRunner:
         tell a budget halt from any other classified failure.
         """
 
+        self._turn_open = False
         self._status = SessionStatus.CLASSIFIED_FAILURE
         return [
             to_ndjson_line(
