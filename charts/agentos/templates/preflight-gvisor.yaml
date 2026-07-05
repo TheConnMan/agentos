@@ -25,7 +25,11 @@ metadata:
     {{- include "agentos.labels" . | nindent 4 }}
     app.kubernetes.io/component: agent-sandbox
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade,test
+    # When the chart itself creates the RuntimeClass (installRuntimeClass=true),
+    # that object is a NORMAL resource applied after pre-install hooks -- so this
+    # check must run post-install (test only), not before the class exists.
+    # Otherwise it runs pre-install to block a broken install up front.
+    "helm.sh/hook": {{ if .Values.security.gvisor.installRuntimeClass }}test{{ else }}pre-install,pre-upgrade,test{{ end }}
     "helm.sh/hook-weight": "-9"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
