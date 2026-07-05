@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import aiohttp
@@ -43,7 +44,7 @@ from agentos_dispatcher.queue import QueuedSlackEvent
 
 from .config import WorkerConfig
 from .markers import Markers
-from .runner_client import RunnerClient
+from .runner_client import RunnerClient, TurnStream
 from .sandbox import SandboxSubstrate
 from .sandbox.types import SandboxHandle, SuspendedThreadError
 from .slack_sink import SlackSink
@@ -72,7 +73,17 @@ class TurnOutcome:
 class _RouteResult:
     steered: bool
     handle: SandboxHandle | None = None
-    turn: object | None = None  # TurnStream, kept opaque here
+    turn: TurnStream | None = None
+
+
+@dataclass
+class _LockEntry:
+    """A per-thread in-process lock plus a holder/waiter refcount so the entry
+    can be evicted when idle (otherwise the map grows one entry per thread ever
+    seen, an unbounded leak in a long-running worker)."""
+
+    lock: asyncio.Lock
+    refs: int = 0
 
 
 @dataclass
@@ -140,7 +151,7 @@ class Kernel:
         # The cross-worker guarantee is the Valkey ThreadLock; this adds
         # deterministic ordering within a process without blocking steering,
         # because it is released before the stream is consumed.
-        self._inproc_locks: dict[str, asyncio.Lock] = {}
+        self._order_locks: dict[str, _LockEntry] = {}
 
     async def process_event(self, qevent: QueuedSlackEvent) -> None:
         """Handle one queued Slack event to a terminal state (success or escalate).
@@ -149,58 +160,84 @@ class Kernel:
         acks it. Raising leaves the entry pending for crash-recovery reclaim.
         """
         event_id = qevent.slack_event_id
+        thread = qevent.thread_ts
 
-        if await self._markers.is_done(event_id):
-            logger.info("event %s already done; skipping", event_id)
-            return
+        # Acquire the per-thread order lock BEFORE any await, so concurrent
+        # same-thread events queue in task-arrival order (asyncio.Lock is FIFO and
+        # an uncontended acquire does not yield). It is released as soon as this
+        # event's turn is started or steered (``_release_order`` in _attempt), so
+        # streaming and steering are never blocked; holding it across the marker
+        # checks is what keeps those awaits from reordering arrivals.
+        entry = self._acquire_order_entry(thread)
+        await entry.lock.acquire()
+        release_state = {"done": False}
 
-        # Crash-safety: a prior attempt executed a side effect but never reached
-        # done (worker died mid-run). Do not auto-retry a non-idempotent action.
-        if await self._markers.saw_side_effect(event_id):
-            await self._escalate(
-                qevent,
-                "A prior attempt started an action before the worker restarted; "
-                "not retrying automatically. Flagging for a human.",
-            )
-            await self._markers.mark_done(event_id)
-            return
+        def release_order() -> None:
+            if not release_state["done"]:
+                release_state["done"] = True
+                entry.lock.release()
+                self._release_order_entry(thread, entry)
 
-        attempt = 0
-        while True:
-            attempt += 1
-            outcome = await self._attempt(qevent)
-
-            if outcome.terminal_ok:
-                await self._markers.mark_done(event_id)
+        try:
+            if await self._markers.is_done(event_id):
+                logger.info("event %s already done; skipping", event_id)
                 return
 
-            if outcome.saw_side_effect:
+            # Crash-safety: a prior attempt executed a side effect but never
+            # reached done (worker died mid-run). Do not auto-retry the action.
+            if await self._markers.saw_side_effect(event_id):
                 await self._escalate(
                     qevent,
-                    f"The run hit an error ({outcome.classification or 'unknown'}) after "
-                    "starting an action; not retrying automatically. Flagging for a human.",
+                    "A prior attempt started an action before the worker restarted; "
+                    "not retrying automatically. Flagging for a human.",
                 )
                 await self._markers.mark_done(event_id)
                 return
 
-            retryable = outcome.classification in RETRYABLE_CLASSIFICATIONS
-            if not retryable or attempt >= self._config.max_attempts:
-                await self._escalate(
-                    qevent,
-                    f"The run failed ({outcome.classification or 'unknown'}) after "
-                    f"{attempt} attempt(s). Flagging for a human.",
-                )
-                await self._markers.mark_done(event_id)
-                return
+            attempt = 0
+            while True:
+                attempt += 1
+                outcome = await self._attempt(qevent, release_order)
 
-            await asyncio.sleep(self._backoff(attempt))
+                if outcome.terminal_ok:
+                    await self._markers.mark_done(event_id)
+                    return
 
-    def _inproc_thread_lock(self, thread: str) -> asyncio.Lock:
-        lock = self._inproc_locks.get(thread)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._inproc_locks[thread] = lock
-        return lock
+                if outcome.saw_side_effect:
+                    await self._escalate(
+                        qevent,
+                        f"The run hit an error ({outcome.classification or 'unknown'}) after "
+                        "starting an action; not retrying automatically. Flagging for a human.",
+                    )
+                    await self._markers.mark_done(event_id)
+                    return
+
+                retryable = outcome.classification in RETRYABLE_CLASSIFICATIONS
+                if not retryable or attempt >= self._config.max_attempts:
+                    await self._escalate(
+                        qevent,
+                        f"The run failed ({outcome.classification or 'unknown'}) after "
+                        f"{attempt} attempt(s). Flagging for a human.",
+                    )
+                    await self._markers.mark_done(event_id)
+                    return
+
+                await asyncio.sleep(self._backoff(attempt))
+        finally:
+            release_order()
+
+    def _acquire_order_entry(self, thread: str) -> _LockEntry:
+        entry = self._order_locks.get(thread)
+        if entry is None:
+            entry = _LockEntry(asyncio.Lock())
+            self._order_locks[thread] = entry
+        entry.refs += 1
+        return entry
+
+    def _release_order_entry(self, thread: str, entry: _LockEntry) -> None:
+        entry.refs -= 1
+        if entry.refs == 0 and self._order_locks.get(thread) is entry:
+            del self._order_locks[thread]
 
     async def reap_orphans(self) -> list[str]:
         """Periodic tick: delete substrate claims no live route references."""
@@ -216,36 +253,44 @@ class Kernel:
 
     # -- internals ------------------------------------------------------------
 
-    async def _attempt(self, qevent: QueuedSlackEvent) -> TurnOutcome:
+    async def _attempt(
+        self, qevent: QueuedSlackEvent, release_order: Callable[[], None]
+    ) -> TurnOutcome:
         thread = qevent.thread_ts
         event = self._to_event(qevent)
 
-        # Critical section: decide steer-vs-new-turn and, if new, open the turn
-        # so it is active before we release the lock (rule 1). The in-process
-        # lock gives FIFO ordering within this worker; the Valkey lock gives
-        # one-live-session across workers. Both are released before streaming.
-        async with self._inproc_thread_lock(thread):
-            async with self._lock.hold(self._config.lock_key(thread)):
-                route = await self._route_and_start(thread, event)
+        # Critical section: decide steer-vs-new-turn and, if new, open the turn so
+        # it is active before we release the Valkey lock (rule 1: no two live
+        # turns per thread across workers). Then release the order lock so the
+        # next same-thread event can route, and release the Valkey lock before
+        # streaming so a follow-up can steer.
+        async with self._lock.hold(self._config.lock_key(thread)):
+            route = await self._route_and_start(thread, event)
+        release_order()
 
         if route.steered:
-            # Delivered into another task's live turn; that task streams the
-            # output. This event's job is done once the steer is accepted.
+            # Delivered into the thread's live turn; that turn streams the output
+            # onto its own placeholder. Retire this follow-up's placeholder so it
+            # does not sit stuck on "working" in the thread.
+            await self._sink.update(
+                channel=qevent.channel,
+                ts=qevent.placeholder_ts,
+                text="Folded into the in-progress reply above.",
+            )
             return TurnOutcome(terminal_ok=True, steered=True)
 
         assert route.handle is not None and route.turn is not None
         return await self._consume(qevent, route.turn)
 
     async def _route_and_start(self, thread: str, event: Event) -> _RouteResult:
-        handle = await asyncio.to_thread(self._substrate.lookup, thread)
-        if handle is not None:
-            if await self._runner.steer(handle.base_url, event):
-                return _RouteResult(steered=True)
-            # 409 finish race: the turn ended but the sandbox is idle. Reuse it.
-            turn = await self._runner.start_turn(handle.base_url, event)
-            return _RouteResult(steered=False, handle=handle, turn=turn)
-
+        # claim() adopts the thread's live sandbox and refreshes its route TTL
+        # (so a busy thread past route_ttl is not reaped), or claims a warm one /
+        # resumes a suspended one. Then try to steer: a live turn takes the
+        # follow-up; otherwise (fresh sandbox, or the finish-race where the turn
+        # just ended -> 409) we open a new turn on that same sandbox.
         handle = await self._claim_or_resume(thread)
+        if await self._runner.steer(handle.base_url, event):
+            return _RouteResult(steered=True)
         turn = await self._runner.start_turn(handle.base_url, event)
         return _RouteResult(steered=False, handle=handle, turn=turn)
 
@@ -255,7 +300,7 @@ class Kernel:
         except SuspendedThreadError:
             return await asyncio.to_thread(self._substrate.resume, thread)
 
-    async def _consume(self, qevent: QueuedSlackEvent, turn: object) -> TurnOutcome:
+    async def _consume(self, qevent: QueuedSlackEvent, turn: TurnStream) -> TurnOutcome:
         acc = _StreamAccumulator()
         reply = _ThrottledReply(
             self._sink,
@@ -264,8 +309,12 @@ class Kernel:
             min_interval_s=self._config.slack_edit_min_interval_s,
         )
         try:
-            async for frame in turn:  # type: ignore[attr-defined]
-                await self._apply_frame(frame, acc, reply, qevent.slack_event_id)
+            # ``async with`` releases the aiohttp response on every exit path
+            # (normal end, apply-frame error, or a mid-stream transport drop), so
+            # the connection is never leaked.
+            async with turn:
+                async for frame in turn:
+                    await self._apply_frame(frame, acc, reply, qevent.slack_event_id)
         except (aiohttp.ClientError, TimeoutError) as exc:
             # Stream dropped mid-run (sandbox killed, network fault). No final.
             logger.warning("turn stream dropped for %s: %s", qevent.slack_event_id, exc)

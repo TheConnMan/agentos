@@ -49,6 +49,11 @@ class Consumer:
         self._stop = asyncio.Event()
         self._sem = asyncio.Semaphore(max_concurrency)
         self._inflight: set[asyncio.Task[None]] = set()
+        # Entry ids currently being handled by THIS consumer. XAUTOCLAIM would
+        # otherwise reclaim our own long-running (still-pending) entries and
+        # re-dispatch a duplicate handler that steers the same prompt into its
+        # own live turn; skipping these ids prevents that self-reclaim.
+        self._inflight_ids: set[str] = set()
 
     async def ensure_group(self) -> None:
         """Create the consumer group (and the stream) if it does not exist.
@@ -93,6 +98,9 @@ class Consumer:
                     self._dispatch(entry_id, fields)
 
     def _dispatch(self, entry_id: str, fields: dict[str, str]) -> None:
+        if entry_id in self._inflight_ids:
+            return  # already being handled by this consumer
+        self._inflight_ids.add(entry_id)
         task = asyncio.create_task(self._handle(entry_id, fields))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
@@ -100,18 +108,21 @@ class Consumer:
     async def _handle(self, entry_id: str, fields: dict[str, str]) -> None:
         async with self._sem:
             try:
-                qevent = QueuedSlackEvent.from_stream_fields(fields)
-            except Exception:
-                logger.exception("unparseable stream entry %s; acking as poison", entry_id)
+                try:
+                    qevent = QueuedSlackEvent.from_stream_fields(fields)
+                except Exception:
+                    logger.exception("unparseable stream entry %s; acking as poison", entry_id)
+                    await self._ack(entry_id)
+                    return
+                try:
+                    await self._kernel.process_event(qevent)
+                except Exception:
+                    # Leave the entry pending: XAUTOCLAIM will reclaim and retry.
+                    logger.exception("processing failed for entry %s; left pending", entry_id)
+                    return
                 await self._ack(entry_id)
-                return
-            try:
-                await self._kernel.process_event(qevent)
-            except Exception:
-                # Leave the entry pending: XAUTOCLAIM will reclaim and retry it.
-                logger.exception("processing failed for entry %s; left pending", entry_id)
-                return
-            await self._ack(entry_id)
+            finally:
+                self._inflight_ids.discard(entry_id)
 
     async def _ack(self, entry_id: str) -> None:
         await self._redis.xack(self._config.stream, self._config.consumer_group, entry_id)
@@ -143,6 +154,8 @@ class Consumer:
             cursor = str(raw[0])
             entries = cast("list[StreamEntry]", raw[1])
             for entry_id, fields in entries:
+                if entry_id in self._inflight_ids:
+                    continue  # still being processed here; not an orphan
                 reclaimed += 1
                 self._dispatch(entry_id, fields)
             if cursor in ("0-0", "0"):

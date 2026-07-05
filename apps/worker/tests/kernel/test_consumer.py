@@ -59,6 +59,37 @@ def test_consumes_stream_entry_end_to_end_and_acks(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_reclaim_skips_this_consumers_own_inflight_entry(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness(reclaim_min_idle_ms=0) as h:
+            # A turn that hangs, so its stream entry stays pending (unacked, in
+            # flight) while streaming.
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="working")]
+            h.runner.tail = [Final(text="done", status=DONE)]
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await consumer.ensure_group()
+
+            qe = _qevent("hello", thread="ti1", event_id="i1")
+            await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
+            task = asyncio.create_task(consumer.run())
+            await _wait_until(lambda: h.runner.turn_active)
+
+            # A reclaim pass while the turn is still in flight must NOT re-dispatch
+            # our own entry (which would steer the same prompt into its own turn).
+            reclaimed = await consumer._reclaim_once()
+            assert reclaimed == 0
+            assert h.runner.opened == ["hello"]  # no duplicate turn
+
+            hold.set()
+            await _wait_until(lambda: h.sink.last_text == "done")
+            consumer.request_stop()
+            await task
+
+    asyncio.run(go())
+
+
 def test_reclaims_and_reprocesses_a_dead_consumers_pending_entry(make_harness) -> None:
     async def go() -> None:
         async with make_harness(reclaim_min_idle_ms=0) as h:
