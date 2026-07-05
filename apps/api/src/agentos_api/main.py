@@ -12,8 +12,9 @@ from fastapi import FastAPI
 
 from .config import get_settings
 from .db import create_engine, create_sessionmaker
+from .k8s import build_pod_log_reader
 from .langfuse import LangfuseClient
-from .routers import agents, bundles, deployments, github, runs
+from .routers import agents, bundles, deployments, github, observability, runs
 from .storage import BundleStore
 
 
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     store = BundleStore(settings)
     await store.ensure_bucket()
     app.state.bundle_store = store
+    app.state.pod_log_reader = build_pod_log_reader(settings.kube_config_path)
     try:
         yield
     finally:
@@ -47,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(deployments.router)
     app.include_router(bundles.router)
     app.include_router(github.router)
+    app.include_router(observability.router)
     app.include_router(runs.router)
     return app
 
