@@ -5,14 +5,11 @@ the original bytes immutably (write-once per version). Fetch returns those exact
 bytes so a runner can pull a bundle by version.
 """
 
-import hashlib
-import tempfile
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 
-from .. import bundles, crud
+from .. import bundles, crud, deploy
 from ..auth import require_api_key
 from ..deps import SessionDep, StoreDep
 from ..models import AgentVersion
@@ -64,33 +61,18 @@ async def upload_bundle(
         )
 
     data = await file.read()
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            extension, content_type, result = bundles.extract_and_validate(
-                data, Path(tmp)
-            )
-        except bundles.UnsupportedArchive as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-
-    if not result.valid:
+    try:
+        extension, content_type = deploy.validate_archive(data)
+    except bundles.UnsupportedArchive as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except deploy.BundleInvalid as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {
-                "detail": "bundle failed validation",
-                "errors": [e.model_dump() for e in result.errors],
-            },
-        )
+            {"detail": "bundle failed validation", "errors": exc.errors},
+        ) from exc
 
-    key = f"bundles/{agent_id}/{version_id}{extension}"
-    digest = hashlib.sha256(data).hexdigest()
-    await store.put(key, data, content_type)
-    await crud.attach_bundle(session, version, key, digest)
-
-    return BundleOut(
-        version_id=version_id,
-        bundle_ref=key,
-        bundle_sha256=digest,
-        size_bytes=len(data),
+    return await deploy.store_bundle(
+        store, session, agent_id, version, data, extension, content_type
     )
 
 

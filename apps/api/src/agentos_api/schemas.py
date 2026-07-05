@@ -12,6 +12,7 @@ from .models import Environment
 class AgentCreate(BaseModel):
     name: str
     slack_channel: str
+    repo_full_name: str | None = None
 
 
 class AgentOut(BaseModel):
@@ -20,6 +21,7 @@ class AgentOut(BaseModel):
     id: uuid.UUID
     name: str
     slack_channel: str
+    repo_full_name: str | None
     created_at: datetime
 
 
@@ -37,6 +39,7 @@ class VersionOut(BaseModel):
     version_label: str
     bundle_ref: str | None
     bundle_sha256: str | None
+    commit_sha: str | None
     created_by: str
     created_at: datetime
 
@@ -71,8 +74,23 @@ class DeploymentOut(BaseModel):
     agent_id: uuid.UUID
     version_id: uuid.UUID
     environment: Environment
+    bot_identity: str | None
+    commit_sha: str | None
     status: str
     deployed_at: datetime
+
+
+class WebhookResult(BaseModel):
+    """The outcome of processing a GitHub webhook event."""
+
+    status: str
+    environment: Environment | None = None
+    bot_identity: str | None = None
+    agent_id: uuid.UUID | None = None
+    version_id: uuid.UUID | None = None
+    deployment_id: uuid.UUID | None = None
+    commit_sha: str | None = None
+    errors: list[dict[str, str]] | None = None
 
 
 class ObservationNode(BaseModel):
