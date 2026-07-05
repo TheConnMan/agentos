@@ -66,6 +66,30 @@ def schema_path() -> Path:
     return Path(__file__).resolve().parents[2] / "schema" / "aci-protocol.schema.json"
 
 
+def _require_const_props(defs: dict[str, Any]) -> None:
+    """Make fixed wire tokens required and drop their misleading defaults.
+
+    The discriminator and version fields carry a Python default for ergonomic
+    construction, which pydantic renders as non-required with a default. On the
+    wire they are mandatory (the NDJSON decoder rejects a missing version, and
+    the union discriminator selects the variant), so any property with a
+    ``const`` is marked required and its default removed. This keeps the schema
+    and generated TypeScript consistent with the Python decoder for every lane.
+    """
+
+    for schema in defs.values():
+        props = schema.get("properties")
+        if not isinstance(props, dict):
+            continue
+        required = set(schema.get("required", []))
+        for name, prop in props.items():
+            if isinstance(prop, dict) and "const" in prop:
+                required.add(name)
+                prop.pop("default", None)
+        if required:
+            schema["required"] = sorted(required)
+
+
 def build_schema() -> dict[str, Any]:
     """Build the combined JSON Schema document for every ACI model."""
 
@@ -73,6 +97,8 @@ def build_schema() -> dict[str, Any]:
         [(model, "validation") for model in _MODELS],
         ref_template="#/$defs/{model}",
     )
+    if isinstance(top.get("$defs"), dict):
+        _require_const_props(top["$defs"])
     doc: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": SCHEMA_ID,

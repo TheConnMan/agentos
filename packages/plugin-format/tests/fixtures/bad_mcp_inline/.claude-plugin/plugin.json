@@ -1,0 +1,9 @@
+{
+  "name": "bad-mcp-inline-plugin",
+  "description": "Declares mcpServers inline in the manifest with an incomplete server.",
+  "mcpServers": {
+    "inline-broken": {
+      "env": { "FOO": "bar" }
+    }
+  }
+}

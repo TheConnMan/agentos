@@ -42,6 +42,12 @@ def test_mcp_server_without_command_or_url_is_reported() -> None:
     assert "mcp.server_incomplete" in _codes(FIXTURES / "bad_mcp")
 
 
+def test_inline_manifest_mcp_server_is_validated() -> None:
+    # The manifest mcpServers field (inline object) is a supported declaration
+    # and must be validated, not just a root .mcp.json file.
+    assert "mcp.server_incomplete" in _codes(FIXTURES / "bad_mcp_inline")
+
+
 def test_error_messages_carry_location_and_are_actionable() -> None:
     result = validate_bundle(FIXTURES / "bad_skill")
     issue = next(i for i in result.errors if i.code == "skill.frontmatter_invalid")
