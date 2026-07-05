@@ -177,6 +177,55 @@ def test_prod_deployment_wins_over_dev() -> None:
     asyncio.run(go())
 
 
+def test_deployment_pointing_at_another_agents_version_does_not_resolve() -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_a = await _seed_agent(
+                engine, channel=channel, name=f"a-{token}", max_usd=None, max_tokens=None
+            )
+            agent_b = await _seed_agent(
+                engine, channel=f"C-other-{token}", name=f"b-{token}", max_usd=None, max_tokens=None
+            )
+            # Give B a version, then point an active deployment for A at B's version.
+            b_version = uuid.uuid4()
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        f"INSERT INTO {_SCHEMA}.agent_versions "
+                        "(id, agent_id, version_label, bundle_ref, created_by) "
+                        "VALUES (:id, :agent_id, 'v', 'bundles/b.zip', 't')"
+                    ),
+                    {"id": b_version, "agent_id": agent_b},
+                )
+                await conn.execute(
+                    text(
+                        f"INSERT INTO {_SCHEMA}.deployments "
+                        "(id, agent_id, version_id, environment, status) VALUES "
+                        f"(:id, :agent_id, :vid, CAST('prod' AS {_SCHEMA}.environment), 'active')"
+                    ),
+                    {"id": uuid.uuid4(), "agent_id": agent_a, "vid": b_version},
+                )
+
+            # The agent-scoped join refuses B's bundle for A's channel.
+            resolved = await _resolver(engine).resolve(channel)
+            assert resolved is None
+
+            await _cleanup(engine, [agent_a, agent_b])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
 def test_unknown_channel_resolves_to_none() -> None:
     async def go() -> None:
         engine = create_async_engine(_DB_URL)

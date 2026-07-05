@@ -377,6 +377,15 @@ class Kernel:
         # stream; unregister when the turn ends.
         self._register_run(agent_id, thread)
         try:
+            # Close the precheck-vs-register race: a kill that landed between the
+            # is_killed precheck and this registration would have interrupted zero
+            # turns. Recheck now that the turn is registered and interrupt it.
+            if (
+                agent_id is not None
+                and self._killswitch is not None
+                and await self._killswitch.is_killed(agent_id)
+            ):
+                await self.interrupt_thread(thread, f"agent {agent_id} killed by operator")
             return await self._consume(qevent, route.turn)
         finally:
             self._unregister_run(agent_id, thread)
