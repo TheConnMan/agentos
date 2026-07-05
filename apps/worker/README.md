@@ -37,9 +37,9 @@ Contract notes F1 must know:
 - **Sub-second claims require a warm pool.** The chart's
   `agentSandbox.deploy=true` installs `<release>-runner` (SandboxTemplate) and
   `<release>-runner-pool` (SandboxWarmPool). Claims without per-claim env bind
-  a pre-warmed sandbox (~0.2 s measured); claims **with** env (the resume path)
-  force a cold sandbox creation (~2-3 s) because the controller cannot inject
-  env into an already-running pod.
+  a pre-warmed sandbox (0.04-0.07 s measured on k8scratch); claims **with**
+  env (the resume path) get a fresh sandbox instead (cold create, seconds not
+  sub-second) because env cannot be injected into an already-running pod.
 - **Suspend/resume is a cold rehydrate (PT-1).** `suspend()` flips the Sandbox
   to `Suspended` (the pod is deleted) and records the caller-supplied history
   ref. `resume()` retires the old claim and creates a new one whose per-claim
