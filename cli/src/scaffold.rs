@@ -54,17 +54,6 @@ pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
     if !valid_name(name) {
         bail!("plugin name {name:?} must be kebab-case (lowercase letters, digits, hyphens)");
     }
-    for existing in [
-        dir.join(".claude-plugin/plugin.json"),
-        dir.join("plugin.json"),
-    ] {
-        if existing.exists() {
-            bail!(
-                "{} already exists; refusing to overwrite",
-                existing.display()
-            );
-        }
-    }
 
     let files: Vec<(PathBuf, String)> = vec![
         (dir.join(".claude-plugin/plugin.json"), manifest(name)),
@@ -73,6 +62,24 @@ pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
         (dir.join("evals/cases.json"), eval_cases(name)),
         (dir.join(".gitignore"), GITIGNORE.to_string()),
     ];
+
+    // Refuse if ANY target (or a stray manifest) already exists: init must
+    // never truncate a file the user already has (e.g. a real .mcp.json).
+    let mut collisions: Vec<PathBuf> = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .filter(|path| path.exists())
+        .collect();
+    if dir.join("plugin.json").exists() {
+        collisions.push(dir.join("plugin.json"));
+    }
+    if !collisions.is_empty() {
+        let listed: Vec<String> = collisions.iter().map(|p| p.display().to_string()).collect();
+        bail!(
+            "refusing to overwrite existing files: {}",
+            listed.join(", ")
+        );
+    }
 
     let mut created = Vec::new();
     for (path, body) in files {
@@ -161,6 +168,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         scaffold(dir.path(), "deal-desk").unwrap();
         assert!(scaffold(dir.path(), "deal-desk").is_err());
+    }
+
+    #[test]
+    fn refuses_to_truncate_any_existing_target_even_without_a_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = r#"{"mcpServers":{"important":{"command":"x"}}}"#;
+        std::fs::write(dir.path().join(".mcp.json"), existing).unwrap();
+
+        let err = scaffold(dir.path(), "deal-desk").unwrap_err();
+        assert!(err.to_string().contains(".mcp.json"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap(),
+            existing,
+            "existing file must be untouched"
+        );
+        assert!(!dir.path().join(".claude-plugin/plugin.json").exists());
     }
 
     #[test]

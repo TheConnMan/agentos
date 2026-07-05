@@ -14,7 +14,7 @@ use clap::ValueEnum;
 use crate::api::ApiClient;
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
-use crate::evals::{case_line, case_passes, load_cases, summary_line, transcript};
+use crate::evals::{case_line, load_cases, summary_line, turn_passes};
 use crate::render::{boxed_summary, TurnPrinter};
 use crate::runner::RunnerClient;
 use crate::scaffold::{read_manifest, scaffold};
@@ -74,7 +74,7 @@ pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
     for path in created {
         println!("  created {}", path.display());
     }
-    println!("\nNext: agentos start --plugin-dir {}", dir.display());
+    println!("\nNext: cd {} && agentos start", dir.display());
     Ok(())
 }
 
@@ -199,8 +199,10 @@ pub async fn send(
     Ok(())
 }
 
-pub async fn eval(cases_path: &Path, url: Option<String>) -> Result<()> {
-    let cases = load_cases(cases_path)?;
+pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()> {
+    let state_plugin_dir = state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
+    let cases_path = resolve_cases_path(cases_path, Path::new("."), state_plugin_dir.as_deref())?;
+    let cases = load_cases(&cases_path)?;
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
 
@@ -212,7 +214,7 @@ pub async fn eval(cases_path: &Path, url: Option<String>) -> Result<()> {
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
-        let ok = case_passes(case, &transcript(&events));
+        let ok = turn_passes(case, &events);
         if ok {
             passed += 1;
         }
@@ -223,6 +225,34 @@ pub async fn eval(cases_path: &Path, url: Option<String>) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Where the eval cases live: an explicit `--cases` wins; otherwise
+/// `evals/cases.json` in the current directory, falling back to the started
+/// runner's recorded bundle directory (so `agentos eval` works from wherever
+/// `agentos start` was run).
+pub fn resolve_cases_path(
+    explicit: Option<PathBuf>,
+    cwd: &Path,
+    state_plugin_dir: Option<&Path>,
+) -> Result<PathBuf> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+    let local = cwd.join("evals/cases.json");
+    if local.is_file() {
+        return Ok(local);
+    }
+    if let Some(plugin_dir) = state_plugin_dir {
+        let in_bundle = plugin_dir.join("evals/cases.json");
+        if in_bundle.is_file() {
+            return Ok(in_bundle);
+        }
+    }
+    bail!(
+        "no eval cases found: looked for {} and the running bundle's evals/cases.json; pass --cases",
+        local.display()
+    )
 }
 
 pub struct DeployOpts {
@@ -311,4 +341,46 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
     }
     let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!sha.is_empty()).then_some(sha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_cases_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn explicit_cases_path_wins() {
+        let path = resolve_cases_path(
+            Some(PathBuf::from("/x/cases.json")),
+            std::path::Path::new("/nowhere"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(path, PathBuf::from("/x/cases.json"));
+    }
+
+    #[test]
+    fn falls_back_from_cwd_to_the_recorded_bundle_dir() {
+        let cwd = tempfile::tempdir().unwrap();
+        let bundle = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(bundle.path().join("evals")).unwrap();
+        std::fs::write(bundle.path().join("evals/cases.json"), "[]").unwrap();
+
+        // cwd has no cases: resolve into the bundle dir from the state file.
+        let resolved = resolve_cases_path(None, cwd.path(), Some(bundle.path())).unwrap();
+        assert_eq!(resolved, bundle.path().join("evals/cases.json"));
+
+        // cwd cases take precedence once present.
+        std::fs::create_dir_all(cwd.path().join("evals")).unwrap();
+        std::fs::write(cwd.path().join("evals/cases.json"), "[]").unwrap();
+        let resolved = resolve_cases_path(None, cwd.path(), Some(bundle.path())).unwrap();
+        assert_eq!(resolved, cwd.path().join("evals/cases.json"));
+    }
+
+    #[test]
+    fn errors_when_nothing_is_found() {
+        let cwd = tempfile::tempdir().unwrap();
+        let err = resolve_cases_path(None, cwd.path(), None).unwrap_err();
+        assert!(err.to_string().contains("--cases"), "{err}");
+    }
 }

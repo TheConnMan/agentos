@@ -58,6 +58,21 @@ pub fn case_passes(case: &EvalCase, transcript: &str) -> bool {
         .all(|needle| haystack.contains(&needle.to_lowercase()))
 }
 
+/// Full pass condition for a turn: it must end in a `final` with status
+/// `done` AND the transcript must match. A classified-failure or interrupted
+/// turn never passes, even if its error text happens to contain the expected
+/// substrings.
+pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
+    let completed = matches!(
+        events.last(),
+        Some(OutboundEvent::Final {
+            status: agentos_aci_protocol::SessionStatus::Done,
+            ..
+        })
+    );
+    completed && case_passes(case, &transcript(events))
+}
+
 /// One rendered result line: check-or-cross, name, duration (design canon).
 pub fn case_line(name: &str, passed: bool, seconds: f64) -> String {
     let mark = if passed { '\u{2713}' } else { '\u{2717}' };
@@ -111,6 +126,22 @@ mod tests {
         assert!(case_passes(&case(&["ALL DONE", "looking"]), &t));
         assert!(!case_passes(&case(&["all done", "missing"]), &t));
         assert!(case_passes(&case(&[]), &t));
+    }
+
+    #[test]
+    fn a_classified_failure_never_passes_even_when_text_matches() {
+        let mut failed = events();
+        failed.pop();
+        failed.push(OutboundEvent::Final {
+            version: PROTOCOL_VERSION.into(),
+            text: "all done".into(),
+            status: SessionStatus::ClassifiedFailure,
+        });
+        assert!(turn_passes(&case(&["all done"]), &events()));
+        assert!(!turn_passes(&case(&["all done"]), &failed));
+        // An empty expectation list is a smoke case: completion is the assert.
+        assert!(turn_passes(&case(&[]), &events()));
+        assert!(!turn_passes(&case(&[]), &failed));
     }
 
     #[test]
