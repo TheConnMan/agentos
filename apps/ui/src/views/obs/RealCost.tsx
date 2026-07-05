@@ -103,7 +103,9 @@ function BudgetPanel({ agentId }: { agentId: string }) {
   const parseField = (raw: string, integer: boolean): number | null | "invalid" => {
     const t = raw.trim();
     if (t === "") return null; // empty -> platform default
-    const n = integer ? Number(t) : parseFloat(t);
+    // Number() (not parseFloat) rejects the whole string: parseFloat("1,000") is
+    // 1 and parseFloat("25usd") is 25, which would silently truncate the cap.
+    const n = Number(t);
     if (!Number.isFinite(n) || n <= 0 || (integer && !Number.isInteger(n))) return "invalid";
     return n;
   };

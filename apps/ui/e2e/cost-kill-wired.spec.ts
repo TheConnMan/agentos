@@ -106,6 +106,21 @@ test("budget rejects a non-positive value client-side", async ({ page }) => {
   await expect(page.getByTestId("budget-form")).toBeVisible();
 });
 
+test("budget rejects a malformed amount instead of truncating it", async ({ page }) => {
+  // parseFloat("1,000") is 1 and parseFloat("25usd") is 25; the strict Number()
+  // parse must reject the whole string rather than silently save a smaller cap.
+  await stubL1(page);
+  await openCost(page);
+  for (const bad of ["1,000", "25usd"]) {
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByTestId("budget-usd").fill(bad);
+    await page.getByRole("button", { name: "Save budget" }).click();
+    await expect(page.getByTestId("budget-error")).toContainText(/positive/i);
+    await expect(page.getByTestId("budget-form")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
+});
+
 test("budget surfaces a server 422", async ({ page }) => {
   await stubL1(page, { budgetPutStatus: 422 });
   await openCost(page);
