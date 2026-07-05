@@ -3,7 +3,16 @@ name = "agentos-api"
 version = "0.0.0"
 description = "AgentOS API server (FastAPI): agents/versions/deployments CRUD, auth, Langfuse proxy"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.7",
+    "httpx>=0.28",
+]
 
 [build-system]
 requires = ["hatchling"]
