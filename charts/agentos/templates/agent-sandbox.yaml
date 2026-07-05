@@ -89,7 +89,8 @@ metadata:
     app.kubernetes.io/component: agent-sandbox
 spec:
   replicas: {{ .Values.agentSandbox.warmPool.replicas }}
-  updateStrategy: {{ .Values.agentSandbox.warmPool.updateStrategy }}
+  updateStrategy:
+    type: {{ .Values.agentSandbox.warmPool.updateStrategy }}
   sandboxTemplateRef:
     name: {{ include "agentos.fullname" . }}-runner
 {{- end }}
