@@ -17,14 +17,26 @@ from .models import (
 from .recorder import SCORE_NAME, IngestionError, LangfuseEvalRecorder
 from .run import load_suite, run_eval_suite
 from .runner import EvalRunner
+from .stream import (
+    EvalReport,
+    EvalReporter,
+    EvalStreamConsumer,
+    EvalWorkItem,
+    load_suite_from_bundle,
+)
 
 __all__ = [
     "SCORE_NAME",
     "EvalCase",
     "EvalCaseResult",
+    "EvalReport",
+    "EvalReporter",
     "EvalRunResult",
     "EvalRunner",
+    "EvalStreamConsumer",
     "EvalSuite",
+    "EvalWorkItem",
+    "load_suite_from_bundle",
     "Grader",
     "GraderKind",
     "IngestionError",

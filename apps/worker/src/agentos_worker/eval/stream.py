@@ -1,0 +1,318 @@
+"""F3 eval-stream consumer: run eval suites requested on the agentos:evals stream.
+
+The K1-API producer XADDs one stream field ``payload`` holding an ``EvalWorkItem``
+JSON (the dispatcher seam convention). This consumer runs a distinct consumer
+group (``agentos-eval-workers``) so it does not compete with the runs consumer.
+For each entry it:
+
+  1. fetches the version's immutable bundle from MinIO by ``bundle_ref`` and loads
+     the suite from the bundle's own ``evals/cases.json`` (the same shape the CLI's
+     ``agentos eval`` reads); the ``suite`` field names it and tags Langfuse;
+  2. runs the suite against the runner: ``target_url`` if given (the dev/test
+     shortcut), otherwise provisions a sandbox for the version via the G1
+     substrate (the same boot env F2 uses) and tears it down in a finally;
+  3. records per-case scores to Langfuse (keyed by version, the shape the matrix
+     endpoint reads) and POSTs a summary to the platform API's ``/evals/report``.
+
+Delivery semantics: an entry is XACKed only after the report POST attempt
+completes (success, or terminally failed after bounded retries, logged). A worker
+crash before that attempt leaves the entry pending, so the next redelivery re-runs
+it -- an eval is never lost to a mid-run crash. A malformed payload cannot be
+processed on any redelivery, so it is logged and acked (a poison-pill drop). A
+missing/corrupt bundle or a provisioning failure is a failed run reported and
+acked, not a crash; a failing eval case is a failed count in the report.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import logging
+import tarfile
+import tempfile
+import uuid
+import zipfile
+from pathlib import Path
+from typing import Any, cast
+
+import httpx
+from aci_protocol import Budget
+from pydantic import BaseModel
+from redis.asyncio import Redis
+from redis.exceptions import ResponseError
+
+from ..binding import BUDGET_ENV, BUNDLE_REF_ENV, PLUGIN_DIR_ENV, SESSION_ID_ENV
+from ..bundle_store import BundleStore
+from ..config import WorkerConfig
+from ..sandbox import SandboxSubstrate
+from ..sandbox.types import SandboxError
+from .models import EvalRunResult, EvalSuite
+from .recorder import LangfuseEvalRecorder
+from .run import run_eval_suite
+
+logger = logging.getLogger(__name__)
+
+STREAM_PAYLOAD_FIELD = "payload"
+StreamEntry = tuple[str, dict[str, str]]
+
+
+class EvalWorkItem(BaseModel):
+    """One eval request from the agentos:evals stream (the K1-API seam)."""
+
+    agent_id: uuid.UUID
+    version_id: uuid.UUID
+    sha: str
+    suite: str
+    bundle_ref: str | None = None
+    target_url: str | None = None
+    requested_at: str
+
+    @classmethod
+    def from_stream_fields(cls, fields: dict[str, str]) -> EvalWorkItem:
+        return cls.model_validate_json(fields[STREAM_PAYLOAD_FIELD])
+
+
+class EvalReport(BaseModel):
+    """The summary POSTed to the platform API for the GitHub check."""
+
+    repo_full_name: str
+    sha: str
+    passed_count: int
+    total: int
+    target_url: str | None = None
+
+
+class EvalReporter:
+    """POSTs an EvalReport to the platform API's /evals/report, with retries."""
+
+    def __init__(
+        self,
+        *,
+        api_base_url: str,
+        api_key: str,
+        client: httpx.AsyncClient,
+        max_attempts: int = 3,
+        backoff_base_s: float = 0.5,
+    ) -> None:
+        self._url = f"{api_base_url.rstrip('/')}/evals/report"
+        self._headers = {"X-API-Key": api_key} if api_key else {}
+        self._client = client
+        self._max_attempts = max_attempts
+        self._backoff_base_s = backoff_base_s
+
+    async def report(self, report: EvalReport) -> bool:
+        """Attempt the report POST with bounded retries. True on success; False
+        when terminally failed (logged) -- either way the caller may ack."""
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                resp = await self._client.post(
+                    self._url, json=report.model_dump(), headers=self._headers
+                )
+                resp.raise_for_status()
+                return True
+            except httpx.HTTPError as exc:
+                if attempt >= self._max_attempts:
+                    logger.error(
+                        "eval report POST failed terminally for %s@%s: %s",
+                        report.repo_full_name,
+                        report.sha,
+                        exc,
+                    )
+                    return False
+                await asyncio.sleep(self._backoff_base_s * (2 ** (attempt - 1)))
+        return False
+
+
+def load_suite_from_bundle(data: bytes, suite_name: str) -> EvalSuite | None:
+    """Extract the bundle archive and load its evals/cases.json as an EvalSuite,
+    named with ``suite_name`` (the payload's authoritative name / Langfuse tag).
+    Returns None on a corrupt archive or a missing/invalid suite file."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            _safe_extract(data, dest)
+            cases = next(
+                (p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None
+            )
+            if cases is None:
+                return None
+            loaded = EvalSuite.model_validate_json(cases.read_text())
+    except Exception:
+        logger.exception("could not load eval suite from bundle")
+        return None
+    return EvalSuite(name=suite_name, cases=loaded.cases)
+
+
+def _safe_extract(data: bytes, dest: Path) -> None:
+    if zipfile.is_zipfile(io.BytesIO(data)):
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for name in zf.namelist():
+                if Path(name).is_absolute() or ".." in Path(name).parts:
+                    raise ValueError(f"unsafe path in bundle: {name}")
+            zf.extractall(dest)
+        return
+    for mode in ("r:gz", "r:"):
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
+                tf.extractall(dest, filter="data")
+            return
+        except tarfile.TarError:
+            continue
+    raise ValueError("bundle is not a recognized zip or tar archive")
+
+
+class EvalStreamConsumer:
+    """Reads agentos:evals, runs each suite, records, reports, then acks."""
+
+    def __init__(
+        self,
+        *,
+        redis: Redis,
+        config: WorkerConfig,
+        bundle_store: BundleStore,
+        substrate: SandboxSubstrate,
+        reporter: EvalReporter,
+        recorder: LangfuseEvalRecorder,
+        repo_lookup: Any,
+    ) -> None:
+        self._redis = redis
+        self._config = config
+        self._bundles = bundle_store
+        self._substrate = substrate
+        self._reporter = reporter
+        self._recorder = recorder
+        self._repo_lookup = repo_lookup
+        self._stop = asyncio.Event()
+
+    async def ensure_group(self) -> None:
+        try:
+            await self._redis.xgroup_create(
+                self._config.eval_stream,
+                self._config.eval_consumer_group,
+                id="0",
+                mkstream=True,
+            )
+        except ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    async def run(self) -> None:
+        await self.ensure_group()
+        while not self._stop.is_set():
+            resp = await self._redis.xreadgroup(
+                self._config.eval_consumer_group,
+                self._config.eval_consumer_name,
+                {self._config.eval_stream: ">"},
+                count=self._config.read_count,
+                block=self._config.read_block_ms,
+            )
+            if not resp:
+                continue
+            streams = cast("list[tuple[str, list[StreamEntry]]]", resp)
+            for _stream, entries in streams:
+                for entry_id, fields in entries:
+                    await self._handle(entry_id, fields)
+
+    async def _handle(self, entry_id: str, fields: dict[str, str]) -> None:
+        try:
+            item = EvalWorkItem.from_stream_fields(fields)
+        except Exception:
+            # Poison pill: unprocessable on any redelivery, so ack and drop.
+            logger.exception("malformed eval work item %s; acking as poison", entry_id)
+            await self._ack(entry_id)
+            return
+        try:
+            result = await self._run_and_report(item)
+            logger.info("eval %s @ %s: %s", item.suite, item.sha, result.summary())
+        except Exception:
+            # An unexpected error before the report attempt: leave pending so a
+            # redelivery re-runs it (an eval must not be lost to a crash).
+            logger.exception("eval processing failed for %s; left pending", entry_id)
+            return
+        await self._ack(entry_id)
+
+    async def _run_and_report(self, item: EvalWorkItem) -> EvalRunResult:
+        repo = await self._repo_lookup.repo_full_name(item.agent_id)
+        suite = await self._load_suite(item)
+        if suite is None:
+            return await self._report_failed(item, repo, "unresolvable suite/bundle")
+
+        base_url, release_key = await self._acquire_target(item)
+        if base_url is None:
+            return await self._report_failed(item, repo, "runner provisioning failed")
+        try:
+            result = await run_eval_suite(
+                suite, base_url=base_url, version=item.sha, recorder=self._recorder
+            )
+        finally:
+            if release_key is not None:
+                await asyncio.to_thread(self._substrate.release, release_key)
+
+        await self._report(item, repo, result)
+        return result
+
+    async def _load_suite(self, item: EvalWorkItem) -> EvalSuite | None:
+        if item.bundle_ref is None:
+            return None
+        try:
+            data = await asyncio.to_thread(self._bundles.get, item.bundle_ref)
+        except Exception:
+            logger.exception("could not fetch bundle %s", item.bundle_ref)
+            return None
+        return load_suite_from_bundle(data, item.suite)
+
+    async def _acquire_target(self, item: EvalWorkItem) -> tuple[str | None, str | None]:
+        if item.target_url is not None:
+            return item.target_url, None  # dev/test shortcut: eval a given runner
+        release_key = f"eval-{uuid.uuid4().hex}"
+        try:
+            handle = await asyncio.to_thread(
+                self._substrate.claim, release_key, env=self._boot_env(item)
+            )
+        except SandboxError:
+            logger.exception("could not provision a runner for eval %s", item.sha)
+            return None, None
+        return handle.base_url, release_key
+
+    def _boot_env(self, item: EvalWorkItem) -> dict[str, str]:
+        budget = Budget(
+            max_output_tokens_per_run=self._config.default_max_output_tokens_per_run,
+            max_usd_per_day=self._config.default_max_usd_per_day,
+        )
+        env = {
+            BUDGET_ENV: budget.model_dump_json(),
+            SESSION_ID_ENV: f"eval-{item.version_id}",
+            PLUGIN_DIR_ENV: self._config.bundle_plugin_dir,
+        }
+        if item.bundle_ref is not None:
+            env[BUNDLE_REF_ENV] = item.bundle_ref
+        return env
+
+    async def _report_failed(
+        self, item: EvalWorkItem, repo: str | None, reason: str
+    ) -> EvalRunResult:
+        logger.error("eval %s @ %s failed: %s", item.suite, item.sha, reason)
+        result = EvalRunResult(version=item.sha, suite=item.suite, results=[])
+        await self._report(item, repo, result)
+        return result
+
+    async def _report(
+        self, item: EvalWorkItem, repo: str | None, result: EvalRunResult
+    ) -> None:
+        await self._reporter.report(
+            EvalReport(
+                repo_full_name=repo or str(item.agent_id),
+                sha=item.sha,
+                passed_count=result.passed_count,
+                total=result.total,
+                target_url=item.target_url,
+            )
+        )
+
+    async def _ack(self, entry_id: str) -> None:
+        await self._redis.xack(
+            self._config.eval_stream, self._config.eval_consumer_group, entry_id
+        )
