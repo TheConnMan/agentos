@@ -2,6 +2,18 @@
 
 Guidance for agents implementing tasks in this repo. Relay is the project codename; `agentos` is the product-surface name (bot handle, CLI binary). The build is a fleet of individually-verifiable background jobs along the DAG in `docs/build-orchestration-plan.md` §4; read that file and `docs/mvp-build-plan.md` before starting a task. Every task owns one directory boundary and must verify its own work with no human in the loop.
 
+## Worktree protocol (mandatory for every task agent)
+
+Concurrent agents share one `.git`; the primary checkout at the repo root is NOT yours. Before your first edit:
+
+```bash
+git -C /home/theconnman/git/curietech/agentos worktree add \
+  /home/theconnman/git/curietech/agentos-<taskid> -b task/<taskid>-<desc> main
+cd /home/theconnman/git/curietech/agentos-<taskid> && uv sync
+```
+
+Work exclusively in your worktree. Never run `git checkout`, `commit`, or `add` in the primary checkout. Stage only paths you own (never `git add -A`). If you changed dependencies, regenerate `uv.lock` in your own worktree (`uv lock`). The orchestrator merges your branch into main and removes your worktree; do not merge or delete branches yourself.
+
 ## Monorepo layout and directory ownership
 
 One task owns one directory; two agents never edit the same directory.
