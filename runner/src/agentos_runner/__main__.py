@@ -17,6 +17,7 @@ from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_plugins
+from .sdk_auth import resolve_model_credential
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
@@ -58,8 +59,14 @@ def build_runner(config: RunnerConfig, *, fake_model: bool = False) -> SessionRu
 
 
 def main() -> None:
-    config = RunnerConfig.from_env(os.environ)
     fake_model = os.environ.get("AGENTOS_FAKE_MODEL", "").lower() in ("1", "true", "yes")
+    # A real session authenticates from the SDK's own credential env; map the
+    # forwarded ACI AGENTOS_CREDENTIALS reference onto it (a no-op for a fake
+    # run, which needs no credential). Raises on an unsupported credential so the
+    # process fails visibly before the port is up rather than after a real call.
+    if not fake_model:
+        resolve_model_credential(os.environ)
+    config = RunnerConfig.from_env(os.environ)
     runner = build_runner(config, fake_model=fake_model)
     app = create_app(runner)
 
