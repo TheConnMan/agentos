@@ -60,4 +60,11 @@ otelCollector:
     limits: { cpu: 250m, memory: 256Mi }
 
 # agentSandbox stays default-off; the G1 e2e enables it explicitly with the
-# backbone toggled down (see charts/agentos/README.md).
+# backbone toggled down (see charts/agentos/README.md). When it IS enabled for
+# dev/e2e, use the locally-built, cluster-imported runner image rather than the
+# GHCR default, so an offline cluster never tries (and fails) to pull.
+agentSandbox:
+  runner:
+    image: agentos-runner
+    tag: latest
+    imagePullPolicy: Never

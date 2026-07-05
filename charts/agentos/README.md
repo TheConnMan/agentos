@@ -52,6 +52,36 @@ App services emit OTLP to the **collector**, never straight to Langfuse
 | MinIO | `minio/minio` (+ `minio/mc` init) | Langfuse object storage; BYO real S3 in prod. |
 | OTel Collector | `otel/opentelemetry-collector-contrib:0.119.0` | OTLP (gRPC+HTTP) -> Langfuse over HTTP. |
 
+## Publishing and pulling images
+
+First-party service images are published to GHCR by the `Release images`
+workflow (`.github/workflows/release.yaml`) on every push to `main`, as
+`ghcr.io/curie-eng/agentos-<service>` tagged with the commit SHA and `latest`.
+Today that is only the runner (`agentos-runner`) -- the only service with a
+Dockerfile and the only first-party image the chart deploys; the others join the
+build matrix once their Dockerfiles land.
+
+The chart defaults `agentSandbox.runner.image` at
+`ghcr.io/curie-eng/agentos-runner` with `imagePullPolicy: IfNotPresent`. A GHCR
+package inherits its repo's visibility, so on a **private** repo the image is not
+anonymously pullable and the node needs credentials. Two supported paths:
+
+- **Private + pull Secret (default posture).** Create a docker-registry Secret
+  in the release namespace and reference it:
+  ```bash
+  kubectl create secret docker-registry ghcr-pull -n <ns> \
+    --docker-server=ghcr.io --docker-username=<gh-user> \
+    --docker-password=<a PAT or token with read:packages>
+  helm install ... --set 'agentSandbox.runner.imagePullSecrets[0].name=ghcr-pull'
+  ```
+  The chart wires `imagePullSecrets` onto the runner SandboxTemplate pod.
+- **Public package.** In the GHCR package settings make the package public; then
+  no pull Secret is needed and `imagePullSecrets` stays empty.
+
+For offline dev/e2e, `-f values-dev.yaml` overrides the runner back to a
+locally-built, cluster-imported `agentos-runner` with `imagePullPolicy: Never`,
+so a disconnected cluster never attempts a GHCR pull.
+
 ## Values surface and the BYO idiom
 
 Keys are **camelCase** (Go templates cannot dot-index hyphenated keys). Every
