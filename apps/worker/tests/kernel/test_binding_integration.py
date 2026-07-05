@@ -94,15 +94,18 @@ def test_unmapped_channel_is_a_polite_drop(make_harness) -> None:
 def test_bound_channel_claims_sandbox_with_boot_env(make_harness) -> None:
     async def go() -> None:
         agent_id = uuid.uuid4()
-        binding = StubBinding({"C-bound": _resolved(agent_id, bundle="bundles/x.zip")})
+        resolved = _resolved(agent_id, bundle="bundles/x.zip")
+        binding = StubBinding({"C-bound": resolved})
         async with make_harness(binding=binding) as h:
             h.runner.default_script = [Final(text="answer", status=DONE)]
-            await h.kernel.process_event(_qevent("hi", channel="C-bound"))
+            await h.kernel.process_event(_qevent("hi", channel="C-bound", thread="th-1"))
 
             assert h.runner.opened == ["hi"]
             assert h.sink.last_text == "answer"
-            # The sandbox was claimed WITH the agent's boot env.
+            # The sandbox was claimed WITH exactly the resolved boot env
+            # (BUNDLE_REF / PLUGIN_DIR / BUDGET / AGENT_ID), unmodified.
             env = h.fake_k8s.claim_envs[-1]
+            assert env == binding.boot_env(resolved, "th-1")
             assert env is not None
             assert env[BUNDLE_REF_ENV] == "bundles/x.zip"
             assert env[AGENT_ID_ENV] == str(agent_id)
@@ -124,6 +127,39 @@ def test_killed_agent_refuses_new_runs(make_harness) -> None:
 
             assert h.runner.opened == []  # refused before opening a turn
             assert h.sink.last_text is not None and "paused" in h.sink.last_text.lower()
+
+    asyncio.run(go())
+
+
+class _StubKillSwitch:
+    """Scripted is_killed: returns the sequence in order (last value repeats)."""
+
+    def __init__(self, killed_sequence: list[bool]) -> None:
+        self._seq = list(killed_sequence)
+        self.calls = 0
+
+    async def is_killed(self, _agent_id: uuid.UUID) -> bool:
+        value = self._seq[min(self.calls, len(self._seq) - 1)]
+        self.calls += 1
+        return value
+
+
+def test_kill_between_precheck_and_register_is_caught(make_harness) -> None:
+    async def go() -> None:
+        agent_id = uuid.uuid4()
+        binding = StubBinding({"C-bound": _resolved(agent_id)})
+        async with make_harness(binding=binding) as h:
+            # Precheck sees the agent alive; by the time the turn is registered the
+            # kill has landed. The post-register recheck must interrupt it.
+            h.kernel.attach_killswitch(_StubKillSwitch([False, True]))
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="working")]
+            h.runner.tail = [Final(text="stopped", status=IDLE)]
+
+            await h.kernel.process_event(_qevent("hi", channel="C-bound", thread="tRace"))
+
+            assert h.runner.interrupts == 1  # the just-opened turn was interrupted
 
     asyncio.run(go())
 

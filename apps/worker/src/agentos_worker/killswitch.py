@@ -76,8 +76,13 @@ class KillSwitch:
             return
         # A resume needs no worker action: the flag is already cleared by the API,
         # so is_killed lets new runs through. Only a kill interrupts live turns.
+        # Guard on_kill so a failed interrupt of one agent does not tear down the
+        # subscriber and miss every later kill event.
         if action == "kill":
-            await self._on_kill(agent_id)
+            try:
+                await self._on_kill(agent_id)
+            except Exception:
+                logger.exception("kill handler failed for agent %s", agent_id)
 
 
 def _as_text(data: object) -> str:

@@ -13,6 +13,15 @@ with no agent, or an agent with no active deployment, resolves to None -- the
 kernel answers with a polite placeholder and drops the event rather than crashing.
 Per-channel dev/prod bot-identity routing (the dispatcher carrying which bot was
 addressed) is a J1/dispatcher refinement noted for later.
+
+Contract (cross-lane, load-bearing): agents.slack_channel MUST store the Slack
+channel ID (e.g. ``C0123ABCD``), because the dispatcher enqueues
+``QueuedSlackEvent.channel`` as the Slack event's channel id, and this resolver
+matches on equality. If the create-agent API/UI stores a channel NAME (``#triage``)
+instead, every real mention resolves to None and is dropped. Storing the id at
+agent creation (or translating name->id there) is the API/UI's responsibility;
+this resolver deliberately does not call the Slack API to translate, to avoid
+coupling the worker to a Slack token.
 """
 
 from __future__ import annotations
@@ -44,7 +53,7 @@ SELECT a.id AS agent_id,
        v.bundle_ref AS bundle_ref
 FROM {schema}.agents a
 JOIN {schema}.deployments d ON d.agent_id = a.id AND d.status = 'active'
-JOIN {schema}.agent_versions v ON v.id = d.version_id
+JOIN {schema}.agent_versions v ON v.id = d.version_id AND v.agent_id = a.id
 WHERE a.slack_channel = :channel
 ORDER BY (d.environment = 'prod') DESC, d.deployed_at DESC
 LIMIT 1
