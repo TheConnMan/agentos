@@ -36,6 +36,7 @@ from .types import (
     RouteState,
     SandboxHandle,
     SubstrateConfig,
+    SuspendedThreadError,
 )
 
 HISTORY_ENV = "AGENTOS_HISTORY_REF"
@@ -65,10 +66,18 @@ class SandboxSubstrate:
         generic sandbox.
         """
 
-        existing = self.lookup(thread_key)
-        if existing is not None:
-            self._affinity.touch(thread_key, self._config.route_ttl_seconds)
-            return existing
+        record = self._affinity.get(thread_key)
+        if record is not None:
+            if record.state is RouteState.SUSPENDED:
+                raise SuspendedThreadError(thread_key)
+            sandbox = self._k8s.get_sandbox(record.handle.sandbox_name)
+            if sandbox is not None and sandbox.operating_mode == "Running":
+                self._affinity.touch(thread_key, self._config.route_ttl_seconds)
+                return record.handle
+            # The sandbox died (or was suspended) out from under a live route:
+            # a stale route must never be handed back, and must not win the
+            # re-claim race below. Evict it and bind fresh.
+            self._evict_stale(thread_key, record)
 
         return self._claim_fresh(thread_key, env=env, state=RouteState.LIVE)
 
@@ -199,15 +208,32 @@ class SandboxSubstrate:
             history_ref=history_ref,
         )
         record = RouteRecord(handle=handle, state=state)
-        if not self._affinity.put_if_absent(thread_key, record, config.route_ttl_seconds):
-            # Lost the race: another worker bound this thread first. Adopt the
-            # winner and retire our claim.
-            self._k8s.delete_claim(name)
+        for _ in range(3):
+            if self._affinity.put_if_absent(thread_key, record, config.route_ttl_seconds):
+                return handle
+            # Lost the race: another worker recorded a route first. Adopt the
+            # winner only if its sandbox is actually alive; a stale route
+            # (dead sandbox) is evicted and the put retried.
             winner = self._affinity.get(thread_key)
-            if winner is not None and winner.state is RouteState.LIVE:
+            if winner is None:
+                continue
+            if winner.state is RouteState.SUSPENDED:
+                self._k8s.delete_claim(name)
+                raise SuspendedThreadError(thread_key)
+            sandbox = self._k8s.get_sandbox(winner.handle.sandbox_name)
+            if sandbox is not None and sandbox.operating_mode == "Running":
+                self._k8s.delete_claim(name)
                 return winner.handle
-            raise NoRouteError(f"route for {thread_key} vanished during claim race")
-        return handle
+            self._evict_stale(thread_key, winner)
+        self._k8s.delete_claim(name)
+        raise NoRouteError(f"could not record a route for {thread_key} after repeated races")
+
+    def _evict_stale(self, thread_key: str, record: RouteRecord) -> None:
+        """Retire a route whose sandbox is gone: delete its claim (idempotent)
+        and drop the route, guarded so a fresher route is never deleted."""
+
+        self._k8s.delete_claim(record.handle.claim_name)
+        self._affinity.delete_if_claim(thread_key, record.handle.claim_name)
 
     def _await_bound(self, claim_name: str) -> str:
         deadline = time.monotonic() + self._config.claim_timeout_seconds

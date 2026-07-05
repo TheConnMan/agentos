@@ -47,7 +47,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 NAMESPACE = os.environ.get("AGENTOS_SANDBOX_E2E_NAMESPACE", "agentos-g1")
-POOL = os.environ.get("AGENTOS_SANDBOX_E2E_POOL", "agentos-g1-agentos-runner-pool")
+# Matches what the chart renders for release agentos-g1 (fullname collapses the
+# repeated chart name): <fullname>-runner-pool.
+POOL = os.environ.get("AGENTOS_SANDBOX_E2E_POOL", "agentos-g1-runner-pool")
 
 
 def _kubectl(*args: str) -> str:

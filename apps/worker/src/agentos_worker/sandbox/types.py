@@ -129,3 +129,9 @@ class ClaimTimeoutError(SandboxError):
 
 class NoRouteError(SandboxError):
     """An operation needed an existing thread route and none was found."""
+
+
+class SuspendedThreadError(SandboxError):
+    """claim() was called on a suspended thread; the kernel must resume()
+    explicitly so the stored history is carried into the replacement runner
+    instead of silently forking a fresh, history-less session."""
