@@ -46,10 +46,15 @@ test("create agent -> Deploy -> version + stored bundle exist via API", async ({
   await page.getByRole("navigation").getByText("Agents", { exact: true }).click();
   await page.getByRole("button", { name: /New agent/ }).click();
   await page.getByTestId("agent-name").fill(agentName);
+  await page.getByTestId("agent-channel").fill("#support");
   await page.getByRole("button", { name: "Deploy" }).click();
 
-  // Success panel proves the whole chain (create agent + version + bundle) ran.
-  await expect(page.getByText(/is live in #revenue-ops/)).toBeVisible({ timeout: 15_000 });
+  // Honest post-deploy panel proves the whole chain (create agent + version +
+  // bundle) ran and names the real next step.
+  const panel = page.getByTestId("deployed-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await expect(panel).toContainText(agentName);
+  await expect(panel).toContainText("#support");
 
   // Verify server-side: the agent, its version, and a stored bundle all exist.
   const agents = await (await api("/agents")).json();
@@ -75,6 +80,7 @@ test("a malformed skill.md surfaces the validator error inline", async ({ page }
   await page.getByRole("navigation").getByText("Agents", { exact: true }).click();
   await page.getByRole("button", { name: /New agent/ }).click();
   await page.getByTestId("agent-name").fill(agentName);
+  await page.getByTestId("agent-channel").fill("C0MALFORMED");
   // No YAML frontmatter -> the plugin_format validator rejects the SKILL.md.
   await page.getByTestId("skill-editor").fill("this skill has no frontmatter at all");
   await page.getByRole("button", { name: "Deploy" }).click();
@@ -82,8 +88,8 @@ test("a malformed skill.md surfaces the validator error inline", async ({ page }
   const errors = page.getByTestId("deploy-errors");
   await expect(errors).toBeVisible({ timeout: 15_000 });
   await expect(errors).toContainText(/skill|frontmatter|manifest/i);
-  // The modal stays open (no success panel) so the user can fix and retry.
-  await expect(page.getByText(/is live in #revenue-ops/)).toHaveCount(0);
+  // The modal stays open and the (new) success panel never appears on failure.
+  await expect(page.getByTestId("deployed-panel")).toHaveCount(0);
 });
 
 test("Runs tab lists the seeded trace and drill-in renders its span tree", async ({ page }) => {

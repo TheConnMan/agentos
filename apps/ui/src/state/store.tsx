@@ -116,6 +116,22 @@ export function reducer(s: AppState, a: Action): AppState {
         deployError: null,
       };
     }
+    case "confettiFire":
+      // Backend-driven deploy success: close the modal, land on Overview, and
+      // fire confetti once, WITHOUT the fixture level/showSuccess machinery (the
+      // wired shell renders its own honest post-deploy panel from real state).
+      return {
+        ...s,
+        modal: null,
+        deploying: false,
+        deployIssues: null,
+        deployError: null,
+        nav: "overview",
+        terminal: false,
+        agentDetail: null,
+        confetti: !s.confettiDone,
+        confettiDone: true,
+      };
     case "deployFailedValidation":
       return { ...s, deploying: false, deployIssues: a.issues, deployError: null };
     case "deployFailed":

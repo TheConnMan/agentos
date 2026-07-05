@@ -1,5 +1,6 @@
 import { C } from "./tokens";
 import { useStore } from "./state/store";
+import { isWired } from "./api/config";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar, DevBanner } from "./components/Topbar";
 import { ModalHost } from "./components/ModalHost";
@@ -17,27 +18,35 @@ import { Settings } from "./views/Settings";
 import { AgentDetail } from "./views/AgentDetail";
 import { Terminal } from "./views/Terminal";
 
+import { WiredOverview } from "./views/wired/WiredOverview";
+import { WiredAgents } from "./views/wired/WiredAgents";
+import { WiredEvals, WiredVersions, WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
+
+// Wired mode renders the backend-driven shell (real agents/onboarding); unwired
+// renders the fixture demo (?state=N). Observability and Settings branch on
+// isWired() internally, so they stay shared. The two worlds never mix.
 function Main() {
   const { state } = useStore();
+  const wired = isWired();
   if (state.terminal) return <Terminal />;
-  if (state.agentDetail) return <AgentDetail />;
+  if (state.agentDetail && !wired) return <AgentDetail />;
   switch (state.nav) {
     case "overview":
-      return <Overview />;
+      return wired ? <WiredOverview /> : <Overview />;
     case "agents":
-      return <Agents />;
+      return wired ? <WiredAgents /> : <Agents />;
     case "evals":
-      return <Evals />;
+      return wired ? <WiredEvals /> : <Evals />;
     case "observability":
       return <Observability />;
     case "versions":
-      return <Versions />;
+      return wired ? <WiredVersions /> : <Versions />;
     case "connections":
-      return <Connections />;
+      return wired ? <WiredConnections /> : <Connections />;
     case "settings":
-      return <Settings />;
+      return wired ? <WiredSettings /> : <Settings />;
     default:
-      return <Overview />;
+      return wired ? <WiredOverview /> : <Overview />;
   }
 }
 

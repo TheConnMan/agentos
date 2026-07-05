@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { C } from "../../tokens";
 import { Button } from "../../primitives";
 import { useStore } from "../../state/store";
+import { useWired } from "../../state/wired";
 import { isWired } from "../../api/config";
 import { createAgent, createVersion, uploadBundle, BundleValidationError } from "../../api/client";
 import { buildBundleZip } from "../../api/bundle";
@@ -25,7 +26,7 @@ tools: [salesforce-mcp, slack]
 
 # When to run
 Trigger when a teammate @-mentions the bot with a deal
-approval request in #revenue-ops.
+approval request in its channel.
 
 # Policy
 - Read the deal from the CRM record, not the message.
@@ -39,11 +40,24 @@ approval request in #revenue-ops.
 - If no matching CRM record exists, refuse and ask for the
   deal id. Do not guess.`;
 
+// The worker resolves agents.slack_channel against the Slack channel ID, not the
+// name, so the field captures the ID. This is a soft check: non-matching values
+// warn but still deploy (the CLI's synthetic channels are arbitrary strings).
+const CHANNEL_ID_RE = /^[CDG][A-Z0-9]+$/;
+
 export function NewAgentModal() {
   const { state, dispatch } = useStore();
+  const wired = useWired();
   const [name, setName] = useState("deal-desk");
+  const [channel, setChannel] = useState("");
   const [skill, setSkill] = useState(SKILL);
   const lineCount = useMemo(() => skill.split("\n").length, [skill]);
+  const channelValue = channel.trim();
+  const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
+  // A blank channel can never match a Slack mention, so wired deploy requires one.
+  // This is distinct from the format warning above, which never blocks: arbitrary
+  // non-ID strings (the CLI's synthetic channels) still deploy — empty does not.
+  const channelBlank = isWired() && channelValue === "";
 
   const deploy = async () => {
     if (state.deploying) return;
@@ -53,13 +67,20 @@ export function NewAgentModal() {
       setTimeout(() => dispatch({ type: "deployDone" }), 700);
       return;
     }
+    if (channelValue === "") return;
     dispatch({ type: "deployStart" });
     try {
-      const agent = await createAgent({ name, slack_channel: "#revenue-ops" });
+      // Store the trimmed ID: a copied ID with surrounding spaces would silently
+      // drop every mention because the worker matches the channel value exactly.
+      const agent = await createAgent({ name, slack_channel: channelValue });
       const version = await createVersion(agent.id, { version_label: "v0.1.0", created_by: "ui" });
       const archive = await buildBundleZip({ agentName: name, versionLabel: version.version_label, skillMd: skill });
       await uploadBundle(agent.id, version.id, archive);
-      dispatch({ type: "deployDone" });
+      // Backend-driven success: record the real next step, refresh the real agent
+      // list, and fire confetti without the fixture level/success-panel machinery.
+      wired.markDeployed({ name, channel: channelValue });
+      wired.refetch();
+      dispatch({ type: "confettiFire" });
     } catch (e) {
       if (e instanceof BundleValidationError) {
         dispatch({ type: "deployFailedValidation", issues: e.issues });
@@ -113,6 +134,34 @@ export function NewAgentModal() {
               marginBottom: 20,
             }}
           />
+          <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>Slack channel ID</label>
+          <input
+            data-testid="agent-channel"
+            value={channel}
+            onChange={(e) => setChannel(e.target.value)}
+            placeholder="C0123ABCD"
+            style={{
+              width: "100%",
+              background: C.input,
+              border: "1px solid " + (channelLooksOff ? C.warn : C.borderStrong),
+              borderRadius: 7,
+              padding: "8px 10px",
+              color: C.text,
+              fontFamily: C.mono,
+              fontSize: 13,
+              marginBottom: 6,
+            }}
+          />
+          {channelLooksOff ? (
+            <div data-testid="channel-warn" style={{ fontSize: 11, color: C.warn, marginBottom: 6 }}>
+              That does not look like a channel ID (C…). Mentions match on the ID, not the name — deploy anyway if you
+              are using the CLI.
+            </div>
+          ) : null}
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 20, lineHeight: 1.5 }}>
+            In Slack: open the channel, click its name, and copy the ID at the bottom of Channel details (or copy the
+            channel link and take the C… segment). Invite the bot there after deploy.
+          </div>
           <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Template</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             {TEMPLATES.map((t, i) => (
@@ -222,7 +271,7 @@ export function NewAgentModal() {
       </div>
       <div style={{ padding: "14px 24px", borderTop: "1px solid " + C.border, display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ fontSize: 12, color: C.muted, fontFamily: C.mono }}>
-          deploys to <span style={{ color: C.text2 }}>#revenue-ops</span>
+          deploys to <span style={{ color: C.text2 }}>{channel.trim() || "your channel"}</span>
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <Button label="Cancel" variant="ghost" onClick={() => dispatch({ type: "closeModal" })} />
@@ -239,7 +288,13 @@ export function NewAgentModal() {
               }}
             />
           ) : (
-            <Button label="Deploy" variant="primary" onClick={() => void deploy()} />
+            <Button
+              label="Deploy"
+              variant="primary"
+              disabled={channelBlank}
+              title={channelBlank ? "Enter the Slack channel ID first" : undefined}
+              onClick={() => void deploy()}
+            />
           )}
         </div>
       </div>
