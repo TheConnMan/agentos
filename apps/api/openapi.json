@@ -7,6 +7,17 @@
             "title": "Name",
             "type": "string"
           },
+          "repo_full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Full Name"
+          },
           "slack_channel": {
             "title": "Slack Channel",
             "type": "string"
@@ -35,6 +46,17 @@
             "title": "Name",
             "type": "string"
           },
+          "repo_full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Full Name"
+          },
           "slack_channel": {
             "title": "Slack Channel",
             "type": "string"
@@ -44,6 +66,7 @@
           "id",
           "name",
           "slack_channel",
+          "repo_full_name",
           "created_at"
         ],
         "title": "AgentOut",
@@ -129,6 +152,28 @@
             "title": "Agent Id",
             "type": "string"
           },
+          "bot_identity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Identity"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
           "deployed_at": {
             "format": "date-time",
             "title": "Deployed At",
@@ -157,6 +202,8 @@
           "agent_id",
           "version_id",
           "environment",
+          "bot_identity",
+          "commit_sha",
           "status",
           "deployed_at"
         ],
@@ -377,6 +424,17 @@
             ],
             "title": "Bundle Sha256"
           },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -402,10 +460,110 @@
           "version_label",
           "bundle_ref",
           "bundle_sha256",
+          "commit_sha",
           "created_by",
           "created_at"
         ],
         "title": "VersionOut",
+        "type": "object"
+      },
+      "WebhookResult": {
+        "description": "The outcome of processing a GitHub webhook event.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "bot_identity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Identity"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "deployment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Id"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Environment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WebhookResult",
         "type": "object"
       }
     }
@@ -1042,6 +1200,65 @@
         "summary": "Get Deployment",
         "tags": [
           "deployments"
+        ]
+      }
+    },
+    "/github/webhook": {
+      "post": {
+        "operationId": "github_webhook_github_webhook_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-github-event",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Github-Event",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-hub-signature-256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Hub-Signature-256"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Webhook",
+        "tags": [
+          "github"
         ]
       }
     },
