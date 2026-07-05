@@ -209,11 +209,17 @@ class EvalStreamConsumer:
 
     async def _read_loop(self) -> None:
         while not self._stop.is_set():
+            # count=1 is load-bearing, not a tunable: this consumer handles an
+            # entry inline (evals are heavy and run sequentially), and only the
+            # entry inside _handle is tracked as in-flight. Claiming a batch would
+            # leave the un-handled tail claimed-but-untracked, where the reclaim
+            # loop could re-run one before the read loop reaches it (a duplicate
+            # report). Peer replicas in the group provide the parallelism instead.
             resp = await self._redis.xreadgroup(
                 self._config.eval_consumer_group,
                 self._config.eval_consumer_name,
                 {self._config.eval_stream: ">"},
-                count=self._config.read_count,
+                count=1,
                 block=self._config.read_block_ms,
             )
             if not resp:
