@@ -54,20 +54,39 @@ can Connect Slack, create an agent, deploy, and reach the live state organically
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
-## Backend wiring (H1b)
+## Backend wiring (H1b + OB1)
 
-Two paths now run against the real B1/B2 API; everything else stays on fixtures.
+Several paths now run against the real API; everything else stays on fixtures.
 
 **Wired (real API):**
-- Create agent + Deploy: the create-agent modal POSTs `/agents` and
+- Create agent + Deploy (H1b): the create-agent modal POSTs `/agents` and
   `/agents/{id}/versions`, packages the editor's skill.md into a plugin bundle
   client-side (jszip), and PUTs it to `/agents/{id}/versions/{vid}/bundle`. The
   bundle validator's 422 `errors[]` render inline under the editor.
-- Runs tab (Observability > Traces): reads `GET /langfuse/traces` and
+- Runs tab (Observability > Traces, H1b): reads `GET /langfuse/traces` and
   `/langfuse/traces/{id}` through the proxy and renders the real span tree.
+- Metrics tab (Observability > Metrics, OB1): summary stat cards from
+  `GET /observability/metrics/summary` plus a selectable time-series chart from
+  `/observability/metrics/series` (metric x granularity). Langfuse-backed, five
+  metrics (runs, latency p95, tokens, cost, error rate). See the divergence note
+  below.
+- Logs tab (Observability > Logs, OB1): the runner-pod log viewer over
+  `GET /observability/runners/{namespace}/{pod}/logs`, with designed distinct
+  states for 503 (no cluster), 404 (pod not found), and 502 (other cluster
+  error).
 
-**Still fixtures:** fleet, evals, versions, metrics, logs, usage, cost, and the
-whole of states 4-6. Swap these next by replacing the `src/fixtures` selectors.
+**OB1 Metrics divergence (deliberate).** The design canon's Metrics tab is a
+Prometheus/PromQL surface (a `rate(...)` query bar, a request-rate hero, and
+p50/tool-calls/active-sessions panels). The real API is Langfuse aggregates over
+five metrics with no Prometheus, so the wired view keeps the card-grid +
+hero-chart layout but drops the PromQL bar (replaced by an honest `langfuse {...}`
+descriptor) and shows only the five API-backed metrics. The per-agent filter is a
+trace-name substring server-side, so it is presented as a plain "name contains"
+filter, not exact matching.
+
+**Still fixtures:** fleet, evals, versions, usage, cost, and states 4-6 for the
+non-wired demo. The fixture Metrics/Logs (the full canon design) still render
+without `?api=1`. Swap the rest by replacing the `src/fixtures` selectors.
 
 **How wiring is gated.** `src/api/config.ts` resolves the mode at runtime, so a
 single build serves both the fixture demo and the live run:
@@ -79,10 +98,14 @@ single build serves both the fixture demo and the live run:
   prefix. This avoids CORS: apps/api has no CORS middleware, so the browser must
   reach it same-origin.
 
-**Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`),
+**Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`
++ the observability calls `getMetricsSummary`/`getMetricSeries`/`getRunnerLogs`),
 `bundle.ts` (jszip packaging + the testable `bundleFileTree`), `hooks.ts`
-(`useTraces`/`useTrace`), `config.ts` (the wiring gate). Deploy failures flow
-through the store reducer actions `deployFailedValidation` / `deployFailed`.
+(`useTraces`/`useTrace`/`useMetricsSummary`/`useMetricSeries`), `config.ts` (the
+wiring gate). Deploy failures flow through the store reducer actions
+`deployFailedValidation` / `deployFailed`. Wired Observability lives in
+`src/views/obs/Real*.tsx` (`RealTraces`, `RealMetrics`, `RealLogs`), branched
+from the fixtures in `Observability.tsx` by `isWired()`.
 
 **Integration E2E (needs the live stack).** With the compose dev stack up and
 apps/api on 8000:
@@ -99,6 +122,14 @@ The integration spec (`e2e/integration/`) seeds a real OTLP trace
 version + stored bundle via the API, checks the malformed-skill.md validator
 error inline, and asserts the Runs list + span-tree drill-in. The default
 `pnpm exec playwright test` excludes it, so stackless CI stays green.
+
+The OB1 wired Metrics/Logs are covered in the **stackless** suite
+(`e2e/observability-wired.spec.ts`) by running the app in `?api=1` mode and
+stubbing the observability endpoints with real-shaped responses via Playwright
+route interception (200 metrics, 503 no-cluster logs, 200 logs) — no backend
+needed. Against a real API on the dev box, runner-logs returns 502 rather than
+503 because a kubeconfig is present (the 401-rejecting cluster), which the UI
+renders as the "Cluster error" state.
 
 Config reference: `.env.example`.
 

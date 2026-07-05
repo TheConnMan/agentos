@@ -171,3 +171,95 @@ export async function getTrace(traceId: string): Promise<TraceTree> {
   });
   return jsonOrThrow<TraceTree>(resp);
 }
+
+// ---- observability (OB1): Langfuse-backed metrics + runner-pod log proxy ----
+
+export type MetricKey = "runs" | "latency_p95_seconds" | "tokens" | "cost_usd" | "error_rate";
+export type Granularity = "hour" | "day" | "week";
+
+export interface MetricsSummary {
+  start: string;
+  end: string;
+  runs: number;
+  latency_p95_seconds: number;
+  tokens: number;
+  cost_usd: number;
+  error_rate: number;
+}
+
+export interface MetricPoint {
+  ts: string;
+  value: number;
+}
+
+export interface MetricSeries {
+  metric: string;
+  granularity: string;
+  start: string;
+  end: string;
+  points: MetricPoint[];
+}
+
+export interface PodLogs {
+  namespace: string;
+  pod: string;
+  container: string | null;
+  logs: string;
+}
+
+// The per-agent filter is a trace-name substring server-side, so it is passed as
+// a plain `agent` query param, not a promise of exact matching.
+export interface MetricFilter {
+  environment?: string;
+  agent?: string;
+}
+
+function query(params: Record<string, string | number | boolean | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function getMetricsSummary(filter: MetricFilter = {}): Promise<MetricsSummary> {
+  const resp = await fetch(url(`/observability/metrics/summary${query({ ...filter })}`), {
+    headers: headers(),
+  });
+  return jsonOrThrow<MetricsSummary>(resp);
+}
+
+export async function getMetricSeries(
+  metric: MetricKey,
+  granularity: Granularity,
+  filter: MetricFilter = {},
+): Promise<MetricSeries> {
+  const resp = await fetch(
+    url(`/observability/metrics/series${query({ metric, granularity, ...filter })}`),
+    { headers: headers() },
+  );
+  return jsonOrThrow<MetricSeries>(resp);
+}
+
+export interface RunnerLogsQuery {
+  container?: string;
+  tail_lines?: number;
+  previous?: boolean;
+}
+
+// Fetch runner-pod logs. Non-2xx throws ApiError carrying the status so the view
+// can render distinct states: 503 (no cluster), 404 (missing pod), 502 (other).
+export async function getRunnerLogs(
+  namespace: string,
+  pod: string,
+  opts: RunnerLogsQuery = {},
+): Promise<PodLogs> {
+  const resp = await fetch(
+    url(
+      `/observability/runners/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs${query({ ...opts })}`,
+    ),
+    { headers: headers() },
+  );
+  return jsonOrThrow<PodLogs>(resp);
+}
