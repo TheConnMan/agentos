@@ -75,10 +75,12 @@ class RunTracer:
         with self._tracer.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
             root.set_attribute("langfuse.trace.name", trace_name)
             with self._tracer.start_as_current_span("llm.generation") as gen:
-                if model:
-                    gen.set_attribute("gen_ai.request.model", model)
-                    gen.set_attribute("model", model)
-                yield _GenerationSpan(self._tracer, gen)
+                span = _GenerationSpan(self._tracer, gen)
+                # Stamp the configured model at span open when AGENTOS_MODEL is
+                # set; otherwise the span stays model-less until the SDK reports
+                # the actual model on its first assistant message (record_model).
+                span.record_model(model)
+                yield span
 
     def shutdown(self) -> None:
         """Flush and shut down the exporter if one was configured."""
@@ -93,6 +95,25 @@ class _GenerationSpan:
     def __init__(self, tracer: Tracer, span: Any) -> None:
         self._tracer = tracer
         self._span = span
+        self._model_recorded = False
+
+    def record_model(self, model: str | None) -> None:
+        """Stamp the generation model attribute once, first non-empty value wins.
+
+        Langfuse only maps ``llm.generation`` to a GENERATION observation (and so
+        records the ``gen_ai.usage.*`` token counts) when the span carries a model
+        attribute; a model-less span ingests as an untyped SPAN with zero usage.
+        The configured ``AGENTOS_MODEL`` is stamped at span open when set; when it
+        is unset the runner backfills the actual model the SDK reports on its first
+        assistant message, so the generation is typed either way. Only genuinely
+        unknown models leave the attribute absent.
+        """
+
+        if self._model_recorded or not model:
+            return
+        self._span.set_attribute("gen_ai.request.model", model)
+        self._span.set_attribute("model", model)
+        self._model_recorded = True
 
     def record_usage(self, usage: Mapping[str, Any] | None) -> None:
         """Attach gen_ai token-usage attributes from an SDK usage mapping."""
