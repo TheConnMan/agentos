@@ -8,7 +8,9 @@ runnable standalone.
 
 import datetime
 import json
+import time
 import urllib.parse
+import uuid
 from typing import Any
 
 import httpx
@@ -48,10 +50,95 @@ def _window() -> tuple[str, str]:
     return (now - datetime.timedelta(days=90)).isoformat(), now.isoformat()
 
 
+def _seed_cost_bearing_trace() -> tuple[str, float]:
+    """Ingest one trace + generation carrying an explicit cost into Langfuse.
+
+    Keeps the cost assertion hermetic: it verifies against a workload this test
+    created rather than depending on ambient data left by other lanes, which is
+    absent on a fresh instance. Langfuse honours an explicit ``costDetails`` and
+    surfaces it via the totalCost measure, so no model-price table is required.
+    """
+
+    settings = get_settings()
+    ts = datetime.datetime.now(datetime.UTC).isoformat()
+    name = f"metrics-cost-seed-{uuid.uuid4().hex}"
+    trace_id = str(uuid.uuid4())
+    total_cost = 0.0424242
+    batch = {
+        "batch": [
+            {
+                "id": str(uuid.uuid4()),
+                "type": "trace-create",
+                "timestamp": ts,
+                "body": {
+                    "id": trace_id,
+                    "name": name,
+                    "timestamp": ts,
+                    "environment": "default",
+                },
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "generation-create",
+                "timestamp": ts,
+                "body": {
+                    "id": str(uuid.uuid4()),
+                    "traceId": trace_id,
+                    "type": "GENERATION",
+                    "name": "llm.generation",
+                    "startTime": ts,
+                    "endTime": ts,
+                    "model": "claude-opus-4-8",
+                    "environment": "default",
+                    "usageDetails": {"input": 1200, "output": 88, "total": 1288},
+                    "costDetails": {"input": 0.03, "output": 0.0124242, "total": total_cost},
+                },
+            },
+        ]
+    }
+    resp = httpx.post(
+        f"{settings.langfuse_host}/api/public/ingestion",
+        auth=(settings.langfuse_public_key, settings.langfuse_secret_key),
+        json=batch,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    assert not resp.json()["errors"], resp.text
+    return name, total_cost
+
+
+def _await_seeded_cost(name: str, start: str, end: str, floor: float) -> None:
+    """Block until the seeded cost is queryable; Langfuse ingests to ClickHouse
+    asynchronously. Fails (never skips) if it does not land within the budget."""
+
+    for _ in range(45):
+        rows = _lf_metric(
+            {
+                "view": "observations",
+                "metrics": [{"measure": "totalCost", "aggregation": "sum"}],
+                "filters": [
+                    {"column": "traceName", "operator": "=", "value": name, "type": "string"}
+                ],
+                "fromTimestamp": start,
+                "toTimestamp": end,
+            }
+        )
+        got = rows[0].get("sum_totalCost") if rows else None
+        if got is not None and float(got) >= floor - 1e-9:
+            return
+        time.sleep(2)
+    pytest.fail(f"seeded cost for {name!r} never became queryable in Langfuse")
+
+
 def test_summary_matches_langfuse_aggregates(
     client: Any, auth_headers: dict[str, str]
 ) -> None:
+    # Seed our own cost-bearing workload so the assertions do not depend on
+    # ambient data, then wait for Langfuse's async ingestion to reflect it.
+    seed_name, seeded_cost = _seed_cost_bearing_trace()
     start, end = _window()
+    _await_seeded_cost(seed_name, start, end, seeded_cost)
+
     resp = client.get(
         "/observability/metrics/summary",
         params={"start": start, "end": end},
@@ -59,7 +146,7 @@ def test_summary_matches_langfuse_aggregates(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["runs"] > 0  # a real workload exists from the other lanes
+    assert body["runs"] >= 1  # at least the trace we just seeded
 
     runs = _lf_metric(
         {
@@ -79,6 +166,9 @@ def test_summary_matches_langfuse_aggregates(
             "toTimestamp": end,
         }
     )
+    # The endpoint must equal Langfuse's own aggregate, and both must include at
+    # least the cost we seeded (proves a real, non-null cost is reported).
+    assert body["cost_usd"] >= seeded_cost - 1e-9
     assert abs(body["cost_usd"] - float(cost[0]["sum_totalCost"])) < 1e-9
 
 
