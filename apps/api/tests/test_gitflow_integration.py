@@ -5,15 +5,19 @@ webhook payloads are HMAC-signed exactly as GitHub signs them. This exercises
 the real deploy/promote path (git archive -> validate -> store -> deploy row).
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
 import os
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
+from agentos_api import crud
 from agentos_api.config import get_settings
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 SECRET = get_settings().github_webhook_secret
 REPO = "octo/demo-agent"
@@ -84,6 +88,29 @@ def _push_payload(ref: str, sha: str, clone_url: str) -> dict[str, Any]:
         "after": sha,
         "repository": {"full_name": REPO, "clone_url": clone_url},
     }
+
+
+def _insert_partial_version(agent_id: str, sha: str) -> None:
+    """Insert a version row with commit_sha set but no bundle stored.
+
+    Mimics the residue of a prior push that committed the row and then failed
+    before the bundle was stored.
+    """
+
+    async def _run() -> None:
+        engine = create_async_engine(get_settings().database_url)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as session:
+            await crud.create_version_row(
+                session,
+                uuid.UUID(agent_id),
+                version_label=sha[:12],
+                created_by="git-flow",
+                commit_sha=sha,
+            )
+        await engine.dispose()
+
+    asyncio.run(_run())
 
 
 def _register_agent(client: Any, headers: dict[str, str]) -> str:
@@ -160,6 +187,26 @@ def test_main_push_promotes_and_reuses_the_built_version(
         ).json()
     }
     assert envs == {"dev": "@agentos-dev", "prod": "@agentos"}
+
+
+def test_partial_version_is_rebuilt_not_reused(
+    client: Any, auth_headers: dict[str, str], clean_db: None, tmp_path: Path
+) -> None:
+    agent_id = _register_agent(client, auth_headers)
+    clone_url, sha = _build_bare_repo(tmp_path, VALID_FILES)
+    _insert_partial_version(agent_id, sha)
+
+    resp = _post(client, "push", _push_payload("refs/heads/dev", sha, clone_url))
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deployed"
+
+    versions = client.get(
+        f"/agents/{agent_id}/versions", headers=auth_headers
+    ).json()
+    # The partial row was repaired in place (no duplicate) and now has a bundle.
+    assert len(versions) == 1
+    assert versions[0]["commit_sha"] == sha
+    assert versions[0]["bundle_ref"] is not None
 
 
 def test_invalid_signature_is_401(

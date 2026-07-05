@@ -43,6 +43,14 @@ def test_environment_for_ref_maps_dev_and_prod_branches() -> None:
     assert environment_for_ref(None, settings) is None
 
 
+def test_environment_for_ref_requires_exact_head_ref() -> None:
+    # A tag or a nested branch that merely ends in dev/main must not deploy.
+    settings = Settings()
+    assert environment_for_ref("refs/tags/main", settings) is None
+    assert environment_for_ref("refs/heads/feature/dev", settings) is None
+    assert environment_for_ref("refs/heads/topic/main", settings) is None
+
+
 def test_clone_and_archive_refuses_disallowed_scheme() -> None:
     # ext:: is git's arbitrary-command transport; it must be refused before any
     # subprocess runs, regardless of the allowlist.
