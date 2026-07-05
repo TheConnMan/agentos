@@ -46,6 +46,19 @@ the worker, Postgres, MinIO/S3, Langfuse, and GitHub.
   is gone, 502 for any other cluster error. The UI renders each differently
   (`apps/ui/CLAUDE.md`); do not collapse these into a single error shape.
 
+## Migrations: never develop against the shared compose DB
+
+**Alembic migrations must be developed and tested against a disposable
+database (or schema), never the shared `compose.dev.yaml` Postgres.** That
+Postgres is shared state every other lane's test suite reads on setup;
+stamping it with an unmerged revision breaks everyone else's `alembic upgrade
+head` (`Can't locate revision ...`) until your branch merges or you unstamp
+it. This has already bitten two lanes: J1's `0003` migration broke F1's env,
+and L1's `0004` broke main's suite during the K1 merge. Spin up a scratch
+Postgres (a second compose service, a throwaway container, or a fresh
+schema) for migration development; only run migrations against the shared
+compose DB once your revision is merged to main.
+
 ## Config surface
 
 `Settings` (`config.py`, env-driven) covers the Postgres DSN, the bundle
