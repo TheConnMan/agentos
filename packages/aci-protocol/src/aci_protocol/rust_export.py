@@ -156,10 +156,13 @@ def _struct_fields(model: type[BaseModel], skip: set[str], public: bool) -> list
         if field_name in skip:
             continue
         rust = _rust_type(field.annotation)
-        # Any field with a Pydantic default is omittable on the wire, so Rust
-        # accepts it missing too, EXCEPT wire constants (version), which are
-        # mandatory on the wire despite carrying a construction default.
-        if not field.is_required() and not _is_wire_const(field.annotation):
+        if _is_wire_const(field.annotation):
+            # A wire constant (version) is mandatory and value-checked on decode,
+            # matching the NDJSON decoder's exact-match version policy.
+            out.append('    #[serde(deserialize_with = "require_protocol_version")]')
+        elif not field.is_required():
+            # Any other field with a Pydantic default is omittable on the wire,
+            # so Rust accepts it missing too.
             out.append("    #[serde(default)]")
         out.append(f"    {prefix}{_rust_field(field_name)}: {rust},")
     return out
@@ -173,7 +176,11 @@ def _struct(model: type[BaseModel]) -> str:
 
 
 def _tagged_enum(name: str, tag: str, variants: tuple[type[BaseModel], ...]) -> str:
-    lines = [_ENUM_DERIVES, f'#[serde(tag = "{tag}")]', f"pub enum {name} {{"]
+    lines = [
+        _ENUM_DERIVES,
+        f'#[serde(tag = "{tag}", deny_unknown_fields)]',
+        f"pub enum {name} {{",
+    ]
     for model in variants:
         tag_value = get_args(model.model_fields[tag].annotation)[0]
         lines.append(f'    #[serde(rename = "{tag_value}")]')
@@ -183,6 +190,20 @@ def _tagged_enum(name: str, tag: str, variants: tuple[type[BaseModel], ...]) -> 
         lines.append("    },")
     lines.append("}")
     return "\n".join(lines)
+
+
+_VERSION_GUARD = """fn require_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value != PROTOCOL_VERSION {
+        return Err(serde::de::Error::custom(format!(
+            "unsupported protocol version {value:?}; this build speaks {PROTOCOL_VERSION:?}"
+        )));
+    }
+    Ok(value)
+}"""
 
 
 _TESTS = """#[cfg(test)]
@@ -213,6 +234,18 @@ mod tests {
         let decoded: InboundMessage = serde_json::from_str(&encoded).unwrap();
         assert_eq!(message, decoded);
     }
+
+    #[test]
+    fn rejects_off_version_event() {
+        let raw = r#"{"type":"final","version":"9.9.9","text":"x","status":"done"}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_fields() {
+        let raw = r#"{"type":"final","version":"0.1.0","text":"x","status":"done","extra":1}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
+    }
 }
 """
 
@@ -226,6 +259,7 @@ def render_rust() -> str:
         "#![allow(dead_code)]",
         "use serde::{Deserialize, Serialize};",
         f'pub const PROTOCOL_VERSION: &str = "{PROTOCOL_VERSION}";',
+        _VERSION_GUARD,
         _string_enum(
             "SessionStatus",
             tuple(m.value for m in SessionStatus),

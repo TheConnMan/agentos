@@ -8,6 +8,19 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: &str = "0.1.0";
 
+fn require_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value != PROTOCOL_VERSION {
+        return Err(serde::de::Error::custom(format!(
+            "unsupported protocol version {value:?}; this build speaks {PROTOCOL_VERSION:?}"
+        )));
+    }
+    Ok(value)
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum SessionStatus {
     #[serde(rename = "done")]
@@ -65,7 +78,7 @@ pub struct SessionConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum InboundMessage {
     #[serde(rename = "event")]
     Event {
@@ -81,15 +94,17 @@ pub enum InboundMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 pub enum OutboundEvent {
     #[serde(rename = "text_delta")]
     TextDelta {
+        #[serde(deserialize_with = "require_protocol_version")]
         version: String,
         text: String,
     },
     #[serde(rename = "tool_note")]
     ToolNote {
+        #[serde(deserialize_with = "require_protocol_version")]
         version: String,
         text: String,
         #[serde(default)]
@@ -97,6 +112,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "final")]
     Final {
+        #[serde(deserialize_with = "require_protocol_version")]
         version: String,
         text: String,
         #[serde(default)]
@@ -104,6 +120,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "error")]
     ErrorEvent {
+        #[serde(deserialize_with = "require_protocol_version")]
         version: String,
         message: String,
         #[serde(default)]
@@ -111,6 +128,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "side_effect_flag")]
     SideEffectFlag {
+        #[serde(deserialize_with = "require_protocol_version")]
         version: String,
         #[serde(default)]
         tool: Option<String>,
@@ -146,5 +164,17 @@ mod tests {
         let encoded = serde_json::to_string(&message).unwrap();
         let decoded: InboundMessage = serde_json::from_str(&encoded).unwrap();
         assert_eq!(message, decoded);
+    }
+
+    #[test]
+    fn rejects_off_version_event() {
+        let raw = r#"{"type":"final","version":"9.9.9","text":"x","status":"done"}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_fields() {
+        let raw = r#"{"type":"final","version":"0.1.0","text":"x","status":"done","extra":1}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
     }
 }
