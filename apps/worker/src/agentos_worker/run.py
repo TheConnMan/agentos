@@ -70,7 +70,9 @@ def build(
     kernel = Kernel(
         substrate=substrate,
         runner=runner,
-        sink=AsyncSlackSink(config.slack_bot_token),
+        sink=AsyncSlackSink(
+            config.slack_bot_token, base_url=config.slack_api_base_url or None
+        ),
         lock=ThreadLock(
             async_redis,
             ttl_ms=config.lock_ttl_ms,
