@@ -1,0 +1,79 @@
+"""Observability API (OB1): Langfuse-backed metrics + runner-pod log proxy."""
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
+
+from .. import metrics as metrics_service
+from ..auth import require_api_key
+from ..config import get_settings
+from ..deps import LangfuseDep, PodLogReaderDep
+from ..k8s import NoClusterConfigured, PodLogError
+from ..schemas import MetricSeries, MetricsSummary, PodLogs
+
+router = APIRouter(
+    prefix="/observability",
+    tags=["observability"],
+    dependencies=[Depends(require_api_key)],
+)
+
+
+@router.get("/metrics/summary", response_model=MetricsSummary)
+async def metrics_summary(
+    lf: LangfuseDep,
+    start: str | None = None,
+    end: str | None = None,
+    environment: str | None = None,
+    agent: str | None = None,
+) -> MetricsSummary:
+    window = get_settings().metrics_default_window_hours
+    start_iso, end_iso = metrics_service.resolve_window(start, end, window)
+    return await metrics_service.summary(lf, start_iso, end_iso, environment, agent)
+
+
+@router.get("/metrics/series", response_model=MetricSeries)
+async def metrics_series(
+    lf: LangfuseDep,
+    metric: str,
+    start: str | None = None,
+    end: str | None = None,
+    granularity: str = "day",
+    environment: str | None = None,
+    agent: str | None = None,
+) -> MetricSeries:
+    if metric not in metrics_service.ALL_METRICS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"unknown metric {metric!r}; choose one of {metrics_service.ALL_METRICS}",
+        )
+    window = get_settings().metrics_default_window_hours
+    start_iso, end_iso = metrics_service.resolve_window(start, end, window)
+    return await metrics_service.series(
+        lf, metric, start_iso, end_iso, granularity, environment, agent
+    )
+
+
+@router.get("/runners/{namespace}/{pod}/logs", response_model=PodLogs)
+async def runner_logs(
+    namespace: str,
+    pod: str,
+    reader: PodLogReaderDep,
+    container: str | None = None,
+    tail_lines: int | None = None,
+    previous: bool = False,
+) -> PodLogs:
+    try:
+        logs = await run_in_threadpool(
+            reader.read, namespace, pod, container, tail_lines, previous
+        )
+    except NoClusterConfigured as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)
+        ) from exc
+    except PodLogError as exc:
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.status == 404
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(code, str(exc)) from exc
+    return PodLogs(namespace=namespace, pod=pod, container=container, logs=logs)

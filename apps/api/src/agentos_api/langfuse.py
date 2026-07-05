@@ -7,6 +7,7 @@ observation list via parentObservationId linkage, the PT-4-proven pattern (see
 prototypes/observability/read_tree.py).
 """
 
+import json
 from typing import Any
 
 import httpx
@@ -82,3 +83,16 @@ class LangfuseClient:
         )
         observations: list[dict[str, Any]] = body.get("data", [])
         return observations
+
+    async def query_metrics(self, query: dict[str, Any]) -> list[dict[str, Any]]:
+        """Run a Langfuse Metrics API query and return its data rows.
+
+        The query is the Langfuse metrics query object (view/metrics/dimensions/
+        filters/timeDimension/fromTimestamp/toTimestamp); it is sent url-encoded
+        as the ``query`` parameter. Rows key each metric as
+        ``<aggregation>_<measure>`` (e.g. ``count_count``, ``sum_totalCost``).
+        """
+
+        body = await self._get("/api/public/metrics", {"query": json.dumps(query)})
+        rows: list[dict[str, Any]] = body.get("data", [])
+        return rows
