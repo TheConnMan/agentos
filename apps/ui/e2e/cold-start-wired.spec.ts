@@ -60,21 +60,33 @@ test("create-agent -> the real agent appears in the list with its channel, hones
 
   await page.getByRole("button", { name: /New agent/ }).first().click();
   await page.getByTestId("agent-name").fill("support-bot");
-  await page.getByTestId("agent-channel").fill("#support");
+  await page.getByTestId("agent-channel").fill("C01SUPPORT");
   await page.getByRole("button", { name: "Deploy" }).click();
 
   // honest post-deploy panel: real next step, not "replied in 42ms"
   const panel = page.getByTestId("deployed-panel");
   await expect(panel).toBeVisible({ timeout: 10_000 });
   await expect(panel).toContainText("support-bot");
-  await expect(panel).toContainText("#support");
+  await expect(panel).toContainText("C01SUPPORT");
   await expect(page.getByText(/replied to its first ping in 42ms/)).toHaveCount(0);
 
-  // the real agent now shows in the Agents list with its channel
+  // the real agent now shows in the Agents list with its channel id
   await page.getByRole("navigation").getByText("Agents", { exact: true }).click();
   const nameCell = page.getByTestId("agent-name").filter({ hasText: "support-bot" });
   await expect(nameCell).toBeVisible();
-  await expect(page.getByText("#support").first()).toBeVisible();
+  await expect(page.getByText("C01SUPPORT").first()).toBeVisible();
+});
+
+test("a channel that is not an ID warns but still deploys (CLI synthetic channels)", async ({ page }) => {
+  await stubBackend(page);
+  await page.goto("/?api=1");
+  await page.getByRole("button", { name: /New agent/ }).first().click();
+  await page.getByTestId("agent-name").fill("cli-bot");
+  await page.getByTestId("agent-channel").fill("#not-an-id");
+  // soft warning, not a block
+  await expect(page.getByTestId("channel-warn")).toBeVisible();
+  await page.getByRole("button", { name: "Deploy" }).click();
+  await expect(page.getByTestId("deployed-panel")).toBeVisible({ timeout: 10_000 });
 });
 
 test("no fixture agent (deal-desk) leaks anywhere in wired mode", async ({ page }) => {

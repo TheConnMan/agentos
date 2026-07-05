@@ -66,6 +66,27 @@ export function WiredVersions() {
   );
 }
 
+export function WiredUsage() {
+  return (
+    <ComingSoon
+      title="No usage analytics yet"
+      body="Top users, intents, and override rates surface here once there is live traffic. Nothing to show for a fresh workspace."
+    />
+  );
+}
+
+export function WiredSettings() {
+  return (
+    <div>
+      <SectionTitle title="Settings" />
+      <ComingSoon
+        title="Project settings are not wired yet"
+        body="Project name, default model, and provider keys are managed outside the console for now. This view will bind to real settings in a later pass."
+      />
+    </div>
+  );
+}
+
 export function WiredConnections() {
   return (
     <div>

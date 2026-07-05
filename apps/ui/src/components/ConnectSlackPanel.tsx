@@ -34,11 +34,13 @@ const STEPS: { n: number; title: string; body: ReactNode }[] = [
   },
   {
     n: 3,
-    title: "Invite the bot to your channel",
+    title: "Invite the bot and note the channel ID",
     body: (
       <>
-        In the channel you gave the agent, run{" "}
-        <span style={{ fontFamily: C.mono, color: C.text2 }}>/invite @your-bot</span> so it can read and post.
+        In the channel you want the agent to serve, run{" "}
+        <span style={{ fontFamily: C.mono, color: C.text2 }}>/invite @your-bot</span>. Then grab that channel's ID (click
+        the channel name → the ID is at the bottom of Channel details) — you give the agent that ID when you create it,
+        because mentions are matched on the ID, not the name.
       </>
     ),
   },
