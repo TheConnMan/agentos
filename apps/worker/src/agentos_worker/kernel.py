@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -42,7 +43,9 @@ from aci_protocol import (
 )
 from agentos_dispatcher.queue import QueuedSlackEvent
 
+from .binding import BindingResolver
 from .config import WorkerConfig
+from .killswitch import KillSwitch
 from .markers import Markers
 from .runner_client import RunnerClient, RunnerError, TurnStream
 from .sandbox import SandboxSubstrate
@@ -138,6 +141,8 @@ class Kernel:
         lock: ThreadLock,
         markers: Markers,
         config: WorkerConfig,
+        binding: BindingResolver | None = None,
+        killswitch: KillSwitch | None = None,
     ) -> None:
         self._substrate = substrate
         self._runner = runner
@@ -145,6 +150,14 @@ class Kernel:
         self._lock = lock
         self._markers = markers
         self._config = config
+        # Deployment-to-runtime binding and the kill switch are optional: when
+        # absent the kernel runs a generic sandbox (the F1 behavior); when present
+        # it resolves channel -> agent -> bundle/budget and gates killed agents.
+        self._binding = binding
+        self._killswitch = killswitch
+        # Which threads are running which agent, so a kill interrupts the agent's
+        # live turns. Populated while a turn owner streams.
+        self._active_by_agent: dict[uuid.UUID, set[str]] = {}
         # In-process per-thread lock over the route/start critical section only.
         # asyncio.Lock is FIFO, so same-thread events from one worker open/steer
         # the runner in arrival order (ordering preserved under concurrent sends).
@@ -194,10 +207,33 @@ class Kernel:
                 await self._markers.mark_done(event_id)
                 return
 
+            # Deployment-to-runtime binding: resolve which agent/version this
+            # channel runs, and refuse a killed agent. An unmapped channel is a
+            # polite drop, not a crash.
+            boot_env: dict[str, str] | None = None
+            agent_id: uuid.UUID | None = None
+            if self._binding is not None:
+                resolved = await self._binding.resolve(qevent.channel)
+                if resolved is None:
+                    await self._drop_with_message(
+                        qevent, "No agent is configured for this channel yet."
+                    )
+                    return
+                if self._killswitch is not None and await self._killswitch.is_killed(
+                    resolved.agent_id
+                ):
+                    await self._drop_with_message(
+                        qevent,
+                        "This agent is paused by an operator. Try again once it resumes.",
+                    )
+                    return
+                agent_id = resolved.agent_id
+                boot_env = self._binding.boot_env(resolved, thread)
+
             attempt = 0
             while True:
                 attempt += 1
-                outcome = await self._attempt(qevent, release_order)
+                outcome = await self._attempt(qevent, release_order, boot_env, agent_id)
 
                 if outcome.terminal_ok:
                     await self._markers.mark_done(event_id)
@@ -251,10 +287,51 @@ class Kernel:
         await self._runner.interrupt(handle.base_url, reason)
         return True
 
+    def attach_killswitch(self, killswitch: KillSwitch) -> None:
+        """Wire the kill switch after construction (it needs interrupt_agent)."""
+        self._killswitch = killswitch
+
+    async def interrupt_agent(self, agent_id: uuid.UUID) -> int:
+        """Interrupt every live turn belonging to an agent (kill switch). Returns
+        the number of turns signalled. The kill flag stays set (the API owns it),
+        so new runs are refused by the is_killed check until resume."""
+        threads = list(self._active_by_agent.get(agent_id, set()))
+        signalled = 0
+        for thread in threads:
+            if await self.interrupt_thread(thread, f"agent {agent_id} killed by operator"):
+                signalled += 1
+        logger.info("kill: interrupted %d live turn(s) for agent %s", signalled, agent_id)
+        return signalled
+
+    def _register_run(self, agent_id: uuid.UUID | None, thread: str) -> None:
+        if agent_id is not None:
+            self._active_by_agent.setdefault(agent_id, set()).add(thread)
+
+    def _unregister_run(self, agent_id: uuid.UUID | None, thread: str) -> None:
+        if agent_id is None:
+            return
+        threads = self._active_by_agent.get(agent_id)
+        if threads is not None:
+            threads.discard(thread)
+            if not threads:
+                del self._active_by_agent[agent_id]
+
+    async def _drop_with_message(self, qevent: QueuedSlackEvent, message: str) -> None:
+        """Edit the placeholder with a reason and mark the event done (a polite
+        drop for an unmapped channel or a paused agent, never a crash)."""
+        await self._sink.update(
+            channel=qevent.channel, ts=qevent.placeholder_ts, text=message
+        )
+        await self._markers.mark_done(qevent.slack_event_id)
+
     # -- internals ------------------------------------------------------------
 
     async def _attempt(
-        self, qevent: QueuedSlackEvent, release_order: Callable[[], None]
+        self,
+        qevent: QueuedSlackEvent,
+        release_order: Callable[[], None],
+        boot_env: dict[str, str] | None = None,
+        agent_id: uuid.UUID | None = None,
     ) -> TurnOutcome:
         thread = qevent.thread_ts
         event = self._to_event(qevent)
@@ -266,7 +343,7 @@ class Kernel:
         # streaming so a follow-up can steer.
         try:
             async with self._lock.hold(self._config.lock_key(thread)):
-                route = await self._route_and_start(thread, event)
+                route = await self._route_and_start(thread, event, boot_env)
         except (RunnerError, aiohttp.ClientError, TimeoutError, SandboxError) as exc:
             # The turn was never accepted (transient runner 5xx, runner not ready,
             # claim timeout). Convert to a retryable outcome so process_event backs
@@ -296,23 +373,43 @@ class Kernel:
             return TurnOutcome(terminal_ok=True, steered=True)
 
         assert route.handle is not None and route.turn is not None
-        return await self._consume(qevent, route.turn)
+        # Register this owner turn so a kill for its agent interrupts it, then
+        # stream; unregister when the turn ends.
+        self._register_run(agent_id, thread)
+        try:
+            # Close the precheck-vs-register race: a kill that landed between the
+            # is_killed precheck and this registration would have interrupted zero
+            # turns. Recheck now that the turn is registered and interrupt it.
+            if (
+                agent_id is not None
+                and self._killswitch is not None
+                and await self._killswitch.is_killed(agent_id)
+            ):
+                await self.interrupt_thread(thread, f"agent {agent_id} killed by operator")
+            return await self._consume(qevent, route.turn)
+        finally:
+            self._unregister_run(agent_id, thread)
 
-    async def _route_and_start(self, thread: str, event: Event) -> _RouteResult:
+    async def _route_and_start(
+        self, thread: str, event: Event, boot_env: dict[str, str] | None
+    ) -> _RouteResult:
         # claim() adopts the thread's live sandbox and refreshes its route TTL
         # (so a busy thread past route_ttl is not reaped), or claims a warm one /
-        # resumes a suspended one. Then try to steer: a live turn takes the
-        # follow-up; otherwise (fresh sandbox, or the finish-race where the turn
-        # just ended -> 409) we open a new turn on that same sandbox.
-        handle = await self._claim_or_resume(thread)
+        # resumes a suspended one. On a fresh claim the boot env binds the agent's
+        # bundle + budget; on an adopt the live sandbox is already bound, so the
+        # env is ignored. Then try to steer: a live turn takes the follow-up;
+        # otherwise (fresh sandbox, or the finish-race 409) we open a new turn.
+        handle = await self._claim_or_resume(thread, boot_env)
         if await self._runner.steer(handle.base_url, event):
             return _RouteResult(steered=True)
         turn = await self._runner.start_turn(handle.base_url, event)
         return _RouteResult(steered=False, handle=handle, turn=turn)
 
-    async def _claim_or_resume(self, thread: str) -> SandboxHandle:
+    async def _claim_or_resume(
+        self, thread: str, boot_env: dict[str, str] | None
+    ) -> SandboxHandle:
         try:
-            return await asyncio.to_thread(self._substrate.claim, thread)
+            return await asyncio.to_thread(self._substrate.claim, thread, env=boot_env)
         except SuspendedThreadError:
             return await asyncio.to_thread(self._substrate.resume, thread)
 

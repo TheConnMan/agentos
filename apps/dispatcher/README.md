@@ -89,9 +89,11 @@ python -m agentos_dispatcher
 
 ## Runbook: point it at a real Slack workspace (once one exists)
 
-1. Create a Slack app; enable Socket Mode; add bot scopes (`app_mentions:read`,
-   `chat:write`, `im:history`, `im:read`) and subscribe to the `app_mention` and
-   `message.im` events.
+1. Create a Slack app. Fastest path: at <https://api.slack.com/apps> choose
+   "From a manifest" and paste [`slack-app-manifest.yaml`](slack-app-manifest.yaml),
+   which already sets Socket Mode on, the bot scopes (`app_mentions:read`,
+   `chat:write`, `im:history`, `im:read`), and the `app_mention` + `message.im`
+   event subscriptions. (To do it by hand, configure exactly those.)
 2. Generate an App-Level Token with `connections:write` -> `SLACK_APP_TOKEN`
    (`xapp-...`); copy the Bot User OAuth Token -> `SLACK_BOT_TOKEN` (`xoxb-...`).
 3. Set both env vars (plus `VALKEY_*` for the target Valkey) and run

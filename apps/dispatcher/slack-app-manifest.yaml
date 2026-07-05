@@ -1,0 +1,33 @@
+# AgentOS Slack app manifest.
+#
+# Paste this at https://api.slack.com/apps -> Create New App -> From a manifest,
+# to create the app the dispatcher connects to. It encodes exactly what the
+# dispatcher runbook (README "point it at a real workspace") requires: Socket
+# Mode on, the four bot scopes, and the app_mention + message.im event
+# subscriptions. After creating: generate an App-Level Token with
+# connections:write -> SLACK_APP_TOKEN; install to the workspace and copy the
+# Bot User OAuth Token -> SLACK_BOT_TOKEN.
+display_information:
+  name: AgentOS
+  description: Slack-based agents deployed by AgentOS.
+features:
+  bot_user:
+    display_name: agentos
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - im:history
+      - im:read
+settings:
+  socket_mode_enabled: true
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  token_rotation_enabled: false

@@ -11,6 +11,8 @@ dependencies = [
     "aiohttp>=3.11",
     "slack-sdk>=3.43",
     "httpx>=0.28",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
 ]
 
 [build-system]

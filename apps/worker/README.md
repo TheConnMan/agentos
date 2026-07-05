@@ -2,6 +2,42 @@
 
 Owning tasks: **F1** (the prod-hard concurrency kernel: routing rule, finish-race CAS, steer/interrupt, no-retry-after-side-effects, resume-rehydrate), **G1** (Agent Sandbox substrate module: warm pool, thread-to-sandbox affinity, claim/release), **K1** (eval runner module). F1 is single-owner and never split, with an escalated adversarial review roster. Reads Valkey Streams via redis-py consumer groups; drives claimed sandboxes running the D1 runner image.
 
+## F2: deployment binding + kill switch (`agentos_worker.binding` + `agentos_worker.killswitch`)
+
+Wires the kernel to the deployment tables and the L1 kill switch. Both are
+optional on the kernel: absent, it runs a generic sandbox (F1 behavior); present,
+it binds per-channel and gates killed agents.
+
+**Binding** (`binding.py`): on each event, resolve `channel -> agent -> active
+deployment -> version` with one read-only SELECT over the B1/J1/L1 Postgres tables
+(a thin query layer, not the API's ORM, to avoid pulling FastAPI into the worker).
+Prod wins over dev, then most recent. The kernel claims the sandbox with a boot
+env built from the resolution: `AGENTOS_BUDGET` (the agent's
+`max_usd_per_day`/`max_output_tokens_per_run`, platform defaults when NULL),
+`AGENTOS_SESSION_ID`, `AGENTOS_AGENT_ID`, `AGENTOS_PLUGIN_DIR`, and
+`AGENTOS_BUNDLE_REF` (the MinIO key). An unmapped channel is a polite placeholder
+edit and drop, never a crash.
+
+> Handoff: `AGENTOS_BUNDLE_REF` is a MinIO object key; the runner reads
+> `AGENTOS_PLUGIN_DIR` as a local mounted path and does not fetch. Fetching the
+> bundle key into the plugin dir is sandbox provisioning (an init container in the
+> G1 SandboxTemplate / A1 chart), owned there, not by the worker. Per-channel
+> dev/prod bot-identity routing (the dispatcher carrying which bot was addressed)
+> is a J1/dispatcher refinement.
+
+**Kill switch** (`killswitch.py`): subscribes to the L1 Valkey channel
+`agentos:kill-events`; on `kill` for an agent it interrupts that agent's live
+turns (a run registry maps agent -> active threads). New runs are refused while
+the flag `agentos:kill:<agent_id>` is set - the kernel checks the flag before
+opening a turn, which also covers a kill event missed while the subscriber was
+down. `resume` clears the flag (API-side); no worker action needed.
+
+Tests (`apps/worker/tests/binding` + `tests/kernel/test_binding_integration.py`):
+the resolver against the real compose Postgres (channel resolution, prod
+preference, unknown -> None, budget/env); the kill switch against real Valkey
+(flag gate, subscriber dispatch); and kernel-level behaviors (unmapped drop,
+boot-env on claim, killed-agent refusal, kill interrupts a live turn).
+
 ## K1: the eval lane (`agentos_worker.eval`)
 
 Runs an eval suite against a plugin version and records the grid the eval matrix
