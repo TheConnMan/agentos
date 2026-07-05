@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .langfuse import LangfuseClient
+from .storage import BundleStore
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -20,5 +21,11 @@ def get_langfuse(request: Request) -> LangfuseClient:
     return client
 
 
+def get_store(request: Request) -> BundleStore:
+    store: BundleStore = request.app.state.bundle_store
+    return store
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LangfuseDep = Annotated[LangfuseClient, Depends(get_langfuse)]
+StoreDep = Annotated[BundleStore, Depends(get_store)]

@@ -49,6 +49,50 @@
         "title": "AgentOut",
         "type": "object"
       },
+      "Body_upload_bundle_agents__agent_id__versions__version_id__bundle_put": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_bundle_agents__agent_id__versions__version_id__bundle_put",
+        "type": "object"
+      },
+      "BundleOut": {
+        "description": "Result of storing a bundle for a version.",
+        "properties": {
+          "bundle_ref": {
+            "title": "Bundle Ref",
+            "type": "string"
+          },
+          "bundle_sha256": {
+            "title": "Bundle Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "bundle_ref",
+          "bundle_sha256",
+          "size_bytes"
+        ],
+        "title": "BundleOut",
+        "type": "object"
+      },
       "DeploymentCreate": {
         "properties": {
           "agent_id": {
@@ -322,6 +366,17 @@
             ],
             "title": "Bundle Ref"
           },
+          "bundle_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Sha256"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -346,6 +401,7 @@
           "agent_id",
           "version_label",
           "bundle_ref",
+          "bundle_sha256",
           "created_by",
           "created_at"
         ],
@@ -656,6 +712,150 @@
         "summary": "Create Version",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/agents/{agent_id}/versions/{version_id}/bundle": {
+      "get": {
+        "operationId": "download_bundle_agents__agent_id__versions__version_id__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Bundle",
+        "tags": [
+          "bundles"
+        ]
+      },
+      "put": {
+        "operationId": "upload_bundle_agents__agent_id__versions__version_id__bundle_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_bundle_agents__agent_id__versions__version_id__bundle_put"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Bundle",
+        "tags": [
+          "bundles"
         ]
       }
     },
