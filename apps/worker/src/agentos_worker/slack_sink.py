@@ -20,10 +20,18 @@ class SlackSink(Protocol):
 
 
 class AsyncSlackSink:
-    """A SlackSink backed by the Slack Web API (chat.update)."""
+    """A SlackSink backed by the Slack Web API (chat.update).
 
-    def __init__(self, token: str) -> None:
-        self._client = AsyncWebClient(token=token)
+    ``base_url`` overrides the Slack API endpoint when set (e.g. a local Slack
+    stub for the no-Slack middle-mode e2e); unset leaves the SDK default (real
+    Slack), so behavior is unchanged when the override is absent.
+    """
+
+    def __init__(self, token: str, *, base_url: str | None = None) -> None:
+        if base_url:
+            self._client = AsyncWebClient(token=token, base_url=base_url)
+        else:
+            self._client = AsyncWebClient(token=token)
 
     async def update(self, *, channel: str, ts: str, text: str) -> None:
         await self._client.chat_update(channel=channel, ts=ts, text=text)
