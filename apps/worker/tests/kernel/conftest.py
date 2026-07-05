@@ -132,6 +132,7 @@ class FakeK8s:
     namespace: str = "test-ns"
     claims: dict[str, _FakeClaim] = field(default_factory=dict)
     sandboxes: dict[str, _FakeSandbox] = field(default_factory=dict)
+    claim_envs: list[dict[str, str] | None] = field(default_factory=list)
 
     def create_claim(
         self,
@@ -141,6 +142,7 @@ class FakeK8s:
         env: dict[str, str] | None = None,
         labels: dict[str, str] | None = None,
     ) -> None:
+        self.claim_envs.append(env)
         sandbox_name = f"sbx-{name}"
         self.claims[name] = _FakeClaim(
             name=name,
@@ -270,6 +272,8 @@ class Harness:
     runner: FakeRunner
     config: WorkerConfig
     async_redis: AsyncRedis
+    fake_k8s: FakeK8s
+    killswitch: object | None = None
 
 
 @pytest.fixture
@@ -279,7 +283,9 @@ def make_harness(
     """A factory the tests call inside their asyncio.run body: ``make_harness()``.
 
     Closes over the per-test names and the sync Valkey client so tests need no
-    conftest import (which importlib mode makes fragile)."""
+    conftest import (which importlib mode makes fragile). Optional kwargs:
+    ``binding`` (a resolver injected into the kernel) and ``with_killswitch``
+    (build a real KillSwitch wired to the kernel); the rest are config overrides."""
 
     def factory(**overrides: object) -> contextlib.AbstractAsyncContextManager[Harness]:
         return kernel_harness(names, sync_redis, **overrides)
@@ -289,7 +295,12 @@ def make_harness(
 
 @contextlib.asynccontextmanager
 async def kernel_harness(
-    names: dict[str, str], sync_redis: redis.Redis, **config_overrides: object
+    names: dict[str, str],
+    sync_redis: redis.Redis,
+    *,
+    binding: object | None = None,
+    with_killswitch: bool = False,
+    **config_overrides: object,
 ) -> AsyncIterator[Harness]:
     """Assemble a live kernel wired to a fake runner and real Valkey."""
     config = make_config(names, **config_overrides)
@@ -330,9 +341,18 @@ async def kernel_harness(
         ),
         markers=Markers(async_redis, config),
         config=config,
+        binding=binding,  # type: ignore[arg-type]
     )
+    killswitch = None
+    if with_killswitch:
+        from agentos_worker.killswitch import KillSwitch
+
+        killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
+        kernel.attach_killswitch(killswitch)
     try:
-        yield Harness(substrate, kernel, sink, fake_runner, config, async_redis)
+        yield Harness(
+            substrate, kernel, sink, fake_runner, config, async_redis, fake_k8s, killswitch
+        )
     finally:
         with contextlib.suppress(Exception):
             await runner_client.close()
