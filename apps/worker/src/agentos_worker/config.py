@@ -93,6 +93,29 @@ class WorkerConfig(BaseModel):
     runner_connect_timeout_s: float = 10.0
     runner_total_timeout_s: float = 600.0
 
+    # Eval stream (F3): a separate consumer group on agentos:evals runs eval
+    # suites and reports results to the platform API and Langfuse.
+    eval_stream: str = "agentos:evals"
+    eval_consumer_group: str = "agentos-eval-workers"
+    eval_consumer_name: str = Field(default_factory=_default_consumer_name)
+    # MinIO / S3 for plugin bundles (mirrors the API's env names). The consumer
+    # fetches a version's bundle by bundle_ref and loads its evals/ suite.
+    s3_endpoint_url: str = "http://localhost:9002"
+    s3_access_key: str = "minio"
+    s3_secret_key: str = "miniosecret"
+    s3_region: str = "us-east-1"
+    bundle_bucket: str = "agentos-bundles"
+    # Platform API for POST /evals/report. Defaults match the API's dev stack
+    # (README serves it on :8000; its shared dev key is agentos-dev-key).
+    api_base_url: str = "http://localhost:8000"
+    api_key: str = "agentos-dev-key"
+    report_max_attempts: int = 3
+    report_backoff_base_s: float = Field(default=0.5, gt=0)
+    # Langfuse for recording eval scores (the matrix reads them back by version).
+    langfuse_host: str = "http://localhost:3001"
+    langfuse_public_key: str = "pk-lf-agentos-dev"
+    langfuse_secret_key: str = "sk-lf-agentos-dev"
+
     key_prefix: str = "agentos:worker"
 
     def done_key(self, slack_event_id: str) -> str:
@@ -116,6 +139,18 @@ class WorkerConfig(BaseModel):
         _s(values, "database_url", env, "DATABASE_URL")
         _s(values, "db_schema", env, "DB_SCHEMA")
         _s(values, "bundle_plugin_dir", env, "AGENTOS_PLUGIN_DIR")
+        _s(values, "eval_stream", env, "AGENTOS_EVAL_STREAM")
+        _s(values, "eval_consumer_group", env, "AGENTOS_EVAL_CONSUMER_GROUP")
+        _s(values, "s3_endpoint_url", env, "S3_ENDPOINT_URL")
+        _s(values, "s3_access_key", env, "S3_ACCESS_KEY")
+        _s(values, "s3_secret_key", env, "S3_SECRET_KEY")
+        _s(values, "s3_region", env, "S3_REGION")
+        _s(values, "bundle_bucket", env, "BUNDLE_BUCKET")
+        _s(values, "api_base_url", env, "AGENTOS_API_BASE_URL")
+        _s(values, "api_key", env, "AGENTOS_API_KEY")
+        _s(values, "langfuse_host", env, "LANGFUSE_HOST")
+        _s(values, "langfuse_public_key", env, "LANGFUSE_PUBLIC_KEY")
+        _s(values, "langfuse_secret_key", env, "LANGFUSE_SECRET_KEY")
         _s(values, "stream", env, "AGENTOS_STREAM")
         _s(values, "consumer_group", env, "AGENTOS_CONSUMER_GROUP")
         _s(values, "consumer_name", env, "AGENTOS_CONSUMER_NAME")
