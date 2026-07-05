@@ -1,0 +1,105 @@
+{{- if and .Values.agentSandbox.deploy .Values.security.networkPolicy.enabled }}
+{{- $np := .Values.security.networkPolicy }}
+{{/*
+Rail 1: default-deny egress on runner sandboxes, with explicit allows.
+
+These policies select the runner sandbox pods by their component label
+(app.kubernetes.io/component: runner-sandbox, set on the SandboxTemplate
+podTemplate). A pod matched by ANY egress policy is default-deny for egress
+except what some policy explicitly allows -- so the base "deny" policy plus the
+narrow "allow" policies below compose into: DNS + the declared model/MCP egress
+are permitted, and EVERYTHING else (arbitrary internet AND the cloud metadata
+endpoint 169.254.169.254) is denied. Fail-closed: an empty allowedEgress means
+the runner can resolve names but reach nothing outbound until the operator
+declares where the model API and MCP servers live.
+
+A customer CNI that does not enforce NetworkPolicy turns all of this into a
+silent false-pass; the security probe's before/after egress check exists to
+catch exactly that.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner-default-deny-egress
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: runner-sandbox
+  policyTypes: [Egress]
+  # No egress rules == deny all egress for the selected pods.
+{{- if $np.allowDNS }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner-allow-dns
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: runner-sandbox
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dnsNamespace }}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{- end }}
+{{- if $np.allowedEgress }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner-allow-egress
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: runner-sandbox
+  policyTypes: [Egress]
+  egress:
+    {{- range $np.allowedEgress }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      {{- with .ports }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}
+{{- if $np.lockIngress }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner-ingress
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: runner-sandbox
+  policyTypes: [Ingress]
+  # The worker dials the claimed sandbox on the ACI port; allow ingress to it
+  # from within the release namespace only.
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.agentSandbox.runner.port }} }
+{{- end }}
+{{- end }}
