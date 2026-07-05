@@ -104,6 +104,20 @@ spec:
     - to:
         - ipBlock:
             cidr: {{ .cidr }}
+            {{- /* NetworkPolicy allows are additive, so a broad allow (the
+                   realistic 0.0.0.0/0 model-API case) would re-permit the cloud
+                   metadata endpoint that rail 1 blocks. Carve it back out with
+                   `except`. Kubernetes requires except to be a SUBSET of cidr,
+                   so we only auto-add it to the all-egress case; a narrower CIDR
+                   cannot contain 169.254.169.254 anyway. Operators can override
+                   with an explicit `except:` list per entry. */}}
+            {{- if .except }}
+            except:
+              {{- toYaml .except | nindent 14 }}
+            {{- else if or (eq .cidr "0.0.0.0/0") (eq .cidr "::/0") }}
+            except:
+              - 169.254.169.254/32
+            {{- end }}
       {{- with .ports }}
       ports:
         {{- toYaml . | nindent 8 }}

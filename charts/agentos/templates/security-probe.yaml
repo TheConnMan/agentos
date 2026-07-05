@@ -23,7 +23,9 @@ metadata:
   annotations:
     "helm.sh/hook": test
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation
+    # Privileged RBAC (can read namespace secrets) must NOT outlive the test:
+    # clean up whether the test succeeds or fails, and re-create on the next run.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -34,7 +36,9 @@ metadata:
   annotations:
     "helm.sh/hook": test
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation
+    # Privileged RBAC (can read namespace secrets) must NOT outlive the test:
+    # clean up whether the test succeeds or fails, and re-create on the next run.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 rules:
   - apiGroups: [""]
     resources: [pods]
@@ -70,7 +74,8 @@ metadata:
   annotations:
     "helm.sh/hook": test
     "helm.sh/hook-weight": "-4"
-    "helm.sh/hook-delete-policy": before-hook-creation
+    # Privileged RBAC binding: clean up on success or failure (see the Role/SA).
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -172,6 +177,8 @@ spec:
               value: {{ include "agentos.fullname" . }}-egress-probe
             - name: NETSHOOT
               value: {{ .Values.security.probe.netshootImage | quote }}
+            - name: BUSYBOX
+              value: {{ .Values.security.probe.busyboxImage | quote }}
             - name: ALLOW_ALL_NP
               value: {{ include "agentos.fullname" . }}-security-probe-allow-all
             # The egress-probe carries this release's runner-sandbox labels (so the
@@ -284,7 +291,7 @@ spec:
               else
                 gpod="sp-gvisor-check"
                 kubectl delete pod "$gpod" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
-                admit=$(kubectl run "$gpod" -n "$NS" --image=busybox:1.36 --restart=Never \
+                admit=$(kubectl run "$gpod" -n "$NS" --image="$BUSYBOX" --restart=Never \
                   --overrides="{\"spec\":{\"runtimeClassName\":\"${RC}\"}}" \
                   --command -- sh -c 'uname -a; sleep 3' 2>&1 || true)
                 if echo "$admit" | grep -qi 'not found'; then
