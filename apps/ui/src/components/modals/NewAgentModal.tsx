@@ -26,7 +26,7 @@ tools: [salesforce-mcp, slack]
 
 # When to run
 Trigger when a teammate @-mentions the bot with a deal
-approval request in #revenue-ops.
+approval request in its channel.
 
 # Policy
 - Read the deal from the CRM record, not the message.
@@ -40,13 +40,19 @@ approval request in #revenue-ops.
 - If no matching CRM record exists, refuse and ask for the
   deal id. Do not guess.`;
 
+// The worker resolves agents.slack_channel against the Slack channel ID, not the
+// name, so the field captures the ID. This is a soft check: non-matching values
+// warn but still deploy (the CLI's synthetic channels are arbitrary strings).
+const CHANNEL_ID_RE = /^[CDG][A-Z0-9]+$/;
+
 export function NewAgentModal() {
   const { state, dispatch } = useStore();
   const wired = useWired();
   const [name, setName] = useState("deal-desk");
-  const [channel, setChannel] = useState("#agentos");
+  const [channel, setChannel] = useState("");
   const [skill, setSkill] = useState(SKILL);
   const lineCount = useMemo(() => skill.split("\n").length, [skill]);
+  const channelLooksOff = channel.trim() !== "" && !CHANNEL_ID_RE.test(channel.trim());
 
   const deploy = async () => {
     if (state.deploying) return;
@@ -120,16 +126,16 @@ export function NewAgentModal() {
               marginBottom: 20,
             }}
           />
-          <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>Slack channel</label>
+          <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>Slack channel ID</label>
           <input
             data-testid="agent-channel"
             value={channel}
             onChange={(e) => setChannel(e.target.value)}
-            placeholder="#channel"
+            placeholder="C0123ABCD"
             style={{
               width: "100%",
               background: C.input,
-              border: "1px solid " + C.borderStrong,
+              border: "1px solid " + (channelLooksOff ? C.warn : C.borderStrong),
               borderRadius: 7,
               padding: "8px 10px",
               color: C.text,
@@ -138,8 +144,15 @@ export function NewAgentModal() {
               marginBottom: 6,
             }}
           />
-          <div style={{ fontSize: 11, color: C.muted, marginBottom: 20 }}>
-            Invite the bot to this channel after deploy.
+          {channelLooksOff ? (
+            <div data-testid="channel-warn" style={{ fontSize: 11, color: C.warn, marginBottom: 6 }}>
+              That does not look like a channel ID (C…). Mentions match on the ID, not the name — deploy anyway if you
+              are using the CLI.
+            </div>
+          ) : null}
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 20, lineHeight: 1.5 }}>
+            In Slack: open the channel, click its name, and copy the ID at the bottom of Channel details (or copy the
+            channel link and take the C… segment). Invite the bot there after deploy.
           </div>
           <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Template</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -250,7 +263,7 @@ export function NewAgentModal() {
       </div>
       <div style={{ padding: "14px 24px", borderTop: "1px solid " + C.border, display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ fontSize: 12, color: C.muted, fontFamily: C.mono }}>
-          deploys to <span style={{ color: C.text2 }}>{channel || "#channel"}</span>
+          deploys to <span style={{ color: C.text2 }}>{channel.trim() || "your channel"}</span>
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <Button label="Cancel" variant="ghost" onClick={() => dispatch({ type: "closeModal" })} />

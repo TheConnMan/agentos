@@ -101,11 +101,15 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
     </Card>
   );
   const s = summary.data;
+  // A telemetry fetch failure must not read as "0 runs" — show a neutral dash so
+  // an observability outage is never reported as no traffic.
+  const metric = (fmt: (d: NonNullable<typeof s>) => string): string =>
+    s ? fmt(s) : summary.loading ? "…" : "—";
   const stats: [string, string][] = [
     ["Agents", String(agents.length)],
-    ["Runs (7d)", s ? String(s.runs) : summary.loading ? "…" : "0"],
-    ["Latency p95", s ? s.latency_p95_seconds.toFixed(2) + "s" : "—"],
-    ["Cost (7d)", s ? "$" + s.cost_usd.toFixed(2) : "—"],
+    ["Runs (7d)", metric((d) => String(d.runs))],
+    ["Latency p95", metric((d) => d.latency_p95_seconds.toFixed(2) + "s")],
+    ["Cost (7d)", metric((d) => "$" + d.cost_usd.toFixed(2))],
   ];
   const recent = traces.data ?? [];
 
@@ -133,6 +137,8 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
           </div>
           {traces.loading ? (
             <Notice>Loading…</Notice>
+          ) : traces.error ? (
+            <Notice>Could not load traces: {traces.error}</Notice>
           ) : recent.length === 0 ? (
             <Notice>No runs yet. Mention an agent in Slack to generate the first trace.</Notice>
           ) : (

@@ -20,7 +20,7 @@ import { Terminal } from "./views/Terminal";
 
 import { WiredOverview } from "./views/wired/WiredOverview";
 import { WiredAgents } from "./views/wired/WiredAgents";
-import { WiredEvals, WiredVersions, WiredConnections } from "./views/wired/WiredStubs";
+import { WiredEvals, WiredVersions, WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
 
 // Wired mode renders the backend-driven shell (real agents/onboarding); unwired
 // renders the fixture demo (?state=N). Observability and Settings branch on
@@ -44,7 +44,7 @@ function Main() {
     case "connections":
       return wired ? <WiredConnections /> : <Connections />;
     case "settings":
-      return <Settings />;
+      return wired ? <WiredSettings /> : <Settings />;
     default:
       return wired ? <WiredOverview /> : <Overview />;
   }

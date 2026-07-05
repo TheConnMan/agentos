@@ -12,6 +12,7 @@ import { RealCost } from "./obs/RealCost";
 import { MemoryStub } from "./obs/MemoryStub";
 import { Usage } from "./obs/Usage";
 import { Cost } from "./obs/Cost";
+import { WiredUsage } from "./wired/WiredStubs";
 
 const TABS: [ObsTab, string][] = [
   ["traces", "Traces"],
@@ -61,7 +62,7 @@ export function Observability() {
       content = <MemoryStub />;
       break;
     case "usage":
-      content = <Usage />;
+      content = isWired() ? <WiredUsage /> : <Usage />;
       break;
     case "cost":
       content = isWired() ? <RealCost /> : <Cost />;
