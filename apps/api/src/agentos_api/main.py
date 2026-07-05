@@ -8,13 +8,23 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
+import redis.asyncio as redis
 from fastapi import FastAPI
 
 from .config import get_settings
 from .db import create_engine, create_sessionmaker
 from .k8s import build_pod_log_reader
+from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
-from .routers import agents, bundles, deployments, github, observability, runs
+from .routers import (
+    agents,
+    bundles,
+    control,
+    deployments,
+    github,
+    observability,
+    runs,
+)
 from .storage import BundleStore
 
 
@@ -31,9 +41,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await store.ensure_bucket()
     app.state.bundle_store = store
     app.state.pod_log_reader = build_pod_log_reader(settings.kube_config_path)
+    valkey: redis.Redis = redis.from_url(settings.valkey_dsn())
+    app.state.valkey = valkey
+    app.state.kill_switch = KillSwitch(valkey)
     try:
         yield
     finally:
+        await valkey.aclose()
         await http_client.aclose()
         await engine.dispose()
 
@@ -50,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(bundles.router)
     app.include_router(github.router)
     app.include_router(observability.router)
+    app.include_router(control.router)
     app.include_router(runs.router)
     return app
 

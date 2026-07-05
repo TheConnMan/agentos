@@ -16,6 +16,7 @@ dependencies = [
     "boto3-stubs[s3]>=1.35",
     "python-multipart>=0.0.18",
     "kubernetes>=31",
+    "redis>=5.0",
     "plugin-format",
 ]
 
