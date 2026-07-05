@@ -1,0 +1,185 @@
+import type { ReactNode } from "react";
+import { C } from "../../tokens";
+import { Card, Chip, Dot } from "../../primitives";
+import { hoverBg } from "../../lib/style";
+import { useStore } from "../../state/store";
+import { useTraces, useTrace } from "../../api/hooks";
+import type { RawTrace, ObservationNode } from "../../api/client";
+
+function str(o: RawTrace, key: string): string | null {
+  const v = o[key];
+  return typeof v === "string" ? v : typeof v === "number" ? String(v) : null;
+}
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ padding: "40px 20px", textAlign: "center", color: C.muted, fontSize: 13.5 }}>{children}</div>
+  );
+}
+
+// Live Runs list: real Langfuse traces via the API proxy. Rendered in place of
+// the fixture list when the app is wired to a backend.
+export function RealTracesList() {
+  const { dispatch } = useStore();
+  const { data, loading, error } = useTraces(true);
+  const grid = "1.9fr 1.1fr 1fr";
+
+  if (loading) return <Notice>Loading traces…</Notice>;
+  if (error) return <Notice>Could not load traces: {error}</Notice>;
+  const traces = data ?? [];
+  if (traces.length === 0) return <Notice>No traces yet. Send the agent a message to generate one.</Notice>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: C.input,
+            border: "1px solid " + C.border,
+            borderRadius: 8,
+            padding: "7px 11px",
+            fontFamily: C.mono,
+            fontSize: 12.5,
+            color: C.text2,
+          }}
+        >
+          <span style={{ color: C.muted }}>trace</span>
+          <span style={{ color: C.text }}>{"{ source=\"langfuse\" }"}</span>
+          <span style={{ marginLeft: "auto", color: C.muted }}>{traces.length + " traces"}</span>
+        </div>
+        <Chip color={C.mutedStatus}>OTel · live</Chip>
+      </div>
+      <Card>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: grid,
+            gap: 12,
+            padding: "0 0 12px",
+            fontSize: 12,
+            color: C.muted,
+            borderBottom: "1px solid " + C.border,
+          }}
+        >
+          {["Name", "Trace", "When"].map((c) => (
+            <div key={c}>{c}</div>
+          ))}
+        </div>
+        {traces.map((t) => {
+          const id = str(t, "id") ?? "";
+          const name = str(t, "name") ?? "(unnamed trace)";
+          const when = str(t, "timestamp") ?? "";
+          return (
+            <button
+              key={id}
+              type="button"
+              data-testid="trace-row"
+              onClick={() => dispatch({ type: "openTrace", id })}
+              style={{
+                display: "grid",
+                gridTemplateColumns: grid,
+                gap: 12,
+                padding: "13px 0 13px 12px",
+                alignItems: "center",
+                borderBottom: "1px solid " + C.border,
+                background: "transparent",
+                border: "none",
+                width: "100%",
+                textAlign: "left",
+                cursor: "pointer",
+                color: C.text,
+                fontSize: 13,
+              }}
+              {...hoverBg("transparent", C.hover)}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+                <Dot color={C.success} size={7} />
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: C.text2 }}>{name}</span>
+              </div>
+              <span style={{ fontFamily: C.mono, fontSize: 12, color: C.link, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{id}</span>
+              <span style={{ color: C.muted, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{when}</span>
+            </button>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+function typeColor(type: string): string {
+  if (type === "GENERATION") return C.brand;
+  if (type === "SPAN") return C.mutedStatus;
+  if (type === "EVENT") return C.link;
+  return C.text2;
+}
+
+function SpanRow({ node, depth }: { node: ObservationNode; depth: number }) {
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 0", paddingLeft: depth * 22 }}>
+        <Dot color={typeColor(node.type)} size={8} />
+        <span style={{ fontSize: 13, fontWeight: 500 }}>{node.name ?? node.type}</span>
+        <span
+          style={{
+            fontFamily: C.mono,
+            fontSize: 10.5,
+            color: typeColor(node.type),
+            border: "1px solid " + C.border,
+            borderRadius: 20,
+            padding: "1px 7px",
+          }}
+        >
+          {node.type}
+        </span>
+        {node.model ? <span style={{ fontFamily: C.mono, fontSize: 11.5, color: C.muted }}>{node.model}</span> : null}
+        {node.startTime ? <span style={{ marginLeft: "auto", fontFamily: C.mono, fontSize: 11, color: C.muted }}>{node.startTime}</span> : null}
+      </div>
+      {node.children.map((c) => (
+        <SpanRow key={c.id} node={c} depth={depth + 1} />
+      ))}
+    </>
+  );
+}
+
+// Live trace drill-in: the reconstructed observation tree from the API proxy.
+export function RealTraceDetail() {
+  const { state, dispatch } = useStore();
+  const { data, loading, error } = useTrace(state.traceOpen);
+  const traceName = data ? (str(data.trace as RawTrace, "name") ?? state.traceOpen) : state.traceOpen;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => dispatch({ type: "closeTrace" })}
+        style={{ background: "none", border: "none", color: C.muted, fontSize: 13, cursor: "pointer", marginBottom: 14, padding: 0 }}
+      >
+        ← Traces
+      </button>
+      {loading ? <Notice>Loading trace…</Notice> : null}
+      {error ? <Notice>Could not load trace: {error}</Notice> : null}
+      {data ? (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 400, margin: 0, fontFamily: C.mono }}>{traceName}</h1>
+            <Chip color={C.success} border="rgba(46,160,67,.4)" pre={<Dot color={C.success} size={6} />}>
+              live
+            </Chip>
+            <span style={{ marginLeft: "auto", fontSize: 12.5, color: C.muted, fontFamily: C.mono }}>{state.traceOpen}</span>
+          </div>
+          <Card>
+            <div data-testid="span-tree">
+              {data.tree.map((n) => (
+                <SpanRow key={n.id} node={n} depth={0} />
+              ))}
+            </div>
+          </Card>
+        </>
+      ) : null}
+    </div>
+  );
+}

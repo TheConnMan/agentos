@@ -18,6 +18,14 @@ export type EvalTab = "suite" | "matrix";
 export type MetricRange = "1h" | "6h" | "24h" | "7d";
 export type ModalKind = "new-agent" | "plugin" | "slack-oauth";
 
+// A plugin-format validator issue, surfaced inline when a wired deploy is
+// rejected (mirrors api/client BundleIssue without importing across layers).
+export interface DeployIssue {
+  code: string;
+  message: string;
+  location: string;
+}
+
 export interface AppState {
   level: FixtureLevel;
   nav: Nav;
@@ -45,6 +53,9 @@ export interface AppState {
   driftHover: string | null;
   slackTyping: boolean;
   showSuccess: boolean;
+  // Wired-deploy feedback surfaced in the create-agent modal.
+  deployIssues: DeployIssue[] | null;
+  deployError: string | null;
 }
 
 export type Action =
@@ -64,6 +75,9 @@ export type Action =
   | { type: "closeAgentDetail" }
   | { type: "deployStart" }
   | { type: "deployDone" }
+  | { type: "deployFailedValidation"; issues: DeployIssue[] }
+  | { type: "deployFailed"; message: string }
+  | { type: "clearDeployErrors" }
   | { type: "allowSlack" }
   | { type: "pluginUpload" }
   | { type: "installPlugin" }
