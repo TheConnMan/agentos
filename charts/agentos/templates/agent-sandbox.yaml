@@ -1,0 +1,96 @@
+{{/*
+Agent Sandbox substrate (G1): the runner SandboxTemplate and SandboxWarmPool
+the worker claims from, plus (optionally) the vendored upstream controller.
+
+- CRDs live in this chart's crds/ directory (Helm installs them before
+  templates render, so the CRs below never race their own CRDs).
+- The controller bundle is the upstream v0.5.0 release manifests verbatim
+  (core manifest + extensions overlay: the Deployment runs with --extensions),
+  vendored under files/agent-sandbox/. Cluster-scoped, one per cluster.
+- The SandboxTemplate bakes the generic warm-pod env. Per-session env
+  (AGENTOS_HISTORY_REF, AGENTOS_SESSION_ID) is injected per-claim by the
+  substrate; envVarsInjectionPolicy Overrides makes that injection win.
+- service: true is what gives every claimed sandbox its routable
+  .status.serviceFQDN (PT-1: without it no Service is created at all).
+*/}}
+{{- if .Values.agentSandbox.controller.deploy }}
+{{ .Files.Get "files/agent-sandbox/controller.yaml" }}
+{{- end }}
+{{- if .Values.agentSandbox.deploy }}
+{{- $runner := .Values.agentSandbox.runner }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  service: true
+  envVarsInjectionPolicy: {{ $runner.envVarsInjectionPolicy }}
+  podTemplate:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "runner-sandbox") | nindent 8 }}
+    spec:
+      containers:
+        - name: runner
+          image: "{{ $runner.image }}:{{ $runner.tag }}"
+          imagePullPolicy: {{ $runner.imagePullPolicy }}
+          ports:
+            - name: aci
+              containerPort: {{ $runner.port }}
+          env:
+            {{- if $runner.fakeModel }}
+            - name: AGENTOS_FAKE_MODEL
+              value: "1"
+            {{- end }}
+            - name: AGENTOS_PLUGIN_DIR
+              value: {{ $runner.pluginDir | quote }}
+            # Generic identity for a pre-warmed, not-yet-claimed sandbox; the
+            # substrate's resume path overrides it per-claim.
+            - name: AGENTOS_SESSION_ID
+              value: warm-unbound
+            # Stable per-sandbox identity: the sandbox controller names the pod
+            # after the Sandbox resource, so the pod name IS the sandbox id.
+            - name: AGENTOS_SANDBOX_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AGENTOS_BUDGET
+              value: {{ printf "{\"max_output_tokens_per_run\":%d,\"max_usd_per_day\":%v}" (int $runner.budget.maxOutputTokensPerRun) $runner.budget.maxUsdPerDay | quote }}
+            - name: AGENTOS_RUNNER_PORT
+              value: {{ $runner.port | quote }}
+            {{- if .Values.otelCollector.deploy }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://{{ include "agentos.fullname" . }}-otel-collector:{{ .Values.otelCollector.service.httpPort }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            {{- end }}
+            {{- with $runner.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ $runner.port }}
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          resources:
+            {{- toYaml $runner.resources | nindent 12 }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner-pool
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  replicas: {{ .Values.agentSandbox.warmPool.replicas }}
+  updateStrategy:
+    type: {{ .Values.agentSandbox.warmPool.updateStrategy }}
+  sandboxTemplateRef:
+    name: {{ include "agentos.fullname" . }}-runner
+{{- end }}

@@ -135,3 +135,35 @@ comfortable headroom for the walking-skeleton and soak gates.
 - **Resource headroom:** on the current 4 GB node the backbone leaves little
   room for bursty runner pods; G1's warm-pool sizing should assume the resize,
   or run against the plan's `kind` fallback for pure lifecycle tests.
+
+## Agent Sandbox substrate (G1)
+
+`agentSandbox.deploy: true` adds the runner `SandboxTemplate`
+(`<release>-runner`) and `SandboxWarmPool` (`<release>-runner-pool`) that the
+worker's sandbox substrate (`agentos_worker.sandbox`) claims from. Default off.
+
+- **CRDs** (`sandboxes.agents.x-k8s.io` + the three
+  `*.extensions.agents.x-k8s.io`) are vendored from the upstream v0.5.0
+  release into this chart's `crds/` directory, so Helm installs them before
+  any template renders. Helm never upgrades or deletes `crds/` content:
+  removing them after a teardown is a manual
+  `kubectl delete crd <name>`.
+- **Controller**: `agentSandbox.controller.deploy: true` installs the vendored
+  upstream controller bundle (`files/agent-sandbox/controller.yaml`: namespace
+  `agent-sandbox-system`, RBAC, webhook Service, and the Deployment running
+  with `--extensions`). It is cluster-scoped; install it from exactly one
+  release per cluster, or leave it false on clusters that already run
+  agent-sandbox.
+- **Runner image**: the pool runs `agentos-runner` built locally
+  (`docker build -f runner/Dockerfile -t agentos-runner .` from the repo root)
+  and imported into the cluster runtime
+  (`docker save agentos-runner:<tag> | ssh <node> 'sudo k3s ctr images import -'`),
+  hence `imagePullPolicy: Never` by default. Fake-model mode
+  (`agentSandbox.runner.fakeModel`, default true) round-trips ACI events with
+  no credential.
+- **Per-claim env**: the template sets `envVarsInjectionPolicy: Overrides` so
+  the substrate's resume path can inject `AGENTOS_HISTORY_REF` /
+  `AGENTOS_SESSION_ID` per claim. Claims carrying env bind a fresh sandbox
+  rather than a pre-warmed one; the fast path (no env) binds warm.
+- Traces flow to `<release>-otel-collector:4318` (HTTP), per the collector
+  rule above; the env block is omitted when `otelCollector.deploy: false`.
