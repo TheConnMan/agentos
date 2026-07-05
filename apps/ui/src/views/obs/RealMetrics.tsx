@@ -185,6 +185,14 @@ export function RealMetrics() {
           <Notice>No data in this window.</Notice>
         ) : (
           <div data-testid="metric-chart">
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+              <span style={{ fontFamily: C.mono, fontSize: 20, color: C.text }} data-testid="metric-chart-latest">
+                {fmt(metric, series.data.points[series.data.points.length - 1].value)}
+              </span>
+              <span style={{ fontSize: 12, color: C.muted }}>
+                latest of {series.data.points.length} {series.data.points.length === 1 ? "point" : "points"}
+              </span>
+            </div>
             <AreaChart data={series.data.points.map((p) => p.value)} color={C.brand} height={120} />
           </div>
         )}
