@@ -39,6 +39,8 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
     "types-PyYAML>=6.0",
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-exporter-otlp-proto-http>=1.29",
 ]
 
 [tool.pytest.ini_options]
