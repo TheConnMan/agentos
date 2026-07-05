@@ -1,0 +1,99 @@
+{{- if .Values.worker.deploy }}
+{{- $warmPool := .Values.worker.warmPool | default (printf "%s-runner-pool" (include "agentos.fullname" .)) }}
+{{- if .Values.worker.serviceAccount.create }}
+{{/*
+The worker drives the Kubernetes API to claim and manage agent-sandbox custom
+resources (the substrate's SandboxClient). It gets a namespaced Role scoped to
+exactly the CRD verbs KubernetesSandboxClient uses -- SandboxClaims it
+creates/reads/deletes/lists, Sandboxes it reads and patches (suspend/resume) --
+and nothing else. RBAC does not require the CRDs to be installed for the Role to
+apply, so this is valid even when agentSandbox.deploy is false.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentos.fullname" . }}-worker
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentos.fullname" . }}-worker
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+rules:
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agentos.fullname" . }}-worker
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agentos.fullname" . }}-worker
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentos.fullname" . }}-worker
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentos.fullname" . }}-worker
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.labels" . | nindent 8 }}
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "worker") | nindent 8 }}
+    spec:
+      {{- if .Values.worker.serviceAccount.create }}
+      serviceAccountName: {{ include "agentos.fullname" . }}-worker
+      {{- end }}
+      {{- with .Values.worker.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          env:
+            {{- include "agentos.env.postgres" . | nindent 12 }}
+            {{- include "agentos.env.valkey" . | nindent 12 }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentos.secretName" . }}
+                  key: slackBotToken
+            # Substrate wiring: which namespace to claim sandboxes in, the warm
+            # pool to claim from, and the ACI port on each claimed sandbox.
+            - name: AGENTOS_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: AGENTOS_WARM_POOL
+              value: {{ $warmPool | quote }}
+            - name: AGENTOS_RUNNER_PORT
+              value: {{ .Values.agentSandbox.runner.port | quote }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+{{- end }}
