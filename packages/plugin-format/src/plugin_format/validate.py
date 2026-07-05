@@ -65,7 +65,7 @@ def validate_bundle(path: str | Path) -> ValidationResult:
     manifest = _validate_manifest(root, c)
     if manifest is not None:
         _validate_skills(root, c)
-        _validate_mcp(root, c)
+        _validate_mcp(root, manifest, c)
         _validate_scripts(root, c)
 
     return c.result()
@@ -129,22 +129,54 @@ def _validate_skills(root: Path, c: _Collector) -> None:
                 c.error("skill.frontmatter_invalid", issue, rel)
 
 
-def _validate_mcp(root: Path, c: _Collector) -> None:
-    mcp_path = root / ".mcp.json"
-    if not mcp_path.is_file():
-        return
+def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> None:
+    """Validate every MCP declaration: the manifest field and root .mcp.json.
 
+    The manifest ``mcpServers`` may be an inline object or a path to a config
+    file; either form is a supported declaration that must be checked, not only
+    the conventional root ``.mcp.json``.
+    """
+
+    validated_files: set[Path] = set()
+    declared = manifest.mcpServers
+
+    if isinstance(declared, dict):
+        _validate_mcp_object(declared, "plugin.json (mcpServers)", c)
+    elif isinstance(declared, str):
+        declared_path = root / declared
+        if declared_path.is_file():
+            _validate_mcp_file(declared_path, str(Path(declared)), c)
+            validated_files.add(declared_path.resolve())
+        else:
+            c.error(
+                "mcp.declared_missing",
+                f"manifest mcpServers path {declared!r} was not found",
+                "plugin.json",
+            )
+
+    root_mcp = root / ".mcp.json"
+    if root_mcp.is_file() and root_mcp.resolve() not in validated_files:
+        _validate_mcp_file(root_mcp, ".mcp.json", c)
+
+
+def _validate_mcp_file(path: Path, location: str, c: _Collector) -> None:
     try:
-        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        c.error("mcp.invalid_json", f".mcp.json is not valid JSON: {exc}", ".mcp.json")
+        c.error("mcp.invalid_json", f"{location} is not valid JSON: {exc}", location)
         return
+    _validate_mcp_object(data, location, c)
 
+
+def _validate_mcp_object(obj: object, location: str, c: _Collector) -> None:
+    # Accept both a full config object ({"mcpServers": {...}}) and a bare servers
+    # map ({name: server}), which is how the manifest carries an inline value.
+    payload = obj if isinstance(obj, dict) and "mcpServers" in obj else {"mcpServers": obj}
     try:
-        config = McpConfig.model_validate(data)
+        config = McpConfig.model_validate(payload)
     except ValidationError as exc:
         for issue in _explain(exc):
-            c.error("mcp.invalid", issue, ".mcp.json")
+            c.error("mcp.invalid", issue, location)
         return
 
     for name, server in config.mcpServers.items():
@@ -152,7 +184,7 @@ def _validate_mcp(root: Path, c: _Collector) -> None:
             c.error(
                 "mcp.server_incomplete",
                 f"mcp server {name!r} must define either 'command' (stdio) or 'url' (remote)",
-                ".mcp.json",
+                location,
             )
 
 

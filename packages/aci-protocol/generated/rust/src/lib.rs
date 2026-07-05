@@ -85,13 +85,11 @@ pub enum InboundMessage {
 pub enum OutboundEvent {
     #[serde(rename = "text_delta")]
     TextDelta {
-        #[serde(default)]
         version: String,
         text: String,
     },
     #[serde(rename = "tool_note")]
     ToolNote {
-        #[serde(default)]
         version: String,
         text: String,
         #[serde(default)]
@@ -99,7 +97,6 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "final")]
     Final {
-        #[serde(default)]
         version: String,
         text: String,
         #[serde(default)]
@@ -107,7 +104,6 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "error")]
     ErrorEvent {
-        #[serde(default)]
         version: String,
         message: String,
         #[serde(default)]
@@ -115,7 +111,6 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "side_effect_flag")]
     SideEffectFlag {
-        #[serde(default)]
         version: String,
         #[serde(default)]
         tool: Option<String>,

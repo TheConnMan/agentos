@@ -54,19 +54,19 @@
         },
         "type": {
           "const": "error",
-          "default": "error",
           "title": "Type",
           "type": "string"
         },
         "version": {
           "const": "0.1.0",
-          "default": "0.1.0",
           "title": "Version",
           "type": "string"
         }
       },
       "required": [
-        "message"
+        "message",
+        "type",
+        "version"
       ],
       "title": "ErrorEvent",
       "type": "object"
@@ -77,7 +77,6 @@
       "properties": {
         "kind": {
           "const": "event",
-          "default": "event",
           "title": "Kind",
           "type": "string"
         },
@@ -104,10 +103,11 @@
         }
       },
       "required": [
-        "type",
+        "kind",
         "text",
-        "user",
-        "ts"
+        "ts",
+        "type",
+        "user"
       ],
       "title": "Event",
       "type": "object"
@@ -126,19 +126,19 @@
         },
         "type": {
           "const": "final",
-          "default": "final",
           "title": "Type",
           "type": "string"
         },
         "version": {
           "const": "0.1.0",
-          "default": "0.1.0",
           "title": "Version",
           "type": "string"
         }
       },
       "required": [
-        "text"
+        "text",
+        "type",
+        "version"
       ],
       "title": "Final",
       "type": "object"
@@ -167,7 +167,6 @@
       "properties": {
         "kind": {
           "const": "interrupt",
-          "default": "interrupt",
           "title": "Kind",
           "type": "string"
         },
@@ -177,6 +176,7 @@
         }
       },
       "required": [
+        "kind",
         "reason"
       ],
       "title": "Interrupt",
@@ -304,10 +304,10 @@
         }
       },
       "required": [
+        "budget",
         "plugin_dir",
-        "session_id",
         "sandbox_id",
-        "budget"
+        "session_id"
       ],
       "title": "SessionConfig",
       "type": "object"
@@ -352,17 +352,19 @@
         },
         "type": {
           "const": "side_effect_flag",
-          "default": "side_effect_flag",
           "title": "Type",
           "type": "string"
         },
         "version": {
           "const": "0.1.0",
-          "default": "0.1.0",
           "title": "Version",
           "type": "string"
         }
       },
+      "required": [
+        "type",
+        "version"
+      ],
       "title": "SideEffectFlag",
       "type": "object"
     },
@@ -376,19 +378,19 @@
         },
         "type": {
           "const": "text_delta",
-          "default": "text_delta",
           "title": "Type",
           "type": "string"
         },
         "version": {
           "const": "0.1.0",
-          "default": "0.1.0",
           "title": "Version",
           "type": "string"
         }
       },
       "required": [
-        "text"
+        "text",
+        "type",
+        "version"
       ],
       "title": "TextDelta",
       "type": "object"
@@ -415,19 +417,19 @@
         },
         "type": {
           "const": "tool_note",
-          "default": "tool_note",
           "title": "Type",
           "type": "string"
         },
         "version": {
           "const": "0.1.0",
-          "default": "0.1.0",
           "title": "Version",
           "type": "string"
         }
       },
       "required": [
-        "text"
+        "text",
+        "type",
+        "version"
       ],
       "title": "ToolNote",
       "type": "object"

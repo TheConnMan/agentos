@@ -74,6 +74,19 @@ def _rust_field(name: str) -> str:
     return f"r#{name}" if name in _RUST_KEYWORDS else name
 
 
+def _is_wire_const(annotation: Any) -> bool:
+    """True for a single-valued string literal (the version const).
+
+    Such fields have a Python default but are mandatory on the wire, so Rust must
+    require them rather than defaulting them, matching the JSON Schema.
+    """
+
+    if get_origin(annotation) is Literal:
+        args = get_args(annotation)
+        return len(args) == 1 and isinstance(args[0], str)
+    return False
+
+
 def crate_dir() -> Path:
     """The committed generated Rust crate directory inside this package."""
 
@@ -143,9 +156,10 @@ def _struct_fields(model: type[BaseModel], skip: set[str], public: bool) -> list
         if field_name in skip:
             continue
         rust = _rust_type(field.annotation)
-        # Any field with a Pydantic default (optional or not) is omittable on the
-        # wire, so Rust must accept it missing too.
-        if not field.is_required():
+        # Any field with a Pydantic default is omittable on the wire, so Rust
+        # accepts it missing too, EXCEPT wire constants (version), which are
+        # mandatory on the wire despite carrying a construction default.
+        if not field.is_required() and not _is_wire_const(field.annotation):
             out.append("    #[serde(default)]")
         out.append(f"    {prefix}{_rust_field(field_name)}: {rust},")
     return out

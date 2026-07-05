@@ -95,8 +95,8 @@ export interface Budget {
 export interface ErrorEvent {
   classification?: Classification;
   message: Message;
-  type?: Type;
-  version?: Version;
+  type: Type;
+  version: Version;
 }
 /**
  * An inbound event delivered into a live session (initial or follow-up).
@@ -105,7 +105,7 @@ export interface ErrorEvent {
  * via the `definition` "Event".
  */
 export interface Event {
-  kind?: Kind;
+  kind: Kind;
   text: Text;
   ts: Ts;
   type: Type1;
@@ -120,8 +120,8 @@ export interface Event {
 export interface Final {
   status?: SessionStatus;
   text: Text1;
-  type?: Type2;
-  version?: Version1;
+  type: Type2;
+  version: Version1;
 }
 /**
  * A hard stop delivered on the control channel, distinct from a steer.
@@ -130,7 +130,7 @@ export interface Final {
  * via the `definition` "Interrupt".
  */
 export interface Interrupt {
-  kind?: Kind1;
+  kind: Kind1;
   reason: Reason;
 }
 /**
@@ -156,8 +156,8 @@ export interface OtelConfig {
  */
 export interface TextDelta {
   text: Text2;
-  type?: Type3;
-  version?: Version2;
+  type: Type3;
+  version: Version2;
 }
 /**
  * A human readable note about a tool call the harness is making.
@@ -168,8 +168,8 @@ export interface TextDelta {
 export interface ToolNote {
   text: Text3;
   tool?: Tool;
-  type?: Type4;
-  version?: Version3;
+  type: Type4;
+  version: Version3;
 }
 /**
  * Marks that a non-idempotent tool call executed during the run.
@@ -183,8 +183,8 @@ export interface ToolNote {
 export interface SideEffectFlag {
   detail?: Detail;
   tool?: Tool1;
-  type?: Type5;
-  version?: Version4;
+  type: Type5;
+  version: Version4;
 }
 /**
  * The typed session setup contract.
