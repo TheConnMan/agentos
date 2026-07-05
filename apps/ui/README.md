@@ -54,22 +54,61 @@ can Connect Slack, create an agent, deploy, and reach the live state organically
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
-## For H1b (wiring the backend)
+## Backend wiring (H1b)
 
-Every screen reads from `src/fixtures` and the fixture-level selectors. To wire
-real data, replace the fixture calls with API reads without touching the views'
-markup:
+Two paths now run against the real B1/B2 API; everything else stays on fixtures.
 
-- Data entry points are the `*ForLevel` / seeded exports in `src/fixtures`
-  (`agentsForLevel`, `tracesForLevel`, `traceSpans`, `EVAL_CASES`,
-  `VERSION_ROWS`, `logsForLevel`, the metric series). Swap these for API-backed
-  hooks/loaders.
-- Mutating actions are all funneled through the store reducer
-  (`src/state/store.tsx`): `deployDone`, `allowSlack`, `installPlugin`,
-  `promoteEval`, `connectGitHub`, etc. These are where create/deploy/promote
-  calls hit B1/B2; the reducer already models the resulting UI state.
-- The ACI contract types are already imported for trace spans; extend that
-  typing to real trace payloads from the Langfuse proxy.
+**Wired (real API):**
+- Create agent + Deploy: the create-agent modal POSTs `/agents` and
+  `/agents/{id}/versions`, packages the editor's skill.md into a plugin bundle
+  client-side (jszip), and PUTs it to `/agents/{id}/versions/{vid}/bundle`. The
+  bundle validator's 422 `errors[]` render inline under the editor.
+- Runs tab (Observability > Traces): reads `GET /langfuse/traces` and
+  `/langfuse/traces/{id}` through the proxy and renders the real span tree.
+
+**Still fixtures:** fleet, evals, versions, metrics, logs, usage, cost, and the
+whole of states 4-6. Swap these next by replacing the `src/fixtures` selectors.
+
+**How wiring is gated.** `src/api/config.ts` resolves the mode at runtime, so a
+single build serves both the fixture demo and the live run:
+- Wired ON when the URL has `?api=1` (or the build set `VITE_WIRED=1`).
+- The API key is `?api_key=` else `VITE_API_KEY` else the dev default; sent as
+  `X-API-Key`.
+- All calls go to the same-origin `/api` prefix. `vite.config.ts` proxies `/api`
+  to `AGENTOS_API_TARGET` (default `http://localhost:8000`), stripping the
+  prefix. This avoids CORS: apps/api has no CORS middleware, so the browser must
+  reach it same-origin.
+
+**Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`),
+`bundle.ts` (jszip packaging + the testable `bundleFileTree`), `hooks.ts`
+(`useTraces`/`useTrace`), `config.ts` (the wiring gate). Deploy failures flow
+through the store reducer actions `deployFailedValidation` / `deployFailed`.
+
+**Integration E2E (needs the live stack).** With the compose dev stack up and
+apps/api on 8000:
+
+```bash
+# apply the schema once
+(cd ../api && uv run alembic upgrade head)
+# run uvicorn in another shell: (cd ../api && uv run uvicorn agentos_api.main:app --port 8000)
+PW_INTEGRATION=1 AGENTOS_API_TARGET=http://localhost:8000 pnpm exec playwright test --project=integration
+```
+
+The integration spec (`e2e/integration/`) seeds a real OTLP trace
+(`seed_trace.py`, run via `uv run`), drives create -> Deploy -> verifies the
+version + stored bundle via the API, checks the malformed-skill.md validator
+error inline, and asserts the Runs list + span-tree drill-in. The default
+`pnpm exec playwright test` excludes it, so stackless CI stays green.
+
+Config reference: `.env.example`.
+
+## For H1b+ (wiring the rest)
+
+- Remaining data entry points are the `*ForLevel` / seeded exports in
+  `src/fixtures` (`agentsForLevel`, `EVAL_CASES`, `VERSION_ROWS`, `logsForLevel`,
+  the metric series). Swap these for API-backed loaders.
+- The ACI contract types are imported for the fixture trace spans; the wired
+  Runs path renders the API's `ObservationNode` tree directly.
 
 ## Scope notes (H1a decisions)
 
