@@ -47,6 +47,7 @@ class AgentVersion(Base):
     )
     version_label: Mapped[str]
     bundle_ref: Mapped[str | None] = mapped_column(default=None)
+    bundle_sha256: Mapped[str | None] = mapped_column(default=None)
     created_by: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
