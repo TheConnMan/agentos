@@ -77,6 +77,64 @@ Tests (`apps/worker/tests/eval`): graders and rollups (unit); `EvalRunner`
 against a scriptable fake runner; `LangfuseEvalRecorder` against the REAL compose
 Langfuse (record + read back by version tag, never mocked).
 
+## F3: the eval-stream consumer (`agentos_worker.eval.stream`)
+
+Where K1 is the eval Job entrypoint (run one suite against one endpoint), F3 is the
+long-running worker that turns a queued eval request into a full run. It is a second
+consumer group (`agentos-eval-workers`) on a distinct Valkey stream `agentos:evals`,
+running on its own connection so its blocking read never stalls the runs consumer.
+The K1-API git-flow is the producer; build against this written contract, not its
+code.
+
+```
+XREADGROUP agentos:evals            EvalStreamConsumer (own consumer group)
+   -> payload: EvalWorkItem JSON       one stream field `payload` (dispatcher seam)
+   -> BundleStore.get(bundle_ref)      MinIO GET, extract, load evals/cases.json
+   -> run_eval_suite(target)           target_url shortcut, else provision a runner
+   -> LangfuseEvalRecorder.record      per-case eval_pass scores, tagged version:<sha>
+   -> POST /evals/report               platform API (repo, sha, passed_count, total)
+   -> XACK                             only AFTER the report POST attempt completes
+```
+
+Stream seam (the exact producer contract): each entry carries one field `payload`
+holding an `EvalWorkItem` JSON object with `agent_id`, `version_id`, `sha`, `suite`
+(the suite NAME, used to select/tag, not the cases themselves), `bundle_ref` (the
+MinIO object key), optional `target_url`, and `requested_at` (ISO-8601 UTC). The
+cases come FROM the bundle's own `evals/cases.json` (the `EvalSuite` JSON shape the
+K1 loader reads), never from the stream.
+
+Runtime rules (each has a provoking integration test in `tests/eval/test_stream.py`):
+
+- **Suite loads from the bundle.** MinIO GET `bundle_ref` from bucket
+  `agentos-bundles`, extract, load `evals/cases.json`; the `suite` field renames it
+  and tags Langfuse. A missing/corrupt bundle or missing evals dir is a **failed run**
+  (0/0) reported and acked, never a crash.
+- **`target_url` present -> eval it directly** (the dev/test shortcut). Absent ->
+  **provision a runner via the G1 substrate** (the same warm-pool `claim` F2 chat-runs
+  use, boot env carrying `AGENTOS_BUNDLE_REF` + budget), eval against it, and tear it
+  down in a `finally`. A provisioning failure is a failed run reported and acked.
+- **XACK only after the report POST attempt completes** (success, or terminally failed
+  after bounded retries and logged). A worker crash before that leaves the entry
+  pending; a background reclaim loop (`XAUTOCLAIM` past an idle timeout, mirroring the
+  runs consumer) re-runs it, so delivery is **at-least-once** with a best-effort
+  report. A malformed payload cannot be processed on any redelivery, so it is logged
+  and acked (a poison-pill drop). A failing eval case is a failed COUNT in the report,
+  not a consumer crash.
+
+Config surface (added to `WorkerConfig.from_env`): `AGENTOS_EVAL_STREAM` /
+`AGENTOS_EVAL_CONSUMER_GROUP`; MinIO/S3 `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` /
+`S3_SECRET_KEY` / `S3_REGION` / `BUNDLE_BUCKET` (mirroring the API's env names); the
+platform API `AGENTOS_API_BASE_URL` / `AGENTOS_API_KEY` for `POST /evals/report`; and
+`LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` for score recording.
+The consumer is wired into `python -m agentos_worker` alongside the runs consumer and
+the kill switch.
+
+Tests (`apps/worker/tests/eval/test_stream.py`, real Valkey + real MinIO bundle + real
+Langfuse, only the report POST mocked): the seam cycle (XADD the exact payload ->
+one consume->eval->report), the poison-pill drop, a missing-bundle failed run,
+ack-after-report even when the report terminally fails, and a provisioned-runner
+end-to-end (no `target_url`) that boots via the substrate and releases in a finally.
+
 ## F1: the concurrency kernel (`agentos_worker.kernel` + `agentos_worker.consumer`)
 
 The kernel closes the loop: it consumes `QueuedSlackEvent` entries the dispatcher

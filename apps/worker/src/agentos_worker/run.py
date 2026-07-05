@@ -13,14 +13,18 @@ import logging
 import os
 import signal
 from collections.abc import Mapping
+from dataclasses import dataclass
 
+import httpx
 import redis
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .binding import BindingResolver
+from .bundle_store import BundleStore
 from .config import WorkerConfig
 from .consumer import Consumer
+from .eval import EvalReporter, EvalStreamConsumer, LangfuseEvalRecorder
 from .kernel import Kernel
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -35,6 +39,21 @@ from .slack_sink import AsyncSlackSink
 from .threadlock import ThreadLock
 
 
+@dataclass
+class Runtime:
+    """The wired worker: the two Valkey consumers (runs + evals) plus the
+    resources whose lifetimes they share, so ``_run`` can drive and dispose them."""
+
+    consumer: Consumer
+    killswitch: KillSwitch
+    eval_consumer: EvalStreamConsumer
+    runner: RunnerClient
+    async_redis: AsyncRedis
+    eval_redis: AsyncRedis
+    eval_http: httpx.AsyncClient
+    engine: AsyncEngine
+
+
 def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
     return SubstrateConfig(
         namespace=env.get("AGENTOS_NAMESPACE", "default"),
@@ -43,9 +62,7 @@ def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
     )
 
 
-def build(
-    config: WorkerConfig, env: Mapping[str, str]
-) -> tuple[Consumer, KillSwitch, RunnerClient, AsyncRedis, AsyncEngine]:
+def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     async_redis: AsyncRedis = AsyncRedis(
         host=config.valkey_host,
         port=config.valkey_port,
@@ -71,6 +88,7 @@ def build(
         total_timeout_s=config.runner_total_timeout_s,
     )
     engine = create_async_engine(config.database_url, pool_pre_ping=True)
+    binding = BindingResolver(engine, config)
     kernel = Kernel(
         substrate=substrate,
         runner=runner,
@@ -85,33 +103,80 @@ def build(
         ),
         markers=Markers(async_redis, config),
         config=config,
-        binding=BindingResolver(engine, config),
+        binding=binding,
     )
     killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
     kernel.attach_killswitch(killswitch)
     consumer = Consumer(redis=async_redis, kernel=kernel, config=config)
-    return consumer, killswitch, runner, async_redis, engine
+
+    # The eval lane (F3): a second consumer group on agentos:evals, on its own
+    # Valkey connection so its blocking read never stalls the runs consumer. It
+    # reuses the same substrate (eval runs provision from the same warm pool) and
+    # the binding resolver as its repo lookup for the /evals/report payload.
+    eval_redis: AsyncRedis = AsyncRedis(
+        host=config.valkey_host,
+        port=config.valkey_port,
+        password=config.valkey_password or None,
+        db=config.valkey_db,
+        decode_responses=True,
+    )
+    eval_http = httpx.AsyncClient(timeout=30.0)
+    eval_consumer = EvalStreamConsumer(
+        redis=eval_redis,
+        config=config,
+        bundle_store=BundleStore(config),
+        substrate=substrate,
+        reporter=EvalReporter(
+            api_base_url=config.api_base_url,
+            api_key=config.api_key,
+            client=eval_http,
+            max_attempts=config.report_max_attempts,
+            backoff_base_s=config.report_backoff_base_s,
+        ),
+        recorder=LangfuseEvalRecorder(
+            base_url=config.langfuse_host,
+            public_key=config.langfuse_public_key,
+            secret_key=config.langfuse_secret_key,
+            client=eval_http,
+        ),
+        repo_lookup=binding,
+    )
+    return Runtime(
+        consumer=consumer,
+        killswitch=killswitch,
+        eval_consumer=eval_consumer,
+        runner=runner,
+        async_redis=async_redis,
+        eval_redis=eval_redis,
+        eval_http=eval_http,
+        engine=engine,
+    )
 
 
 async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
-    consumer, killswitch, runner, async_redis, engine = build(config, env)
+    rt = build(config, env)
 
     loop = asyncio.get_running_loop()
 
     def _stop() -> None:
-        consumer.request_stop()
-        killswitch.request_stop()
+        rt.consumer.request_stop()
+        rt.killswitch.request_stop()
+        rt.eval_consumer.request_stop()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _stop)
 
     logging.getLogger("agentos_worker").info("worker starting")
     try:
-        await asyncio.gather(consumer.run(), killswitch.run())
+        await asyncio.gather(
+            rt.consumer.run(), rt.killswitch.run(), rt.eval_consumer.run()
+        )
     finally:
-        await runner.close()
-        await async_redis.aclose()
-        await engine.dispose()
+        await rt.runner.close()
+        await rt.eval_http.aclose()
+        await rt.async_redis.aclose()
+        await rt.eval_redis.aclose()
+        await rt.engine.dispose()
     logging.getLogger("agentos_worker").info("worker stopped")
 
 
