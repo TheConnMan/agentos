@@ -6,6 +6,8 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .evalqueue import EvalQueue
+from .github_checks import GitHubStatusReporter
 from .k8s import PodLogReader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
@@ -38,8 +40,20 @@ def get_kill_switch(request: Request) -> KillSwitch:
     return kill_switch
 
 
+def get_eval_queue(request: Request) -> EvalQueue:
+    eval_queue: EvalQueue = request.app.state.eval_queue
+    return eval_queue
+
+
+def get_github_reporter(request: Request) -> GitHubStatusReporter:
+    reporter: GitHubStatusReporter = request.app.state.github_reporter
+    return reporter
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LangfuseDep = Annotated[LangfuseClient, Depends(get_langfuse)]
 StoreDep = Annotated[BundleStore, Depends(get_store)]
 PodLogReaderDep = Annotated[PodLogReader, Depends(get_pod_log_reader)]
 KillSwitchDep = Annotated[KillSwitch, Depends(get_kill_switch)]
+EvalQueueDep = Annotated[EvalQueue, Depends(get_eval_queue)]
+GitHubReporterDep = Annotated[GitHubStatusReporter, Depends(get_github_reporter)]

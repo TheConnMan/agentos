@@ -69,6 +69,20 @@ class LangfuseClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    async def _get_all(
+        self, path: str, params: dict[str, Any], page_size: int = 100, max_pages: int = 50
+    ) -> list[dict[str, Any]]:
+        """Fetch every page of a paginated list endpoint (data[] + meta.totalPages)."""
+
+        items: list[dict[str, Any]] = []
+        for page in range(1, max_pages + 1):
+            body = await self._get(path, {**params, "page": page, "limit": page_size})
+            items.extend(body.get("data", []))
+            meta = body.get("meta") or {}
+            if page >= int(meta.get("totalPages", page)):
+                break
+        return items
+
     async def list_traces(self, limit: int) -> list[dict[str, Any]]:
         body = await self._get("/api/public/traces", {"limit": limit})
         traces: list[dict[str, Any]] = body.get("data", [])
@@ -83,6 +97,16 @@ class LangfuseClient:
         )
         observations: list[dict[str, Any]] = body.get("data", [])
         return observations
+
+    async def list_traces_by_tags(self, tags: list[str]) -> list[dict[str, Any]]:
+        """Every trace carrying all of the given tags (e.g. suite:<name>)."""
+
+        return await self._get_all("/api/public/traces", {"tags": tags})
+
+    async def list_scores(self, name: str) -> list[dict[str, Any]]:
+        """Every score with the given name (e.g. eval_pass)."""
+
+        return await self._get_all("/api/public/scores", {"name": name})
 
     async def query_metrics(self, query: dict[str, Any]) -> list[dict[str, Any]]:
         """Run a Langfuse Metrics API query and return its data rows.
