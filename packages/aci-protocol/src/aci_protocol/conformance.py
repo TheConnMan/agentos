@@ -116,20 +116,23 @@ def _reject_missing_version() -> str:
 
 
 def _producer_stream(producer: Producer) -> str:
-    message = Event(type="message", text="do the thing", user="U1", ts="1720200003.0004")
-    lines = list(producer(message))
-    document = "".join(lines)
-    events = parse_ndjson(document)
-    if not events:
-        raise AssertionError("producer emitted no events for an inbound message")
-    if events[-1].type != "final":
-        raise AssertionError(
-            f"producer stream must end in a final event, ended in {events[-1].type!r}"
-        )
-    for event in events:
-        if event.version != PROTOCOL_VERSION:
-            raise AssertionError(f"producer emitted version {event.version!r}")
-    return f"producer stream of {len(events)} events is well formed"
+    # Exercise every inbound case (message, job, eval_case, interrupt): a runner
+    # that mishandles interrupt or a batch job must not pass the gate by handling
+    # only ordinary messages.
+    for message in _INBOUND_SAMPLES:
+        label = message.kind if isinstance(message, Interrupt) else f"event:{message.type}"
+        events = parse_ndjson("".join(producer(message)))
+        if not events:
+            raise AssertionError(f"producer emitted no events for {label}")
+        if events[-1].type != "final":
+            raise AssertionError(
+                f"producer stream for {label} must end in a final event, "
+                f"ended in {events[-1].type!r}"
+            )
+        for event in events:
+            if event.version != PROTOCOL_VERSION:
+                raise AssertionError(f"producer emitted version {event.version!r} for {label}")
+    return f"producer streams for {len(_INBOUND_SAMPLES)} inbound cases are well formed"
 
 
 def run_conformance(producer: Producer | None = None) -> ConformanceReport:

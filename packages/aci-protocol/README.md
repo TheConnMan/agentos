@@ -102,12 +102,11 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
 - **Whole-frame union types are exported.** The committed schema and generated
   TypeScript include `InboundMessage` (`Event | Interrupt`) and `OutboundEvent`
   (the five response events) as discriminated unions, so a consumer can type a
-  full channel frame, not only the concrete variants. The generated Rust already
-  models these as internally-tagged enums. Rust structs carry
-  `deny_unknown_fields` to mirror the strict wire contract; serde does not
-  support that attribute on internally-tagged enums, so the enum frames rely on
-  the NDJSON decoder and the schema's `additionalProperties: false` for that
-  check.
+  full channel frame, not only the concrete variants. The generated Rust models
+  these as internally-tagged enums that enforce the same strictness as Python:
+  `deny_unknown_fields` on both structs and the tagged enums rejects extra keys,
+  and the `version` field decodes through a guard that rejects any value other
+  than `PROTOCOL_VERSION`.
 
 ## What consumers need to know
 
