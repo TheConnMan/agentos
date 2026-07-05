@@ -8,8 +8,12 @@
 
 mod support;
 
+use std::time::{Duration, Instant};
+
 use agentos::queue::{xadd, QueuedSlackEvent};
-use agentos::slack_sim::{reply_text_if_changed, SlackClient, PLACEHOLDER_TEXT};
+use agentos::slack_sim::{
+    reply_text_if_changed, wait_for_completion, SimOutcome, SlackClient, PLACEHOLDER_TEXT,
+};
 use support::{serve, Response};
 
 const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:56379";
@@ -176,4 +180,98 @@ async fn slack_client_surfaces_api_errors() {
     let slack = SlackClient::new(&server.base_url, "xoxb-test").unwrap();
     let err = slack.post_message("C-nope", "hi", None).await.unwrap_err();
     assert!(err.to_string().contains("channel_not_found"), "{err}");
+}
+
+#[tokio::test]
+async fn wait_for_completion_holds_until_the_worker_acks() {
+    // Even though conversations.replies already shows the placeholder edited, the
+    // wait must not return until the worker acks the entry -- a throttled interim
+    // edit is not the final answer. Drive a real ack ~300ms in and assert the
+    // wait returns the edited text only after it.
+    let Some(mut conn) = valkey_or_skip("wait_for_completion_holds_until_the_worker_acks").await
+    else {
+        return;
+    };
+    let stream = unique_stream();
+    let event = QueuedSlackEvent::synthetic("C-test", "U-slack-sim", "hi", "111.100", "111.200");
+    let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
+
+    // Deliver the entry to the worker group so it becomes acknowledgeable.
+    let _: () = redis::cmd("XGROUP")
+        .arg("CREATE")
+        .arg(&stream)
+        .arg("agentos-workers")
+        .arg("0")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let _: redis::Value = redis::cmd("XREADGROUP")
+        .arg("GROUP")
+        .arg("agentos-workers")
+        .arg("worker-1")
+        .arg("COUNT")
+        .arg(10)
+        .arg("STREAMS")
+        .arg(&stream)
+        .arg(">")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+
+    // The mock always reports the placeholder already edited to the final text.
+    let server = serve(|_req| {
+        Response::json(
+            200,
+            r#"{"ok":true,"messages":[
+                {"ts":"111.100","text":"the user text"},
+                {"ts":"111.200","text":"the final answer"}
+            ]}"#,
+        )
+    });
+    let slack = SlackClient::new(&server.base_url, "xoxb-test").unwrap();
+
+    // A separate connection acks the entry after a delay (the "worker finalizing").
+    let ack_stream = stream.clone();
+    let ack_id = stream_id.clone();
+    let acker = tokio::spawn(async move {
+        let client = redis::Client::open(valkey_url()).unwrap();
+        let mut c = client.get_multiplexed_async_connection().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _: i64 = redis::cmd("XACK")
+            .arg(&ack_stream)
+            .arg("agentos-workers")
+            .arg(&ack_id)
+            .query_async(&mut c)
+            .await
+            .unwrap();
+    });
+
+    let started = Instant::now();
+    let outcome = wait_for_completion(
+        &slack,
+        &mut conn,
+        &stream,
+        &stream_id,
+        "C-test",
+        "111.100",
+        "111.200",
+        PLACEHOLDER_TEXT,
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    let elapsed = started.elapsed();
+    acker.await.unwrap();
+
+    let _: i64 = redis::cmd("DEL")
+        .arg(&stream)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome, SimOutcome::Replied("the final answer".to_string()));
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "must wait for the ack, not return on the first text change (elapsed {elapsed:?})"
+    );
 }

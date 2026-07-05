@@ -41,11 +41,13 @@ mistaken for the answer). It prints the reply and exits 0, or on timeout prints
 stream diagnostics (`XLEN` + `XINFO GROUPS` + `XPENDING`) and exits nonzero.
 
 Contract: run the worker with `SLACK_API_BASE_URL` pointing at the `/api/` base
-URL `chat` prints on startup (that env var is added to the worker by another
-lane). Use `--listen-host`/`--listen-port` when the worker runs off-box (default
-`localhost` on an ephemeral port). No Slack token, channel, or real Slack HTTP is
-involved. The full worker round trip is validated at the walking-skeleton gate;
-`chat` itself verifies the stub and the enqueue.
+URL `chat` prints on startup. The worker reads that env var and points its Slack
+sink's `AsyncWebClient` `base_url` at it, so `chat.update` edits land at the stub
+instead of real Slack. Use `--listen-host`/`--listen-port` when the worker runs
+off-box (default `localhost` on an ephemeral port). No Slack token, channel, or
+real Slack HTTP is involved. The full worker round trip is validated at the
+walking-skeleton gate; `chat` itself verifies the stub, the enqueue, and the
+ack-based completion.
 
 ## Verify
 
