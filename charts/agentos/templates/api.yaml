@@ -81,10 +81,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.minio.existingSecret | default (include "agentos.secretName" .) }}
                   key: minioRootPassword
-            # Immutable plugin-bundle bucket. Kept in lockstep with the runner
-            # sandbox's bundle-fetch init container (templates/agent-sandbox.yaml).
+            # Immutable plugin-bundle bucket. Single source of truth with the
+            # runner sandbox's bundle-fetch init container: the API writes each
+            # uploaded bundle here, the fetcher reads it from the same bucket, so
+            # an operator override of bundleFetch.bucket keeps them in lockstep.
             - name: BUNDLE_BUCKET
-              value: agentos-bundles
+              value: {{ .Values.agentSandbox.runner.bundleFetch.bucket | quote }}
           ports:
             - name: http
               containerPort: 8000
