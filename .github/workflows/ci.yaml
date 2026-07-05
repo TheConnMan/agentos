@@ -60,6 +60,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Regenerate TypeScript from the committed schema and check for drift
+        run: |
+          npx --yes json-schema-to-typescript@15 \
+            packages/aci-protocol/schema/aci-protocol.schema.json \
+            --unreachableDefinitions --no-additionalProperties=false \
+            -o packages/aci-protocol/generated/ts/aci-protocol.ts
+          git diff --exit-code -- packages/aci-protocol/generated/ts/aci-protocol.ts
       - name: tsc --noEmit on generated ACI types
         run: npx --yes -p typescript@5 tsc --noEmit -p packages/aci-protocol/generated/ts/tsconfig.json
 

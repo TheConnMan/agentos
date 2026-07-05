@@ -94,8 +94,20 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
   `classified-failure`) as spelled in section 0.
 - **Version policy is exact match for the 0.x line.** The decoder accepts only
   events whose `version` equals `PROTOCOL_VERSION` and rejects anything else
-  with `ProtocolVersionError`. This is the "reject unknown versions gracefully"
-  requirement; a looser same-major policy can come with 1.0.
+  with `ProtocolVersionError`. The `version` field is typed as the literal
+  `"0.1.0"`, so the models reject an off-version value at construction and the
+  JSON Schema and TypeScript express it as a `const`, not just any string. This
+  is the "reject unknown versions gracefully" requirement; a looser same-major
+  policy can come with 1.0.
+- **Whole-frame union types are exported.** The committed schema and generated
+  TypeScript include `InboundMessage` (`Event | Interrupt`) and `OutboundEvent`
+  (the five response events) as discriminated unions, so a consumer can type a
+  full channel frame, not only the concrete variants. The generated Rust already
+  models these as internally-tagged enums. Rust structs carry
+  `deny_unknown_fields` to mirror the strict wire contract; serde does not
+  support that attribute on internally-tagged enums, so the enum frames rely on
+  the NDJSON decoder and the schema's `additionalProperties: false` for that
+  check.
 
 ## What consumers need to know
 
@@ -108,5 +120,5 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
   `packages/aci-protocol/generated/rust` (or vendor its `lib.rs`); do not
   hand-write the types. The internally-tagged enums decode the NDJSON stream and
   inbound frames directly.
-- **UI (H1a/H1b via TS):** import the interfaces from
-  `generated/ts/aci-protocol.ts`.
+- **UI (H1a/H1b via TS):** import the interfaces and the `OutboundEvent` /
+  `InboundMessage` union types from `generated/ts/aci-protocol.ts`.

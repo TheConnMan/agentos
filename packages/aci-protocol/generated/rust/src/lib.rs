@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: &str = "0.1.0";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum SessionStatus {
     #[serde(rename = "done")]
+    #[default]
     Done,
     #[serde(rename = "idle-awaiting-input")]
     IdleAwaitingInput,
@@ -28,7 +29,8 @@ pub enum EventType {
     EvalCase,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Budget {
     pub max_output_tokens_per_run: i64,
     #[serde(default)]
@@ -36,7 +38,8 @@ pub struct Budget {
     pub max_usd_per_day: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OtelConfig {
     #[serde(default)]
     pub endpoint: Option<String>,
@@ -46,7 +49,8 @@ pub struct OtelConfig {
     pub protocol: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     pub plugin_dir: String,
     pub session_id: String,
@@ -56,6 +60,7 @@ pub struct SessionConfig {
     pub memory_ref: Option<String>,
     #[serde(default)]
     pub credentials_ref: Option<String>,
+    #[serde(default)]
     pub otel: OtelConfig,
 }
 
@@ -80,11 +85,13 @@ pub enum InboundMessage {
 pub enum OutboundEvent {
     #[serde(rename = "text_delta")]
     TextDelta {
+        #[serde(default)]
         version: String,
         text: String,
     },
     #[serde(rename = "tool_note")]
     ToolNote {
+        #[serde(default)]
         version: String,
         text: String,
         #[serde(default)]
@@ -92,12 +99,15 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "final")]
     Final {
+        #[serde(default)]
         version: String,
         text: String,
+        #[serde(default)]
         status: SessionStatus,
     },
     #[serde(rename = "error")]
     ErrorEvent {
+        #[serde(default)]
         version: String,
         message: String,
         #[serde(default)]
@@ -105,6 +115,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "side_effect_flag")]
     SideEffectFlag {
+        #[serde(default)]
         version: String,
         #[serde(default)]
         tool: Option<String>,

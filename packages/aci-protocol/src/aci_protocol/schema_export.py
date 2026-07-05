@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import RootModel
 from pydantic.json_schema import models_json_schema
 
 from .events import (
@@ -23,14 +24,30 @@ from .events import (
     TextDelta,
     ToolNote,
 )
+from .events import InboundMessage as InboundMessageUnion
+from .events import OutboundEvent as OutboundEventUnion
 from .session import Budget, OtelConfig, SessionConfig
 from .version import PROTOCOL_VERSION
+
+
+# RootModel envelopes so the committed schema and generated TypeScript expose the
+# whole-frame discriminated unions consumers actually validate against, not just
+# the concrete variants. The class names become the $defs keys and TS type names.
+class InboundMessage(RootModel[InboundMessageUnion]):
+    pass
+
+
+class OutboundEvent(RootModel[OutboundEventUnion]):
+    pass
+
 
 # Fixed model order so the generated $defs are deterministic.
 _MODELS = (
     SessionConfig,
     Budget,
     OtelConfig,
+    InboundMessage,
+    OutboundEvent,
     Event,
     Interrupt,
     TextDelta,

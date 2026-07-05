@@ -11,7 +11,7 @@ export type TaskBudgetHint = number | null;
 export type Classification = string | null;
 export type Message = string;
 export type Type = "error";
-export type Version = string;
+export type Version = "0.1.0";
 export type Kind = "event";
 export type Text = string;
 export type Ts = string;
@@ -26,12 +26,33 @@ export type User = string;
 export type SessionStatus = "done" | "idle-awaiting-input" | "classified-failure";
 export type Text1 = string;
 export type Type2 = "final";
-export type Version1 = string;
+export type Version1 = "0.1.0";
+/**
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "InboundMessage".
+ */
+export type InboundMessage = Event | Interrupt;
 export type Kind1 = "interrupt";
 export type Reason = string;
 export type Endpoint = string | null;
 export type Headers = string | null;
 export type Protocol = string | null;
+/**
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "OutboundEvent".
+ */
+export type OutboundEvent = TextDelta | ToolNote | Final | ErrorEvent | SideEffectFlag;
+export type Text2 = string;
+export type Type3 = "text_delta";
+export type Version2 = "0.1.0";
+export type Text3 = string;
+export type Tool = string | null;
+export type Type4 = "tool_note";
+export type Version3 = "0.1.0";
+export type Detail = string | null;
+export type Tool1 = string | null;
+export type Type5 = "side_effect_flag";
+export type Version4 = "0.1.0";
 export type CredentialsRef = string | null;
 export type MemoryRef = string | null;
 export type PluginDir = string;
@@ -47,17 +68,6 @@ export type SessionId = string;
  * via the `definition` "SessionStatus".
  */
 export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure";
-export type Detail = string | null;
-export type Tool = string | null;
-export type Type3 = "side_effect_flag";
-export type Version2 = string;
-export type Text2 = string;
-export type Type4 = "text_delta";
-export type Version3 = string;
-export type Text3 = string;
-export type Tool1 = string | null;
-export type Type5 = "tool_note";
-export type Version4 = string;
 
 export interface ACIProtocolV010 {
   [k: string]: unknown;
@@ -139,6 +149,44 @@ export interface OtelConfig {
   protocol?: Protocol;
 }
 /**
+ * A streamed chunk of assistant text.
+ *
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "TextDelta".
+ */
+export interface TextDelta {
+  text: Text2;
+  type?: Type3;
+  version?: Version2;
+}
+/**
+ * A human readable note about a tool call the harness is making.
+ *
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "ToolNote".
+ */
+export interface ToolNote {
+  text: Text3;
+  tool?: Tool;
+  type?: Type4;
+  version?: Version3;
+}
+/**
+ * Marks that a non-idempotent tool call executed during the run.
+ *
+ * Its presence gates the no-retry-after-side-effects rule (section 2b): a
+ * failed run carrying this flag escalates to a human instead of retrying.
+ *
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "SideEffectFlag".
+ */
+export interface SideEffectFlag {
+  detail?: Detail;
+  tool?: Tool1;
+  type?: Type5;
+  version?: Version4;
+}
+/**
  * The typed session setup contract.
  *
  * ``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);
@@ -156,42 +204,4 @@ export interface SessionConfig {
   plugin_dir: PluginDir;
   sandbox_id: SandboxId;
   session_id: SessionId;
-}
-/**
- * Marks that a non-idempotent tool call executed during the run.
- *
- * Its presence gates the no-retry-after-side-effects rule (section 2b): a
- * failed run carrying this flag escalates to a human instead of retrying.
- *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
- * via the `definition` "SideEffectFlag".
- */
-export interface SideEffectFlag {
-  detail?: Detail;
-  tool?: Tool;
-  type?: Type3;
-  version?: Version2;
-}
-/**
- * A streamed chunk of assistant text.
- *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
- * via the `definition` "TextDelta".
- */
-export interface TextDelta {
-  text: Text2;
-  type?: Type4;
-  version?: Version3;
-}
-/**
- * A human readable note about a tool call the harness is making.
- *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
- * via the `definition` "ToolNote".
- */
-export interface ToolNote {
-  text: Text3;
-  tool?: Tool1;
-  type?: Type5;
-  version?: Version4;
 }

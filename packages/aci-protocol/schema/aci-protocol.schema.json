@@ -59,6 +59,7 @@
           "type": "string"
         },
         "version": {
+          "const": "0.1.0",
           "default": "0.1.0",
           "title": "Version",
           "type": "string"
@@ -130,6 +131,7 @@
           "type": "string"
         },
         "version": {
+          "const": "0.1.0",
           "default": "0.1.0",
           "title": "Version",
           "type": "string"
@@ -140,6 +142,24 @@
       ],
       "title": "Final",
       "type": "object"
+    },
+    "InboundMessage": {
+      "discriminator": {
+        "mapping": {
+          "event": "#/$defs/Event",
+          "interrupt": "#/$defs/Interrupt"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Event"
+        },
+        {
+          "$ref": "#/$defs/Interrupt"
+        }
+      ],
+      "title": "InboundMessage"
     },
     "Interrupt": {
       "additionalProperties": false,
@@ -205,6 +225,36 @@
       },
       "title": "OtelConfig",
       "type": "object"
+    },
+    "OutboundEvent": {
+      "discriminator": {
+        "mapping": {
+          "error": "#/$defs/ErrorEvent",
+          "final": "#/$defs/Final",
+          "side_effect_flag": "#/$defs/SideEffectFlag",
+          "text_delta": "#/$defs/TextDelta",
+          "tool_note": "#/$defs/ToolNote"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextDelta"
+        },
+        {
+          "$ref": "#/$defs/ToolNote"
+        },
+        {
+          "$ref": "#/$defs/Final"
+        },
+        {
+          "$ref": "#/$defs/ErrorEvent"
+        },
+        {
+          "$ref": "#/$defs/SideEffectFlag"
+        }
+      ],
+      "title": "OutboundEvent"
     },
     "SessionConfig": {
       "additionalProperties": false,
@@ -307,6 +357,7 @@
           "type": "string"
         },
         "version": {
+          "const": "0.1.0",
           "default": "0.1.0",
           "title": "Version",
           "type": "string"
@@ -330,6 +381,7 @@
           "type": "string"
         },
         "version": {
+          "const": "0.1.0",
           "default": "0.1.0",
           "title": "Version",
           "type": "string"
@@ -368,6 +420,7 @@
           "type": "string"
         },
         "version": {
+          "const": "0.1.0",
           "default": "0.1.0",
           "title": "Version",
           "type": "string"
