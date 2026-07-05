@@ -27,12 +27,24 @@ fn append_dir(
         let path = entry.path();
         let name = entry.file_name();
         let rel = path.strip_prefix(root).expect("entry is under root");
-        if path.is_dir() {
+        // file_type() does not follow symlinks: a link inside the bundle would
+        // otherwise be dereferenced by tar and upload host files from outside
+        // the plugin root (e.g. a link into ~/.ssh). Refuse loudly instead.
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("stat {}", path.display()))?;
+        if file_type.is_symlink() {
+            bail!(
+                "symlinks are not supported in plugin bundles: {}",
+                path.display()
+            );
+        }
+        if file_type.is_dir() {
             if EXCLUDED_DIRS.iter().any(|d| name == *d) {
                 continue;
             }
             append_dir(builder, root, &path)?;
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             builder
                 .append_path_with_name(&path, rel)
                 .with_context(|| format!("archiving {}", path.display()))?;
@@ -87,5 +99,21 @@ mod tests {
     #[test]
     fn refuses_a_missing_directory() {
         assert!(pack_tar_gz(Path::new("/nonexistent/bundle")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_symlinks_instead_of_dereferencing_them() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::scaffold::scaffold(dir.path(), "deal-desk").unwrap();
+        let secret = tempfile::tempdir().unwrap();
+        std::fs::write(secret.path().join("id_rsa"), "private").unwrap();
+        std::os::unix::fs::symlink(secret.path(), dir.path().join("skills/data")).unwrap();
+
+        let err = pack_tar_gz(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("symlinks are not supported"),
+            "{err}"
+        );
     }
 }
