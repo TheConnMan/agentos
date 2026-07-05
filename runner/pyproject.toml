@@ -3,7 +3,15 @@ name = "agentos-runner"
 version = "0.0.0"
 description = "AgentOS runner: claude-agent-sdk streaming session server implementing the ACI v0.1 contract"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "aci-protocol",
+    "plugin-format",
+    "claude-agent-sdk>=0.2.110",
+    "aiohttp>=3.11",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+    "anyio>=4.6",
+]
 
 [build-system]
 requires = ["hatchling"]
