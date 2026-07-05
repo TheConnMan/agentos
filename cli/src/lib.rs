@@ -6,11 +6,14 @@
 
 pub mod api;
 pub mod bundle;
+pub mod chat;
 pub mod commands;
 pub mod docker;
 pub mod evals;
 pub mod ndjson;
+pub mod queue;
 pub mod render;
 pub mod runner;
 pub mod scaffold;
+pub mod slack_sim;
 pub mod state;
