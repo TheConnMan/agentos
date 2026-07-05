@@ -2,8 +2,19 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The generated ACI contract types live outside apps/ui in the workspace package.
-// Alias @aci/* so fixtures can type trace/session data against the frozen contract.
+// apps/api has no CORS middleware, so the browser talks to it same-origin: the
+// UI calls /api/* and Vite proxies to the API server, stripping the /api prefix.
+// AGENTOS_API_TARGET points at the running uvicorn (default the local dev port).
+// Wiring is gated at runtime (?api=1), so the proxy is inert until the UI opts in.
+const apiTarget = process.env.AGENTOS_API_TARGET ?? "http://localhost:8000";
+const proxy = {
+  "/api": {
+    target: apiTarget,
+    changeOrigin: true,
+    rewrite: (p: string) => p.replace(/^\/api/, ""),
+  },
+};
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -13,6 +24,7 @@ export default defineConfig({
       ),
     },
   },
-  server: { port: 5173 },
-  preview: { port: 4173 },
+  // Dev server on 5174: 5173 is held by the review preview from agentos-main.
+  server: { port: 5174, proxy },
+  preview: { port: 4173, proxy },
 });

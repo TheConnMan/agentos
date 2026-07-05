@@ -1,7 +1,9 @@
 import { SectionTitle, EmptyState, Tabs } from "../primitives";
 import { useStore } from "../state/store";
+import { isWired } from "../api/config";
 import type { ObsTab } from "../state/types";
 import { TracesList, TraceDetail } from "./obs/Traces";
+import { RealTracesList, RealTraceDetail } from "./obs/RealTraces";
 import { Metrics } from "./obs/Metrics";
 import { Logs } from "./obs/Logs";
 import { MemoryStub } from "./obs/MemoryStub";
@@ -38,7 +40,11 @@ export function Observability() {
   let content;
   switch (tab) {
     case "traces":
-      content = state.traceOpen ? <TraceDetail /> : <TracesList />;
+      if (isWired()) {
+        content = state.traceOpen ? <RealTraceDetail /> : <RealTracesList />;
+      } else {
+        content = state.traceOpen ? <TraceDetail /> : <TracesList />;
+      }
       break;
     case "metrics":
       content = <Metrics />;
