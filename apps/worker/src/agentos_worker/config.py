@@ -105,9 +105,10 @@ class WorkerConfig(BaseModel):
     s3_secret_key: str = "miniosecret"
     s3_region: str = "us-east-1"
     bundle_bucket: str = "agentos-bundles"
-    # Platform API for POST /evals/report.
-    api_base_url: str = "http://localhost:3000"
-    api_key: str = ""
+    # Platform API for POST /evals/report. Defaults match the API's dev stack
+    # (README serves it on :8000; its shared dev key is agentos-dev-key).
+    api_base_url: str = "http://localhost:8000"
+    api_key: str = "agentos-dev-key"
     report_max_attempts: int = 3
     report_backoff_base_s: float = Field(default=0.5, gt=0)
     # Langfuse for recording eval scores (the matrix reads them back by version).
