@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # refused before a subprocess runs.
     git_allowed_schemes: tuple[str, ...] = ("file://", "https://", "http://")
 
+    # Observability (OB1). kube_config_path points the runner-logs proxy at a
+    # cluster; when unset the API tries in-cluster config, and if neither is
+    # available the logs endpoint degrades to 503 rather than crashing.
+    kube_config_path: str | None = None
+    metrics_default_window_hours: int = 168  # 7 days
+
 
 @lru_cache
 def get_settings() -> Settings:

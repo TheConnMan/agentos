@@ -110,3 +110,39 @@ class TraceTree(BaseModel):
 
     trace: dict[str, Any]
     tree: list[ObservationNode]
+
+
+class MetricsSummary(BaseModel):
+    """Scalar totals for the Metrics tab stat row over a time window."""
+
+    start: str
+    end: str
+    runs: int
+    latency_p95_seconds: float
+    tokens: int
+    cost_usd: float
+    error_rate: float
+
+
+class MetricPoint(BaseModel):
+    ts: str
+    value: float
+
+
+class MetricSeries(BaseModel):
+    """One metric as a time series for the Metrics tab charts."""
+
+    metric: str
+    granularity: str
+    start: str
+    end: str
+    points: list[MetricPoint]
+
+
+class PodLogs(BaseModel):
+    """Runner-pod logs for the per-run runner-logs affordance."""
+
+    namespace: str
+    pod: str
+    container: str | None
+    logs: str

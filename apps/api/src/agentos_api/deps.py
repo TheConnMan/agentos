@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .k8s import PodLogReader
 from .langfuse import LangfuseClient
 from .storage import BundleStore
 
@@ -26,6 +27,12 @@ def get_store(request: Request) -> BundleStore:
     return store
 
 
+def get_pod_log_reader(request: Request) -> PodLogReader:
+    reader: PodLogReader = request.app.state.pod_log_reader
+    return reader
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LangfuseDep = Annotated[LangfuseClient, Depends(get_langfuse)]
 StoreDep = Annotated[BundleStore, Depends(get_store)]
+PodLogReaderDep = Annotated[PodLogReader, Depends(get_pod_log_reader)]
