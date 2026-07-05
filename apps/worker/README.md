@@ -2,6 +2,45 @@
 
 Owning tasks: **F1** (the prod-hard concurrency kernel: routing rule, finish-race CAS, steer/interrupt, no-retry-after-side-effects, resume-rehydrate), **G1** (Agent Sandbox substrate module: warm pool, thread-to-sandbox affinity, claim/release), **K1** (eval runner module). F1 is single-owner and never split, with an escalated adversarial review roster. Reads Valkey Streams via redis-py consumer groups; drives claimed sandboxes running the D1 runner image.
 
+## K1: the eval lane (`agentos_worker.eval`)
+
+Runs an eval suite against a plugin version and records the grid the eval matrix
+and PR check read.
+
+```
+EvalSuite (cases: input + grader)
+   -> EvalRunner: deliver each case as an ACI `eval_case` event over the runner's
+      HTTP channel (the F1 RunnerClient), take the `final` text as the answer
+   -> Grader: exact | contains | regex -> pass/fail (deny-by-default; a case must
+      name a grader)
+   -> EvalRunResult: per-case rows + the "N/M passed" summary
+   -> LangfuseEvalRecorder: a trace + `eval_pass` score per case, tagged
+      `version:<sha>` and `suite:<name>`, via the Langfuse ingestion API
+```
+
+Run a Job with `python -m agentos_worker.eval`; it loads a suite JSON, runs it
+against a runner endpoint, records to Langfuse if configured, prints the
+`EvalRunResult` as JSON (for the PR-check reporter), and exits non-zero if any
+case failed (so the Job / GitHub check reflects the result).
+
+Env: `AGENTOS_EVAL_SUITE` (suite JSON path), `AGENTOS_EVAL_TARGET_URL` (runner
+base_url), `AGENTOS_EVAL_VERSION` (version/sha tag, default `local`),
+`LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (record scores
+when all set).
+
+**Handoffs (not in apps/worker):** the API's eval **matrix endpoint** reads the
+grid back from Langfuse filtered by the `version:` tag (a trace's `eval_pass`
+score is 1.0/0.0; query traces by tag, read each trace's score); the **PR-check**
+reporter (J1) turns the printed `EvalRunResult` summary into a GitHub commit
+status; the **UI** matrix tab renders the grid; the **Job fan-out** per version @
+sha on a PR webhook is the API's (a Job template runs this module). Per-case
+sandbox isolation (a fresh sandbox per case) is that Job-orchestration layer's
+choice; `EvalRunner` runs a suite against one endpoint.
+
+Tests (`apps/worker/tests/eval`): graders and rollups (unit); `EvalRunner`
+against a scriptable fake runner; `LangfuseEvalRecorder` against the REAL compose
+Langfuse (record + read back by version tag, never mocked).
+
 ## F1: the concurrency kernel (`agentos_worker.kernel` + `agentos_worker.consumer`)
 
 The kernel closes the loop: it consumes `QueuedSlackEvent` entries the dispatcher
