@@ -221,3 +221,49 @@ preflights:
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 250m, memory: 128Mi }
+
+# ---------------------------------------------------------------------------
+# Agent Sandbox substrate (G1). The runner SandboxTemplate + SandboxWarmPool
+# that the worker's sandbox substrate claims from (one claimed sandbox per
+# Slack thread). Requires the agent-sandbox CRDs (shipped in this chart's
+# crds/ directory, installed automatically on `helm install`) and the upstream
+# controller with the extensions enabled: either flip
+# `agentSandbox.controller.deploy: true` to install the vendored v0.5.0
+# controller bundle, or point the chart at a cluster that already runs it.
+# Default off: the sandbox substrate is opt-in until the walking-skeleton gate.
+# ---------------------------------------------------------------------------
+agentSandbox:
+  deploy: false
+  controller:
+    # Installs the vendored kubernetes-sigs/agent-sandbox v0.5.0 controller
+    # (namespace agent-sandbox-system, RBAC, webhook Service, Deployment with
+    # --extensions). Cluster-scoped; one install per cluster, so keep this
+    # false when the cluster already runs the controller.
+    deploy: false
+  warmPool:
+    # Pre-warmed generic runner sandboxes ready to be claimed sub-second.
+    replicas: 1
+    updateStrategy: OnReplenish
+  runner:
+    image: agentos-runner
+    tag: latest
+    # The runner image is built locally (docker build -f runner/Dockerfile .)
+    # and imported into the cluster runtime, so Never is the safe default: a
+    # pull would fail against a registry that does not have the image.
+    imagePullPolicy: Never
+    port: 8080
+    # Fake-model mode round-trips ACI events offline with no credential; flip
+    # false (and provide credentials) for real model runs.
+    fakeModel: true
+    pluginDir: /unused
+    budget:
+      maxOutputTokensPerRun: 100000
+      maxUsdPerDay: 5.0
+    # Per-claim env injection (the resume path injects AGENTOS_HISTORY_REF and
+    # AGENTOS_SESSION_ID) must be able to override the template's baked env.
+    envVarsInjectionPolicy: Overrides
+    # Extra env for the runner container, list of {name, value}.
+    extraEnv: []
+    resources:
+      requests: { cpu: 50m, memory: 192Mi }
+      limits: { cpu: "1", memory: 768Mi }
