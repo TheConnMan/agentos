@@ -128,12 +128,14 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     }
 
     // State lives with the bundle: init gitignores .agentos/ there, and the
-    // follow-up commands are documented to run from the bundle directory.
-    state::save(
+    // follow-up commands are documented to run from the bundle directory. If
+    // the save fails (e.g. a read-only bundle), tear the container down again:
+    // a live runner with no recorded state would be invisible to stop/status.
+    if let Err(err) = state::save(
         &plugin_dir,
         &RunnerState {
             container_id,
-            container_name: opts.name,
+            container_name: opts.name.clone(),
             image: opts.image,
             port: opts.port,
             base_url: base_url.clone(),
@@ -141,7 +143,10 @@ pub async fn start(opts: StartOpts) -> Result<()> {
             plugin_dir: plugin_dir.display().to_string(),
             fake_model: opts.fake_model,
         },
-    )?;
+    ) {
+        let _ = docker::remove_container(&opts.name).await;
+        return Err(err.context("recording runner state (container removed again)"));
+    }
 
     let version = git_short_sha(&plugin_dir)
         .await
@@ -157,7 +162,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     let cwd = Path::new(".").canonicalize()?;
     if cwd != plugin_dir {
         println!(
-            "\nState recorded in {}/.agentos/runner.json; run send/eval/stop from there (or pass --url).",
+            "\nState recorded in {}/.agentos/runner.json; run stop (and send/eval/status) from that directory. send and eval also accept --url.",
             plugin_dir.display()
         );
     }
