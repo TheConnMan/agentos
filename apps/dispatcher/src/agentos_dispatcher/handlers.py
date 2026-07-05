@@ -1,0 +1,139 @@
+"""Slack event handling: the fast-ack path that posts a placeholder and enqueues.
+
+The Socket Mode transport acks the envelope in under three seconds on its own
+(the handler sends the ack before dispatching to these listeners). These handlers
+own the rest of the lifecycle step: dedupe the delivery, post an in-thread
+placeholder reply, and enqueue the normalized job for the worker.
+
+Two event types feed the same processing path:
+  - ``app_mention``: the bot was @-mentioned in a channel; always process.
+  - ``message``: only direct messages to the bot (``channel_type == "im"``) are
+    processed, so ordinary channel chatter is not enqueued.
+
+We use the dispatcher's own ``WebClient`` (built from the bot token) rather than
+Bolt's per-request injected client so the Web API surface is a single, mockable
+seam. Routing, retries, and run orchestration are the worker's job (F1), not the
+dispatcher's.
+"""
+
+import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+from slack_bolt import App
+from slack_sdk.web import WebClient
+
+from .config import DispatcherConfig
+from .queue import QueuedSlackEvent, claim_event, enqueue
+
+if TYPE_CHECKING:
+    from redis import Redis
+
+Clock = Callable[[], str]
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def is_actionable(event: dict[str, Any]) -> bool:
+    """False for events the dispatcher must ignore to avoid loops and noise.
+
+    Bot-authored messages (including the dispatcher's own placeholder) and
+    subtyped messages (edits, joins, deletions) are not user requests.
+    """
+    if event.get("bot_id"):
+        return False
+    if event.get("subtype"):
+        return False
+    return True
+
+
+def process_event(
+    *,
+    body: dict[str, Any],
+    event: dict[str, Any],
+    web_client: WebClient,
+    redis_client: "Redis",
+    config: DispatcherConfig,
+    clock: Clock = _utc_now_iso,
+    logger: logging.Logger | None = None,
+) -> str | None:
+    """Dedupe, post the placeholder, and enqueue one Slack event.
+
+    Returns the Valkey Stream id when a job was enqueued, or None when the event
+    was skipped (non-actionable, or a duplicate delivery already claimed).
+    """
+    log = logger or logging.getLogger(__name__)
+
+    if not is_actionable(event):
+        return None
+
+    slack_event_id = body["event_id"]
+
+    if not claim_event(redis_client, config, slack_event_id):
+        log.info("duplicate slack event %s, skipping", slack_event_id)
+        return None
+
+    # Reply in-thread: for a root message the thread key is its own ts.
+    thread_ts = event.get("thread_ts") or event["ts"]
+    channel = event["channel"]
+
+    placeholder = web_client.chat_postMessage(
+        channel=channel,
+        thread_ts=thread_ts,
+        text=config.placeholder_text,
+    )
+    placeholder_ts = placeholder["ts"]
+
+    queued = QueuedSlackEvent(
+        slack_event_id=slack_event_id,
+        thread_ts=thread_ts,
+        channel=channel,
+        user=event.get("user", ""),
+        text=event.get("text", ""),
+        placeholder_ts=placeholder_ts,
+        received_at=clock(),
+    )
+    stream_id = enqueue(redis_client, config, queued)
+    log.info("enqueued slack event %s as stream entry %s", slack_event_id, stream_id)
+    return stream_id
+
+
+def register_handlers(
+    app: App,
+    *,
+    web_client: WebClient,
+    redis_client: "Redis",
+    config: DispatcherConfig,
+    clock: Clock = _utc_now_iso,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Wire the app_mention and (direct-message) message listeners onto the app."""
+
+    @app.event("app_mention")
+    def _on_app_mention(body: dict[str, Any], event: dict[str, Any]) -> None:
+        process_event(
+            body=body,
+            event=event,
+            web_client=web_client,
+            redis_client=redis_client,
+            config=config,
+            clock=clock,
+            logger=logger,
+        )
+
+    @app.event("message")
+    def _on_message(body: dict[str, Any], event: dict[str, Any]) -> None:
+        if event.get("channel_type") != "im":
+            return
+        process_event(
+            body=body,
+            event=event,
+            web_client=web_client,
+            redis_client=redis_client,
+            config=config,
+            clock=clock,
+            logger=logger,
+        )
