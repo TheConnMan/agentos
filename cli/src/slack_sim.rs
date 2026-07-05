@@ -3,20 +3,26 @@
 //! It posts a synthetic conversation in a real Slack channel as the bot (a root
 //! message rendering the simulated user text, then a threaded placeholder),
 //! enqueues the exact `QueuedSlackEvent` the dispatcher would produce onto the
-//! real Valkey stream, and polls `conversations.replies` until the worker edits
-//! the placeholder in place. On success it prints the reply and exits 0; on
-//! timeout it prints stream diagnostics and exits nonzero.
+//! real Valkey stream, and waits for the worker to finalize the turn. On success
+//! it prints the reply and exits 0; on timeout it prints stream diagnostics and
+//! exits nonzero.
+//!
+//! Completion is the worker's XACK of our stream entry, not the first placeholder
+//! edit: the worker throttles live `chat.update` edits during a turn and acks
+//! only after finalizing, so waiting for the ack (then reading the latest
+//! placeholder text) avoids reporting a throttled interim edit as the answer.
+//! This is the same completion signal `chat` uses; both share it via `queue`.
 //!
 //! This is the real-Slack rung of the ladder; the no-Slack rung is `chat`, which
-//! makes the CLI itself the Slack service. Both share the frozen queue seam via
-//! the `queue` module.
+//! makes the CLI itself the Slack service.
 
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use redis::aio::MultiplexedConnection;
 use serde::Deserialize;
 
-use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent};
+use crate::queue::{self, connect, diagnostics, entry_acked, xadd, QueuedSlackEvent, WORKER_GROUP};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
 pub const DEFAULT_VALKEY_URL: &str = queue::DEFAULT_VALKEY_URL;
@@ -191,29 +197,48 @@ impl SlackClient {
     }
 }
 
-/// Poll `conversations.replies` until the placeholder text changes or the
-/// deadline passes. `Ok(Some(text))` is the worker's reply; `Ok(None)` is a
-/// timeout.
-async fn poll_for_reply(
+/// The result of waiting for the worker to finalize the turn.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SimOutcome {
+    /// The worker acked the entry; the final placeholder text.
+    Replied(String),
+    /// The worker acked but the placeholder never changed from the placeholder.
+    CompletedNoEdit,
+    /// The deadline passed with no ack.
+    TimedOut,
+}
+
+/// Wait for the worker to consume and finalize the turn. Terminal signal is the
+/// XACK of our entry; the reply is the latest edited placeholder text read from
+/// `conversations.replies`. Polling keeps capturing the latest edit so the text
+/// is current when the ack lands.
+#[allow(clippy::too_many_arguments)]
+pub async fn wait_for_completion(
     slack: &SlackClient,
+    conn: &mut MultiplexedConnection,
+    stream: &str,
+    entry_id: &str,
     channel: &str,
     thread_ts: &str,
     placeholder_ts: &str,
     original: &str,
     timeout: Duration,
-) -> Result<Option<String>> {
+) -> Result<SimOutcome> {
     let deadline = Instant::now() + timeout;
+    let mut latest: Option<String> = None;
     loop {
         let messages = slack.conversations_replies(channel, thread_ts).await?;
         if let Some(text) = reply_text_if_changed(&messages, placeholder_ts, original) {
-            return Ok(Some(text));
+            latest = Some(text);
+        }
+        if entry_acked(conn, stream, WORKER_GROUP, entry_id).await {
+            return Ok(latest.map_or(SimOutcome::CompletedNoEdit, SimOutcome::Replied));
         }
         let now = Instant::now();
         if now >= deadline {
-            return Ok(None);
+            return Ok(SimOutcome::TimedOut);
         }
-        let remaining = deadline - now;
-        tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
+        tokio::time::sleep(POLL_INTERVAL.min(deadline - now)).await;
     }
 }
 
@@ -257,14 +282,17 @@ pub async fn slack_sim(opts: SlackSimOpts) -> Result<()> {
         event.slack_event_id, opts.stream
     );
 
-    // 4. Poll until the worker edits the placeholder, or time out with
-    // diagnostics.
+    // 4. Wait for the worker to finalize (XACK), then read the final placeholder
+    // text, or time out with diagnostics.
     println!(
-        "waiting up to {}s for the worker to reply...",
+        "waiting up to {}s for the worker to finalize the turn...",
         opts.timeout_secs
     );
-    let outcome = poll_for_reply(
+    let outcome = wait_for_completion(
         &slack,
+        &mut conn,
+        &opts.stream,
+        &stream_id,
         &opts.channel,
         &thread_ts,
         &placeholder_ts,
@@ -274,13 +302,17 @@ pub async fn slack_sim(opts: SlackSimOpts) -> Result<()> {
     .await?;
 
     match outcome {
-        Some(reply) => {
+        SimOutcome::Replied(reply) => {
             println!("reply    {reply}");
             Ok(())
         }
-        None => {
+        SimOutcome::CompletedNoEdit => {
+            println!("the worker finished the turn but never edited the placeholder");
+            Ok(())
+        }
+        SimOutcome::TimedOut => {
             println!(
-                "TIMEOUT: no reply after {}s. Stream diagnostics:",
+                "TIMEOUT: the worker did not finalize within {}s. Stream diagnostics:",
                 opts.timeout_secs
             );
             let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;

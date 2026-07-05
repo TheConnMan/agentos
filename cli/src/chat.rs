@@ -14,8 +14,10 @@
 //! interim edit as the answer.
 //!
 //! The worker must run with `SLACK_API_BASE_URL` pointing at this stub's `/api/`
-//! base (that env var is plumbed into the worker sink by the K1 lane; here it is
-//! the integration contract). No Slack token, channel, or real Slack HTTP.
+//! base: the worker reads that env var (`agentos_worker.config`) and builds its
+//! Slack sink's `AsyncWebClient(token=..., base_url=...)` against it, so its
+//! `chat.update` edits land at this stub instead of real Slack. No Slack token,
+//! channel, or real Slack HTTP on the CLI side.
 
 use std::time::{Duration, Instant};
 
