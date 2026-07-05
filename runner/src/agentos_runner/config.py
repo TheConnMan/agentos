@@ -41,9 +41,13 @@ class RunnerConfig:
         """Parse a RunnerConfig from a process environment mapping.
 
         The ACI-frozen vars are parsed by ``SessionConfig.from_env``; a malformed
-        or missing required var raises there. The rehydrate ref falls back to
-        ``AGENTOS_MEMORY_REF`` when no explicit ``AGENTOS_HISTORY_REF`` is set, so
-        the externalized-memory pointer doubles as the resume ref (ADR-0003).
+        or missing required var raises there. ``history_ref`` is read only from an
+        explicit ``AGENTOS_HISTORY_REF``, which is an SDK ``resume`` session id
+        (transcript- or session-store-backed). It is deliberately NOT derived from
+        ``AGENTOS_MEMORY_REF``: the memory ref is an externalized-memory pointer
+        (S3 path / API URL), a different concept the SDK cannot resume from. The
+        worker/G1 is what turns externalized history into a resume id; the runner
+        only accepts one (ADR-0003, stateless-first).
         """
 
         session = SessionConfig.from_env(env)
@@ -58,7 +62,7 @@ class RunnerConfig:
             model=env.get("AGENTOS_MODEL"),
             system_prompt=env.get("AGENTOS_SYSTEM_PROMPT"),
             max_turns=int(env.get("AGENTOS_MAX_TURNS", "20")),
-            history_ref=env.get("AGENTOS_HISTORY_REF") or session.memory_ref,
+            history_ref=env.get("AGENTOS_HISTORY_REF"),
             idempotent_tools=idempotent,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
         )

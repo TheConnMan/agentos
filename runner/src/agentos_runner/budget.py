@@ -46,13 +46,16 @@ class BudgetTracker:
     used: int = 0
 
     def add(self, usage: Mapping[str, Any] | None) -> None:
-        """Fold one message's usage into the running total (monotonic).
+        """Fold one SDK message's output usage into the running total.
 
-        SDK usage is typically cumulative for the turn, so the running total
-        tracks the max seen rather than a naive sum, which would double count.
+        ``AssistantMessage.usage`` reports the output tokens for *that* message,
+        not a cumulative turn total, so a multi-message turn is summed. If a build
+        instead reports cumulative usage the sum overshoots and halts a touch
+        early -- the safe direction for a spend ceiling (halt early, never blow
+        past).
         """
 
-        self.used = max(self.used, output_tokens(usage))
+        self.used += output_tokens(usage)
 
     @property
     def exceeded(self) -> bool:

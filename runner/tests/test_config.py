@@ -20,9 +20,11 @@ def test_parses_budget_and_defaults() -> None:
     assert config.history_ref is None
 
 
-def test_history_ref_falls_back_to_memory_ref() -> None:
+def test_history_ref_is_not_derived_from_memory_ref() -> None:
+    # A memory ref is an externalized-memory pointer, not an SDK resume id, so it
+    # must not become the rehydrate ref.
     env = dict(_BASE, AGENTOS_MEMORY_REF="s3://mem/thread")
-    assert RunnerConfig.from_env(env).history_ref == "s3://mem/thread"
+    assert RunnerConfig.from_env(env).history_ref is None
 
 
 def test_explicit_history_ref_wins() -> None:
