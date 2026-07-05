@@ -9,6 +9,16 @@ claiming agent-sandbox CRs. The boot recipe mirrors the CLI's
 ``cli/src/docker.rs`` (image ``agentos-runner``, port publish, plugin mount,
 network join, the ACI boot env).
 
+Local middle mode defaults to a REAL model: the runner authenticates through the
+claude-agent-sdk, which reads ``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_API_KEY``
+from its own environment (the runner never dereferences the ACI
+``AGENTOS_CREDENTIALS`` reference). So this client forwards those SDK credential
+vars BY NAME into every runner container when the worker has them set -- Docker
+reads the value from the worker's environment, this code never does. Fake model
+is an explicit offline/test opt-in (``AGENTOS_FAKE_MODEL=1``), gated in
+``run.py``: middle mode never silently degrades to a fake when a credential is
+missing.
+
 Model mapping. Docker has no warm pool, no separate Sandbox object, and no init
 containers, so one container is simultaneously the "claim" and the "sandbox"
 (claim name == container name == sandbox name), and there is no bundle-fetch init
@@ -26,11 +36,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 from ..binding import BUNDLE_REF_ENV, PLUGIN_DIR_ENV
@@ -47,6 +59,11 @@ logger = logging.getLogger(__name__)
 # The runner listens on this fixed port inside every container; the host port it
 # is published to is Docker-assigned and read back per-container.
 RUNNER_CONTAINER_PORT = 8080
+
+# SDK credential env the runner's claude-agent-sdk authenticates with. Forwarded
+# into the container BY NAME (docker reads the value from the worker env, this
+# code never does), matching cli/src/docker.rs and cli/src/commands.rs.
+MODEL_CREDENTIAL_ENV = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 # Env keys the worker owns on the Docker path and must not blindly forward into
 # the container: the plugin dir and sandbox id are set explicitly, and the bundle
 # ref named a MinIO object the worker already fetched (the runner never fetches).
@@ -70,6 +87,7 @@ class DockerSandboxClient:
         host: str = "127.0.0.1",
         default_plugin_dir: str = "/bundles/current",
         healthz_timeout_s: float = 0.5,
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         self._image = image
         self._bundles = bundle_store
@@ -78,6 +96,9 @@ class DockerSandboxClient:
         self._host = host
         self._default_plugin_dir = default_plugin_dir
         self._healthz_timeout_s = healthz_timeout_s
+        # Presence-only view of the worker environment, used to decide which SDK
+        # credential vars to forward by name. Never read for their values.
+        self._environ = environ if environ is not None else os.environ
         # Per-container host dir holding the extracted bundle, cleaned on delete.
         self._bundle_dirs: dict[str, str] = {}
 
@@ -133,6 +154,12 @@ class DockerSandboxClient:
         for key, value in sorted(env.items()):
             if key not in _WORKER_OWNED_ENV:
                 args += ["-e", f"{key}={value}"]
+        # Forward the SDK credential(s) by name only (no value in the argv) when
+        # the worker has them set, so a real-model run authenticates without this
+        # code ever reading the token. Fake-model runs simply have none set.
+        for var in MODEL_CREDENTIAL_ENV:
+            if var in self._environ:
+                args += ["-e", var]
         args.append(self._image)
 
         try:

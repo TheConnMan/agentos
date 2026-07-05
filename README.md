@@ -60,12 +60,16 @@ NDJSON reply to your terminal. `agentos eval` runs a plugin's `evals/cases.json`
 the same way. This is the fastest inner loop for developing a plugin: zero
 Slack, zero cluster. See `cli/README.md`.
 
-**`agentos chat` (middle mode, being built)** — a planned CLI mode that hits
-the real deployed pipeline (dispatcher → worker → sandboxed runner) without a
-Slack workspace in between, for testing against production-shaped
-infrastructure without needing a live Slack app. Not yet implemented; the CLI
-today covers the fully-local mode (`start`/`send`/`eval`) and the deploy path
-(`agentos deploy` pushes a bundle to the API), described above.
+**`agentos chat` (middle mode)** — drive the real deployed pipeline (worker →
+sandboxed runner) without a Slack workspace in between. `agentos deploy` pushes a
+bundle to the API, then a worker run with `AGENTOS_SANDBOX_SUBSTRATE=docker`
+claims runner containers locally instead of a cluster, and `agentos chat` sends a
+message through the same path a Slack mention would take. Middle mode defaults to
+a **real model**: export `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`)
+before starting the worker and it is forwarded into each runner container. For a
+fully offline round-trip, set `AGENTOS_FAKE_MODEL=1` — an explicit test-only knob;
+without a credential and without that flag the worker refuses to start rather than
+silently faking. See the middle-mode runbook below.
 
 ## Quickstart
 
@@ -108,6 +112,31 @@ cd cli && cargo build --release
 ../target/release/agentos send "hello"
 ../target/release/agentos eval
 ```
+
+**Middle-mode runbook** (real deployed pipeline, no Slack, no cluster — the
+backing stack from the Quickstart plus the API on :8000 and the runner image
+built as above):
+
+```bash
+# Deploy a plugin to the API (creates the agent bound to a Slack channel id).
+./target/release/agentos deploy --plugin-dir ./my-agent --slack-channel C-DEMO --env dev
+
+# Start a worker that claims runner containers via Docker. REAL MODEL is the
+# default: export your credential first (forwarded into each runner container).
+export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=...
+env AGENTOS_SANDBOX_SUBSTRATE=docker \
+    VALKEY_HOST=localhost VALKEY_PORT=56379 VALKEY_PASSWORD=valkeypass \
+    SLACK_API_BASE_URL=http://localhost:8137/api/ SLACK_BOT_TOKEN=xoxb-dev \
+    uv run python -m agentos_worker &
+
+# Send a message through the same path a Slack mention takes; the fake-model
+# transcript is the identical command minus the credential, plus AGENTOS_FAKE_MODEL=1.
+./target/release/agentos chat "what changed in the last deploy?" \
+    --channel C-DEMO --listen-port 8137
+```
+
+For an offline round-trip add `AGENTOS_FAKE_MODEL=1` to the worker env and drop
+the credential. Without either, the worker refuses to start.
 
 Prefer a prebuilt binary? Tagged releases attach `agentos-<target>` binaries
 (linux + macOS) to the [GitHub Releases](../../releases) page — download one and

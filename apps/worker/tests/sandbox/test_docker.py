@@ -117,6 +117,31 @@ def test_create_claim_without_bundle_ref_mounts_nothing() -> None:
     assert _flag_values(client.calls[0], "-v") == []
 
 
+def test_sdk_credential_forwarded_by_name_only() -> None:
+    # A real-model run: the SDK token is present in the worker env. It must be
+    # forwarded by NAME (docker reads the value), never with its value in the argv.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={"CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER-never-real"},
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    argv = client.calls[0]
+    envs = _flag_values(argv, "-e")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in envs  # forwarded by name
+    assert all("PLACEHOLDER" not in a for a in argv)  # the value never leaks in
+
+
+def test_sdk_credential_not_forwarded_when_absent() -> None:
+    client = _RecordingDocker(
+        image="agentos-runner", bundle_store=_FakeBundleStore(), environ={}
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    envs = _flag_values(client.calls[0], "-e")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs
+    assert "ANTHROPIC_API_KEY" not in envs
+
+
 def test_get_sandbox_reports_published_port_and_mode() -> None:
     client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
     client.outputs = {

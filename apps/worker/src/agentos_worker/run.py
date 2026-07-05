@@ -64,6 +64,11 @@ def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
     )
 
 
+# The SDK credential env the runner authenticates a real model with; presence of
+# either satisfies the local-middle-mode credential requirement.
+_MODEL_CREDENTIAL_ENV = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+
+
 def _sandbox_client(
     config: WorkerConfig, env: Mapping[str, str], sub_config: SubstrateConfig
 ) -> SandboxClient:
@@ -72,15 +77,28 @@ def _sandbox_client(
     ``kubernetes`` (default) claims agent-sandbox CRs; ``docker`` boots runner
     containers locally (middle mode on a laptop, no cluster). The eval consumer
     shares the substrate this client backs, so the choice applies to both lanes.
+
+    Local middle mode defaults to a REAL model. Fake model is an explicit
+    offline/test opt-in, so a Docker worker with neither a model credential nor
+    ``AGENTOS_FAKE_MODEL`` fails loudly here rather than booting a real runner
+    that would fail cryptically or silently degrading to a fake.
     """
     substrate = env.get("AGENTOS_SANDBOX_SUBSTRATE", "kubernetes").lower()
     if substrate == "docker":
+        if not config.fake_model and not any(v in env for v in _MODEL_CREDENTIAL_ENV):
+            raise SystemExit(
+                "Local middle mode (AGENTOS_SANDBOX_SUBSTRATE=docker) defaults to a "
+                "real model, but no model credential is set. Export "
+                "CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) before starting the "
+                "worker, or set AGENTOS_FAKE_MODEL=1 for an offline/test run."
+            )
         return DockerSandboxClient(
             image=env.get("AGENTOS_RUNNER_IMAGE", "agentos-runner"),
             bundle_store=BundleStore(config),
             network=env.get("AGENTOS_DOCKER_NETWORK") or None,
             otel_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
             default_plugin_dir=config.bundle_plugin_dir,
+            environ=env,
         )
     return KubernetesSandboxClient(sub_config.namespace)
 
