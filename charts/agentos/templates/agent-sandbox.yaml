@@ -34,14 +34,47 @@ spec:
       labels:
         {{- include "agentos.selectorLabels" (dict "root" . "component" "runner-sandbox") | nindent 8 }}
     spec:
+      {{- if $runner.serviceAccount.create }}
+      serviceAccountName: {{ include "agentos.fullname" . }}-runner
+      automountServiceAccountToken: {{ $runner.serviceAccount.automountToken }}
+      {{- end }}
+      {{- if $runner.runtimeClassName }}
+      runtimeClassName: {{ $runner.runtimeClassName }}
+      {{- end }}
+      {{- if $runner.hardening.enabled }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $runner.hardening.runAsUser }}
+        runAsGroup: {{ $runner.hardening.runAsGroup }}
+        fsGroup: {{ $runner.hardening.fsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        {{- range $i, $p := $runner.hardening.writablePaths }}
+        - name: writable-{{ $i }}
+          emptyDir: {}
+        {{- end }}
+      {{- end }}
       containers:
         - name: runner
           image: "{{ $runner.image }}:{{ $runner.tag }}"
           imagePullPolicy: {{ $runner.imagePullPolicy }}
+          {{- if $runner.hardening.enabled }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          {{- end }}
           ports:
             - name: aci
               containerPort: {{ $runner.port }}
           env:
+            {{- if $runner.hardening.enabled }}
+            - name: HOME
+              value: {{ $runner.hardening.home | quote }}
+            {{- end }}
             {{- if $runner.fakeModel }}
             - name: AGENTOS_FAKE_MODEL
               value: "1"
@@ -79,6 +112,13 @@ spec:
             periodSeconds: 2
           resources:
             {{- toYaml $runner.resources | nindent 12 }}
+          {{- if $runner.hardening.enabled }}
+          volumeMounts:
+            {{- range $i, $p := $runner.hardening.writablePaths }}
+            - name: writable-{{ $i }}
+              mountPath: {{ $p }}
+            {{- end }}
+          {{- end }}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
