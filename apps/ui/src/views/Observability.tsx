@@ -5,7 +5,9 @@ import type { ObsTab } from "../state/types";
 import { TracesList, TraceDetail } from "./obs/Traces";
 import { RealTracesList, RealTraceDetail } from "./obs/RealTraces";
 import { Metrics } from "./obs/Metrics";
+import { RealMetrics } from "./obs/RealMetrics";
 import { Logs } from "./obs/Logs";
+import { RealLogs } from "./obs/RealLogs";
 import { MemoryStub } from "./obs/MemoryStub";
 import { Usage } from "./obs/Usage";
 import { Cost } from "./obs/Cost";
@@ -47,10 +49,10 @@ export function Observability() {
       }
       break;
     case "metrics":
-      content = <Metrics />;
+      content = isWired() ? <RealMetrics /> : <Metrics />;
       break;
     case "logs":
-      content = <Logs />;
+      content = isWired() ? <RealLogs /> : <Logs />;
       break;
     case "memory":
       content = <MemoryStub />;
