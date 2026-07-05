@@ -1,0 +1,176 @@
+{{- if .Values.preflights.networkPolicyProbe.enabled }}
+{{/*
+Preflight (b): NetworkPolicy-enforcement probe.
+
+The chart's security rails (A2) rely on NetworkPolicy to isolate runner pods.
+But a CNI that does not implement NetworkPolicy accepts the objects and silently
+ignores them -- the policies render, look correct, and enforce nothing. That is
+a security false-pass. This probe proves enforcement empirically with a
+before/after egress check:
+
+  1. reach an external target with no policy in place  (expect: reachable)
+  2. apply a default-deny-egress NetworkPolicy to this pod (DNS + in-cluster
+     egress still allowed so the control channel survives)
+  3. retry the external target                          (expect: blocked)
+
+enforcement=true only if step 3 is actually blocked. If step 3 still reaches
+out, the CNI is not enforcing and the probe FAILS loudly.
+
+Runs as a `helm test`. Needs RBAC to manage its own NetworkPolicy.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentos.fullname" . }}-netpol-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentos.fullname" . }}-netpol-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "delete", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agentos.fullname" . }}-netpol-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agentos.fullname" . }}-netpol-probe
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentos.fullname" . }}-netpol-probe
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agentos.fullname" . }}-netpol-probe
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.labels" . | nindent 8 }}
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "netpol-probe") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "agentos.fullname" . }}-netpol-probe
+      restartPolicy: Never
+      containers:
+        - name: netpol-probe
+          image: {{ .Values.preflights.networkPolicyProbe.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: TARGET
+              value: {{ .Values.preflights.networkPolicyProbe.externalTarget | quote }}
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: POLICY_NAME
+              value: {{ include "agentos.fullname" . }}-netpol-probe-deny
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              echo "== AgentOS NetworkPolicy-enforcement probe =="
+              echo "external target: ${TARGET}:443   namespace: ${NAMESPACE}"
+
+              # reachable unless the connection times out or is refused (a dropped
+              # egress from an enforced NetworkPolicy shows up as a timeout).
+              probe_egress() {
+                curl -sS -o /dev/null --connect-timeout 8 --max-time 10 "https://${TARGET}/" 2>/dev/null
+                rc=$?
+                case "$rc" in
+                  28|7) echo "blocked" ;;   # timed out / connection refused
+                  *)    echo "reachable" ;; # 0 or TLS/cert codes: bytes crossed the boundary
+                esac
+              }
+
+              cleanup() {
+                kubectl delete networkpolicy "${POLICY_NAME}" -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
+              }
+              trap cleanup EXIT
+
+              before=$(probe_egress)
+              echo "phase 1 (no policy):        egress ${before}"
+
+              echo "applying default-deny-egress NetworkPolicy (${POLICY_NAME}) ..."
+              cat <<EOF | kubectl apply -f -
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: ${POLICY_NAME}
+                namespace: ${NAMESPACE}
+              spec:
+                podSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: netpol-probe
+                policyTypes: [Egress]
+                egress:
+                  # Allow the RFC1918 private ranges only: this keeps the
+                  # in-cluster control path alive (cluster pods/services in 10.x
+                  # AND the API server, whose in-cluster endpoint is the node's
+                  # private InternalIP) so kubectl cleanup still works, while
+                  # denying the PUBLIC target -- which is what we are testing.
+                  - to:
+                      - ipBlock:
+                          cidr: 10.0.0.0/8
+                      - ipBlock:
+                          cidr: 172.16.0.0/12
+                      - ipBlock:
+                          cidr: 192.168.0.0/16
+              EOF
+
+              echo "waiting for the policy to take effect ..."
+              sleep 8
+              after=$(probe_egress)
+              echo "phase 2 (deny-egress):      egress ${after}"
+
+              cleanup
+              trap - EXIT
+
+              echo "---"
+              if [ "${before}" = "reachable" ] && [ "${after}" = "blocked" ]; then
+                echo "RESULT: enforcement=true  - CNI enforces NetworkPolicy (egress dropped after deny)."
+                exit 0
+              elif [ "${before}" = "reachable" ] && [ "${after}" = "reachable" ]; then
+                echo "RESULT: enforcement=false - SILENT FALSE-PASS. The CNI accepted the"
+                echo "        NetworkPolicy but did not enforce it. The chart's isolation rails"
+                echo "        would render but provide NO egress protection on this cluster."
+                exit 1
+              else
+                echo "RESULT: inconclusive - baseline egress was '${before}' (expected reachable)."
+                echo "        Cannot judge enforcement without a working baseline. Check that a"
+                echo "        pod can reach ${TARGET}:443 on this cluster."
+                exit 2
+              fi
+          resources:
+            {{- toYaml .Values.preflights.networkPolicyProbe.resources | nindent 12 }}
+{{- end }}
