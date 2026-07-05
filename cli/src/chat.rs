@@ -51,6 +51,12 @@ const FINAL_DRAIN: Duration = Duration::from_millis(100);
 /// Options for `agentos chat`, mirroring its clap flags.
 pub struct ChatOpts {
     pub text: String,
+    /// Channel to send as; `None` mints a throwaway synthetic channel. Set it
+    /// to the agent's slack_channel so the worker's exact-equality binding
+    /// routes the turn to a deployed agent.
+    pub channel: Option<String>,
+    /// Thread ts to continue; `None` starts a fresh thread.
+    pub thread: Option<String>,
     pub valkey_url: String,
     pub stream: String,
     pub user: String,
@@ -232,6 +238,27 @@ async fn await_reply(
     }
 }
 
+/// Print the one-liner that continues this thread: reusing the same channel and
+/// thread ts keeps the worker routing to the same agent and turn context.
+fn print_continue_hint(channel: &str, thread_ts: &str) {
+    println!(
+        "continue this conversation: agentos chat --channel {channel} --thread {thread_ts} \"...\""
+    );
+}
+
+/// Resolve the channel and timestamps for a turn: an explicit `--channel` is
+/// carried verbatim (so the worker's exact-equality binding can route to a
+/// deployed agent) and an explicit `--thread` continues that thread; each falls
+/// back to a fresh synthetic value when absent. The placeholder ts is always
+/// synthetic (the CLI owns the placeholder message). Returns
+/// `(channel, thread_ts, placeholder_ts)`.
+pub fn resolve_targets(channel: Option<&str>, thread: Option<&str>) -> (String, String, String) {
+    let channel = channel.map_or_else(synthetic_channel, str::to_string);
+    let (synthetic_thread_ts, placeholder_ts) = synthetic_thread_and_placeholder();
+    let thread_ts = thread.map_or(synthetic_thread_ts, str::to_string);
+    (channel, thread_ts, placeholder_ts)
+}
+
 /// The `agentos chat` handler.
 pub async fn chat(opts: ChatOpts) -> Result<()> {
     // Connect Valkey up front so a misconfigured stream or down stack fails fast,
@@ -245,9 +272,11 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
     );
 
     // Invent internally-consistent synthetic ids; the CLI is both the producer
-    // and the Slack endpoint that receives them back.
-    let channel = synthetic_channel();
-    let (thread_ts, placeholder_ts) = synthetic_thread_and_placeholder();
+    // and the Slack endpoint that receives them back. --channel/--thread let a
+    // caller target a deployed agent (whose slack_channel the worker binds on)
+    // and continue an existing thread; absent, both fall back to synthetic.
+    let (channel, thread_ts, placeholder_ts) =
+        resolve_targets(opts.channel.as_deref(), opts.thread.as_deref());
     let event = QueuedSlackEvent::synthetic(
         &channel,
         &opts.user,
@@ -278,10 +307,12 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             println!("reply    {reply}");
+            print_continue_hint(&channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             println!("the worker finished the turn but never edited the placeholder");
+            print_continue_hint(&channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {

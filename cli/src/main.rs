@@ -129,6 +129,15 @@ enum Command {
     Chat {
         /// The user message text.
         text: String,
+        /// Slack channel id to send as; must match the agent's slack_channel
+        /// for the worker to route it (e.g. the value passed to deploy
+        /// --slack-channel). Omit to mint a throwaway synthetic channel.
+        #[arg(long)]
+        channel: Option<String>,
+        /// Existing thread ts to continue a conversation; omit to start a new
+        /// thread. Pair with --channel to keep multi-turn context.
+        #[arg(long)]
+        thread: Option<String>,
         /// Valkey connection URL.
         #[arg(long, env = "VALKEY_URL", default_value = chat::DEFAULT_VALKEY_URL)]
         valkey_url: String,
@@ -251,6 +260,8 @@ async fn main() -> Result<()> {
         }
         Command::Chat {
             text,
+            channel,
+            thread,
             valkey_url,
             stream,
             user,
@@ -260,6 +271,8 @@ async fn main() -> Result<()> {
         } => {
             chat::chat(ChatOpts {
                 text,
+                channel,
+                thread,
                 valkey_url,
                 stream,
                 user,
