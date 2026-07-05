@@ -1,0 +1,37 @@
+# OTel Collector config for the AgentOS dev stack.
+#
+# Receives OTLP from our services over BOTH gRPC (4317) and HTTP (4318), and
+# forwards to Langfuse. Langfuse OTLP ingest is HTTP-only (gRPC is silently
+# unsupported), so the collector is the adapter: services may speak gRPC, but
+# the export to Langfuse is always otlphttp. Langfuse appends /v1/traces to the
+# otlphttp endpoint's base path itself.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      # Basic auth for the LANGFUSE_INIT project keys baked into compose.dev.yaml.
+      # Value is base64("<public-key>:<secret-key>"), supplied via .env.
+      Authorization: ${env:LANGFUSE_OTLP_AUTH_HEADER}
+  debug:
+    verbosity: normal
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/langfuse, debug]
