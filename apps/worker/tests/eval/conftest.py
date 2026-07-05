@@ -24,6 +24,9 @@ class FakeEvalRunner:
         )
         self.responses: dict[str, str] = {}
         self.fail_inputs: set[str] = set()
+        # Inputs whose turn ends with a classified-failure final (budget/model
+        # error) while still carrying text in responses[input].
+        self.classified_failure_inputs: set[str] = set()
         self.default_output = ""
         self.seen: list[dict[str, str]] = []
 
@@ -37,9 +40,14 @@ class FakeEvalRunner:
         if text in self.fail_inputs:
             return web.json_response({"error": "boom"}, status=500)
         output = self.responses.get(text, self.default_output)
+        status = (
+            SessionStatus.CLASSIFIED_FAILURE
+            if text in self.classified_failure_inputs
+            else SessionStatus.DONE
+        )
         resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})
         await resp.prepare(request)
-        frame = Final(text=output, status=SessionStatus.DONE)
+        frame = Final(text=output, status=status)
         await resp.write((frame.model_dump_json() + "\n").encode("utf-8"))
         await resp.write_eof()
         return resp

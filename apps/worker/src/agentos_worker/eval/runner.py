@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 
 import aiohttp
-from aci_protocol import Event, Final, TextDelta
+from aci_protocol import ErrorEvent, Event, Final, SessionStatus, TextDelta
 
 from ..runner_client import RunnerClient, RunnerError
 from .models import EvalCase, EvalCaseResult, EvalRunResult, EvalSuite
@@ -40,6 +40,8 @@ class EvalRunner:
         event = Event(type="eval_case", text=case.input, user="eval", ts="0")
         parts: list[str] = []
         final_text: str | None = None
+        final_status: SessionStatus | None = None
+        error_detail: str | None = None
         try:
             turn = await self._runner.start_turn(base_url, event)
             async with turn:
@@ -48,6 +50,9 @@ class EvalRunner:
                         parts.append(frame.text)
                     elif isinstance(frame, Final):
                         final_text = frame.text
+                        final_status = frame.status
+                    elif isinstance(frame, ErrorEvent):
+                        error_detail = frame.classification or frame.message
         except (RunnerError, aiohttp.ClientError, TimeoutError) as exc:
             return EvalCaseResult(
                 case_id=case.id,
@@ -58,6 +63,17 @@ class EvalRunner:
             )
 
         output = final_text if final_text is not None else "".join(parts)
+        # A runner-reported failure (budget/model/runner error) fails the case
+        # regardless of the grader, so a classified-failure final whose text
+        # happens to contain the expected string can never turn a PR check green.
+        if final_status is SessionStatus.CLASSIFIED_FAILURE:
+            return EvalCaseResult(
+                case_id=case.id,
+                passed=False,
+                output=output,
+                latency_ms=_elapsed_ms(start),
+                error=error_detail or "runner reported a classified failure",
+            )
         return EvalCaseResult(
             case_id=case.id,
             passed=case.grader.grade(output),

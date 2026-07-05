@@ -62,6 +62,28 @@ def test_a_case_that_errors_is_failed_not_fatal(make_eval_harness) -> None:
     asyncio.run(go())
 
 
+def test_classified_failure_final_fails_even_if_text_matches(make_eval_harness) -> None:
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            # The runner ends in a classified failure but its text contains the
+            # expected string. The case must still FAIL (a failed turn can never
+            # turn a PR check green).
+            fake.responses = {"q": "the answer is 4"}
+            fake.classified_failure_inputs = {"q"}
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+
+            case = result.results[0]
+            assert case.passed is False
+            assert case.error is not None  # the failure reason is recorded
+            assert result.summary() == "0/1 passed"
+
+    asyncio.run(go())
+
+
 def test_all_passed_suite(make_eval_harness) -> None:
     async def go() -> None:
         async with make_eval_harness() as (base_url, fake, client):

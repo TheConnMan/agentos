@@ -14,7 +14,7 @@ from .models import (
     Grader,
     GraderKind,
 )
-from .recorder import SCORE_NAME, LangfuseEvalRecorder
+from .recorder import SCORE_NAME, IngestionError, LangfuseEvalRecorder
 from .run import load_suite, run_eval_suite
 from .runner import EvalRunner
 
@@ -27,6 +27,7 @@ __all__ = [
     "EvalSuite",
     "Grader",
     "GraderKind",
+    "IngestionError",
     "LangfuseEvalRecorder",
     "load_suite",
     "run_eval_suite",
