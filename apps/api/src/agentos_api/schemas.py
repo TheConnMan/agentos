@@ -36,8 +36,25 @@ class VersionOut(BaseModel):
     agent_id: uuid.UUID
     version_label: str
     bundle_ref: str | None
+    bundle_sha256: str | None
     created_by: str
     created_at: datetime
+
+
+class BundleOut(BaseModel):
+    """Result of storing a bundle for a version."""
+
+    version_id: uuid.UUID
+    bundle_ref: str
+    bundle_sha256: str
+    size_bytes: int
+
+
+class BundleValidationError(BaseModel):
+    """Returned (HTTP 422) when a bundle fails plugin-format validation."""
+
+    detail: str = "bundle failed validation"
+    errors: list[dict[str, str]]
 
 
 class DeploymentCreate(BaseModel):

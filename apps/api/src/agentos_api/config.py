@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     langfuse_public_key: str = "pk-lf-agentos-dev"
     langfuse_secret_key: str = "sk-lf-agentos-dev"
 
+    # MinIO / S3 for immutable plugin bundles (compose stack MinIO on 9002).
+    s3_endpoint_url: str = "http://localhost:9002"
+    s3_access_key: str = "minio"
+    s3_secret_key: str = "miniosecret"
+    s3_region: str = "us-east-1"
+    bundle_bucket: str = "agentos-bundles"
+
 
 @lru_cache
 def get_settings() -> Settings:
