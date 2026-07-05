@@ -130,8 +130,11 @@ async def process_push(
     # Only a version whose bundle is actually stored may be reused for promote.
     # A row with bundle_ref still None is the residue of a prior attempt that
     # failed after the row committed; rebuild and store into it rather than
-    # deploying a bundleless version.
-    if version is None or version.bundle_ref is None:
+    # deploying a bundleless version. This same "new-or-repaired" condition
+    # gates the eval fan-out below: a redelivered push for an already-bundled
+    # version must not enqueue a second job for the same version.
+    bundle_built = version is None or version.bundle_ref is None
+    if bundle_built:
         try:
             data = await run_in_threadpool(
                 clone_and_archive, clone_url, after, settings
@@ -162,6 +165,10 @@ async def process_push(
             store, session, agent.id, version, data, extension, content_type
         )
 
+    # Either the version pre-existed with a bundle, or the block above created
+    # or repaired it; it is non-None from here on.
+    assert version is not None
+
     bot_identity = (
         settings.bot_identity_prod
         if environment is Environment.prod
@@ -177,7 +184,9 @@ async def process_push(
     )
 
     # Fan out the eval run for a dev deploy (eval-as-CI); prod promote does not.
-    if environment is Environment.dev:
+    # Only when this delivery actually built the bundle, so a redelivered push
+    # for an already-bundled version does not spawn a duplicate eval job.
+    if environment is Environment.dev and bundle_built:
         await eval_queue.enqueue(
             EvalJobRequest(
                 agent_id=agent.id,
