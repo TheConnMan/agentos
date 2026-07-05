@@ -3,7 +3,10 @@ name = "plugin-format"
 version = "0.0.0"
 description = "Claude Code plugin bundle format (verbatim) and its validators"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+]
 
 [build-system]
 requires = ["hatchling"]

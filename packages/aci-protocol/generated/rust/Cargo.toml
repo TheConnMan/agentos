@@ -1,0 +1,9 @@
+[package]
+name = "agentos-aci-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Generated Rust types for the frozen ACI protocol. Do not edit by hand."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

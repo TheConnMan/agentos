@@ -1,0 +1,4 @@
+{
+  "name": "bad-skill-plugin",
+  "description": "Manifest is fine; the skill frontmatter is missing a field."
+}

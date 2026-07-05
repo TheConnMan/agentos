@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "local-tools": {
+      "command": "python",
+      "args": ["-m", "demo_tools"],
+      "env": { "DEMO_MODE": "1" }
+    },
+    "remote-api": {
+      "type": "http",
+      "url": "https://mcp.example.com/v1"
+    }
+  }
+}

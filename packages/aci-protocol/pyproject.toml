@@ -3,7 +3,9 @@ name = "aci-protocol"
 version = "0.0.0"
 description = "Frozen ACI session protocol and NDJSON event types (Pydantic source of truth)"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pydantic>=2.9",
+]
 
 [build-system]
 requires = ["hatchling"]
