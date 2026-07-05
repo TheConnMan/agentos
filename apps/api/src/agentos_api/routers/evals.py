@@ -20,8 +20,7 @@ async def eval_matrix(
     # deliberately no agent filter: eval traces are tagged by suite + version,
     # not agent, so an agent param would be dead. Do not re-add one.
     traces = await lf.list_traces_by_tags(["eval", f"suite:{suite}"])
-    scores = await lf.list_scores("eval_pass")
-    return build_matrix(traces, scores, suite, versions)
+    return build_matrix(traces, suite, versions)
 
 
 @router.post("/report", response_model=EvalReportResult)

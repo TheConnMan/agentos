@@ -103,11 +103,6 @@ class LangfuseClient:
 
         return await self._get_all("/api/public/traces", {"tags": tags})
 
-    async def list_scores(self, name: str) -> list[dict[str, Any]]:
-        """Every score with the given name (e.g. eval_pass)."""
-
-        return await self._get_all("/api/public/scores", {"name": name})
-
     async def query_metrics(self, query: dict[str, Any]) -> list[dict[str, Any]]:
         """Run a Langfuse Metrics API query and return its data rows.
 
