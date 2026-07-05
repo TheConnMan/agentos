@@ -32,20 +32,23 @@ COPY packages/aci-protocol ./packages/aci-protocol
 COPY packages/plugin-format ./packages/plugin-format
 COPY runner ./runner
 
-# One venv, deps pinned to the runner's pyproject. Install the local packages
-# first, then the runner without redeps, then its third-party deps explicitly, so
-# the local "aci-protocol"/"plugin-format" requirements resolve to the copied
-# trees rather than any same-named PyPI distribution.
+# One venv. Install the local packages first, then the runner without redeps,
+# then its third-party deps. The versions are pinned == to the tested workspace
+# uv.lock (source of truth: root uv.lock) so a rebuild ships exactly what CI
+# exercised rather than resolving a newer SDK/aiohttp/OTel at build time. Keep
+# these pins in lockstep with uv.lock when the runner's deps move. The local
+# packages are installed by path first so the "aci-protocol"/"plugin-format"
+# requirements resolve to the copied trees, not a same-named PyPI distribution.
 RUN python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip \
     && /app/.venv/bin/pip install --no-cache-dir ./packages/aci-protocol ./packages/plugin-format \
     && /app/.venv/bin/pip install --no-cache-dir --no-deps ./runner \
     && /app/.venv/bin/pip install --no-cache-dir \
-        "claude-agent-sdk>=0.2.110" \
-        "aiohttp>=3.11" \
-        "opentelemetry-sdk>=1.30" \
-        "opentelemetry-exporter-otlp-proto-http>=1.30" \
-        "anyio>=4.6"
+        "claude-agent-sdk==0.2.110" \
+        "aiohttp==3.14.1" \
+        "opentelemetry-sdk==1.43.0" \
+        "opentelemetry-exporter-otlp-proto-http==1.43.0" \
+        "anyio==4.14.1"
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV AGENTOS_RUNNER_PORT=8080
