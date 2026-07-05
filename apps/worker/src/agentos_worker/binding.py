@@ -88,6 +88,17 @@ class BindingResolver:
             return None
         return ResolvedDeployment.model_validate(dict(row))
 
+    async def repo_full_name(self, agent_id: uuid.UUID) -> str | None:
+        """The agent's GitHub repo (owner/name), for the eval PR-check report."""
+        sql = text(f"SELECT repo_full_name FROM {self._config.db_schema}.agents WHERE id = :id")
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": agent_id})
+            row = result.first()
+        if row is None:
+            return None
+        value: str | None = row[0]
+        return value
+
     def budget_for(self, resolved: ResolvedDeployment) -> Budget:
         """The AGENTOS_BUDGET for the agent, applying platform defaults for NULLs."""
         return Budget(
