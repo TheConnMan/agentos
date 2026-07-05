@@ -80,6 +80,11 @@ def _translate_assistant(
 ) -> list[OutboundEvent]:
     events: list[OutboundEvent] = []
 
+    # Backfill the generation model from the SDK's own report when AGENTOS_MODEL
+    # was unset at span open (record_model no-ops once a model is already stamped).
+    if gen is not None:
+        gen.record_model(getattr(message, "model", None))
+
     error = getattr(message, "error", None)
     if error:
         state.error_classification = error
