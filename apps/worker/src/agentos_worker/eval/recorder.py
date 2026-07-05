@@ -25,6 +25,10 @@ from .models import EvalCaseResult, EvalRunResult
 SCORE_NAME = "eval_pass"
 
 
+class IngestionError(Exception):
+    """Langfuse accepted the ingestion request but rejected one or more events."""
+
+
 class LangfuseEvalRecorder:
     """Writes eval traces + scores to a Langfuse project via the ingestion API."""
 
@@ -57,6 +61,11 @@ class LangfuseEvalRecorder:
             auth=self._auth,
         )
         resp.raise_for_status()
+        # Ingestion returns 207 with a per-event errors array; a 2xx alone does
+        # not mean every event was accepted, so surface partial failures.
+        errors = resp.json().get("errors") or []
+        if errors:
+            raise IngestionError(f"Langfuse rejected {len(errors)} eval event(s): {errors}")
         return trace_ids
 
     def _trace_event(
