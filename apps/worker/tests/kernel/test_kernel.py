@@ -163,6 +163,23 @@ def test_rate_limit_retries_then_succeeds(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_turn_start_failure_is_retryable_not_a_stall(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            # The first /v1/event returns 500 (transient runner error / not ready).
+            # This must be turned into a bounded retry, not escape and leave the
+            # entry pending for the long reclaim window.
+            h.runner.event_fail_times = 1
+            h.runner.default_script = [Final(text="recovered", status=DONE)]
+
+            await h.kernel.process_event(_qevent("go"))
+
+            assert h.runner.opened == ["go", "go"]  # failed start, then retried
+            assert h.sink.last_text == "recovered"
+
+    asyncio.run(go())
+
+
 def test_budget_exceeded_escalates_without_retry(make_harness) -> None:
     async def go() -> None:
         async with make_harness() as h:

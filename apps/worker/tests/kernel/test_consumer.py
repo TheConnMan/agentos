@@ -90,6 +90,36 @@ def test_reclaim_skips_this_consumers_own_inflight_entry(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_dispatch_applies_backpressure_at_capacity(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            # A hanging turn holds the single capacity slot; the next dispatch must
+            # block (backpressure) rather than claim the entry into a local queue.
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="w")]
+            h.runner.tail = [Final(text="done", status=DONE)]
+            consumer = Consumer(
+                redis=h.async_redis, kernel=h.kernel, config=h.config, max_concurrency=1
+            )
+            await consumer.ensure_group()
+
+            first = _qevent("a", thread="ta", event_id="a").to_stream_fields()
+            await consumer._dispatch("1-0", first)
+            await _wait_until(lambda: h.runner.turn_active)  # slot taken, turn hanging
+
+            second_fields = _qevent("b", thread="tb", event_id="b").to_stream_fields()
+            second = asyncio.create_task(consumer._dispatch("2-0", second_fields))
+            await asyncio.sleep(0.1)
+            assert not second.done()  # blocked: capacity is full
+
+            hold.set()  # first turn finishes, frees the slot
+            await second  # second dispatch now proceeds
+            await asyncio.gather(*list(consumer._inflight))
+
+    asyncio.run(go())
+
+
 def test_reclaims_and_reprocesses_a_dead_consumers_pending_entry(make_harness) -> None:
     async def go() -> None:
         async with make_harness(reclaim_min_idle_ms=0) as h:

@@ -223,6 +223,7 @@ class FakeRunner:
         self.interrupts: int = 0
         self.hold: object | None = None  # asyncio.Event when a turn should hang
         self.tail: list[OutboundEvent] = []
+        self.event_fail_times: int = 0  # return 500 on the next N /v1/event calls
 
     async def _status(self, _request: web.Request) -> web.Response:
         return web.json_response({"status": "idle-awaiting-input", "turn_active": self.turn_active})
@@ -230,6 +231,9 @@ class FakeRunner:
     async def _event(self, request: web.Request) -> web.StreamResponse:
         body = await request.json()
         self.opened.append(body["text"])
+        if self.event_fail_times > 0:
+            self.event_fail_times -= 1
+            return web.json_response({"error": "transient runner failure"}, status=500)
         script = self.turn_scripts.pop(0) if self.turn_scripts else list(self.default_script)
         resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})
         await resp.prepare(request)
