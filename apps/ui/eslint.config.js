@@ -24,6 +24,9 @@ export default [
     rules: {
       ...tseslint.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
+      // TypeScript itself resolves identifiers/types; the core rule produces
+      // false positives on ambient DOM lib types (e.g. RequestInit) in .ts files.
+      "no-undef": "off",
       // This is a hand-rolled design system: primitive files intentionally
       // colocate small color/helper exports next to their component, and the
       // store colocates its hook with the provider. Fast-refresh granularity is

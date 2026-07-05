@@ -40,6 +40,8 @@ export function initialState(level: FixtureLevel): AppState {
     driftHover: null,
     slackTyping: false,
     showSuccess: false,
+    deployIssues: null,
+    deployError: null,
   };
 }
 
@@ -74,7 +76,7 @@ export function reducer(s: AppState, a: Action): AppState {
     case "openModal":
       return { ...s, modal: a.modal };
     case "closeModal":
-      return { ...s, modal: null, pluginUploaded: false };
+      return { ...s, modal: null, pluginUploaded: false, deployIssues: null, deployError: null };
     case "toast":
       return { ...s, toast: a.message };
     case "setEnv":
@@ -96,7 +98,7 @@ export function reducer(s: AppState, a: Action): AppState {
     case "closeAgentDetail":
       return { ...s, agentDetail: null, nav: "overview" };
     case "deployStart":
-      return { ...s, deploying: true };
+      return { ...s, deploying: true, deployIssues: null, deployError: null };
     case "deployDone": {
       const fire = !s.confettiDone;
       return {
@@ -110,8 +112,16 @@ export function reducer(s: AppState, a: Action): AppState {
         showSuccess: true,
         confetti: fire,
         confettiDone: true,
+        deployIssues: null,
+        deployError: null,
       };
     }
+    case "deployFailedValidation":
+      return { ...s, deploying: false, deployIssues: a.issues, deployError: null };
+    case "deployFailed":
+      return { ...s, deploying: false, deployError: a.message, deployIssues: null };
+    case "clearDeployErrors":
+      return s.deployIssues || s.deployError ? { ...s, deployIssues: null, deployError: null } : s;
     case "allowSlack":
       return {
         ...s,

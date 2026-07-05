@@ -1,11 +1,15 @@
+import { useMemo, useState } from "react";
 import { C } from "../../tokens";
 import { Button } from "../../primitives";
 import { useStore } from "../../state/store";
+import { isWired } from "../../api/config";
+import { createAgent, createVersion, uploadBundle, BundleValidationError } from "../../api/client";
+import { buildBundleZip } from "../../api/bundle";
 
 // The classic create-agent modal: template picker + skill.md editor + Deploy.
-// This is the MVP onboarding path (the interview wizard is deferred). Ported
-// from the canon's newAgentModal(); Deploy runs the 700ms skeleton then fires
-// the deploy action (confetti + success panel on Overview).
+// In wired mode Deploy creates the agent + version via B1, packages the editor's
+// skill.md into a plugin bundle, and PUTs it to B2, surfacing validator errors
+// inline. Without wiring it runs the fixture 700ms deploy (the H1a behavior).
 const TEMPLATES: [string, string, boolean][] = [
   ["Deal desk approvals", "revenue guardrails", true],
   ["SRE triage", "incident routing", false],
@@ -37,12 +41,32 @@ approval request in #revenue-ops.
 
 export function NewAgentModal() {
   const { state, dispatch } = useStore();
-  const lines = SKILL.split("\n");
+  const [name, setName] = useState("deal-desk");
+  const [skill, setSkill] = useState(SKILL);
+  const lineCount = useMemo(() => skill.split("\n").length, [skill]);
 
-  const deploy = () => {
+  const deploy = async () => {
     if (state.deploying) return;
+    if (!isWired()) {
+      // Fixture path: staged skeleton then success, no backend.
+      dispatch({ type: "deployStart" });
+      setTimeout(() => dispatch({ type: "deployDone" }), 700);
+      return;
+    }
     dispatch({ type: "deployStart" });
-    setTimeout(() => dispatch({ type: "deployDone" }), 700);
+    try {
+      const agent = await createAgent({ name, slack_channel: "#revenue-ops" });
+      const version = await createVersion(agent.id, { version_label: "v0.1.0", created_by: "ui" });
+      const archive = await buildBundleZip({ agentName: name, versionLabel: version.version_label, skillMd: skill });
+      await uploadBundle(agent.id, version.id, archive);
+      dispatch({ type: "deployDone" });
+    } catch (e) {
+      if (e instanceof BundleValidationError) {
+        dispatch({ type: "deployFailedValidation", issues: e.issues });
+      } else {
+        dispatch({ type: "deployFailed", message: e instanceof Error ? e.message : String(e) });
+      }
+    }
   };
 
   return (
@@ -73,7 +97,9 @@ export function NewAgentModal() {
         <div style={{ width: 300, flexShrink: 0, padding: "20px 24px", borderRight: "1px solid " + C.border, overflow: "auto" }}>
           <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>Name</label>
           <input
-            defaultValue="deal-desk"
+            data-testid="agent-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             onFocus={(e) => e.target.select()}
             style={{
               width: "100%",
@@ -122,16 +148,76 @@ export function NewAgentModal() {
               gap: 8,
             }}
           >
-            <span style={{ color: C.text2 }}>skills/deal-desk/skill.md</span>
+            <span style={{ color: C.text2 }}>skills/{name || "agent"}/SKILL.md</span>
           </div>
-          <div style={{ flex: 1, overflow: "auto", background: C.darkest, display: "flex", fontFamily: C.mono, fontSize: 12.5, lineHeight: 1.55 }}>
-            <div style={{ padding: "12px 8px", color: C.disabled, textAlign: "right", userSelect: "none", borderRight: "1px solid " + C.border }}>
-              {lines.map((_, i) => (
+          <div style={{ flex: 1, overflow: "hidden", background: C.darkest, display: "flex", fontFamily: C.mono, fontSize: 12.5, lineHeight: 1.55, minHeight: 0 }}>
+            <div style={{ padding: "12px 8px", color: C.disabled, textAlign: "right", userSelect: "none", borderRight: "1px solid " + C.border, overflow: "hidden" }}>
+              {Array.from({ length: lineCount }, (_, i) => (
                 <div key={i}>{i + 1}</div>
               ))}
             </div>
-            <pre style={{ margin: 0, padding: "12px 16px", color: C.text2, whiteSpace: "pre-wrap", flex: 1 }}>{SKILL}</pre>
+            <textarea
+              data-testid="skill-editor"
+              value={skill}
+              onChange={(e) => {
+                setSkill(e.target.value);
+                dispatch({ type: "clearDeployErrors" });
+              }}
+              spellCheck={false}
+              style={{
+                margin: 0,
+                padding: "12px 16px",
+                color: C.text2,
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                resize: "none",
+                whiteSpace: "pre",
+                flex: 1,
+                fontFamily: C.mono,
+                fontSize: 12.5,
+                lineHeight: 1.55,
+              }}
+            />
           </div>
+          {state.deployIssues && state.deployIssues.length > 0 ? (
+            <div
+              data-testid="deploy-errors"
+              style={{
+                borderTop: "1px solid rgba(229,77,46,.3)",
+                background: "rgba(229,77,46,.06)",
+                padding: "10px 16px",
+                maxHeight: 140,
+                overflow: "auto",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.destructive, marginBottom: 6 }}>
+                Bundle validation failed
+              </div>
+              {state.deployIssues.map((issue, i) => (
+                <div key={i} style={{ fontFamily: C.mono, fontSize: 11.5, color: C.text2, marginBottom: 3 }}>
+                  <span style={{ color: C.destructive }}>{issue.code}</span>
+                  {issue.location ? <span style={{ color: C.muted }}> · {issue.location}</span> : null}
+                  <span style={{ color: C.text2 }}> — {issue.message}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {state.deployError ? (
+            <div
+              data-testid="deploy-error"
+              style={{
+                borderTop: "1px solid rgba(229,77,46,.3)",
+                background: "rgba(229,77,46,.06)",
+                padding: "10px 16px",
+                fontSize: 12.5,
+                color: C.destructive,
+                fontFamily: C.mono,
+              }}
+            >
+              Deploy failed: {state.deployError}
+            </div>
+          ) : null}
         </div>
       </div>
       <div style={{ padding: "14px 24px", borderTop: "1px solid " + C.border, display: "flex", alignItems: "center", gap: 12 }}>
@@ -153,7 +239,7 @@ export function NewAgentModal() {
               }}
             />
           ) : (
-            <Button label="Deploy" variant="primary" onClick={deploy} />
+            <Button label="Deploy" variant="primary" onClick={() => void deploy()} />
           )}
         </div>
       </div>
