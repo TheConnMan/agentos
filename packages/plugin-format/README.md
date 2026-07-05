@@ -1,0 +1,3 @@
+# plugin-format
+
+Owning task: **C1**. The plugin bundle format: the Claude Code plugin shape verbatim (`plugin.json` manifest + `skills/**/SKILL.md` + `.mcp.json` + `scripts/`), plus its validators, authored as Pydantic models with committed JSON Schema export. Compatibility with the Claude Code plugin shape is the distribution wedge, so this is a frozen interface: never change it unilaterally; a change stops the task and escalates to the orchestrator (see repo `CLAUDE.md`). R0 ships only an empty importable skeleton so the workspace lint and test harness is green; C1 fills in the real format.
