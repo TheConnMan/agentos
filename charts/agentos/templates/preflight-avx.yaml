@@ -1,0 +1,100 @@
+{{- if and .Values.preflights.avxCheck.enabled .Values.clickhouse.deploy }}
+{{/*
+Preflight (a): CPU-AVX / ClickHouse-pin check.
+
+Newer ClickHouse (>= 25.x) is compiled for AVX and SIGILLs with exit 132 on
+CPUs that only have SSE4.2. A crash-looping ClickHouse pod is a confusing way to
+discover this, so this hook catches it BEFORE the stores install: it reads the
+node's /proc/cpuinfo (a container shares the host kernel, so the flags are the
+node's), and if the node lacks AVX it FAILS the install unless the configured
+ClickHouse tag is in clickhouse.sse42SafeTags.
+
+Runs as a pre-install / pre-upgrade hook (blocks a broken install) and is
+re-runnable via `helm test`. The Job is kept after success so its verdict log
+can be read; it is replaced on the next install.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agentos.fullname" . }}-preflight-avx
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,test
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "preflight-avx") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: avx-check
+          image: {{ .Values.preflights.avxCheck.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: CLICKHOUSE_TAG
+              value: {{ .Values.clickhouse.image.tag | quote }}
+            - name: CLICKHOUSE_IMAGE
+              value: "{{ .Values.clickhouse.image.repository }}:{{ .Values.clickhouse.image.tag }}"
+            - name: SSE42_SAFE_TAGS
+              value: {{ join " " .Values.clickhouse.sse42SafeTags | quote }}
+            - name: FORCE_NO_AVX
+              value: {{ .Values.preflights.avxCheck.forceNoAvx | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "== AgentOS AVX / ClickHouse-pin preflight =="
+              echo "configured ClickHouse image: ${CLICKHOUSE_IMAGE}"
+              echo "SSE4.2-safe tag prefixes:    ${SSE42_SAFE_TAGS}"
+
+              if [ "${FORCE_NO_AVX}" = "true" ]; then
+                avx="absent (forced via preflights.avxCheck.forceNoAvx)"
+                has_avx=0
+              elif grep -qw avx /proc/cpuinfo; then
+                avx="present"
+                has_avx=1
+              else
+                avx="absent"
+                has_avx=0
+              fi
+              node_flags=$(grep -m1 '^flags' /proc/cpuinfo | grep -o -E 'sse4_2|avx2|avx512f|(^| )avx( |$)' | tr -s ' ' | sort -u | tr '\n' ' ' || true)
+              echo "node CPU AVX:                ${avx}"
+              echo "node CPU (relevant flags):   ${node_flags}"
+
+              # Is the configured tag one of the SSE4.2-safe prefixes?
+              safe=0
+              for p in ${SSE42_SAFE_TAGS}; do
+                case "${CLICKHOUSE_TAG}" in
+                  "${p}"|"${p}."*|"${p}-"*) safe=1 ;;
+                esac
+              done
+
+              if [ "${has_avx}" -eq 1 ]; then
+                echo "RESULT: PASS - node has AVX; ClickHouse ${CLICKHOUSE_TAG} will run."
+                if [ "${safe}" -eq 1 ]; then
+                  echo "        (tag is also SSE4.2-safe: conservative pin, portable to AVX-less nodes.)"
+                fi
+                exit 0
+              fi
+
+              # No AVX from here down.
+              if [ "${safe}" -eq 1 ]; then
+                echo "RESULT: PASS - node lacks AVX, but ClickHouse ${CLICKHOUSE_TAG} is an"
+                echo "        SSE4.2-safe build. Pinned image validated: ${CLICKHOUSE_IMAGE}"
+                exit 0
+              fi
+
+              echo "RESULT: FAIL - node lacks AVX and ClickHouse tag '${CLICKHOUSE_TAG}' is NOT"
+              echo "        SSE4.2-safe. It will SIGILL (exit 132) and crash-loop on this node."
+              echo "REMEDY: pin clickhouse.image.tag to an SSE4.2-safe build (one of:"
+              echo "        ${SSE42_SAFE_TAGS}), e.g. --set clickhouse.image.tag=24.8"
+              exit 1
+          resources:
+            {{- toYaml .Values.preflights.avxCheck.resources | nindent 12 }}
+{{- end }}

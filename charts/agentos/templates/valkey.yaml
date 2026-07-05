@@ -1,0 +1,84 @@
+{{- if .Values.valkey.deploy }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentos.fullname" . }}-valkey
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "agentos.selectorLabels" (dict "root" . "component" "valkey") | nindent 4 }}
+  ports:
+    - name: valkey
+      port: {{ .Values.valkey.port }}
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agentos.fullname" . }}-valkey
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "agentos.fullname" . }}-valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" . "component" "valkey") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.labels" . | nindent 8 }}
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "valkey") | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 999
+      {{- if not .Values.valkey.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+      containers:
+        - name: valkey
+          image: {{ .Values.valkey.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - exec valkey-server --requirepass "$VALKEY_PASSWORD"
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.valkey.existingSecret | default (include "agentos.secretName" .) }}
+                  key: valkeyPassword
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "valkey-cli -a \"$VALKEY_PASSWORD\" ping | grep -q PONG"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  {{- if .Values.valkey.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.global.storageClass }}
+        storageClassName: {{ .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.valkey.persistence.size }}
+  {{- end }}
+{{- end }}
