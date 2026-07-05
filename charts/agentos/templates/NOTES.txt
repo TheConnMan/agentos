@@ -28,6 +28,23 @@ Components deployed:
   - OTel Collector ({{ .Values.otelCollector.image }})
 {{- end }}
 
+App services:
+{{- if .Values.api.deploy }}
+  - api ({{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}) on Service {{ include "agentos.fullname" . }}-api:{{ .Values.api.service.port }}
+{{- end }}
+{{- if .Values.dispatcher.deploy }}
+  - dispatcher ({{ .Values.dispatcher.image.repository }}:{{ .Values.dispatcher.image.tag }}) [Slack Socket Mode, no Service]
+{{- end }}
+{{- if .Values.worker.deploy }}
+  - worker ({{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }})
+{{- end }}
+{{- if .Values.ui.deploy }}
+  - ui ({{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}) on Service {{ include "agentos.fullname" . }}-ui:{{ .Values.ui.service.port }}
+
+Reach the UI (port-forward):
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "agentos.fullname" . }}-ui {{ .Values.ui.service.port }}:{{ .Values.ui.service.port }}
+{{- end }}
+
 Preflights:
 {{- if and .Values.preflights.avxCheck.enabled .Values.clickhouse.deploy }}
   - AVX / ClickHouse-pin check ran as a pre-install hook. Read its verdict:

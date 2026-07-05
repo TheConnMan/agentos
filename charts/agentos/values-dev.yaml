@@ -68,3 +68,30 @@ agentSandbox:
     image: agentos-runner
     tag: latest
     imagePullPolicy: Never
+
+# First-party apps: locally-built images imported into the cluster runtime
+# (docker build + `k3s ctr images import`), pulled Never so an offline scratch
+# cluster never reaches out to GHCR. Mirrors the runner override above.
+api:
+  image:
+    repository: agentos-api
+    tag: local
+    pullPolicy: Never
+
+dispatcher:
+  image:
+    repository: agentos-dispatcher
+    tag: local
+    pullPolicy: Never
+
+worker:
+  image:
+    repository: agentos-worker
+    tag: local
+    pullPolicy: Never
+
+ui:
+  image:
+    repository: agentos-ui
+    tag: local
+    pullPolicy: Never

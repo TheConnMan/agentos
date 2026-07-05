@@ -5,6 +5,11 @@
 *credentials*
 *secret*
 oauth.env
+# Exception: the umbrella chart's Secret *template* is Helm syntax, not secret
+# material (its dev-default values live in the committed values.yaml). Without
+# this the chart is silently uninstallable (backing stores reference a Secret
+# that never gets committed).
+!charts/agentos/templates/secrets.yaml
 
 # Python
 __pycache__/

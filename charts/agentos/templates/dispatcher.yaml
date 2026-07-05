@@ -1,0 +1,53 @@
+{{- if .Values.dispatcher.deploy }}
+{{/*
+The dispatcher runs Slack in Socket Mode: it dials Slack outbound over a
+websocket, so there is no inbound port and therefore no Service and no HTTP
+probe. The supervisor reconnects with backoff forever, so the pod stays Running
+even before valid Slack credentials are supplied.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentos.fullname" . }}-dispatcher
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+spec:
+  replicas: {{ .Values.dispatcher.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" . "component" "dispatcher") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentos.labels" . | nindent 8 }}
+        {{- include "agentos.selectorLabels" (dict "root" . "component" "dispatcher") | nindent 8 }}
+    spec:
+      {{- with .Values.dispatcher.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dispatcher
+          image: "{{ .Values.dispatcher.image.repository }}:{{ .Values.dispatcher.image.tag }}"
+          imagePullPolicy: {{ .Values.dispatcher.image.pullPolicy }}
+          env:
+            {{- include "agentos.env.valkey" . | nindent 12 }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentos.secretName" . }}
+                  key: slackAppToken
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentos.secretName" . }}
+                  key: slackBotToken
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentos.secretName" . }}
+                  key: slackSigningSecret
+          resources:
+            {{- toYaml .Values.dispatcher.resources | nindent 12 }}
+{{- end }}
