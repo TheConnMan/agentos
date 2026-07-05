@@ -18,7 +18,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .version import PROTOCOL_VERSION
+from .version import PROTOCOL_VERSION, ProtocolVersionLiteral
 
 # Wire contract: unknown keys are a hard error. Every lane compiles against these
 # exact shapes, so a stray field means a producer and consumer disagree.
@@ -70,7 +70,7 @@ InboundMessage = Annotated[Event | Interrupt, Field(discriminator="kind")]
 class _OutboundBase(BaseModel):
     model_config = _STRICT
 
-    version: str = PROTOCOL_VERSION
+    version: ProtocolVersionLiteral = PROTOCOL_VERSION
 
 
 class TextDelta(_OutboundBase):

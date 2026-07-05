@@ -37,7 +37,11 @@ _SCALARS: dict[type, str] = {str: "String", int: "i64", float: "f64", bool: "boo
 # exists today; an unrecognized literal raises so the generator stays honest.
 _EVENT_TYPE_ARGS = get_args(Event.model_fields["type"].annotation)
 
-_DERIVES = "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]"
+# Tagged enums cannot use deny_unknown_fields (serde does not support it with
+# internally tagged enums), so the wire-strictness of extra="forbid" is enforced
+# on the plain structs, which do carry deny_unknown_fields.
+_ENUM_DERIVES = "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]"
+_STRUCT_DERIVES = "#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]"
 
 # Rust keywords that a field name may collide with, requiring a raw identifier.
 _RUST_KEYWORDS = {
@@ -103,8 +107,13 @@ def _rust_bare_type(annotation: Any) -> str:
     if origin is list:
         return f"Vec<{_rust_type(get_args(annotation)[0])}>"
     if origin is Literal:
-        if get_args(annotation) == _EVENT_TYPE_ARGS:
+        args = get_args(annotation)
+        if args == _EVENT_TYPE_ARGS:
             return "EventType"
+        if len(args) == 1 and isinstance(args[0], str):
+            # A single-valued string literal (the version const) is a plain
+            # String on the Rust side; the NDJSON decoder enforces the value.
+            return "String"
         raise TypeError(f"unexpected literal field {annotation!r}")
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return annotation.__name__
@@ -113,10 +122,15 @@ def _rust_bare_type(annotation: Any) -> str:
     raise TypeError(f"no Rust mapping for {annotation!r}")
 
 
-def _string_enum(name: str, values: tuple[str, ...]) -> str:
-    lines = [_DERIVES, f"pub enum {name} {{"]
+def _string_enum(name: str, values: tuple[str, ...], default: str | None = None) -> str:
+    # Derive Default (with a #[default] variant) only when a defaulted field
+    # references this enum, so serde(default) on that field compiles.
+    derives = _STRUCT_DERIVES if default is not None else _ENUM_DERIVES
+    lines = [derives, f"pub enum {name} {{"]
     for value in values:
         lines.append(f'    #[serde(rename = "{value}")]')
+        if value == default:
+            lines.append("    #[default]")
         lines.append(f"    {_pascal(value)},")
     lines.append("}")
     return "\n".join(lines)
@@ -128,23 +142,24 @@ def _struct_fields(model: type[BaseModel], skip: set[str], public: bool) -> list
     for field_name, field in model.model_fields.items():
         if field_name in skip:
             continue
-        _, optional = _split_optional(field.annotation)
         rust = _rust_type(field.annotation)
-        if optional:
+        # Any field with a Pydantic default (optional or not) is omittable on the
+        # wire, so Rust must accept it missing too.
+        if not field.is_required():
             out.append("    #[serde(default)]")
         out.append(f"    {prefix}{_rust_field(field_name)}: {rust},")
     return out
 
 
 def _struct(model: type[BaseModel]) -> str:
-    lines = [_DERIVES, f"pub struct {model.__name__} {{"]
+    lines = [_STRUCT_DERIVES, "#[serde(deny_unknown_fields)]", f"pub struct {model.__name__} {{"]
     lines.extend(_struct_fields(model, skip=set(), public=True))
     lines.append("}")
     return "\n".join(lines)
 
 
 def _tagged_enum(name: str, tag: str, variants: tuple[type[BaseModel], ...]) -> str:
-    lines = [_DERIVES, f'#[serde(tag = "{tag}")]', f"pub enum {name} {{"]
+    lines = [_ENUM_DERIVES, f'#[serde(tag = "{tag}")]', f"pub enum {name} {{"]
     for model in variants:
         tag_value = get_args(model.model_fields[tag].annotation)[0]
         lines.append(f'    #[serde(rename = "{tag_value}")]')
@@ -197,7 +212,11 @@ def render_rust() -> str:
         "#![allow(dead_code)]",
         "use serde::{Deserialize, Serialize};",
         f'pub const PROTOCOL_VERSION: &str = "{PROTOCOL_VERSION}";',
-        _string_enum("SessionStatus", tuple(m.value for m in SessionStatus)),
+        _string_enum(
+            "SessionStatus",
+            tuple(m.value for m in SessionStatus),
+            default=SessionStatus.DONE.value,
+        ),
         _string_enum("EventType", _EVENT_TYPE_ARGS),
         _struct(Budget),
         _struct(OtelConfig),
