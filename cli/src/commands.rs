@@ -87,9 +87,10 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // it at boot anyway (real-model mode), with a worse error surface.
     let (plugin_name, manifest_version) = read_manifest(&plugin_dir)?;
 
-    if state::load(Path::new("."))?.is_some() {
+    if state::load(&plugin_dir)?.is_some() {
         bail!(
-            "a local runner is already recorded in .agentos/runner.json; run 'agentos stop' first"
+            "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos stop' there first",
+            plugin_dir.display()
         );
     }
 
@@ -126,8 +127,10 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         bail!("runner failed to become healthy: {err}\ncontainer logs:\n{logs}");
     }
 
+    // State lives with the bundle: init gitignores .agentos/ there, and the
+    // follow-up commands are documented to run from the bundle directory.
     state::save(
-        Path::new("."),
+        &plugin_dir,
         &RunnerState {
             container_id,
             container_name: opts.name,
@@ -151,17 +154,34 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         ("Version", version),
     ];
     println!("{}", boxed_summary("agentos dev environment", &rows));
+    let cwd = Path::new(".").canonicalize()?;
+    if cwd != plugin_dir {
+        println!(
+            "\nState recorded in {}/.agentos/runner.json; run send/eval/stop from there (or pass --url).",
+            plugin_dir.display()
+        );
+    }
     Ok(())
 }
 
 pub async fn stop() -> Result<()> {
     let dir = Path::new(".");
     let Some(saved) = state::load(dir)? else {
-        bail!("no local runner recorded in .agentos/runner.json");
+        bail!("no local runner recorded in .agentos/runner.json; run from the bundle directory");
     };
-    docker::remove_container(&saved.container_name).await?;
+    match docker::remove_container(&saved.container_name).await {
+        Ok(()) => println!("Stopped and removed container '{}'", saved.container_name),
+        // The container being gone already is a success for stop: clear the
+        // state instead of wedging start/stop on a stale runner.json.
+        Err(err) if err.to_string().contains("No such container") => {
+            println!(
+                "Container '{}' was already gone; cleared stale state",
+                saved.container_name
+            );
+        }
+        Err(err) => return Err(err),
+    }
     state::remove(dir)?;
-    println!("Stopped and removed container '{}'", saved.container_name);
     Ok(())
 }
 

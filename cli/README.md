@@ -17,9 +17,9 @@ Slack involved.
 | `agentos status` / `agentos stop` | Session status / tear down the container. |
 | `agentos deploy` | Package the bundle as tar.gz and push it to the platform API (find-or-create agent, create version, upload bundle, create deployment). Auth via `--api-key` / `AGENTOS_API_KEY`. |
 
-`start` records the container in `.agentos/runner.json` (gitignored by the
-scaffold); `send`/`eval`/`status`/`stop` resolve the runner from it, or accept
-`--url`.
+`start` records the container in the bundle's `.agentos/runner.json`
+(gitignored by the scaffold); `send`/`eval`/`status`/`stop` run from the bundle
+directory and resolve the runner from it, or accept `--url`.
 
 ## Verify
 
