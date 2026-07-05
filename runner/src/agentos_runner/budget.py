@@ -40,28 +40,37 @@ def output_tokens(usage: Mapping[str, Any] | None) -> int:
 
 @dataclass
 class BudgetTracker:
-    """Accumulates output tokens for one run and reports ceiling crossings."""
+    """Accumulates output tokens for one run and reports ceiling crossings.
+
+    Two SDK usage sources report the same tokens and must not be double counted:
+    ``AssistantMessage.usage`` is the per-message output as the turn streams, and
+    ``ResultMessage.usage`` is the SDK's authoritative aggregate for the whole
+    turn (equal to the sum of the per-message values). So per-message usage is
+    *summed* (for mid-turn enforcement) while the terminal total *replaces* rather
+    than adds -- ``used`` is the max of the two, which is correct whether the SDK
+    reports per-message usage, only a terminal total, or both.
+    """
 
     ceiling: int
-    used: int = 0
+    _incremental: int = 0
+    _total: int = 0
 
-    def add(self, usage: Mapping[str, Any] | None) -> None:
-        """Fold one SDK message's output usage into the running total.
+    def add_increment(self, usage: Mapping[str, Any] | None) -> None:
+        """Add one streaming (assistant) message's output to the running sum."""
 
-        ``AssistantMessage.usage`` reports the output tokens for *that* message,
-        not a cumulative turn total, so a multi-message turn is summed. If a build
-        instead reports cumulative usage the sum overshoots and halts a touch
-        early -- the safe direction for a spend ceiling (halt early, never blow
-        past).
-        """
+        self._incremental += output_tokens(usage)
 
-        self.used += output_tokens(usage)
+    def set_total(self, usage: Mapping[str, Any] | None) -> None:
+        """Record the terminal result's authoritative turn total (does not add)."""
+
+        self._total = max(self._total, output_tokens(usage))
+
+    @property
+    def used(self) -> int:
+        return max(self._incremental, self._total)
 
     @property
     def exceeded(self) -> bool:
-        """True once accumulated output tokens exceed the ceiling.
-
-        A non-positive ceiling disables enforcement (unbounded run).
-        """
+        """True once output tokens exceed the ceiling (<=0 ceiling = unbounded)."""
 
         return self.ceiling > 0 and self.used > self.ceiling

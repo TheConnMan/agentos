@@ -42,6 +42,7 @@ def build_runner(config: RunnerConfig, *, fake_model: bool = False) -> SessionRu
             max_turns=config.max_turns,
             max_budget_usd=config.max_usd_per_day,
             resume=config.history_ref,
+            task_budget_hint=config.session.budget.task_budget_hint,
         )
         return ClaudeAgentSession(options)
 
