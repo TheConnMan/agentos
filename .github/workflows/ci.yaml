@@ -49,6 +49,14 @@ jobs:
             sleep 3
           done
           echo "Langfuse did not become ready within 180s"; exit 1
+      # The apps/api suite provisions a throwaway migrated DB per run, but the
+      # worker binding integration tests dial the shared default database and
+      # assume the agentos schema already exists (as it does on a dev box).
+      # Apply the real migrations to it so those tests run against a real
+      # schema; this also exercises the alembic upgrade path on virgin Postgres.
+      - name: Migrate the shared database
+        working-directory: apps/api
+        run: uv run alembic upgrade head
       - name: Pytest
         run: uv run pytest -q
       - name: Dump dev stack logs on failure
