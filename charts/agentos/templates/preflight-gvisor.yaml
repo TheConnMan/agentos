@@ -27,9 +27,10 @@ metadata:
   annotations:
     # When the chart itself creates the RuntimeClass (installRuntimeClass=true),
     # that object is a NORMAL resource applied after pre-install hooks -- so this
-    # check must run post-install (test only), not before the class exists.
-    # Otherwise it runs pre-install to block a broken install up front.
-    "helm.sh/hook": {{ if .Values.security.gvisor.installRuntimeClass }}test{{ else }}pre-install,pre-upgrade,test{{ end }}
+    # check runs POST-install/upgrade (the class exists by then) and a failure
+    # still fails the release closed. Otherwise it runs pre-install to block a
+    # broken install up front. Both branches also run on `helm test`.
+    "helm.sh/hook": {{ if .Values.security.gvisor.installRuntimeClass }}post-install,post-upgrade,test{{ else }}pre-install,pre-upgrade,test{{ end }}
     "helm.sh/hook-weight": "-9"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
