@@ -2,6 +2,8 @@ import { C } from "../tokens";
 import { Dot } from "../primitives";
 import { hoverBg } from "../lib/style";
 import { useStore } from "../state/store";
+import { useWired } from "../state/wired";
+import { isWired } from "../api/config";
 import { agentsForLevel } from "../fixtures";
 import type { Nav } from "../state/types";
 
@@ -17,11 +19,16 @@ const ITEMS: [Nav, string][] = [
 
 export function Sidebar() {
   const { state, dispatch } = useStore();
-  const badges: Partial<Record<Nav, string | number>> = {
-    agents: agentsForLevel(state.level).length || undefined,
-    evals: state.level >= 4 ? (state.extraEval ? "37" : "36") : undefined,
-    connections: state.level >= 4 ? "2" : state.level >= 2 ? "1" : undefined,
-  };
+  const wired = useWired();
+  // In wired mode the only real count is the agent list; evals/connections have
+  // no backend count yet, so no fixture badges leak.
+  const badges: Partial<Record<Nav, string | number>> = isWired()
+    ? { agents: wired.agents.length || undefined }
+    : {
+        agents: agentsForLevel(state.level).length || undefined,
+        evals: state.level >= 4 ? (state.extraEval ? "37" : "36") : undefined,
+        connections: state.level >= 4 ? "2" : state.level >= 2 ? "1" : undefined,
+      };
   return (
     <div
       style={{

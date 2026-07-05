@@ -12,6 +12,7 @@ import { RealCost } from "./obs/RealCost";
 import { MemoryStub } from "./obs/MemoryStub";
 import { Usage } from "./obs/Usage";
 import { Cost } from "./obs/Cost";
+import { WiredUsage } from "./wired/WiredStubs";
 
 const TABS: [ObsTab, string][] = [
   ["traces", "Traces"],
@@ -25,7 +26,9 @@ const TABS: [ObsTab, string][] = [
 export function Observability() {
   const { state, dispatch } = useStore();
 
-  if (state.level < 3) {
+  // The level<3 gate is a fixture-demo construct; in wired mode the tabs always
+  // render and each degrades honestly (empty traces, zero metrics) on their own.
+  if (!isWired() && state.level < 3) {
     return (
       <div>
         <SectionTitle title="Observability" />
@@ -59,7 +62,7 @@ export function Observability() {
       content = <MemoryStub />;
       break;
     case "usage":
-      content = <Usage />;
+      content = isWired() ? <WiredUsage /> : <Usage />;
       break;
     case "cost":
       content = isWired() ? <RealCost /> : <Cost />;

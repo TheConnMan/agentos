@@ -3,11 +3,14 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { App } from "./App";
 import { StoreProvider } from "./state/store";
+import { WiredProvider } from "./state/wired";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <StoreProvider>
-      <App />
+      <WiredProvider>
+        <App />
+      </WiredProvider>
     </StoreProvider>
   </StrictMode>,
 );
