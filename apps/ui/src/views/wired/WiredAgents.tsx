@@ -44,7 +44,7 @@ export function WiredAgents() {
           <Card key={a.id}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
               <Dot color={C.brand} size={9} />
-              <span style={{ fontFamily: C.mono, fontSize: 15, fontWeight: 500 }} data-testid="agent-name">
+              <span style={{ fontFamily: C.mono, fontSize: 15, fontWeight: 500 }} data-testid="agent-card-name">
                 {a.name}
               </span>
               <span style={{ marginLeft: "auto", fontSize: 12, color: C.muted, fontFamily: C.mono }}>{a.slack_channel}</span>

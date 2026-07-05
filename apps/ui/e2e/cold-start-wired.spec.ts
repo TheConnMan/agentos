@@ -72,7 +72,7 @@ test("create-agent -> the real agent appears in the list with its channel, hones
 
   // the real agent now shows in the Agents list with its channel id
   await page.getByRole("navigation").getByText("Agents", { exact: true }).click();
-  const nameCell = page.getByTestId("agent-name").filter({ hasText: "support-bot" });
+  const nameCell = page.getByTestId("agent-card-name").filter({ hasText: "support-bot" });
   await expect(nameCell).toBeVisible();
   await expect(page.getByText("C01SUPPORT").first()).toBeVisible();
 });
