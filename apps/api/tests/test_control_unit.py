@@ -3,9 +3,22 @@
 import uuid
 
 import pytest
+from agentos_api.config import Settings
 from agentos_api.killswitch import KILL_CHANNEL, kill_key
 from agentos_api.schemas import BudgetConfig
 from pydantic import ValidationError
+
+
+def test_valkey_dsn_honors_the_password_override() -> None:
+    # The compose VALKEY_PASSWORD knob must reach the DSN the API connects with.
+    assert Settings(valkey_password="s3cret").valkey_dsn() == (
+        "redis://:s3cret@localhost:56379/0"
+    )
+    # An explicit full URL overrides the parts.
+    assert (
+        Settings(valkey_url="redis://:x@other:1/2").valkey_dsn()
+        == "redis://:x@other:1/2"
+    )
 
 
 def test_kill_key_matches_the_seam_contract() -> None:

@@ -18,7 +18,7 @@ from agentos_api.killswitch import KILL_CHANNEL, kill_key
 
 @pytest.fixture
 def valkey() -> Iterator[redis.Redis]:
-    client: redis.Redis = redis.from_url(get_settings().valkey_url)
+    client: redis.Redis = redis.from_url(get_settings().valkey_dsn())
     try:
         yield client
     finally:
