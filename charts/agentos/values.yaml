@@ -250,7 +250,11 @@ agentSandbox:
     # which overrides this back to `agentos-runner` with imagePullPolicy Never.
     image: ghcr.io/theconnman/agentos-runner
     tag: latest
-    imagePullPolicy: IfNotPresent
+    # Always with the mutable `latest` default: IfNotPresent would let a node
+    # that already cached an older `latest` digest keep running stale runner code
+    # after a new image is published. Pin `tag` to an immutable sha/version and
+    # switch this to IfNotPresent for reproducible, cache-friendly deploys.
+    imagePullPolicy: Always
     # GHCR packages on a private repo are NOT anonymously pullable -- the node
     # needs a docker-registry pull Secret. List pre-created Secret names here,
     # e.g. [{ name: ghcr-pull }]. Leave empty when the package is public or for
