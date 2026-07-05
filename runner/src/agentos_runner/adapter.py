@@ -1,0 +1,100 @@
+"""The SDK adapter seam: a ModelSession protocol and its claude-agent-sdk impl.
+
+The runner owns exactly one long-lived model session per process (one session per
+sandbox), which is the source of prompt-cache affinity across turns. The session
+is driven in the SDK's **streaming-input mode**: ``query`` pushes a user message
+(initial or a mid-run steer), ``receive_turn`` yields the SDK messages for the
+current turn until its terminal result, and ``interrupt`` is the native hard stop.
+Steering is therefore first-class, not emulated: a ``query`` issued while a turn's
+``receive_turn`` iterator is live is incorporated at the next loop boundary.
+
+The protocol is the fake seam: unit tests and the conformance suite supply a
+scripted ModelSession, so the model (the only external dependency) is mocked at
+this boundary and nothing above it is. ``aci-protocol`` is never mocked.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
+
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, SdkPluginConfig
+
+
+class ModelSession(Protocol):
+    """One long-lived model session the runner drives turn by turn."""
+
+    async def connect(self) -> None:
+        """Start the session (spawn/attach the harness), rehydrating if configured."""
+        ...
+
+    async def query(self, text: str) -> None:
+        """Push a user message into the session (initial turn or mid-run steer)."""
+        ...
+
+    def receive_turn(self) -> AsyncIterator[Any]:
+        """Yield SDK messages for the current turn, ending at its terminal result."""
+        ...
+
+    async def interrupt(self) -> None:
+        """Hard-stop the in-flight turn at the next safe boundary."""
+        ...
+
+    async def close(self) -> None:
+        """Tear down the session."""
+        ...
+
+
+def build_options(
+    *,
+    plugins: list[SdkPluginConfig],
+    model: str | None,
+    system_prompt: str | None,
+    max_turns: int,
+    max_budget_usd: float | None,
+    resume: str | None,
+    env: dict[str, str] | None = None,
+) -> ClaudeAgentOptions:
+    """Assemble ClaudeAgentOptions for the session.
+
+    ``resume`` is the rehydrate path (ADR-0003, stateless-first): when a history
+    ref is supplied it is passed as the SDK ``resume`` session id so a resumed
+    thread reconstructs its history from the store rather than assuming a
+    surviving in-RAM process. ``max_budget_usd`` hands the daily USD cap to the
+    SDK's native enforcement; the per-run output-token ceiling is enforced by the
+    runner (see budget.py).
+    """
+
+    return ClaudeAgentOptions(
+        plugins=plugins,
+        model=model,
+        system_prompt=system_prompt,
+        max_turns=max_turns,
+        max_budget_usd=max_budget_usd,
+        resume=resume,
+        permission_mode="bypassPermissions",
+        env=env or {},
+    )
+
+
+class ClaudeAgentSession:
+    """ModelSession backed by a real claude-agent-sdk streaming-input session."""
+
+    def __init__(self, options: ClaudeAgentOptions) -> None:
+        self._options = options
+        self._client = ClaudeSDKClient(options)
+
+    async def connect(self) -> None:
+        await self._client.connect()
+
+    async def query(self, text: str) -> None:
+        await self._client.query(text)
+
+    def receive_turn(self) -> AsyncIterator[Any]:
+        return self._client.receive_response()
+
+    async def interrupt(self) -> None:
+        await self._client.interrupt()
+
+    async def close(self) -> None:
+        await self._client.disconnect()
