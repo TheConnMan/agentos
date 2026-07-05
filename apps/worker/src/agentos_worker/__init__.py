@@ -6,9 +6,11 @@ side-effects with human escalation, and crash-recovery reclaim. G1 owns the
 ``sandbox`` substrate module; K1 will add the eval runner.
 """
 
+from .binding import BindingResolver, ResolvedDeployment
 from .config import WorkerConfig
 from .consumer import Consumer
 from .kernel import RETRYABLE_CLASSIFICATIONS, Kernel, TurnOutcome
+from .killswitch import KillSwitch
 from .markers import Markers
 from .runner_client import RunnerClient, RunnerError, TurnStream
 from .slack_sink import AsyncSlackSink, SlackSink
@@ -19,10 +21,13 @@ __version__ = "0.0.0"
 __all__ = [
     "RETRYABLE_CLASSIFICATIONS",
     "AsyncSlackSink",
+    "BindingResolver",
     "Consumer",
     "Kernel",
+    "KillSwitch",
     "LockAcquireTimeout",
     "Markers",
+    "ResolvedDeployment",
     "RunnerClient",
     "RunnerError",
     "SlackSink",
