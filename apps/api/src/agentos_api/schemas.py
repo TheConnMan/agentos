@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -146,6 +146,46 @@ class PodLogs(BaseModel):
     pod: str
     container: str | None
     logs: str
+
+
+class EvalCell(BaseModel):
+    """One cell of the eval matrix: a case's result on a version."""
+
+    version: str
+    status: Literal["pass", "fail", "missing"]
+
+
+class EvalMatrixRow(BaseModel):
+    """One row of the eval matrix: a case across every version column."""
+
+    case_id: str
+    cells: list[EvalCell]
+
+
+class EvalMatrix(BaseModel):
+    """The eval matrix grid: rows = cases, columns = versions (most recent first)."""
+
+    suite: str
+    versions: list[str]
+    cases: list[str]
+    rows: list[EvalMatrixRow]
+
+
+class EvalReport(BaseModel):
+    """An eval run's rollup, reported so the API can post the PR check."""
+
+    repo_full_name: str
+    sha: str
+    passed_count: int
+    total: int
+    target_url: str | None = None
+
+
+class EvalReportResult(BaseModel):
+    """The committed GitHub commit-status state for a reported eval run."""
+
+    state: str
+    sha: str
 
 
 class BudgetConfig(BaseModel):

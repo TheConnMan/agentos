@@ -10,7 +10,7 @@ import json
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from ..config import get_settings
-from ..deps import SessionDep, StoreDep
+from ..deps import EvalQueueDep, SessionDep, StoreDep
 from ..gitflow import process_push, verify_signature
 from ..schemas import WebhookResult
 
@@ -22,6 +22,7 @@ async def github_webhook(
     request: Request,
     session: SessionDep,
     store: StoreDep,
+    eval_queue: EvalQueueDep,
     x_github_event: str = Header(default=""),
     x_hub_signature_256: str | None = Header(default=None),
 ) -> WebhookResult:
@@ -44,4 +45,4 @@ async def github_webhook(
             status.HTTP_400_BAD_REQUEST, "webhook body is not valid JSON"
         ) from exc
 
-    return await process_push(session, store, settings, payload)
+    return await process_push(session, store, settings, eval_queue, payload)
