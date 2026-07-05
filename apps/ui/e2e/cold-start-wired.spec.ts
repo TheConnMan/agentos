@@ -20,12 +20,16 @@ const SUMMARY = {
 };
 
 // Mutable agent list: starts empty, gains the created agent after POST /agents.
+// `posted` records the raw create bodies so a test can assert exactly what the UI
+// sent (e.g. the channel is trimmed before it hits the backend).
 async function stubBackend(page: Page) {
   const agents: { id: string; name: string; slack_channel: string; created_at: string }[] = [];
+  const posted: { name: string; slack_channel: string }[] = [];
 
   await page.route(/\/api\/agents(\?.*)?$/, async (route) => {
     if (route.request().method() === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}");
+      posted.push(body);
       const agent = { id: "ag-" + (agents.length + 1), name: body.name, slack_channel: body.slack_channel, created_at: "2026-07-05T00:00:00Z" };
       agents.push(agent);
       return route.fulfill(json(201, agent));
@@ -40,6 +44,7 @@ async function stubBackend(page: Page) {
   );
   await page.route("**/api/observability/metrics/summary*", (route) => route.fulfill(json(200, SUMMARY)));
   await page.route("**/api/langfuse/traces*", (route) => route.fulfill(json(200, [])));
+  return { agents, posted };
 }
 
 test("empty DB shows onboarding with honest Slack guidance, no fixture agent", async ({ page }) => {
@@ -87,6 +92,30 @@ test("a channel that is not an ID warns but still deploys (CLI synthetic channel
   await expect(page.getByTestId("channel-warn")).toBeVisible();
   await page.getByRole("button", { name: "Deploy" }).click();
   await expect(page.getByTestId("deployed-panel")).toBeVisible({ timeout: 10_000 });
+});
+
+test("a blank channel keeps Deploy disabled so no unreachable agent is created", async ({ page }) => {
+  const { posted } = await stubBackend(page);
+  await page.goto("/?api=1");
+  await page.getByRole("button", { name: /New agent/ }).first().click();
+  await page.getByTestId("agent-name").fill("no-channel-bot");
+  // Channel left empty: a blank channel can never match a Slack mention, so the
+  // success panel must not claim a deploy that will silently drop every message.
+  await expect(page.getByRole("button", { name: "Deploy" })).toBeDisabled();
+  expect(posted).toHaveLength(0);
+});
+
+test("a channel copied with surrounding spaces is trimmed before it is stored", async ({ page }) => {
+  const { posted } = await stubBackend(page);
+  await page.goto("/?api=1");
+  await page.getByRole("button", { name: /New agent/ }).first().click();
+  await page.getByTestId("agent-name").fill("trim-bot");
+  await page.getByTestId("agent-channel").fill("  C01SPACED  ");
+  await page.getByRole("button", { name: "Deploy" }).click();
+  await expect(page.getByTestId("deployed-panel")).toBeVisible({ timeout: 10_000 });
+  // The worker matches the stored channel value exactly, so the spaces must be
+  // gone by the time the create request is sent.
+  expect(posted.at(-1)?.slack_channel).toBe("C01SPACED");
 });
 
 test("no fixture agent (deal-desk) leaks anywhere in wired mode", async ({ page }) => {
