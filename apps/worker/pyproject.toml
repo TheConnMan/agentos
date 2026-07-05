@@ -3,7 +3,10 @@ name = "agentos-worker"
 version = "0.0.0"
 description = "AgentOS worker: concurrency kernel (routing, finish-race CAS, steer/interrupt), sandbox substrate, eval runner"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "redis>=5.2",
+    "kubernetes>=31.0",
+]
 
 [build-system]
 requires = ["hatchling"]

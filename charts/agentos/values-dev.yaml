@@ -58,3 +58,6 @@ otelCollector:
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
+
+# agentSandbox stays default-off; the G1 e2e enables it explicitly with the
+# backbone toggled down (see charts/agentos/README.md).
