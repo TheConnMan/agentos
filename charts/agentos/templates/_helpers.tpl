@@ -97,6 +97,38 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/* ---- Shared first-party-app environment fragments ---- */}}
+
+{{/* Postgres connection env for the app services. POSTGRES_PASSWORD comes from
+     the Secret and DATABASE_URL is composed with $(POSTGRES_PASSWORD) so the
+     password never lands in the rendered manifest. Both the API and the worker
+     use the asyncpg driver and the dedicated `agentos` schema. */}}
+{{- define "agentos.env.postgres" -}}
+- name: POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.postgres.existingSecret | default (include "agentos.secretName" .) }}
+      key: postgresPassword
+- name: DATABASE_URL
+  value: postgresql+asyncpg://{{ .Values.postgres.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "agentos.postgres.host" . }}:{{ .Values.postgres.port }}/{{ .Values.postgres.auth.database }}
+- name: DB_SCHEMA
+  value: agentos
+{{- end -}}
+
+{{/* Valkey connection env for the app services (host/port + password from the
+     Secret). The apps build their own redis DSN from these parts. */}}
+{{- define "agentos.env.valkey" -}}
+- name: VALKEY_HOST
+  value: {{ include "agentos.valkey.host" . | quote }}
+- name: VALKEY_PORT
+  value: {{ .Values.valkey.port | quote }}
+- name: VALKEY_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.valkey.existingSecret | default (include "agentos.secretName" .) }}
+      key: valkeyPassword
+{{- end -}}
+
 {{/* ---- Langfuse shared environment (mirrors compose.dev.yaml's
         x-langfuse-env anchor). Rendered into both web and worker. ---- */}}
 {{- define "agentos.langfuse.env" -}}
