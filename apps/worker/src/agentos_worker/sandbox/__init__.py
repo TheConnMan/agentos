@@ -27,6 +27,7 @@ from .types import (
     SandboxHandle,
     SandboxView,
     SubstrateConfig,
+    SuspendedThreadError,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "SandboxSubstrate",
     "SandboxView",
     "SubstrateConfig",
+    "SuspendedThreadError",
 ]
