@@ -2,9 +2,9 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .models import Environment
 
@@ -146,3 +146,28 @@ class PodLogs(BaseModel):
     pod: str
     container: str | None
     logs: str
+
+
+class BudgetConfig(BaseModel):
+    """Per-agent budget (L1). Field names match the ACI AGENTOS_BUDGET so the
+    worker passes them straight through; null means platform defaults."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    max_usd_per_day: Annotated[float, Field(gt=0)] | None = None
+    max_output_tokens_per_run: Annotated[int, Field(gt=0)] | None = None
+
+
+class KillState(BaseModel):
+    """Whether an agent is currently killed (kill switch, L1)."""
+
+    killed: bool
+
+
+class CostReport(BaseModel):
+    """Daily spend series + total for an agent (L1 Cost view)."""
+
+    start: str
+    end: str
+    total_usd: float
+    points: list[MetricPoint]

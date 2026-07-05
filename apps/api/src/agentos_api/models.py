@@ -33,6 +33,11 @@ class Agent(Base):
     repo_full_name: Mapped[str | None] = mapped_column(
         default=None, unique=True, index=True
     )
+    # Per-agent budget (L1). Field names match the frozen ACI SessionConfig
+    # AGENTOS_BUDGET so the worker passes them straight through at sandbox boot;
+    # NULL means platform defaults apply.
+    max_usd_per_day: Mapped[float | None] = mapped_column(default=None)
+    max_output_tokens_per_run: Mapped[int | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     versions: Mapped[list["AgentVersion"]] = relationship(
