@@ -13,7 +13,8 @@ from fastapi import FastAPI
 from .config import get_settings
 from .db import create_engine, create_sessionmaker
 from .langfuse import LangfuseClient
-from .routers import agents, deployments, runs
+from .routers import agents, bundles, deployments, runs
+from .storage import BundleStore
 
 
 @asynccontextmanager
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     http_client = httpx.AsyncClient(timeout=10.0)
     app.state.http_client = http_client
     app.state.langfuse = LangfuseClient(settings, http_client)
+    store = BundleStore(settings)
+    await store.ensure_bucket()
+    app.state.bundle_store = store
     try:
         yield
     finally:
@@ -41,6 +45,7 @@ def create_app() -> FastAPI:
 
     app.include_router(agents.router)
     app.include_router(deployments.router)
+    app.include_router(bundles.router)
     app.include_router(runs.router)
     return app
 

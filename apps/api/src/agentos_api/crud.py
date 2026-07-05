@@ -9,6 +9,25 @@ from .models import Agent, AgentVersion, Deployment
 from .schemas import AgentCreate, DeploymentCreate, VersionCreate
 
 
+async def get_version(
+    session: AsyncSession, version_id: uuid.UUID
+) -> AgentVersion | None:
+    return await session.get(AgentVersion, version_id)
+
+
+async def attach_bundle(
+    session: AsyncSession,
+    version: AgentVersion,
+    bundle_ref: str,
+    bundle_sha256: str,
+) -> AgentVersion:
+    version.bundle_ref = bundle_ref
+    version.bundle_sha256 = bundle_sha256
+    await session.commit()
+    await session.refresh(version)
+    return version
+
+
 async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
     agent = Agent(name=data.name, slack_channel=data.slack_channel)
     session.add(agent)
