@@ -46,10 +46,15 @@ test("create agent -> Deploy -> version + stored bundle exist via API", async ({
   await page.getByRole("navigation").getByText("Agents", { exact: true }).click();
   await page.getByRole("button", { name: /New agent/ }).click();
   await page.getByTestId("agent-name").fill(agentName);
+  await page.getByTestId("agent-channel").fill("#support");
   await page.getByRole("button", { name: "Deploy" }).click();
 
-  // Success panel proves the whole chain (create agent + version + bundle) ran.
-  await expect(page.getByText(/is live in #revenue-ops/)).toBeVisible({ timeout: 15_000 });
+  // Honest post-deploy panel proves the whole chain (create agent + version +
+  // bundle) ran and names the real next step.
+  const panel = page.getByTestId("deployed-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await expect(panel).toContainText(agentName);
+  await expect(panel).toContainText("#support");
 
   // Verify server-side: the agent, its version, and a stored bundle all exist.
   const agents = await (await api("/agents")).json();

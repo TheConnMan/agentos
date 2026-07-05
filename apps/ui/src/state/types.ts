@@ -75,6 +75,7 @@ export type Action =
   | { type: "closeAgentDetail" }
   | { type: "deployStart" }
   | { type: "deployDone" }
+  | { type: "confettiFire" }
   | { type: "deployFailedValidation"; issues: DeployIssue[] }
   | { type: "deployFailed"; message: string }
   | { type: "clearDeployErrors" }
