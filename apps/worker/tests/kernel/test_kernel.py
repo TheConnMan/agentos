@@ -25,14 +25,20 @@ IDLE = SessionStatus.IDLE_AWAITING_INPUT
 FAIL = SessionStatus.CLASSIFIED_FAILURE
 
 
-def _qevent(text: str, *, thread: str = "th-1", event_id: str | None = None) -> QueuedSlackEvent:
+def _qevent(
+    text: str,
+    *,
+    thread: str = "th-1",
+    event_id: str | None = None,
+    placeholder: str = "p-1",
+) -> QueuedSlackEvent:
     return QueuedSlackEvent(
         slack_event_id=event_id or uuid.uuid4().hex,
         thread_ts=thread,
         channel="C1",
         user="U1",
         text=text,
-        placeholder_ts="p-1",
+        placeholder_ts=placeholder,
         received_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -308,5 +314,72 @@ def test_suspended_thread_is_resumed_not_forked(make_harness) -> None:
 
             assert h.runner.opened == ["first", "second"]
             assert h.sink.last_text == "resumed"
+
+    asyncio.run(go())
+
+
+async def _route_key(async_redis, thread: str) -> str:
+    keys = [k async for k in async_redis.scan_iter(match=f"*:route:{thread}")]
+    assert len(keys) == 1, f"expected one route key for {thread}, found {keys}"
+    return keys[0]
+
+
+def test_live_route_reuse_refreshes_ttl(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            # First event creates a live route with the substrate's route TTL.
+            h.runner.default_script = [Final(text="one", status=DONE)]
+            await h.kernel.process_event(_qevent("first", thread="tTTL"))
+
+            route_key = await _route_key(h.async_redis, "tTTL")
+            # Simulate time passing by dropping the TTL low.
+            await h.async_redis.expire(route_key, 5)
+            assert await h.async_redis.ttl(route_key) <= 5
+
+            # A second event reuses the live route; routing through claim() must
+            # refresh the TTL (a regression to lookup() would leave it at ~5 and
+            # let the reaper delete a busy thread's sandbox).
+            h.runner.default_script = [Final(text="two", status=DONE)]
+            await h.kernel.process_event(_qevent("second", thread="tTTL"))
+            assert await h.async_redis.ttl(route_key) > 5
+
+    asyncio.run(go())
+
+
+def test_steered_followup_placeholder_is_retired(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="w")]
+            h.runner.tail = [Final(text="done", status=DONE)]
+
+            e1 = _qevent("first", thread="tPH", placeholder="ph-1")
+            t1 = asyncio.create_task(h.kernel.process_event(e1))
+            await _wait_until(lambda: h.runner.turn_active)
+
+            # The follow-up carries its own placeholder; once steered, that
+            # placeholder must be retired (not left stuck on "working").
+            e2 = _qevent("second", thread="tPH", placeholder="ph-2")
+            await h.kernel.process_event(e2)
+
+            folded = [u for u in h.sink.updates if u[1] == "ph-2"]
+            assert folded, "the steered follow-up's placeholder was never updated"
+            assert "folded" in folded[-1][2].lower()
+
+            hold.set()
+            await t1
+
+    asyncio.run(go())
+
+
+def test_order_lock_map_evicts_after_processing(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="ok", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tEV"))
+            # Ref-counted eviction: no per-thread lock entry lingers once the last
+            # holder releases (a regression would leak one entry per thread seen).
+            assert h.kernel._order_locks == {}
 
     asyncio.run(go())
