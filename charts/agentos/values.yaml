@@ -245,12 +245,21 @@ agentSandbox:
     replicas: 1
     updateStrategy: OnReplenish
   runner:
-    image: agentos-runner
+    # Defaults to the image published to GHCR by the Release workflow. For
+    # offline dev/e2e (a locally-built, cluster-imported image) use values-dev,
+    # which overrides this back to `agentos-runner` with imagePullPolicy Never.
+    image: ghcr.io/curie-eng/agentos-runner
     tag: latest
-    # The runner image is built locally (docker build -f runner/Dockerfile .)
-    # and imported into the cluster runtime, so Never is the safe default: a
-    # pull would fail against a registry that does not have the image.
-    imagePullPolicy: Never
+    # Always with the mutable `latest` default: IfNotPresent would let a node
+    # that already cached an older `latest` digest keep running stale runner code
+    # after a new image is published. Pin `tag` to an immutable sha/version and
+    # switch this to IfNotPresent for reproducible, cache-friendly deploys.
+    imagePullPolicy: Always
+    # GHCR packages on a private repo are NOT anonymously pullable -- the node
+    # needs a docker-registry pull Secret. List pre-created Secret names here,
+    # e.g. [{ name: ghcr-pull }]. Leave empty when the package is public or for
+    # local dev. See the chart README "Publishing and pulling images".
+    imagePullSecrets: []
     port: 8080
     # Fake-model mode round-trips ACI events offline with no credential; flip
     # false (and provide credentials) for real model runs.
