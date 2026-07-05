@@ -1,51 +1,148 @@
 # AgentOS
 
-Open-source, self-hostable developer platform for Slack-based agents — the build workspace for the Curie AgentOS prototype. Connect Slack, author a Claude-Code-format plugin (skills + tools + MCP), deploy it as a versioned bot identity, and get traces + evals + budgets + git-flow for free.
+Open-source, self-hostable developer platform for Slack-based agents. Connect
+Slack, author a Claude-Code-format plugin (skills + tools + MCP), deploy it as
+a versioned bot identity, and get traces, evals, budgets, and git-flow for
+free.
 
-This repo is where the prototype gets built. The architecture and every load-bearing decision below were validated on a real cluster on 2026-07-04 before any of it was committed — see `docs/` for the evidence.
+"Relay" is this project's internal codename (repo, commits, internal docs);
+"agentos" is the product-surface name — the CLI binary, the bot handle, the
+console. Both names refer to the same system.
+
+## What it does
+
+A Slack `@mention` (or DM) is answered by a versioned plugin running in an
+isolated Kubernetes sandbox, with the run traced end to end and steerable
+mid-turn. A `git push` deploys that plugin under a bot identity: push to `dev`
+updates `@agentos-dev`, merging to `prod` promotes the same built artifact to
+`@agentos`. See [`docs/architecture.md`](docs/architecture.md) for the full
+component map, a message-flow sequence diagram, and the deploy-flow sequence
+diagram.
 
 ## Status
 
-**Pre-implementation.** The infrastructure foundation is proven end to end (Kubernetes Agent Sandbox runtime, claude-agent-sdk steering/interrupt/cache, Langfuse trace+eval backbone, security rails, warm-pool allocation, runner-in-sandbox with cache affinity). What remains is the build itself, ordered in `docs/mvp-build-plan.md`.
+The core spine is built and covered by CI: the frozen contracts, the API
+server, the dispatcher, the runner, the sandbox substrate, the worker
+concurrency kernel, the UI (shell plus create/deploy/Runs/Metrics/Logs wired
+to the real backend), the CLI, the Helm chart with its security rails, and
+git-flow (push-to-deploy, merge-to-promote). Still ahead: the eval runner +
+PR-check pipeline, end-to-end budget enforcement through the UI's Cost view,
+the soak/chaos suite, and the walking-skeleton verification gate against a
+real Slack workspace. See "What is proven vs. what is designed" in
+[`docs/architecture.md`](docs/architecture.md#what-is-proven-vs-what-is-designed)
+for the precise built/in-progress split.
 
-## Layout
+## Component map
 
+| Component | Language | What it owns |
+|---|---|---|
+| [`apps/dispatcher`](apps/dispatcher/README.md) | Python (Slack Bolt) | Socket Mode ingestion: ack, dedupe, placeholder reply, enqueue |
+| [`apps/worker`](apps/worker/README.md) | Python (redis-py) | The concurrency kernel (routing, finish-race, steer/interrupt) + the Agent Sandbox substrate |
+| [`runner`](runner/README.md) | Python (claude-agent-sdk) | The streaming session server that implements the ACI contract inside a sandbox |
+| [`apps/api`](apps/api/README.md) | Python (FastAPI) | Agents/versions/deployments CRUD, plugin bundle pipeline, GitHub git-flow, Langfuse + pod-log proxies |
+| [`apps/ui`](apps/ui/README.md) | React (Vite + TS) | The AgentOS console: author, deploy, and observe agents |
+| [`cli`](cli/README.md) | Rust (clap + tokio) | The `agentos` CLI: local emulation, evals, and deploy from a laptop |
+| [`charts/agentos`](charts/agentos/README.md) | Helm | The umbrella chart: Langfuse + Postgres + Valkey + ClickHouse + MinIO + OTel Collector + the Agent Sandbox substrate, with security rails on by default |
+| [`packages/aci-protocol`](packages/aci-protocol/README.md) | Python (frozen, codegen to TS + Rust) | The ACI session protocol every lane speaks |
+| [`packages/plugin-format`](packages/plugin-format/README.md) | Python (frozen, codegen to JSON Schema) | The Claude Code plugin bundle shape, verbatim |
+
+## Three ways to talk to the system
+
+**Real Slack** — connect a workspace, `@mention` the bot in a channel or DM it.
+The dispatcher acks, posts a placeholder, and the worker routes the turn into
+a claimed sandbox; the placeholder is edited in place as the reply streams.
+See `apps/dispatcher/README.md`'s runbook for pointing at a real workspace.
+
+**Local CLI, no Slack at all** — `agentos start` boots the runner image in
+Docker (optionally `--fake-model` for a fully offline round-trip), then
+`agentos send "..."` emulates a Slack message against it and streams the
+NDJSON reply to your terminal. `agentos eval` runs a plugin's `evals/cases.json`
+the same way. This is the fastest inner loop for developing a plugin: zero
+Slack, zero cluster. See `cli/README.md`.
+
+**`agentos chat` (middle mode, being built)** — a planned CLI mode that hits
+the real deployed pipeline (dispatcher → worker → sandboxed runner) without a
+Slack workspace in between, for testing against production-shaped
+infrastructure without needing a live Slack app. Not yet implemented; the CLI
+today covers the fully-local mode (`start`/`send`/`eval`) and the deploy path
+(`agentos deploy` pushes a bundle to the API), described above.
+
+## Quickstart
+
+Everything below runs against the dev stack in `compose.dev.yaml`
+(Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel Collector — see
+[`CLAUDE.md`](CLAUDE.md#the-dev-stack) for ports and gotchas).
+
+```bash
+# 1. Bring up the backing stack
+docker compose -f compose.dev.yaml up -d
+docker compose -f compose.dev.yaml ps    # wait for all services healthy
+
+# 2. Install the Python workspace (uv workspace: aci-protocol, plugin-format,
+#    apps/api, apps/dispatcher, apps/worker, runner)
+uv sync
+
+# 3. Run the test suite
+uv run pytest -q
+uv run ruff check .
+uv run mypy
+
+# 4. Boot the API server (needs the Postgres schema applied once)
+cd apps/api && uv run alembic upgrade head
+uv run uvicorn agentos_api.main:app --port 8000 &
+cd -
+
+# 5. Boot the UI (fixture mode by default; ?api=1 wires it to the running API)
+cd apps/ui && pnpm install && pnpm dev
+# open http://localhost:5173/?state=1        (fixture demo)
+# open http://localhost:5173/?api=1&state=1  (wired to apps/api on :8000)
 ```
-docs/
-  mvp-build-plan.md            The architecture + phased build order for the v0.1 MVP. Start here.
-  prototype-derisking-review.md  The risk register: every assumption, ranked, with live evidence + the
-                               remaining (non-prototype-settleable) risks.
-  adr/                         Architecture Decision Records — the decisions, why, and the evidence.
-  test-plans/                  PT-1..PT-4: the prototype test plans, each with its live run results.
-  reference/                   The design corpus the build implements against:
-                                 detailed-architecture.md   — the full component/ACI contract (the spec)
-                                 on-prem-architecture.md     — build-vs-adopt research (license-verified)
-                                 claude-design-prompt.md     — the AgentOS console UI spec (H1 lane)
-                                 agent-architecture-decision-menu.md — the 10-axis decision menu
-                                 product-direction.md        — the strategy/moat framing
-prototypes/
-  runner/                      The claude-agent-sdk runner proven inside a Sandbox (PT-E seed). Not prod.
-  sdk-tests/                   Streaming steer/interrupt/cache probes (PT-2).
-  observability/               OTLP emitter + Langfuse tool-tree reconstruction (PT-4).
+
+**CLI walkthrough** (no Slack, no cluster — needs the runner image built once:
+`docker build -f runner/Dockerfile -t agentos-runner .` from the repo root):
+
+```bash
+cd cli && cargo build --release
+./target/release/agentos init my-agent && cd my-agent
+../target/release/agentos start --fake-model
+../target/release/agentos send "hello"
+../target/release/agentos eval
 ```
 
-## What's proven (all live, 2026-07-04)
+Each package documents its own deeper verify commands and gotchas in its own
+README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
+enough to see the pieces move; it is not a substitute for those.
 
-| Claim | Result |
-|---|---|
-| Agent Sandbox routable control endpoint | `.status.serviceFQDN` + headless Service, reachable |
-| Hibernation preserves the process? | No — cold restart. **Design stateless-first, rehydrate on resume.** |
-| Warm-pool allocation | ~0.2s claim to a pre-warmed sandbox |
-| claude-agent-sdk steering + interrupt | Real (mid-run redirect at tool boundary; interrupt aborts) |
-| Prompt-cache reuse in a live session | Proven in-sandbox: call-2 cache_read == call-1 cache_creation (16045) |
-| Langfuse tool-call-tree via public API | Reconstructs 3-level tree; model span → GENERATION |
-| Single-node footprint | ~2.3 GB (not 16-20); ClickHouse needs AVX (pin ≤24.8 for old CPUs) |
-| Security boundary | Egress + metadata blocked (with control), per-agent secret isolation, non-root RO-rootfs, gVisor |
+## Dev workflow
 
-## The one design constraint
+- **Python packages** are one `uv` workspace (root `pyproject.toml`); ruff,
+  mypy, and pytest run across all members from the repo root (see step 3
+  above). Integration tests hit the real dev stack, never mocks of
+  Postgres/Valkey/Langfuse.
+- **The Rust CLI** and **the UI** are verified independently; see
+  `cli/README.md` and `apps/ui/README.md` for their commands.
+- **Concurrent work happens in git worktrees**, one per task/branch, so
+  multiple agents (or you and a teammate) can build in parallel without
+  clobbering each other's checkout. See `CLAUDE.md` for the exact protocol.
+- **Two frozen contracts** (`packages/aci-protocol`, `packages/plugin-format`)
+  gate every cross-language lane; changing either requires regenerating the
+  committed schema/TS/Rust artifacts and is enforced by a CI compat test.
 
-Hibernation cold-restarts the runner (a suspended sandbox is deleted; resume is a new pod). So AgentOS is **stateless-first**: session state is externalized and a resumed thread rehydrates from history. Prompt-cache warmth is an optimization *within* a continuous claim, never assumed across a suspend. See `docs/adr/0003-*`.
+## Where to go next
 
-## Next
-
-Freeze `packages/aci-protocol` first (the versioned contract), then the walking skeleton, then git-flow/evals, then prod-hardening the concurrency kernel. Full ordering in `docs/mvp-build-plan.md` §5.
+- [`docs/architecture.md`](docs/architecture.md) — the component diagram, the
+  message-flow and deploy-flow sequence diagrams, and the built/in-progress
+  split.
+- [`docs/adr/`](docs/adr/) — the load-bearing architecture decisions (Agent
+  Sandbox as substrate, stateless-first sessions, Langfuse as the
+  observability backbone, the frozen ACI, security rails as chart defaults,
+  adopt-not-build boundaries), each with the live-cluster evidence behind it.
+- [`docs/mvp-build-plan.md`](docs/mvp-build-plan.md) and
+  [`docs/build-orchestration-plan.md`](docs/build-orchestration-plan.md) —
+  historical planning artifacts: the architecture spine and the task DAG this
+  repo was built along. Useful for understanding sequencing decisions; not
+  living documentation.
+- [`CLAUDE.md`](CLAUDE.md) — the operative rules for anyone (human or agent)
+  working in this repo: the worktree protocol, verify commands, the dev
+  stack, and the frozen-contract escalation rule. Each top-level directory
+  also has its own scoped `CLAUDE.md` with rules specific to that area.
