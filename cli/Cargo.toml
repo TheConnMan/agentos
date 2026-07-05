@@ -11,6 +11,11 @@ path = "src/main.rs"
 [dependencies]
 agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
 anyhow = "1"
+axum = { version = "0.8", default-features = false, features = [
+    "tokio",
+    "http1",
+    "json",
+] }
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 futures-util = "0.3"
@@ -20,9 +25,16 @@ reqwest = { version = "0.12", default-features = false, features = [
     "multipart",
     "rustls-tls",
 ] }
+redis = { version = "0.27", default-features = false, features = [
+    "tokio-comp",
+    "streams",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_urlencoded = "0.7"
 tar = "0.4"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = [
     "macros",
     "rt-multi-thread",
@@ -30,6 +42,8 @@ tokio = { version = "1", features = [
     "time",
     "fs",
     "io-util",
+    "net",
+    "sync",
 ] }
 
 [dev-dependencies]
