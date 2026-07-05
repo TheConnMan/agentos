@@ -1,0 +1,82 @@
+[project]
+name = "agentos-workspace"
+version = "0.0.0"
+description = "Relay (AgentOS) monorepo workspace root"
+requires-python = ">=3.13"
+dependencies = [
+    "aci-protocol",
+    "plugin-format",
+    "agentos-api",
+    "agentos-dispatcher",
+    "agentos-worker",
+    "agentos-runner",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "packages/aci-protocol",
+    "packages/plugin-format",
+    "apps/api",
+    "apps/dispatcher",
+    "apps/worker",
+    "runner",
+]
+
+[tool.uv.sources]
+aci-protocol = { workspace = true }
+plugin-format = { workspace = true }
+agentos-api = { workspace = true }
+agentos-dispatcher = { workspace = true }
+agentos-worker = { workspace = true }
+agentos-runner = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.9",
+    "mypy>=1.14",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = [
+    "packages/aci-protocol/tests",
+    "packages/plugin-format/tests",
+    "apps/api/tests",
+    "apps/dispatcher/tests",
+    "apps/worker/tests",
+    "runner/tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["prototypes"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = [
+    "packages/aci-protocol/src",
+    "packages/plugin-format/src",
+    "apps/api/src",
+    "apps/dispatcher/src",
+    "apps/worker/src",
+    "runner/src",
+]
+files = [
+    "packages/aci-protocol/src",
+    "packages/plugin-format/src",
+    "apps/api/src",
+    "apps/dispatcher/src",
+    "apps/worker/src",
+    "runner/src",
+]

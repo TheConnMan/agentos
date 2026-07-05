@@ -12,6 +12,16 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Rust
+target/
+
+# Kubernetes local artifacts
+.kube/
+*.kubeconfig
 
 # Node
 node_modules/

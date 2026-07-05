@@ -1,0 +1,11 @@
+[package]
+name = "agentos"
+version = "0.0.0"
+edition = "2021"
+description = "AgentOS CLI: init/start/send/eval a plugin against a local runner (task I1)"
+
+[[bin]]
+name = "agentos"
+path = "src/main.rs"
+
+[dependencies]
