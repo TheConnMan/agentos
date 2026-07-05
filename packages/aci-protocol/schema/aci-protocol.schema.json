@@ -1,0 +1,387 @@
+{
+  "$defs": {
+    "Budget": {
+      "additionalProperties": false,
+      "description": "Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.\n\n``task_budget_hint`` is the optional hint passed through to the model so it\nself paces (section 6b); it is not a hard ceiling.",
+      "properties": {
+        "max_output_tokens_per_run": {
+          "title": "Max Output Tokens Per Run",
+          "type": "integer"
+        },
+        "max_usd_per_day": {
+          "title": "Max Usd Per Day",
+          "type": "number"
+        },
+        "task_budget_hint": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Budget Hint"
+        }
+      },
+      "required": [
+        "max_output_tokens_per_run",
+        "max_usd_per_day"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "ErrorEvent": {
+      "additionalProperties": false,
+      "description": "A classified failure surfaced to the platform.",
+      "properties": {
+        "classification": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Classification"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "ErrorEvent",
+      "type": "object"
+    },
+    "Event": {
+      "additionalProperties": false,
+      "description": "An inbound event delivered into a live session (initial or follow-up).",
+      "properties": {
+        "kind": {
+          "const": "event",
+          "default": "event",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "message",
+            "job",
+            "eval_case"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "user": {
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text",
+        "user",
+        "ts"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "Final": {
+      "additionalProperties": false,
+      "description": "The terminal response event, carrying the session status.",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/SessionStatus",
+          "default": "done"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "final",
+          "default": "final",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "Final",
+      "type": "object"
+    },
+    "Interrupt": {
+      "additionalProperties": false,
+      "description": "A hard stop delivered on the control channel, distinct from a steer.",
+      "properties": {
+        "kind": {
+          "const": "interrupt",
+          "default": "interrupt",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "Interrupt",
+      "type": "object"
+    },
+    "OtelConfig": {
+      "additionalProperties": false,
+      "description": "The OTEL_EXPORTER_OTLP_* subset the runner needs to export traces.\n\nSection 0 lists OTEL_EXPORTER_OTLP_* as a wildcard. We capture the standard\nfields the prototype used (endpoint, headers, protocol); any others pass\nthrough as raw env vars untouched and are out of scope for this typed view.",
+      "properties": {
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "protocol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protocol"
+        }
+      },
+      "title": "OtelConfig",
+      "type": "object"
+    },
+    "SessionConfig": {
+      "additionalProperties": false,
+      "description": "The typed session setup contract.\n\n``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);\nsection 0 describes these as per-tool secrets via K8s Secret refs, so the\ncontract carries the reference, not the secret material itself.",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "credentials_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credentials Ref"
+        },
+        "memory_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Ref"
+        },
+        "otel": {
+          "$ref": "#/$defs/OtelConfig"
+        },
+        "plugin_dir": {
+          "title": "Plugin Dir",
+          "type": "string"
+        },
+        "sandbox_id": {
+          "title": "Sandbox Id",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_dir",
+        "session_id",
+        "sandbox_id",
+        "budget"
+      ],
+      "title": "SessionConfig",
+      "type": "object"
+    },
+    "SessionStatus": {
+      "description": "Terminal or awaiting status of a session, from the output contract.\n\nWire tokens follow the section 0 spelling; ``classified failure`` in prose\nbecomes the token ``classified-failure`` on the wire.",
+      "enum": [
+        "done",
+        "idle-awaiting-input",
+        "classified-failure"
+      ],
+      "title": "SessionStatus",
+      "type": "string"
+    },
+    "SideEffectFlag": {
+      "additionalProperties": false,
+      "description": "Marks that a non-idempotent tool call executed during the run.\n\nIts presence gates the no-retry-after-side-effects rule (section 2b): a\nfailed run carrying this flag escalates to a human instead of retrying.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "type": {
+          "const": "side_effect_flag",
+          "default": "side_effect_flag",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "title": "SideEffectFlag",
+      "type": "object"
+    },
+    "TextDelta": {
+      "additionalProperties": false,
+      "description": "A streamed chunk of assistant text.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text_delta",
+          "default": "text_delta",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextDelta",
+      "type": "object"
+    },
+    "ToolNote": {
+      "additionalProperties": false,
+      "description": "A human readable note about a tool call the harness is making.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "type": {
+          "const": "tool_note",
+          "default": "tool_note",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ToolNote",
+      "type": "object"
+    }
+  },
+  "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "protocolVersion": "0.1.0",
+  "title": "ACI Protocol v0.1.0"
+}

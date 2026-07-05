@@ -45,6 +45,23 @@ jobs:
         run: cargo clippy -- -D warnings
       - name: Test
         run: cargo test
+      - name: Generated ACI protocol crate compiles
+        working-directory: packages/aci-protocol/generated/rust
+        run: cargo test
+
+  contracts-ts:
+    name: Contracts (generated TypeScript compiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: tsc --noEmit on generated ACI types
+        run: npx --yes -p typescript@5 tsc --noEmit -p packages/aci-protocol/generated/ts/tsconfig.json
 
   ui:
     name: UI (placeholder until H1a)
