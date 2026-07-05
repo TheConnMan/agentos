@@ -83,3 +83,9 @@ files = [
     "apps/worker/src",
     "runner/src",
 ]
+
+# The official kubernetes client ships no type stubs; keep its boundary typed
+# on our side (apps/worker/src/agentos_worker/sandbox/k8s.py) instead.
+[[tool.mypy.overrides]]
+module = "kubernetes.*"
+ignore_missing_imports = true
