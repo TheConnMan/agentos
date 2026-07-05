@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { C } from "../../tokens";
 import { Button } from "../../primitives";
 import { useStore } from "../../state/store";
+import { useWired } from "../../state/wired";
 import { isWired } from "../../api/config";
 import { createAgent, createVersion, uploadBundle, BundleValidationError } from "../../api/client";
 import { buildBundleZip } from "../../api/bundle";
@@ -41,7 +42,9 @@ approval request in #revenue-ops.
 
 export function NewAgentModal() {
   const { state, dispatch } = useStore();
+  const wired = useWired();
   const [name, setName] = useState("deal-desk");
+  const [channel, setChannel] = useState("#agentos");
   const [skill, setSkill] = useState(SKILL);
   const lineCount = useMemo(() => skill.split("\n").length, [skill]);
 
@@ -55,11 +58,15 @@ export function NewAgentModal() {
     }
     dispatch({ type: "deployStart" });
     try {
-      const agent = await createAgent({ name, slack_channel: "#revenue-ops" });
+      const agent = await createAgent({ name, slack_channel: channel });
       const version = await createVersion(agent.id, { version_label: "v0.1.0", created_by: "ui" });
       const archive = await buildBundleZip({ agentName: name, versionLabel: version.version_label, skillMd: skill });
       await uploadBundle(agent.id, version.id, archive);
-      dispatch({ type: "deployDone" });
+      // Backend-driven success: record the real next step, refresh the real agent
+      // list, and fire confetti without the fixture level/success-panel machinery.
+      wired.markDeployed({ name, channel });
+      wired.refetch();
+      dispatch({ type: "confettiFire" });
     } catch (e) {
       if (e instanceof BundleValidationError) {
         dispatch({ type: "deployFailedValidation", issues: e.issues });
@@ -113,6 +120,27 @@ export function NewAgentModal() {
               marginBottom: 20,
             }}
           />
+          <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>Slack channel</label>
+          <input
+            data-testid="agent-channel"
+            value={channel}
+            onChange={(e) => setChannel(e.target.value)}
+            placeholder="#channel"
+            style={{
+              width: "100%",
+              background: C.input,
+              border: "1px solid " + C.borderStrong,
+              borderRadius: 7,
+              padding: "8px 10px",
+              color: C.text,
+              fontFamily: C.mono,
+              fontSize: 13,
+              marginBottom: 6,
+            }}
+          />
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 20 }}>
+            Invite the bot to this channel after deploy.
+          </div>
           <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Template</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             {TEMPLATES.map((t, i) => (
@@ -222,7 +250,7 @@ export function NewAgentModal() {
       </div>
       <div style={{ padding: "14px 24px", borderTop: "1px solid " + C.border, display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ fontSize: 12, color: C.muted, fontFamily: C.mono }}>
-          deploys to <span style={{ color: C.text2 }}>#revenue-ops</span>
+          deploys to <span style={{ color: C.text2 }}>{channel || "#channel"}</span>
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <Button label="Cancel" variant="ghost" onClick={() => dispatch({ type: "closeModal" })} />

@@ -25,7 +25,9 @@ const TABS: [ObsTab, string][] = [
 export function Observability() {
   const { state, dispatch } = useStore();
 
-  if (state.level < 3) {
+  // The level<3 gate is a fixture-demo construct; in wired mode the tabs always
+  // render and each degrades honestly (empty traces, zero metrics) on their own.
+  if (!isWired() && state.level < 3) {
     return (
       <div>
         <SectionTitle title="Observability" />

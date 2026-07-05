@@ -3,12 +3,17 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { StoreProvider } from "./state/store";
+import { WiredProvider } from "./state/wired";
 import type { FixtureLevel } from "./state/types";
 
+// These tests exercise the fixture shell (no ?api=1), so WiredProvider is inert
+// here — it just satisfies the useWired() contract the shared chrome now uses.
 function renderAt(level: FixtureLevel) {
   return render(
     <StoreProvider level={level}>
-      <App />
+      <WiredProvider>
+        <App />
+      </WiredProvider>
     </StoreProvider>,
   );
 }
