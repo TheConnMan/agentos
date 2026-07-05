@@ -1,0 +1,56 @@
+"""Process entrypoint: wire config, clients, app, and supervisor, then run.
+
+This is the top-level composition. It reads the environment, builds the Bolt app
+and its backing clients, installs SIGINT/SIGTERM handlers for graceful shutdown,
+and hands a Socket Mode connection factory to the supervisor. Run it with
+``python -m agentos_dispatcher``.
+"""
+
+import logging
+import os
+import signal
+from collections.abc import Mapping
+
+from .app import SocketModeConnection, build_app, build_redis, build_web_client
+from .config import DispatcherConfig
+from .supervisor import BackoffPolicy, Supervisor
+
+
+def build_supervisor(config: DispatcherConfig, *, logger: logging.Logger) -> Supervisor:
+    """Assemble the supervisor and its Socket Mode connection factory from config."""
+    redis_client = build_redis(config)
+    web_client = build_web_client(config)
+    app = build_app(config, web_client=web_client, redis_client=redis_client, logger=logger)
+
+    def connect() -> SocketModeConnection:
+        return SocketModeConnection(app, config.slack_app_token, logger=logger)
+
+    backoff = BackoffPolicy(
+        initial_seconds=config.backoff_initial_seconds,
+        max_seconds=config.backoff_max_seconds,
+        multiplier=config.backoff_multiplier,
+    )
+    return Supervisor(connect, backoff=backoff, logger=logger)
+
+
+def main(env: Mapping[str, str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("agentos_dispatcher")
+    config = DispatcherConfig.from_env(env if env is not None else os.environ)
+
+    supervisor = build_supervisor(config, logger=logger)
+
+    def _handle_signal(signum: int, _frame: object) -> None:
+        logger.info("received signal %s, shutting down", signum)
+        supervisor.request_stop()
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    logger.info("dispatcher starting")
+    supervisor.run()
+    logger.info("dispatcher stopped")
+
+
+if __name__ == "__main__":
+    main()
