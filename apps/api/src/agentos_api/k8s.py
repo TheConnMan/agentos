@@ -92,7 +92,12 @@ def build_pod_log_reader(kube_config_path: str | None) -> PodLogReader:
         if kube_config_path:
             config.load_kube_config(config_file=kube_config_path)
         else:
-            config.load_incluster_config()
+            try:
+                config.load_incluster_config()
+            except Exception:
+                # Not in a cluster: honor the standard KUBECONFIG / ~/.kube/config
+                # so local runs against a real cluster work without extra config.
+                config.load_kube_config()
         return KubernetesPodLogReader(client.CoreV1Api())
     except Exception:
         return NullPodLogReader()
