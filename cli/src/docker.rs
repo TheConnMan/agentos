@@ -23,6 +23,9 @@ pub struct StartSpec {
     pub fake_model: bool,
     pub network: Option<String>,
     pub otel_endpoint: Option<String>,
+    /// Model id forwarded as `AGENTOS_MODEL`; `None` leaves the runner on its
+    /// SDK default.
+    pub model: Option<String>,
     /// Env vars forwarded from the caller's environment when set (model
     /// credentials for real-model runs; never baked into the args as values).
     pub passthrough_env: Vec<String>,
@@ -52,6 +55,10 @@ impl StartSpec {
         if self.fake_model {
             args.push("-e".into());
             args.push("AGENTOS_FAKE_MODEL=1".into());
+        }
+        if let Some(model) = &self.model {
+            args.push("-e".into());
+            args.push(format!("AGENTOS_MODEL={model}"));
         }
         if let Some(network) = &self.network {
             args.push("--network".into());
@@ -131,6 +138,7 @@ mod tests {
             fake_model: true,
             network: Some("agentos_default".into()),
             otel_endpoint: Some("http://otel-collector:4318".into()),
+            model: None,
             passthrough_env: vec!["AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST".into()],
         }
     }
@@ -160,5 +168,18 @@ mod tests {
         let joined = s.run_args().join(" ");
         assert!(!joined.contains("AGENTOS_FAKE_MODEL"));
         assert!(!joined.contains("AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST"));
+    }
+
+    #[test]
+    fn model_is_forwarded_only_when_set() {
+        let mut s = spec();
+        s.model = None;
+        assert!(!s.run_args().join(" ").contains("AGENTOS_MODEL"));
+
+        s.model = Some("claude-opus-4-8".into());
+        assert!(s
+            .run_args()
+            .join(" ")
+            .contains("-e AGENTOS_MODEL=claude-opus-4-8"));
     }
 }

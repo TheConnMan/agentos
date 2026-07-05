@@ -16,7 +16,7 @@ use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
 use crate::evals::{case_line, load_cases, summary_line, turn_passes};
 use crate::render::{boxed_summary, TurnPrinter};
-use crate::runner::RunnerClient;
+use crate::runner::{RunnerClient, SteerOutcome};
 use crate::scaffold::{read_manifest, scaffold};
 use crate::state::{self, RunnerState};
 
@@ -65,6 +65,7 @@ pub struct StartOpts {
     pub network: Option<String>,
     pub otel_endpoint: Option<String>,
     pub budget: String,
+    pub model: Option<String>,
 }
 
 pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
@@ -110,6 +111,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         fake_model: opts.fake_model,
         network: opts.network,
         otel_endpoint: opts.otel_endpoint,
+        model: opts.model,
         passthrough_env: vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
     };
 
@@ -190,12 +192,35 @@ pub async fn stop() -> Result<()> {
     Ok(())
 }
 
-pub async fn status() -> Result<()> {
-    let url = resolve_url(None)?;
+pub async fn status(url: Option<String>) -> Result<()> {
+    let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let status = client.status().await?;
     println!("runner {url}");
     println!("{}", serde_json::to_string_pretty(&status)?);
+    Ok(())
+}
+
+pub async fn steer(text: &str, user: &str, url: Option<String>) -> Result<()> {
+    let url = resolve_url(url)?;
+    let client = RunnerClient::new(&url)?;
+    match client.steer(text, user).await? {
+        SteerOutcome::Delivered => {
+            println!("steered the live turn");
+            Ok(())
+        }
+        SteerOutcome::NoActiveTurn => {
+            println!("no active turn to steer; send a new message to start one");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub async fn interrupt(reason: &str, url: Option<String>) -> Result<()> {
+    let url = resolve_url(url)?;
+    let client = RunnerClient::new(&url)?;
+    client.interrupt(reason).await?;
+    println!("interrupted the runner");
     Ok(())
 }
 
