@@ -14,31 +14,37 @@ const SUMMARY = {
   error_rate: 0.018,
 };
 
+// Distinct last value per metric so a metric switch is observable in the caption.
+const LAST_VALUE: Record<string, number> = {
+  runs: 122,
+  latency_p95_seconds: 3.4,
+  tokens: 44000,
+  cost_usd: 7.25,
+  error_rate: 0.06,
+};
+
 function seriesFor(metric: string) {
+  const last = LAST_VALUE[metric] ?? 100;
   return {
     metric,
     granularity: "day",
     start: SUMMARY.start,
     end: SUMMARY.end,
     points: [
-      { ts: "2026-06-28", value: 90 },
-      { ts: "2026-06-29", value: 110 },
-      { ts: "2026-06-30", value: 105 },
-      { ts: "2026-07-01", value: 130 },
-      { ts: "2026-07-02", value: 128 },
-      { ts: "2026-07-03", value: 140 },
-      { ts: "2026-07-04", value: 122 },
+      { ts: "2026-06-30", value: last * 0.8 },
+      { ts: "2026-07-01", value: last * 0.9 },
+      { ts: "2026-07-02", value: last },
     ],
   };
 }
 
-async function stubMetrics(page: Page) {
+async function stubMetrics(page: Page, seriesBuilder: (metric: string) => object = seriesFor) {
   await page.route("**/api/observability/metrics/summary*", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(SUMMARY) }),
   );
   await page.route("**/api/observability/metrics/series*", (route) => {
     const metric = new URL(route.request().url()).searchParams.get("metric") ?? "runs";
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(seriesFor(metric)) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(seriesBuilder(metric)) });
   });
 }
 
@@ -56,9 +62,31 @@ test("Metrics tab renders the summary cards and the series chart from real-shape
   await expect(summary).toContainText("1.8%"); // error rate (fraction -> percent)
   await expect(page.getByTestId("metric-chart")).toBeVisible();
 
-  // switching the selected metric refetches and keeps the chart rendered
+  // switching the selected metric refetches: the chart's latest value must change
+  // to the newly selected metric's series (runs -> 122, error rate -> 6.0%).
+  await expect(page.getByTestId("metric-chart-latest")).toHaveText("122");
   await page.getByRole("button", { name: "Error rate" }).click();
+  await expect(page.getByTestId("metric-chart-latest")).toHaveText("6.0%");
+});
+
+test("a single-point series renders the value without NaN", async ({ page }) => {
+  // One-point series (e.g. weekly granularity over a short window) used to divide
+  // by zero in the chart; assert it renders the value and no NaN leaks to the DOM.
+  await stubMetrics(page, (metric) => ({
+    metric,
+    granularity: "week",
+    start: SUMMARY.start,
+    end: SUMMARY.end,
+    points: [{ ts: "2026-07-01", value: 137 }],
+  }));
+  await page.goto("/?state=3&api=1");
+  await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
+  await page.getByRole("button", { name: "Metrics" }).click();
+
   await expect(page.getByTestId("metric-chart")).toBeVisible();
+  await expect(page.getByTestId("metric-chart-latest")).toHaveText("137");
+  const html = await page.content();
+  expect(html).not.toContain("NaN");
 });
 
 test("Logs tab shows the 503 no-cluster degraded state", async ({ page }) => {
