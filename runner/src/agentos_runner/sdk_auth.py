@@ -7,10 +7,12 @@ The claude-agent-sdk authenticates from ``CLAUDE_CODE_OAUTH_TOKEN`` /
 it and the real session would fail with a generic ``authentication_failed``. This
 resolves it to the correct SDK variable before the session starts.
 
-Rules:
+Rules (order matters -- an OAuth token and an API key share the ``sk-ant-``
+prefix, so the more specific OAuth prefix is checked first):
 - An explicit SDK credential already in the environment wins (the platform set it
   deliberately); this is then a no-op.
-- ``sk-ant-...`` is an Anthropic API key -> ``ANTHROPIC_API_KEY``.
+- ``sk-ant-oat...`` is a Claude Code OAuth token -> ``CLAUDE_CODE_OAUTH_TOKEN``.
+- ``sk-ant-...`` (any other) is an Anthropic API key -> ``ANTHROPIC_API_KEY``.
 - A recognizably non-Anthropic key (``sk-or-...`` OpenRouter, bare ``sk-...``
   OpenAI-style) is rejected loudly, naming what IS supported, rather than handed
   to the SDK to die as a generic auth failure. Other providers are post-MVP.
@@ -46,7 +48,11 @@ def resolve_model_credential(env: MutableMapping[str, str]) -> None:
     credential = env.get(CREDENTIALS_ENV)
     if not credential:
         return
-    if credential.startswith("sk-ant-"):
+    if credential.startswith("sk-ant-oat"):
+        # Claude Code OAuth tokens share the sk-ant- prefix with API keys, so
+        # this more specific check must come first.
+        env[OAUTH_TOKEN_ENV] = credential
+    elif credential.startswith("sk-ant-"):
         env[API_KEY_ENV] = credential
     elif credential.startswith("sk-"):
         # OpenAI-style ("sk-..."), OpenRouter ("sk-or-..."), and similar. Fail

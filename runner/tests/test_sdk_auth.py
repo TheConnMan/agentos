@@ -22,6 +22,15 @@ def test_anthropic_api_key_maps_to_api_key_env() -> None:
     assert OAUTH_TOKEN_ENV not in env
 
 
+def test_oauth_token_with_sk_ant_oat_prefix_maps_to_oauth_env() -> None:
+    # Claude Code OAuth tokens begin with sk-ant-oat and share the sk-ant-
+    # prefix with API keys; they must route to the OAuth var, not the API key.
+    env = {CREDENTIALS_ENV: "sk-ant-oatPLACEHOLDER"}
+    resolve_model_credential(env)
+    assert env[OAUTH_TOKEN_ENV] == "sk-ant-oatPLACEHOLDER"
+    assert API_KEY_ENV not in env
+
+
 def test_oauth_token_maps_to_oauth_env() -> None:
     # A Claude Code OAuth token is not an sk- key.
     env = {CREDENTIALS_ENV: "oauth-PLACEHOLDER-token"}
