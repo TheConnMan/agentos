@@ -17,6 +17,17 @@ router = APIRouter(
 )
 
 
+def _resolve_window(start: str | None, end: str | None) -> tuple[str, str]:
+    window = get_settings().metrics_default_window_hours
+    try:
+        return metrics_service.resolve_window(start, end, window)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"start/end must be ISO 8601 timestamps: {exc}",
+        ) from exc
+
+
 @router.get("/metrics/summary", response_model=MetricsSummary)
 async def metrics_summary(
     lf: LangfuseDep,
@@ -25,8 +36,7 @@ async def metrics_summary(
     environment: str | None = None,
     agent: str | None = None,
 ) -> MetricsSummary:
-    window = get_settings().metrics_default_window_hours
-    start_iso, end_iso = metrics_service.resolve_window(start, end, window)
+    start_iso, end_iso = _resolve_window(start, end)
     return await metrics_service.summary(lf, start_iso, end_iso, environment, agent)
 
 
@@ -45,8 +55,7 @@ async def metrics_series(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"unknown metric {metric!r}; choose one of {metrics_service.ALL_METRICS}",
         )
-    window = get_settings().metrics_default_window_hours
-    start_iso, end_iso = metrics_service.resolve_window(start, end, window)
+    start_iso, end_iso = _resolve_window(start, end)
     return await metrics_service.series(
         lf, metric, start_iso, end_iso, granularity, environment, agent
     )

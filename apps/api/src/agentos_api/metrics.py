@@ -21,9 +21,11 @@ SCALAR_METRICS = ("runs", "latency_p95_seconds", "tokens", "cost_usd")
 ALL_METRICS = (*SCALAR_METRICS, "error_rate")
 
 # metric -> (view, measure, aggregation, result-key, is_integer)
+# Latency is queried on the traces view so the p95 is per run, not per span
+# (a run with many tool/generation spans would otherwise skew a span-weighted p95).
 _SPEC: dict[str, tuple[str, str, str, str, bool]] = {
     "runs": ("traces", "count", "count", "count_count", True),
-    "latency_p95_seconds": ("observations", "latency", "p95", "p95_latency", False),
+    "latency_p95_seconds": ("traces", "latency", "p95", "p95_latency", False),
     "tokens": ("observations", "totalTokens", "sum", "sum_totalTokens", True),
     "cost_usd": ("observations", "totalCost", "sum", "sum_totalCost", False),
 }

@@ -7,7 +7,7 @@ reader; the default app (no cluster configured) proves the 503 degradation.
 from typing import Any
 
 from agentos_api.deps import get_pod_log_reader
-from agentos_api.k8s import PodLogError
+from agentos_api.k8s import NullPodLogReader, PodLogError, build_pod_log_reader
 from agentos_api.main import create_app
 from fastapi.testclient import TestClient
 
@@ -44,13 +44,19 @@ def _client_with(reader: object) -> TestClient:
     return TestClient(app)
 
 
-def test_no_cluster_configured_degrades_to_503(
-    client: Any, auth_headers: dict[str, str]
-) -> None:
-    # The default app built a NullPodLogReader (no kubeconfig, not in-cluster).
-    resp = client.get(URL, headers=auth_headers)
+def test_no_cluster_configured_degrades_to_503(auth_headers: dict[str, str]) -> None:
+    # With no cluster the reader is a NullPodLogReader, which the endpoint turns
+    # into a 503-with-reason rather than crashing.
+    with _client_with(NullPodLogReader()) as client:
+        resp = client.get(URL, headers=auth_headers)
     assert resp.status_code == 503
     assert "no kubernetes cluster" in resp.json()["detail"]
+
+
+def test_build_reader_degrades_to_null_when_config_unloadable() -> None:
+    # An explicit but unloadable kubeconfig path degrades to the null reader.
+    reader = build_pod_log_reader("/nonexistent/kubeconfig-path.yaml")
+    assert isinstance(reader, NullPodLogReader)
 
 
 def test_returns_logs_from_the_reader(auth_headers: dict[str, str]) -> None:

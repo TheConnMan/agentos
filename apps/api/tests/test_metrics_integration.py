@@ -139,3 +139,14 @@ def test_unknown_metric_is_422(
         headers=auth_headers,
     )
     assert resp.status_code == 422
+
+
+def test_malformed_date_is_422_not_500(
+    client: Any, auth_headers: dict[str, str]
+) -> None:
+    resp = client.get(
+        "/observability/metrics/summary",
+        params={"start": "not-a-date"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
