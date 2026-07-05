@@ -95,34 +95,39 @@ class Consumer:
             streams = cast("list[tuple[str, list[StreamEntry]]]", resp)
             for _stream, entries in streams:
                 for entry_id, fields in entries:
-                    self._dispatch(entry_id, fields)
+                    await self._dispatch(entry_id, fields)
 
-    def _dispatch(self, entry_id: str, fields: dict[str, str]) -> None:
+    async def _dispatch(self, entry_id: str, fields: dict[str, str]) -> None:
         if entry_id in self._inflight_ids:
             return  # already being handled by this consumer
+        # Acquire a capacity slot BEFORE spawning the handler so a burst larger
+        # than max_concurrency exerts backpressure on the read loop instead of
+        # claiming the whole backlog into this consumer's local queue (which would
+        # starve other replicas and make a crash wait out the reclaim window).
+        await self._sem.acquire()
         self._inflight_ids.add(entry_id)
         task = asyncio.create_task(self._handle(entry_id, fields))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
 
     async def _handle(self, entry_id: str, fields: dict[str, str]) -> None:
-        async with self._sem:
+        try:
             try:
-                try:
-                    qevent = QueuedSlackEvent.from_stream_fields(fields)
-                except Exception:
-                    logger.exception("unparseable stream entry %s; acking as poison", entry_id)
-                    await self._ack(entry_id)
-                    return
-                try:
-                    await self._kernel.process_event(qevent)
-                except Exception:
-                    # Leave the entry pending: XAUTOCLAIM will reclaim and retry.
-                    logger.exception("processing failed for entry %s; left pending", entry_id)
-                    return
+                qevent = QueuedSlackEvent.from_stream_fields(fields)
+            except Exception:
+                logger.exception("unparseable stream entry %s; acking as poison", entry_id)
                 await self._ack(entry_id)
-            finally:
-                self._inflight_ids.discard(entry_id)
+                return
+            try:
+                await self._kernel.process_event(qevent)
+            except Exception:
+                # Leave the entry pending: XAUTOCLAIM will reclaim and retry.
+                logger.exception("processing failed for entry %s; left pending", entry_id)
+                return
+            await self._ack(entry_id)
+        finally:
+            self._inflight_ids.discard(entry_id)
+            self._sem.release()
 
     async def _ack(self, entry_id: str) -> None:
         await self._redis.xack(self._config.stream, self._config.consumer_group, entry_id)
@@ -157,7 +162,7 @@ class Consumer:
                 if entry_id in self._inflight_ids:
                     continue  # still being processed here; not an orphan
                 reclaimed += 1
-                self._dispatch(entry_id, fields)
+                await self._dispatch(entry_id, fields)
             if cursor in ("0-0", "0"):
                 break
         return reclaimed

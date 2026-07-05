@@ -44,9 +44,9 @@ from agentos_dispatcher.queue import QueuedSlackEvent
 
 from .config import WorkerConfig
 from .markers import Markers
-from .runner_client import RunnerClient, TurnStream
+from .runner_client import RunnerClient, RunnerError, TurnStream
 from .sandbox import SandboxSubstrate
-from .sandbox.types import SandboxHandle, SuspendedThreadError
+from .sandbox.types import SandboxError, SandboxHandle, SuspendedThreadError
 from .slack_sink import SlackSink
 from .threadlock import ThreadLock
 
@@ -264,14 +264,30 @@ class Kernel:
         # turns per thread across workers). Then release the order lock so the
         # next same-thread event can route, and release the Valkey lock before
         # streaming so a follow-up can steer.
-        async with self._lock.hold(self._config.lock_key(thread)):
-            route = await self._route_and_start(thread, event)
+        try:
+            async with self._lock.hold(self._config.lock_key(thread)):
+                route = await self._route_and_start(thread, event)
+        except (RunnerError, aiohttp.ClientError, TimeoutError, SandboxError) as exc:
+            # The turn was never accepted (transient runner 5xx, runner not ready,
+            # claim timeout). Convert to a retryable outcome so process_event backs
+            # off and retries within max_attempts, instead of letting the entry
+            # escape to the consumer and sit pending for the whole reclaim window.
+            release_order()
+            logger.warning("turn start failed for %s: %s", qevent.slack_event_id, exc)
+            return TurnOutcome(terminal_ok=False, classification="runner-error")
         release_order()
 
         if route.steered:
             # Delivered into the thread's live turn; that turn streams the output
             # onto its own placeholder. Retire this follow-up's placeholder so it
             # does not sit stuck on "working" in the thread.
+            #
+            # Steering is best-effort by design (mirror Claude Code, arch 2b rule
+            # 3): the follow-up joins the live turn's context. If that owning turn
+            # later fails and retries, the retry replays only its own event, so a
+            # steer folded into a since-failed turn is not itself replayed. This is
+            # the accepted MVP semantic; durable per-steer replay is a deliberate
+            # follow-up, flagged to the orchestrator rather than silently assumed.
             await self._sink.update(
                 channel=qevent.channel,
                 ts=qevent.placeholder_ts,
