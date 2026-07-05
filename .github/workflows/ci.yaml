@@ -48,6 +48,16 @@ jobs:
       - name: Generated ACI protocol crate compiles
         working-directory: packages/aci-protocol/generated/rust
         run: cargo test
+      # Continuously prove the release build (the artifact a cold user downloads)
+      # and publish it as a sha-addressable workflow artifact every run.
+      - name: Release build
+        run: cargo build --release
+      - name: Upload agentos binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentos-x86_64-linux-${{ github.sha }}
+          path: cli/target/release/agentos
+          if-no-files-found: error
 
   contracts-ts:
     name: Contracts (generated TypeScript compiles)

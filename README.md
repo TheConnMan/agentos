@@ -109,6 +109,10 @@ cd cli && cargo build --release
 ../target/release/agentos eval
 ```
 
+Prefer a prebuilt binary? Tagged releases attach `agentos-<target>` binaries
+(linux + macOS) to the [GitHub Releases](../../releases) page — download one and
+skip the `cargo build` (no Rust toolchain needed).
+
 Each package documents its own deeper verify commands and gotchas in its own
 README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
 enough to see the pieces move; it is not a substitute for those.
