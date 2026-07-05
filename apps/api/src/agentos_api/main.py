@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await store.ensure_bucket()
     app.state.bundle_store = store
     app.state.pod_log_reader = build_pod_log_reader(settings.kube_config_path)
-    valkey: redis.Redis = redis.from_url(settings.valkey_url)
+    valkey: redis.Redis = redis.from_url(settings.valkey_dsn())
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
     try:
