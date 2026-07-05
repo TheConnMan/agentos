@@ -1,0 +1,3 @@
+# charts/agentos
+
+Owning tasks: **A1** (Helm umbrella v0: Langfuse + Postgres + Valkey + OTel deps, dev profile, BYO toggles, the two preflights) and **A2** (security rails as chart defaults). The umbrella Helm chart that installs the whole AgentOS stack on a single node with security rails on by default. The two preflights A1 must ship: a CPU-AVX / ClickHouse-pin check (this class of host has SSE4.2 only, no AVX, so ClickHouse must be pinned to `:24.8`) and a NetworkPolicy-enforcement probe. Helm values keys are camelCase and every dependency is `condition:`-gated with a BYO block. This directory is reserved at R0 with this README only; **A1** authors the chart. Chart verification runs on k8scratch (or a local `kind` cluster), not in the R0 harness.

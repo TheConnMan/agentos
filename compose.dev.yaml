@@ -1,0 +1,207 @@
+# AgentOS dev stack (verification tier V1).
+#
+# Productizes the PT-4 setup: Postgres + Valkey + Langfuse v3 (web + worker +
+# ClickHouse) + MinIO + OTel Collector, on a single node (~2.3 GB at light load).
+# Every backend integration test and UI E2E runs against this stack; it is also
+# the seed of the A1 Helm dev profile (same components, same pinned versions).
+#
+# Bring up:   docker compose -f compose.dev.yaml up -d
+# Tear down:  docker compose -f compose.dev.yaml down        (keeps volumes; fast restart)
+# Wipe:       docker compose -f compose.dev.yaml down -v     (drops volumes; throwaway)
+#
+# Host ports are chosen to NOT collide with the CurieTech platform E2E stack
+# (which uses 55432, 8000, 3000, 8080, 9091):
+#   Langfuse UI ....... http://localhost:3001
+#   Postgres .......... localhost:55434
+#   Valkey ............ localhost:56379
+#   ClickHouse HTTP ... localhost:8124   (native TCP localhost:9011)
+#   MinIO S3 API ...... localhost:9002   (console localhost:9003)
+#   OTel Collector .... localhost:4317 (gRPC) / localhost:4318 (HTTP)
+#
+# ClickHouse is pinned to :24.8 on purpose. Newer ClickHouse requires AVX and
+# SIGILLs with exit 132 on CPUs without it; :24.8 still ships an SSE4.2 build.
+# THIS HOST has only sse4_2 (no avx/avx2 in /proc/cpuinfo as of 2026-07-05), so
+# the pin is required here, not merely defensive. A1 turns this into a chart
+# preflight.
+
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+  SALT: ${LANGFUSE_SALT:-dev-salt-change-me}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+  TELEMETRY_ENABLED: "false"
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: default
+  CLICKHOUSE_PASSWORD: clickhouse
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: valkey
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${VALKEY_PASSWORD:-valkeypass}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "55434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:-valkeypass}"]
+    ports:
+      - "56379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a ${VALKEY_PASSWORD:-valkeypass} ping | grep -q PONG"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  clickhouse:
+    # Pinned to 24.8: newer ClickHouse needs AVX and crashes (exit 132) on this
+    # SSE4.2-only host. See the header comment.
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_PASSWORD: clickhouse
+    ports:
+      - "8124:8123"
+      - "9011:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  minio:
+    image: minio/minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # Creates the langfuse bucket so the web/worker never race a missing bucket.
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minio miniosecret &&
+      mc mb --ignore-existing local/langfuse &&
+      echo 'bucket ready'
+      "
+    restart: "no"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      <<: *langfuse-env
+    restart: unless-stopped
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-dev-nextauth-secret-change-me}
+      # Headless bootstrap so the OTel Collector has known keys to authenticate
+      # with on first boot (no manual key-minting step). Dev-only values.
+      LANGFUSE_INIT_ORG_ID: agentos
+      LANGFUSE_INIT_ORG_NAME: AgentOS
+      LANGFUSE_INIT_PROJECT_ID: agentos-dev
+      LANGFUSE_INIT_PROJECT_NAME: agentos-dev
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-agentos-dev
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-agentos-dev
+      LANGFUSE_INIT_USER_EMAIL: dev@agentos.local
+      LANGFUSE_INIT_USER_NAME: AgentOS Dev
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-agentos-dev-password}
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otel/collector-config.yaml"]
+    depends_on:
+      langfuse-web:
+        condition: service_started
+    environment:
+      # base64("pk-lf-agentos-dev:sk-lf-agentos-dev"); matches the LANGFUSE_INIT keys above.
+      LANGFUSE_OTLP_AUTH_HEADER: ${LANGFUSE_OTLP_AUTH_HEADER:-Basic cGstbGYtYWdlbnRvcy1kZXY6c2stbGYtYWdlbnRvcy1kZXY=}
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  valkey_data:
+  clickhouse_data:
+  clickhouse_logs:
+  minio_data:
