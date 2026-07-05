@@ -3,7 +3,11 @@ name = "agentos-dispatcher"
 version = "0.0.0"
 description = "AgentOS dispatcher (Slack Bolt for Python, Socket Mode): ack + enqueue to Valkey Streams"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "slack-bolt>=1.21",
+    "redis>=5.2",
+    "pydantic>=2.10",
+]
 
 [build-system]
 requires = ["hatchling"]
