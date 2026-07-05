@@ -34,6 +34,10 @@ class WorkerConfig(BaseModel):
 
     # Slack
     slack_bot_token: str = ""
+    # Optional Slack Web API base URL override. Unset = the real Slack API; set it
+    # to point chat.update at a local Slack stub (the CLI's `agentos chat`
+    # no-Slack middle-mode e2e).
+    slack_api_base_url: str = ""
 
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = "agentos:runs"
@@ -96,6 +100,7 @@ class WorkerConfig(BaseModel):
         _s(values, "valkey_password", env, "VALKEY_PASSWORD")
         _i(values, "valkey_db", env, "VALKEY_DB")
         _s(values, "slack_bot_token", env, "SLACK_BOT_TOKEN")
+        _s(values, "slack_api_base_url", env, "SLACK_API_BASE_URL")
         _s(values, "stream", env, "AGENTOS_STREAM")
         _s(values, "consumer_group", env, "AGENTOS_CONSUMER_GROUP")
         _s(values, "consumer_name", env, "AGENTOS_CONSUMER_NAME")
