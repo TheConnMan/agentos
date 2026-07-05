@@ -140,8 +140,10 @@ default, but the NODE must have runsc + the containerd handler installed (a
 node-level op the chart cannot do). The `preflight-gvisor` hook blocks the
 install with a clear remediation if the runtimeclass is missing or downgraded,
 so runner pods never silently lose kernel isolation. On a cluster without runsc,
-set `agentSandbox.runner.runtimeClassName=""` to disable this rail knowingly (and
-`security.gvisorPreflight.enabled=false`).
+opt out of just this rail with the ready-made overlay
+`-f charts/agentos/values-e2e-nogvisor.yaml` (it sets `runtimeClassName=""` and
+disables the gVisor preflight; every other rail stays on). That overlay is what
+G1's e2e and any SK run should layer until runsc is reinstalled on the node.
 
 **Verifying the rails.** The PT-3 probe suite re-runs as a `helm test`:
 
