@@ -50,8 +50,24 @@ RUN python3 -m venv /app/.venv \
         "opentelemetry-exporter-otlp-proto-http==1.43.0" \
         "anyio==4.14.1"
 
+# Run as a non-root user. The claude-agent-sdk spawns
+# `claude --dangerously-skip-permissions` (permission_mode=bypassPermissions),
+# and Claude Code refuses that flag under uid 0 ("cannot be used with root/sudo
+# privileges"), so a root image fails every real-model boot. uid:gid 1000:1000
+# matches the A2 chart hardening (runAsUser/runAsGroup/fsGroup 1000) and HOME is
+# /home/runner (one of the chart's writablePaths). The venv and the global npm
+# `claude` CLI live in root-owned, world-readable paths, so uid 1000 imports the
+# deps and executes the CLI without owning them. HOME is the only writable path
+# the runtime needs; under the A2 read-only rootfs the chart mounts writable
+# emptyDirs at /tmp and /home/runner, and nothing here writes elsewhere.
+RUN groupadd --gid 1000 runner \
+    && useradd --uid 1000 --gid 1000 --home-dir /home/runner --create-home --shell /usr/sbin/nologin runner \
+    && chown -R 1000:1000 /home/runner
+ENV HOME=/home/runner
+
 ENV PATH="/app/.venv/bin:$PATH"
 ENV AGENTOS_RUNNER_PORT=8080
 EXPOSE 8080
 
+USER 1000:1000
 CMD ["python", "-m", "agentos_runner"]

@@ -40,6 +40,39 @@ def test_run_emits_agent_generation_and_tool_spans() -> None:
     assert spans["execute_tool"].attributes["gen_ai.tool.name"] == "Bash"
 
 
+def test_generation_model_backfilled_from_sdk_when_unconfigured() -> None:
+    # AGENTOS_MODEL unset (model=None) must NOT leave the generation span
+    # model-less: Langfuse would then ingest it as an untyped span and drop token
+    # usage to zero. The runner backfills the model the SDK reports on its first
+    # assistant message (the fake scripts model="fake-model"), so the span stays a
+    # typed generation with usage intact.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    runner = SessionRunner(
+        session_factory=FakeModelSession,
+        ceiling=0,
+        tracer=RunTracer(provider),
+        classifier=SideEffectClassifier(),
+        trace_name="agentos-run:test",
+        model=None,
+    )
+
+    async def go() -> None:
+        await runner.start()
+        async for _ in runner.run_turn(Event(type="message", text="go", user="U", ts="1")):
+            pass
+
+    anyio.run(go)
+
+    gen = {s.name: s for s in exporter.get_finished_spans()}["llm.generation"]
+    assert gen.attributes["gen_ai.request.model"] == "fake-model"
+    # The usage counts only land on a model-bearing generation, so their presence
+    # is the end-to-end proof the span was typed as a generation, not a bare span.
+    assert gen.attributes["gen_ai.usage.output_tokens"] == 8
+
+
 def test_tracer_provider_none_without_endpoint() -> None:
     otel = OtelConfig()
     assert build_tracer_provider(otel, "s1") is None
