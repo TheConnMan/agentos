@@ -1,6 +1,6 @@
 [package]
 name = "agentos"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 description = "AgentOS CLI: init/start/send/eval a plugin against a local runner (task I1)"
 
@@ -9,3 +9,28 @@ name = "agentos"
 path = "src/main.rs"
 
 [dependencies]
+agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "multipart",
+    "rustls-tls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "process",
+    "time",
+    "fs",
+    "io-util",
+] }
+
+[dev-dependencies]
+tempfile = "3"

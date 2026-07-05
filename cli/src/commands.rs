@@ -1,0 +1,314 @@
+//! Command handlers behind the `agentos` subcommands.
+//!
+//! main.rs owns the clap surface; each handler here owns one subcommand's
+//! behavior and speaks only through the library modules (docker, runner, api,
+//! scaffold, state, evals, render).
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use agentos_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
+use anyhow::{bail, Context, Result};
+use clap::ValueEnum;
+
+use crate::api::ApiClient;
+use crate::bundle::pack_tar_gz;
+use crate::docker::{self, StartSpec};
+use crate::evals::{case_line, case_passes, load_cases, summary_line, transcript};
+use crate::render::{boxed_summary, TurnPrinter};
+use crate::runner::RunnerClient;
+use crate::scaffold::{read_manifest, scaffold};
+use crate::state::{self, RunnerState};
+
+pub const DEFAULT_PORT: u16 = 7245; // the design canon's local bot port
+pub const DEFAULT_BUDGET: &str = r#"{"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}"#;
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum SendType {
+    Message,
+    Job,
+    EvalCase,
+}
+
+impl From<SendType> for EventType {
+    fn from(value: SendType) -> Self {
+        match value {
+            SendType::Message => EventType::Message,
+            SendType::Job => EventType::Job,
+            SendType::EvalCase => EventType::EvalCase,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum DeployEnv {
+    Dev,
+    Prod,
+}
+
+impl DeployEnv {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeployEnv::Dev => "dev",
+            DeployEnv::Prod => "prod",
+        }
+    }
+}
+
+/// Options for `agentos start`, mirroring its clap flags.
+pub struct StartOpts {
+    pub plugin_dir: PathBuf,
+    pub image: String,
+    pub port: u16,
+    pub name: String,
+    pub fake_model: bool,
+    pub network: Option<String>,
+    pub otel_endpoint: Option<String>,
+    pub budget: String,
+}
+
+pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
+    let dir = dir.unwrap_or_else(|| PathBuf::from(name));
+    let created = scaffold(&dir, name)?;
+    println!("Initialized plugin bundle '{name}' in {}", dir.display());
+    for path in created {
+        println!("  created {}", path.display());
+    }
+    println!("\nNext: agentos start --plugin-dir {}", dir.display());
+    Ok(())
+}
+
+pub async fn start(opts: StartOpts) -> Result<()> {
+    let plugin_dir = opts
+        .plugin_dir
+        .canonicalize()
+        .with_context(|| format!("plugin dir not found: {}", opts.plugin_dir.display()))?;
+    // Fail fast on a directory that is not a bundle; the runner would reject
+    // it at boot anyway (real-model mode), with a worse error surface.
+    let (plugin_name, manifest_version) = read_manifest(&plugin_dir)?;
+
+    if state::load(Path::new("."))?.is_some() {
+        bail!(
+            "a local runner is already recorded in .agentos/runner.json; run 'agentos stop' first"
+        );
+    }
+
+    // Parse (not just forward) the budget so a typo fails here, not in-container.
+    let _: Budget = serde_json::from_str(&opts.budget)
+        .with_context(|| format!("--budget is not a valid ACI budget: {}", opts.budget))?;
+
+    let session_id = format!("local-{}", unix_now());
+    let spec = StartSpec {
+        image: opts.image.clone(),
+        container_name: opts.name.clone(),
+        host_port: opts.port,
+        plugin_dir: plugin_dir.clone(),
+        session_id: session_id.clone(),
+        sandbox_id: "local".into(),
+        budget_json: opts.budget,
+        fake_model: opts.fake_model,
+        network: opts.network,
+        otel_endpoint: opts.otel_endpoint,
+        passthrough_env: vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
+    };
+
+    println!(
+        "Starting runner container '{}' from image '{}'...",
+        opts.name, opts.image
+    );
+    let container_id = docker::docker(&spec.run_args()).await?;
+
+    let base_url = format!("http://localhost:{}", opts.port);
+    let client = RunnerClient::new(&base_url)?;
+    if let Err(err) = client.wait_healthy(Duration::from_secs(60)).await {
+        let logs = docker::container_logs(&opts.name, 40).await;
+        let _ = docker::remove_container(&opts.name).await;
+        bail!("runner failed to become healthy: {err}\ncontainer logs:\n{logs}");
+    }
+
+    state::save(
+        Path::new("."),
+        &RunnerState {
+            container_id,
+            container_name: opts.name,
+            image: opts.image,
+            port: opts.port,
+            base_url: base_url.clone(),
+            session_id,
+            plugin_dir: plugin_dir.display().to_string(),
+            fake_model: opts.fake_model,
+        },
+    )?;
+
+    let version = git_short_sha(&plugin_dir)
+        .await
+        .map(|sha| format!("dev @ {sha}"))
+        .unwrap_or_else(|| format!("{plugin_name} @ {manifest_version}"));
+    let rows = [
+        ("Local bot", base_url),
+        ("Slack emulator", "agentos send \"<message>\"".to_string()),
+        ("Eval runner", "agentos eval".to_string()),
+        ("Version", version),
+    ];
+    println!("{}", boxed_summary("agentos dev environment", &rows));
+    Ok(())
+}
+
+pub async fn stop() -> Result<()> {
+    let dir = Path::new(".");
+    let Some(saved) = state::load(dir)? else {
+        bail!("no local runner recorded in .agentos/runner.json");
+    };
+    docker::remove_container(&saved.container_name).await?;
+    state::remove(dir)?;
+    println!("Stopped and removed container '{}'", saved.container_name);
+    Ok(())
+}
+
+pub async fn status() -> Result<()> {
+    let url = resolve_url(None)?;
+    let client = RunnerClient::new(&url)?;
+    let status = client.status().await?;
+    println!("runner {url}");
+    println!("{}", serde_json::to_string_pretty(&status)?);
+    Ok(())
+}
+
+pub async fn send(
+    text: &str,
+    user: &str,
+    event_type: EventType,
+    url: Option<String>,
+) -> Result<()> {
+    let url = resolve_url(url)?;
+    let client = RunnerClient::new(&url)?;
+    let mut printer = TurnPrinter::default();
+    let events = client
+        .send_event(event_type, text, user, |event| {
+            if let Some(line) = printer.line_for(event) {
+                println!("{line}");
+            }
+        })
+        .await?;
+
+    if let Some(OutboundEvent::Final { status, .. }) = events.last() {
+        if *status == SessionStatus::ClassifiedFailure {
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+pub async fn eval(cases_path: &Path, url: Option<String>) -> Result<()> {
+    let cases = load_cases(cases_path)?;
+    let url = resolve_url(url)?;
+    let client = RunnerClient::new(&url)?;
+
+    let total = cases.len();
+    let mut passed = 0usize;
+    for case in &cases {
+        let started = Instant::now();
+        let events = client
+            .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
+            .await?;
+        let elapsed = started.elapsed().as_secs_f64();
+        let ok = case_passes(case, &transcript(&events));
+        if ok {
+            passed += 1;
+        }
+        println!("{}", case_line(&case.name, ok, elapsed));
+    }
+    println!("{}", summary_line(passed, total));
+    if passed < total {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+pub struct DeployOpts {
+    pub plugin_dir: PathBuf,
+    pub api_url: String,
+    pub api_key: String,
+    pub slack_channel: String,
+    pub env: DeployEnv,
+    pub label: Option<String>,
+}
+
+pub async fn deploy(opts: DeployOpts) -> Result<()> {
+    let plugin_dir = opts
+        .plugin_dir
+        .canonicalize()
+        .with_context(|| format!("plugin dir not found: {}", opts.plugin_dir.display()))?;
+    let (plugin_name, manifest_version) = read_manifest(&plugin_dir)?;
+    let label = opts
+        .label
+        .unwrap_or_else(|| format!("{manifest_version}-{}", unix_now()));
+    let created_by = std::env::var("USER").unwrap_or_else(|_| "agentos-cli".to_string());
+
+    let archive = pack_tar_gz(&plugin_dir)?;
+    println!(
+        "Deploying '{plugin_name}' ({} bytes) as {label} to {} [{}]",
+        archive.len(),
+        opts.api_url,
+        opts.env.as_str()
+    );
+
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let outcome = client
+        .deploy(
+            &plugin_name,
+            &opts.slack_channel,
+            &label,
+            &created_by,
+            opts.env.as_str(),
+            archive,
+        )
+        .await?;
+
+    println!("agent       {} ({})", outcome.agent.name, outcome.agent.id);
+    println!(
+        "version     {} ({})",
+        outcome.version.version_label, outcome.version.id
+    );
+    println!(
+        "bundle      {} sha256:{} {} bytes",
+        outcome.bundle.bundle_ref, outcome.bundle.bundle_sha256, outcome.bundle.size_bytes
+    );
+    println!(
+        "deployment  {} [{}] {}",
+        outcome.deployment.id, outcome.deployment.environment, outcome.deployment.status
+    );
+    Ok(())
+}
+
+fn resolve_url(explicit: Option<String>) -> Result<String> {
+    if let Some(url) = explicit {
+        return Ok(url);
+    }
+    if let Some(saved) = state::load(Path::new("."))? {
+        return Ok(saved.base_url);
+    }
+    Ok(format!("http://localhost:{DEFAULT_PORT}"))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after the epoch")
+        .as_secs()
+}
+
+/// Short git SHA of the plugin dir's checkout, for the version line.
+async fn git_short_sha(dir: &Path) -> Option<String> {
+    let output = tokio::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!sha.is_empty()).then_some(sha)
+}
