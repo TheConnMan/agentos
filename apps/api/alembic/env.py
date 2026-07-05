@@ -1,10 +1,18 @@
-"""Alembic environment (async engine, URL and metadata from the app)."""
+"""Alembic environment (async engine, URL and metadata from the app).
+
+The version table lives in the app's own ``agentos`` schema, not ``public``.
+Alembic defaults ``alembic_version`` to ``public``, which leaves the public
+schema non-empty; when AgentOS shares a Postgres with Langfuse that trips
+Langfuse's first-boot Prisma migration (P3005: "the database schema is not
+empty"). Pinning ``version_table_schema`` keeps ``public`` untouched so a
+co-tenant's migrations still see an empty public schema.
+"""
 
 import asyncio
 
 from agentos_api import models  # noqa: F401  (register tables on the metadata)
 from agentos_api.config import get_settings
-from agentos_api.db import Base
+from agentos_api.db import SCHEMA, Base
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -15,9 +23,40 @@ config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
 
 
+def _relocate_legacy_version_table(connection: Connection) -> None:
+    """Move a pre-existing ``public.alembic_version`` into the app schema.
+
+    Dev databases created before this change track their revision in
+    ``public.alembic_version``. Switching ``version_table_schema`` without
+    carrying that row over would make Alembic see the app schema as unversioned
+    and try to re-run every migration against already-existing tables. Relocating
+    the table preserves the recorded revision AND empties the public schema, so
+    the transition is a no-op for the app and unblocks a Langfuse co-tenant. On a
+    fresh database neither table exists yet and this is a no-op.
+    """
+    public_tbl = connection.exec_driver_sql(
+        "SELECT to_regclass('public.alembic_version')"
+    ).scalar()
+    schema_tbl = connection.exec_driver_sql(
+        f"SELECT to_regclass('{SCHEMA}.alembic_version')"
+    ).scalar()
+    if public_tbl is not None and schema_tbl is None:
+        connection.exec_driver_sql(
+            f'ALTER TABLE public.alembic_version SET SCHEMA "{SCHEMA}"'
+        )
+
+
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        version_table_schema=SCHEMA,
+    )
     with context.begin_transaction():
+        # The app schema must exist before Alembic manages the version table in
+        # it, and any legacy public.alembic_version must be carried over first.
+        connection.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
+        _relocate_legacy_version_table(connection)
         context.run_migrations()
 
 
@@ -37,8 +76,13 @@ def run_migrations_offline() -> None:
         url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
         literal_binds=True,
+        version_table_schema=SCHEMA,
     )
     with context.begin_transaction():
+        # Emit the schema creation before anything else so the generated SQL
+        # creates agentos.alembic_version into an existing schema (Alembic writes
+        # the version table before migration 0001's CREATE SCHEMA would run).
+        context.execute(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
         context.run_migrations()
 
 

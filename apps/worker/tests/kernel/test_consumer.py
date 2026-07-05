@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 
+import redis.exceptions
 from aci_protocol import Final, SessionStatus, TextDelta
 from agentos_dispatcher.queue import QueuedSlackEvent
 from agentos_worker.consumer import Consumer
@@ -116,6 +117,69 @@ def test_dispatch_applies_backpressure_at_capacity(make_harness) -> None:
             hold.set()  # first turn finishes, frees the slot
             await second  # second dispatch now proceeds
             await asyncio.gather(*list(consumer._inflight))
+
+    asyncio.run(go())
+
+
+def test_ensure_group_does_not_replay_preexisting_backlog(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            # A stale entry already on the stream BEFORE the group is created (a
+            # persistent Valkey carrying a backlog from a prior deploy). Creating
+            # the group at "$" must skip it; creating at "0" would storm it.
+            stale = _qevent("stale", thread="tb1", event_id="b1")
+            await h.async_redis.xadd(h.config.stream, stale.to_stream_fields())
+
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await consumer.ensure_group()
+
+            # An entry produced AFTER the group exists must still be delivered.
+            fresh = _qevent("fresh", thread="tb2", event_id="b2")
+            await h.async_redis.xadd(h.config.stream, fresh.to_stream_fields())
+            h.runner.default_script = [Final(text="answer", status=DONE)]
+
+            task = asyncio.create_task(consumer.run())
+            await _wait_until(lambda: h.sink.last_text == "answer")
+            consumer.request_stop()
+            await task
+
+            # Only the post-group entry ran; the stale backlog was never opened.
+            assert h.runner.opened == ["fresh"]
+
+    asyncio.run(go())
+
+
+def test_read_loop_survives_transient_redis_timeout(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await consumer.ensure_group()
+
+            # The first blocking read raises a transient redis TimeoutError (the
+            # real pod-to-pod RTT hazard). The loop must survive it and process
+            # the next read; an unguarded read would kill the worker.
+            real = h.async_redis.xreadgroup
+            calls = {"n": 0}
+
+            async def flaky(*args: object, **kwargs: object) -> object:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise redis.exceptions.TimeoutError("simulated blocking-read timeout")
+                return await real(*args, **kwargs)
+
+            consumer._redis.xreadgroup = flaky  # type: ignore[method-assign,assignment]
+
+            h.runner.default_script = [Final(text="answer", status=DONE)]
+            qe = _qevent("hello", thread="tt1", event_id="t1")
+            await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
+
+            task = asyncio.create_task(consumer.run())
+            await _wait_until(lambda: h.sink.last_text == "answer")
+            consumer.request_stop()
+            await task
+
+            assert calls["n"] >= 2  # it retried after the injected timeout
+            assert h.runner.opened == ["hello"]
 
     asyncio.run(go())
 

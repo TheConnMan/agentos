@@ -94,6 +94,18 @@ spec:
               value: {{ $warmPool | quote }}
             - name: AGENTOS_RUNNER_PORT
               value: {{ .Values.agentSandbox.runner.port | quote }}
+            # Runner model passthrough: the worker injects these into every claim
+            # (fake model needs no credential; a real credential comes from the
+            # chart Secret and is only wired when one is configured).
+            - name: AGENTOS_FAKE_MODEL
+              value: {{ ternary "1" "0" .Values.agentSandbox.runner.fakeModel | quote }}
+            {{- if .Values.agentSandbox.runner.credentials }}
+            - name: AGENTOS_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentos.secretName" . }}
+                  key: agentCredentials
+            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
 {{- end }}

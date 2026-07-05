@@ -31,7 +31,9 @@ from .markers import Markers
 from .runner_client import RunnerClient
 from .sandbox import (
     AffinityStore,
+    DockerSandboxClient,
     KubernetesSandboxClient,
+    SandboxClient,
     SandboxSubstrate,
     SubstrateConfig,
 )
@@ -62,6 +64,51 @@ def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
     )
 
 
+# The SDK credential env the runner authenticates a real model with; presence of
+# either satisfies the local-middle-mode credential requirement.
+_MODEL_CREDENTIAL_ENV = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+
+
+def _sandbox_client(
+    config: WorkerConfig, env: Mapping[str, str], sub_config: SubstrateConfig
+) -> SandboxClient:
+    """The cluster/Docker seam, chosen by ``AGENTOS_SANDBOX_SUBSTRATE``.
+
+    ``kubernetes`` (default) claims agent-sandbox CRs; ``docker`` boots runner
+    containers locally (middle mode on a laptop, no cluster). The eval consumer
+    shares the substrate this client backs, so the choice applies to both lanes.
+
+    Local middle mode defaults to a REAL model. Fake model is an explicit
+    offline/test opt-in, so a Docker worker with neither a model credential nor
+    ``AGENTOS_FAKE_MODEL`` fails loudly here rather than booting a real runner
+    that would fail cryptically or silently degrading to a fake. A credential can
+    be an SDK var (``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_API_KEY``) or the ACI
+    ``AGENTOS_CREDENTIALS`` reference, which the runner maps onto an SDK var.
+    """
+    substrate = env.get("AGENTOS_SANDBOX_SUBSTRATE", "kubernetes").lower()
+    if substrate == "docker":
+        has_credential = bool(config.credentials) or any(
+            v in env for v in _MODEL_CREDENTIAL_ENV
+        )
+        if not config.fake_model and not has_credential:
+            raise SystemExit(
+                "Local middle mode (AGENTOS_SANDBOX_SUBSTRATE=docker) defaults to a "
+                "real model, but no model credential is set. Export "
+                "AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_API_KEY "
+                "before starting the worker, or set AGENTOS_FAKE_MODEL=1 for an "
+                "offline/test run."
+            )
+        return DockerSandboxClient(
+            image=env.get("AGENTOS_RUNNER_IMAGE", "agentos-runner"),
+            bundle_store=BundleStore(config),
+            network=env.get("AGENTOS_DOCKER_NETWORK") or None,
+            otel_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
+            default_plugin_dir=config.bundle_plugin_dir,
+            environ=env,
+        )
+    return KubernetesSandboxClient(sub_config.namespace)
+
+
 def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     async_redis: AsyncRedis = AsyncRedis(
         host=config.valkey_host,
@@ -79,7 +126,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     )
     sub_config = _substrate_config(env)
     substrate = SandboxSubstrate(
-        KubernetesSandboxClient(sub_config.namespace),
+        _sandbox_client(config, env, sub_config),
         AffinityStore(sync_redis),
         sub_config,
     )

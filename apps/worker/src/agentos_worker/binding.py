@@ -43,6 +43,8 @@ PLUGIN_DIR_ENV = "AGENTOS_PLUGIN_DIR"
 BUDGET_ENV = "AGENTOS_BUDGET"
 SESSION_ID_ENV = "AGENTOS_SESSION_ID"
 AGENT_ID_ENV = "AGENTOS_AGENT_ID"
+FAKE_MODEL_ENV = "AGENTOS_FAKE_MODEL"
+CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 
 _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
@@ -124,4 +126,18 @@ class BindingResolver:
         }
         if resolved.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = resolved.bundle_ref
+        apply_model_env(env, self._config)
         return env
+
+
+def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
+    """Layer the runner model + credentials passthrough onto a boot env.
+
+    Shared by the runs binding and the eval consumer so both lanes boot the
+    runner the same way: fake_model gates the canned model (no credential
+    needed); credentials is forwarded only when set and never logged.
+    """
+    if config.fake_model:
+        env[FAKE_MODEL_ENV] = "1"
+    if config.credentials:
+        env[CREDENTIALS_ENV] = config.credentials

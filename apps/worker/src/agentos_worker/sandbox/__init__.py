@@ -9,6 +9,7 @@ Public surface for F1 (the worker kernel):
 """
 
 from .affinity import AffinityStore
+from .docker import DockerError, DockerSandboxClient
 from .k8s import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
@@ -39,6 +40,8 @@ __all__ = [
     "AffinityStore",
     "ClaimTimeoutError",
     "ClaimView",
+    "DockerError",
+    "DockerSandboxClient",
     "KubernetesSandboxClient",
     "NoRouteError",
     "RouteRecord",

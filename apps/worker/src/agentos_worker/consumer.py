@@ -21,12 +21,24 @@ from typing import cast
 
 from agentos_dispatcher.queue import QueuedSlackEvent
 from redis.asyncio import Redis
-from redis.exceptions import ResponseError
+from redis.exceptions import (
+    ConnectionError as RedisConnectionError,
+)
+from redis.exceptions import (
+    ResponseError,
+)
+from redis.exceptions import (
+    TimeoutError as RedisTimeoutError,
+)
 
 from .config import WorkerConfig
 from .kernel import Kernel
 
 logger = logging.getLogger(__name__)
+
+# Pause before retrying the blocking stream read after a transient transport
+# error, so a briefly-unreachable Valkey does not spin the read loop hot.
+_READ_ERROR_BACKOFF_S = 0.5
 
 # One stream entry as redis returns it with decode_responses=True.
 StreamEntry = tuple[str, dict[str, str]]
@@ -58,13 +70,18 @@ class Consumer:
     async def ensure_group(self) -> None:
         """Create the consumer group (and the stream) if it does not exist.
 
-        Created at id 0 so a group that appears after entries were produced still
-        picks up the backlog (the walking-skeleton event already on the stream);
-        an existing group is left untouched.
+        Created at ``$`` (the stream's current tail) so a first boot against a
+        stream that already carries entries does NOT replay the whole backlog:
+        a persistent Valkey that accumulated stale Slack mentions while no worker
+        ran would otherwise storm every one of them into a live turn the moment
+        the group is created. Only entries produced after the group exists are
+        delivered; crash-recovery of in-flight entries is unaffected (it works
+        off the pending list, not the group's start id). An existing group is
+        left untouched.
         """
         try:
             await self._redis.xgroup_create(
-                self._config.stream, self._config.consumer_group, id="0", mkstream=True
+                self._config.stream, self._config.consumer_group, id="$", mkstream=True
             )
         except ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
@@ -83,13 +100,23 @@ class Consumer:
 
     async def _read_loop(self) -> None:
         while not self._stop.is_set():
-            resp = await self._redis.xreadgroup(
-                self._config.consumer_group,
-                self._config.consumer_name,
-                {self._config.stream: ">"},
-                count=self._config.read_count,
-                block=self._config.read_block_ms,
-            )
+            try:
+                resp = await self._redis.xreadgroup(
+                    self._config.consumer_group,
+                    self._config.consumer_name,
+                    {self._config.stream: ">"},
+                    count=self._config.read_count,
+                    block=self._config.read_block_ms,
+                )
+            except (RedisTimeoutError, RedisConnectionError) as exc:
+                # The blocking read timed out or the connection blipped (real
+                # pod-to-pod RTT, a Valkey failover). Both are transient: log and
+                # retry rather than letting the exception kill the read loop (and
+                # with it the whole worker). A short pause avoids a hot spin if
+                # Valkey is briefly unreachable; redis-py reconnects on the retry.
+                logger.warning("stream read failed transiently; retrying: %s", exc)
+                await self._sleep_or_stop(_READ_ERROR_BACKOFF_S)
+                continue
             if not resp:
                 continue
             streams = cast("list[tuple[str, list[StreamEntry]]]", resp)

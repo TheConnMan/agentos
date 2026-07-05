@@ -35,6 +35,7 @@ from .types import (
     RouteRecord,
     RouteState,
     SandboxHandle,
+    SandboxView,
     SubstrateConfig,
     SuspendedThreadError,
 )
@@ -192,7 +193,7 @@ class SandboxSubstrate:
         )
         try:
             sandbox_name = self._await_bound(name)
-            fqdn = self._await_service_fqdn(sandbox_name)
+            bound = self._await_service_fqdn(sandbox_name)
         except Exception:
             self._k8s.delete_claim(name)
             raise
@@ -202,8 +203,8 @@ class SandboxSubstrate:
             claim_name=name,
             sandbox_name=sandbox_name,
             namespace=config.namespace,
-            service_fqdn=fqdn,
-            port=config.runner_port,
+            service_fqdn=bound.service_fqdn or "",
+            port=bound.port if bound.port is not None else config.runner_port,
             session_id=session_id or f"thread-{thread_hash}",
             history_ref=history_ref,
         )
@@ -246,12 +247,12 @@ class SandboxSubstrate:
             f"claim {claim_name} not bound within {self._config.claim_timeout_seconds}s"
         )
 
-    def _await_service_fqdn(self, sandbox_name: str) -> str:
+    def _await_service_fqdn(self, sandbox_name: str) -> SandboxView:
         deadline = time.monotonic() + self._config.claim_timeout_seconds
         while time.monotonic() < deadline:
             sandbox = self._k8s.get_sandbox(sandbox_name)
             if sandbox is not None and sandbox.service_fqdn:
-                return sandbox.service_fqdn
+                return sandbox
             time.sleep(self._config.poll_interval_seconds)
         raise ClaimTimeoutError(
             f"sandbox {sandbox_name} has no serviceFQDN within "

@@ -111,12 +111,19 @@ class ClaimView:
 
 @dataclass(frozen=True)
 class SandboxView:
-    """What the substrate needs to know about a Sandbox."""
+    """What the substrate needs to know about a Sandbox.
+
+    ``port`` is the dial port when it is sandbox-specific (the Docker substrate
+    publishes each runner on its own loopback host port); ``None`` means the
+    substrate falls back to the fleet-wide ``SubstrateConfig.runner_port`` (the
+    Kubernetes path, where every sandbox listens on the same in-cluster port).
+    """
 
     name: str
     ready: bool
     service_fqdn: str | None
     operating_mode: str
+    port: int | None = None
 
 
 class SandboxError(Exception):

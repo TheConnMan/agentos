@@ -51,6 +51,14 @@ class WorkerConfig(BaseModel):
     default_max_usd_per_day: float = 10.0
     default_max_output_tokens_per_run: int = 100000
 
+    # Runner model + credentials passthrough (injected per-claim into every boot
+    # env). fake_model runs the runner's canned FakeModelSession (no Anthropic
+    # call, no credential needed) -- the middle-mode default on a laptop.
+    # credentials is the opaque AGENTOS_CREDENTIALS the runner forwards to the
+    # model call; it is never logged and never required when fake_model is on.
+    fake_model: bool = False
+    credentials: str = ""
+
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = "agentos:runs"
     consumer_group: str = "agentos-workers"
@@ -139,6 +147,8 @@ class WorkerConfig(BaseModel):
         _s(values, "database_url", env, "DATABASE_URL")
         _s(values, "db_schema", env, "DB_SCHEMA")
         _s(values, "bundle_plugin_dir", env, "AGENTOS_PLUGIN_DIR")
+        _b(values, "fake_model", env, "AGENTOS_FAKE_MODEL")
+        _s(values, "credentials", env, "AGENTOS_CREDENTIALS")
         _s(values, "eval_stream", env, "AGENTOS_EVAL_STREAM")
         _s(values, "eval_consumer_group", env, "AGENTOS_EVAL_CONSUMER_GROUP")
         _s(values, "s3_endpoint_url", env, "S3_ENDPOINT_URL")
@@ -166,3 +176,8 @@ def _s(values: dict[str, Any], key: str, env: Mapping[str, str], var: str) -> No
 def _i(values: dict[str, Any], key: str, env: Mapping[str, str], var: str) -> None:
     if var in env:
         values[key] = int(env[var])
+
+
+def _b(values: dict[str, Any], key: str, env: Mapping[str, str], var: str) -> None:
+    if var in env:
+        values[key] = env[var].strip().lower() in ("1", "true", "yes")

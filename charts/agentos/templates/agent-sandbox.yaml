@@ -137,12 +137,29 @@ spec:
                 echo "FATAL: ref '$REF' set but no fetched archive present" >&2
                 exit 1
               fi
+              STAGE={{ $bf.mountPath }}/.stage
+              rm -rf "$STAGE"
+              mkdir -p "$STAGE"
               case "$REF" in
-                *.tar.gz|*.tgz) tar -xzf "$ARCHIVE" -C "$DEST" ;;
-                *.tar)          tar -xf  "$ARCHIVE" -C "$DEST" ;;
-                *.zip)          unzip -o "$ARCHIVE" -d "$DEST" ;;
+                *.tar.gz|*.tgz) tar -xzf "$ARCHIVE" -C "$STAGE" ;;
+                *.tar)          tar -xf  "$ARCHIVE" -C "$STAGE" ;;
+                *.zip)          unzip -o "$ARCHIVE" -d "$STAGE" ;;
                 *) echo "FATAL: unsupported bundle extension for '$REF'" >&2; exit 1 ;;
               esac
+              # Unwrap a single top-level wrapper dir so the plugin manifest sits
+              # at the plugin-dir root, matching the API's bundle_root validation
+              # (a `tar czf b.tgz myplugin/` wraps everything in one folder). The
+              # runner reads AGENTOS_PLUGIN_DIR expecting the manifest at its root.
+              ROOT="$STAGE"
+              if [ ! -f "$STAGE/plugin.json" ] && [ ! -f "$STAGE/.claude-plugin/plugin.json" ]; then
+                subdir=$(find "$STAGE" -mindepth 1 -maxdepth 1 -type d)
+                count=$(printf '%s\n' "$subdir" | grep -c .)
+                if [ "$count" = "1" ] && { [ -f "$subdir/plugin.json" ] || [ -f "$subdir/.claude-plugin/plugin.json" ]; }; then
+                  ROOT="$subdir"
+                fi
+              fi
+              cp -a "$ROOT"/. "$DEST"/
+              rm -rf "$STAGE"
               echo "extracted bundle '$REF' into $DEST"
           env:
             - name: AGENTOS_BUNDLE_REF
@@ -176,6 +193,15 @@ spec:
             {{- if $runner.fakeModel }}
             - name: AGENTOS_FAKE_MODEL
               value: "1"
+            {{- end }}
+            {{- if $runner.credentials }}
+            # Warm-pod fallback credential; the worker's per-claim Overrides
+            # injection carries the (per-agent) credential on a bound run.
+            - name: AGENTOS_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentos.secretName" . }}
+                  key: agentCredentials
             {{- end }}
             - name: AGENTOS_PLUGIN_DIR
               value: {{ $runner.pluginDir | quote }}

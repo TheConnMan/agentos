@@ -29,6 +29,23 @@ THREAD_HASH_LABEL = "agentos.dev/thread-hash"
 
 OperatingMode = Literal["Running", "Suspended"]
 
+# Per-claim env with no containerName reaches only the FIRST main container (the
+# agent-sandbox Overrides policy). The bundle ref must additionally reach the
+# init containers that fetch and extract the bundle, or a Kubernetes runner boots
+# an empty plugin dir. These names MUST match the init containers the chart's
+# SandboxTemplate declares (charts/agentos/templates/agent-sandbox.yaml).
+BUNDLE_REF_ENV = "AGENTOS_BUNDLE_REF"
+BUNDLE_INIT_CONTAINERS = ("bundle-fetch", "bundle-extract")
+
+# The SandboxClaim env schema is value-only (no secretKeyRef), so anything put
+# here is stored in plain text on the claim object. The model credential must NOT
+# be persisted that way: the chart's SandboxTemplate injects AGENTOS_CREDENTIALS
+# from the chart Secret (a secretKeyRef the Overrides policy leaves in place when
+# the claim does not set it), so the Kubernetes runner still receives it without
+# a plaintext copy on every claim. The Docker substrate has no Secret object and
+# forwards it directly; this stripping is Kubernetes-only.
+CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
+
 
 class SandboxClient(Protocol):
     """What the substrate needs from the cluster, and nothing more."""
@@ -112,7 +129,28 @@ class KubernetesSandboxClient:
             "spec": {"warmPoolRef": {"name": pool}},
         }
         if env:
-            body["spec"]["env"] = [{"name": k, "value": v} for k, v in sorted(env.items())]
+            # Unnamed entries land on the first main container (the runner). The
+            # model credential is deliberately excluded so it is never persisted
+            # in plain text on the claim (it reaches the runner via the template's
+            # secretKeyRef instead).
+            entries: list[dict[str, str]] = [
+                {"name": k, "value": v}
+                for k, v in sorted(env.items())
+                if k != CREDENTIALS_ENV
+            ]
+            # The bundle ref must also reach the init containers, which the
+            # Overrides policy does not touch without an explicit containerName.
+            bundle_ref = env.get(BUNDLE_REF_ENV)
+            if bundle_ref is not None:
+                for container in BUNDLE_INIT_CONTAINERS:
+                    entries.append(
+                        {
+                            "containerName": container,
+                            "name": BUNDLE_REF_ENV,
+                            "value": bundle_ref,
+                        }
+                    )
+            body["spec"]["env"] = entries
         self._api.create_namespaced_custom_object(
             EXT_GROUP, EXT_VERSION, self._namespace, "sandboxclaims", body
         )

@@ -359,6 +359,12 @@ agentSandbox:
     # Fake-model mode round-trips ACI events offline with no credential; flip
     # false (and provide credentials) for real model runs.
     fakeModel: true
+    # Opaque model credential (AGENTOS_CREDENTIALS) the worker forwards into each
+    # claim and the warm template bakes as a fallback. EMPTY by default: fake
+    # model needs none, and a real credential is per-agent (see the runner
+    # ServiceAccount note below), so a global one is opt-in. When set it is stored
+    # in the chart Secret (key agentCredentials), never inlined into a manifest.
+    credentials: ""
     pluginDir: /unused
     budget:
       maxOutputTokensPerRun: 100000
