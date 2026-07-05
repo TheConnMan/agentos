@@ -80,8 +80,11 @@ subjects:
     name: {{ include "agentos.fullname" . }}-security-probe
     namespace: {{ .Release.Namespace }}
 ---
+{{- if $h.enabled }}
 {{/* Claim 3: non-root + read-only rootfs. The pod IS the test, hardened with the
-     SAME securityContext the chart applies to runner sandboxes. */}}
+     SAME securityContext the chart applies to runner sandboxes. Only rendered
+     when hardening is enabled -- otherwise the real runner is not hardened and a
+     passing probe here would be a false security result. */}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -131,6 +134,7 @@ spec:
           exit $rc
       resources:
         {{- toYaml .Values.security.probe.resources | nindent 8 }}
+{{- end }}
 ---
 {{/* Claims 1, 2, 4: kubectl-driven orchestrator (alpine/k8s ships kubectl). */}}
 apiVersion: batch/v1
@@ -170,6 +174,14 @@ spec:
               value: {{ .Values.security.probe.netshootImage | quote }}
             - name: ALLOW_ALL_NP
               value: {{ include "agentos.fullname" . }}-security-probe-allow-all
+            # The egress-probe carries this release's runner-sandbox labels (so the
+            # chart's default-deny selects it) PLUS a unique per-release probe label.
+            # The temporary allow-all selects ONLY the unique label, so it never
+            # opens egress on real runner sandboxes sharing the namespace.
+            - name: PROBE_LABELS
+              value: "app.kubernetes.io/name={{ include "agentos.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=runner-sandbox,agentos.io/egress-probe={{ .Release.Name }}"
+            - name: PROBE_UNIQUE_VAL
+              value: {{ .Release.Name | quote }}
           command:
             - /bin/bash
             - -c
@@ -194,7 +206,7 @@ spec:
               echo ""
               echo "== Claim 1: default-deny egress + metadata, with before/after control =="
               kubectl run "$EGRESS_POD" -n "$NS" --image="$NETSHOOT" --restart=Never \
-                --labels=app.kubernetes.io/component=runner-sandbox \
+                --labels="$PROBE_LABELS" \
                 --command -- sleep 3600 >/dev/null
               kubectl wait --for=condition=Ready "pod/$EGRESS_POD" -n "$NS" --timeout=120s >/dev/null
 
@@ -213,7 +225,7 @@ spec:
               spec:
                 podSelector:
                   matchLabels:
-                    app.kubernetes.io/component: runner-sandbox
+                    agentos.io/egress-probe: ${PROBE_UNIQUE_VAL}
                 policyTypes: [Egress]
                 egress:
                   - {}
