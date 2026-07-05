@@ -13,6 +13,8 @@ from fastapi import FastAPI
 
 from .config import get_settings
 from .db import create_engine, create_sessionmaker
+from .evalqueue import EvalQueue
+from .github_checks import GitHubStatusReporter
 from .k8s import build_pod_log_reader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
@@ -21,6 +23,7 @@ from .routers import (
     bundles,
     control,
     deployments,
+    evals,
     github,
     observability,
     runs,
@@ -44,6 +47,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     valkey: redis.Redis = redis.from_url(settings.valkey_dsn())
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
+    app.state.eval_queue = EvalQueue(valkey)
+    app.state.github_reporter = GitHubStatusReporter(
+        http_client,
+        api_url=settings.github_api_url,
+        token=settings.github_token,
+        context=settings.eval_check_context,
+    )
     try:
         yield
     finally:
@@ -65,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(github.router)
     app.include_router(observability.router)
     app.include_router(control.router)
+    app.include_router(evals.router)
     app.include_router(runs.router)
     return app
 

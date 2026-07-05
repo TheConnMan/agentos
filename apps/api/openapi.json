@@ -281,6 +281,149 @@
         "title": "Environment",
         "type": "string"
       },
+      "EvalCell": {
+        "description": "One cell of the eval matrix: a case's result on a version.",
+        "properties": {
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "missing"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "status"
+        ],
+        "title": "EvalCell",
+        "type": "object"
+      },
+      "EvalMatrix": {
+        "description": "The eval matrix grid: rows = cases, columns = versions (most recent first).",
+        "properties": {
+          "cases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/EvalMatrixRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "suite",
+          "versions",
+          "cases",
+          "rows"
+        ],
+        "title": "EvalMatrix",
+        "type": "object"
+      },
+      "EvalMatrixRow": {
+        "description": "One row of the eval matrix: a case across every version column.",
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/EvalCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          }
+        },
+        "required": [
+          "case_id",
+          "cells"
+        ],
+        "title": "EvalMatrixRow",
+        "type": "object"
+      },
+      "EvalReport": {
+        "description": "An eval run's rollup, reported so the API can post the PR check.",
+        "properties": {
+          "passed_count": {
+            "title": "Passed Count",
+            "type": "integer"
+          },
+          "repo_full_name": {
+            "title": "Repo Full Name",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "target_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Url"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "repo_full_name",
+          "sha",
+          "passed_count",
+          "total"
+        ],
+        "title": "EvalReport",
+        "type": "object"
+      },
+      "EvalReportResult": {
+        "description": "The committed GitHub commit-status state for a reported eval run.",
+        "properties": {
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "sha"
+        ],
+        "title": "EvalReportResult",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1804,6 +1947,133 @@
         "summary": "Get Deployment",
         "tags": [
           "deployments"
+        ]
+      }
+    },
+    "/evals/matrix": {
+      "get": {
+        "operationId": "eval_matrix_evals_matrix_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "suite",
+            "required": true,
+            "schema": {
+              "title": "Suite",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "versions",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "title": "Versions",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalMatrix"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Eval Matrix",
+        "tags": [
+          "evals"
+        ]
+      }
+    },
+    "/evals/report": {
+      "post": {
+        "operationId": "report_eval_evals_report_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalReportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Eval",
+        "tags": [
+          "evals"
         ]
       }
     },

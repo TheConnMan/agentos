@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     github_webhook_secret: str = "dev-webhook-secret"
     dev_branch: str = "dev"
     prod_branch: str = "main"
+    # Outbound GitHub commit-status API for the eval PR check (K1).
+    github_api_url: str = "https://api.github.com"
+    github_token: str = ""
+    eval_check_context: str = "agentos/evals"
+    # Suite name put on the fan-out request for a dev-push eval run (the plugin
+    # bundle carries the suite itself; the consumer resolves it by this name).
+    eval_default_suite: str = "default"
     bot_identity_dev: str = "@agentos-dev"
     bot_identity_prod: str = "@agentos"
     # Clone-URL schemes the git-flow builder will fetch from. file:// supports
