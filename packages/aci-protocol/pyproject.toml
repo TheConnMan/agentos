@@ -1,0 +1,13 @@
+[project]
+name = "aci-protocol"
+version = "0.0.0"
+description = "Frozen ACI session protocol and NDJSON event types (Pydantic source of truth)"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aci_protocol"]
