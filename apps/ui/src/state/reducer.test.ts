@@ -81,4 +81,20 @@ describe("reducer state machine", () => {
     const s = reducer(at(3), { type: "setLevel", level: 3 });
     expect(s.env).toBe("prod");
   });
+
+  it("viewTraces jumps to the traces tab filtered to an agent", () => {
+    const s = reducer(at(3), { type: "viewTraces", agentId: "agent-123" });
+    expect(s.nav).toBe("observability");
+    expect(s.obsTab).toBe("traces");
+    expect(s.tracesAgentId).toBe("agent-123");
+    expect(s.traceOpen).toBeNull();
+  });
+
+  it("changing tab or nav clears the agent trace filter", () => {
+    let s = reducer(at(3), { type: "viewTraces", agentId: "agent-123" });
+    s = reducer(s, { type: "setObsTab", tab: "metrics" });
+    expect(s.tracesAgentId).toBeNull();
+    s = reducer(reducer(at(3), { type: "viewTraces", agentId: "agent-9" }), { type: "go", nav: "agents" });
+    expect(s.tracesAgentId).toBeNull();
+  });
 });

@@ -114,10 +114,8 @@ export function WiredAgents() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  dispatch({ type: "go", nav: "observability" });
-                  dispatch({ type: "setObsTab", tab: "traces" });
-                }}
+                data-testid="view-traces-link"
+                onClick={() => dispatch({ type: "viewTraces", agentId: a.id })}
                 style={{ marginLeft: "auto", background: "none", border: "none", color: C.link, fontSize: 13, cursor: "pointer" }}
               >
                 View traces →

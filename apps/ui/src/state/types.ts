@@ -48,6 +48,9 @@ export interface AppState {
   extraEval: boolean;
   agentDetail: string | null;
   traceOpen: string | null;
+  // When set (wired mode), the Traces list opens pre-filtered to this agent id;
+  // null means all agents. Set by an agent card's "View traces" action.
+  tracesAgentId: string | null;
   promoteForm: boolean;
   defaultModel: string;
   driftHover: string | null;
@@ -67,6 +70,7 @@ export type Action =
   | { type: "setEnv"; env: Env }
   | { type: "toggleTerminal" }
   | { type: "setObsTab"; tab: ObsTab }
+  | { type: "viewTraces"; agentId: string | null }
   | { type: "setEvalTab"; tab: EvalTab }
   | { type: "setMetricRange"; range: MetricRange }
   | { type: "openTrace"; id: string }

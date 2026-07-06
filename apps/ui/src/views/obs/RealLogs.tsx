@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { C } from "../../tokens";
 import { Button, Dot } from "../../primitives";
-import { getRunnerLogs, ApiError, type PodLogs } from "../../api/client";
+import { getRunnerLogs, listRunnerPods, ApiError, type PodLogs } from "../../api/client";
 
 type Result =
   | { kind: "idle" }
@@ -11,6 +11,16 @@ type Result =
   | { kind: "not-found"; message: string }
   | { kind: "cluster-error"; message: string }
   | { kind: "error"; message: string };
+
+// The pod list backing the dropdown. "no-cluster" mirrors the logs 503 state so
+// the dev box (no cluster) degrades honestly instead of an empty silent select.
+type Pods =
+  | { kind: "loading" }
+  | { kind: "ok"; pods: string[] }
+  | { kind: "no-cluster"; message: string }
+  | { kind: "error"; message: string };
+
+const ALL = ""; // the "All runner pods" sentinel (aggregate across the list)
 
 const inputStyle = {
   background: C.input,
@@ -42,54 +52,150 @@ function StateBanner({ tone, title, body }: { tone: "warn" | "muted" | "error"; 
   );
 }
 
-// Wired Logs tab: the per-run runner-logs affordance, proxying the K8s pod-logs
-// API. Fetch is on demand (namespace + pod), and the distinct cluster states are
-// designed: 503 no cluster, 404 pod not found, 502 other cluster error. On the
-// dev box (no cluster) the 503 degraded state is the expected result.
+// Map an ApiError from a single-pod log read to a distinct Result state.
+function resultFromError(e: unknown): Result {
+  if (e instanceof ApiError) {
+    if (e.status === 503) return { kind: "no-cluster", message: e.message };
+    if (e.status === 404) return { kind: "not-found", message: e.message };
+    if (e.status === 502) return { kind: "cluster-error", message: e.message };
+    return { kind: "error", message: `${e.status}: ${e.message}` };
+  }
+  return { kind: "error", message: e instanceof Error ? e.message : String(e) };
+}
+
+// Wired Logs tab: pick a runner pod (or all of them) and tail its logs, proxying
+// the K8s pod-logs API. The pod list comes from the runner-pods endpoint; the
+// distinct cluster states are designed (503 no cluster, 404 pod not found, 502
+// other). On the dev box (no cluster) the 503 degraded state is expected.
 export function RealLogs() {
   const [namespace, setNamespace] = useState("agentos");
-  const [pod, setPod] = useState("");
+  const [pods, setPods] = useState<Pods>({ kind: "loading" });
+  const [selected, setSelected] = useState<string>(ALL);
   const [result, setResult] = useState<Result>({ kind: "idle" });
 
-  const fetchLogs = async () => {
-    if (!pod.trim()) return;
-    setResult({ kind: "loading" });
+  const loadPods = useCallback(async (ns: string) => {
+    setPods({ kind: "loading" });
+    setSelected(ALL);
+    setResult({ kind: "idle" });
     try {
-      const data = await getRunnerLogs(namespace.trim(), pod.trim(), { tail_lines: 200 });
-      setResult({ kind: "ok", data });
+      const data = await listRunnerPods(ns.trim() || undefined);
+      setPods({ kind: "ok", pods: data.pods });
     } catch (e) {
-      if (e instanceof ApiError) {
-        if (e.status === 503) setResult({ kind: "no-cluster", message: e.message });
-        else if (e.status === 404) setResult({ kind: "not-found", message: e.message });
-        else if (e.status === 502) setResult({ kind: "cluster-error", message: e.message });
-        else setResult({ kind: "error", message: `${e.status}: ${e.message}` });
+      if (e instanceof ApiError && e.status === 503) {
+        setPods({ kind: "no-cluster", message: e.message });
       } else {
-        setResult({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+        setPods({ kind: "error", message: e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e) });
       }
     }
+  }, []);
+
+  useEffect(() => {
+    void loadPods("agentos");
+  }, [loadPods]);
+
+  // Aggregate logs across every listed pod, one labeled block per pod. A single
+  // pod short-circuits to the plain per-pod result so its distinct error states
+  // (404/502/503) are preserved; only the multi-pod "All" view concatenates.
+  const fetchAll = async (ns: string, list: string[]) => {
+    const blocks: string[] = [];
+    for (const pod of list) {
+      try {
+        const data = await getRunnerLogs(ns, pod, { tail_lines: 200 });
+        blocks.push(`=== ${pod} ===\n${data.logs.trim() === "" ? "(no log lines)" : data.logs}`);
+      } catch (e) {
+        // A cluster-wide failure (503) aborts the whole aggregate; per-pod 404s
+        // are noted inline so one missing pod does not blank the others.
+        if (e instanceof ApiError && e.status === 503) {
+          setResult({ kind: "no-cluster", message: e.message });
+          return;
+        }
+        const msg = e instanceof ApiError ? `${e.status}: ${e.message}` : e instanceof Error ? e.message : String(e);
+        blocks.push(`=== ${pod} ===\n(could not fetch: ${msg})`);
+      }
+    }
+    setResult({
+      kind: "ok",
+      data: { namespace: ns, pod: `all runner pods (${list.length})`, container: null, logs: blocks.join("\n\n") },
+    });
   };
+
+  const fetchLogs = async () => {
+    const ns = namespace.trim();
+    if (pods.kind === "no-cluster") {
+      setResult({ kind: "no-cluster", message: pods.message });
+      return;
+    }
+    const list = pods.kind === "ok" ? pods.pods : [];
+    setResult({ kind: "loading" });
+    if (selected !== ALL) {
+      try {
+        const data = await getRunnerLogs(ns, selected, { tail_lines: 200 });
+        setResult({ kind: "ok", data });
+      } catch (e) {
+        setResult(resultFromError(e));
+      }
+      return;
+    }
+    if (list.length === 0) {
+      setResult({ kind: "error", message: "No runner pods to tail in this namespace." });
+      return;
+    }
+    await fetchAll(ns, list);
+  };
+
+  const podOptions = pods.kind === "ok" ? pods.pods : [];
+  const canFetch = pods.kind !== "loading";
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <input aria-label="namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} placeholder="namespace" style={{ ...inputStyle, width: 150 }} />
         <input
-          data-testid="logs-pod"
-          aria-label="pod"
-          value={pod}
-          onChange={(e) => setPod(e.target.value)}
+          aria-label="namespace"
+          value={namespace}
+          onChange={(e) => setNamespace(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") void fetchLogs();
+            if (e.key === "Enter") void loadPods(namespace);
           }}
-          placeholder="runner pod name"
-          style={{ ...inputStyle, flex: 1, minWidth: 200 }}
+          onBlur={() => void loadPods(namespace)}
+          placeholder="namespace"
+          style={{ ...inputStyle, width: 150 }}
         />
-        <Button label="Fetch logs" variant="primary" onClick={() => void fetchLogs()} />
+        <select
+          data-testid="logs-pod-select"
+          aria-label="pod"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          style={{ ...inputStyle, flex: 1, minWidth: 200 }}
+        >
+          <option value={ALL}>{`All runner pods${podOptions.length ? ` (${podOptions.length})` : ""}`}</option>
+          {podOptions.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <Button label="Fetch logs" variant="primary" onClick={() => void fetchLogs()} disabled={!canFetch} />
       </div>
+
+      {pods.kind === "loading" ? (
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, fontFamily: C.mono }}>Loading runner pods…</div>
+      ) : pods.kind === "no-cluster" ? (
+        <div data-testid="pods-note" style={{ fontSize: 12, color: C.warn, marginBottom: 12, fontFamily: C.mono }}>
+          No cluster configured — pod list unavailable.
+        </div>
+      ) : pods.kind === "error" ? (
+        <div data-testid="pods-note" style={{ fontSize: 12, color: C.failure, marginBottom: 12, fontFamily: C.mono }}>
+          Could not list runner pods: {pods.message}
+        </div>
+      ) : pods.pods.length === 0 ? (
+        <div data-testid="pods-note" style={{ fontSize: 12, color: C.muted, marginBottom: 12, fontFamily: C.mono }}>
+          No runner pods found in {namespace || "agentos"}.
+        </div>
+      ) : null}
 
       {result.kind === "idle" ? (
         <div style={{ padding: "40px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>
-          Enter a runner pod to tail its logs. Logs proxy the serving sandbox pod for a run.
+          Pick a runner pod (or all of them) and fetch to tail its logs. Logs proxy the serving sandbox pods.
         </div>
       ) : null}
       {result.kind === "loading" ? (

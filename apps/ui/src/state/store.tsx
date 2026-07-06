@@ -35,6 +35,7 @@ export function initialState(level: FixtureLevel): AppState {
     extraEval: false,
     agentDetail: null,
     traceOpen: null,
+    tracesAgentId: null,
     promoteForm: false,
     defaultModel: "claude-sonnet-5",
     driftHover: null,
@@ -57,6 +58,7 @@ function levelReset(s: AppState, level: FixtureLevel): AppState {
     terminal: false,
     matrixRun: false,
     traceOpen: null,
+    tracesAgentId: null,
     obsTab: "traces",
     promoteForm: false,
     agentDeployed: level >= 3,
@@ -72,7 +74,7 @@ export function reducer(s: AppState, a: Action): AppState {
     case "setLevel":
       return levelReset(s, a.level);
     case "go":
-      return { ...s, nav: a.nav, terminal: false, agentDetail: null, traceOpen: null };
+      return { ...s, nav: a.nav, terminal: false, agentDetail: null, traceOpen: null, tracesAgentId: null };
     case "openModal":
       return { ...s, modal: a.modal };
     case "closeModal":
@@ -84,7 +86,19 @@ export function reducer(s: AppState, a: Action): AppState {
     case "toggleTerminal":
       return { ...s, terminal: !s.terminal };
     case "setObsTab":
-      return { ...s, obsTab: a.tab, traceOpen: null };
+      return { ...s, obsTab: a.tab, traceOpen: null, tracesAgentId: null };
+    case "viewTraces":
+      // Jump to the Traces tab pre-filtered to one agent (wired mode). The
+      // fixture Traces list ignores the filter; the wired list applies it.
+      return {
+        ...s,
+        nav: "observability",
+        obsTab: "traces",
+        terminal: false,
+        agentDetail: null,
+        traceOpen: null,
+        tracesAgentId: a.agentId,
+      };
     case "setEvalTab":
       return { ...s, evalTab: a.tab };
     case "setMetricRange":

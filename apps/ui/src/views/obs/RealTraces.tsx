@@ -20,14 +20,22 @@ function Notice({ children }: { children: ReactNode }) {
 // Live Runs list: real Langfuse traces via the API proxy. Rendered in place of
 // the fixture list when the app is wired to a backend.
 export function RealTracesList() {
-  const { dispatch } = useStore();
-  const { data, loading, error } = useTraces(true);
+  const { state, dispatch } = useStore();
+  const agentId = state.tracesAgentId;
+  const { data, loading, error } = useTraces(true, agentId);
   const grid = "1.9fr 1.1fr 1fr";
 
   if (loading) return <Notice>Loading traces…</Notice>;
   if (error) return <Notice>Could not load traces: {error}</Notice>;
   const traces = data ?? [];
-  if (traces.length === 0) return <Notice>No traces yet. Send the agent a message to generate one.</Notice>;
+  if (traces.length === 0)
+    return (
+      <Notice>
+        {agentId
+          ? "No traces for this agent yet. Send it a message to generate one."
+          : "No traces yet. Send the agent a message to generate one."}
+      </Notice>
+    );
 
   return (
     <div>
@@ -48,9 +56,30 @@ export function RealTracesList() {
           }}
         >
           <span style={{ color: C.muted }}>trace</span>
-          <span style={{ color: C.text }}>{"{ source=\"langfuse\" }"}</span>
+          <span style={{ color: C.text }}>
+            {agentId ? `{ source="langfuse", agent~"agent-${agentId}" }` : '{ source="langfuse" }'}
+          </span>
           <span style={{ marginLeft: "auto", color: C.muted }}>{traces.length + " traces"}</span>
         </div>
+        {agentId ? (
+          <button
+            type="button"
+            data-testid="trace-filter-clear"
+            onClick={() => dispatch({ type: "viewTraces", agentId: null })}
+            style={{
+              background: "transparent",
+              border: "1px solid " + C.border,
+              borderRadius: 20,
+              padding: "5px 11px",
+              color: C.text2,
+              fontFamily: C.mono,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            agent filter · clear ✕
+          </button>
+        ) : null}
         <Chip color={C.mutedStatus}>OTel · live</Chip>
       </div>
       <Card>

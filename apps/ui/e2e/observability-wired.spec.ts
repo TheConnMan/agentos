@@ -89,8 +89,19 @@ test("a single-point series renders the value without NaN", async ({ page }) => 
   expect(html).not.toContain("NaN");
 });
 
+// Stub the runner-pods list endpoint (`/observability/runners`), which populates
+// the Logs pod dropdown. A function matcher keeps it from swallowing the per-pod
+// `/runners/{ns}/{pod}/logs` route.
+async function stubRunnerPods(page: Page, status: number, body: unknown) {
+  await page.route(
+    (url) => url.pathname.endsWith("/api/observability/runners"),
+    (route) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }),
+  );
+}
+
 test("Logs tab shows the 503 no-cluster degraded state", async ({ page }) => {
-  await page.route("**/api/observability/runners/**/logs*", (route) =>
+  await stubRunnerPods(page, 503, { detail: "no kubernetes cluster configured for runner pods" });
+  await page.route("**/api/observability/runners/*/*/logs*", (route) =>
     route.fulfill({
       status: 503,
       contentType: "application/json",
@@ -101,7 +112,8 @@ test("Logs tab shows the 503 no-cluster degraded state", async ({ page }) => {
   await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
   await page.getByRole("button", { name: "Logs" }).click();
 
-  await page.getByTestId("logs-pod").fill("runner-deal-desk-abc123");
+  // The dropdown can't populate without a cluster, so the note flags it.
+  await expect(page.getByTestId("pods-note")).toContainText("No cluster configured");
   await page.getByRole("button", { name: "Fetch logs" }).click();
 
   const stateBanner = page.getByTestId("logs-state");
@@ -110,8 +122,9 @@ test("Logs tab shows the 503 no-cluster degraded state", async ({ page }) => {
   await expect(stateBanner).toContainText("no kubernetes cluster configured");
 });
 
-test("Logs tab renders pod logs on success", async ({ page }) => {
-  await page.route("**/api/observability/runners/**/logs*", (route) =>
+test("Logs tab renders a single pod's logs from the dropdown", async ({ page }) => {
+  await stubRunnerPods(page, 200, { namespace: "agentos", pods: ["runner-deal-desk-abc123", "runner-billing-xyz"] });
+  await page.route("**/api/observability/runners/*/*/logs*", (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -126,10 +139,61 @@ test("Logs tab renders pod logs on success", async ({ page }) => {
   await page.goto("/?state=3&api=1");
   await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
   await page.getByRole("button", { name: "Logs" }).click();
-  await page.getByTestId("logs-pod").fill("runner-deal-desk-abc123");
+  await page.getByTestId("logs-pod-select").selectOption("runner-deal-desk-abc123");
   await page.getByRole("button", { name: "Fetch logs" }).click();
 
   await expect(page.getByTestId("logs-output")).toContainText("verdict routed");
+});
+
+test("Logs tab aggregates logs across all runner pods by default", async ({ page }) => {
+  await stubRunnerPods(page, 200, { namespace: "agentos", pods: ["runner-a", "runner-b"] });
+  await page.route("**/api/observability/runners/*/*/logs*", (route) => {
+    const pod = new URL(route.request().url()).pathname.split("/").slice(-2)[0];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ namespace: "agentos", pod, container: "runner", logs: `line from ${pod}` }),
+    });
+  });
+  await page.goto("/?state=3&api=1");
+  await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
+  await page.getByRole("button", { name: "Logs" }).click();
+  // The default selection is "All runner pods"; fetch aggregates every pod.
+  await page.getByRole("button", { name: "Fetch logs" }).click();
+
+  const out = page.getByTestId("logs-output");
+  await expect(out).toContainText("=== runner-a ===");
+  await expect(out).toContainText("line from runner-a");
+  await expect(out).toContainText("=== runner-b ===");
+  await expect(out).toContainText("line from runner-b");
+});
+
+test("an agent's View traces opens the Traces list pre-filtered to that agent", async ({ page }) => {
+  const agent = { id: "ag-77", name: "billing-bot", slack_channel: "C0BILL", created_at: "2026-07-05T00:00:00Z" };
+  await page.route(/\/api\/agents(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([agent]) }));
+
+  const traceUrls: string[] = [];
+  await page.route("**/api/langfuse/traces*", (route) => {
+    traceUrls.push(route.request().url());
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ id: "t1", name: `agentos-run:agent-${agent.id}-thread-1`, timestamp: "2026-07-05T00:00:00Z" }]),
+    });
+  });
+
+  await page.goto("/?api=1");
+  await page.getByRole("navigation").getByText("Agents", { exact: true }).click();
+  await page.getByTestId("view-traces-link").first().click();
+
+  // The traces list opened, filtered: the request carried the agent id token and
+  // the filter chip is shown with a clear affordance.
+  await expect(page.getByTestId("trace-filter-clear")).toBeVisible();
+  await expect.poll(() => traceUrls.some((u) => u.includes(`agent_id=${agent.id}`))).toBe(true);
+
+  // Clearing the filter re-requests without the agent_id.
+  await page.getByTestId("trace-filter-clear").click();
+  await expect.poll(() => traceUrls.some((u) => u.includes("/langfuse/traces") && !u.includes("agent_id"))).toBe(true);
 });
 
 test("Metrics/Logs stay on fixtures without ?api=1", async ({ page }) => {

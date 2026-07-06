@@ -41,10 +41,7 @@ function AgentCard({ agent }: { agent: Agent }) {
         <Chip color={C.text2}>{suite + " eval cases"}</Chip>
         <button
           type="button"
-          onClick={() => {
-            dispatch({ type: "go", nav: "observability" });
-            dispatch({ type: "setObsTab", tab: "traces" });
-          }}
+          onClick={() => dispatch({ type: "viewTraces", agentId: agent.id })}
           style={{ marginLeft: "auto", background: "none", border: "none", color: C.link, fontSize: 13, cursor: "pointer" }}
         >
           View traces →
