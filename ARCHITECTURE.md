@@ -365,6 +365,15 @@ chart defaults (ADR-0006, [`docs/adr/0006-security-rails-as-chart-defaults.md`](
 - **Bundle-fetch init containers** on the sandbox template, fail-closed if a bundle ref is set but no archive is fetched ([`charts/agentos/templates/agent-sandbox.yaml:83`](charts/agentos/templates/agent-sandbox.yaml)), with a MinIO egress carve-out.
 - **A single chart-managed Secret** carrying backing-store passwords, Langfuse keys, the model `agentCredentials`, the API key, the GitHub webhook secret, and Slack tokens ([`charts/agentos/templates/secrets.yaml`](charts/agentos/templates/secrets.yaml)).
 
+**Install verification status.** The chart's structure and its full render+apply
+were verified on the scratch k3s cluster using locally-built images. The
+one-command install from the public GHCR-default images — the path a fresh
+operator actually takes — is being verified now, on the first such install since
+the crashloop fixes landed; its findings will be recorded in
+[`docs/roadmap.md`](docs/roadmap.md) §8. Read "one command brings up the stack"
+as the chart's design intent, structurally verified, not yet a proven cold-start
+from published images.
+
 **Local dev stack** is [`compose.dev.yaml`](compose.dev.yaml): the same backing
 components at fixed host ports (see [`CLAUDE.md`](CLAUDE.md)). Every backend
 integration test and UI E2E runs against it.
@@ -384,8 +393,10 @@ cuts a GitHub Release with CLI binaries for `x86_64-unknown-linux-gnu` and
 ## 11. What is built vs deferred
 
 **Built and live-verified end to end** (32+ merged lanes; a real Slack
-conversation on a real model, a k8scratch install, and a local middle-mode loop
-were all exercised): the frozen contracts, the API (agents/versions/deployments,
+conversation on a real model, a scratch-cluster install from locally-built
+images, and a local middle-mode loop were all exercised — the GHCR-default
+one-command install is being verified separately, see §10): the frozen
+contracts, the API (agents/versions/deployments,
 git-flow, evals, Langfuse proxy, bundle pipeline), the runner, the dispatcher,
 the worker kernel and its four invariants, both substrate clients, the eval
 plane, the chart with its security rails, the CLI, and the wired UI

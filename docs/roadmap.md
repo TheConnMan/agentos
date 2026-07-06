@@ -10,9 +10,9 @@ ordered by leverage.
 The product is real; the UI should default to it. This is the headline item.
 
 - Make the wired experience the default open, not the `acme-corp` fixture dataset behind `?api=1`. Remove `VITE_WIRED`/`?api=1` as a mode switch once the real API is the only path.
-- Replace the scripted CLI-terminal view ([`apps/ui/src/views/Terminal.tsx`](../apps/ui/src/views/Terminal.tsx)) with real status, or remove it.
+- **Delete the simulated CLI-terminal view entirely** ([`apps/ui/src/views/Terminal.tsx`](../apps/ui/src/views/Terminal.tsx)). A real `agentos` CLI exists ([`cli/`](../cli)); the scripted in-browser terminal is a demo prop, not a feature to wire up. Remove it rather than pointing it at real status.
 - Wire the remaining `ComingSoon` placeholders to real backends: Evals matrix (the API `GET /evals/matrix` endpoint already exists and is unconsumed), Versions, Usage, Settings ([`apps/ui/src/views/wired/WiredStubs.tsx`](../apps/ui/src/views/wired/WiredStubs.tsx)).
-- Delete the fixture stores and the demo dataset ([`apps/ui/src/fixtures/`](../apps/ui/src/fixtures/)) once nothing imports them.
+- Delete the fixture stores and the demo dataset ([`apps/ui/src/fixtures/`](../apps/ui/src/fixtures/)) and the `acme-corp` literals in the chrome components once nothing imports them.
 
 ## 2. Thin-shim / contract debt
 
@@ -28,6 +28,7 @@ The thin-shim thesis holds, but three seams are hand-mirrored rather than frozen
 - **Live sandbox list.** A dropdown or list view enumerating live sandboxes per agent (local: `docker ps`; k8s: `SandboxClaim`s).
 - **Cold-boot latency.** The first Docker claim can exceed the bind window and force a kernel retry. Tune the bind timeout against image warm-up, consider a local warm pool / pre-pulled image, and surface a "booting runner" state in the Slack placeholder.
 - **Empty-trace UX.** Stop writing observation-less trace shells for 0/0 eval replays; keep the honest empty state.
+- **Dev/prod environment switcher.** Deployments already carry an environment (`dev`|`prod`) in the data model ([`apps/api/src/agentos_api/models.py`](../apps/api/src/agentos_api/models.py), `Environment` enum on `Deployment`) and in the CLI ([`cli/src/api.rs`](../cli/src/api.rs)), but the wired UI never surfaces it: a DEV/PROD pill exists only in the fixture chrome ([`apps/ui/src/components/Topbar.tsx`](../apps/ui/src/components/Topbar.tsx)) and is not wired to real env-scoped data. Build a real environment switcher that scopes agents, deployments, and observability, plus a promote-to-prod flow (the API git-flow promote path already exists; the UI has no button for it).
 
 ## 4. API / platform hygiene
 
@@ -35,6 +36,7 @@ The thin-shim thesis holds, but three seams are hand-mirrored rather than frozen
 - **Bundle-files read endpoint** so the UI can show a bundle's tree beyond `SKILL.md`.
 - **Eval backlog policy.** The eval consumer group reads from `0`; ancient test entries can spam errors on worker boot. Add a max-age or explicit requeue policy.
 - **Graceful eval reporting.** `POST /evals/report` should return a clean 4xx on an unknown repo rather than erroring.
+- **Configurable organization/workspace name.** `acme-corp` is fixture-only branding ([`apps/ui/src/components/`](../apps/ui/src/components/) chrome); the wired UI and API have no organization-name concept at all. A deployed install should present the operator's real company name: add an org/workspace name as an API setting or a chart value that feeds the UI chrome (topbar, sidebar, settings), so a fresh install is not branded with a demo company.
 - **Boot hygiene.** Lazy-init the cluster/AWS client so a cold API boot does not emit a scary ERROR.
 - **Hermetic worker tests.** The binding tests currently depend on a CI-step-migrated shared DB; make them self-contained.
 - **`.gitignore` secret patterns.** Anchor `*credentials*` / `*secret*` patterns to real secret files; bare substrings silently swallowed source files during the build (`credentials.py` was renamed to `sdk_auth.py` to dodge it).
@@ -56,3 +58,12 @@ The thin-shim thesis holds, but three seams are hand-mirrored rather than frozen
 - **Cold-start rehearsal** as the acceptance gate: timed, README-only, fresh clone to `helm install` to UI to an agent answering in Slack.
 - **N1 soak on k8scratch:** chart resilience under sustained load — concurrent threads, mid-thread batch job, sandbox-kill-mid-run, resume-rehydrate. The harness is scaffolded at [`tests/soak`](../tests/soak); the scenario is not yet written.
 - **Regression tests from live findings** where cheap: e.g. a worker boot warning when the substrate is Docker and no OTLP endpoint is set.
+
+## 8. Cluster bring-up findings
+
+Findings from the first install of the chart on the scratch cluster using the
+public GHCR-default images (the first such install since the crashloop fixes)
+land here: bugs, missing values knobs, runbook steps that should not need to
+exist, and doc gaps surfaced by a clean one-command install. Populated at merge
+time from the k8s-deployer report; until then this section is a placeholder for
+that feed.
