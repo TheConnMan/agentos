@@ -12,6 +12,8 @@ from typing import Protocol
 
 from slack_sdk.web.async_client import AsyncWebClient
 
+from .mrkdwn import to_mrkdwn
+
 
 class SlackSink(Protocol):
     """Edit a message in place. The kernel throttles how often it calls this."""
@@ -34,4 +36,7 @@ class AsyncSlackSink:
             self._client = AsyncWebClient(token=token)
 
     async def update(self, *, channel: str, ts: str, text: str) -> None:
-        await self._client.chat_update(channel=channel, ts=ts, text=text)
+        # The runner emits Markdown; Slack renders mrkdwn. Convert here, at the
+        # real-Slack seam, so both streamed partials and the final edit render
+        # correctly without the kernel knowing about Slack's dialect.
+        await self._client.chat_update(channel=channel, ts=ts, text=to_mrkdwn(text))
