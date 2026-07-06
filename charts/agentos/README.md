@@ -113,10 +113,18 @@ workflow (`.github/workflows/release.yaml`) on every push to `main`, as
 All five first-party services build in the matrix: `agentos-api`,
 `agentos-dispatcher`, `agentos-worker`, `agentos-ui`, and `agentos-runner`. The
 chart defaults every first-party image at its `ghcr.io/curie-eng/agentos-*`
-`:latest` with `imagePullPolicy: Always`, so the bare install (above) pulls
-from GHCR with no image overrides. `Always` keeps a fresh install from silently
-serving a stale `latest` a node cached earlier; pin an immutable tag for
-reproducible deploys, where `Always` on a digest is a cheap no-op.
+`:latest`, so the bare install (above) pulls from GHCR with no image overrides.
+The four Deployment-managed services (api, dispatcher, worker, ui) use
+`imagePullPolicy: Always` -- they pull once per rollout, so `Always` just keeps a
+fresh install from serving a stale `latest` a node cached earlier. The **runner**
+image is the exception: it uses `imagePullPolicy: IfNotPresent` because a sandbox
+pod is cold-created per Slack thread, and an `Always` (re-)pull inside that boot
+window blew past the worker's claim timeout and killed runs. Its freshness comes
+instead from the `runner-prewarm` DaemonSet (`agentSandbox.runner.prewarm`,
+default on with the sandbox substrate), which pulls the runner image `Always` and
+keeps it pinned on every node; a Release-revision annotation rolls those pods on
+every `helm upgrade` so the pin refreshes a churned `latest`. Pin an immutable tag
+for reproducible deploys, where the pull policies are a cheap no-op.
 A GHCR package inherits its repo's visibility, so on a **private** repo the image
 is not anonymously pullable and the node needs credentials. Two supported paths:
 
@@ -311,8 +319,10 @@ to install only the control plane + backing stores without the runner substrate.
   release per cluster, or leave it false on clusters that already run
   agent-sandbox.
 - **Runner image**: the pool runs `agentos-runner`, defaulting to
-  `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: Always`
-  (the GHCR path, used by the bare install). For offline
+  `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: IfNotPresent`
+  (per-thread cold boots must not contain a pull; the `runner-prewarm` DaemonSet
+  keeps the image fresh on every node -- see "Publishing and pulling images").
+  For offline
   dev/e2e, `-f values-dev.yaml` overrides it to a locally-built, cluster-imported
   tag with `imagePullPolicy: Never` (`docker build -f runner/Dockerfile -t
   agentos-runner .` from the repo root, then

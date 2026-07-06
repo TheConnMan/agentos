@@ -399,16 +399,34 @@ agentSandbox:
     # which overrides this back to `agentos-runner` with imagePullPolicy Never.
     image: ghcr.io/curie-eng/agentos-runner
     tag: latest
-    # Always so a fresh install never serves a stale `latest`: a node that cached
-    # an older `latest` digest would otherwise keep running it under IfNotPresent
-    # until the image was manually removed. Pin `tag` to an immutable sha/version
-    # for production, where `Always` on a digest is a cheap no-op.
-    imagePullPolicy: Always
+    # IfNotPresent -- NOT Always, unlike the four Deployment-managed services.
+    # A sandbox pod is cold-created per Slack thread, so `Always` would put a
+    # (re-)pull of this ~380MB image inside the per-thread boot window; when
+    # `latest` has churned that pull blew past the worker's 90s claim timeout and
+    # killed the run. Sandbox cold boot must never contain an image download.
+    # Freshness is handled out of band by the runner-prewarm DaemonSet below,
+    # which pulls `Always` and pins the image in the node cache between threads;
+    # `IfNotPresent` here then binds the already-present image instantly.
+    imagePullPolicy: IfNotPresent
     # GHCR packages on a private repo are NOT anonymously pullable -- the node
     # needs a docker-registry pull Secret. List pre-created Secret names here,
     # e.g. [{ name: ghcr-pull }]. Leave empty when the package is public or for
     # local dev. See the chart README "Publishing and pulling images".
     imagePullSecrets: []
+    # Runner-image prewarm DaemonSet. Keeps this image pulled and pinned on every
+    # node so per-thread sandbox cold boots (imagePullPolicy IfNotPresent above)
+    # bind an already-present image instead of downloading it inside the claim
+    # window. Rendered only while the sandbox substrate is deployed
+    # (agentSandbox.deploy). Each `helm upgrade` rolls the pods (a Release-revision
+    # annotation on the pod template) so the DaemonSet's `Always` pull refreshes a
+    # churned `latest` -- a plain DaemonSet would not re-pull on a digest-only
+    # change since its pod spec is unchanged. Tiny idle container (sleep infinity);
+    # the point is the pinned image, not the process.
+    prewarm:
+      enabled: true
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 50m, memory: 32Mi }
     port: 8080
     # Fake-model mode round-trips ACI events offline with no credential; flip
     # false (and provide credentials) for real model runs.
