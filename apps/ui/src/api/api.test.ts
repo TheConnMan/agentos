@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bundleFileTree, buildBundleZip } from "./bundle";
-import { createAgent, uploadBundle, BundleValidationError, ApiError } from "./client";
+import { bundleFileTree, buildBundleZip, bundleTreeFromFiles, nextVersionLabel } from "./bundle";
+import {
+  createAgent,
+  uploadBundle,
+  BundleValidationError,
+  ApiError,
+  getVersionFiles,
+  listVersions,
+  listDeployments,
+  createDeployment,
+} from "./client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -68,5 +77,100 @@ describe("api client", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(409, { detail: "already stored" })));
     const archive = await buildBundleZip({ agentName: "x", versionLabel: "v0", skillMd: "ok" });
     await expect(uploadBundle("a1", "v1", archive)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("nextVersionLabel (redeploy)", () => {
+  it("bumps the patch of the highest vX.Y.Z", () => {
+    expect(nextVersionLabel(["v0.1.0"])).toBe("v0.1.1");
+    expect(nextVersionLabel(["v0.1.0", "v0.1.4", "v0.1.2"])).toBe("v0.1.5");
+    expect(nextVersionLabel(["v1.2.9", "v0.9.9"])).toBe("v1.2.10");
+  });
+
+  it("falls back to a v0.1.<count> label when none parse", () => {
+    expect(nextVersionLabel(["nightly", "hotfix"])).toBe("v0.1.2");
+    expect(nextVersionLabel([])).toBe("v0.1.0");
+  });
+
+  it("never collides with an existing label", () => {
+    // v0.1.0 would bump to v0.1.1, but that is taken -> suffix -rN.
+    const out = nextVersionLabel(["v0.1.0", "v0.1.1"]);
+    expect(out).toBe("v0.1.2");
+    const suffixed = nextVersionLabel(["v0.1.0", "v0.1.1", "v0.1.2"]);
+    expect(suffixed).toBe("v0.1.3");
+  });
+});
+
+describe("bundleTreeFromFiles (redeploy re-pack)", () => {
+  it("preserves every file and keeps an existing manifest untouched", () => {
+    const manifest = JSON.stringify({ name: "deal-desk", description: "keep me" });
+    const tree = bundleTreeFromFiles("deal-desk", [
+      { path: ".claude-plugin/plugin.json", content: manifest },
+      { path: "skills/deal-desk/SKILL.md", content: "edited body" },
+      { path: "policy.yaml", content: "approver: J. Whitfield" },
+    ]);
+    // nothing dropped, and the manifest we passed is not overwritten
+    expect(Object.keys(tree).sort()).toEqual(
+      [".claude-plugin/plugin.json", "policy.yaml", "skills/deal-desk/SKILL.md"].sort(),
+    );
+    expect(tree[".claude-plugin/plugin.json"]).toBe(manifest);
+    expect(tree["skills/deal-desk/SKILL.md"]).toBe("edited body");
+  });
+
+  it("synthesizes a manifest from the first skill when the bundle lacks one", () => {
+    const tree = bundleTreeFromFiles("deal-desk", [
+      { path: "skills/deal-desk/SKILL.md", content: "---\nname: deal-desk\ndescription: Approves deals\n---\n# body" },
+    ]);
+    expect(Object.keys(tree)).toContain(".claude-plugin/plugin.json");
+    const manifest = JSON.parse(tree[".claude-plugin/plugin.json"]);
+    expect(manifest.name).toBe("deal-desk");
+    expect(manifest.description).toBe("Approves deals");
+  });
+});
+
+describe("agent-detail client calls", () => {
+  it("lists versions and deployments at the right URLs", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(200, [])));
+    vi.stubGlobal("fetch", fetchMock);
+    await listVersions("a1");
+    await listDeployments("a1");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/agents/a1/versions");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/deployments?agent_id=a1");
+  });
+
+  it("reads bundle files and surfaces a 404 as ApiError(status=404)", async () => {
+    const ok = vi.fn().mockResolvedValue(
+      jsonResponse(200, { files: [{ path: "skills/x/SKILL.md", content: "body" }] }),
+    );
+    vi.stubGlobal("fetch", ok);
+    const files = await getVersionFiles("a1", "v1");
+    expect(ok.mock.calls[0][0]).toBe("/api/agents/a1/versions/v1/files");
+    expect(files.files[0].path).toBe("skills/x/SKILL.md");
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, { detail: "no bundle stored for this version" })));
+    const err = (await getVersionFiles("a1", "v9").catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+  });
+
+  it("activates a version by POSTing a deployment", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(201, {
+        id: "d1",
+        agent_id: "a1",
+        version_id: "v2",
+        environment: "prod",
+        bot_identity: null,
+        commit_sha: null,
+        status: "active",
+        deployed_at: "now",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const dep = await createDeployment({ agent_id: "a1", version_id: "v2", environment: "prod" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/deployments");
+    expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ agent_id: "a1", version_id: "v2", environment: "prod" });
+    expect(dep.status).toBe("active");
   });
 });

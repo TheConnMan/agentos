@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { C } from "../../tokens";
-import { Card, Chip, Dot } from "../../primitives";
+import { Card, Chip, Dot, EmptyState } from "../../primitives";
 import { hoverBg } from "../../lib/style";
 import { useStore } from "../../state/store";
 import { useTraces, useTrace } from "../../api/hooks";
@@ -145,11 +145,35 @@ function SpanRow({ node, depth }: { node: ObservationNode; depth: number }) {
   );
 }
 
+// Pull the runner's sandbox id from a trace's OTel resource/metadata, if present
+// (set by the runner as `agentos.sandbox_id`: the Docker container name locally,
+// the sandbox pod name on k8s). Returns null when absent, so the UI degrades
+// silently on traces emitted before the attribute existed.
+export function sandboxIdFromTrace(trace: RawTrace | null | undefined): string | null {
+  if (!trace || typeof trace !== "object") return null;
+  const candidates: unknown[] = [trace];
+  for (const key of ["metadata", "resourceAttributes", "resource"]) {
+    const v = (trace as Record<string, unknown>)[key];
+    if (v && typeof v === "object") {
+      candidates.push(v);
+      const nested = (v as Record<string, unknown>).attributes;
+      if (nested && typeof nested === "object") candidates.push(nested);
+    }
+  }
+  for (const bag of candidates) {
+    const rec = bag as Record<string, unknown>;
+    const hit = rec["agentos.sandbox_id"] ?? rec["sandbox_id"];
+    if (typeof hit === "string" && hit.trim() !== "") return hit;
+  }
+  return null;
+}
+
 // Live trace drill-in: the reconstructed observation tree from the API proxy.
 export function RealTraceDetail() {
   const { state, dispatch } = useStore();
-  const { data, loading, error } = useTrace(state.traceOpen);
+  const { data, loading, error, notFound } = useTrace(state.traceOpen);
   const traceName = data ? (str(data.trace as RawTrace, "name") ?? state.traceOpen) : state.traceOpen;
+  const sandboxId = sandboxIdFromTrace(data?.trace as RawTrace | undefined);
 
   return (
     <div>
@@ -162,6 +186,13 @@ export function RealTraceDetail() {
       </button>
       {loading ? <Notice>Loading trace…</Notice> : null}
       {error ? <Notice>Could not load trace: {error}</Notice> : null}
+      {notFound ? (
+        <EmptyState
+          title="No spans recorded for this run yet"
+          sub="This trace exists but has no observations. Spans appear here once the agent finishes a run against it."
+          showDemo={false}
+        />
+      ) : null}
       {data ? (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
@@ -171,6 +202,15 @@ export function RealTraceDetail() {
             </Chip>
             <span style={{ marginLeft: "auto", fontSize: 12.5, color: C.muted, fontFamily: C.mono }}>{state.traceOpen}</span>
           </div>
+          {sandboxId ? (
+            <div
+              data-testid="trace-sandbox"
+              style={{ fontSize: 12.5, color: C.muted, fontFamily: C.mono, marginBottom: 16, display: "flex", alignItems: "center", gap: 7 }}
+            >
+              <Dot color={C.mutedStatus} size={6} />
+              Served by sandbox <span style={{ color: C.text2 }}>{sandboxId}</span>
+            </div>
+          ) : null}
           <Card>
             <div data-testid="span-tree">
               {data.tree.map((n) => (

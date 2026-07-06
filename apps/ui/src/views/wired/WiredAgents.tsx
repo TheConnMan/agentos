@@ -44,9 +44,23 @@ export function WiredAgents() {
           <Card key={a.id}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
               <Dot color={C.brand} size={9} />
-              <span style={{ fontFamily: C.mono, fontSize: 15, fontWeight: 500 }} data-testid="agent-card-name">
+              <button
+                type="button"
+                data-testid="agent-card-name"
+                onClick={() => dispatch({ type: "openAgentDetail", id: a.id })}
+                style={{
+                  fontFamily: C.mono,
+                  fontSize: 15,
+                  fontWeight: 500,
+                  background: "none",
+                  border: "none",
+                  color: C.text,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
                 {a.name}
-              </span>
+              </button>
               <span style={{ marginLeft: "auto", fontSize: 12, color: C.muted, fontFamily: C.mono }}>{a.slack_channel}</span>
             </div>
             <div
@@ -68,9 +82,17 @@ export function WiredAgents() {
                 <div style={{ fontFamily: C.mono, fontSize: 13 }}>{new Date(a.created_at).toLocaleDateString()}</div>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               {/* No status chip: GET /agents carries no bundle/deploy state, so we
                   cannot honestly claim an agent is "live" from the list alone. */}
+              <button
+                type="button"
+                data-testid="edit-skills-link"
+                onClick={() => dispatch({ type: "openAgentDetail", id: a.id })}
+                style={{ background: "none", border: "none", color: C.link, fontSize: 13, cursor: "pointer", padding: 0 }}
+              >
+                Edit skills →
+              </button>
               <button
                 type="button"
                 onClick={() => {
