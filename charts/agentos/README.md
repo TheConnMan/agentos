@@ -113,9 +113,10 @@ workflow (`.github/workflows/release.yaml`) on every push to `main`, as
 All five first-party services build in the matrix: `agentos-api`,
 `agentos-dispatcher`, `agentos-worker`, `agentos-ui`, and `agentos-runner`. The
 chart defaults every first-party image at its `ghcr.io/curie-eng/agentos-*`
-`:latest` with `imagePullPolicy: IfNotPresent`, so the bare install (above) pulls
-from GHCR with no image overrides. `IfNotPresent` avoids re-pulling the mutable
-`latest` digest on every restart; pin an immutable tag for reproducible deploys.
+`:latest` with `imagePullPolicy: Always`, so the bare install (above) pulls
+from GHCR with no image overrides. `Always` keeps a fresh install from silently
+serving a stale `latest` a node cached earlier; pin an immutable tag for
+reproducible deploys, where `Always` on a digest is a cheap no-op.
 A GHCR package inherits its repo's visibility, so on a **private** repo the image
 is not anonymously pullable and the node needs credentials. Two supported paths:
 
@@ -310,7 +311,7 @@ to install only the control plane + backing stores without the runner substrate.
   release per cluster, or leave it false on clusters that already run
   agent-sandbox.
 - **Runner image**: the pool runs `agentos-runner`, defaulting to
-  `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: IfNotPresent`
+  `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: Always`
   (the GHCR path, used by the bare install). For offline
   dev/e2e, `-f values-dev.yaml` overrides it to a locally-built, cluster-imported
   tag with `imagePullPolicy: Never` (`docker build -f runner/Dockerfile -t
