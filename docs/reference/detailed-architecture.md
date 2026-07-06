@@ -1,5 +1,12 @@
 # AgentOS: Detailed Build Architecture (on-prem-first)
 
+> **As-built status: reference (design canon).** This is the pre-build component
+> contract and task DAG the MVP was designed against. Section 11's DAG was
+> executed and the contract is frozen as `packages/aci-protocol` and
+> `packages/plugin-format`. For the system as it was actually built, read the
+> root [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md); for forward work read
+> [`../roadmap.md`](../roadmap.md). Kept as the detailed design reference.
+
 Companion to `on-prem-architecture.md` (build-vs-adopt research) and `claude-design-prompt.md` (UI prototype). This is the build-out plan AND the implementation handoff document: component diagram, container contract, run lifecycle, Agent Sandbox substrate, model-access paths, phased milestones, and the task DAG for parallel implementer agents (section 11). Written 2026-07-02.
 
 ## Definition of done (v0.1 platform)

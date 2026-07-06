@@ -1,5 +1,14 @@
 # Relay (AgentOS) MVP: Build Orchestration Plan
 
+> **As-built status: built.** The task DAG below (R0 through O1) was executed as
+> a fleet of individually-verified lanes; 32+ merged. The spine (R0, C1, D1, G1,
+> F1) plus Waves 1-4 landed, including the eval plane (K1), budgets (L1), and
+> observability (OB1); N1 (soak) remains a scaffold and SK's formal recorded run
+> log is the outstanding cold-start rehearsal. This doc is the record of how the
+> build was orchestrated. For the resulting system read the root
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); for forward work read
+> [`roadmap.md`](roadmap.md).
+
 How the v0.1 MVP gets built as a fleet of individually-verifiable background jobs: the task list with ordering and parallelization, the success criteria per task, the self-verification harness that lets each job prove its own work, and the dispatch/merge workflow. Companion to `mvp-build-plan.md` (the architecture spine) and `reference/detailed-architecture.md` §11 (the task DAG this refines).
 
 Author: 2026-07-05, after reviewing the AgentOS.html design canon against the build docs and auditing the verification substrate (k8scratch, toolchains, Playwright).

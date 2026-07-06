@@ -1,5 +1,12 @@
 # AgentOS MVP: Architecture and Build Order
 
+> **As-built status: built.** This is the plan the MVP was built from; every
+> phase (0 through 4) landed, with the single exception of the N1 soak suite
+> (scaffold only). For the as-built system rather than the plan, read the root
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); for the forward work read
+> [`roadmap.md`](roadmap.md). This file is kept as the design rationale and the
+> record of what the MVP set out to be.
+
 The implementation-ready synthesis for the Curie AgentOS v0.1 MVP. This doc turns the reference design (`detailed-architecture.md`), the on-prem build-vs-adopt research (`on-prem-architecture.md`), and the prototype de-risking runs (`../agent-os-pivot/analysis/agent-os-prototype-derisking-review.md` + its `test-plans/`) into one thing: **what to build, in what order, with the risky infra questions already answered by live prototypes.**
 
 Author: 2026-07-04, after the prototype de-risking passes. Read `detailed-architecture.md` for the full component contract and `../agent-os-pivot/analysis/agent-os-prototype-derisking-review.md` for the evidence behind every "proven" below. This doc is the build spine; those are the reference and the receipts.
