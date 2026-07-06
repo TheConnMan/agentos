@@ -47,10 +47,17 @@ helm upgrade agentos charts/agentos -n agentos --reuse-values \
   --set dispatcher.slack.botToken=xoxb-... \
   --set dispatcher.slack.signingSecret=... \
   --set agentSandbox.runner.fakeModel=false \
-  --set agentSandbox.runner.credentials=sk-ant-...
+  --set agentSandbox.runner.credentials=sk-ant-... \
+  --set 'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23' \
+  --set 'security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP' \
+  --set 'security.networkPolicy.allowedEgress[0].ports[0].port=443'
 ```
 
-Setting the two Slack tokens is what makes the dispatcher deploy.
+Setting the two Slack tokens is what makes the dispatcher deploy. The runner
+NetworkPolicy is fail-closed (`security.networkPolicy.allowedEgress` is empty by
+default), so the `allowedEgress` flags are required to let real model calls reach
+the API -- here Anthropic's published range (`160.79.104.0/23`, TCP 443). Add
+further entries for any MCP endpoints the runner must reach.
 
 **Cluster variants:**
 

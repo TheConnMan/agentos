@@ -81,14 +81,21 @@ Kernel isolation (gVisor, security.gvisor.mode={{ $gvisorMode }}):
 
 Connect Slack + switch to a real model:
   The dispatcher is not deployed (no Slack tokens) and the runner is in offline
-  fake-model mode. Upgrade with your Slack tokens and a model credential to go live:
+  fake-model mode. Upgrade with your Slack tokens and a model credential to go live.
+  The runner NetworkPolicy is fail-closed, so you must ALSO open egress to the
+  model API -- without it real model calls are denied. The flags below allow
+  Anthropic's published range (160.79.104.0/23, TCP 443); add more allowedEgress
+  entries for any MCP endpoints the runner needs.
 
   helm upgrade {{ .Release.Name }} charts/agentos -n {{ .Release.Namespace }} --reuse-values \
     --set dispatcher.slack.appToken=xapp-your-app-token \
     --set dispatcher.slack.botToken=xoxb-your-bot-token \
     --set dispatcher.slack.signingSecret=your-signing-secret \
     --set agentSandbox.runner.fakeModel=false \
-    --set agentSandbox.runner.credentials=sk-ant-your-model-key
+    --set agentSandbox.runner.credentials=sk-ant-your-model-key \
+    --set 'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23' \
+    --set 'security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP' \
+    --set 'security.networkPolicy.allowedEgress[0].ports[0].port=443'
 {{- end }}
 
 {{- if .Values.langfuse.deploy }}

@@ -59,11 +59,19 @@ otelCollector:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
 
-# agentSandbox stays default-off; the G1 e2e enables it explicitly with the
-# backbone toggled down (see charts/agentos/README.md). When it IS enabled for
-# dev/e2e, use the locally-built, cluster-imported runner image rather than the
-# GHCR default, so an offline cluster never tries (and fails) to pull.
+# The sandbox substrate stays OFF in this offline profile. The chart now defaults
+# agentSandbox.deploy and controller.deploy to true (a bare install pulls the
+# GHCR runner and the registry.k8s.io agent-sandbox controller), which a
+# disconnected scratch cluster cannot satisfy. Turn both back off here so
+# values-dev renders no remote-pull sandbox resources; the G1 e2e re-enables the
+# substrate explicitly with the backbone toggled down (see charts/agentos/README.md).
+# When it IS enabled for dev/e2e, use the locally-built, cluster-imported runner
+# image rather than the GHCR default, so an offline cluster never tries (and
+# fails) to pull.
 agentSandbox:
+  deploy: false
+  controller:
+    deploy: false
   runner:
     image: agentos-runner
     tag: latest
