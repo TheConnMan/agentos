@@ -55,6 +55,33 @@ langfuse:
     userEmail: dev@agentos.local
     userName: AgentOS Dev
     userPassword: agentos-dev-password
+  # Seed Langfuse model-price definitions so the Cost view is non-zero on a fresh
+  # install. Langfuse computes a generation's cost by matching its model name to a
+  # price row; with no matching row it reports calculatedTotalCost 0 even when the
+  # generation carries real token usage. A post-install/post-upgrade hook Job POSTs
+  # these to the Langfuse public models API (/api/public/models) using the init
+  # project keys as basic auth. Idempotent: a model whose name already exists is
+  # skipped, so re-upgrades are safe. Gated on langfuse.deploy.
+  modelPricing:
+    enabled: true
+    image: curlimages/curl:8.11.1
+    # Per-token prices (unit TOKENS). matchPattern is an anchored, case-insensitive
+    # regex Langfuse matches against the generation's model name.
+    # Prices are strings so they render as plain decimals (a float would render
+    # in scientific notation); the seed Job injects them unquoted into the JSON
+    # body, so Langfuse still receives them as numbers.
+    models:
+      - modelName: claude-sonnet-5
+        matchPattern: "(?i)^(claude-sonnet-5)$"
+        inputPrice: "0.000003"
+        outputPrice: "0.000015"
+      - modelName: claude-sonnet-4-6
+        matchPattern: "(?i)^(claude-sonnet-4-6)$"
+        inputPrice: "0.000003"
+        outputPrice: "0.000015"
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 128Mi }
   web:
     service:
       type: ClusterIP
@@ -364,6 +391,13 @@ agentSandbox:
     # Fake-model mode round-trips ACI events offline with no credential; flip
     # false (and provide credentials) for real model runs.
     fakeModel: true
+    # Default model for real (non-fake) runs, baked into the sandbox pod template
+    # as AGENTOS_MODEL. The runner passes it to the SDK; leaving it unset lets the
+    # SDK pick its own default (historically an older Sonnet), which also has no
+    # matching Langfuse price row, so the Cost view reads zero. Pinning it here
+    # both fixes the model and pairs with langfuse.modelPricing below. Baked into
+    # the template (not per-claim) so warm-pool binds stay fast. Empty = unset.
+    model: "claude-sonnet-5"
     # Opaque model credential (AGENTOS_CREDENTIALS) the worker forwards into each
     # claim and the warm template bakes as a fallback. EMPTY by default: fake
     # model needs none, and a real credential is per-agent (see the runner

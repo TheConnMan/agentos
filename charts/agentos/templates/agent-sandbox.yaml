@@ -202,6 +202,15 @@ spec:
             - name: AGENTOS_FAKE_MODEL
               value: "1"
             {{- end }}
+            {{- if $runner.model }}
+            # Default model for real runs, baked into the pod template (not
+            # per-claim). Per-claim injection would force a cold create
+            # (envVarsInjectionPolicy Overrides), so baking it keeps warm-pool
+            # binds fast. Pairs with langfuse.modelPricing so the Cost view is
+            # non-zero.
+            - name: AGENTOS_MODEL
+              value: {{ $runner.model | quote }}
+            {{- end }}
             {{- if $runner.credentials }}
             # Warm-pod fallback credential; the worker's per-claim Overrides
             # injection carries the (per-agent) credential on a bound run.
