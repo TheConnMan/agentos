@@ -1,5 +1,12 @@
 # Architecture
 
+> **As-built status: superseded by [`../ARCHITECTURE.md`](../ARCHITECTURE.md).**
+> This was the pre-and-mid-build architecture map. The MVP is now built and
+> live-verified end to end, so the flagship as-built reference is the root
+> `ARCHITECTURE.md`. This file is kept for its message/deploy sequence diagrams
+> and the frozen-seam explanation; its "in progress" and "not yet built"
+> annotations below have been corrected to match main.
+
 AgentOS turns a Slack thread into a conversation with a versioned, sandboxed AI
 agent, and turns a git push into a deployment of that agent. This document is
 the map: the components, how a message flows through them, and how a deploy
@@ -61,13 +68,13 @@ flowchart TB
     GH -- "push (dev/prod branch)" --> API
     API -- "validated bundle" --> Store
     API -- "agents/versions/deployments" --> Postgres
-    Runner -. "AGENTOS_PLUGIN_DIR<br/>(in progress: not yet<br/>deployment-resolved)" .-> Store
 
     UI -- "same-origin /api" --> API
     API -- "trace/metric proxy" --> Langfuse
     API -- "pod log proxy" --> Sandbox
-    CLI -- "local Docker runner<br/>(start/send/eval)" --> Runner
+    CLI -- "local Docker runner<br/>(chat/eval)" --> Runner
     CLI -- "deploy (tar.gz)" --> API
+    Runner -- "AGENTOS_PLUGIN_DIR<br/>(deployment-resolved via<br/>bundle-fetch init container)" --> Store
 ```
 
 **The frozen seam.** `packages/aci-protocol` (the ACI session protocol: inject /
@@ -137,12 +144,12 @@ suspending a sandbox deletes its pod; resume creates a fresh one and injects
 warmth is real within one continuous claim and is never assumed across a
 suspend.
 
-**In progress:** the worker's sandbox claim does not yet resolve which plugin
-bundle/version to mount from the deployment the thread belongs to — today's
-kernel is the walking-skeleton shape (one fixed runner image/plugin). Wiring
-`agentos:runs` events to a specific `deployment_id` and injecting that
-deployment's bundle at claim time is part of the remaining Wave 3/4 work
-(tracked informally as the SK walking-skeleton gate).
+**Built (was in progress):** the worker's claim now resolves which agent,
+version, and `bundle_ref` to mount by exact-matching the Slack channel against
+the active deployment (`apps/worker/src/agentos_worker/binding.py`), and the
+chart's bundle-fetch init containers provision that bundle into the sandbox
+before the runner starts (`charts/agentos/templates/agent-sandbox.yaml`). One
+worker serves many agents; the channel selects the bundle.
 
 ## Deploy flow: a git push becomes a bot identity
 
@@ -208,15 +215,18 @@ within a claim, Langfuse's trace-tree reconstruction, the security rails
 *built* on top of that proven foundation (per the task DAG in
 `docs/build-orchestration-plan.md` and git history): the frozen contracts, the
 API server, the runner, the dispatcher, the UI (shell + wired create/deploy/
-Runs/Metrics/Logs), the sandbox substrate, the worker kernel, the CLI, the
-Helm chart with its security rails (A2), and git-flow (J1).
+Runs/Metrics/Logs/Cost), the sandbox substrate (both the Kubernetes and the
+local Docker client), the worker kernel, the CLI, the Helm chart with its
+security rails (A2), git-flow (J1), the eval plane (K1: eval-stream consumer,
+matrix endpoint, PR-check reporter), budgets + kill switch end to end (L1), and
+Langfuse-backed Metrics/Logs (OB1). The loop was live-verified end to end
+against a real Slack workspace on a real model, plus a k8scratch install and a
+local middle-mode run.
 
-**Not yet built / explicitly deferred:** the eval runner + PR-check + eval
-matrix endpoint (K1), end-to-end budget enforcement wired through the API and
-UI Cost view (L1 — the runner already enforces its own per-run token ceiling
-and daily USD cap locally), the soak/chaos suite (N1), the walking-skeleton
-verification gate (SK) that proves the whole loop live against a real Slack
-workspace, the Interview-Me onboarding compiler, and automatic memory
-generation. The UI's Fleet, Evals, Versions, Usage, and Cost views still run
-on fixture data pending those lanes; see `apps/ui/README.md` for the current
-fixture-vs-wired split.
+**Still deferred:** the N1 soak/chaos suite (the `tests/soak` harness is a
+scaffold), the runner-side `agentos.sandbox_id` trace stitch, retiring the UI
+fixture/showroom surface, the Interview-Me onboarding compiler, automatic memory
+generation, and non-Anthropic providers. The UI's Evals matrix, Versions, Usage,
+and Settings views still run on fixtures or `ComingSoon` stubs pending those
+lanes; see `apps/ui/README.md` and `docs/roadmap.md` for the current
+fixture-vs-wired split and the ordered forward work.

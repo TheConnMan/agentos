@@ -1,5 +1,12 @@
 # Curie AgentOS: Prototype De-risking Review
 
+> **As-built status: historical (the receipts).** This is the pre-build
+> evidence: the live prototype runs that settled the risky infrastructure bets
+> before any of the MVP was built. Every verdict here held up; the system that
+> got built on top of it is described in the root
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md). Kept unchanged as the record of why
+> the build could start with confidence.
+
 Author: prototype-derisking pass, 2026-07-04. Companion to `.projects/agent-os-pivot/agent-os-product-direction.md` (strategy), `agent-architecture-decision-menu.md` (the 10-axis menu), and `.projects/supabase-for-agents/detailed-architecture.md` (the build plan for "AgentOS", the v0.1 platform). This document exists to answer one question: **which architecture assumptions in the AgentOS build plan are most likely to be wrong, and which of those can a cheap mini-prototype settle before the full build starts.**
 
 Scope note. The strategy doc argues *what* to build and where the moat is (verification oracle + eval reproducibility). This review deliberately does not re-litigate the strategy. It targets the **implementation architecture** in `detailed-architecture.md`, because that is where the Phase-0 spikes live and where the money gets spent. Where a strategy risk is unavoidable I flag it and move on.
