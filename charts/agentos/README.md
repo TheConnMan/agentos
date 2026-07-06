@@ -37,6 +37,18 @@ helm install agentos charts/agentos -n agentos --create-namespace \
   -f charts/agentos/values-e2e-nogvisor.yaml
 ```
 
+On a small cluster (~4 GB / 4 cores, e.g. an un-resized k8scratch) the default
+resource requests may not schedule. Add the sizing-only overlay
+`values-demo-small.yaml` (it carries values-dev's footprint with no image
+overrides, so images stay on GHCR):
+
+```bash
+helm install agentos charts/agentos -n agentos --create-namespace \
+  -f charts/agentos/values-ghcr.yaml \
+  -f charts/agentos/values-demo-small.yaml
+# ... append -f charts/agentos/values-e2e-nogvisor.yaml on a no-runsc cluster
+```
+
 If the target cluster already runs the agent-sandbox controller, add
 `--set agentSandbox.controller.deploy=false` (the controller is cluster-scoped,
 one per cluster).
