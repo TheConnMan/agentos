@@ -216,8 +216,10 @@ within a claim, Langfuse's trace-tree reconstruction, the security rails
 `docs/build-orchestration-plan.md` and git history): the frozen contracts, the
 API server, the runner, the dispatcher, the UI (shell + wired create/deploy/
 Runs/Metrics/Logs/Cost), the sandbox substrate (both the Kubernetes and the
-local Docker client), the worker kernel, the CLI, the Helm chart with its
-security rails (A2), git-flow (J1), the eval plane (K1: eval-stream consumer,
+local Docker client), the worker kernel, the CLI (local inner loop plus the
+cluster operator lifecycle: up/connect-slack/go-live/status/down), the Helm
+chart with its security rails (A2) and the runner-image prewarm DaemonSet,
+git-flow (J1), the eval plane (K1: eval-stream consumer,
 matrix endpoint, PR-check reporter), budgets + kill switch end to end (L1), and
 Langfuse-backed Metrics/Logs (OB1). The loop was live-verified end to end
 against a real Slack workspace on a real model, plus a k8scratch install and a

@@ -21,14 +21,18 @@ diagram.
 
 ## Status
 
-The core spine is built and covered by CI: the frozen contracts, the API
-server, the dispatcher, the runner, the sandbox substrate, the worker
-concurrency kernel, the UI (shell plus create/deploy/Runs/Metrics/Logs wired
-to the real backend), the CLI, the Helm chart with its security rails, and
-git-flow (push-to-deploy, merge-to-promote). Still ahead: the eval runner +
-PR-check pipeline, end-to-end budget enforcement through the UI's Cost view,
-the soak/chaos suite, and the walking-skeleton verification gate against a
-real Slack workspace. See "What is proven vs. what is designed" in
+The core spine is built, covered by CI, and was live-verified end to end
+against a real Slack workspace on a real model: the frozen contracts, the API
+server, the dispatcher, the runner, the sandbox substrate (Kubernetes and
+local Docker), the worker concurrency kernel with deployment-to-runtime
+binding, the UI (shell plus create/deploy/Runs/Metrics/Logs/Cost/Versions
+wired to the real backend), the CLI (local inner loop plus the cluster
+operator lifecycle), the Helm chart with its security rails and the
+runner-image prewarm DaemonSet, git-flow (push-to-deploy, merge-to-promote),
+the eval plane (eval-stream consumer, matrix endpoint, PR-check reporter), and
+budgets plus the kill switch. Still ahead: wiring the UI's Evals matrix and
+Usage/Settings views to their existing backends, the soak/chaos suite, and
+retiring the fixture/showroom surface. See "What is proven vs. what is designed" in
 [`docs/architecture.md`](docs/architecture.md#what-is-proven-vs-what-is-designed)
 for the precise built/in-progress split.
 
@@ -41,7 +45,7 @@ for the precise built/in-progress split.
 | [`runner`](runner/README.md) | Python (claude-agent-sdk) | The streaming session server that implements the ACI contract inside a sandbox |
 | [`apps/api`](apps/api/README.md) | Python (FastAPI) | Agents/versions/deployments CRUD, plugin bundle pipeline, GitHub git-flow, Langfuse + pod-log proxies |
 | [`apps/ui`](apps/ui/README.md) | React (Vite + TS) | The AgentOS console: author, deploy, and observe agents |
-| [`cli`](cli/README.md) | Rust (clap + tokio) | The `agentos` CLI: local emulation, evals, and deploy from a laptop |
+| [`cli`](cli/README.md) | Rust (clap + tokio) | The `agentos` CLI: local emulation, evals, deploy, and the cluster operator lifecycle (`up`/`connect-slack`/`go-live`/`status`/`down`) |
 | [`charts/agentos`](charts/agentos/README.md) | Helm | The umbrella chart: Langfuse + Postgres + Valkey + ClickHouse + MinIO + OTel Collector + the Agent Sandbox substrate, with security rails on by default |
 | [`packages/aci-protocol`](packages/aci-protocol/README.md) | Python (frozen, codegen to TS + Rust) | The ACI session protocol every lane speaks |
 | [`packages/plugin-format`](packages/plugin-format/README.md) | Python (frozen, codegen to JSON Schema) | The Claude Code plugin bundle shape, verbatim |
@@ -70,6 +74,33 @@ before starting the worker and it is forwarded into each runner container. For a
 fully offline round-trip, set `AGENTOS_FAKE_MODEL=1` — an explicit test-only knob;
 without a credential and without that flag the worker refuses to start rather than
 silently faking. See the middle-mode runbook below.
+
+## Operating a cluster install
+
+The same `agentos` binary installs and runs the platform on a Kubernetes
+cluster, wrapping the Helm chart the way `linkerd` or `cilium` wrap theirs.
+Every verb takes `--dry-run` to print the exact `helm`/`kubectl` command line
+(secrets masked) without executing.
+
+- `agentos up` runs `helm upgrade --install` of `charts/agentos` into the
+  `agentos` namespace, exposing the UI and Langfuse on node ports (pass
+  `--no-expose` to keep them ClusterIP-only). `agentos status` reports release
+  health, pod readiness, and the access URLs; the UI URL carries `?api=1`, so
+  it opens wired to the in-cluster API (the deployed UI proxies `/api/` there).
+- `agentos connect-slack` wires Slack app/bot tokens into the release.
+  `agentos go-live` switches the runner off the fake model and opens its
+  fail-closed egress policy to the model provider (credentials from
+  `AGENTOS_MODEL_CREDENTIALS`, Anthropic's published CIDR by default).
+- `agentos down` uninstalls the release and sweeps its runtime namespaces; the
+  `agents.x-k8s.io` CRDs are left in place.
+- `agentos message "..."` drives a deployed cluster end to end with no Slack at
+  all: it stands up a local Slack API stub, resolves the target agent's channel
+  from the API, enqueues the exact event a Slack mention would produce, boots
+  the real Kubernetes sandbox, and prints the reply. This lets a developer
+  iterate on an agent built for someone else's workspace with no Slack access;
+  `agentos connect-slack` later swaps the stub for the real workspace.
+- `agentos local up|down|status` wraps the `compose.dev.yaml` dev stack below,
+  so the inner loop and the cluster share one CLI.
 
 ## Quickstart
 
