@@ -26,12 +26,17 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 # ATX headings (# .. ######) -> a bold line; Slack has no heading syntax.
 _HEADING_RE = re.compile(r"^[ ]{0,3}#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
+# List bullets (- item / * item) -> the bullet character; Slack mrkdwn has no
+# list syntax. Leading whitespace is preserved so nested bullets stay indented.
+# The trailing space is required, which excludes *italic* (no space after *).
+_BULLET_RE = re.compile(r"^([ \t]*)[-*] ", re.MULTILINE)
 
 
 def _convert_segment(text: str) -> str:
     """Rewrite the Markdown constructs Slack renders differently."""
 
     text = _HEADING_RE.sub(lambda m: f"*{m.group(1).strip()}*", text)
+    text = _BULLET_RE.sub(lambda m: f"{m.group(1)}• ", text)
     text = _BOLD_RE.sub(lambda m: f"*{m.group(1)}*", text)
     text = _LINK_RE.sub(lambda m: f"<{m.group(2)}|{m.group(1)}>", text)
     return text
