@@ -10,6 +10,7 @@ pub mod chat;
 pub mod commands;
 pub mod docker;
 pub mod evals;
+pub mod local;
 pub mod ndjson;
 pub mod ops;
 pub mod queue;

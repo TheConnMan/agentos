@@ -48,7 +48,7 @@ impl CmdArg {
 }
 
 impl OpsCommand {
-    fn new(program: &str, args: Vec<CmdArg>) -> Self {
+    pub(crate) fn new(program: &str, args: Vec<CmdArg>) -> Self {
         Self {
             program: program.to_string(),
             args,
@@ -71,7 +71,7 @@ impl OpsCommand {
     }
 }
 
-fn plain(s: impl Into<String>) -> CmdArg {
+pub(crate) fn plain(s: impl Into<String>) -> CmdArg {
     CmdArg::Plain(s.into())
 }
 
@@ -340,7 +340,7 @@ pub fn host_from_server_url(server: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Fail with a clear one-line error if `bin` is not on `PATH`.
-fn require_on_path(bin: &str) -> Result<()> {
+pub(crate) fn require_on_path(bin: &str) -> Result<()> {
     let found = std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
         .unwrap_or(false);
@@ -352,7 +352,7 @@ fn require_on_path(bin: &str) -> Result<()> {
 }
 
 /// Print each command line (secrets masked) and exit without running anything.
-fn print_dry_run(cmds: &[OpsCommand]) {
+pub(crate) fn print_dry_run(cmds: &[OpsCommand]) {
     for cmd in cmds {
         println!("{}", cmd.display());
     }
@@ -360,7 +360,7 @@ fn print_dry_run(cmds: &[OpsCommand]) {
 
 /// Run one command with inherited stdio (so helm/kubectl output streams live),
 /// echoing the masked command line first. Bails on a nonzero exit.
-async fn run_streaming(cmd: &OpsCommand) -> Result<()> {
+pub(crate) async fn run_streaming(cmd: &OpsCommand) -> Result<()> {
     println!("+ {}", cmd.display());
     let status = Command::new(&cmd.program)
         .args(cmd.argv())
