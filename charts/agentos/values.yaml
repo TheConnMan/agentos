@@ -226,8 +226,9 @@ otelCollector:
 #   - ui         static React SPA served by nginx, proxying /api to the API
 #
 # IMAGE DEFAULTS: every app image defaults to the GHCR package the Release
-# workflow publishes, pulled `IfNotPresent` so a demo node does not re-pull the
-# mutable `latest` digest on every restart (pin an immutable tag for production).
+# workflow publishes, pulled `Always` so a fresh install on a node that cached an
+# older `latest` digest never silently serves a stale image (pin an immutable tag
+# for production, where `Always` on a digest is a cheap no-op).
 # The repo and its packages are public, so NO imagePullSecret is needed by
 # default; the `imagePullSecrets` plumbing stays for private forks. For offline
 # dev/e2e use values-dev.yaml, which repoints each image at a locally-built,
@@ -239,7 +240,7 @@ api:
   image:
     repository: ghcr.io/curie-eng/agentos-api
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   imagePullSecrets: []
   # Single shared API key the UI and CLI authenticate with. Dev default; override
   # (or point at an existingSecret) in any shared deployment.
@@ -264,7 +265,7 @@ dispatcher:
   image:
     repository: ghcr.io/curie-eng/agentos-dispatcher
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   imagePullSecrets: []
   # Slack credentials. Socket Mode means the process dials out (no ingress), so
   # there is no Service. Left empty the supervisor just backs off and retries, so
@@ -284,7 +285,7 @@ worker:
   image:
     repository: ghcr.io/curie-eng/agentos-worker
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   imagePullSecrets: []
   # The worker drives the Kubernetes API to claim/manage agent-sandbox CRDs, so
   # it gets a ServiceAccount + a namespaced Role scoped to exactly those verbs
@@ -314,7 +315,7 @@ ui:
   image:
     repository: ghcr.io/curie-eng/agentos-ui
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   imagePullSecrets: []
   service:
     type: ClusterIP
@@ -398,11 +399,11 @@ agentSandbox:
     # which overrides this back to `agentos-runner` with imagePullPolicy Never.
     image: ghcr.io/curie-eng/agentos-runner
     tag: latest
-    # IfNotPresent so a demo node does not re-pull the mutable `latest` digest on
-    # every restart. The tradeoff: a node that cached an older `latest` keeps
-    # running it until the image is removed. Pin `tag` to an immutable sha/version
-    # for production so IfNotPresent is both cache-friendly AND reproducible.
-    imagePullPolicy: IfNotPresent
+    # Always so a fresh install never serves a stale `latest`: a node that cached
+    # an older `latest` digest would otherwise keep running it under IfNotPresent
+    # until the image was manually removed. Pin `tag` to an immutable sha/version
+    # for production, where `Always` on a digest is a cheap no-op.
+    imagePullPolicy: Always
     # GHCR packages on a private repo are NOT anonymously pullable -- the node
     # needs a docker-registry pull Secret. List pre-created Secret names here,
     # e.g. [{ name: ghcr-pull }]. Leave empty when the package is public or for
