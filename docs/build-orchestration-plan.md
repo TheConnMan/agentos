@@ -11,11 +11,11 @@
 
 How the v0.1 MVP gets built as a fleet of individually-verifiable background jobs: the task list with ordering and parallelization, the success criteria per task, the self-verification harness that lets each job prove its own work, and the dispatch/merge workflow. Companion to `mvp-build-plan.md` (the architecture spine) and `reference/detailed-architecture.md` §11 (the task DAG this refines).
 
-Author: 2026-07-05, after reviewing the design canon against the build docs and auditing the verification substrate (k8scratch, toolchains, Playwright).
+Author: 2026-07-05, after reviewing the design canon against the build docs and auditing the verification substrate (the scratch cluster, toolchains, Playwright).
 
 ## 1. What the design file adds to the scope
 
-The design canon (per `claude-design-prompt.md` §4: the exported source outranks the prompt) is authoritative. Its feature index enumerates 18 shippable features in 6 groups plus 2 scaffolding items. Mapping against the MVP scope in `mvp-build-plan.md` §4 surfaced three deltas; Brian decided all three on 2026-07-05:
+The design canon (per `claude-design-prompt.md` §4: the exported source outranks the prompt) is authoritative. Its feature index enumerates 18 shippable features in 6 groups plus 2 scaffolding items. Mapping against the MVP scope in `mvp-build-plan.md` §4 surfaced three deltas; the maintainers decided all three on 2026-07-05:
 
 | Design feature | MVP docs say | Decision |
 |---|---|---|
@@ -29,7 +29,7 @@ Naming: repo and commits say **Relay**; the design and CLI say **agentos**. Trea
 
 ## 2. Stack decisions (locked this session)
 
-Brian's calls, replacing `detailed-architecture.md` §9's "TypeScript end-to-end" lean:
+The maintainers' calls, replacing `detailed-architecture.md` §9's "TypeScript end-to-end" lean:
 
 - **Backend: Python 3.13** — API server (**FastAPI**), dispatcher (**Slack Bolt for Python**, Socket Mode), worker (plain **redis-py against Valkey Streams** with consumer groups — the concurrency kernel is hand-rolled correctness logic either way; a framework like Celery/arq would obscure the finish-race CAS, and Streams give explicit ack + at-least-once + idempotency keys), runner (**claude-agent-sdk Python** — this is what the prototypes proved, so the proven code seeds production directly). Poetry or uv workspace, pytest, ruff, mypy.
 - **UI: React** — Vite + React + TypeScript, no meta-framework. Design tokens lifted verbatim from the design canon's `C = {...}` block. Playwright for E2E.
@@ -48,14 +48,14 @@ The user requirement: every job must verify its own work with no human in the lo
 - *The gate:* a committed Playwright E2E suite asserting behavior (deploy flow completes, runs view renders the tool-call tree, eval matrix grid populates) — runs headless in CI against the compose stack. This is the deletion-test-passing regression net.
 - *The agent's eyes:* **`@playwright/mcp` added to this repo's `.mcp.json`.** Implementing agents drive the real browser interactively — click through the flow they just built, take screenshots, and diff against the corresponding design-canon demo state (the design mockup renders locally, so the agent can screenshot design-vs-implementation side by side). The MCP is for verification-during-development and visual fidelity checks; the committed test suite is the merge gate. Both use the Chrome + Playwright 1.61 already on this machine.
 
-**V3 — cluster verification: k8scratch.** The scratch k3s cluster is alive, clean (prototype resources torn down), and reachable via the repo-local kubeconfig (`~/k8scratch/.kube/k8scratch.yaml`). It's where G1 (sandbox substrate), A1/A2 (Helm + security rails), and N1 (soak) verify. **Constraint: the box is 4 GB / 4 cores; the full-stack definition-of-done target is 8-10 vCPU / ~20 GB.** Plan: early cluster tasks (G1 sandbox lifecycle, A2 NetworkPolicy probes) fit in 4 GB with the observability stack left on the dev box; before the walking-skeleton integration gate, **resize the LXC to ≥8 vCPU / 16-20 GB** (Brian action, listed in §7). Fallback if resize is inconvenient: a `kind` cluster on the dev box for chart tests, with k8scratch reserved for sandbox/gVisor work — but the resize is strictly better because a resized k8scratch *is* the definition-of-done environment.
+**V3 — cluster verification: the scratch cluster.** The scratch k3s cluster is alive, clean (prototype resources torn down), and reachable via the repo-local kubeconfig (the scratch cluster's repo-local kubeconfig). It's where G1 (sandbox substrate), A1/A2 (Helm + security rails), and N1 (soak) verify. **Constraint: the box is 4 GB / 4 cores; the full-stack definition-of-done target is 8-10 vCPU / ~20 GB.** Plan: early cluster tasks (G1 sandbox lifecycle, A2 NetworkPolicy probes) fit in 4 GB with the observability stack left on the dev box; before the walking-skeleton integration gate, **resize the LXC to ≥8 vCPU / 16-20 GB** (a maintainer action, listed in §7). Fallback if resize is inconvenient: a `kind` cluster on the dev box for chart tests, with the scratch cluster reserved for sandbox/gVisor work — but the resize is strictly better because a resized scratch cluster *is* the definition-of-done environment.
 
 **External dependencies with no self-serve verification path (flagged, not blocking early waves):**
-- *Slack:* the architecture is deliberately emulation-first — `agentos send` injects synthetic events with no workspace, so D1/F1/I1/most of E1 verify Slack-free. A real test workspace + **two** Slack apps (`@agentos`, `@agentos-dev`) is needed only at the walking-skeleton gate and for J1. Brian creates these (~15 min).
+- *Slack:* the architecture is deliberately emulation-first — `agentos send` injects synthetic events with no workspace, so D1/F1/I1/most of E1 verify Slack-free. A real test workspace + **two** Slack apps (`@agentos`, `@agentos-dev`) is needed only at the walking-skeleton gate and for J1. A maintainer creates these (~15 min).
 - *Anthropic credential:* dev runs use the `CLAUDE_CODE_OAUTH_TOKEN` path PT-2 proved. Runner integration tests that burn real tokens are tagged `@live` and run at integration gates, not on every PR.
 - *GitHub App (J1):* needs the repo to exist on GitHub (see §7) and an App registration at Phase-3 time.
 
-The harness itself is encoded in the repo's `CLAUDE.md` (verification commands per package, compose stack usage, k8scratch access pattern, Playwright MCP conventions, the frozen-contract escalation rule) — so every background job inherits the how-to-verify knowledge without re-discovery.
+The harness itself is encoded in the repo's `CLAUDE.md` (verification commands per package, compose stack usage, scratch-cluster access, Playwright MCP conventions, the frozen-contract escalation rule) — so every background job inherits the how-to-verify knowledge without re-discovery.
 
 ## 4. The ordered task list
 
@@ -67,14 +67,14 @@ The DAG from `detailed-architecture.md` §11, adjusted for the stack decisions, 
 
 | ID | Task | Owns | Deps | Done when | Verify |
 |---|---|---|---|---|---|
-| **R0** | Repo bootstrap + verification harness: GitHub remote, monorepo layout (`apps/{api,dispatcher,worker,ui}`, `cli/`, `runner/`, `packages/{aci-protocol,plugin-format}`, `charts/agentos`), `compose.dev.yaml` (V1 stack), GitHub Actions CI skeleton, `.mcp.json` (+ `@playwright/mcp`), repo `CLAUDE.md` with per-package verify commands + k8scratch access + escalation rules | repo root | — | `docker compose -f compose.dev.yaml up` is healthy (Langfuse UI answers, PG/Valkey/MinIO up); CI runs green on a trivial PR; `CLAUDE.md` documents every verify command | V0+V1 |
+| **R0** | Repo bootstrap + verification harness: GitHub remote, monorepo layout (`apps/{api,dispatcher,worker,ui}`, `cli/`, `runner/`, `packages/{aci-protocol,plugin-format}`, `charts/agentos`), `compose.dev.yaml` (V1 stack), GitHub Actions CI skeleton, `.mcp.json` (+ `@playwright/mcp`), repo `CLAUDE.md` with per-package verify commands + scratch-cluster access + escalation rules | repo root | — | `docker compose -f compose.dev.yaml up` is healthy (Langfuse UI answers, PG/Valkey/MinIO up); CI runs green on a trivial PR; `CLAUDE.md` documents every verify command | V0+V1 |
 | **C1** | Frozen contracts: `aci-protocol` (session protocol + NDJSON events as Pydantic, per detailed-architecture §0) + `plugin-format` (Claude Code plugin shape verbatim) + JSON Schema export + TS/Rust codegen + schema-compat CI test | `packages/*` | R0 | Pydantic models express the §0 contract; committed JSON Schemas regenerate byte-identical in CI; generated TS + Rust compile; a deliberately-breaking schema change fails the compat test | V0 |
 
 ### Wave 1 — Fan-out (up to 5 parallel jobs after C1)
 
 | ID | Task | Owns | Deps | Done when | Verify |
 |---|---|---|---|---|---|
-| **A1** | Helm umbrella v0: Langfuse+PG+Valkey+OTel deps, dev profile, BYO toggles, the two preflights (CPU-AVX/ClickHouse pin, NetworkPolicy-enforcement probe) | `charts/agentos` | C1 | `helm install` on k8scratch (or kind) brings up the stack; both preflights demonstrably fire on a violating config | V3 |
+| **A1** | Helm umbrella v0: Langfuse+PG+Valkey+OTel deps, dev profile, BYO toggles, the two preflights (CPU-AVX/ClickHouse pin, NetworkPolicy-enforcement probe) | `charts/agentos` | C1 | `helm install` on the scratch cluster (or kind) brings up the stack; both preflights demonstrably fire on a violating config | V3 |
 | **B1** | API server core: FastAPI + Postgres schema (agents/versions/deployments CRUD, auth, Langfuse proxy endpoints), OpenAPI emitted | `apps/api` | C1 | CRUD integration tests pass against real Postgres from the compose stack; OpenAPI spec committed; Langfuse proxy returns a reconstructed trace tree for a seeded trace | V0+V1 |
 | **D1** | Runner image + SDK adapter: productize the PT-2/PT-E prototype — streaming session server implementing full ACI v0.1, `AGENTOS_BUDGET` enforcement, `side_effect_flag`, plugin-bundle loading | `runner/` | C1 | ACI conformance suite (lives in `packages/aci-protocol`) passes: initial event + mid-run steer + interrupt + NDJSON stream + gen_ai spans in compose-stack Langfuse; budget ceiling halts a run; `@live` test proves real cache reuse | V0+V1 |
 | **E1** | Dispatcher: Bolt-python Socket Mode, <3s ack + placeholder, enqueue to Valkey Streams with idempotency key, reconnect supervision | `apps/dispatcher` | C1 | Simulated Slack event (Bolt test harness) → acked, placeholder posted, queued exactly once; duplicate retry deduped; no real workspace needed | V0+V1 |
@@ -84,7 +84,7 @@ The DAG from `detailed-architecture.md` §11, adjusted for the stack decisions, 
 
 | ID | Task | Owns | Deps | Done when | Verify |
 |---|---|---|---|---|---|
-| **G1** | Agent Sandbox substrate: controller + extensions install in chart, warm pool, `thread_ts → sandbox_id` affinity store, claim/release, cold-restart rehydrate path design | `charts/agentos/agent-sandbox` + `apps/worker` (substrate module only) | A1, D1 | On k8scratch: warm-pool claim <1s binds a pre-warmed sandbox running the D1 image; consecutive turns to the same claim show `cache_read_input_tokens > 0`; suspend/resume rehydrates from history (asserted, not assumed) | V3 |
+| **G1** | Agent Sandbox substrate: controller + extensions install in chart, warm pool, `thread_ts → sandbox_id` affinity store, claim/release, cold-restart rehydrate path design | `charts/agentos/agent-sandbox` + `apps/worker` (substrate module only) | A1, D1 | On the scratch cluster: warm-pool claim <1s binds a pre-warmed sandbox running the D1 image; consecutive turns to the same claim show `cache_read_input_tokens > 0`; suspend/resume rehydrates from history (asserted, not assumed) | V3 |
 | **B2** | Plugin bundle pipeline: validate (via `plugin-format`) → immutable versioned bundle → MinIO/S3, fetch-by-version | `apps/api` (bundles module) | B1 | Upload → validated → versioned bundle stored; malformed bundle rejected with actionable error; runner fetches by version in an integration test | V0+V1 |
 | **H1b** | UI wired to real backend: editor→deploy against B1/B2, Runs view on the Langfuse proxy, states 1-3 real | `apps/ui` | B1, B2, H1a | The design's state-3 flow (create → Deploy → first trace visible) works E2E against the compose stack; Playwright gate green | V2 |
 | **I1** | `agentos` CLI (Rust): init/start/send/eval, local runner orchestration via Docker, boxed `start` summary per design | `cli/` | C1, D1 | `agentos send "..."` round-trips a synthetic event through a local runner container and streams the reply, zero Slack involved; `cargo test` + a scripted E2E pass | V0+V1 |
@@ -94,7 +94,7 @@ The DAG from `detailed-architecture.md` §11, adjusted for the stack decisions, 
 | ID | Task | Owns | Deps | Done when | Verify |
 |---|---|---|---|---|---|
 | **F1** | **Worker — the prod-hard kernel. Single owner, never split, adversarial review.** Routing rule, finish-race CAS, steer/interrupt, no-retry-after-side-effects, resume-rehydrate | `apps/worker` | D1, E1, G1 | Each rule has an integration test that provokes the race (concurrent send during finish, kill mid-run, side-effect-flagged failure escalates); ordering preserved under concurrent sends | V0+V1+V3 |
-| **SK** | **Walking-skeleton gate (verification job, not a build job):** Slack message → dispatcher → worker → claimed sandbox → runner → threaded reply, trace in Langfuse, steering live | — | F1 + resized k8scratch + real Slack workspace | The mvp-build-plan Phase-1 exit criterion demonstrated on k8scratch, recorded run log committed to `docs/` | V3 |
+| **SK** | **Walking-skeleton gate (verification job, not a build job):** Slack message → dispatcher → worker → claimed sandbox → runner → threaded reply, trace in Langfuse, steering live | — | F1 + resized scratch cluster + real Slack workspace | The mvp-build-plan Phase-1 exit criterion demonstrated on the scratch cluster, recorded run log committed to `docs/` | V3 |
 | **J1** | GitHub App, branch→bot identities, promote-on-merge | `apps/api` (gh module) | B1, B2 | Push to dev deploys `@agentos-dev`; merge promotes `@agentos`; identities routed by deployment table | V1 + live GitHub |
 | **K1** | Eval runner Jobs + PR checks + eval matrix endpoint | `apps/worker` (eval module) | J1, D1 | PR → eval Jobs fan out → GitHub check reports; matrix endpoint returns the grid across N pinned versions; UI matrix tab renders it | V1+V3 |
 | **OB1** | Metrics + Logs observability, Langfuse-backed (design delta, §1): Metrics tab charts (runs, latency, tokens, cost, error rate per agent/env with range selector) served by API endpoints over the Langfuse Metrics API; per-run "runner logs" affordance in trace detail, proxying the K8s pod-logs API for the serving sandbox; `/metrics` (Prometheus format) instrumentation on api/dispatcher/worker for operator scraping — no Prometheus/Loki adoption in-chart | `apps/api` (obs module) + `apps/ui` (metrics/logs tabs) | B1, H1b | Metrics tab renders real series for a seeded workload, verified against Langfuse's own aggregates; trace detail fetches live runner logs from a real sandbox pod; `curl /metrics` on each service returns well-formed Prometheus exposition | V1+V2+V3 |
@@ -105,16 +105,16 @@ The DAG from `detailed-architecture.md` §11, adjusted for the stack decisions, 
 |---|---|---|---|---|---|
 | **A2** | Security rails as chart defaults (the four PT-3-proven rails) | `charts/agentos` (policies) | A1 | The PT-3 probe suite re-runs green against the chart's defaults: egress+metadata blocked with before/after control, secret isolation, non-root/RO-rootfs, gVisor class applied | V3 |
 | **L1** | Budgets + kill switch end-to-end (runner enforce → API → UI Cost view) | seam across api/ui/runner (lead-coordinated) | F1, H1b | Test hits per-run ceiling and daily cap, run halts gracefully; kill switch stops a live agent <5s | V1+V3 |
-| **N1** | Soak/chaos suite: concurrent threads + mid-thread batch job + sandbox-kill-mid-run + resume-rehydrate | `tests/soak` | F1, G1, A2 | Definition-of-done soak passes 3 consecutive runs on k8scratch: no cross-talk, no duplicate side effects | V3 |
+| **N1** | Soak/chaos suite: concurrent threads + mid-thread batch job + sandbox-kill-mid-run + resume-rehydrate | `tests/soak` | F1, G1, A2 | Definition-of-done soak passes 3 consecutive runs on the scratch cluster: no cross-talk, no duplicate side effects | V3 |
 | **O1** | Quickstart docs + demo agent | `docs/` | K1, L1, N1 | Cold reader reaches agent-live-in-Slack from README alone, <15 min | manual |
 
 **Explicitly deferred (design-visible but stubbed):** the interview onboarding wizard (MVP uses the classic create-agent modal), the Memory tab (and automatic memory generation), the real Interview-Me compiler, the Loki live-tail Logs view + kube-prometheus-stack adoption (fleet/leave-behind phase; OB1's per-run log proxy covers MVP debugging), fleet dashboard + drift timeline (state 6), model-gateway toggle. Each gets an empty-state in the UI per the design's own empty-state patterns.
 
 ## 5. Orchestration model: how the jobs run
 
-**Mechanism (revised 2026-07-05, Brian's call): all local, no Linear tickets, no remote, no PRs.** This is a prototype — the repo stays local until Brian decides to create a remote. Each task runs as an **in-session sub-agent** spawned by the orchestrator with the standard prompt structure (Goal, Context, Constraints, Done-when — the task row verbatim). Each sub-agent works on a `task/<id>-<desc>` branch; the orchestrator then **verifies the done-when itself** (runs the suites, drives the UI via Playwright MCP, hits k8scratch) and merges `--no-ff` to main. Serialized spine work may land directly on main when branching adds no value; anything parallel always branches.
+**Mechanism (revised 2026-07-05, a maintainer decision): all local, no Linear tickets, no remote, no PRs.** This is a prototype — the repo stays local until the maintainers decide to create a remote. Each task runs as an **in-session sub-agent** spawned by the orchestrator with the standard prompt structure (Goal, Context, Constraints, Done-when — the task row verbatim). Each sub-agent works on a `task/<id>-<desc>` branch; the orchestrator then **verifies the done-when itself** (runs the suites, drives the UI via Playwright MCP, hits the scratch cluster) and merges `--no-ff` to main. Serialized spine work may land directly on main when branching adds no value; anything parallel always branches.
 
-**The orchestrator loop:** dispatch a wave of sub-agents (disjoint directory ownership) → as each reports, verify its done-when against real output → merge `--no-ff` in dependency order → run the wave's integration checks (compose stack up, cross-package tests, Playwright suite) → dispatch the next wave. Brian reviews asynchronously by reading merged history and the orchestrator's reports; nothing blocks on him. Special handling:
+**The orchestrator loop:** dispatch a wave of sub-agents (disjoint directory ownership) → as each reports, verify its done-when against real output → merge `--no-ff` in dependency order → run the wave's integration checks (compose stack up, cross-package tests, Playwright suite) → dispatch the next wave. The maintainer reviews asynchronously by reading merged history and the orchestrator's reports; nothing blocks on them. Special handling:
 
 1. **F1 is sacred:** one sub-agent, never split, escalated review before merge (spec-vs-impl + side-effects-detective + a Codex pass on the diff) per the standing adversarial-review guidance for the kernel.
 2. **SK and N1 are verification tasks, not build tasks:** their deliverable is a committed run log proving the gate, echoing the PT-1..PT-4 evidence discipline.
@@ -125,18 +125,18 @@ The DAG from `detailed-architecture.md` §11, adjusted for the stack decisions, 
 
 ## 6. What "the spine" means for sequencing
 
-Brian's stated minimum: the core spine plus a decent chunk of UI + backend. That is exactly **Waves 0-2 + F1 + SK**: after those, a Slack message is answered by a versioned plugin in a claimed sandbox with traces, steering works, the UI authors and deploys plugins and shows runs, and the CLI emulates Slack locally. Waves 3-4 (git-flow wedge, budgets, soak, security defaults) follow the same machinery once the spine demo lands.
+The maintainer's stated minimum: the core spine plus a decent chunk of UI + backend. That is exactly **Waves 0-2 + F1 + SK**: after those, a Slack message is answered by a versioned plugin in a claimed sandbox with traces, steering works, the UI authors and deploys plugins and shows runs, and the CLI emulates Slack locally. Waves 3-4 (git-flow wedge, budgets, soak, security defaults) follow the same machinery once the spine demo lands.
 
 Rough shape (calendar depends on review cadence): Wave 0 ≈ 2 jobs sequential, Wave 1 ≈ 5 jobs parallel over 2-3 dispatch cycles, Wave 2 ≈ 4 jobs, then F1 alone, then SK. On a 3-4-jobs-per-cycle cadence that's roughly 5-6 dispatch cycles to the spine demo.
 
-## 7. Needed from Brian (blocking items, in the order they bite)
+## 7. Needed from the maintainer (blocking items, in the order they bite)
 
-1. ~~GitHub remote~~ — **decided 2026-07-05: none for now.** All work stays local; Brian creates a remote later if wanted. CI workflows are authored but dormant until then. J1 (git-flow) will need the remote when its wave arrives.
+1. ~~GitHub remote~~ — **decided 2026-07-05: none for now.** All work stays local; a maintainer creates a remote later if wanted. CI workflows are authored but dormant until then. J1 (git-flow) will need the remote when its wave arrives.
 2. ~~Scope calls on the three design deltas~~ — **decided 2026-07-05** (§1): interview wizard deferred, memory tab deferred, Metrics/Logs in MVP Langfuse-backed with a per-run K8s log proxy (task OB1); Prometheus/Loki adoption deferred to the fleet phase.
-3. **k8scratch resize** to ≥8 vCPU / 16-20 GB (blocks the SK gate and N1; G1/A2 fit in the current 4 GB): it's an LXC, so this is a Proxmox config change + reboot.
+3. **Resize the scratch cluster** to ≥8 vCPU / 16-20 GB (blocks the SK gate and N1; G1/A2 fit in the current 4 GB): it's an LXC, so this is a Proxmox config change + reboot.
 4. **Test Slack workspace + two apps** (blocks SK, J1): one throwaway workspace, two Socket-Mode apps (`@agentos`, `@agentos-dev`), tokens into the repo's gitignored `.env` convention.
 5. ~~Linear placement~~ — **decided 2026-07-05: no tickets.** Tracking lives in this doc + the orchestrator's reports; task IDs (R0, C1, ...) are the tracking keys.
 
 ## 8. Bottom line
 
-Every infrastructure bet under this plan is already proven live; the design file enumerates exactly what the UI must become; the task DAG has clean file-ownership seams. The orchestration problem reduces to: freeze the contracts (C1), give every job the means to verify itself (R0's harness: compose stack + Playwright suite/MCP + k8scratch + repo CLAUDE.md), then dispatch waves of sub-agents along the DAG with the orchestrator verifying every done-when and running integration gates between waves. The two places judgment must concentrate — the F1 kernel and contract changes — get single ownership and adversarial review by construction.
+Every infrastructure bet under this plan is already proven live; the design file enumerates exactly what the UI must become; the task DAG has clean file-ownership seams. The orchestration problem reduces to: freeze the contracts (C1), give every job the means to verify itself (R0's harness: compose stack + Playwright suite/MCP + the scratch cluster + repo CLAUDE.md), then dispatch waves of sub-agents along the DAG with the orchestrator verifying every done-when and running integration gates between waves. The two places judgment must concentrate — the F1 kernel and contract changes — get single ownership and adversarial review by construction.

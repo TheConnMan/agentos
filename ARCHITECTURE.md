@@ -228,7 +228,39 @@ never assumed across a suspend. The `thread_ts -> sandbox_id` affinity store
 ([`apps/worker/src/agentos_worker/sandbox/affinity.py`](apps/worker/src/agentos_worker/sandbox/affinity.py))
 is what routes a thread back to its sandbox.
 
-## 5. Data flow: a dev push runs the eval suite as a CI check
+## 5. Data flow: a git push deploys a bundle and runs evals
+
+A push is HMAC-verified, archived, validated, and stored as an immutable
+versioned bundle. A dev-branch push builds the artifact; a prod-branch push
+promotes that same artifact without rebuilding.
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant GH as GitHub
+    participant API as apps/api (gitflow.py)
+    participant PF as plugin-format validator
+    participant S3 as MinIO / S3
+    participant PG as Postgres
+
+    Dev->>GH: git push (dev or prod branch)
+    GH->>API: POST /github/webhook (push, HMAC-signed)
+    API->>API: verify_signature(x-hub-signature-256)
+    alt push to dev branch
+        API->>API: clone_and_archive(sha)
+        API->>PF: validate_bundle(archived tree)
+        PF-->>API: ValidationResult (path-qualified errors)
+        API->>S3: store immutable versioned bundle
+        API->>PG: create Version + Deployment (env=dev)
+        Note over API: the dev bot identity now serves this sha
+    else push to prod branch
+        API->>PG: find the already-built Version for this sha
+        API->>PG: create Deployment (env=prod)
+        Note over API: promotes the same artifact, no separate prod build
+    end
+```
+
+A newly built dev version additionally fans out its eval suite as a CI check:
 
 ```mermaid
 sequenceDiagram

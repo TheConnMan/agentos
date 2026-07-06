@@ -13,7 +13,7 @@ A small team (CT is ~7 people) cannot maintain a bespoke telemetry datastore, ev
 
 **Adopt** (all license-verified): Langfuse (traces + evals, MIT core — ADR 0004), Kubernetes Agent Sandbox (interactive runner substrate — ADR 0002), Slack Bolt (Socket Mode, MIT), claude-agent-sdk (harness — ADR 0005), BullMQ + Valkey (queue), vanilla Postgres (app state), OTel Collector, and the Claude Code plugin format verbatim (the distribution wedge — do not invent a format).
 
-**Do not build:** a generic declarative-DAG / config-as-agent engine (commodity infra where Curie has no edge; the product's value is the verification/eval layer, not the orchestration layer).
+**Do not build:** a generic declarative-DAG / config-as-agent engine (commodity infra where the project has no edge; the product's value is the verification/eval layer, not the orchestration layer).
 
 ## Consequences
 

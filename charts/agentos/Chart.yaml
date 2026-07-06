@@ -13,9 +13,9 @@ appVersion: "3"
 kubeVersion: ">=1.25.0-0"
 maintainers:
   - name: AgentOS
-home: https://github.com/curietech/agentos
+home: https://github.com/curie-eng/agentos
 sources:
-  - https://github.com/curietech/agentos
+  - https://github.com/curie-eng/agentos
 keywords:
   - agentos
   - langfuse

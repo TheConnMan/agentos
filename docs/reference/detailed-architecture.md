@@ -244,7 +244,7 @@ Adds to the earlier tree: `agent-sandbox/` (Agent Sandbox controller wiring, `Sa
 | 4b. v1.1 backlog (later) | workflow compiler + memory proposals | guided workflow interview, draft skill.md, success contract, tool and permission map, architecture recommendation, optional generated eval cases; automatic memory proposals with source evidence, scoped writes, policy or human gate, conflict handling, and telemetry/eval feedback | Interview Me creates editable draft artifacts or returns not ready to automate with missing decisions; memory proposals never silently write |
 | 5. Fleet + leave-behind seam (later) | state-6 | fleet dashboard, drift timeline, usage analytics; converges with the agent-leave-behind platform | TBD |
 
-Sequencing note (from the CurieTech agent-OS synthesis, 2026-07-01): first real client engagement funds phases 1-4; platform and plugin layers stay cleanly separated from day one.
+Sequencing note (from an internal agent-OS synthesis, 2026-07-01): first real client engagement funds phases 1-4; platform and plugin layers stay cleanly separated from day one.
 
 ## 7b. v1.1 backlog: automatic memory generation (not needed for MVP)
 

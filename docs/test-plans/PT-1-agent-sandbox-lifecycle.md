@@ -1,12 +1,14 @@
 # PT-1 — Agent Sandbox lifecycle + control-endpoint reachability
 
+> **Historical document.** This is a prototype de-risking test plan from the pre-build phase, preserved as engineering history. It is not living documentation and is not maintained. See [`../prototype-derisking-review.md`](../prototype-derisking-review.md) for what these prototypes proved and the root [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) for the system that got built.
+
 Settles risk **R1** (Agent Sandbox does not deliver the interactive control endpoint the ACI assumes) and touches R6 (footprint). This is the top-ranked prototype: the entire interactive path (DAG lanes D1/F1/G1) hangs on the outcome. Companion: `../analysis/agent-os-prototype-derisking-review.md` §3 R1.
 
-**Run status: RUN on the `k8scratch` throwaway k3s cluster, 2026-07-04. Verdict: GO-with-one-material-caveat.** Live evidence in §Live results below; offline schema findings in §Evidence-so-far. The routable-endpoint assumption is confirmed live; the suspend/resume-is-cold-restart risk is confirmed real. Cluster was cleaned up after (disposable-default).
+**Run status: RUN on a disposable throwaway k3s cluster, 2026-07-04. Verdict: GO-with-one-material-caveat.** Live evidence in §Live results below; offline schema findings in §Evidence-so-far. The routable-endpoint assumption is confirmed live; the suspend/resume-is-cold-restart risk is confirmed real. Cluster was cleaned up after (disposable-default).
 
-## Live results (k8scratch, k3s v1.35.5+k3s1, 2026-07-04)
+## Live results (scratch cluster, k3s v1.35.5+k3s1, 2026-07-04)
 
-Ran on the confirmed-throwaway `k8scratch` single-node k3s cluster (context gated: `current-context == k8scratch`, server `k8scratch:6443`, NOT an EKS Curie account). Controller = agent-sandbox v0.5.0 core `manifest.yaml`.
+Ran on the confirmed-throwaway single-node k3s scratch cluster (context gated: current-context is the scratch context, server is the scratch cluster's API server, NOT a shared cloud EKS account). Controller = agent-sandbox v0.5.0 core `manifest.yaml`.
 
 - **Controller install: CLEAN.** `agent-sandbox-controller` rolled out `1/1 Running`, zero restarts, no cert-manager/webhook dependency errors, no registered validating/mutating webhooks. A good stability data point for a pre-1.0 project on a stock k3s.
 - **Claim 1 (Sandbox lifecycle): PASS.** `apiVersion: agents.x-k8s.io/v1beta1`, `kind: Sandbox` created; its managed pod reached `1/1 Running` in <8s; `.status.podIPs` populated; `.status.conditions` showed `Ready / DependenciesReady`.
@@ -47,11 +49,11 @@ The deliverable is a GO / NO-GO / PARTIAL memo on whether Agent Sandbox is the i
 ## Setup
 
 ```bash
-# 1. Confirm the target is the scratch cluster, NOT a Curie env. Print server + context and eyeball it.
+# 1. Confirm the target is the scratch cluster, NOT a shared cloud env. Print server + context and eyeball it.
 kubectl config current-context
 kubectl cluster-info
-# HARD GATE: if the server host resolves to *.eks.amazonaws.com in a shared CurieTech account
-# (ei-agents/staging or prod), STOP — that is a shared Curie cluster, not the scratch host.
+# HARD GATE: if the server host resolves to *.eks.amazonaws.com in a shared cloud account
+# (ei-agents/staging or prod), STOP — that is a shared cloud cluster, not the scratch host.
 
 # 2. Install the agent-sandbox controller + CRDs (v0.5.0, the version verified 2026-07-04).
 VERSION=v0.5.0
@@ -171,4 +173,4 @@ On the scratch cluster, `kubectl delete namespace pt1` removes all experiment ob
 
 ## Blocker (as of 2026-07-04)
 
-Target cluster not yet confirmed. This plan must run on the **throwaway K8s scratch host** named in Brian's connection notes; those notes had not been located/confirmed at authoring time (a search subagent was dispatched — see the review's cover message). **Exact next step:** confirm the scratch host kubeconfig/context, verify `kubectl cluster-info` does NOT point at an `*.eks.amazonaws.com` shared CurieTech account (ei-agents/staging or prod), then run Setup. If no throwaway host exists, install `kind` locally and run there — every step except the specific storage-class/runtimeClass behavior is identical.
+Target cluster not yet confirmed. This plan must run on the **throwaway K8s scratch host** named in the operator's connection notes; those notes had not been located/confirmed at authoring time (a search subagent was dispatched — see the review's cover message). **Exact next step:** confirm the scratch host kubeconfig/context, verify `kubectl cluster-info` does NOT point at an `*.eks.amazonaws.com` shared cloud account (ei-agents/staging or prod), then run Setup. If no throwaway host exists, install `kind` locally and run there — every step except the specific storage-class/runtimeClass behavior is identical.

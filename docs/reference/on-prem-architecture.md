@@ -1,5 +1,7 @@
 # Supabase-for-Agents: On-Prem / Self-Hosted Build-vs-Adopt Architecture
 
+> **Historical document.** This is a pre-build reference/design document, preserved as engineering history. It is not living documentation and is not maintained. For the system that was actually built, read the root [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md); for forward-looking work read [`../roadmap.md`](../roadmap.md).
+
 Research + synthesis, 2026-07-02. Primary-source-verified (licenses, storage engines, and Helm chart structures fetched directly from LICENSE files, raw `Chart.yaml`/`values.yaml`, and official docs; every load-bearing claim carries a URL). Companion to `claude-design-prompt.md` (the product prototype) and the competitive scan on the Supabase-for-agents model.
 
 **Guiding principle:** minimize what gets built. The team builds at most a nice UI, a thin CLI, an API server, a Slack dispatcher, and the Helm charts that orchestrate everything. Everything else leans on existing open source. No custom telemetry datastore, no custom eval database engine.
@@ -125,4 +127,4 @@ BYO everything via `<dep>.deploy: false` + `host`/`auth`/`existingSecret`. A `do
 
 ## Related
 
-The Supabase-for-agents model, the CurieTech agent-OS synthesis, the agent-deployment model, the agent-leave-behind platform, and `claude-design-prompt.md`.
+The Supabase-for-agents model, an internal agent-OS synthesis, the agent-deployment model, the agent-leave-behind platform, and `claude-design-prompt.md`.

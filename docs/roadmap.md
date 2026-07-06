@@ -55,12 +55,12 @@ The thin-shim thesis holds, but three seams are hand-mirrored rather than frozen
 - **Cut v0.1.0** at MVP acceptance: tag, GitHub Release with CLI binaries and version-pinned images, then point the README install section at the release assets.
 - **musl fully-static Linux CLI build** if glibc portability bites.
 - **UI edit-agent surface:** view/edit skills and deploy a new version from the UI; then bundle file tree beyond `SKILL.md` and version history/rollback.
-- **k8scratch standing deployment:** a CLI-vs-cluster runbook, and a decision on whether Slack serving moves in-cluster (one Socket Mode owner at a time) with a documented cutover.
+- **Scratch-cluster standing deployment:** a CLI-vs-cluster runbook, and a decision on whether Slack serving moves in-cluster (one Socket Mode owner at a time) with a documented cutover.
 
 ## 7. Verification debt
 
 - **Cold-start rehearsal** as the acceptance gate: timed, README-only, fresh clone to `helm install` to UI to an agent answering in Slack.
-- **N1 soak on k8scratch:** chart resilience under sustained load — concurrent threads, mid-thread batch job, sandbox-kill-mid-run, resume-rehydrate. The harness is scaffolded at [`tests/soak`](../tests/soak); the scenario is not yet written.
+- **N1 soak on the scratch cluster:** chart resilience under sustained load — concurrent threads, mid-thread batch job, sandbox-kill-mid-run, resume-rehydrate. The harness is scaffolded at [`tests/soak`](../tests/soak); the scenario is not yet written.
 - **Regression tests from live findings** where cheap: e.g. a worker boot warning when the substrate is Docker and no OTLP endpoint is set.
 
 ## 8. Cluster bring-up findings

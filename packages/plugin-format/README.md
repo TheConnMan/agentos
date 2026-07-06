@@ -1,8 +1,23 @@
 # plugin-format
 
-Owning task: **C1**. The plugin bundle format: the Claude Code plugin shape
+The plugin bundle format: the Claude Code plugin shape
 verbatim, plus its validator. Compatibility with the Claude Code plugin format
 is the distribution wedge, so this package does not invent format extensions.
+
+## Stability
+
+This is a frozen contract compiled against in three languages, for the same
+reason as `aci-protocol`: every deploy path (the CLI scaffold, the bundle
+pipeline, the runner's bundle loader) calls the single `validate_bundle`, so it
+never changes from a dependent lane and a needed change lands as its own
+reviewed change (see the frozen-interface rule below). Unlike `aci-protocol` it
+carries no `PROTOCOL_VERSION`: the format is the Claude Code plugin shape
+verbatim, and the models are lenient by design (`extra="allow"`) so real and
+future Claude Code bundles that carry keys this MVP does not model still
+validate. It is v0.x, so breaking changes to the validator remain possible, but
+they must stay backward-compatible with existing valid bundles and land as their
+own reviewed change; the schema-compat gate (`tests/test_schema_compat.py`)
+fails on any drift between the models and the committed schema.
 
 ## Format surface
 
@@ -19,7 +34,7 @@ Pydantic models mirroring the Claude Code shapes:
   `headers?`).
 - `scripts/` is a directory convention (no manifest schema of its own).
 
-`validate_bundle(path) -> ValidationResult` is the entry point B2 calls. It
+`validate_bundle(path) -> ValidationResult` is the entry point the bundle pipeline calls. It
 returns actionable, path-qualified issues instead of raising:
 
 ```python
@@ -39,7 +54,7 @@ Error codes include `bundle.missing`, `manifest.missing`,
 
 This package is a **frozen interface** for the same reasons as `aci-protocol`:
 compatibility is the wedge. Do not change it unilaterally; a needed change stops
-the task and escalates to the orchestrator. Any change must regenerate the
+the task and escalates to the maintainers. Any change must regenerate the
 committed schema with `scripts/check-contracts.sh` (which runs
 `python -m plugin_format.schema_export`) and commit it. The compat gate
 (`tests/test_schema_compat.py`) fails on drift.

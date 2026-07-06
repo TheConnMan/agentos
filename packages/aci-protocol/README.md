@@ -1,9 +1,25 @@
 # aci-protocol
 
-Owning task: **C1**. The frozen ACI (Agent Container Interface) contract: the
+The frozen ACI (Agent Container Interface) contract: the
 session protocol and NDJSON event types that every lane compiles against. The
 Pydantic models here are the single source of truth; the committed JSON Schema,
 the generated TypeScript, and the generated Rust are all derived from them.
+
+## Stability
+
+This is a frozen contract compiled against in three languages: the Pydantic
+models are the source of truth, and the committed JSON Schema, generated
+TypeScript, and generated Rust are derived from them. The runner, worker, CLI,
+and UI all depend on it, so it never changes from a dependent lane; a needed
+change stops the task and lands as its own reviewed change (see the
+frozen-interface rule below). The wire contract is strict: the decoder accepts
+only events whose `version` equals `PROTOCOL_VERSION` (currently `0.1.0`) and
+raises `ProtocolVersionError` on anything else, with `version` typed as a
+`const` literal so an off-version value is rejected at construction. The 0.x
+line has no same-major looseness, so any protocol change is a `PROTOCOL_VERSION`
+bump and a hard break signaled by `ProtocolVersionError`; a looser same-major
+policy is planned for 1.0, and the schema-compat gate
+(`tests/test_schema_compat.py`) fails on any drift.
 
 ## Contract surface (v0.1.0)
 
@@ -45,7 +61,7 @@ event.
 `parse_ndjson`, `iter_ndjson`, `parse_inbound`, `to_inbound_json`. The decoder
 raises `ProtocolVersionError` for a missing or mismatched `version`.
 
-**Conformance** (`run_conformance`, `reference_producer`): a reusable suite D1
+**Conformance** (`run_conformance`, `reference_producer`): a reusable suite the runner
 runs against the real runner. Pass a `Producer` (an inbound-message to NDJSON
 function) to validate a real implementation's stream; the library round-trip and
 version-rejection checks always run.
@@ -54,7 +70,7 @@ version-rejection checks always run.
 
 This package is a **frozen interface**. Do not change it unilaterally from a
 dependent lane. A needed change stops the current task and escalates to the
-orchestrator, which lands the change as its own reviewed PR. Any change must:
+maintainers, who land the change as its own reviewed PR. Any change must:
 
 1. bump `PROTOCOL_VERSION` in `src/aci_protocol/version.py`,
 2. regenerate the committed artifacts with `scripts/check-contracts.sh`,
@@ -76,7 +92,7 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
 
 - **Inbound `kind` discriminator.** Section 0 lists `event` and `interrupt` as
   two separate channel operations without a shared tag. To make inbound frames
-  self-describing on a single control channel (which F1 and D1 need), inbound
+  self-describing on a single control channel (which the worker and runner need), inbound
   messages are a discriminated union on an added `kind` field. `Event.type`
   keeps its section-0 meaning (`message|job|eval_case`).
 - **`credentials_ref` carries a reference, not secret material.** Section 0
@@ -110,14 +126,14 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
 
 ## What consumers need to know
 
-- **D1 (runner):** implement the outbound stream with these exact event shapes
+- **The runner:** implement the outbound stream with these exact event shapes
   and run `run_conformance(<your producer>)` in your suite; it must return
   `passed=True`. Read setup from the environment with `SessionConfig.from_env`.
-- **B2 (bundle pipeline):** this package does not validate bundles; see
+- **The bundle pipeline:** this package does not validate bundles; see
   `plugin-format`.
-- **I1 (Rust CLI):** depend on the generated crate at
+- **The Rust CLI:** depend on the generated crate at
   `packages/aci-protocol/generated/rust` (or vendor its `lib.rs`); do not
   hand-write the types. The internally-tagged enums decode the NDJSON stream and
   inbound frames directly.
-- **UI (H1a/H1b via TS):** import the interfaces and the `OutboundEvent` /
+- **The UI (via TS):** import the interfaces and the `OutboundEvent` /
   `InboundMessage` union types from `generated/ts/aci-protocol.ts`.

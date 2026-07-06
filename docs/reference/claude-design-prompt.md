@@ -1,5 +1,7 @@
 # Supabase for Agents: Claude Design Prompt
 
+> **Historical document.** This is a pre-build reference/design document, preserved as engineering history. It is not living documentation and is not maintained. For the system that was actually built, read the root [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md); for forward-looking work read [`../roadmap.md`](../roadmap.md).
+
 Big plan for the "Supabase for agents" prototype (the open-source developer platform for Slack-based agents named in the 2026-07-02 Claude Tag/Viktor discussion). Section 3 is the deliverable: a fully self-contained prompt to paste into Claude Design. Sections 1-2 are the context and decision record that shaped it.
 
 ## 1. Competitive verdict (why this design is worth building)
@@ -19,13 +21,13 @@ Full research ran 2026-07-02 across ~40 candidates with per-capability scoring (
 
 ## 2. Design decisions record
 
-Pinned by Brian in this session:
+Pinned by a maintainer in this session:
 
 1. **One full design.** The console is the only product surface designed. GitHub is never rendered (the console's own Eval Runs view plus terminal `git push` output tells the CI story). Slack appears as exactly one small static thread card at the agent-live payoff moment (re-tinted once for the dev-bot story). The terminal flip stays.
-2. **Neutral codename, Supabase-dark skin.** Default codename: **AgentOS** (bot handle `@agentos`, CLI `agentos`). Alternates if AgentOS collides: Dispatch, Agentbase. The name is a placeholder, deliberately not CurieTech-branded.
+2. **Neutral codename, Supabase-dark skin.** Default codename: **AgentOS** (bot handle `@agentos`, CLI `agentos`). Alternates if AgentOS collides: Dispatch, Agentbase. The name is a placeholder, deliberately not company-branded.
 3. **The "complicated" demo state is a multi-agent fleet** (the AgentOS / leave-behind fleet-view story).
-4. **Single self-contained HTML file** via Claude Design (Brian's geo-game convention), not a React component.
-5. **Maintenance is a headline act**, with all four heroes: promote-failure-to-eval, drift/regression timeline, usage analytics, cost per agent. Plus Brian's addition, which the design treats as the centerpiece of the eval surface: **the Eval Matrix — run an eval suite against different commit hashes/versions side by side** (regression bisection; extends to model arbitrage later).
+4. **Single self-contained HTML file** via Claude Design (an internal convention), not a React component.
+5. **Maintenance is a headline act**, with all four heroes: promote-failure-to-eval, drift/regression timeline, usage analytics, cost per agent. Plus a maintainer's addition, which the design treats as the centerpiece of the eval surface: **the Eval Matrix — run an eval suite against different commit hashes/versions side by side** (regression bisection; extends to model arbitrage later).
 6. **Demo controls follow the RS staffing-plan v0 convention**: an out-of-product controls bar driving a typed state machine, explicitly framed as review scaffolding.
 
 Sources feeding the prompt: Supabase design tokens extracted from supabase/ui compiled CSS; Supabase onboarding and CLI-parity flows; Stripe test/live toggle and key-reveal patterns; Vercel bot-comment/two-URL patterns; Neon branch-table model; GitHub Primer check-state vocabulary and colors; terminal chrome/typewriter specs (traffic-light hexes, `steps()` animation). All verified via direct fetches 2026-07-02.
@@ -167,4 +169,4 @@ You have one self-contained HTML file where all six demo states render, the five
 
 ## 5. Research provenance
 
-Competitive scan and DX research ran 2026-07-02 in this session via parallel research agents; every product claim traces to a fetched URL (capability tables delivered in-session). Key fetched sources: github.com/vercel/eve, vercel.com/blog/introducing-eve, vercel.com/kb/guide/eve-slack-agent-starter, mastra.ai/blog/introducing-channels, docs.langchain.com/langsmith/deployment, developers.openai.com/api/docs/deprecations, platform.claude.com/docs/en/managed-agents/overview, claude.com/blog/claude-managed-agents, supabase/ui dark.css (design tokens), supabase.com/docs/guides/local-development/cli/getting-started, docs.stripe.com/keys, docs.stripe.com/test-mode, vercel.com/docs/git/vercel-for-github, neon.com/docs/manage/branches, docs.github.com (status checks, workflow commands), primer.style/octicons. Wiki updates with the durable findings follow separately.
+Competitive scan and DX research ran 2026-07-02 in this session via parallel research agents; every product claim traces to a fetched URL (capability tables delivered in-session). Key fetched sources: github.com/vercel/eve, vercel.com/blog/introducing-eve, vercel.com/kb/guide/eve-slack-agent-starter, mastra.ai/blog/introducing-channels, docs.langchain.com/langsmith/deployment, developers.openai.com/api/docs/deprecations, platform.claude.com/docs/en/managed-agents/overview, claude.com/blog/claude-managed-agents, supabase/ui dark.css (design tokens), supabase.com/docs/guides/local-development/cli/getting-started, docs.stripe.com/keys, docs.stripe.com/test-mode, vercel.com/docs/git/vercel-for-github, neon.com/docs/manage/branches, docs.github.com (status checks, workflow commands), primer.style/octicons. Durable findings were captured separately.

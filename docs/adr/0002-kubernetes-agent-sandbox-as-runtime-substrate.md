@@ -13,7 +13,7 @@ Interactive Slack threads need a runtime that gives each thread a stable identit
 
 Adopt Kubernetes Agent Sandbox as the interactive runtime substrate. The worker claims a `Sandbox` from a `SandboxWarmPool`, records `thread_ts → sandbox_id`, and dials the runner at the sandbox's `.status.serviceFQDN`. Batch/eval runs use plain K8s Jobs. Keep the ACI abstraction (ADR 0005) and a plain-K8s-Job fallback so the substrate is replaceable if the project breaks API.
 
-## Evidence (live, k8scratch k3s, 2026-07-04)
+## Evidence (live, scratch k3s cluster, 2026-07-04)
 
 - `Sandbox` + `spec.service: true` populates `.status.serviceFQDN` and auto-creates a headless Service; a probe pod reached the runner through it.
 - `SandboxWarmPool` (replicas:2) pre-warmed sandboxes; a `SandboxClaim` bound to a pre-warmed one in **0.199s** (claim Ready timestamp precedes claim creation), pool self-replenished to readyReplicas:2.
