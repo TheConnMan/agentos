@@ -1,5 +1,5 @@
 //! The `agentos` binary: init/start/send/eval a plugin against a local runner,
-//! stop/status/steer/interrupt for the container lifecycle, chat to drive the
+//! stop/runner-status/steer/interrupt for the container lifecycle, chat to drive the
 //! whole system with the CLI acting as the Slack service, and deploy for the
 //! platform API. Task I1; contracts are frozen in packages/aci-protocol and
 //! packages/plugin-format.
@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use agentos::chat::{self, ChatOpts};
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
+use agentos::ops::{self, CommonOpts, ConnectSlackOpts, DownOpts, GoLiveOpts, UpOpts};
 use agentos::slack_sim::{self, SlackSimOpts};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -67,7 +68,8 @@ enum Command {
     /// Stop and remove the local runner container.
     Stop,
     /// Show the local runner's session status.
-    Status {
+    #[command(name = "runner-status")]
+    RunnerStatus {
         /// Runner base URL (defaults to the started runner, then localhost).
         #[arg(long)]
         url: Option<String>,
@@ -201,6 +203,104 @@ enum Command {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Install or upgrade the AgentOS release via Helm (helm upgrade --install).
+    /// By default it puts the UI and Langfuse on node ports for tailnet/LAN
+    /// access; pass --no-expose to keep them ClusterIP-only.
+    Up {
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Chart path (run from the repo root for the default).
+        #[arg(long, default_value = "charts/agentos")]
+        chart: String,
+        /// Keep the UI and Langfuse services ClusterIP instead of NodePort.
+        #[arg(long)]
+        no_expose: bool,
+        /// Extra `--set KEY=VAL` passed through to helm verbatim (repeatable).
+        #[arg(long = "set", value_name = "KEY=VAL")]
+        set: Vec<String>,
+        /// Print the helm command that would run and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Wire Slack credentials into a deployed release (helm upgrade
+    /// --reuse-values). Tokens are never printed.
+    ConnectSlack {
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Chart path (run from the repo root for the default).
+        #[arg(long, default_value = "charts/agentos")]
+        chart: String,
+        /// Slack app-level token (xapp-...). Never printed.
+        #[arg(long, env = "SLACK_APP_TOKEN", hide_env_values = true)]
+        app_token: String,
+        /// Slack bot token (xoxb-...). Never printed.
+        #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
+        bot_token: String,
+        /// Print the helm command that would run and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Switch off the fake model and open the fail-closed runner NetworkPolicy to
+    /// the model provider (helm upgrade --reuse-values).
+    GoLive {
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Chart path (run from the repo root for the default).
+        #[arg(long, default_value = "charts/agentos")]
+        chart: String,
+        /// Opaque model credential forwarded into every sandbox. Never printed.
+        #[arg(long, env = "AGENTOS_MODEL_CREDENTIALS", hide_env_values = true)]
+        credentials: String,
+        /// Egress CIDR the runner may reach (default: Anthropic's published range).
+        #[arg(long, default_value = "160.79.104.0/23")]
+        egress_cidr: String,
+        /// Egress port the runner may reach.
+        #[arg(long, default_value_t = 443)]
+        egress_port: u16,
+        /// Print the helm command that would run and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Report release health and access URLs (read-only: helm status + kubectl).
+    Status {
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Print the read-only commands that would run and exit.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Uninstall the release and sweep its runtime namespaces (helm uninstall +
+    /// kubectl delete namespace). The agents.x-k8s.io CRDs are left in place.
+    Down {
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Skip the interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Print the commands that would run and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[tokio::main]
@@ -232,7 +332,7 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Stop => commands::stop().await,
-        Command::Status { url } => commands::status(url).await,
+        Command::RunnerStatus { url } => commands::status(url).await,
         Command::Send {
             text,
             user,
@@ -301,6 +401,96 @@ async fn main() -> Result<()> {
                 slack_channel,
                 env,
                 label,
+            })
+            .await
+        }
+        Command::Up {
+            namespace,
+            release,
+            chart,
+            no_expose,
+            set,
+            dry_run,
+        } => {
+            ops::up(UpOpts {
+                common: CommonOpts {
+                    namespace,
+                    release,
+                    dry_run,
+                },
+                chart,
+                no_expose,
+                set,
+            })
+            .await
+        }
+        Command::ConnectSlack {
+            namespace,
+            release,
+            chart,
+            app_token,
+            bot_token,
+            dry_run,
+        } => {
+            ops::connect_slack(ConnectSlackOpts {
+                common: CommonOpts {
+                    namespace,
+                    release,
+                    dry_run,
+                },
+                chart,
+                app_token,
+                bot_token,
+            })
+            .await
+        }
+        Command::GoLive {
+            namespace,
+            release,
+            chart,
+            credentials,
+            egress_cidr,
+            egress_port,
+            dry_run,
+        } => {
+            ops::go_live(GoLiveOpts {
+                common: CommonOpts {
+                    namespace,
+                    release,
+                    dry_run,
+                },
+                chart,
+                credentials,
+                egress_cidr,
+                egress_port,
+            })
+            .await
+        }
+        Command::Status {
+            namespace,
+            release,
+            dry_run,
+        } => {
+            ops::status(CommonOpts {
+                namespace,
+                release,
+                dry_run,
+            })
+            .await
+        }
+        Command::Down {
+            namespace,
+            release,
+            yes,
+            dry_run,
+        } => {
+            ops::down(DownOpts {
+                common: CommonOpts {
+                    namespace,
+                    release,
+                    dry_run,
+                },
+                yes,
             })
             .await
         }

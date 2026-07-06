@@ -11,6 +11,7 @@ pub mod commands;
 pub mod docker;
 pub mod evals;
 pub mod ndjson;
+pub mod ops;
 pub mod queue;
 pub mod render;
 pub mod runner;
