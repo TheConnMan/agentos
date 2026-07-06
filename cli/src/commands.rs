@@ -11,7 +11,7 @@ use agentos_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
 use crate::evals::{case_line, load_cases, summary_line, turn_passes};
@@ -309,7 +309,10 @@ pub struct DeployOpts {
     pub plugin_dir: PathBuf,
     pub api_url: String,
     pub api_key: String,
-    pub slack_channel: String,
+    /// Explicit `--slack-channel`; None when the flag was omitted so a redeploy
+    /// leaves an existing agent's channel untouched instead of masking intent
+    /// with a default.
+    pub slack_channel: Option<String>,
     pub env: DeployEnv,
     pub label: Option<String>,
 }
@@ -337,7 +340,7 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
     let outcome = client
         .deploy(
             &plugin_name,
-            &opts.slack_channel,
+            opts.slack_channel.as_deref(),
             &label,
             &created_by,
             opts.env.as_str(),
@@ -346,6 +349,19 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         .await?;
 
     println!("agent       {} ({})", outcome.agent.name, outcome.agent.id);
+    match &outcome.channel {
+        ChannelOutcome::Created(channel) => println!("channel     {channel}"),
+        ChannelOutcome::Updated { from, to } => {
+            println!("channel     updated to {to} (was {from})")
+        }
+        ChannelOutcome::Unchanged { channel, passed } => {
+            if *passed {
+                println!("channel     unchanged ({channel})");
+            } else {
+                println!("channel     unchanged ({channel}); pass --slack-channel to move it");
+            }
+        }
+    }
     println!(
         "version     {} ({})",
         outcome.version.version_label, outcome.version.id
