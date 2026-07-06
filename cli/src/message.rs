@@ -22,9 +22,9 @@
 //!    dispatcher deployment) unless `--force-wire` -- otherwise the stub would
 //!    hijack the real Slack replies cluster-wide.
 //!
-//! In the demo flow `message` runs BEFORE `connect-slack`, so the guard never
-//! fires there; and `connect-slack` clears `worker.slackApiBaseUrl` back to
-//! empty, un-wiring the stub when real Slack is connected.
+//! In the demo flow `message` runs BEFORE a real Slack workspace is connected, so
+//! the guard never fires there; and the helm upgrade that connects Slack clears
+//! `worker.slackApiBaseUrl` back to empty, un-wiring the stub in the same step.
 
 use std::process::Stdio;
 use std::time::{Duration, Instant};

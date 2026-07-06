@@ -1,4 +1,4 @@
-//! `agentos up | connect-slack | go-live | status | down`: the operator
+//! `agentos up | status | down`: the operator
 //! day-1 lifecycle, wrapping the Helm chart and `kubectl` the way linkerd or
 //! cilium wrap theirs -- a deliberately thin CLI over the chart, which stays the
 //! source of truth. Every verb shells out to the `helm`/`kubectl` binaries; the
@@ -122,21 +122,13 @@ pub struct UpOpts {
     pub chart: String,
     pub no_expose: bool,
     pub set: Vec<String>,
-}
-
-pub struct ConnectSlackOpts {
-    pub common: CommonOpts,
-    pub chart: String,
-    pub app_token: String,
-    pub bot_token: String,
-}
-
-pub struct GoLiveOpts {
-    pub common: CommonOpts,
-    pub chart: String,
-    pub credentials: String,
-    pub egress_cidr: String,
-    pub egress_port: u16,
+    /// Whether `--fake-model` was passed (forces the sealed install and
+    /// suppresses the fake-model warning even when the env credential is set).
+    pub fake_model: bool,
+    /// The model credential to install with, resolved from
+    /// `AGENTOS_MODEL_CREDENTIALS`. `Some(non-empty)` enables the real model and
+    /// opens egress to the provider; `None` installs sealed (fake model).
+    pub credentials: Option<String>,
 }
 
 pub struct DownOpts {
@@ -148,8 +140,27 @@ pub struct DownOpts {
 // Command builders (pure; unit-tested below)
 // ---------------------------------------------------------------------------
 
+/// Egress the runner NetworkPolicy is opened to when a real model credential is
+/// installed: Anthropic's published API range over TLS. The runner policy is
+/// fail-closed, so a real model call needs this allowlist entry too.
+const MODEL_EGRESS_CIDR: &str = "160.79.104.0/23";
+const MODEL_EGRESS_PORT: u16 = 443;
+
+/// Resolve the model credential `up` installs with. `--fake-model` forces the
+/// sealed install regardless of the environment; otherwise a non-empty
+/// `AGENTOS_MODEL_CREDENTIALS` value enables the real model.
+pub fn resolve_up_credentials(fake_model: bool, env_value: Option<String>) -> Option<String> {
+    if fake_model {
+        return None;
+    }
+    env_value.filter(|v| !v.is_empty())
+}
+
 /// `helm upgrade --install` for the release, exposing the UI and Langfuse on
-/// node ports unless `--no-expose`, plus any pass-through `--set` values.
+/// node ports unless `--no-expose`, plus any pass-through `--set` values. When a
+/// model credential is present it also switches the fake model off, forwards the
+/// credential (masked when printed), and opens the fail-closed runner egress to
+/// the model provider.
 pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     let mut args = vec![
         plain("upgrade"),
@@ -166,64 +177,28 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
         args.push(plain("--set"));
         args.push(plain("langfuse.web.service.type=NodePort"));
     }
+    if let Some(credentials) = &o.credentials {
+        args.push(plain("--set"));
+        args.push(plain("agentSandbox.runner.fakeModel=false"));
+        args.push(plain("--set"));
+        args.push(secret_set("agentSandbox.runner.credentials", credentials));
+        args.push(plain("--set"));
+        args.push(plain(format!(
+            "security.networkPolicy.allowedEgress[0].cidr={MODEL_EGRESS_CIDR}"
+        )));
+        args.push(plain("--set"));
+        args.push(plain(
+            "security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP",
+        ));
+        args.push(plain("--set"));
+        args.push(plain(format!(
+            "security.networkPolicy.allowedEgress[0].ports[0].port={MODEL_EGRESS_PORT}"
+        )));
+    }
     for s in &o.set {
         args.push(plain("--set"));
         args.push(plain(s));
     }
-    vec![OpsCommand::new("helm", args)]
-}
-
-/// `helm upgrade --reuse-values` injecting the Slack app/bot tokens. It also
-/// clears `worker.slackApiBaseUrl` back to empty so connecting real Slack
-/// un-wires any `agentos message` stub routing the worker was pointed at --
-/// otherwise a prior `message --wire` would keep hijacking the worker's replies
-/// to a now-dead local stub instead of posting to the Slack workspace we just
-/// connected.
-pub fn connect_slack_commands(o: &ConnectSlackOpts) -> Vec<OpsCommand> {
-    let args = vec![
-        plain("upgrade"),
-        plain(&o.common.release),
-        plain(&o.chart),
-        plain("-n"),
-        plain(&o.common.namespace),
-        plain("--reuse-values"),
-        plain("--set"),
-        secret_set("dispatcher.slack.appToken", &o.app_token),
-        plain("--set"),
-        secret_set("dispatcher.slack.botToken", &o.bot_token),
-        plain("--set"),
-        plain("worker.slackApiBaseUrl="),
-    ];
-    vec![OpsCommand::new("helm", args)]
-}
-
-/// `helm upgrade --reuse-values` opening the fail-closed runner egress policy to
-/// the model provider and switching the fake model off.
-pub fn go_live_commands(o: &GoLiveOpts) -> Vec<OpsCommand> {
-    let args = vec![
-        plain("upgrade"),
-        plain(&o.common.release),
-        plain(&o.chart),
-        plain("-n"),
-        plain(&o.common.namespace),
-        plain("--reuse-values"),
-        plain("--set"),
-        plain("agentSandbox.runner.fakeModel=false"),
-        plain("--set"),
-        secret_set("agentSandbox.runner.credentials", &o.credentials),
-        plain("--set"),
-        plain(format!(
-            "security.networkPolicy.allowedEgress[0].cidr={}",
-            o.egress_cidr
-        )),
-        plain("--set"),
-        plain("security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP"),
-        plain("--set"),
-        plain(format!(
-            "security.networkPolicy.allowedEgress[0].ports[0].port={}",
-            o.egress_port
-        )),
-    ];
     vec![OpsCommand::new("helm", args)]
 }
 
@@ -400,6 +375,17 @@ pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, Strin
 
 pub async fn up(opts: UpOpts) -> Result<()> {
     let cmds = up_commands(&opts);
+    if opts.credentials.is_some() {
+        println!(
+            "Real model enabled (credentials from AGENTOS_MODEL_CREDENTIALS); egress opened to the model provider."
+        );
+    } else if !opts.fake_model {
+        println!("WARNING: no AGENTOS_MODEL_CREDENTIALS set -- installing with the fake model and sealed egress.");
+        println!("         Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and");
+        println!(
+            "         re-run `agentos up` (an idempotent helm upgrade) to enable the real model."
+        );
+    }
     if opts.common.dry_run {
         print_dry_run(&cmds);
         return Ok(());
@@ -409,34 +395,6 @@ pub async fn up(opts: UpOpts) -> Result<()> {
         run_streaming(cmd).await?;
     }
     println!("\nInstalled. Run `agentos status` for pod health and URLs.");
-    Ok(())
-}
-
-pub async fn connect_slack(opts: ConnectSlackOpts) -> Result<()> {
-    let cmds = connect_slack_commands(&opts);
-    if opts.common.dry_run {
-        print_dry_run(&cmds);
-        return Ok(());
-    }
-    require_on_path("helm")?;
-    for cmd in &cmds {
-        run_streaming(cmd).await?;
-    }
-    println!("\nSlack tokens applied. The dispatcher will connect on its next roll.");
-    Ok(())
-}
-
-pub async fn go_live(opts: GoLiveOpts) -> Result<()> {
-    let cmds = go_live_commands(&opts);
-    if opts.common.dry_run {
-        print_dry_run(&cmds);
-        return Ok(());
-    }
-    require_on_path("helm")?;
-    for cmd in &cmds {
-        run_streaming(cmd).await?;
-    }
-    println!("\nReal model enabled; runner egress opened to the model provider.");
     Ok(())
 }
 
@@ -673,6 +631,8 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: false,
             set: vec![],
+            fake_model: false,
+            credentials: None,
         });
         assert_eq!(cmds.len(), 1);
         let line = cmds[0].display();
@@ -690,6 +650,8 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: true,
             set: vec![],
+            fake_model: false,
+            credentials: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("NodePort"), "{line}");
@@ -703,6 +665,8 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: true,
             set: vec!["worker.replicas=2".into(), "dispatcher.deploy=false".into()],
+            fake_model: false,
+            credentials: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -712,78 +676,62 @@ mod tests {
     }
 
     #[test]
-    fn connect_slack_masks_tokens_but_argv_keeps_them() {
-        let cmds = connect_slack_commands(&ConnectSlackOpts {
+    fn up_without_credentials_installs_sealed() {
+        // No credential and not --fake-model: a plain install with no real-model
+        // or egress sets (the fake model stays on, egress stays fail-closed).
+        let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
-            app_token: "xapp-1-abcdefghijklmnop".into(),
-            bot_token: "xoxb-abcdefghijklmnop".into(),
+            no_expose: false,
+            set: vec![],
+            fake_model: false,
+            credentials: None,
         });
         let line = cmds[0].display();
-        // Masked in the printed form.
-        assert!(
-            line.contains("dispatcher.slack.appToken=xapp-1-a***"),
-            "{line}"
-        );
-        assert!(
-            line.contains("dispatcher.slack.botToken=xoxb-abc***"),
-            "{line}"
-        );
-        assert!(!line.contains("abcdefghijklmnop"), "secret leaked: {line}");
-        // Real values in the executed argv.
-        let argv = cmds[0].argv().join(" ");
-        assert!(
-            argv.contains("dispatcher.slack.appToken=xapp-1-abcdefghijklmnop"),
-            "{argv}"
-        );
-        assert!(
-            argv.contains("dispatcher.slack.botToken=xoxb-abcdefghijklmnop"),
-            "{argv}"
-        );
+        assert!(!line.contains("agentSandbox.runner.fakeModel"), "{line}");
+        assert!(!line.contains("agentSandbox.runner.credentials"), "{line}");
+        assert!(!line.contains("allowedEgress"), "{line}");
     }
 
     #[test]
-    fn connect_slack_clears_the_worker_stub_routing() {
-        // Connecting real Slack must un-wire any `agentos message` stub routing,
-        // so the upgrade sets worker.slackApiBaseUrl back to empty.
-        let cmds = connect_slack_commands(&ConnectSlackOpts {
+    fn up_fake_model_installs_sealed_like_no_credential() {
+        // --fake-model resolves to no credential, so the argv is the sealed
+        // install even when the caller had a credential in the environment.
+        let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
-            app_token: "xapp-1-x".into(),
-            bot_token: "xoxb-x".into(),
+            no_expose: false,
+            set: vec![],
+            fake_model: true,
+            credentials: None,
         });
         let line = cmds[0].display();
-        assert!(
-            line.contains("--set worker.slackApiBaseUrl="),
-            "connect-slack must clear the stub routing: {line}"
-        );
-        // Empty value, not a stray non-empty one.
-        assert!(
-            !line.contains("worker.slackApiBaseUrl=http"),
-            "must clear, not set, the stub URL: {line}"
-        );
+        assert!(!line.contains("agentSandbox.runner"), "{line}");
+        assert!(!line.contains("allowedEgress"), "{line}");
     }
 
     #[test]
-    fn go_live_defaults_to_anthropic_egress_and_masks_credentials() {
-        let cmds = go_live_commands(&GoLiveOpts {
+    fn up_with_credentials_enables_real_model_and_masks() {
+        let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
-            credentials: "sk-ant-secretsecret".into(),
-            egress_cidr: "160.79.104.0/23".into(),
-            egress_port: 443,
+            no_expose: false,
+            set: vec![],
+            fake_model: false,
+            credentials: Some("sk-ant-secretsecret".into()),
         });
         let line = cmds[0].display();
         assert!(
             line.contains("agentSandbox.runner.fakeModel=false"),
             "{line}"
         );
+        // Credential is masked in the printed form and never leaks.
         assert!(
             line.contains("agentSandbox.runner.credentials=sk-ant-s***"),
             "{line}"
         );
         assert!(!line.contains("secretsecret"), "secret leaked: {line}");
-        // Array-index keys must print single-quoted.
+        // Model-provider egress entry (array-index keys print single-quoted).
         assert!(
             line.contains("'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23'"),
             "{line}"
@@ -796,23 +744,26 @@ mod tests {
             line.contains("'security.networkPolicy.allowedEgress[0].ports[0].port=443'"),
             "{line}"
         );
+        // The real value still reaches the executed argv.
+        let argv = cmds[0].argv().join(" ");
+        assert!(
+            argv.contains("agentSandbox.runner.credentials=sk-ant-secretsecret"),
+            "{argv}"
+        );
     }
 
     #[test]
-    fn go_live_egress_overrides_flow_through() {
-        let cmds = go_live_commands(&GoLiveOpts {
-            common: common(),
-            chart: "charts/agentos".into(),
-            credentials: "cred".into(),
-            egress_cidr: "10.0.0.0/8".into(),
-            egress_port: 8443,
-        });
-        let line = cmds[0].display();
-        assert!(line.contains("allowedEgress[0].cidr=10.0.0.0/8"), "{line}");
-        assert!(
-            line.contains("allowedEgress[0].ports[0].port=8443"),
-            "{line}"
+    fn resolve_up_credentials_reflects_env_and_fake_model() {
+        // Env set, not fake: real model.
+        assert_eq!(
+            resolve_up_credentials(false, Some("sk-ant-x".into())).as_deref(),
+            Some("sk-ant-x")
         );
+        // --fake-model wins even with a credential in the environment.
+        assert_eq!(resolve_up_credentials(true, Some("sk-ant-x".into())), None);
+        // Empty and absent both mean sealed.
+        assert_eq!(resolve_up_credentials(false, Some(String::new())), None);
+        assert_eq!(resolve_up_credentials(false, None), None);
     }
 
     #[test]
