@@ -1,0 +1,71 @@
+# GHCR demo profile: a single-command fresh install with NO locally-built images.
+#
+# The chart's default values.yaml already points all five first-party services at
+# `ghcr.io/curie-eng/agentos-<service>:latest` (the `Release images` workflow
+# publishes api, dispatcher, worker, ui, and runner on every push to main, tagged
+# both sha-<commit> and latest). This overlay is the flagship quickstart profile:
+#
+#   1. Pull policy IfNotPresent on all five, so a demo cluster does not re-pull the
+#      `latest` digest on every pod restart.
+#   2. The agent-sandbox substrate AND its controller turned ON, so the runner pool
+#      actually deploys on a fresh cluster that has never run agent-sandbox. Without
+#      this the four app services come up but no runner is created.
+#
+# Runsc-capable cluster:
+#   helm install agentos charts/agentos -n agentos --create-namespace \
+#     -f charts/agentos/values-ghcr.yaml
+#
+# No-runsc cluster (kind, or k8scratch without runsc + the containerd handler) --
+# add the no-gvisor overlay LAST so its runtimeClassName="" wins:
+#   helm install agentos charts/agentos -n agentos --create-namespace \
+#     -f charts/agentos/values-ghcr.yaml \
+#     -f charts/agentos/values-e2e-nogvisor.yaml
+#
+# Contrast with values-dev.yaml, which repoints every image at a locally-built,
+# cluster-imported tag with imagePullPolicy Never for OFFLINE dev/e2e -- that path
+# requires the manual `docker build` + `k3s ctr images import` pre-step first, or
+# the runner pod dies ErrImageNeverPull. Use THIS file, not values-dev, for a
+# from-GHCR install with no local build step.
+#
+# NOTE on the controller: it is cluster-scoped, one install per cluster. If the
+# target cluster ALREADY runs agent-sandbox, set agentSandbox.controller.deploy
+# to false to avoid a second controller.
+#
+# NOTE on the model: fakeModel stays true (the chart default) so the install comes
+# up green with no model credential. For a real-model demo, set
+# agentSandbox.runner.fakeModel=false and supply agentSandbox.runner.credentials.
+
+api:
+  image:
+    repository: ghcr.io/curie-eng/agentos-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+dispatcher:
+  image:
+    repository: ghcr.io/curie-eng/agentos-dispatcher
+    tag: latest
+    pullPolicy: IfNotPresent
+
+worker:
+  image:
+    repository: ghcr.io/curie-eng/agentos-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+
+ui:
+  image:
+    repository: ghcr.io/curie-eng/agentos-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+
+agentSandbox:
+  # Turn the substrate on so the runner SandboxTemplate + warm pool render, and
+  # install the vendored controller (fresh cluster with no agent-sandbox yet).
+  deploy: true
+  controller:
+    deploy: true
+  runner:
+    image: ghcr.io/curie-eng/agentos-runner
+    tag: latest
+    imagePullPolicy: IfNotPresent

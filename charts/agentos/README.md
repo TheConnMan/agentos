@@ -16,15 +16,46 @@ every backing store is toggle-gated with a single-block bring-your-own surface.
 
 ## Install
 
-Dev profile (single node, ~4 GB scratch cluster such as k8scratch):
+**Flagship quickstart (GHCR images, no local build).** Installs the full stack
+plus the runner from the images the `Release images` workflow publishes to GHCR,
+with the agent-sandbox substrate and controller turned on. Nothing to build or
+import first:
 
 ```bash
+helm install agentos charts/agentos -n agentos --create-namespace \
+  -f charts/agentos/values-ghcr.yaml
+kubectl get pods -n agentos -w
+```
+
+On a cluster without `runsc` (a plain `kind` cluster, or k8scratch before the
+gVisor handler is installed), add the no-gvisor overlay LAST so its
+`runtimeClassName=""` wins:
+
+```bash
+helm install agentos charts/agentos -n agentos --create-namespace \
+  -f charts/agentos/values-ghcr.yaml \
+  -f charts/agentos/values-e2e-nogvisor.yaml
+```
+
+If the target cluster already runs the agent-sandbox controller, add
+`--set agentSandbox.controller.deploy=false` (the controller is cluster-scoped,
+one per cluster).
+
+**Dev profile (offline, locally-built images).** Single node, ~4 GB scratch
+cluster such as k8scratch. `values-dev.yaml` repoints every image at a
+locally-built, cluster-imported tag with `imagePullPolicy: Never`, so you MUST
+build and import the images first (see "Publishing and pulling images" below) or
+the pods die `ErrImageNeverPull`:
+
+```bash
+# Prereq: build + import each first-party image into the cluster runtime first.
 helm install agentos-dev charts/agentos -n agentos-dev --create-namespace \
   -f charts/agentos/values-dev.yaml
 kubectl get pods -n agentos-dev -w
 ```
 
-Default profile (larger requests; supply real secrets for anything real):
+Default profile (larger requests, GHCR images, runner substrate OFF; supply real
+secrets for anything real):
 
 ```bash
 helm install agentos charts/agentos -n agentos --create-namespace
@@ -57,14 +88,18 @@ App services emit OTLP to the **collector**, never straight to Langfuse
 First-party service images are published to GHCR by the `Release images`
 workflow (`.github/workflows/release.yaml`) on every push to `main`, as
 `ghcr.io/curie-eng/agentos-<service>` tagged with the commit SHA and `latest`.
-Today that is only the runner (`agentos-runner`) -- the only service with a
-Dockerfile and the only first-party image the chart deploys; the others join the
-build matrix once their Dockerfiles land.
+All five first-party services build in the matrix: `agentos-api`,
+`agentos-dispatcher`, `agentos-worker`, `agentos-ui`, and `agentos-runner`. The
+chart defaults every first-party image at its `ghcr.io/curie-eng/agentos-*`
+`:latest`, so the GHCR install path needs no image overrides -- see the flagship
+quickstart above (`-f values-ghcr.yaml`), which also flips the pull policy to
+`IfNotPresent` and turns the runner substrate on.
 
-The chart defaults `agentSandbox.runner.image` at
-`ghcr.io/curie-eng/agentos-runner` with `imagePullPolicy: IfNotPresent`. A GHCR
-package inherits its repo's visibility, so on a **private** repo the image is not
-anonymously pullable and the node needs credentials. Two supported paths:
+The default `imagePullPolicy` is `Always` (the four apps and the runner), chosen
+so a node that cached an older `latest` digest does not keep running stale code;
+pin an immutable tag and switch to `IfNotPresent` for reproducible deploys.
+A GHCR package inherits its repo's visibility, so on a **private** repo the image
+is not anonymously pullable and the node needs credentials. Two supported paths:
 
 - **Private + pull Secret (default posture).** Create a docker-registry Secret
   in the release namespace and reference it:
@@ -78,9 +113,26 @@ anonymously pullable and the node needs credentials. Two supported paths:
 - **Public package.** In the GHCR package settings make the package public; then
   no pull Secret is needed and `imagePullSecrets` stays empty.
 
-For offline dev/e2e, `-f values-dev.yaml` overrides the runner back to a
-locally-built, cluster-imported `agentos-runner` with `imagePullPolicy: Never`,
-so a disconnected cluster never attempts a GHCR pull.
+For offline dev/e2e, `-f values-dev.yaml` overrides all five first-party images
+back to locally-built, cluster-imported tags with `imagePullPolicy: Never`, so a
+disconnected cluster never attempts a GHCR pull. That path requires building and
+importing each image first:
+
+```bash
+for svc in api dispatcher worker ui; do
+  docker build -f apps/$svc/Dockerfile -t agentos-$svc:local .
+done
+docker build -f runner/Dockerfile -t agentos-runner:latest .
+# import each into the cluster runtime, e.g. for k3s:
+for img in agentos-api:local agentos-dispatcher:local agentos-worker:local \
+           agentos-ui:local agentos-runner:latest; do
+  docker save "$img" | ssh <node> 'sudo k3s ctr images import -'
+done
+```
+
+Skip the build+import and the `Never` pull policy leaves the pods stuck at
+`ErrImageNeverPull`. For a from-GHCR install with no local build, use
+`-f values-ghcr.yaml` instead.
 
 ## Values surface and the BYO idiom
 
@@ -229,13 +281,15 @@ worker's sandbox substrate (`agentos_worker.sandbox`) claims from. Default off.
   with `--extensions`). It is cluster-scoped; install it from exactly one
   release per cluster, or leave it false on clusters that already run
   agent-sandbox.
-- **Runner image**: the pool runs `agentos-runner` built locally
-  (`docker build -f runner/Dockerfile -t agentos-runner .` from the repo root)
-  and imported into the cluster runtime
-  (`docker save agentos-runner:<tag> | ssh <node> 'sudo k3s ctr images import -'`),
-  hence `imagePullPolicy: Never` by default. Fake-model mode
-  (`agentSandbox.runner.fakeModel`, default true) round-trips ACI events with
-  no credential.
+- **Runner image**: the pool runs `agentos-runner`, defaulting to
+  `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: Always` (the
+  GHCR path; `-f values-ghcr.yaml` flips it to `IfNotPresent`). For offline
+  dev/e2e, `-f values-dev.yaml` overrides it to a locally-built, cluster-imported
+  tag with `imagePullPolicy: Never` (`docker build -f runner/Dockerfile -t
+  agentos-runner .` from the repo root, then
+  `docker save agentos-runner:<tag> | ssh <node> 'sudo k3s ctr images import -'`).
+  Fake-model mode (`agentSandbox.runner.fakeModel`, default true) round-trips ACI
+  events with no credential.
 - **Per-claim env**: the template sets `envVarsInjectionPolicy: Overrides` so
   the substrate's resume path can inject `AGENTOS_HISTORY_REF` /
   `AGENTOS_SESSION_ID` per claim. Claims carrying env bind a fresh sandbox
