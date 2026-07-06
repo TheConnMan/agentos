@@ -11,7 +11,7 @@ use agentos::chat::{self, ChatOpts};
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
-use agentos::ops::{self, CommonOpts, ConnectSlackOpts, DownOpts, GoLiveOpts, UpOpts};
+use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -259,7 +259,10 @@ enum Command {
     },
     /// Install or upgrade the AgentOS release via Helm (helm upgrade --install).
     /// By default it puts the UI and Langfuse on node ports for tailnet/LAN
-    /// access; pass --no-expose to keep them ClusterIP-only.
+    /// access; pass --no-expose to keep them ClusterIP-only. Set
+    /// AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) to install with the real
+    /// model and egress opened to the provider; without it the install is sealed
+    /// (fake model, canned replies) and re-running with the env var set goes live.
     Up {
         /// Kubernetes namespace.
         #[arg(long, default_value = "agentos")]
@@ -273,59 +276,13 @@ enum Command {
         /// Keep the UI and Langfuse services ClusterIP instead of NodePort.
         #[arg(long)]
         no_expose: bool,
+        /// Force the sealed fake-model install even when AGENTOS_MODEL_CREDENTIALS
+        /// is set (dev/CI escape hatch); suppresses the fake-model warning.
+        #[arg(long)]
+        fake_model: bool,
         /// Extra `--set KEY=VAL` passed through to helm verbatim (repeatable).
         #[arg(long = "set", value_name = "KEY=VAL")]
         set: Vec<String>,
-        /// Print the helm command that would run and exit without executing.
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Wire Slack credentials into a deployed release (helm upgrade
-    /// --reuse-values). Tokens are never printed. Also clears
-    /// worker.slackApiBaseUrl back to empty, so connecting real Slack un-wires
-    /// any `agentos message` stub routing (otherwise the worker would keep
-    /// posting replies to a now-dead local stub instead of the Slack workspace).
-    ConnectSlack {
-        /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
-        namespace: String,
-        /// Helm release name.
-        #[arg(long, default_value = "agentos")]
-        release: String,
-        /// Chart path (run from the repo root for the default).
-        #[arg(long, default_value = "charts/agentos")]
-        chart: String,
-        /// Slack app-level token (xapp-...). Never printed.
-        #[arg(long, env = "SLACK_APP_TOKEN", hide_env_values = true)]
-        app_token: String,
-        /// Slack bot token (xoxb-...). Never printed.
-        #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
-        bot_token: String,
-        /// Print the helm command that would run and exit without executing.
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Switch off the fake model and open the fail-closed runner NetworkPolicy to
-    /// the model provider (helm upgrade --reuse-values).
-    GoLive {
-        /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
-        namespace: String,
-        /// Helm release name.
-        #[arg(long, default_value = "agentos")]
-        release: String,
-        /// Chart path (run from the repo root for the default).
-        #[arg(long, default_value = "charts/agentos")]
-        chart: String,
-        /// Opaque model credential forwarded into every sandbox. Never printed.
-        #[arg(long, env = "AGENTOS_MODEL_CREDENTIALS", hide_env_values = true)]
-        credentials: String,
-        /// Egress CIDR the runner may reach (default: Anthropic's published range).
-        #[arg(long, default_value = "160.79.104.0/23")]
-        egress_cidr: String,
-        /// Egress port the runner may reach.
-        #[arg(long, default_value_t = 443)]
-        egress_port: u16,
         /// Print the helm command that would run and exit without executing.
         #[arg(long)]
         dry_run: bool,
@@ -545,9 +502,14 @@ async fn main() -> Result<()> {
             release,
             chart,
             no_expose,
+            fake_model,
             set,
             dry_run,
         } => {
+            let credentials = ops::resolve_up_credentials(
+                fake_model,
+                std::env::var("AGENTOS_MODEL_CREDENTIALS").ok(),
+            );
             ops::up(UpOpts {
                 common: CommonOpts {
                     namespace,
@@ -557,48 +519,8 @@ async fn main() -> Result<()> {
                 chart,
                 no_expose,
                 set,
-            })
-            .await
-        }
-        Command::ConnectSlack {
-            namespace,
-            release,
-            chart,
-            app_token,
-            bot_token,
-            dry_run,
-        } => {
-            ops::connect_slack(ConnectSlackOpts {
-                common: CommonOpts {
-                    namespace,
-                    release,
-                    dry_run,
-                },
-                chart,
-                app_token,
-                bot_token,
-            })
-            .await
-        }
-        Command::GoLive {
-            namespace,
-            release,
-            chart,
-            credentials,
-            egress_cidr,
-            egress_port,
-            dry_run,
-        } => {
-            ops::go_live(GoLiveOpts {
-                common: CommonOpts {
-                    namespace,
-                    release,
-                    dry_run,
-                },
-                chart,
+                fake_model,
                 credentials,
-                egress_cidr,
-                egress_port,
             })
             .await
         }

@@ -108,9 +108,10 @@ What it does, in order:
    `<release>-dispatcher` deployment exists, which only renders when both Slack
    tokens are set), wiring is refused unless `--force-wire`, since pointing the
    worker at the stub would hijack that workspace's replies cluster-wide. In the
-   demo flow `message` runs **before** `connect-slack`, so the guard never fires;
-   and `connect-slack` clears `worker.slackApiBaseUrl` back to empty, un-wiring
-   the stub when real Slack is connected.
+   demo flow `message` runs **before** a real Slack workspace is connected, so the
+   guard never fires; and the helm upgrade that connects Slack (setting
+   `worker.slackApiBaseUrl=` to empty in the same command) un-wires the stub when
+   real Slack is connected.
 6. **Enqueue + wait**: `XADD`s the exact `QueuedSlackEvent`, waits for the worker
    to finalize (the same ack-based completion `chat` uses), prints the reply, and
    emits a `continue this conversation: ...` line for multi-turn threads. On

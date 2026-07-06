@@ -6,10 +6,10 @@ and the platform API's committed `apps/api/openapi.json`) and orchestrates a
 local runner container via Docker. Two command families: the **runner-session**
 verbs (`init`, `start`, `send`, `eval`, `runner-status`, `steer`, `interrupt`,
 plus `deploy`/`chat`/`message`) drive a plugin against a local runner or a
-deployed release; the **operator lifecycle** verbs (`up`, `connect-slack`,
-`go-live`, `status`, `down`, and `local <up|down|status>`, in `src/ops.rs` +
-`src/local.rs`) are a thin wrapper over the `helm`/`kubectl`/`docker compose`
-binaries. Full command reference in `cli/README.md`.
+deployed release; the **operator lifecycle** verbs (`up`, `status`, `down`, and
+`local <up|down|status>`, in `src/ops.rs` + `src/local.rs`) are a thin wrapper
+over the `helm`/`kubectl`/`docker compose` binaries. Full command reference in
+`cli/README.md`.
 
 ## Load-bearing invariants
 
@@ -48,10 +48,9 @@ binaries. Full command reference in `cli/README.md`.
   tar.gz and pushes to the platform API (find-or-create agent, create version,
   upload bundle, create deployment) authenticated via
   `--api-key`/`AGENTOS_API_KEY`. `chat`/`message` and every operator verb
-  (`up`, `connect-slack`, `go-live`, `status`, `down`) reach a
-  Valkey/API/cluster by design.
+  (`up`, `status`, `down`) reach a Valkey/API/cluster by design.
 - **The operator verbs are a thin wrapper; the chart stays the source of
-  truth.** `up`/`connect-slack`/`go-live`/`status`/`down` (`src/ops.rs`) and
+  truth.** `up`/`status`/`down` (`src/ops.rs`) and
   `local <up|down|status>` (`src/local.rs`) shell out to
   `helm`/`kubectl`/`docker compose` and never re-derive what a values file
   already declares. Each verb builds its command lines as a pure function
@@ -61,10 +60,11 @@ binaries. Full command reference in `cli/README.md`.
 - **Credentials are masked, never printed.** Secret `helm --set` values use the
   `CmdArg::SecretSet` variant (only a masked prefix is echoed, in dry-run or the
   printed command line) and token flags read from env with `hide_env_values`.
-  Never widen a secret to `Plain` or otherwise print it. `go-live` credentials
-  and `connect-slack` tokens flow through this path; `connect-slack` also clears
-  `worker.slackApiBaseUrl`, un-wiring any `message` stub routing when real Slack
-  is connected.
+  Never widen a secret to `Plain` or otherwise print it. The `up` model
+  credential (from `AGENTOS_MODEL_CREDENTIALS`) flows through this path. Slack is
+  connected with a raw `helm upgrade --reuse-values` (setting the dispatcher
+  tokens and clearing `worker.slackApiBaseUrl=` to un-wire any `message` stub
+  routing), not a CLI verb; see the chart NOTES.
 - **`message` self-plumbs and guards against hijacking real Slack.** It manages
   its own kubectl port-forwards (children killed on exit) and, when wiring the
   deployed worker to its local stub, refuses if a `<release>-dispatcher`
