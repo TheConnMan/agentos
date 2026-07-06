@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use agentos::chat::{self, ChatOpts};
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
+use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::ops::{self, CommonOpts, ConnectSlackOpts, DownOpts, GoLiveOpts, UpOpts};
 use agentos::slack_sim::{self, SlackSimOpts};
 use anyhow::Result;
@@ -203,6 +204,12 @@ enum Command {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Manage the local dev stack (compose.dev.yaml: Postgres + Valkey +
+    /// Langfuse + ClickHouse + MinIO + OTel).
+    Local {
+        #[command(subcommand)]
+        action: LocalAction,
+    },
     /// Install or upgrade the AgentOS release via Helm (helm upgrade --install).
     /// By default it puts the UI and Langfuse on node ports for tailnet/LAN
     /// access; pass --no-expose to keep them ClusterIP-only.
@@ -298,6 +305,44 @@ enum Command {
         #[arg(long)]
         yes: bool,
         /// Print the commands that would run and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// Subcommands of `agentos local`.
+#[derive(Subcommand)]
+enum LocalAction {
+    /// Bring the dev stack up (docker compose up -d --wait) and print URLs.
+    Up {
+        /// Compose file (run from the repo root for the default).
+        #[arg(long, default_value = local::DEFAULT_COMPOSE_FILE)]
+        file: String,
+        /// Print the docker compose command and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Stop the dev stack (docker compose down), keeping volumes.
+    Down {
+        /// Compose file (run from the repo root for the default).
+        #[arg(long, default_value = local::DEFAULT_COMPOSE_FILE)]
+        file: String,
+        /// Also destroy volumes (adds -v). Prompts for confirmation unless --yes.
+        #[arg(long)]
+        wipe: bool,
+        /// Skip the --wipe confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Print the docker compose command and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show the dev stack's service status (docker compose ps).
+    Status {
+        /// Compose file (run from the repo root for the default).
+        #[arg(long, default_value = local::DEFAULT_COMPOSE_FILE)]
+        file: String,
+        /// Print the docker compose command and exit without executing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -404,6 +449,25 @@ async fn main() -> Result<()> {
             })
             .await
         }
+        Command::Local { action } => match action {
+            LocalAction::Up { file, dry_run } => local::up(LocalOpts { file, dry_run }).await,
+            LocalAction::Down {
+                file,
+                wipe,
+                yes,
+                dry_run,
+            } => {
+                local::down(LocalDownOpts {
+                    common: LocalOpts { file, dry_run },
+                    wipe,
+                    yes,
+                })
+                .await
+            }
+            LocalAction::Status { file, dry_run } => {
+                local::status(LocalOpts { file, dry_run }).await
+            }
+        },
         Command::Up {
             namespace,
             release,
