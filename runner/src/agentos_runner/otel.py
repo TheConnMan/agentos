@@ -78,11 +78,29 @@ class RunTracer:
         )
 
     @contextmanager
-    def run_span(self, trace_name: str, model: str | None) -> Iterator[_GenerationSpan]:
-        """Open the root ``agent.run`` span and its child ``llm.generation`` span."""
+    def run_span(
+        self,
+        trace_name: str,
+        model: str | None,
+        session_id: str | None = None,
+        user_id: str | None = None,
+    ) -> Iterator[_GenerationSpan]:
+        """Open the root ``agent.run`` span and its child ``llm.generation`` span.
+
+        ``session_id`` (the ACI ``AGENTOS_SESSION_ID``, one Slack thread) and
+        ``user_id`` (the inbound event's Slack user) are stamped on the root span
+        so Langfuse maps them to its Sessions and Users features respectively.
+        Langfuse reads these from the trace-root span, exactly as it does
+        ``langfuse.trace.name``; an empty or absent value is omitted rather than
+        stamped, so a turn with no event user (eval runs etc.) carries no user id.
+        """
 
         with self._tracer.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
             root.set_attribute("langfuse.trace.name", trace_name)
+            if session_id:
+                root.set_attribute("langfuse.session.id", session_id)
+            if user_id:
+                root.set_attribute("langfuse.user.id", user_id)
             with self._tracer.start_as_current_span("llm.generation") as gen:
                 span = _GenerationSpan(self._tracer, gen)
                 # Stamp the configured model at span open when AGENTOS_MODEL is

@@ -73,6 +73,65 @@ def test_generation_model_backfilled_from_sdk_when_unconfigured() -> None:
     assert gen.attributes["gen_ai.usage.output_tokens"] == 8
 
 
+def test_run_stamps_langfuse_session_and_user_ids() -> None:
+    # Langfuse maps langfuse.session.id -> Sessions and langfuse.user.id -> Users,
+    # but only from the trace-root span (same as langfuse.trace.name). The session
+    # id is stable per session; the user id is the inbound event's Slack user.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    runner = SessionRunner(
+        session_factory=FakeModelSession,
+        ceiling=0,
+        tracer=RunTracer(provider),
+        classifier=SideEffectClassifier(),
+        trace_name="agentos-run:test",
+        session_id="agent-abc-thread-123",
+        model="fake-model",
+    )
+
+    async def go() -> None:
+        await runner.start()
+        async for _ in runner.run_turn(Event(type="message", text="go", user="U42", ts="1")):
+            pass
+
+    anyio.run(go)
+
+    root = {s.name: s for s in exporter.get_finished_spans()}["agent.run"]
+    assert root.attributes["langfuse.session.id"] == "agent-abc-thread-123"
+    assert root.attributes["langfuse.user.id"] == "U42"
+
+
+def test_run_omits_langfuse_user_id_when_event_user_empty() -> None:
+    # A turn with no event user (eval runs etc.) omits the attribute rather than
+    # stamping an empty value; the session id still lands.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    runner = SessionRunner(
+        session_factory=FakeModelSession,
+        ceiling=0,
+        tracer=RunTracer(provider),
+        classifier=SideEffectClassifier(),
+        trace_name="agentos-run:test",
+        session_id="agent-abc-thread-123",
+        model="fake-model",
+    )
+
+    async def go() -> None:
+        await runner.start()
+        async for _ in runner.run_turn(Event(type="message", text="go", user="", ts="1")):
+            pass
+
+    anyio.run(go)
+
+    root = {s.name: s for s in exporter.get_finished_spans()}["agent.run"]
+    assert "langfuse.user.id" not in root.attributes
+    assert root.attributes["langfuse.session.id"] == "agent-abc-thread-123"
+
+
 def test_tracer_provider_none_without_endpoint() -> None:
     otel = OtelConfig()
     assert build_tracer_provider(otel, "s1") is None
