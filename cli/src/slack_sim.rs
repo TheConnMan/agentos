@@ -69,6 +69,32 @@ pub fn reply_text_if_changed(
         .map(|m| m.text.clone())
 }
 
+/// A Slack Web API call returned `ok: false`. `code` is the raw Slack error
+/// string (e.g. `missing_scope`), preserved so callers can classify recoverable
+/// failures without string-matching a formatted message.
+#[derive(Debug, Clone)]
+pub struct SlackApiError {
+    pub method: &'static str,
+    pub code: String,
+}
+
+impl std::fmt::Display for SlackApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} failed: {}", self.method, self.code)
+    }
+}
+
+impl std::error::Error for SlackApiError {}
+
+/// Whether an error is the Slack `missing_scope` failure the reply-poll hits
+/// when the bot token lacks `channels:history`/`groups:history`. The sim treats
+/// this as a graceful degrade (post succeeded, only live polling is unavailable)
+/// rather than a pipeline failure.
+pub fn is_missing_scope(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<SlackApiError>()
+        .is_some_and(|e| e.code == "missing_scope")
+}
+
 /// Minimal Slack Web API client over the shared reqwest dependency.
 ///
 /// The base URL is injectable so integration tests can point it at a wire-level
@@ -164,10 +190,11 @@ impl SlackClient {
             .await
             .context("decoding conversations.replies response")?;
         if !resp.ok {
-            bail!(
-                "conversations.replies failed: {}",
-                resp.error.unwrap_or_else(|| "unknown error".into())
-            );
+            return Err(SlackApiError {
+                method: "conversations.replies",
+                code: resp.error.unwrap_or_else(|| "unknown error".into()),
+            }
+            .into());
         }
         Ok(resp.messages.unwrap_or_default())
     }
@@ -204,6 +231,10 @@ pub enum SimOutcome {
     Replied(String),
     /// The worker acked but the placeholder never changed from the placeholder.
     CompletedNoEdit,
+    /// The reply-poll could not read the thread because the bot token lacks
+    /// `channels:history`/`groups:history`. The turn still runs in Slack; only
+    /// live polling here is unavailable.
+    PollScopeMissing,
     /// The deadline passed with no ack.
     TimedOut,
 }
@@ -227,7 +258,13 @@ pub async fn wait_for_completion(
     let deadline = Instant::now() + timeout;
     let mut latest: Option<String> = None;
     loop {
-        let messages = slack.conversations_replies(channel, thread_ts).await?;
+        let messages = match slack.conversations_replies(channel, thread_ts).await {
+            Ok(messages) => messages,
+            // The scope is fixed for the run, so a missing_scope failure will
+            // recur every poll; surface it once as a graceful degrade.
+            Err(e) if is_missing_scope(&e) => return Ok(SimOutcome::PollScopeMissing),
+            Err(e) => return Err(e),
+        };
         if let Some(text) = reply_text_if_changed(&messages, placeholder_ts, original) {
             latest = Some(text);
         }
@@ -310,6 +347,16 @@ pub async fn slack_sim(opts: SlackSimOpts) -> Result<()> {
             println!("the worker finished the turn but never edited the placeholder");
             Ok(())
         }
+        SimOutcome::PollScopeMissing => {
+            println!(
+                "NOTE: the bot token lacks the channels:history scope, so live-polling \
+                 the reply is unavailable until the Slack app is reinstalled with the \
+                 updated manifest (apps/dispatcher/slack-app-manifest.yaml)."
+            );
+            println!("The worker still handled the turn in Slack. Watch the thread:");
+            println!("thread   {link}");
+            Ok(())
+        }
         SimOutcome::TimedOut => {
             println!(
                 "TIMEOUT: the worker did not finalize within {}s. Stream diagnostics:",
@@ -369,5 +416,28 @@ mod tests {
             reply_text_if_changed(&messages, "ph.1", PLACEHOLDER_TEXT),
             None
         );
+    }
+
+    #[test]
+    fn missing_scope_slack_error_is_classified_recoverable() {
+        let err: anyhow::Error = SlackApiError {
+            method: "conversations.replies",
+            code: "missing_scope".into(),
+        }
+        .into();
+        assert!(is_missing_scope(&err));
+    }
+
+    #[test]
+    fn other_errors_are_not_missing_scope() {
+        let other_slack: anyhow::Error = SlackApiError {
+            method: "conversations.replies",
+            code: "channel_not_found".into(),
+        }
+        .into();
+        assert!(!is_missing_scope(&other_slack));
+
+        // A non-Slack error (e.g. a transport failure) is never missing_scope.
+        assert!(!is_missing_scope(&anyhow::anyhow!("connection reset")));
     }
 }
