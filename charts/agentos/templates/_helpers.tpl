@@ -219,9 +219,13 @@ app.kubernetes.io/component: {{ .component }}
      probe's admission test.
 
      agentos.gvisor.runtimeClassName: the EFFECTIVE runtimeClassName to stamp on a
-     runner pod. off -> empty; require -> className; auto -> className only if the
-     RuntimeClass is found by `lookup`. `lookup` returns empty under
-     `helm template`/--dry-run, so auto renders the no-gvisor shape there. */}}
+     runner pod. off -> empty; require -> className; auto -> className when the
+     chart itself creates the RuntimeClass (installRuntimeClass=true), otherwise
+     only if the class is found by `lookup`. The installRuntimeClass shortcut
+     exists because `lookup` cannot see the RuntimeClass the same install is about
+     to create (nor anything under `helm template`/--dry-run), which would leave
+     first-install runner pods with no runtimeClassName despite the chart
+     guaranteeing the object. */}}
 {{- define "agentos.gvisor.className" -}}
 {{- $g := .Values.security.gvisor -}}
 {{- if eq ($g.mode | default "auto") "off" -}}
@@ -236,6 +240,8 @@ app.kubernetes.io/component: {{ .component }}
 {{- $name := $g.runtimeClassName | default "gvisor" -}}
 {{- if eq $mode "off" -}}
 {{- else if eq $mode "require" -}}
+{{- $name -}}
+{{- else if $g.installRuntimeClass -}}
 {{- $name -}}
 {{- else -}}
 {{- if lookup "node.k8s.io/v1" "RuntimeClass" "" $name -}}
