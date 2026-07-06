@@ -1,9 +1,11 @@
-{{- if .Values.dispatcher.deploy }}
+{{- if include "agentos.dispatcher.enabled" . }}
 {{/*
 The dispatcher runs Slack in Socket Mode: it dials Slack outbound over a
 websocket, so there is no inbound port and therefore no Service and no HTTP
-probe. The supervisor reconnects with backoff forever, so the pod stays Running
-even before valid Slack credentials are supplied.
+probe. It deploys only when both Slack tokens are set (see
+agentos.dispatcher.enabled); a token-less default install skips it entirely
+rather than crash-looping the reconnect supervisor, and NOTES.txt prints the
+`helm upgrade` command to connect Slack later.
 */}}
 apiVersion: apps/v1
 kind: Deployment

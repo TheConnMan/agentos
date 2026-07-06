@@ -39,8 +39,12 @@ spec:
       serviceAccountName: {{ include "agentos.fullname" . }}-runner
       automountServiceAccountToken: {{ $runner.serviceAccount.automountToken }}
       {{- end }}
-      {{- if $runner.runtimeClassName }}
-      runtimeClassName: {{ $runner.runtimeClassName }}
+      {{- $gvisorClass := include "agentos.gvisor.runtimeClassName" . }}
+      {{- if $gvisorClass }}
+      # Kernel-isolation RuntimeClass from security.gvisor.mode. In `auto` this is
+      # present only when the class was found by lookup at install time; under
+      # `helm template`/--dry-run lookup is empty, so it renders the no-gvisor shape.
+      runtimeClassName: {{ $gvisorClass }}
       {{- end }}
       {{- if $runner.dnsPolicy }}
       # The agent-sandbox controller injects a public-resolver DNS default
@@ -202,6 +206,15 @@ spec:
             - name: AGENTOS_FAKE_MODEL
               value: "1"
             {{- end }}
+            {{- if $runner.model }}
+            # Default model for real runs, baked into the pod template (not
+            # per-claim). Per-claim injection would force a cold create
+            # (envVarsInjectionPolicy Overrides), so baking it keeps warm-pool
+            # binds fast. Pairs with langfuse.modelPricing so the Cost view is
+            # non-zero.
+            - name: AGENTOS_MODEL
+              value: {{ $runner.model | quote }}
+            {{- end }}
             {{- if $runner.credentials }}
             # Warm-pod fallback credential; the worker's per-claim Overrides
             # injection carries the (per-agent) credential on a bound run.
@@ -257,6 +270,14 @@ spec:
             {{- end }}
             {{- end }}
           {{- end }}
+{{- if gt (int .Values.agentSandbox.warmPool.replicas) 0 }}
+{{/*
+Rendered only when replicas > 0. At the default 0 the pool is omitted entirely:
+an unbound warm pod cannot boot a real-model runner without a bundle (it raises
+PluginBundleError and crash-loops), and a real claim cold-creates anyway because
+per-claim env injection cannot bind a pre-warmed pod (envVarsInjectionPolicy
+Overrides). Raise replicas only for a fake-model/dev pool.
+*/}}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
@@ -271,4 +292,5 @@ spec:
     type: {{ .Values.agentSandbox.warmPool.updateStrategy }}
   sandboxTemplateRef:
     name: {{ include "agentos.fullname" . }}-runner
+{{- end }}
 {{- end }}

@@ -1,33 +1,22 @@
-# E2E / runsc-less overlay: turn the agent-sandbox ON with every security rail
-# EXCEPT gVisor kernel isolation, for clusters that do not have runsc + the
-# containerd runtime handler installed (the current k8scratch after its resize,
-# a plain kind cluster, etc.). Every other rail stays ON -- default-deny egress
-# + metadata block, per-agent secret isolation, and non-root/read-only-rootfs.
+# Explicit gVisor OFF switch.
 #
-# Layer it on top of a base profile (values order matters: this must come last):
+# Since security.gvisor.mode defaults to `auto` -- which already degrades to
+# no-kernel-isolation (with a NOTES warning) on a cluster that lacks the runsc
+# RuntimeClass -- a bare `helm install` already works on a no-runsc cluster. This
+# overlay is the DETERMINISTIC opt-out: it forces isolation off without the
+# install-time RuntimeClass lookup, so runner pods never get a runtimeClassName
+# and the enforcement preflight never renders. Every OTHER security rail stays ON
+# (default-deny egress + metadata block, per-agent secret isolation, non-root /
+# read-only-rootfs). Use it for e2e/kind/scratch clusters where you want the
+# no-gvisor shape to be explicit and lookup-free.
+#
 #   helm install <release> charts/agentos -n <ns> --create-namespace \
-#     -f charts/agentos/values-dev.yaml \
 #     -f charts/agentos/values-e2e-nogvisor.yaml
 #
-# To restore the gVisor rail once runsc is installed on the node, simply drop
-# this overlay -- runtimeClassName defaults back to "gvisor" and the preflight
-# re-arms.
-#
-# NOTE: the agent-sandbox controller and the runner image are separate e2e
-# prerequisites owned by G1 (agentSandbox.controller.deploy / image import);
-# this overlay only governs the security posture, not those.
-
-agentSandbox:
-  deploy: true
-  runner:
-    # No runsc on the node -> opt out of the gVisor kernel-isolation rail.
-    # Empty string means "set no runtimeClassName", so pods schedule on the
-    # default runtime. This alone also disables the gVisor preflight (it only
-    # renders when runtimeClassName is non-empty).
-    runtimeClassName: ""
+# To restore kernel isolation, drop this overlay (mode returns to `auto`) once
+# runsc + the containerd handler are installed on the node; or set
+# security.gvisor.mode=require to fail-hard if it is missing.
 
 security:
-  gvisorPreflight:
-    # Redundant with runtimeClassName="" above, but explicit: do not run the
-    # gVisor enforcement preflight on a cluster without runsc.
-    enabled: false
+  gvisor:
+    mode: "off"

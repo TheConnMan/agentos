@@ -210,3 +210,46 @@ app.kubernetes.io/component: {{ .component }}
 - name: LANGFUSE_S3_MEDIA_UPLOAD_PREFIX
   value: media/
 {{- end -}}
+
+{{/* ---- gVisor tri-state (security.gvisor.mode: auto|require|off) ----
+
+     agentos.gvisor.className: the RuntimeClass NAME to use/verify when gVisor is
+     intended at all (empty only for mode=off). Deterministic (no cluster lookup);
+     used by the enforcement preflight, the optional RuntimeClass object, and the
+     probe's admission test.
+
+     agentos.gvisor.runtimeClassName: the EFFECTIVE runtimeClassName to stamp on a
+     runner pod. off -> empty; require -> className; auto -> className only if the
+     RuntimeClass is found by `lookup`. `lookup` returns empty under
+     `helm template`/--dry-run, so auto renders the no-gvisor shape there. */}}
+{{- define "agentos.gvisor.className" -}}
+{{- $g := .Values.security.gvisor -}}
+{{- if eq ($g.mode | default "auto") "off" -}}
+{{- else -}}
+{{- $g.runtimeClassName | default "gvisor" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "agentos.gvisor.runtimeClassName" -}}
+{{- $g := .Values.security.gvisor -}}
+{{- $mode := $g.mode | default "auto" -}}
+{{- $name := $g.runtimeClassName | default "gvisor" -}}
+{{- if eq $mode "off" -}}
+{{- else if eq $mode "require" -}}
+{{- $name -}}
+{{- else -}}
+{{- if lookup "node.k8s.io/v1" "RuntimeClass" "" $name -}}
+{{- $name -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* ---- Dispatcher gating ----
+     The Slack dispatcher only deploys when it has both tokens; without them it
+     would crash-loop the reconnect supervisor forever, so a token-less default
+     install skips the Deployment entirely (NOTES prints the connect command). */}}
+{{- define "agentos.dispatcher.enabled" -}}
+{{- if and .Values.dispatcher.deploy .Values.dispatcher.slack.appToken .Values.dispatcher.slack.botToken -}}
+true
+{{- end -}}
+{{- end -}}

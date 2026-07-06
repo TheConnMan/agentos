@@ -16,29 +16,75 @@ every backing store is toggle-gated with a single-block bring-your-own surface.
 
 ## Install
 
-Dev profile (single node, ~4 GB scratch cluster such as k8scratch):
+The defaults are the flagship path: GHCR images, the runner substrate and its
+controller on, a modest single-node footprint, and graceful degradation when the
+cluster lacks Slack tokens or runsc. So a fresh install is two commands.
+
+**Step 1 -- bare install.** Nothing to build, no overlays, no `--set`:
 
 ```bash
+helm install agentos charts/agentos -n agentos --create-namespace
+kubectl get pods -n agentos -w
+```
+
+This brings up the full stack (Langfuse + stores + OTel), the four app services
+from GHCR, and the runner sandbox substrate. Two things degrade gracefully so the
+install is green with zero secrets:
+
+- **Slack** is not connected (no tokens), so the dispatcher Deployment is skipped
+  rather than crash-looped, and the runner stays in offline fake-model mode.
+- **gVisor** kernel isolation is `auto`: if the cluster has the `gvisor`
+  RuntimeClass, runner pods use it; if not, they run without it and `NOTES.txt`
+  prints a warning. Either way the install does not block.
+
+**Step 2 -- connect Slack + a real model.** When you have Slack tokens and a
+model credential, upgrade in place (the exact command is also printed in
+`NOTES.txt` after step 1):
+
+```bash
+helm upgrade agentos charts/agentos -n agentos --reuse-values \
+  --set dispatcher.slack.appToken=xapp-... \
+  --set dispatcher.slack.botToken=xoxb-... \
+  --set dispatcher.slack.signingSecret=... \
+  --set agentSandbox.runner.fakeModel=false \
+  --set agentSandbox.runner.credentials=sk-ant-...
+```
+
+Setting the two Slack tokens is what makes the dispatcher deploy.
+
+**Cluster variants:**
+
+- **Cluster already runs the agent-sandbox controller** (cluster-scoped, one per
+  cluster): add `--set agentSandbox.controller.deploy=false`.
+- **No runsc and you want the no-gvisor shape to be explicit/deterministic**
+  (skip the RuntimeClass lookup): `-f charts/agentos/values-e2e-nogvisor.yaml`.
+  Not required -- `auto` already handles a runsc-less cluster -- but it forces
+  isolation off without the lookup. To fail-hard instead when runsc is missing,
+  `--set security.gvisor.mode=require`.
+- **Production sizing:** the default `resources`/persistence blocks are a modest
+  single-node footprint (fits an 8-16 GB node). Raise them for real load.
+
+**Local dev profile (offline, locally-built images).** `values-dev.yaml` repoints
+every image at a locally-built, cluster-imported tag with `imagePullPolicy: Never`
+for a fully disconnected cluster, so you MUST build and import the images first
+(see "Publishing and pulling images" below) or the pods die `ErrImageNeverPull`:
+
+```bash
+# Prereq: build + import each first-party image into the cluster runtime first.
 helm install agentos-dev charts/agentos -n agentos-dev --create-namespace \
   -f charts/agentos/values-dev.yaml
 kubectl get pods -n agentos-dev -w
 ```
 
-Default profile (larger requests; supply real secrets for anything real):
-
-```bash
-helm install agentos charts/agentos -n agentos --create-namespace
-```
-
 Reach the Langfuse UI:
 
 ```bash
-kubectl port-forward -n agentos-dev svc/agentos-dev-langfuse-web 3000:3000
+kubectl port-forward -n agentos svc/agentos-langfuse-web 3000:3000
 # http://localhost:3000  -- dev keys: pk-lf-agentos-dev / sk-lf-agentos-dev
 ```
 
 App services emit OTLP to the **collector**, never straight to Langfuse
-(Langfuse OTLP ingest is HTTP-only): `agentos-dev-otel-collector:4317` (gRPC) /
+(Langfuse OTLP ingest is HTTP-only): `agentos-otel-collector:4317` (gRPC) /
 `:4318` (HTTP). The collector forwards to Langfuse over HTTP.
 
 ## Components
@@ -57,14 +103,14 @@ App services emit OTLP to the **collector**, never straight to Langfuse
 First-party service images are published to GHCR by the `Release images`
 workflow (`.github/workflows/release.yaml`) on every push to `main`, as
 `ghcr.io/curie-eng/agentos-<service>` tagged with the commit SHA and `latest`.
-Today that is only the runner (`agentos-runner`) -- the only service with a
-Dockerfile and the only first-party image the chart deploys; the others join the
-build matrix once their Dockerfiles land.
-
-The chart defaults `agentSandbox.runner.image` at
-`ghcr.io/curie-eng/agentos-runner` with `imagePullPolicy: IfNotPresent`. A GHCR
-package inherits its repo's visibility, so on a **private** repo the image is not
-anonymously pullable and the node needs credentials. Two supported paths:
+All five first-party services build in the matrix: `agentos-api`,
+`agentos-dispatcher`, `agentos-worker`, `agentos-ui`, and `agentos-runner`. The
+chart defaults every first-party image at its `ghcr.io/curie-eng/agentos-*`
+`:latest` with `imagePullPolicy: IfNotPresent`, so the bare install (above) pulls
+from GHCR with no image overrides. `IfNotPresent` avoids re-pulling the mutable
+`latest` digest on every restart; pin an immutable tag for reproducible deploys.
+A GHCR package inherits its repo's visibility, so on a **private** repo the image
+is not anonymously pullable and the node needs credentials. Two supported paths:
 
 - **Private + pull Secret (default posture).** Create a docker-registry Secret
   in the release namespace and reference it:
@@ -78,9 +124,26 @@ anonymously pullable and the node needs credentials. Two supported paths:
 - **Public package.** In the GHCR package settings make the package public; then
   no pull Secret is needed and `imagePullSecrets` stays empty.
 
-For offline dev/e2e, `-f values-dev.yaml` overrides the runner back to a
-locally-built, cluster-imported `agentos-runner` with `imagePullPolicy: Never`,
-so a disconnected cluster never attempts a GHCR pull.
+For offline dev/e2e, `-f values-dev.yaml` overrides all five first-party images
+back to locally-built, cluster-imported tags with `imagePullPolicy: Never`, so a
+disconnected cluster never attempts a GHCR pull. That path requires building and
+importing each image first:
+
+```bash
+for svc in api dispatcher worker ui; do
+  docker build -f apps/$svc/Dockerfile -t agentos-$svc:local .
+done
+docker build -f runner/Dockerfile -t agentos-runner:latest .
+# import each into the cluster runtime, e.g. for k3s:
+for img in agentos-api:local agentos-dispatcher:local agentos-worker:local \
+           agentos-ui:local agentos-runner:latest; do
+  docker save "$img" | ssh <node> 'sudo k3s ctr images import -'
+done
+```
+
+Skip the build+import and the `Never` pull policy leaves the pods stuck at
+`ErrImageNeverPull`. For a from-GHCR install with no local build, just use the
+bare `helm install` (the default) -- no overlay needed.
 
 ## Values surface and the BYO idiom
 
@@ -158,22 +221,31 @@ chart without A2.
 | 1. Default-deny egress + metadata block | NetworkPolicies selecting `component: runner-sandbox`: default-deny egress, allow-DNS, an operator-declared egress allowlist, and (optional) ingress lock. Arbitrary internet AND `169.254.169.254` are denied by construction. | `security.networkPolicy.*` |
 | 2. Per-agent secret isolation | Least-privilege runner ServiceAccount (no secret get/list, token not mounted). The per-agent `resourceNames`-scoped Role is bound by the control plane per agent. | `agentSandbox.runner.serviceAccount.*` |
 | 3. Non-root / read-only rootfs | Pod + container securityContext on the runner: `runAsNonRoot`, uid 1000, `readOnlyRootFilesystem`, drop ALL caps, no privilege escalation, RuntimeDefault seccomp, plus writable emptyDir scratch (`/tmp`, `/home/runner`) and `HOME`. | `agentSandbox.runner.hardening.*` |
-| 4. gVisor kernel isolation | `runtimeClassName` on runner pods (default `gvisor`) + a preflight that fails the install if the RuntimeClass is missing or downgraded to runc + an optional RuntimeClass object. | `agentSandbox.runner.runtimeClassName`, `security.gvisor.*`, `security.gvisorPreflight.*` |
+| 4. gVisor kernel isolation | `runtimeClassName` on runner pods, driven by the `security.gvisor.mode` tri-state (`auto`/`require`/`off`) + a `require`-mode preflight that fails the install if the RuntimeClass is missing or downgraded + an optional RuntimeClass object. | `security.gvisor.*`, `security.gvisorPreflight.*` |
 
 **Fail-closed egress.** `security.networkPolicy.allowedEgress` is EMPTY by
 default: a fresh install denies all egress except DNS until the operator declares
 where the model API and MCP endpoints live (`{cidr, ports}` entries). An unset
 allowlist never means allow-all.
 
-**gVisor needs runsc on the node.** `runtimeClassName: gvisor` is the secure
-default, but the NODE must have runsc + the containerd handler installed (a
-node-level op the chart cannot do). The `preflight-gvisor` hook blocks the
-install with a clear remediation if the runtimeclass is missing or downgraded,
-so runner pods never silently lose kernel isolation. On a cluster without runsc,
-opt out of just this rail with the ready-made overlay
-`-f charts/agentos/values-e2e-nogvisor.yaml` (it sets `runtimeClassName=""` and
-disables the gVisor preflight; every other rail stays on). That overlay is what
-G1's e2e and any SK run should layer until runsc is reinstalled on the node.
+**gVisor needs runsc on the node**, and `security.gvisor.mode` is a tri-state
+(default `auto`):
+
+- **`auto`** -- at install/upgrade time the chart looks up the `gvisor`
+  RuntimeClass. Present -> runner pods use it. Absent -> pods run without it and
+  `NOTES.txt` warns. Never blocks the install, so a bare install works on any
+  cluster. (Helm's `lookup` returns empty under `helm template`/--dry-run, so a
+  templated render always shows the no-gvisor shape.)
+- **`require`** -- always stamp the RuntimeClass AND run the `preflight-gvisor`
+  hook, which blocks the install with a clear remediation if the runtimeclass is
+  missing or downgraded to runc. The fail-hard production posture.
+- **`off`** -- never stamp a RuntimeClass; kernel isolation disabled knowingly.
+  `-f charts/agentos/values-e2e-nogvisor.yaml` selects this deterministically
+  (skipping the lookup); every other rail stays on.
+
+The class name and handler live on `security.gvisor.runtimeClassName` / `.handler`;
+set `security.gvisor.installRuntimeClass=true` to have the chart create the
+RuntimeClass object (the node must still provide the runtime).
 
 **Verifying the rails.** The PT-3 probe suite re-runs as a `helm test`:
 
@@ -213,9 +285,10 @@ enforcement asserted separately by the preflight and proven live in PT-3
 
 ## Agent Sandbox substrate (G1)
 
-`agentSandbox.deploy: true` adds the runner `SandboxTemplate`
+`agentSandbox.deploy: true` (the default) adds the runner `SandboxTemplate`
 (`<release>-runner`) and `SandboxWarmPool` (`<release>-runner-pool`) that the
-worker's sandbox substrate (`agentos_worker.sandbox`) claims from. Default off.
+worker's sandbox substrate (`agentos_worker.sandbox`) claims from. Set it false
+to install only the control plane + backing stores without the runner substrate.
 
 - **CRDs** (`sandboxes.agents.x-k8s.io` + the three
   `*.extensions.agents.x-k8s.io`) are vendored from the upstream v0.5.0
@@ -229,13 +302,15 @@ worker's sandbox substrate (`agentos_worker.sandbox`) claims from. Default off.
   with `--extensions`). It is cluster-scoped; install it from exactly one
   release per cluster, or leave it false on clusters that already run
   agent-sandbox.
-- **Runner image**: the pool runs `agentos-runner` built locally
-  (`docker build -f runner/Dockerfile -t agentos-runner .` from the repo root)
-  and imported into the cluster runtime
-  (`docker save agentos-runner:<tag> | ssh <node> 'sudo k3s ctr images import -'`),
-  hence `imagePullPolicy: Never` by default. Fake-model mode
-  (`agentSandbox.runner.fakeModel`, default true) round-trips ACI events with
-  no credential.
+- **Runner image**: the pool runs `agentos-runner`, defaulting to
+  `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: IfNotPresent`
+  (the GHCR path, used by the bare install). For offline
+  dev/e2e, `-f values-dev.yaml` overrides it to a locally-built, cluster-imported
+  tag with `imagePullPolicy: Never` (`docker build -f runner/Dockerfile -t
+  agentos-runner .` from the repo root, then
+  `docker save agentos-runner:<tag> | ssh <node> 'sudo k3s ctr images import -'`).
+  Fake-model mode (`agentSandbox.runner.fakeModel`, default true) round-trips ACI
+  events with no credential.
 - **Per-claim env**: the template sets `envVarsInjectionPolicy: Overrides` so
   the substrate's resume path can inject `AGENTOS_HISTORY_REF` /
   `AGENTOS_SESSION_ID` per claim. Claims carrying env bind a fresh sandbox

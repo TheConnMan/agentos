@@ -32,8 +32,10 @@ App services:
 {{- if .Values.api.deploy }}
   - api ({{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}) on Service {{ include "agentos.fullname" . }}-api:{{ .Values.api.service.port }}
 {{- end }}
-{{- if .Values.dispatcher.deploy }}
+{{- if include "agentos.dispatcher.enabled" . }}
   - dispatcher ({{ .Values.dispatcher.image.repository }}:{{ .Values.dispatcher.image.tag }}) [Slack Socket Mode, no Service]
+{{- else }}
+  - dispatcher: NOT deployed (no Slack tokens set) -- see "Connect Slack" below
 {{- end }}
 {{- if .Values.worker.deploy }}
   - worker ({{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }})
@@ -58,6 +60,36 @@ Preflights:
 
 Check rollout:
   kubectl get pods -n {{ .Release.Namespace }} -w
+{{- if .Values.agentSandbox.deploy }}
+{{- $gvisorMode := .Values.security.gvisor.mode | default "auto" }}
+{{- $gvisorClass := include "agentos.gvisor.runtimeClassName" . }}
+
+Kernel isolation (gVisor, security.gvisor.mode={{ $gvisorMode }}):
+{{- if eq $gvisorMode "off" }}
+  - DISABLED: runner pods run on the default runtime (no kernel isolation).
+{{- else if $gvisorClass }}
+  - ACTIVE: runner pods run under RuntimeClass "{{ $gvisorClass }}".
+{{- else }}
+  - !! WARNING: no "{{ .Values.security.gvisor.runtimeClassName }}" RuntimeClass was
+       found on this cluster, so runner pods run with NO kernel isolation. Install
+       runsc + the containerd handler on every node and re-run `helm upgrade`, or
+       set security.gvisor.mode=require to fail-hard on the next install, or =off to
+       acknowledge running without it.
+{{- end }}
+{{- end }}
+{{- if not (include "agentos.dispatcher.enabled" .) }}
+
+Connect Slack + switch to a real model:
+  The dispatcher is not deployed (no Slack tokens) and the runner is in offline
+  fake-model mode. Upgrade with your Slack tokens and a model credential to go live:
+
+  helm upgrade {{ .Release.Name }} charts/agentos -n {{ .Release.Namespace }} --reuse-values \
+    --set dispatcher.slack.appToken=xapp-your-app-token \
+    --set dispatcher.slack.botToken=xoxb-your-bot-token \
+    --set dispatcher.slack.signingSecret=your-signing-secret \
+    --set agentSandbox.runner.fakeModel=false \
+    --set agentSandbox.runner.credentials=sk-ant-your-model-key
+{{- end }}
 
 {{- if .Values.langfuse.deploy }}
 
