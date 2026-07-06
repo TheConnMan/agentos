@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { C } from "../../tokens";
 import { Button } from "../../primitives";
+import { SkillEditor } from "../SkillEditor";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 import { isWired } from "../../api/config";
@@ -51,7 +52,6 @@ export function NewAgentModal() {
   const [name, setName] = useState("deal-desk");
   const [channel, setChannel] = useState("");
   const [skill, setSkill] = useState(SKILL);
-  const lineCount = useMemo(() => skill.split("\n").length, [skill]);
   const channelValue = channel.trim();
   const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
   // A blank channel can never match a Slack mention, so wired deploy requires one.
@@ -185,50 +185,14 @@ export function NewAgentModal() {
           </div>
         </div>
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div
-            style={{
-              padding: "8px 14px",
-              borderBottom: "1px solid " + C.border,
-              fontFamily: C.mono,
-              fontSize: 12,
-              color: C.muted,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
+          <SkillEditor
+            path={`skills/${name || "agent"}/SKILL.md`}
+            value={skill}
+            onChange={(next) => {
+              setSkill(next);
+              dispatch({ type: "clearDeployErrors" });
             }}
-          >
-            <span style={{ color: C.text2 }}>skills/{name || "agent"}/SKILL.md</span>
-          </div>
-          <div style={{ flex: 1, overflow: "hidden", background: C.darkest, display: "flex", fontFamily: C.mono, fontSize: 12.5, lineHeight: 1.55, minHeight: 0 }}>
-            <div style={{ padding: "12px 8px", color: C.disabled, textAlign: "right", userSelect: "none", borderRight: "1px solid " + C.border, overflow: "hidden" }}>
-              {Array.from({ length: lineCount }, (_, i) => (
-                <div key={i}>{i + 1}</div>
-              ))}
-            </div>
-            <textarea
-              data-testid="skill-editor"
-              value={skill}
-              onChange={(e) => {
-                setSkill(e.target.value);
-                dispatch({ type: "clearDeployErrors" });
-              }}
-              spellCheck={false}
-              style={{
-                margin: 0,
-                padding: "12px 16px",
-                color: C.text2,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                resize: "none",
-                whiteSpace: "pre",
-                flex: 1,
-                fontFamily: C.mono,
-                fontSize: 12.5,
-                lineHeight: 1.55,
-              }}
-            />
-          </div>
+          />
           {state.deployIssues && state.deployIssues.length > 0 ? (
             <div
               data-testid="deploy-errors"

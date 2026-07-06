@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { C } from "../tokens";
-import { SectionTitle, Dot } from "../primitives";
+import { SectionTitle, Dot, Chip } from "../primitives";
 import { hoverBg } from "../lib/style";
 
 // Terminal entry model. The CLI view is a self-contained REPL (local state, not
@@ -205,9 +205,14 @@ export function Terminal() {
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <SectionTitle title="CLI view" />
-        <span style={{ fontSize: 12.5, color: C.muted, marginTop: -14 }}>
-          — the same workflow, from your terminal. Type or tap a command.
-        </span>
+        <div style={{ marginTop: -14, display: "flex", alignItems: "center", gap: 10 }}>
+          <Chip color={C.warn} border="rgba(191,135,0,.4)">
+            Demo mock
+          </Chip>
+          <span data-testid="cli-demo-note" style={{ fontSize: 12.5, color: C.muted }}>
+            — a simulated terminal, not the live CLI. Commands and versions shown here are canned.
+          </span>
+        </div>
       </div>
       <div style={{ borderRadius: 10, overflow: "hidden", maxWidth: 840, boxShadow: "0 12px 28px rgba(0,0,0,0.45)", border: "1px solid #26292e" }}>
         <div style={{ background: "#161B22", padding: "9px 14px", display: "flex", alignItems: "center", position: "relative" }}>

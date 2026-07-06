@@ -321,6 +321,70 @@ export async function getKillState(agentId: string): Promise<KillState> {
   return jsonOrThrow<KillState>(resp);
 }
 
+// ---- FX2: agent detail — versions, bundle files, and version activation ----
+
+export type Environment = "prod" | "dev";
+
+export interface DeploymentOut {
+  id: string;
+  agent_id: string;
+  version_id: string;
+  environment: Environment;
+  bot_identity: string | null;
+  commit_sha: string | null;
+  status: string;
+  deployed_at: string;
+}
+
+// One unwrapped file from a stored bundle. `path` is bundle-root-relative, e.g.
+// "skills/deal-desk/SKILL.md" or ".claude-plugin/plugin.json".
+export interface BundleFile {
+  path: string;
+  content: string;
+}
+
+export interface BundleFiles {
+  files: BundleFile[];
+}
+
+export async function listVersions(agentId: string): Promise<VersionOut[]> {
+  const resp = await fetch(url(`/agents/${agentId}/versions`), { headers: headers() });
+  return jsonOrThrow<VersionOut[]>(resp);
+}
+
+export async function listDeployments(agentId: string): Promise<DeploymentOut[]> {
+  const resp = await fetch(url(`/deployments${query({ agent_id: agentId })}`), { headers: headers() });
+  return jsonOrThrow<DeploymentOut[]>(resp);
+}
+
+/**
+ * Read the unwrapped files of a version's stored bundle (FX2 headline: the agent
+ * detail surface renders and edits these). A 404 means no bundle is stored for
+ * the version yet; callers distinguish it via the thrown ApiError's status.
+ */
+export async function getVersionFiles(agentId: string, versionId: string): Promise<BundleFiles> {
+  const resp = await fetch(url(`/agents/${agentId}/versions/${versionId}/files`), { headers: headers() });
+  return jsonOrThrow<BundleFiles>(resp);
+}
+
+export interface DeploymentCreate {
+  agent_id: string;
+  version_id: string;
+  environment: Environment;
+}
+
+// Activate a version by creating a deployment for it (status defaults to active
+// server-side). This is the third step of the redeploy sequence, after POST
+// version + PUT bundle.
+export async function createDeployment(input: DeploymentCreate): Promise<DeploymentOut> {
+  const resp = await fetch(url("/deployments"), {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  return jsonOrThrow<DeploymentOut>(resp);
+}
+
 export async function killAgent(agentId: string): Promise<KillState> {
   const resp = await fetch(url(`/agents/${agentId}/kill`), { method: "POST", headers: headers() });
   return jsonOrThrow<KillState>(resp);

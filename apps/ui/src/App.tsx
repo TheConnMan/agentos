@@ -20,6 +20,7 @@ import { Terminal } from "./views/Terminal";
 
 import { WiredOverview } from "./views/wired/WiredOverview";
 import { WiredAgents } from "./views/wired/WiredAgents";
+import { WiredAgentDetail } from "./views/wired/WiredAgentDetail";
 import { WiredEvals, WiredVersions, WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
 
 // Wired mode renders the backend-driven shell (real agents/onboarding); unwired
@@ -29,7 +30,7 @@ function Main() {
   const { state } = useStore();
   const wired = isWired();
   if (state.terminal) return <Terminal />;
-  if (state.agentDetail && !wired) return <AgentDetail />;
+  if (state.agentDetail) return wired ? <WiredAgentDetail /> : <AgentDetail />;
   switch (state.nav) {
     case "overview":
       return wired ? <WiredOverview /> : <Overview />;
@@ -50,10 +51,44 @@ function Main() {
   }
 }
 
+// Fixture mode serves a convincing demo on fake data. Without this banner a
+// first-time viewer can't tell it apart from the live product, so it is always
+// present when not wired, and links straight to the wired app.
+function DemoBanner() {
+  return (
+    <div
+      data-testid="demo-banner"
+      style={{
+        background: "rgba(62,207,142,.12)",
+        borderBottom: "1px solid rgba(62,207,142,.35)",
+        padding: "8px 36px",
+        fontSize: 12.5,
+        color: C.brand,
+        fontFamily: C.mono,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      <span style={{ fontWeight: 600 }}>Demo data</span>
+      <span style={{ color: C.text2 }}>— not connected to a backend. Everything here is fixtures.</span>
+      <a
+        href="?api=1&state=1"
+        data-testid="demo-banner-connect"
+        style={{ marginLeft: "auto", color: C.link, textDecoration: "none", fontWeight: 500 }}
+      >
+        Connect to a backend →
+      </a>
+    </div>
+  );
+}
+
 export function App() {
   const { envDev } = useStore();
+  const wired = isWired();
   return (
     <div style={{ fontFamily: C.sans, color: C.text, minHeight: "100vh", background: C.page }}>
+      {!wired ? <DemoBanner /> : null}
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <Sidebar />
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
