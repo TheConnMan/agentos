@@ -25,6 +25,8 @@ export default defineConfig({
     },
   },
   // Dev server on 5174: 5173 is held by the review preview from agentos-main.
-  server: { port: 5174, proxy },
-  preview: { port: 4173, proxy },
+  // allowedHosts lets the dev/preview server be reached over the tailnet
+  // (e.g. via `tailscale serve`); tailnet membership is the auth boundary.
+  server: { port: 5174, proxy, allowedHosts: [".ts.net"] },
+  preview: { port: 4173, proxy, allowedHosts: [".ts.net"] },
 });
