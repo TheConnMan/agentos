@@ -6,7 +6,7 @@ import { ConnectSlackPanel } from "../../components/ConnectSlackPanel";
 // leaks fixture data (no fictional deal-desk / eval cases / version rows). They
 // state plainly what is not wired yet rather than showing demo data.
 
-function ComingSoon({ title, body }: { title: string; body: string }) {
+export function ComingSoon({ title, body }: { title: string; body: string }) {
   return (
     <Card>
       <div
@@ -49,18 +49,6 @@ export function WiredEvals() {
       <ComingSoon
         title="No eval runs yet"
         body="Eval suites and the version matrix light up here once the eval runner is connected. Nothing to show for a fresh workspace."
-      />
-    </div>
-  );
-}
-
-export function WiredVersions() {
-  return (
-    <div>
-      <SectionTitle title="Versions" sub="main → your prod bot · dev → your dev bot." />
-      <ComingSoon
-        title="No versions deployed yet"
-        body="Deploy an agent or push to a connected git branch and its versions appear here. This workspace has none yet."
       />
     </div>
   );
