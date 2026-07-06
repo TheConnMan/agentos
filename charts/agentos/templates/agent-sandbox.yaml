@@ -253,8 +253,7 @@ spec:
             httpGet:
               path: /healthz
               port: {{ $runner.port }}
-            initialDelaySeconds: 1
-            periodSeconds: 2
+            {{- toYaml $runner.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml $runner.resources | nindent 12 }}
           {{- if or $bf.enabled $runner.hardening.enabled }}

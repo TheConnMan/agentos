@@ -14,6 +14,7 @@ import os
 import signal
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import redis
@@ -57,10 +58,18 @@ class Runtime:
 
 
 def _substrate_config(env: Mapping[str, str]) -> SubstrateConfig:
+    # claim_timeout is overridable so a slow cluster can raise it; when unset the
+    # authoritative default lives in SubstrateConfig. Keep any override below the
+    # per-thread lock TTL (WorkerConfig.lock_ttl_ms) -- see that comment.
+    overrides: dict[str, Any] = {}
+    claim_timeout = env.get("AGENTOS_CLAIM_TIMEOUT_SECONDS")
+    if claim_timeout is not None:
+        overrides["claim_timeout_seconds"] = float(claim_timeout)
     return SubstrateConfig(
         namespace=env.get("AGENTOS_NAMESPACE", "default"),
         warm_pool=env.get("AGENTOS_WARM_POOL", "agentos-runner-pool"),
         runner_port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
+        **overrides,
     )
 
 

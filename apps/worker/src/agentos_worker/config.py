@@ -71,8 +71,9 @@ class WorkerConfig(BaseModel):
     # Per-thread lock (serializes the routing decision + turn opening across
     # workers so a thread never has two live sessions). The TTL must exceed the
     # worst-case critical section (a cold claim can take up to the substrate's
-    # claim_timeout, ~30s) so the lock never lapses mid-section and lets a second
-    # worker open a concurrent turn.
+    # claim_timeout, default 90s) so the lock never lapses mid-section and lets a
+    # second worker open a concurrent turn. 90s claim + slack/route overhead stays
+    # safely under this 120s TTL; if you raise claim_timeout keep it below this.
     lock_ttl_ms: int = 120000
     lock_acquire_timeout_s: float = 45.0
     lock_poll_interval_s: float = 0.02

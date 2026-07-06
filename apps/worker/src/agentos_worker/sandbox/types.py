@@ -82,7 +82,15 @@ class SubstrateConfig:
     route_ttl_seconds: int = 3600
     # Suspended routes wait longer: the thread may come back tomorrow.
     suspended_route_ttl_seconds: int = 86400
-    claim_timeout_seconds: float = 30.0
+    # How long claim() waits for a claim to bind a ready sandbox before raising
+    # ClaimTimeoutError. A cold create (pod scheduling + bundle-fetch/extract init
+    # containers + runner boot + readiness) is ~30s on a small node and can run
+    # longer under load, so the default is 90s. This is the dominant term in the
+    # kernel's per-thread critical section: it MUST stay below the lock TTL
+    # (WorkerConfig.lock_ttl_ms, 120s) so the lock never lapses mid-claim and lets
+    # a second worker open a concurrent turn. Overridable via
+    # AGENTOS_CLAIM_TIMEOUT_SECONDS; keep any override under the lock TTL too.
+    claim_timeout_seconds: float = 90.0
     poll_interval_seconds: float = 0.05
     key_prefix: str = "agentos:sandbox"
     claim_prefix: str = "agentos-thread"
