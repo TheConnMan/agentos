@@ -92,3 +92,55 @@ def test_version_for_missing_agent_returns_404(
         headers=auth_headers,
     )
     assert resp.status_code == 404
+
+
+def test_patch_agent_moves_slack_channel(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A redeploy that passes a new --slack-channel must actually move the channel
+    # of the existing agent (the audit MAJOR: the channel was silently ignored).
+    agent = client.post(
+        "/agents",
+        json={"name": "mover", "slack_channel": "#old"},
+        headers=auth_headers,
+    ).json()
+    agent_id = agent["id"]
+
+    resp = client.patch(
+        f"/agents/{agent_id}",
+        json={"slack_channel": "#new"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["slack_channel"] == "#new"
+
+    # The change is persisted, not just echoed back.
+    got = client.get(f"/agents/{agent_id}", headers=auth_headers).json()
+    assert got["slack_channel"] == "#new"
+
+
+def test_patch_agent_omitted_field_is_noop(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    agent = client.post(
+        "/agents",
+        json={"name": "stable", "slack_channel": "#keep"},
+        headers=auth_headers,
+    ).json()
+    resp = client.patch(
+        f"/agents/{agent['id']}", json={}, headers=auth_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["slack_channel"] == "#keep"
+
+
+def test_patch_missing_agent_returns_404(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    missing = "00000000-0000-0000-0000-000000000000"
+    resp = client.patch(
+        f"/agents/{missing}",
+        json={"slack_channel": "#x"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404

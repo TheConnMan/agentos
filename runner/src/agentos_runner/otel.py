@@ -33,19 +33,28 @@ from opentelemetry.trace import SpanKind, Tracer
 _SERVICE_NAME = "agentos-runner"
 
 
-def build_tracer_provider(otel: OtelConfig, session_id: str) -> TracerProvider | None:
+def build_tracer_provider(
+    otel: OtelConfig, session_id: str, sandbox_id: str | None = None
+) -> TracerProvider | None:
     """Build a TracerProvider exporting to the collector, or None if unconfigured.
 
     ``session_id`` is attached as a resource attribute so traces are attributable
-    to the sandbox session that produced them.
+    to the sandbox session that produced them. ``sandbox_id`` (the ACI
+    ``AGENTOS_SANDBOX_ID``) is stamped alongside it when present so a trace is
+    attributable to the concrete sandbox that ran it; an absent or empty value is
+    omitted rather than stamped as an empty string.
     """
 
     if not otel.endpoint:
         return None
 
-    resource = Resource.create(
-        {"service.name": _SERVICE_NAME, "agentos.session_id": session_id}
-    )
+    attributes: dict[str, str] = {
+        "service.name": _SERVICE_NAME,
+        "agentos.session_id": session_id,
+    }
+    if sandbox_id:
+        attributes["agentos.sandbox_id"] = sandbox_id
+    resource = Resource.create(attributes)
     provider = TracerProvider(resource=resource)
     # The exporter reads OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _PROTOCOL from
     # the environment itself; SessionConfig.otel is the typed view of the same

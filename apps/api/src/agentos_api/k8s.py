@@ -6,7 +6,11 @@ NoClusterConfigured, which the endpoint turns into a 503 with a reason rather
 than crashing. The real implementation wraps the (untyped) kubernetes client.
 """
 
+import logging
+from collections.abc import Callable
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class NoClusterConfigured(Exception):
@@ -83,9 +87,63 @@ class KubernetesPodLogReader:
             ) from exc
 
 
-def build_pod_log_reader(kube_config_path: str | None) -> PodLogReader:
-    """Build a real reader from kubeconfig or in-cluster config, else a null one."""
+class _SuppressExecCredentialError(logging.Filter):
+    """Drops the kubernetes client's root-logger ERROR for a failed exec plugin.
 
+    Loading a kubeconfig whose user auths via an exec credential plugin (e.g.
+    ``aws eks get-token``) makes the kubernetes client log
+    ``exec: process returned ...`` at ERROR on the root logger when the plugin
+    fails (typically expired AWS/SSO creds). That reads like a crash; we surface a
+    single WARN of our own instead, so this filter suppresses only that line.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "exec: process returned" not in record.getMessage()
+
+
+class LazyPodLogReader:
+    """Defers cluster/credential resolution until the first pod-log read.
+
+    Building the real reader loads a kubeconfig, which resolves the user's
+    credentials (running any exec plugin). Doing that eagerly at app startup turns
+    absent/expired creds into a scary boot-time ERROR for a proxy most runs never
+    touch. Resolving lazily keeps startup clean; the (cached) real reader is built
+    on the first read, and an absent cluster still degrades to 503 there.
+    """
+
+    def __init__(self, factory: Callable[[], PodLogReader]) -> None:
+        self._factory = factory
+        self._reader: PodLogReader | None = None
+
+    def _resolve(self) -> PodLogReader:
+        if self._reader is None:
+            self._reader = self._factory()
+        return self._reader
+
+    def read(
+        self,
+        namespace: str,
+        pod: str,
+        container: str | None,
+        tail_lines: int | None,
+        previous: bool,
+    ) -> str:
+        return self._resolve().read(
+            namespace, pod, container, tail_lines, previous
+        )
+
+
+def build_pod_log_reader(kube_config_path: str | None) -> PodLogReader:
+    """Build a real reader from kubeconfig or in-cluster config, else a null one.
+
+    When no usable cluster/credential is available this logs a single WARN and
+    returns a reader that degrades to 503, rather than letting the kubernetes
+    client's raw exec-credential ERROR reach the operator.
+    """
+
+    root = logging.getLogger()
+    exec_filter = _SuppressExecCredentialError()
+    root.addFilter(exec_filter)
     try:
         from kubernetes import client, config
 
@@ -99,5 +157,18 @@ def build_pod_log_reader(kube_config_path: str | None) -> PodLogReader:
                 # so local runs against a real cluster work without extra config.
                 config.load_kube_config()
         return KubernetesPodLogReader(client.CoreV1Api())
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "runner-logs proxy: no usable kubernetes cluster (%s); "
+            "pod-log reads will return 503",
+            exc,
+        )
         return NullPodLogReader()
+    finally:
+        root.removeFilter(exec_filter)
+
+
+def build_lazy_pod_log_reader(kube_config_path: str | None) -> LazyPodLogReader:
+    """A pod-log reader that resolves the cluster on first use, not at startup."""
+
+    return LazyPodLogReader(lambda: build_pod_log_reader(kube_config_path))

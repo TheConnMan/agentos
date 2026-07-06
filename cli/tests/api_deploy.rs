@@ -3,7 +3,7 @@
 
 mod support;
 
-use agentos::api::ApiClient;
+use agentos::api::{ApiClient, ChannelOutcome};
 use agentos::bundle::pack_tar_gz;
 use agentos::scaffold::scaffold;
 use support::{serve, Response};
@@ -57,7 +57,7 @@ async fn deploy_walks_the_full_contract_flow_with_auth() {
     let outcome = client
         .deploy(
             "deal-desk",
-            "#local-dev",
+            Some("#local-dev"),
             "0.1.0-1",
             "tester",
             "dev",
@@ -123,6 +123,114 @@ async fn reuses_an_existing_agent_instead_of_creating() {
         .unwrap();
     assert_eq!(agent.id, AGENT_ID);
     assert_eq!(server.recorded().len(), 1);
+}
+
+/// The version/bundle/deployment tail of the deploy flow, shared by the
+/// channel-reconciliation tests (which differ only in the agent-resolution head).
+fn deploy_tail(method: &str, path: &str) -> Option<Response> {
+    match (method, path) {
+        ("POST", p) if p == format!("/agents/{AGENT_ID}/versions") => Some(Response::json(
+            201,
+            &format!(
+                r#"{{"id":"{VERSION_ID}","agent_id":"{AGENT_ID}","version_label":"0.1.0-1","bundle_ref":null,"bundle_sha256":null,"created_by":"tester","created_at":"2026-07-05T00:00:00Z"}}"#
+            ),
+        )),
+        ("PUT", p) if p == format!("/agents/{AGENT_ID}/versions/{VERSION_ID}/bundle") => {
+            Some(Response::json(
+                201,
+                &format!(
+                    r#"{{"version_id":"{VERSION_ID}","bundle_ref":"bundles/x.tar.gz","bundle_sha256":"deadbeef","size_bytes":512}}"#
+                ),
+            ))
+        }
+        ("POST", "/deployments") => Some(Response::json(
+            201,
+            &format!(
+                r#"{{"id":"{DEPLOYMENT_ID}","agent_id":"{AGENT_ID}","version_id":"{VERSION_ID}","environment":"dev","status":"active","deployed_at":"2026-07-05T00:00:00Z"}}"#
+            ),
+        )),
+        _ => None,
+    }
+}
+
+fn existing_agent(channel: &str) -> Response {
+    Response::json(
+        200,
+        &format!(
+            r#"[{{"id":"{AGENT_ID}","name":"deal-desk","slack_channel":"{channel}","created_at":"2026-07-05T00:00:00Z"}}]"#
+        ),
+    )
+}
+
+async fn run_deploy(client: &ApiClient, channel: Option<&str>) -> ChannelOutcome {
+    let dir = tempfile::tempdir().unwrap();
+    scaffold(dir.path(), "deal-desk").unwrap();
+    let archive = pack_tar_gz(dir.path()).unwrap();
+    client
+        .deploy("deal-desk", channel, "0.1.0-1", "tester", "dev", archive)
+        .await
+        .unwrap()
+        .channel
+}
+
+#[tokio::test]
+async fn redeploy_with_explicit_channel_patches_the_existing_agent() {
+    // An existing agent on #old + `--slack-channel #new` must PATCH the agent to
+    // move the channel (the audit MAJOR: the channel was silently ignored).
+    let server = serve(|req| match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/agents") => existing_agent("#old"),
+        ("PATCH", p) if *p == format!("/agents/{AGENT_ID}") => Response::json(
+            200,
+            &format!(
+                r##"{{"id":"{AGENT_ID}","name":"deal-desk","slack_channel":"#new","created_at":"2026-07-05T00:00:00Z"}}"##
+            ),
+        ),
+        (m, p) => deploy_tail(m, p).unwrap_or_else(|| panic!("unexpected request: {m} {p}")),
+    });
+    let client = ApiClient::new(&server.base_url, "k").unwrap();
+
+    let outcome = run_deploy(&client, Some("#new")).await;
+    assert_eq!(
+        outcome,
+        ChannelOutcome::Updated {
+            from: "#old".to_string(),
+            to: "#new".to_string(),
+        }
+    );
+
+    let patches: Vec<_> = server
+        .recorded()
+        .into_iter()
+        .filter(|r| r.method == "PATCH" && r.path == format!("/agents/{AGENT_ID}"))
+        .collect();
+    assert_eq!(patches.len(), 1, "expected exactly one PATCH");
+    let body = String::from_utf8_lossy(&patches[0].body);
+    assert!(body.contains("#new"), "PATCH body was {body}");
+}
+
+#[tokio::test]
+async fn redeploy_without_channel_does_not_patch() {
+    // Omitting `--slack-channel` on a redeploy must leave the agent's channel
+    // untouched: no PATCH is issued at all.
+    let server = serve(|req| match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/agents") => existing_agent("#old"),
+        ("PATCH", _) => panic!("redeploy without --slack-channel must not PATCH"),
+        (m, p) => deploy_tail(m, p).unwrap_or_else(|| panic!("unexpected request: {m} {p}")),
+    });
+    let client = ApiClient::new(&server.base_url, "k").unwrap();
+
+    let outcome = run_deploy(&client, None).await;
+    assert_eq!(
+        outcome,
+        ChannelOutcome::Unchanged {
+            channel: "#old".to_string(),
+            passed: false,
+        }
+    );
+    assert!(
+        server.recorded().iter().all(|r| r.method != "PATCH"),
+        "no PATCH should have been issued"
+    );
 }
 
 #[tokio::test]

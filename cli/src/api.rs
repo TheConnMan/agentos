@@ -15,10 +15,28 @@ pub struct ApiClient {
     http: reqwest::Client,
 }
 
+/// The channel used when an agent is first created if `--slack-channel` is
+/// omitted; on an existing agent an omitted channel is left untouched.
+pub const DEFAULT_SLACK_CHANNEL: &str = "#local-dev";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agent {
     pub id: String,
     pub name: String,
+    pub slack_channel: String,
+}
+
+/// What a deploy did with the agent's Slack channel, for the summary printout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelOutcome {
+    /// A new agent was created bound to this channel.
+    Created(String),
+    /// An existing agent's channel was moved.
+    Updated { from: String, to: String },
+    /// An existing agent's channel was left as-is. `passed` records whether a
+    /// `--slack-channel` was supplied (and merely matched) so the caller can hint
+    /// how to move it when none was given.
+    Unchanged { channel: String, passed: bool },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -47,6 +65,7 @@ pub struct DeployOutcome {
     pub version: Version,
     pub bundle: Bundle,
     pub deployment: Deployment,
+    pub channel: ChannelOutcome,
 }
 
 impl ApiClient {
@@ -112,6 +131,65 @@ impl ApiClient {
             return Ok(existing);
         }
         self.create_agent(name, slack_channel).await
+    }
+
+    pub async fn update_agent_channel(&self, agent_id: &str, slack_channel: &str) -> Result<Agent> {
+        let resp = self
+            .http
+            .patch(format!("{}/agents/{agent_id}", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&json!({"slack_channel": slack_channel}))
+            .send()
+            .await
+            .context("PATCH /agents/{id}")?;
+        Self::expect_ok(resp, "updating the agent channel")
+            .await?
+            .json()
+            .await
+            .context("decoding updated agent")
+    }
+
+    /// Find the agent by name (or create it), reconciling its Slack channel with
+    /// an explicitly-passed `--slack-channel`. A new agent binds to the passed
+    /// channel (or the default); an existing agent's channel is moved via PATCH
+    /// only when a channel was passed and differs -- an omitted channel never
+    /// silently overwrites what is already set.
+    async fn resolve_agent(
+        &self,
+        name: &str,
+        slack_channel: Option<&str>,
+    ) -> Result<(Agent, ChannelOutcome)> {
+        let existing = self
+            .list_agents()
+            .await?
+            .into_iter()
+            .find(|a| a.name == name);
+        match existing {
+            Some(agent) => match slack_channel {
+                Some(channel) if channel != agent.slack_channel => {
+                    let from = agent.slack_channel.clone();
+                    let updated = self.update_agent_channel(&agent.id, channel).await?;
+                    let to = updated.slack_channel.clone();
+                    Ok((updated, ChannelOutcome::Updated { from, to }))
+                }
+                other => {
+                    let channel = agent.slack_channel.clone();
+                    Ok((
+                        agent,
+                        ChannelOutcome::Unchanged {
+                            channel,
+                            passed: other.is_some(),
+                        },
+                    ))
+                }
+            },
+            None => {
+                let channel = slack_channel.unwrap_or(DEFAULT_SLACK_CHANNEL);
+                let agent = self.create_agent(name, channel).await?;
+                let outcome = ChannelOutcome::Created(agent.slack_channel.clone());
+                Ok((agent, outcome))
+            }
+        }
     }
 
     pub async fn create_version(
@@ -189,17 +267,18 @@ impl ApiClient {
             .context("decoding created deployment")
     }
 
-    /// The full deploy flow: find-or-create agent, version, bundle, deployment.
+    /// The full deploy flow: resolve agent (create or channel-reconcile),
+    /// version, bundle, deployment.
     pub async fn deploy(
         &self,
         agent_name: &str,
-        slack_channel: &str,
+        slack_channel: Option<&str>,
         version_label: &str,
         created_by: &str,
         environment: &str,
         archive: Vec<u8>,
     ) -> Result<DeployOutcome> {
-        let agent = self.find_or_create_agent(agent_name, slack_channel).await?;
+        let (agent, channel) = self.resolve_agent(agent_name, slack_channel).await?;
         let version = self
             .create_version(&agent.id, version_label, created_by)
             .await?;
@@ -212,6 +291,7 @@ impl ApiClient {
             version,
             bundle,
             deployment,
+            channel,
         })
     }
 }

@@ -5,7 +5,12 @@ import json
 from typing import Any
 
 import httpx
-from agentos_api.github_checks import GitHubStatusReporter, eval_state
+import pytest
+from agentos_api.github_checks import (
+    GitHubReportError,
+    GitHubStatusReporter,
+    eval_state,
+)
 
 
 def test_eval_state_maps_rollup_to_status() -> None:
@@ -59,3 +64,28 @@ def test_report_eval_posts_the_exact_commit_status() -> None:
 def test_report_eval_success_state() -> None:
     _, state = _run_report(36, 36)
     assert state == "success"
+
+
+def test_report_eval_raises_typed_error_on_github_rejection() -> None:
+    # An unknown repo/commit (or a bad token) makes GitHub reject the post. The
+    # reporter must surface that as a typed GitHubReportError carrying the
+    # upstream status, not let the raw httpx.HTTPStatusError bubble as a 500.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    async def go() -> GitHubReportError:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            reporter = GitHubStatusReporter(
+                client,
+                api_url="https://api.github.com",
+                token="tok-123",
+                context="agentos/evals",
+            )
+            with pytest.raises(GitHubReportError) as excinfo:
+                await reporter.report_eval("octo/ghost", "nope", 1, 1)
+            return excinfo.value
+
+    err = asyncio.run(go())
+    assert err.status_code == 404
+    assert "Not Found" in err.detail

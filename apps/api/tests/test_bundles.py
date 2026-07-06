@@ -180,3 +180,58 @@ def test_fetch_missing_bundle_is_404(
         f"/agents/{agent_id}/versions/{version_id}/bundle", headers=auth_headers
     )
     assert resp.status_code == 404
+
+
+def test_read_version_files_returns_bundle_text_surfaces(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # After a real upload to MinIO, the files endpoint returns the bundle's text
+    # surfaces (manifest + skill docs) with bundle-relative paths and content, so
+    # the UI can render the authored bundle without pulling the raw archive.
+    agent_id, version_id = _create_version(client, auth_headers)
+    files = _valid_files()
+    files["evals/cases.json"] = '[{"name": "greets", "input": "hi"}]'
+    archive = _tar_gz(files)
+    put = client.put(
+        f"/agents/{agent_id}/versions/{version_id}/bundle",
+        files={"file": ("demo.tar.gz", archive)},
+        headers=auth_headers,
+    )
+    assert put.status_code == 201, put.text
+
+    resp = client.get(
+        f"/agents/{agent_id}/versions/{version_id}/files", headers=auth_headers
+    )
+    assert resp.status_code == 200, resp.text
+    returned = {f["path"]: f["content"] for f in resp.json()["files"]}
+    assert set(returned) == {
+        ".claude-plugin/plugin.json",
+        "evals/cases.json",
+        "skills/alpha/SKILL.md",
+        "skills/beta/SKILL.md",
+    }
+    assert returned[".claude-plugin/plugin.json"] == MANIFEST
+    assert returned["skills/alpha/SKILL.md"] == _skill("alpha")
+    assert returned["evals/cases.json"] == '[{"name": "greets", "input": "hi"}]'
+
+
+def test_read_version_files_missing_bundle_is_404(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A version with no bundle stored yet has nothing to read.
+    agent_id, version_id = _create_version(client, auth_headers)
+    resp = client.get(
+        f"/agents/{agent_id}/versions/{version_id}/files", headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
+def test_read_version_files_unknown_version_is_404(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    agent_id, _ = _create_version(client, auth_headers)
+    missing = "00000000-0000-0000-0000-000000000000"
+    resp = client.get(
+        f"/agents/{agent_id}/versions/{missing}/files", headers=auth_headers
+    )
+    assert resp.status_code == 404

@@ -49,6 +49,15 @@ async def get_agent(session: AsyncSession, agent_id: uuid.UUID) -> Agent | None:
     return await session.get(Agent, agent_id)
 
 
+async def update_agent_channel(
+    session: AsyncSession, agent: Agent, slack_channel: str
+) -> Agent:
+    agent.slack_channel = slack_channel
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
 async def update_budget(
     session: AsyncSession,
     agent: Agent,
