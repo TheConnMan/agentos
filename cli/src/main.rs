@@ -155,6 +155,9 @@ enum Command {
         #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
         stream: String,
         /// How long to wait for the worker's reply before printing diagnostics.
+        /// Defaults high because the worker kernel can retry a run up to 3 times
+        /// with a 90s sandbox-claim timeout each (worst case near 270s of claim
+        /// waits alone), so a shorter ceiling can time out while it is still working.
         #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
         timeout_secs: u64,
         /// Skip pointing the worker at the stub. Wiring is on by default (helm
