@@ -1,6 +1,6 @@
-# CLAUDE.md — cli
+# CLAUDE.md - cli
 
-The `agentos` CLI (task I1): Rust, clap + tokio + reqwest. Speaks only the
+The `agentos` CLI: Rust, clap + tokio + reqwest. Speaks only the
 frozen contracts (the generated `agentos-aci-protocol` crate over HTTP/NDJSON,
 and the platform API's committed `apps/api/openapi.json`) and orchestrates a
 local runner container via Docker. Two command families: the **runner-session**
@@ -16,8 +16,9 @@ over the `helm`/`kubectl`/`docker compose` binaries. Full command reference in
 - **Never hand-write the ACI types.** `Cargo.toml` depends on
   `agentos-aci-protocol` at `../packages/aci-protocol/generated/rust` --
   that crate is generated from the frozen Pydantic models. If a type you
-  need is missing, that is a contract gap (escalate per the root CLAUDE.md
-  frozen-contracts rule), not something to redefine locally in `cli/src`.
+  need is missing, that is a contract gap (raise it in an issue/PR first per
+  the root AGENTS.md frozen-contracts rule), not something to redefine locally
+  in `cli/src`.
 - **No new HTTP crates.** `reqwest` (rustls-tls, no OpenSSL) is the one HTTP
   client in this binary; do not add a second one for a specific endpoint.
   Keep `reqwest`'s feature set minimal (`json`, `stream`, `multipart`) --

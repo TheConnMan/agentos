@@ -1,8 +1,8 @@
-# CLAUDE.md — packages/
+# CLAUDE.md - packages/
 
-`packages/aci-protocol` and `packages/plugin-format` are **frozen interfaces**
-(owning task C1). Read the root `CLAUDE.md`'s "Frozen contracts: STOP and
-escalate" section first -- it is not optional here.
+`packages/aci-protocol` and `packages/plugin-format` are **frozen interfaces**.
+Read the root `AGENTS.md`'s "Frozen contracts: STOP and escalate" section first
+-- it is not optional here.
 
 ## The rule
 
@@ -12,8 +12,9 @@ truth; JSON Schema, generated TypeScript, and generated Rust are committed
 derivatives, never hand-edited.
 
 **Do not change either package unilaterally from a dependent lane.** If your
-task needs a change here, stop and escalate to the orchestrator -- it lands
-the change as its own reviewed PR before dependent lanes proceed.
+task needs a change here, stop and raise it in an issue/PR first -- a contract
+change lands as its own reviewed, backward-compatible change before dependent
+lanes proceed.
 
 ## When a change is genuinely approved
 
@@ -45,8 +46,8 @@ the change as its own reviewed PR before dependent lanes proceed.
   (`deny_unknown_fields` equivalent in both Python and generated Rust) and
   rejects any `version` other than the exact `PROTOCOL_VERSION` (no
   same-major looseness in the 0.x line). If you are tempted to loosen this
-  for a consumer's convenience, that is a version-policy change -- escalate,
-  do not quietly relax a model.
+  for a consumer's convenience, that is a version-policy change -- raise it in
+  an issue/PR first, do not quietly relax a model.
 - **`plugin-format` is lenient by design.** Its models use `extra="allow"`
   because real Claude Code plugin bundles carry keys this MVP does not model;
   rejecting them would reject valid bundles. Do not add strict validation

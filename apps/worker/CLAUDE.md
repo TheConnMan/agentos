@@ -1,19 +1,18 @@
-# CLAUDE.md — apps/worker
+# CLAUDE.md - apps/worker
 
-The concurrency kernel (F1) plus the Agent Sandbox substrate (G1). Owning
-tasks: F1 (single owner, never split -- see below), G1, K1 (eval runner, not
-yet built). Full behavior spec lives in `apps/worker/README.md`; this file is
-the enforceable-rule summary. Read `docs/architecture.md`'s message-flow
-diagram before changing `kernel.py`.
+The concurrency kernel plus the Agent Sandbox substrate. The eval runner is not
+yet built. Full behavior spec lives in `apps/worker/README.md`; this file is the
+enforceable-rule summary. Read `../../ARCHITECTURE.md`'s message-flow diagram
+before changing `kernel.py`.
 
-## F1 is sacred: single owner, adversarial review
+## The kernel is sacred: single owner, adversarial review
 
 `kernel.py`/`consumer.py`/`threadlock.py`/`markers.py` are correctness logic
-with races that only show up under concurrent load. **One agent owns this
-module at a time, it is never split across parallel tasks, and any change
-needs an escalated adversarial review (spec-vs-impl + side-effects-detective,
-minimum) before merge.** If you are touching `kernel.py` as a side effect of
-another task, stop -- that is scope creep on the sacred module.
+with races that only show up under concurrent load. **One change owns this
+module at a time, it is never split across parallel work, and any change needs
+an adversarial review (spec-vs-impl + side-effects-detective, minimum) before
+merge.** If you are touching `kernel.py` as a side effect of another change,
+stop -- that is scope creep on the sacred module.
 
 ## The four rules the kernel enforces (each has a provoking integration test)
 
@@ -36,9 +35,9 @@ another task, stop -- that is scope creep on the sacred module.
    still escalates on reclaim. Flag-clean failures retry by classification
    (`rate-limit`/`runner-error` transient, everything else escalates).
 
-## G1: the sandbox substrate (`agentos_worker.sandbox`)
+## The sandbox substrate (`agentos_worker.sandbox`)
 
-- **F1 talks in `thread_key` and `SandboxHandle` only.** Everything
+- **The kernel talks in `thread_key` and `SandboxHandle` only.** Everything
   Kubernetes-shaped stays behind the `SandboxSubstrate`/`SandboxClient` seam
   -- never leak a K8s type across it into the kernel.
 - **`claim()` is claim-or-adopt.** A lost creation race deletes the loser's
@@ -54,15 +53,20 @@ another task, stop -- that is scope creep on the sacred module.
   control plane) -- Valkey is never mocked.
 - **Producing a history ref is the caller's job.** The frozen ACI `final`
   frame does not carry the SDK session id today; surfacing it is an
-  `aci-protocol` change -- stop and escalate, do not invent a side channel.
+  `aci-protocol` change -- stop and raise it in an issue/PR first, do not
+  invent a side channel.
 
-## Known gap: deployment-to-runtime binding
+## Deployment-to-runtime binding (implemented)
 
-The kernel claims a sandbox running a fixed runner image/plugin today -- it
-does not resolve a thread's `deployment_id` to the bundle version J1's
-git-flow produced. Confirm with the orchestrator before bolting deployment
-resolution onto the kernel; this is SK-gate-adjacent work and F1's
-single-owner rule applies.
+`binding.py` resolves a thread's Slack channel to its agent, that agent's active
+deployment (prod outranks dev, then most recent), and the resolved
+`AGENTOS_BUNDLE_REF`, and injects it into the sandbox claim so the boot picks up
+the bundle version the API's git-flow engine produced. It is a read-only query
+layer over the shared Postgres tables (agents -> deployments -> agent_versions),
+deliberately not an import of the API package. The seam to remember: a thread
+keeps the sandbox and bundle it first booted with; only a fresh mention (a new
+claim) picks up a newer deployment. Any change that touches the kernel's claim
+path here is still bound by the sacred-module rule above.
 
 ## Verify
 

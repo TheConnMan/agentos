@@ -1,9 +1,8 @@
-# CLAUDE.md — charts/agentos
+# CLAUDE.md - charts/agentos
 
 The umbrella Helm chart: Langfuse + Postgres + Valkey + ClickHouse + MinIO +
-OTel Collector, plus the Agent Sandbox substrate and its security rails.
-Owning tasks: A1 (backbone + preflights), A2 (security rails). Full component
-and rail detail in `charts/agentos/README.md`.
+OTel Collector, plus the Agent Sandbox substrate and its security rails. Full
+component and rail detail in `charts/agentos/README.md`.
 
 ## Load-bearing invariants
 
@@ -64,13 +63,12 @@ helm lint charts/agentos
 helm template charts/agentos -f charts/agentos/values-dev.yaml   # chart-authoring check, no cluster contact
 ```
 
-Cluster verification (k8scratch or `kind`; see the root `CLAUDE.md`'s
-k8scratch section):
+Cluster verification (a disposable local cluster, `kind` or `k3s`):
 ```bash
 helm install agentos-dev charts/agentos -n agentos-dev --create-namespace \
   -f charts/agentos/values-dev.yaml
 kubectl get pods -n agentos-dev -w
-helm test agentos-dev -n agentos-dev                              # re-runs both preflights + the A2 security probe suite
+helm test agentos-dev -n agentos-dev                              # re-runs both preflights + the security probe suite
 kubectl logs -n agentos-dev job/agentos-dev-preflight-avx
 kubectl logs -n agentos-dev job/agentos-dev-security-probe        # rails 1, 2, 4
 kubectl logs -n agentos-dev agentos-dev-security-probe-hardening  # rail 3

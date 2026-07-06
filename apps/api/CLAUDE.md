@@ -1,18 +1,17 @@
-# CLAUDE.md — apps/api
+# CLAUDE.md - apps/api
 
 FastAPI server: agents/versions/deployments CRUD, auth, the plugin bundle
 pipeline, the GitHub git-flow engine, and the Langfuse/pod-log observability
-proxies. Owning tasks: B1 (core), B2 (bundle pipeline), J1 (git-flow), OB1
-(observability). See `docs/architecture.md` for how this service fits between
-the worker, Postgres, MinIO/S3, Langfuse, and GitHub.
+proxies. See `../../ARCHITECTURE.md` for how this service fits between the
+worker, Postgres, MinIO/S3, Langfuse, and GitHub.
 
 ## Load-bearing invariants
 
 - **Auth is one shared API key today.** `require_api_key` (`auth.py`) compares
   the `X-API-Key` header against `Settings.api_key` with `hmac.compare_digest`.
-  This is explicitly MVP-only; J1's GitHub-App identity work is expected to
+  This is explicitly MVP-only; GitHub-App identity work is expected to
   replace it eventually, but until that lands, do not add a second
-  auth scheme for a new router without checking with the orchestrator --
+  auth scheme for a new router without raising it in an issue/PR first --
   every router should share the one dependency.
 - **The GitHub webhook is authenticated differently, on purpose.** `/github/webhook`
   verifies the HMAC signature GitHub sends (`x-hub-signature-256` against
@@ -53,10 +52,9 @@ database (or schema), never the shared `compose.dev.yaml` Postgres.** That
 Postgres is shared state every other lane's test suite reads on setup;
 stamping it with an unmerged revision breaks everyone else's `alembic upgrade
 head` (`Can't locate revision ...`) until your branch merges or you unstamp
-it. This has already bitten two lanes: J1's `0003` migration broke F1's env,
-and L1's `0004` broke main's suite during the K1 merge. Spin up a scratch
-Postgres (a second compose service, a throwaway container, or a fresh
-schema) for migration development; only run migrations against the shared
+it. This has already bitten concurrent work in this repo more than once. Spin
+up a scratch Postgres (a second compose service, a throwaway container, or a
+fresh schema) for migration development; only run migrations against the shared
 compose DB once your revision is merged to main.
 
 ## Config surface

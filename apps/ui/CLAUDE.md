@@ -1,23 +1,21 @@
-# CLAUDE.md — apps/ui
+# CLAUDE.md - apps/ui
 
-The AgentOS console: Vite + React + TypeScript, no meta-framework. Owning
-tasks: H1a (shell, fixture data), H1b (wired to the real backend), OB1
-(Metrics/Logs wired to Langfuse). Full structure and wiring detail in
-`apps/ui/README.md`.
+The AgentOS console: Vite + React + TypeScript, no meta-framework. Full
+structure and wiring detail in `apps/ui/README.md`.
 
 ## Load-bearing invariants
 
-- **The original design mockup is the design canon.** Every view, token,
-  and layout is ported from it verbatim (per `claude-design-prompt.md` §4:
-  the exported source outranks the prompt). If a design question is
-  ambiguous, open the canon and check its rendered state before improvising
-  a new pattern -- do not invent new visual language.
+- **The design canon is the original design mockup.** Every view, token, and
+  layout is ported from it verbatim. Committed side-by-side fidelity
+  screenshots live in `apps/ui/design-review/` (`*-canon.png` vs `*-impl.png`);
+  check those before improvising a new pattern -- do not invent new visual
+  language.
 - **The fixture-vs-wired gate is a runtime URL param, not a build flag.**
   `?state=N` (1-6) seeds a fixture level; `?api=1` (or `VITE_WIRED=1` at
   build time) flips wired paths on. A single build serves both the fixture
   demo and the live app -- do not fork the build per mode.
 - **Not everything is wired yet.** Create-agent + Deploy, the Runs tab, and
-  Metrics/Logs (OB1) call the real API. Fleet, Evals, Versions, Usage, and
+  Metrics/Logs call the real API. Fleet, Evals, Versions, Usage, and
   Cost are still fixtures. Before wiring a new view, check
   `apps/ui/README.md`'s "Wired / Still fixtures" split so you don't assume
   a backend endpoint exists that hasn't been built yet.
@@ -27,7 +25,7 @@ tasks: H1a (shell, fixture data), H1b (wired to the real backend), OB1
   prefix. Do not add a cross-origin fetch to `apps/api`; if a new surface
   genuinely needs CORS, that is an `apps/api` change to raise with its
   owner, not a workaround in the UI.
-- **The OB1 Metrics tab intentionally diverges from the design canon.** The
+- **The Metrics tab intentionally diverges from the design canon.** The
   canon shows a PromQL query bar; the real API is Langfuse aggregates with
   no Prometheus, so the wired view keeps the card-grid/hero-chart layout but
   swaps the PromQL bar for an honest `langfuse {...}` descriptor. This is a

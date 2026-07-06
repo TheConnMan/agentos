@@ -1,6 +1,6 @@
-# CLAUDE.md — runner
+# CLAUDE.md - runner
 
-The runner image and SDK adapter (task D1): a long-lived `claude-agent-sdk`
+The runner image and SDK adapter: a long-lived `claude-agent-sdk`
 streaming session server implementing the full ACI v0.1 contract from
 `packages/aci-protocol`. Runs inside a claimed Agent Sandbox, or locally in
 Docker via `agentos start`. Full behavior spec in `runner/README.md`.
@@ -12,7 +12,8 @@ Docker via `agentos start`. Full behavior spec in `runner/README.md`.
   `AGENTOS_SANDBOX_ID`, `AGENTOS_BUDGET`, and the optional `AGENTOS_MEMORY_REF`/
   `AGENTOS_CREDENTIALS`/`OTEL_EXPORTER_OTLP_*`. Do not invent a parallel
   config path for the same values -- this environment shape is frozen with
-  `aci-protocol`; a new required field is a contract change (escalate).
+  `aci-protocol`; a new required field is a contract change (raise it in an
+  issue/PR first).
 - **One long-lived SDK session per process.** This is the source of
   prompt-cache affinity across turns (ADR-0003) -- do not spin up a fresh SDK
   session per turn or per request; that throws away the cache-reuse property
@@ -20,7 +21,7 @@ Docker via `agentos start`. Full behavior spec in `runner/README.md`.
 - **Budget enforcement is the runner's job, locally.** `AGENTOS_BUDGET.max_output_tokens_per_run`
   halts a run with a classified-failure `final`; the daily USD cap is handed
   to the SDK natively. This is per-run/per-process enforcement only --
-  end-to-end budget wiring through the API and UI Cost view (L1) is separate,
+  end-to-end budget wiring through the API and UI Cost view is separate,
   not-yet-built work; do not assume this runner-local enforcement is the
   whole budget story.
 - **`side_effect_flag` uses a deny-by-default, read-only allowlist**
@@ -35,8 +36,7 @@ Docker via `agentos start`. Full behavior spec in `runner/README.md`.
   earlier turn.
 - **One turn consumes the SDK generator at a time.** Steer and interrupt are
   side-channel injections whose output surfaces on the already-open
-  `/v1/event` stream (the proven PT-2 pattern) -- do not open a second
-  concurrent generator for a steer.
+  `/v1/event` stream -- do not open a second concurrent generator for a steer.
 - **`AGENTOS_FAKE_MODEL` must stay a true offline no-op.** It exists so CI,
   the CLI's `agentos start --fake-model`, and the chart's default runner pool
   can round-trip ACI events with zero credential and zero network call. Any

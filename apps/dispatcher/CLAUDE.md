@@ -1,21 +1,21 @@
-# CLAUDE.md — apps/dispatcher
+# CLAUDE.md - apps/dispatcher
 
-The Slack ingestion edge: Bolt for Python in Socket Mode. Owning task: E1.
-Full behavior spec lives in `apps/dispatcher/README.md`; this file is the
-enforceable-rule summary.
+The Slack ingestion edge: Bolt for Python in Socket Mode. Full behavior spec
+lives in `apps/dispatcher/README.md`; this file is the enforceable-rule
+summary.
 
 ## Load-bearing invariants
 
 - **Scope discipline: ack, dedupe, placeholder, enqueue -- nothing else.**
   Routing, the finish-race, steer/interrupt, and run orchestration belong to
-  the worker (`apps/worker`, task F1). If you find yourself adding any
+  the worker (`apps/worker`). If you find yourself adding any
   decision about *how* a message gets answered, that decision belongs one
   layer up -- stop and move it, don't grow the dispatcher's scope.
 - **The dispatcher owns the `QueuedSlackEvent` shape.** It is defined in
   `dispatcher.queue.QueuedSlackEvent` because the dispatcher is the producer.
   Do not move this model into `packages/` unilaterally -- if it needs to
-  become a shared type, that is an orchestrator call, not a dispatcher-task
-  call.
+  become a shared type, raise it in an issue/PR first rather than moving it
+  from a dispatcher change.
 - **Idempotency key is the Slack event id, not the message content.** Dedupe
   is `SET <dedupe_prefix><event_id> 1 NX EX <ttl>` in Valkey -- O(1), TTL-bounded,
   no scan. Order is always claim -> post placeholder -> `XADD`, so a
