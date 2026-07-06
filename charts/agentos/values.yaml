@@ -374,7 +374,13 @@ agentSandbox:
     deploy: true
   warmPool:
     # Pre-warmed generic runner sandboxes ready to be claimed sub-second.
-    replicas: 1
+    # Default 0 (no SandboxWarmPool rendered): an unbound warm pod boots with
+    # AGENTOS_PLUGIN_DIR=/unused and no AGENTOS_BUNDLE_REF, so a real-model runner
+    # raises PluginBundleError at startup and CrashLoopBackOffs -- and a real claim
+    # cannot use a warm pod anyway (per-claim env injection forces a cold create,
+    # the envVarsInjectionPolicy: Overrides gotcha). Raise it only for a fake-model
+    # / dev pool where unbound pods boot cleanly.
+    replicas: 0
     updateStrategy: OnReplenish
   runner:
     # Defaults to the image published to GHCR by the Release workflow. For
