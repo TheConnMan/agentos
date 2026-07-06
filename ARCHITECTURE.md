@@ -309,16 +309,15 @@ runner (OTLP spans, resource attr agentos.session_id)
                     <-- apps/ui Runs / Metrics / Cost / Logs views
 ```
 
-- The runner emits `gen_ai`-style spans (`agent.run -> generation -> tool`) with a resource including `service.name` and `agentos.session_id` ([`runner/src/agentos_runner/otel.py:46`](runner/src/agentos_runner/otel.py)).
+- The runner emits `gen_ai`-style spans (`agent.run -> generation -> tool`) with a resource including `service.name`, `agentos.session_id`, and `agentos.sandbox_id` ([`runner/src/agentos_runner/otel.py`](runner/src/agentos_runner/otel.py)); the `sandbox_id` is what lets a trace be tied back to the sandbox that served it.
 - **Langfuse OTLP ingest is HTTP-only**; services send to the OTel Collector (which may take gRPC or HTTP) and the collector always exports to Langfuse over HTTP. Collector config at [`otel/collector-config.yaml`](otel/collector-config.yaml); the load-bearing constraint is documented in [`CLAUDE.md`](CLAUDE.md).
 - The API reconstructs the tool-call tree from Langfuse's public API via `parentObservationId` ([`apps/api/src/agentos_api/langfuse.py:19`](apps/api/src/agentos_api/langfuse.py)) and proxies metrics/cost ([`langfuse.py:106`](apps/api/src/agentos_api/langfuse.py), surfaced at [`apps/api/src/agentos_api/routers/observability.py`](apps/api/src/agentos_api/routers/observability.py)).
 - The UI's Runs (`RealTraces.tsx`), Metrics (`RealMetrics.tsx`), Cost (`RealCost.tsx`), and Logs (`RealLogs.tsx`) views render these live in wired mode ([`apps/ui/src/views/obs/`](apps/ui/src/views/obs/)).
 
-**Not yet in main:** the runner does not stamp `agentos.sandbox_id` on its trace
-resource — only `agentos.session_id` is present ([`runner/src/agentos_runner/otel.py:46`](runner/src/agentos_runner/otel.py)).
-The `sandbox_id` is known worker-side (the affinity store and `SandboxHandle`),
-so surfacing "which sandbox served this run" end to end is a near-term roadmap
-item, not a shipped feature. See [`docs/roadmap.md`](docs/roadmap.md).
+The `sandbox_id` is also known worker-side (the affinity store and
+`SandboxHandle`), so a trace, its session, and its serving sandbox all line up.
+Surfacing that in the UI run detail and adding a per-run sandbox-log proxy are
+the remaining pieces — see [`docs/roadmap.md`](docs/roadmap.md) §3.
 
 ## 8. UI: wired vs fixture
 
@@ -365,14 +364,16 @@ chart defaults (ADR-0006, [`docs/adr/0006-security-rails-as-chart-defaults.md`](
 - **Bundle-fetch init containers** on the sandbox template, fail-closed if a bundle ref is set but no archive is fetched ([`charts/agentos/templates/agent-sandbox.yaml:83`](charts/agentos/templates/agent-sandbox.yaml)), with a MinIO egress carve-out.
 - **A single chart-managed Secret** carrying backing-store passwords, Langfuse keys, the model `agentCredentials`, the API key, the GitHub webhook secret, and Slack tokens ([`charts/agentos/templates/secrets.yaml`](charts/agentos/templates/secrets.yaml)).
 
-**Install verification status.** The chart's structure and its full render+apply
-were verified on the scratch k3s cluster using locally-built images. The
-one-command install from the public GHCR-default images — the path a fresh
-operator actually takes — is being verified now, on the first such install since
-the crashloop fixes landed; its findings will be recorded in
-[`docs/roadmap.md`](docs/roadmap.md) §8. Read "one command brings up the stack"
-as the chart's design intent, structurally verified, not yet a proven cold-start
-from published images.
+**Install verification status.** As of 2026-07-06 the GHCR-default install is
+proven end to end on a fresh k3s cluster: `helm install` from published
+sha-pinned GHCR images, a CLI deploy + chat loop answered through an in-cluster
+sandbox, and the trace confirmed in the in-cluster Langfuse (fake model). A
+subsequent rev-3 upgrade flipped on real model credentials and an in-cluster
+Slack dispatcher (Socket Mode connected from the cluster). The findings and the
+two chart fixes that install surfaced are recorded in
+[`docs/roadmap.md`](docs/roadmap.md) §8. The one remaining acceptance gate is the
+timed, README-only cold-start rehearsal (a fresh reader reaching an agent
+answering in Slack from the README alone).
 
 **Local dev stack** is [`compose.dev.yaml`](compose.dev.yaml): the same backing
 components at fixed host ports (see [`CLAUDE.md`](CLAUDE.md)). Every backend
@@ -393,17 +394,18 @@ cuts a GitHub Release with CLI binaries for `x86_64-unknown-linux-gnu` and
 ## 11. What is built vs deferred
 
 **Built and live-verified end to end** (32+ merged lanes; a real Slack
-conversation on a real model, a scratch-cluster install from locally-built
-images, and a local middle-mode loop were all exercised — the GHCR-default
-one-command install is being verified separately, see §10): the frozen
-contracts, the API (agents/versions/deployments,
+conversation on a real model, a GHCR-default `helm install` on a fresh k3s
+cluster with the CLI deploy+chat loop answered through an in-cluster sandbox and
+an in-cluster Slack dispatcher, and a local middle-mode loop were all exercised —
+see §10 for the install-verification detail): the frozen contracts, the API (agents/versions/deployments,
 git-flow, evals, Langfuse proxy, bundle pipeline), the runner, the dispatcher,
 the worker kernel and its four invariants, both substrate clients, the eval
 plane, the chart with its security rails, the CLI, and the wired UI
 (create/deploy, Runs, Metrics, Cost, Logs).
 
-**Deferred or not yet in main:** ripping out the UI fixture/showroom surface, the
-sandbox-id-on-runner-trace stitch, the N1 soak/chaos suite
-([`tests/soak`](tests/soak) is a scaffold), the Interview-Me onboarding compiler,
-automatic memory generation, and non-Anthropic model providers. These are
-enumerated, ordered, in [`docs/roadmap.md`](docs/roadmap.md).
+**Deferred:** ripping out the UI fixture/showroom surface, surfacing sandbox
+identity in the UI run detail, the N1 soak/chaos suite
+([`tests/soak`](tests/soak) is a scaffold), the timed README-only cold-start
+rehearsal, the Interview-Me onboarding compiler, automatic memory generation, and
+non-Anthropic model providers. These are enumerated, ordered, in
+[`docs/roadmap.md`](docs/roadmap.md).

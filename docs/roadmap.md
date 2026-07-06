@@ -24,7 +24,7 @@ The thin-shim thesis holds, but three seams are hand-mirrored rather than frozen
 
 ## 3. Observability and product features
 
-- **Sandbox identity end to end.** Stamp `agentos.sandbox_id` on the runner's trace resource ([`runner/src/agentos_runner/otel.py`](../runner/src/agentos_runner/otel.py) currently carries only `agentos.session_id`), then surface which sandbox served a run in the UI run detail, then add a per-run log proxy (k8s pod-logs API on cluster, `docker logs` locally) from the run detail view.
+- **Surface sandbox identity in the UI.** The runner now stamps `agentos.sandbox_id` on its trace resource ([`runner/src/agentos_runner/otel.py`](../runner/src/agentos_runner/otel.py)), so a trace already carries which sandbox served it. The remaining work is UI-side: show that sandbox in the run detail view, then add a per-run log proxy (k8s pod-logs API on cluster, `docker logs` locally) from that view.
 - **Live sandbox list.** A dropdown or list view enumerating live sandboxes per agent (local: `docker ps`; k8s: `SandboxClaim`s).
 - **Cold-boot latency.** The first Docker claim can exceed the bind window and force a kernel retry. Tune the bind timeout against image warm-up, consider a local warm pool / pre-pulled image, and surface a "booting runner" state in the Slack placeholder.
 - **Empty-trace UX.** Stop writing observation-less trace shells for 0/0 eval replays; keep the honest empty state.
@@ -61,9 +61,13 @@ The thin-shim thesis holds, but three seams are hand-mirrored rather than frozen
 
 ## 8. Cluster bring-up findings
 
-Findings from the first install of the chart on the scratch cluster using the
-public GHCR-default images (the first such install since the crashloop fixes)
-land here: bugs, missing values knobs, runbook steps that should not need to
-exist, and doc gaps surfaced by a clean one-command install. Populated at merge
-time from the k8s-deployer report; until then this section is a placeholder for
-that feed.
+From the first install of the chart on a fresh k3s cluster using the public
+GHCR-default images (the first such install since the crashloop fixes). The two
+chart fixes below are already merged to main (commit 7785999); the remaining
+items are operator-facing notes and follow-ups.
+
+- **DNS default broke in-cluster bundle fetch (fixed).** The agent-sandbox controller injects a public-resolver DNS default (8.8.8.8 / 1.1.1.1) when a `SandboxTemplate` leaves `dnsPolicy` unset, so bound sandbox pods could not resolve the in-cluster MinIO Service and bundle-fetch failed (the worker surfaced it as "claim not bound within 30s"). Fixed with a values-gated `agentSandbox.runner.dnsPolicy`, defaulting to `ClusterFirst`.
+- **No-Slack middle-mode deploy needed a values knob (fixed).** Added a values-gated `worker.extraEnv` so a Slack-free middle-mode deploy can point `SLACK_API_BASE_URL` at an external CLI stub without editing templates.
+- **Controller is opt-in; first install must enable it.** The chart ships the agent-sandbox CRDs, but the vendored controller is gated behind `agentSandbox.controller.deploy`. A cluster that has the CRDs but no controller silently never binds claims. A first install must set `agentSandbox.controller.deploy=true` unless the cluster already runs the controller. Worth a preflight or a louder default.
+- **gVisor stays off without runsc on the node.** Use the `values-e2e-nogvisor` overlay on nodes without `runsc`. All other A2 security rails were verified ON in this install: default-deny egress, metadata-endpoint block, read-only rootfs, non-root, and per-agent secret isolation.
+- **langfuse-web restarts ~2x during first boot** while ClickHouse and Postgres come up, then stabilizes. This is startup ordering, not a crashloop; do not treat the early restarts as a failure.
