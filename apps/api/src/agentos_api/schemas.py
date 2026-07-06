@@ -9,10 +9,49 @@ from pydantic import BaseModel, ConfigDict, Field
 from .models import Environment
 
 
+class TipsPackConfig(BaseModel):
+    """The "working..." acknowledgment content for one agent. Mirrors the worker's
+    agentos_worker.behaviorpacks.TipsPack (packs ride on agent config, not the
+    frozen ACI contract, so the shape is duplicated across the layers the way
+    BudgetConfig mirrors the ACI Budget)."""
+
+    enabled: bool = False
+    working_lines: list[str] = []
+    tips: list[str] = []
+
+
+class GreetingPackConfig(BaseModel):
+    """The deterministic greeting short-circuit content for one agent."""
+
+    enabled: bool = False
+    phrases: list[str] = []
+    reply: str = ""
+
+
+class HelpPackConfig(BaseModel):
+    """The deterministic help / "what can you do" short-circuit for one agent."""
+
+    enabled: bool = False
+    phrases: list[str] = []
+    reply: str = ""
+
+
+class BehaviorPacksConfig(BaseModel):
+    """An agent's opt-in behavior packs. Validated on write and stored as JSON on
+    the agent row; the worker parses the same JSON at bind time."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    tips: TipsPackConfig = TipsPackConfig()
+    greeting: GreetingPackConfig = GreetingPackConfig()
+    help: HelpPackConfig = HelpPackConfig()
+
+
 class AgentCreate(BaseModel):
     name: str
     slack_channel: str
     repo_full_name: str | None = None
+    behavior_packs: BehaviorPacksConfig | None = None
 
 
 class AgentUpdate(BaseModel):
@@ -29,6 +68,7 @@ class AgentOut(BaseModel):
     name: str
     slack_channel: str
     repo_full_name: str | None
+    behavior_packs: dict[str, Any] | None
     created_at: datetime
 
 

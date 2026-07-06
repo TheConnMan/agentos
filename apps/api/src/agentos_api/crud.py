@@ -1,6 +1,7 @@
 """Database access helpers for agents, versions, and deployments."""
 
 import uuid
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,11 @@ async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
         name=data.name,
         slack_channel=data.slack_channel,
         repo_full_name=data.repo_full_name,
+        behavior_packs=(
+            data.behavior_packs.model_dump()
+            if data.behavior_packs is not None
+            else None
+        ),
     )
     session.add(agent)
     await session.commit()
@@ -92,6 +98,15 @@ async def update_budget(
 ) -> Agent:
     agent.max_usd_per_day = max_usd_per_day
     agent.max_output_tokens_per_run = max_output_tokens_per_run
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
+async def update_behavior_packs(
+    session: AsyncSession, agent: Agent, behavior_packs: dict[str, Any] | None
+) -> Agent:
+    agent.behavior_packs = behavior_packs
     await session.commit()
     await session.refresh(agent)
     return agent

@@ -15,7 +15,7 @@ from ..auth import require_api_key
 from ..config import get_settings
 from ..deps import KillSwitchDep, LangfuseDep, SessionDep
 from ..models import Agent
-from ..schemas import BudgetConfig, CostReport, KillState
+from ..schemas import BehaviorPacksConfig, BudgetConfig, CostReport, KillState
 
 router = APIRouter(
     prefix="/agents/{agent_id}",
@@ -75,6 +75,26 @@ async def put_budget(
         config.max_output_tokens_per_run,
     )
     return BudgetConfig.model_validate(updated)
+
+
+@router.get("/behavior-packs", response_model=BehaviorPacksConfig)
+async def get_behavior_packs(
+    agent_id: uuid.UUID, session: SessionDep
+) -> BehaviorPacksConfig:
+    agent = await _load_agent(session, agent_id)
+    # NULL (no packs configured) reads as the all-off default.
+    if agent.behavior_packs is None:
+        return BehaviorPacksConfig()
+    return BehaviorPacksConfig.model_validate(agent.behavior_packs)
+
+
+@router.put("/behavior-packs", response_model=BehaviorPacksConfig)
+async def put_behavior_packs(
+    agent_id: uuid.UUID, config: BehaviorPacksConfig, session: SessionDep
+) -> BehaviorPacksConfig:
+    agent = await _load_agent(session, agent_id)
+    updated = await crud.update_behavior_packs(session, agent, config.model_dump())
+    return BehaviorPacksConfig.model_validate(updated.behavior_packs)
 
 
 @router.get("/cost", response_model=CostReport)
