@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { C } from "../../tokens";
 import { Card, SectionTitle, Button, Dot } from "../../primitives";
 import { hoverBg } from "../../lib/style";
+import { formatLatency } from "../../lib/format";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 import { useMetricsSummary, useTraces } from "../../api/hooks";
@@ -108,7 +109,7 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
   const stats: [string, string][] = [
     ["Agents", String(agents.length)],
     ["Runs (7d)", metric((d) => String(d.runs))],
-    ["Latency p95", metric((d) => d.latency_p95_seconds.toFixed(2) + "s")],
+    ["Latency p95", metric((d) => formatLatency(d.latency_p95_seconds))],
     ["Cost (7d)", metric((d) => "$" + d.cost_usd.toFixed(2))],
   ];
   const recent = traces.data ?? [];
