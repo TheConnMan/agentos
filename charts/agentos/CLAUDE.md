@@ -47,11 +47,15 @@ and rail detail in `charts/agentos/README.md`.
   Install it from exactly one release per cluster; leave it `false` on any
   cluster that already runs `agent-sandbox`. Do not default this to `true`
   in a values file intended for a shared/multi-release cluster.
-- **The runner image ships with `imagePullPolicy: Never` by default**
-  because it is built locally and imported into the cluster runtime
-  (`docker build` + `k3s ctr images import`). Do not change this default
-  without also wiring a real registry push/pull path -- silently switching
-  to `Always` on a cluster with no registry access breaks the install.
+- **The runner image is `IfNotPresent` + prewarm, NOT `Always`.** Images pull
+  from GHCR; the four Deployment-managed services default to `Always` (fresh
+  `:latest` on every rollout), but the runner must not -- a sandbox pod is
+  created per Slack thread, and an in-boot image download can blow the
+  worker's claim timeout (live incident 2026-07-06). The runner-prewarm
+  DaemonSet (`agentSandbox.runner.prewarm`) pulls the runner image at
+  install/upgrade instead, and every `helm upgrade` rolls it to refresh the
+  cache. Do not flip the runner to `Always` and do not disable the prewarm
+  on `:latest`-tag clusters without accepting stale-image risk.
 
 ## Verify
 
