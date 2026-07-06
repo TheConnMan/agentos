@@ -7,10 +7,13 @@
 #     bring-your-own block on the SAME object: to use an external instance, set
 #     `deploy: false` and fill `host` / `port` / `auth` (or `existingSecret`).
 #
-# These defaults are single-node friendly but not sized for production load.
-# For a laptop / 4 GB scratch cluster use `-f values-dev.yaml`, which shrinks
-# every request. For production, raise resources, supply real secrets (or
-# `existingSecret`), and point the stores at managed services via the BYO blocks.
+# SIZING: the defaults below carry a modest single-node footprint (sum of memory
+# requests ~1.7 GB) so a bare `helm install` schedules on an 8-16 GB node without
+# any overlay. This is NOT sized for production load -- for production raise every
+# `resources` block and persistence size, supply real secrets (or `existingSecret`),
+# and point the stores at managed services via the BYO blocks. For a laptop / fully
+# offline cluster use `-f values-dev.yaml`, which additionally swaps every image for
+# a locally-built, cluster-imported tag.
 
 nameOverride: ""
 fullnameOverride: ""
@@ -89,15 +92,15 @@ langfuse:
     # Extra Node flags. The Langfuse web image is a Node app whose default heap
     # cap (~512Mi) OOM-crashes under a tight container limit; raise it in step
     # with the memory limit. Empty = leave the image default.
-    nodeOptions: ""
+    nodeOptions: "--max-old-space-size=1024"
     resources:
-      requests: { cpu: 250m, memory: 768Mi }
-      limits: { cpu: "2", memory: 2Gi }
+      requests: { cpu: 150m, memory: 384Mi }
+      limits: { cpu: "1", memory: 1536Mi }
   worker:
-    nodeOptions: ""
+    nodeOptions: "--max-old-space-size=640"
     resources:
-      requests: { cpu: 250m, memory: 768Mi }
-      limits: { cpu: "2", memory: 2Gi }
+      requests: { cpu: 150m, memory: 384Mi }
+      limits: { cpu: "1", memory: 1Gi }
 
 # ---------------------------------------------------------------------------
 # Postgres. Langfuse's transactional store AND the app-state DB (agents,
@@ -116,10 +119,10 @@ postgres:
   existingSecret: ""
   persistence:
     enabled: true
-    size: 5Gi
+    size: 2Gi
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
 
 # ---------------------------------------------------------------------------
 # Valkey (Redis-compatible). Langfuse cache/queue AND the dispatcher's Streams
@@ -134,10 +137,10 @@ valkey:
   existingSecret: ""
   persistence:
     enabled: true
-    size: 2Gi
+    size: 1Gi
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
 
 # ---------------------------------------------------------------------------
 # ClickHouse. Langfuse's OLAP store for traces/observations/scores. The AVX
@@ -168,10 +171,10 @@ clickhouse:
   clusterEnabled: false
   persistence:
     enabled: true
-    size: 10Gi
+    size: 3Gi
   resources:
-    requests: { cpu: 250m, memory: 1Gi }
-    limits: { cpu: "2", memory: 3Gi }
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "2", memory: 1536Mi }
 
 # ---------------------------------------------------------------------------
 # MinIO. Langfuse object storage (events, media, exports). BYO real S3 in prod:
@@ -191,10 +194,10 @@ minio:
   existingSecret: ""
   persistence:
     enabled: true
-    size: 10Gi
+    size: 3Gi
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
 
 # ---------------------------------------------------------------------------
 # OTel Collector. Receives OTLP (gRPC 4317 / HTTP 4318) from app services and
@@ -211,8 +214,8 @@ otelCollector:
     grpcPort: 4317
     httpPort: 4318
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
 
 # ---------------------------------------------------------------------------
 # First-party app services (A4). The control plane the runner fleet serves:
@@ -223,11 +226,12 @@ otelCollector:
 #   - ui         static React SPA served by nginx, proxying /api to the API
 #
 # IMAGE DEFAULTS: every app image defaults to the GHCR package the Release
-# workflow publishes, pulled `Always` (the `latest` tag is mutable). The repo and
-# its packages are public, so NO imagePullSecret is needed by default; the
-# `imagePullSecrets` plumbing stays for private forks. For offline dev/e2e use
-# values-dev.yaml, which repoints each image at a locally-built, cluster-imported
-# image with imagePullPolicy Never (mirroring the runner pattern).
+# workflow publishes, pulled `IfNotPresent` so a demo node does not re-pull the
+# mutable `latest` digest on every restart (pin an immutable tag for production).
+# The repo and its packages are public, so NO imagePullSecret is needed by
+# default; the `imagePullSecrets` plumbing stays for private forks. For offline
+# dev/e2e use values-dev.yaml, which repoints each image at a locally-built,
+# cluster-imported image with imagePullPolicy Never (mirroring the runner pattern).
 # ---------------------------------------------------------------------------
 api:
   deploy: true
@@ -235,7 +239,7 @@ api:
   image:
     repository: ghcr.io/curie-eng/agentos-api
     tag: latest
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
   imagePullSecrets: []
   # Single shared API key the UI and CLI authenticate with. Dev default; override
   # (or point at an existingSecret) in any shared deployment.
@@ -260,7 +264,7 @@ dispatcher:
   image:
     repository: ghcr.io/curie-eng/agentos-dispatcher
     tag: latest
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
   imagePullSecrets: []
   # Slack credentials. Socket Mode means the process dials out (no ingress), so
   # there is no Service. Left empty the supervisor just backs off and retries, so
@@ -280,7 +284,7 @@ worker:
   image:
     repository: ghcr.io/curie-eng/agentos-worker
     tag: latest
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
   imagePullSecrets: []
   # The worker drives the Kubernetes API to claim/manage agent-sandbox CRDs, so
   # it gets a ServiceAccount + a namespaced Role scoped to exactly those verbs
@@ -305,7 +309,7 @@ ui:
   image:
     repository: ghcr.io/curie-eng/agentos-ui
     tag: latest
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
   imagePullSecrets: []
   service:
     type: ClusterIP
@@ -354,19 +358,20 @@ preflights:
 # that the worker's sandbox substrate claims from (one claimed sandbox per
 # Slack thread). Requires the agent-sandbox CRDs (shipped in this chart's
 # crds/ directory, installed automatically on `helm install`) and the upstream
-# controller with the extensions enabled: either flip
-# `agentSandbox.controller.deploy: true` to install the vendored v0.5.0
-# controller bundle, or point the chart at a cluster that already runs it.
-# Default off: the sandbox substrate is opt-in until the walking-skeleton gate.
+# controller with the extensions enabled: `agentSandbox.controller.deploy: true`
+# installs the vendored v0.5.0 controller bundle.
+# Default ON so a bare `helm install` deploys the runner substrate end to end. On
+# a cluster that ALREADY runs agent-sandbox, set controller.deploy=false (the
+# controller is cluster-scoped, one per cluster).
 # ---------------------------------------------------------------------------
 agentSandbox:
-  deploy: false
+  deploy: true
   controller:
     # Installs the vendored kubernetes-sigs/agent-sandbox v0.5.0 controller
     # (namespace agent-sandbox-system, RBAC, webhook Service, Deployment with
-    # --extensions). Cluster-scoped; one install per cluster, so keep this
+    # --extensions). Cluster-scoped; one install per cluster, so set this
     # false when the cluster already runs the controller.
-    deploy: false
+    deploy: true
   warmPool:
     # Pre-warmed generic runner sandboxes ready to be claimed sub-second.
     replicas: 1
@@ -377,11 +382,11 @@ agentSandbox:
     # which overrides this back to `agentos-runner` with imagePullPolicy Never.
     image: ghcr.io/curie-eng/agentos-runner
     tag: latest
-    # Always with the mutable `latest` default: IfNotPresent would let a node
-    # that already cached an older `latest` digest keep running stale runner code
-    # after a new image is published. Pin `tag` to an immutable sha/version and
-    # switch this to IfNotPresent for reproducible, cache-friendly deploys.
-    imagePullPolicy: Always
+    # IfNotPresent so a demo node does not re-pull the mutable `latest` digest on
+    # every restart. The tradeoff: a node that cached an older `latest` keeps
+    # running it until the image is removed. Pin `tag` to an immutable sha/version
+    # for production so IfNotPresent is both cache-friendly AND reproducible.
+    imagePullPolicy: IfNotPresent
     # GHCR packages on a private repo are NOT anonymously pullable -- the node
     # needs a docker-registry pull Secret. List pre-created Secret names here,
     # e.g. [{ name: ghcr-pull }]. Leave empty when the package is public or for
@@ -453,11 +458,9 @@ agentSandbox:
       # Python both write under HOME/tmp; pointing HOME at a writable emptyDir
       # keeps the root filesystem read-only.
       home: /home/runner
-    # Rail 4: run each sandbox pod under this RuntimeClass for kernel isolation.
-    # "gvisor" (runsc) is the secure default. The NODE must have runsc + the
-    # containerd handler installed (a node-level op the gVisor preflight checks);
-    # set to "" to disable kernel isolation on clusters without runsc.
-    runtimeClassName: gvisor
+    # Rail 4 (gVisor kernel isolation) is controlled by security.gvisor.mode
+    # below -- the effective pod runtimeClassName is computed from that tri-state,
+    # not set here.
     # Pod DNS policy for sandbox pods. Defaults to ClusterFirst because the
     # bundle-fetch init container resolves the in-chart MinIO by Service name and
     # the runner exports OTLP to the in-chart collector by Service name -- both
@@ -507,20 +510,34 @@ security:
     # worker dials the claimed sandbox, so ingress is allowed from the release
     # namespace only. Egress policies do not affect ingress; this adds the lock.
     lockIngress: true
-  # Rail 4: gVisor (runsc) kernel isolation. The pod runtimeClassName lives on
-  # agentSandbox.runner.runtimeClassName; these control the optional RuntimeClass
-  # object and the enforcement preflight.
+  # Rail 4: gVisor (runsc) kernel isolation for runner sandbox pods.
   gvisor:
+    # Tri-state, default `auto`:
+    #   auto    - at install/upgrade time the chart looks up the `runtimeClassName`
+    #             RuntimeClass. If present, runner pods run under it; if absent,
+    #             pods run with NO runtimeClassName (isolation OFF) and NOTES.txt
+    #             prints a prominent warning. Never blocks the install. NOTE: Helm's
+    #             `lookup` returns empty under `helm template`/--dry-run, so a
+    #             templated render always shows the no-gvisor shape.
+    #   require - always stamp the runtimeClassName AND run the enforcement
+    #             preflight as a blocking hook; a missing or downgraded runtime
+    #             fails the install (the fail-hard, production posture).
+    #   off     - never stamp a runtimeClassName; kernel isolation disabled
+    #             knowingly (what values-e2e-nogvisor.yaml selects).
+    mode: auto
+    # The RuntimeClass name to use / look up / verify.
+    runtimeClassName: gvisor
     # Optionally create the RuntimeClass object. The NODE must independently have
     # runsc + the containerd runtime handler installed; the object alone does not
     # install the runtime. Default false: assume the cluster already provides the
-    # runtimeclass, which the preflight verifies.
+    # runtimeclass, which `require` mode's preflight verifies.
     installRuntimeClass: false
     handler: runsc
-  # Preflight: when the runner requests a RuntimeClass, verify it EXISTS and is
+  # Enforcement preflight for `require` mode: verify the RuntimeClass EXISTS and is
   # actually ENFORCED (a pod under it reports a distinct gVisor kernel), so a
   # missing or silently-downgraded runtime fails the install with remediation
-  # instead of shipping runner pods with no kernel isolation.
+  # instead of shipping runner pods with no kernel isolation. Only renders when
+  # security.gvisor.mode is `require` (auto degrades gracefully; off skips it).
   gvisorPreflight:
     enabled: true
     image: busybox:1.36

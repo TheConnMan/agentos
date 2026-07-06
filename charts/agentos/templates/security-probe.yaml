@@ -172,7 +172,7 @@ spec:
             - name: BLOCKED
               value: {{ .Values.security.probe.blockedTarget | quote }}
             - name: RC
-              value: {{ .Values.agentSandbox.runner.runtimeClassName | quote }}
+              value: {{ include "agentos.gvisor.className" . | quote }}
             - name: EGRESS_POD
               value: {{ include "agentos.fullname" . }}-egress-probe
             - name: NETSHOOT
@@ -287,7 +287,7 @@ spec:
               echo ""
               echo "== Claim 4: gVisor RuntimeClass =="
               if [ -z "$RC" ]; then
-                echo "SKIP: agentSandbox.runner.runtimeClassName is empty (kernel isolation disabled)."
+                echo "SKIP: security.gvisor.mode is off (kernel isolation disabled)."
               else
                 gpod="sp-gvisor-check"
                 kubectl delete pod "$gpod" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
