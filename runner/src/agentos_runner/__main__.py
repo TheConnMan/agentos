@@ -47,7 +47,11 @@ def build_runner(config: RunnerConfig, *, fake_model: bool = False) -> SessionRu
         )
         return ClaudeAgentSession(options)
 
-    provider = build_tracer_provider(config.session.otel, config.session.session_id)
+    provider = build_tracer_provider(
+        config.session.otel,
+        config.session.session_id,
+        config.session.sandbox_id,
+    )
     return SessionRunner(
         session_factory=factory,
         ceiling=config.ceiling,
