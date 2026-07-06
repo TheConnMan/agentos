@@ -3,6 +3,7 @@ import { C } from "../../tokens";
 import { Card, Chip, AreaChart } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useMetricsSummary, useMetricSeries } from "../../api/hooks";
+import { formatLatency } from "../../lib/format";
 import type { MetricsSummary, MetricKey, Granularity, MetricFilter } from "../../api/client";
 
 // The five metrics the OB1 API exposes (Langfuse-backed; no Prometheus).
@@ -20,7 +21,7 @@ function fmt(key: MetricKey, v: number): string {
     case "runs":
       return String(Math.round(v));
     case "latency_p95_seconds":
-      return v.toFixed(2) + "s";
+      return formatLatency(v);
     case "tokens":
       return v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v));
     case "cost_usd":

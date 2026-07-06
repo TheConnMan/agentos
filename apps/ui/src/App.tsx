@@ -95,7 +95,7 @@ export function App() {
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <Topbar />
           {envDev ? <DevBanner /> : null}
-          <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1280, width: "100%" }}>
+          <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1280, width: "100%", margin: "0 auto" }}>
             <Main />
           </div>
         </div>
