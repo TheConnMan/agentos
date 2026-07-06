@@ -108,10 +108,17 @@ cd apps/ui && pnpm install && pnpm dev
 ```bash
 cd cli && cargo build --release
 ./target/release/agentos init my-agent && cd my-agent
-../target/release/agentos start --fake-model
+# Real model is the default. Export a credential first (forwarded into the runner
+# container): CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or AGENTOS_CREDENTIALS.
+export CLAUDE_CODE_OAUTH_TOKEN=...
+../target/release/agentos start
 ../target/release/agentos send "hello"
 ../target/release/agentos eval
 ```
+
+For a fully offline round-trip (no credential, scripted replies), add
+`--fake-model` to `agentos start` — an explicit test-only mode that never reaches
+the Anthropic API.
 
 **Middle-mode runbook** (real deployed pipeline, no Slack, no cluster — the
 backing stack from the Quickstart plus the API on :8000 and the runner image
@@ -123,10 +130,15 @@ built as above):
 
 # Start a worker that claims runner containers via Docker. REAL MODEL is the
 # default: export your credential first (forwarded into each runner container).
+# AGENTOS_DOCKER_NETWORK joins each runner container to the compose network and
+# OTEL_EXPORTER_OTLP_ENDPOINT is forwarded into it; without BOTH, runs still
+# execute but emit no traces (the runner cannot resolve otel-collector).
 export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=...
 env AGENTOS_SANDBOX_SUBSTRATE=docker \
     VALKEY_HOST=localhost VALKEY_PORT=56379 VALKEY_PASSWORD=valkeypass \
     SLACK_API_BASE_URL=http://localhost:8137/api/ SLACK_BOT_TOKEN=xoxb-dev \
+    AGENTOS_DOCKER_NETWORK=agentos_default \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
     uv run python -m agentos_worker &
 
 # Send a message through the same path a Slack mention takes; the fake-model
@@ -138,9 +150,10 @@ env AGENTOS_SANDBOX_SUBSTRATE=docker \
 For an offline round-trip add `AGENTOS_FAKE_MODEL=1` to the worker env and drop
 the credential. Without either, the worker refuses to start.
 
-Prefer a prebuilt binary? Tagged releases attach `agentos-<target>` binaries
-(linux + macOS) to the [GitHub Releases](../../releases) page — download one and
-skip the `cargo build` (no Rust toolchain needed).
+Prefer a prebuilt binary? Once `v0.1.0` is tagged, releases will attach
+`agentos-<target>` binaries (linux + macOS) to the
+[GitHub Releases](../../releases) page. No releases are published yet, so
+`cargo build` (above) is the way to get the CLI today.
 
 Each package documents its own deeper verify commands and gotchas in its own
 README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
