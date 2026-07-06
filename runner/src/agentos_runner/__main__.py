@@ -58,6 +58,7 @@ def build_runner(config: RunnerConfig, *, fake_model: bool = False) -> SessionRu
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(config.idempotent_tools),
         trace_name=f"agentos-run:{config.session.session_id}",
+        session_id=config.session.session_id,
         model=config.model,
     )
 

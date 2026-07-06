@@ -53,6 +53,7 @@ class SessionRunner:
         tracer: RunTracer,
         classifier: SideEffectClassifier,
         trace_name: str,
+        session_id: str | None = None,
         model: str | None = None,
     ) -> None:
         self._factory = session_factory
@@ -60,6 +61,7 @@ class SessionRunner:
         self._tracer = tracer
         self._classifier = classifier
         self._trace_name = trace_name
+        self._session_id = session_id
         self._model = model
 
         self._session: ModelSession | None = None
@@ -149,7 +151,9 @@ class SessionRunner:
             state = TurnState()
             tracker = BudgetTracker(ceiling=self._ceiling)
 
-            with self._tracer.run_span(self._trace_name, self._model) as gen:
+            with self._tracer.run_span(
+                self._trace_name, self._model, self._session_id, event.user
+            ) as gen:
                 try:
                     async for line in self._drive_turn(event, state, tracker, gen):
                         yield line
