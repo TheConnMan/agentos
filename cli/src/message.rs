@@ -52,6 +52,19 @@ pub const DEFAULT_VALKEY_PASSWORD: &str = "valkeypass";
 /// The chart's default platform API key (values.yaml `api.apiKey`).
 pub const DEFAULT_API_KEY: &str = "agentos-dev-key";
 
+/// Local mode (`--local`): the compose Valkey's published host port
+/// (`compose.dev.yaml`), where the CLI enqueues and the compose worker consumes.
+pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 56379;
+/// Local mode: the compose API's published host port (`compose.dev.yaml`
+/// `agentos-api`), reached directly (routers mount at root, so no `/api`).
+pub const DEFAULT_LOCAL_API_URL: &str = "http://localhost:8770";
+/// Local mode: the fixed port the stub binds. It MUST equal the port in the
+/// compose worker's `SLACK_API_BASE_URL` (`http://localhost:8155/api/`) so the
+/// containerized worker's placeholder edits reach this stub. Same value as the
+/// cluster-mode `DEFAULT_LISTEN_PORT`; the `local_stub_port_matches_listen_port`
+/// test pins the coupling.
+pub const DEFAULT_LOCAL_STUB_PORT: u16 = DEFAULT_LISTEN_PORT;
+
 /// In-cluster service ports the port-forwards target.
 const VALKEY_REMOTE_PORT: u16 = 6379;
 const API_REMOTE_PORT: u16 = 8000;
@@ -80,6 +93,13 @@ pub struct MessageOpts {
     /// Override the Slack-connected-release safety guard.
     pub force_wire: bool,
     pub dry_run: bool,
+    /// Local mode: drive the compose stack (`agentos local up`) instead of a
+    /// Kubernetes release. No kubectl/helm/port-forwards/wiring; enqueue straight
+    /// to the compose Valkey and let the containerized worker answer.
+    pub local: bool,
+    /// Local mode only: platform API base URL for the channel lookup. None uses
+    /// the compose API default ([`DEFAULT_LOCAL_API_URL`]).
+    pub api_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +194,19 @@ fn server_url_command() -> OpsCommand {
 /// The `/api/` base URL the worker posts its placeholder edits to.
 fn advertised_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}/api/")
+}
+
+/// Local mode: the Valkey URL the CLI enqueues onto -- the compose Valkey on its
+/// published host port, authenticated with the same password the compose worker
+/// uses. Pure so the construction is unit-tested without a live Valkey.
+pub fn local_valkey_url(password: &str) -> String {
+    format!("redis://:{password}@localhost:{DEFAULT_LOCAL_VALKEY_PORT}")
+}
+
+/// Local mode: the platform API base for the channel lookup -- an explicit
+/// `--api-url` wins, else the compose API default.
+pub fn local_api_base(api_url: Option<&str>) -> String {
+    api_url.unwrap_or(DEFAULT_LOCAL_API_URL).to_string()
 }
 
 /// Pick the channel to send as: an explicit `--channel` wins; otherwise the sole
@@ -438,8 +471,118 @@ async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
     Ok(())
 }
 
+/// The `agentos message --local` handler: drive the compose stack directly.
+///
+/// The cluster path's self-plumbing (kubectl port-forwards, the wiring helm
+/// upgrade, the dispatcher guard) is all cluster-specific, so local mode keeps
+/// only the shared engine: bind the same Slack stub, enqueue the same
+/// `QueuedSlackEvent`, wait on the same XACK signal. The compose worker is
+/// already running and already pointed at this stub (its `SLACK_API_BASE_URL` is
+/// fixed to `http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/`), so there is
+/// nothing to wire.
+async fn message_local(opts: MessageOpts) -> Result<()> {
+    let valkey_url = local_valkey_url(&opts.valkey_password);
+    let api_base = local_api_base(opts.api_url.as_deref());
+
+    if opts.dry_run {
+        println!("local mode (compose stack; no kubectl/helm)");
+        println!("enqueue onto redis {valkey_url}");
+        println!("stub advertised at http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/");
+        match opts.channel.as_deref() {
+            Some(channel) => println!("channel {channel}"),
+            None => println!("channel <the sole deployed agent via {api_base}/agents>"),
+        }
+        println!(
+            "enqueue a synthetic QueuedSlackEvent on stream {}",
+            opts.stream
+        );
+        return Ok(());
+    }
+
+    // Connect Valkey up front so a down stack fails fast, before the stub binds.
+    let mut conn = connect(&valkey_url).await?;
+
+    // Bind the stub on loopback at the fixed port the compose worker posts to.
+    // Host networking puts the worker on the same loopback, so 127.0.0.1 both
+    // binds and is reachable; the advertised host is cosmetic here (the worker's
+    // base URL is fixed in compose, not taken from this print).
+    let mut stub = SlackStub::start("127.0.0.1", DEFAULT_LOCAL_STUB_PORT, "localhost").await?;
+    println!(
+        "slack stub listening; the worker posts to {}",
+        stub.base_api_url()
+    );
+
+    // Channel: explicit --channel, else the sole deployed agent from the compose
+    // API (reached directly; routers mount at root, so the base carries no /api).
+    let channel = match opts.channel.as_deref() {
+        Some(channel) => channel.to_string(),
+        None => {
+            let api = ApiClient::new(&api_base, &opts.api_key)?;
+            let agents = api.list_agents().await.with_context(|| {
+                format!("listing agents via {api_base} (is `agentos local up` running?)")
+            })?;
+            select_channel(&agents, None)?
+        }
+    };
+    println!("routing to channel {channel}");
+
+    let (channel, thread_ts, placeholder_ts) =
+        resolve_targets(Some(&channel), opts.thread.as_deref());
+    let event = QueuedSlackEvent::synthetic(
+        &channel,
+        &opts.user,
+        &opts.text,
+        &thread_ts,
+        &placeholder_ts,
+    );
+    let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
+    println!(
+        "enqueued {} on {} as {stream_id}",
+        event.slack_event_id, opts.stream
+    );
+    println!(
+        "waiting up to {}s for the worker to finalize the turn...",
+        opts.timeout_secs
+    );
+
+    let outcome = await_reply(
+        &mut stub,
+        &mut conn,
+        &opts.stream,
+        &stream_id,
+        &placeholder_ts,
+        Duration::from_secs(opts.timeout_secs),
+    )
+    .await;
+
+    match outcome {
+        Outcome::Replied(reply) => {
+            println!("reply    {reply}");
+            print_continue_hint("message --local", &channel, &thread_ts);
+            Ok(())
+        }
+        Outcome::CompletedNoEdit => {
+            println!("the worker finished the turn but never edited the placeholder");
+            print_continue_hint("message --local", &channel, &thread_ts);
+            Ok(())
+        }
+        Outcome::TimedOut => {
+            println!(
+                "TIMEOUT: the worker did not finalize within {}s. Stream diagnostics:",
+                opts.timeout_secs
+            );
+            let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
+            println!("{diag}");
+            std::process::exit(1);
+        }
+    }
+}
+
 /// The `agentos message` handler.
 pub async fn message(opts: MessageOpts) -> Result<()> {
+    if opts.local {
+        return message_local(opts).await;
+    }
     if opts.dry_run {
         let host = opts
             .listen_host
@@ -611,6 +754,8 @@ mod tests {
             wire,
             force_wire: false,
             dry_run: false,
+            local: false,
+            api_url: None,
         }
     }
 
@@ -695,6 +840,35 @@ mod tests {
             Some(("host".into(), 80))
         );
         assert_eq!(server_host_and_port(""), None);
+    }
+
+    #[test]
+    fn local_valkey_url_targets_the_compose_valkey_with_the_password() {
+        assert_eq!(
+            local_valkey_url("valkeypass"),
+            "redis://:valkeypass@localhost:56379"
+        );
+        // A custom password flows through unchanged.
+        assert_eq!(
+            local_valkey_url("s3cr3t"),
+            "redis://:s3cr3t@localhost:56379"
+        );
+    }
+
+    #[test]
+    fn local_api_base_prefers_explicit_then_falls_back_to_compose_default() {
+        assert_eq!(local_api_base(Some("http://host:9999")), "http://host:9999");
+        assert_eq!(local_api_base(None), DEFAULT_LOCAL_API_URL);
+        // The compose API default carries no /api (routers mount at root).
+        assert!(!DEFAULT_LOCAL_API_URL.ends_with("/api"));
+    }
+
+    #[test]
+    fn local_stub_port_matches_listen_port() {
+        // The stub port is coupled to the compose worker's SLACK_API_BASE_URL
+        // (http://localhost:8155/api/); pin it so a change to one flags the other.
+        assert_eq!(DEFAULT_LOCAL_STUB_PORT, 8155);
+        assert_eq!(DEFAULT_LOCAL_STUB_PORT, DEFAULT_LISTEN_PORT);
     }
 
     #[test]

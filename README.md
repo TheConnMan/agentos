@@ -100,7 +100,11 @@ Every verb takes `--dry-run` to print the exact `helm`/`kubectl` command line
   iterate on an agent built for someone else's workspace with no Slack access;
   `agentos connect-slack` later swaps the stub for the real workspace.
 - `agentos local up|down|status` wraps the `compose.dev.yaml` dev stack below,
-  so the inner loop and the cluster share one CLI.
+  so the inner loop and the cluster share one CLI. `local up` now brings up the
+  full product stack (API + worker alongside the backing stores), so
+  `agentos deploy --api-url http://localhost:8770` then `agentos message --local
+  "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with
+  no Slack and no Kubernetes (see the middle-mode runbook below).
 
 ## Quickstart
 
@@ -150,6 +154,20 @@ export CLAUDE_CODE_OAUTH_TOKEN=...
 For a fully offline round-trip (no credential, scripted replies), add
 `--fake-model` to `agentos start` — an explicit test-only mode that never reaches
 the Anthropic API.
+
+**One-command middle mode** (the fastest path — no host-run worker, no cluster):
+
+```bash
+agentos local up   # brings up the backing stores + API + a containerized worker
+agentos deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:8770
+agentos message --local "what changed in the last deploy?"
+```
+
+`local up` runs the worker as the `agentos-worker` compose service (fake model by
+default), so there is nothing to hand-run. For a real model, export a credential
+and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
+below is the equivalent with a host-process worker, useful when iterating on the
+worker itself from source.
 
 **Middle-mode runbook** (real deployed pipeline, no Slack, no cluster — the
 backing stack from the Quickstart plus the API on :8000 and the runner image

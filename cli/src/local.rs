@@ -18,6 +18,7 @@ pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
 /// has the URLs in hand. Hardcoded to match the compose file (see the
 /// `endpoints_match_compose_file` test, which asserts the file still maps them).
 const ENDPOINTS: &[(&str, &str)] = &[
+    ("AgentOS API", "http://localhost:8770"),
     ("Langfuse UI", "http://localhost:3001"),
     ("Postgres", "localhost:55434"),
     ("Valkey", "localhost:56379"),
@@ -91,6 +92,11 @@ pub async fn up(o: LocalOpts) -> Result<()> {
     for (label, url) in ENDPOINTS {
         println!("  {label:16}{url}");
     }
+    println!("\nDrive the local product loop (no Slack, no Kubernetes):");
+    println!(
+        "  agentos deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:8770"
+    );
+    println!("  agentos message --local \"<your question>\"");
     Ok(())
 }
 
@@ -214,6 +220,7 @@ mod tests {
                 .expect("read compose.dev.yaml");
         // Each printed host port must appear as a `"<host>:<container>"` mapping.
         for (label, host_port) in [
+            ("AgentOS API", "8770"),
             ("Langfuse UI", "3001"),
             ("Postgres", "55434"),
             ("Valkey", "56379"),

@@ -149,6 +149,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      # Wait for the langfuse bucket to exist. This also makes `up --wait`
+      # treat minio-init's exit as expected success rather than a failure.
+      minio-init:
+        condition: service_completed_successfully
     environment:
       <<: *langfuse-env
     restart: unless-stopped
@@ -164,6 +168,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - "3001:3000"
     environment:
@@ -197,6 +203,142 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
+    restart: unless-stopped
+
+  # ---- AgentOS product services (the local product loop) --------------------
+  #
+  # These three services turn the backing stack above into a one-command local
+  # product loop. `agentos local up` brings everything up, then:
+  #   agentos deploy --plugin-dir <dir> --slack-channel <C...> \
+  #                  --api-url http://localhost:8770
+  #   agentos message --local "<question>"
+  # drives a real queue -> worker -> sandboxed runner -> reply roundtrip, no
+  # Slack and no Kubernetes. They use the same published images the chart
+  # deploys (only the worker adds a thin local docker-CLI overlay; see below).
+  #
+  # The API host port 8770 is chosen to dodge the CurieTech platform E2E stack
+  # (8000/3000/8080/9091/55432) and every host port this compose file already
+  # publishes.
+
+  # One-shot: bring the Postgres schema to head before api/worker boot. The API
+  # image ships the Alembic tree but its CMD only runs uvicorn, so migrations
+  # run here (mirrors the chart's api migrate init container). Migration 0001
+  # creates the `agentos` schema, so this also gates on Postgres being reachable.
+  agentos-migrate:
+    image: ghcr.io/curie-eng/agentos-api:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
+      DB_SCHEMA: agentos
+    restart: "no"
+
+  # The platform API. On the compose network, reaching Postgres/Valkey/MinIO by
+  # service name. Published on host 8770 for the CLI (`agentos deploy`, and the
+  # `agentos message --local` channel lookup).
+  agentos-api:
+    image: ghcr.io/curie-eng/agentos-api:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      agentos-migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
+      DB_SCHEMA: agentos
+      API_KEY: agentos-dev-key
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-valkeypass}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: miniosecret
+      BUNDLE_BUCKET: agentos-bundles
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: pk-lf-agentos-dev
+      LANGFUSE_SECRET_KEY: sk-lf-agentos-dev
+    ports:
+      - "8770:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+    restart: unless-stopped
+
+  # The worker, containerized so `agentos local up` runs the full loop with no
+  # hand-run host process. It uses the DOCKER sandbox substrate: it spawns runner
+  # CONTAINERS on the host's Docker daemon through the mounted socket.
+  #
+  # SECURITY: this service is host-root-equivalent BY DESIGN. Mounting
+  # /var/run/docker.sock and running as user 0 gives it the same power as the
+  # host's docker CLI (i.e. host root). This is a LOCAL DEVELOPER CONVENIENCE
+  # with NO security boundary -- it is identical in power to the documented
+  # host-process middle mode (a developer running `python -m agentos_worker` with
+  # docker access). Do NOT model production on this. The hardened path is the
+  # Helm deployment (charts/agentos): the worker there uses the Kubernetes
+  # substrate (no docker socket), and runner sandboxes run under gVisor with a
+  # default-deny egress NetworkPolicy. The socket mount and user:0 are confined
+  # to THIS service; no other service in this file gets them.
+  #
+  # network_mode: host recreates the exact topology the Docker substrate was
+  # written and tested against (the host-process middle mode): the worker reaches
+  # the backing stores on their published host ports (localhost 55434/56379/9002),
+  # dials each runner on the loopback host port Docker publishes for it, and
+  # reaches the `agentos message --local` Slack stub at localhost:8155.
+  agentos-worker:
+    build:
+      context: compose
+      dockerfile: worker-local.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      agentos-migrate:
+        condition: service_completed_successfully
+    network_mode: host
+    user: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared bundle staging dir. The worker fetches each plugin bundle from
+      # MinIO and bind-mounts it into the runner container it spawns; because the
+      # runner runs on the HOST daemon, that bind source must resolve on the host
+      # at the SAME absolute path the worker used. An identical host:container
+      # path plus TMPDIR pointed here makes the worker's tempdir host-resolvable.
+      - /tmp/agentos-bundles:/tmp/agentos-bundles
+    environment:
+      - AGENTOS_SANDBOX_SUBSTRATE=docker
+      - AGENTOS_RUNNER_IMAGE=ghcr.io/curie-eng/agentos-runner:latest
+      - TMPDIR=/tmp/agentos-bundles
+      - VALKEY_HOST=localhost
+      - VALKEY_PORT=56379
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD:-valkeypass}
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:55434/postgres
+      - DB_SCHEMA=agentos
+      - S3_ENDPOINT_URL=http://localhost:9002
+      - S3_ACCESS_KEY=minio
+      - S3_SECRET_KEY=miniosecret
+      - BUNDLE_BUCKET=agentos-bundles
+      - AGENTOS_API_BASE_URL=http://localhost:8770
+      - SLACK_API_BASE_URL=http://localhost:8155/api/
+      - SLACK_BOT_TOKEN=xoxb-dev
+      # Fake model by default (no credential needed). For a real model set
+      # AGENTOS_FAKE_MODEL=0 and provide a credential in your SHELL (never in this
+      # file): the bare names below forward it from your environment only if set.
+      - AGENTOS_FAKE_MODEL=${AGENTOS_FAKE_MODEL:-1}
+      - ANTHROPIC_API_KEY
+      - CLAUDE_CODE_OAUTH_TOKEN
+      - AGENTOS_CREDENTIALS
     restart: unless-stopped
 
 volumes:
