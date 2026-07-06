@@ -1,5 +1,7 @@
 # AgentOS
 
+[![CI](https://github.com/curie-eng/agentos/actions/workflows/ci.yaml/badge.svg)](https://github.com/curie-eng/agentos/actions/workflows/ci.yaml)
+
 Open-source, self-hostable developer platform for Slack-based agents. Connect
 Slack, author a Claude-Code-format plugin (skills + tools + MCP), deploy it as
 a versioned bot identity, and get traces, evals, budgets, and git-flow for
@@ -15,7 +17,7 @@ A Slack `@mention` (or DM) is answered by a versioned plugin running in an
 isolated Kubernetes sandbox, with the run traced end to end and steerable
 mid-turn. A `git push` deploys that plugin under a bot identity: push to `dev`
 updates `@agentos-dev`, merging to `prod` promotes the same built artifact to
-`@agentos`. See [`docs/architecture.md`](docs/architecture.md) for the full
+`@agentos`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
 component map, a message-flow sequence diagram, and the deploy-flow sequence
 diagram.
 
@@ -32,8 +34,8 @@ runner-image prewarm DaemonSet, git-flow (push-to-deploy, merge-to-promote),
 the eval plane (eval-stream consumer, matrix endpoint, PR-check reporter), and
 budgets plus the kill switch. Still ahead: wiring the UI's Evals matrix and
 Usage/Settings views to their existing backends, the soak/chaos suite, and
-retiring the fixture/showroom surface. See "What is proven vs. what is designed" in
-[`docs/architecture.md`](docs/architecture.md#what-is-proven-vs-what-is-designed)
+retiring the fixture/showroom surface. See "What is built vs deferred" in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#11-what-is-built-vs-deferred)
 for the precise built/in-progress split.
 
 ## Component map
@@ -45,7 +47,7 @@ for the precise built/in-progress split.
 | [`runner`](runner/README.md) | Python (claude-agent-sdk) | The streaming session server that implements the ACI contract inside a sandbox |
 | [`apps/api`](apps/api/README.md) | Python (FastAPI) | Agents/versions/deployments CRUD, plugin bundle pipeline, GitHub git-flow, Langfuse + pod-log proxies |
 | [`apps/ui`](apps/ui/README.md) | React (Vite + TS) | The AgentOS console: author, deploy, and observe agents |
-| [`cli`](cli/README.md) | Rust (clap + tokio) | The `agentos` CLI: local emulation, evals, deploy, and the cluster operator lifecycle (`up`/`connect-slack`/`go-live`/`status`/`down`) |
+| [`cli`](cli/README.md) | Rust (clap + tokio) | The `agentos` CLI: local emulation, evals, deploy, and the cluster operator lifecycle (`up`/`status`/`down`) |
 | [`charts/agentos`](charts/agentos/README.md) | Helm | The umbrella chart: Langfuse + Postgres + Valkey + ClickHouse + MinIO + OTel Collector + the Agent Sandbox substrate, with security rails on by default |
 | [`packages/aci-protocol`](packages/aci-protocol/README.md) | Python (frozen, codegen to TS + Rust) | The ACI session protocol every lane speaks |
 | [`packages/plugin-format`](packages/plugin-format/README.md) | Python (frozen, codegen to JSON Schema) | The Claude Code plugin bundle shape, verbatim |
@@ -75,45 +77,28 @@ fully offline round-trip, set `AGENTOS_FAKE_MODEL=1` — an explicit test-only k
 without a credential and without that flag the worker refuses to start rather than
 silently faking. See the middle-mode runbook below.
 
-## Operating a cluster install
+## Prerequisites
 
-The same `agentos` binary installs and runs the platform on a Kubernetes
-cluster, wrapping the Helm chart the way `linkerd` or `cilium` wrap theirs.
-Every verb takes `--dry-run` to print the exact `helm`/`kubectl` command line
-(secrets masked) without executing.
-
-- `agentos up` runs `helm upgrade --install` of `charts/agentos` into the
-  `agentos` namespace, exposing the UI and Langfuse on node ports (pass
-  `--no-expose` to keep them ClusterIP-only). `agentos status` reports release
-  health, pod readiness, and the access URLs; the UI URL carries `?api=1`, so
-  it opens wired to the in-cluster API (the deployed UI proxies `/api/` there).
-- `agentos connect-slack` wires Slack app/bot tokens into the release.
-  `agentos go-live` switches the runner off the fake model and opens its
-  fail-closed egress policy to the model provider (credentials from
-  `AGENTOS_MODEL_CREDENTIALS`, Anthropic's published CIDR by default).
-- `agentos down` uninstalls the release and sweeps its runtime namespaces; the
-  `agents.x-k8s.io` CRDs are left in place.
-- `agentos message "..."` drives a deployed cluster end to end with no Slack at
-  all: it stands up a local Slack API stub, resolves the target agent's channel
-  from the API, enqueues the exact event a Slack mention would produce, boots
-  the real Kubernetes sandbox, and prints the reply. This lets a developer
-  iterate on an agent built for someone else's workspace with no Slack access;
-  `agentos connect-slack` later swaps the stub for the real workspace.
-- `agentos local up|down|status` wraps the `compose.dev.yaml` dev stack below,
-  so the inner loop and the cluster share one CLI. `local up` now brings up the
-  full product stack (API + worker alongside the backing stores), so
-  `agentos deploy --api-url http://localhost:8770` then `agentos message --local
-  "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with
-  no Slack and no Kubernetes (see the middle-mode runbook below).
+- **[uv](https://docs.astral.sh/uv/)**: the Python workspace manager.
+- **Python 3.13** (the workspace requires `>=3.13`).
+- **Docker + Compose v2**: for the dev stack and the local runner container.
+- **Node.js 22 + [pnpm](https://pnpm.io/)**: for the UI.
+- **Rust toolchain** (stable, edition 2021, with `rustfmt` and `clippy`): for
+  the CLI. Skip if you use a prebuilt CLI binary from Releases.
+- **kubectl + helm**: only for the cluster-install path (see
+  [Operating a cluster install](#operating-a-cluster-install)).
 
 ## Quickstart
 
 Everything below runs against the dev stack in `compose.dev.yaml`
-(Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel Collector — see
-[`CLAUDE.md`](CLAUDE.md#the-dev-stack) for ports and gotchas).
+(Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel Collector). See
+[`AGENTS.md`](AGENTS.md) for the ports each service binds and the load-bearing
+gotchas.
 
 ```bash
-# 1. Bring up the backing stack
+# 1. Bring up the backing stack. The stack runs on baked defaults; copy
+#    .env.example to the gitignored .env only if you need to override anything.
+cp .env.example .env    # optional
 docker compose -f compose.dev.yaml up -d
 docker compose -f compose.dev.yaml ps    # wait for all services healthy
 
@@ -169,6 +154,10 @@ and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
 below is the equivalent with a host-process worker, useful when iterating on the
 worker itself from source.
 
+`agentos local up` publishes the API on `:8770` (the compose host port); the
+hand-run `uvicorn` in Quickstart step 4 uses `:8000`. Point `deploy --api-url`
+at whichever one you brought up.
+
 **Middle-mode runbook** (real deployed pipeline, no Slack, no cluster — the
 backing stack from the Quickstart plus the API on :8000 and the runner image
 built as above):
@@ -199,10 +188,11 @@ env AGENTOS_SANDBOX_SUBSTRATE=docker \
 For an offline round-trip add `AGENTOS_FAKE_MODEL=1` to the worker env and drop
 the credential. Without either, the worker refuses to start.
 
-Prefer a prebuilt binary? Once `v0.1.0` is tagged, releases will attach
-`agentos-<target>` binaries (linux + macOS) to the
-[GitHub Releases](../../releases) page. No releases are published yet, so
-`cargo build` (above) is the way to get the CLI today.
+Prefer a prebuilt binary? The
+[GitHub Releases](https://github.com/curie-eng/agentos/releases) page attaches
+`agentos-<target>` binaries on every tag push (`agentos-x86_64-unknown-linux-gnu`
+and `agentos-aarch64-apple-darwin`), so `v0.1.0` onward you can download the CLI
+instead of running `cargo build` (above).
 
 Each package documents its own deeper verify commands and gotchas in its own
 README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
@@ -216,16 +206,33 @@ enough to see the pieces move; it is not a substitute for those.
   Postgres/Valkey/Langfuse.
 - **The Rust CLI** and **the UI** are verified independently; see
   `cli/README.md` and `apps/ui/README.md` for their commands.
-- **Concurrent work happens in git worktrees**, one per task/branch, so
-  multiple agents (or you and a teammate) can build in parallel without
-  clobbering each other's checkout. See `CLAUDE.md` for the exact protocol.
+- **Work on a feature branch per change**, cut from `main`; never commit to
+  `main` directly.
 - **Two frozen contracts** (`packages/aci-protocol`, `packages/plugin-format`)
   gate every cross-language lane; changing either requires regenerating the
   committed schema/TS/Rust artifacts and is enforced by a CI compat test.
 
+## Operating a cluster install
+
+The same `agentos` binary installs and runs the platform on a Kubernetes
+cluster, wrapping the umbrella Helm chart the way `linkerd` or `cilium` wrap
+theirs. The short version:
+
+- `agentos up` runs `helm upgrade --install` of `charts/agentos`; it reads
+  `AGENTOS_MODEL_CREDENTIALS` to enable a real model (absent, the release
+  installs sealed with canned replies), and `--no-expose` keeps the UI and
+  Langfuse ClusterIP-only. Connecting Slack is a raw `helm upgrade
+  --reuse-values` (not a CLI verb; the chart's `NOTES.txt` prints it).
+- `agentos status` reports release health and access URLs; `agentos down`
+  uninstalls and sweeps the runtime namespaces. Every verb takes `--dry-run`.
+- `agentos message "..."` drives a deployed release end to end with no Slack.
+
+Full runbook (the credential model, the Slack-connect command, and the
+zero-Slack `message` flow) is in [`docs/operations.md`](docs/operations.md).
+
 ## Where to go next
 
-- [`docs/architecture.md`](docs/architecture.md) — the component diagram, the
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the component diagram, the
   message-flow and deploy-flow sequence diagrams, and the built/in-progress
   split.
 - [`docs/adr/`](docs/adr/) — the load-bearing architecture decisions (Agent
@@ -237,7 +244,7 @@ enough to see the pieces move; it is not a substitute for those.
   historical planning artifacts: the architecture spine and the task DAG this
   repo was built along. Useful for understanding sequencing decisions; not
   living documentation.
-- [`CLAUDE.md`](CLAUDE.md) — the operative rules for anyone (human or agent)
-  working in this repo: the worktree protocol, verify commands, the dev
-  stack, and the frozen-contract escalation rule. Each top-level directory
-  also has its own scoped `CLAUDE.md` with rules specific to that area.
+- [`AGENTS.md`](AGENTS.md) — the operative rules for anyone (human or agent)
+  working in this repo: the verify commands, the dev stack, the
+  frozen-contract escalation rule, and the build gotchas. Each top-level
+  directory also has its own scoped `CLAUDE.md` with rules specific to that area.
