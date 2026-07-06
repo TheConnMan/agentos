@@ -134,6 +134,38 @@ def test_cost_composes_metrics_for_the_agent(
     assert body["total_usd"] == pytest.approx(sum(p["value"] for p in body["points"]))
 
 
+def test_cost_filters_langfuse_by_the_agent_trace_token(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # The per-agent cost query must filter Langfuse by the `agent-<id>` trace-name
+    # token (a `contains` match), not by the agent's display name -- matching on
+    # the name never matched a real runner trace, which read $0 for every agent.
+    from agentos_api.deps import get_langfuse
+
+    agent_id = _make_agent(client, auth_headers)
+
+    captured: list[dict[str, Any]] = []
+
+    class CapturingLangfuse:
+        async def query_metrics(self, query: dict[str, Any]) -> list[dict[str, Any]]:
+            captured.append(query)
+            return []
+
+    client.app.dependency_overrides[get_langfuse] = lambda: CapturingLangfuse()
+    try:
+        resp = client.get(f"/agents/{agent_id}/cost", headers=auth_headers)
+        assert resp.status_code == 200
+    finally:
+        client.app.dependency_overrides.pop(get_langfuse, None)
+
+    assert captured, "cost endpoint issued no Langfuse metrics query"
+    filters = captured[0]["filters"]
+    assert any(
+        f["operator"] == "contains" and f["value"] == f"agent-{agent_id}"
+        for f in filters
+    ), f"agent trace-token filter missing from {filters}"
+
+
 def test_control_endpoints_require_api_key(client: Any) -> None:
     missing = "00000000-0000-0000-0000-000000000000"
     assert client.get(f"/agents/{missing}/kill").status_code == 401

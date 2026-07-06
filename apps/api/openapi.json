@@ -712,6 +712,28 @@
         "title": "PodLogs",
         "type": "object"
       },
+      "RunnerPods": {
+        "description": "The runner sandbox pods in a namespace (populates the Logs pod dropdown).",
+        "properties": {
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "pods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pods",
+            "type": "array"
+          }
+        },
+        "required": [
+          "namespace",
+          "pods"
+        ],
+        "title": "RunnerPods",
+        "type": "object"
+      },
       "TraceTree": {
         "description": "A trace plus its reconstructed observation tree.",
         "properties": {
@@ -2416,6 +2438,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
             "in": "header",
             "name": "x-api-key",
             "required": false,
@@ -2763,6 +2801,71 @@
           }
         },
         "summary": "Metrics Summary",
+        "tags": [
+          "observability"
+        ]
+      }
+    },
+    "/observability/runners": {
+      "get": {
+        "operationId": "list_runner_pods_observability_runners_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "namespace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerPods"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runner Pods",
         "tags": [
           "observability"
         ]

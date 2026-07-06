@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # available the logs endpoint degrades to 503 rather than crashing.
     kube_config_path: str | None = None
     metrics_default_window_hours: int = 168  # 7 days
+    # The namespace the runner sandboxes run in, and the label selector that
+    # identifies them (the chart labels sandbox pods
+    # app.kubernetes.io/component=runner-sandbox). Used by the pod-list endpoint
+    # that populates the Logs tab's pod dropdown.
+    runner_namespace: str = "agentos"
+    runner_pod_label_selector: str = "app.kubernetes.io/component=runner-sandbox"
 
     def valkey_dsn(self) -> str:
         if self.valkey_url:

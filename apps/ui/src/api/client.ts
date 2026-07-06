@@ -167,8 +167,12 @@ function extractIssues(body: unknown): BundleIssue[] | null {
   });
 }
 
-export async function listTraces(limit = 20): Promise<RawTrace[]> {
-  const resp = await fetch(url(`/langfuse/traces?limit=${limit}`), { headers: headers() });
+// List recent traces. With agentId, the API filters to that agent's runs (its
+// traces carry the `agent-<id>` name token); without it, all recent traces.
+export async function listTraces(limit = 20, agentId?: string): Promise<RawTrace[]> {
+  const resp = await fetch(url(`/langfuse/traces${query({ limit, agent_id: agentId })}`), {
+    headers: headers(),
+  });
   return jsonOrThrow<RawTrace[]>(resp);
 }
 
@@ -212,6 +216,20 @@ export interface PodLogs {
   pod: string;
   container: string | null;
   logs: string;
+}
+
+export interface RunnerPods {
+  namespace: string;
+  pods: string[];
+}
+
+// List the runner sandbox pods in a namespace (populates the Logs dropdown).
+// Non-2xx throws ApiError carrying the status: 503 (no cluster), 502 (other).
+export async function listRunnerPods(namespace?: string): Promise<RunnerPods> {
+  const resp = await fetch(url(`/observability/runners${query({ namespace })}`), {
+    headers: headers(),
+  });
+  return jsonOrThrow<RunnerPods>(resp);
 }
 
 // The per-agent filter is a trace-name substring server-side, so it is passed as

@@ -9,6 +9,8 @@ import {
   listVersions,
   listDeployments,
   createDeployment,
+  listTraces,
+  listRunnerPods,
 } from "./client";
 
 afterEach(() => {
@@ -77,6 +79,32 @@ describe("api client", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(409, { detail: "already stored" })));
     const archive = await buildBundleZip({ agentName: "x", versionLabel: "v0", skillMd: "ok" });
     await expect(uploadBundle("a1", "v1", archive)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("passes agent_id to the traces list only when given", async () => {
+    // A fresh Response per call: a Response body can only be read once.
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(200, [])));
+    vi.stubGlobal("fetch", fetchMock);
+    await listTraces(20);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/langfuse/traces?limit=20");
+    await listTraces(5, "agent-uuid-1");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/langfuse/traces?limit=5&agent_id=agent-uuid-1");
+  });
+
+  it("lists runner pods and surfaces a 503 no-cluster as ApiError(status=503)", async () => {
+    const ok = vi.fn().mockResolvedValue(jsonResponse(200, { namespace: "agentos", pods: ["runner-a", "runner-b"] }));
+    vi.stubGlobal("fetch", ok);
+    const pods = await listRunnerPods();
+    expect(ok.mock.calls[0][0]).toBe("/api/observability/runners");
+    expect(pods.pods).toEqual(["runner-a", "runner-b"]);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(503, { detail: "no kubernetes cluster configured for runner pods" })),
+    );
+    const err = (await listRunnerPods("preview-pr-1").catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(503);
   });
 });
 

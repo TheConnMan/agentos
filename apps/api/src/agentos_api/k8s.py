@@ -172,3 +172,98 @@ def build_lazy_pod_log_reader(kube_config_path: str | None) -> LazyPodLogReader:
     """A pod-log reader that resolves the cluster on first use, not at startup."""
 
     return LazyPodLogReader(lambda: build_pod_log_reader(kube_config_path))
+
+
+# --- Pod listing: the runner-pod dropdown that backs the Logs tab ---------
+# Same injectable/lazy/degrade seam as the log reader above: no cluster -> 503,
+# any other cluster error -> PodLogError (502 at the endpoint). Listing has no
+# per-pod 404, so those are the only two failure states.
+
+
+class PodLister(Protocol):
+    def list_runner_pods(self, namespace: str, label_selector: str) -> list[str]: ...
+
+
+class NullPodLister:
+    """Used when no cluster is configured; every list degrades to 503."""
+
+    def list_runner_pods(self, namespace: str, label_selector: str) -> list[str]:
+        raise NoClusterConfigured(
+            "no kubernetes cluster configured for runner pods"
+        )
+
+
+class KubernetesPodLister:
+    """Lists pods via the kubernetes CoreV1 API (client is untyped -> Any)."""
+
+    def __init__(self, core_v1: Any) -> None:
+        self._core_v1 = core_v1
+
+    def list_runner_pods(self, namespace: str, label_selector: str) -> list[str]:
+        try:
+            result = self._core_v1.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector
+            )
+            names = [item.metadata.name for item in result.items]
+            # Newest first so the dropdown leads with the most recent sandboxes.
+            names.sort(reverse=True)
+            return names
+        except Exception as exc:  # kubernetes ApiException carries .status
+            status = getattr(exc, "status", None)
+            raise PodLogError(
+                str(exc), status if isinstance(status, int) else None
+            ) from exc
+
+
+class LazyPodLister:
+    """Defers cluster/credential resolution until the first pod list."""
+
+    def __init__(self, factory: Callable[[], PodLister]) -> None:
+        self._factory = factory
+        self._lister: PodLister | None = None
+
+    def _resolve(self) -> PodLister:
+        if self._lister is None:
+            self._lister = self._factory()
+        return self._lister
+
+    def list_runner_pods(self, namespace: str, label_selector: str) -> list[str]:
+        return self._resolve().list_runner_pods(namespace, label_selector)
+
+
+def build_pod_lister(kube_config_path: str | None) -> PodLister:
+    """Build a real pod lister from kubeconfig/in-cluster config, else a null one.
+
+    Mirrors build_pod_log_reader: a single WARN and a degrade-to-503 lister when
+    no usable cluster/credential is available, rather than a boot-time ERROR.
+    """
+
+    root = logging.getLogger()
+    exec_filter = _SuppressExecCredentialError()
+    root.addFilter(exec_filter)
+    try:
+        from kubernetes import client, config
+
+        if kube_config_path:
+            config.load_kube_config(config_file=kube_config_path)
+        else:
+            try:
+                config.load_incluster_config()
+            except Exception:
+                config.load_kube_config()
+        return KubernetesPodLister(client.CoreV1Api())
+    except Exception as exc:
+        logger.warning(
+            "runner-pods list: no usable kubernetes cluster (%s); "
+            "pod listing will return 503",
+            exc,
+        )
+        return NullPodLister()
+    finally:
+        root.removeFilter(exec_filter)
+
+
+def build_lazy_pod_lister(kube_config_path: str | None) -> LazyPodLister:
+    """A pod lister that resolves the cluster on first use, not at startup."""
+
+    return LazyPodLister(lambda: build_pod_lister(kube_config_path))

@@ -21,7 +21,8 @@ import { Terminal } from "./views/Terminal";
 import { WiredOverview } from "./views/wired/WiredOverview";
 import { WiredAgents } from "./views/wired/WiredAgents";
 import { WiredAgentDetail } from "./views/wired/WiredAgentDetail";
-import { WiredEvals, WiredVersions, WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
+import { WiredEvals, WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
+import { WiredVersions } from "./views/wired/WiredVersions";
 
 // Wired mode renders the backend-driven shell (real agents/onboarding); unwired
 // renders the fixture demo (?state=N). Observability and Settings branch on
