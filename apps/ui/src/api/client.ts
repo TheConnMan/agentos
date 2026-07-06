@@ -295,6 +295,15 @@ export async function getAgents(): Promise<AgentOut[]> {
   return jsonOrThrow<AgentOut[]>(resp);
 }
 
+// Delete an agent (cascades its versions/deployments server-side; 204 No Content
+// on success). A 409 (active deployment) surfaces via the thrown ApiError.
+export async function deleteAgent(agentId: string): Promise<void> {
+  const resp = await fetch(url(`/agents/${agentId}`), { method: "DELETE", headers: headers() });
+  if (resp.ok) return;
+  const body = await resp.json().catch(() => null);
+  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+}
+
 export async function getCost(agentId: string, range: { start?: string; end?: string } = {}): Promise<CostReport> {
   const resp = await fetch(url(`/agents/${agentId}/cost${query({ ...range })}`), { headers: headers() });
   return jsonOrThrow<CostReport>(resp);

@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Agent, AgentVersion, Deployment, Environment
@@ -47,6 +47,32 @@ async def list_agents(session: AsyncSession) -> list[Agent]:
 
 async def get_agent(session: AsyncSession, agent_id: uuid.UUID) -> Agent | None:
     return await session.get(Agent, agent_id)
+
+
+async def agent_has_active_deployment(
+    session: AsyncSession, agent_id: uuid.UUID
+) -> bool:
+    result = await session.scalar(
+        select(Deployment.id)
+        .where(Deployment.agent_id == agent_id, Deployment.status == "active")
+        .limit(1)
+    )
+    return result is not None
+
+
+async def delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> None:
+    # Remove child rows first, then the agent. Bulk deletes bypass the ORM
+    # relationship cascade (which would emit an async lazy-load during flush) and
+    # match the FK ondelete=CASCADE already declared on both child tables. Bundle
+    # objects in MinIO are intentionally left in place (out of scope).
+    await session.execute(
+        delete(Deployment).where(Deployment.agent_id == agent_id)
+    )
+    await session.execute(
+        delete(AgentVersion).where(AgentVersion.agent_id == agent_id)
+    )
+    await session.execute(delete(Agent).where(Agent.id == agent_id))
+    await session.commit()
 
 
 async def update_agent_channel(

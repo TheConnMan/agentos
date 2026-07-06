@@ -17,7 +17,7 @@ export function Suite() {
         <div>
           <div style={{ fontSize: 15, fontWeight: 500, fontFamily: C.mono }}>deal-desk core</div>
           <div style={{ fontSize: 12.5, color: C.muted }}>
-            {total + " cases · last run 3h ago on dev@4f2c91a · claude-sonnet-4.5"}
+            {total + " cases · last run 3h ago on dev@4f2c91a · claude-sonnet-5"}
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>

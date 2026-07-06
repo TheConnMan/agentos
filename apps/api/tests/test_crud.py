@@ -3,7 +3,25 @@
 create agent -> create version -> deploy to dev -> list/get, the B1 done-when.
 """
 
+import asyncio
 from typing import Any
+
+from agentos_api.config import get_settings
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+
+def _count(query: str, agent_id: str) -> int:
+    async def run() -> int:
+        engine = create_async_engine(get_settings().database_url)
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(text(query), {"aid": agent_id})
+                return int(result.scalar_one())
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
 
 
 def test_full_round_trip(
@@ -143,4 +161,85 @@ def test_patch_missing_agent_returns_404(
         json={"slack_channel": "#x"},
         headers=auth_headers,
     )
+    assert resp.status_code == 404
+
+
+def test_delete_agent_removes_it_and_cascades_versions(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # An agent with a version but no active deployment deletes cleanly, and the
+    # version rows go with it (FK cascade) rather than lingering as orphans.
+    agent = client.post(
+        "/agents",
+        json={"name": "disposable", "slack_channel": "#gone"},
+        headers=auth_headers,
+    ).json()
+    agent_id = agent["id"]
+    client.post(
+        f"/agents/{agent_id}/versions",
+        json={"version_label": "v1", "created_by": "bconn"},
+        headers=auth_headers,
+    )
+    assert (
+        _count(
+            "SELECT count(*) FROM agentos.agent_versions WHERE agent_id = :aid",
+            agent_id,
+        )
+        == 1
+    )
+
+    resp = client.delete(f"/agents/{agent_id}", headers=auth_headers)
+    assert resp.status_code == 204, resp.text
+
+    # Agent is gone from the list and by id, and its version rows are deleted.
+    assert client.get(f"/agents/{agent_id}", headers=auth_headers).status_code == 404
+    assert [a["id"] for a in client.get("/agents", headers=auth_headers).json()] == []
+    assert (
+        _count(
+            "SELECT count(*) FROM agentos.agent_versions WHERE agent_id = :aid",
+            agent_id,
+        )
+        == 0
+    )
+
+
+def test_delete_agent_with_active_deployment_returns_409(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A live agent (active deployment) must not be deletable out from under Slack
+    # traffic; the endpoint refuses with 409 and leaves everything intact.
+    agent = client.post(
+        "/agents",
+        json={"name": "live-one", "slack_channel": "#live"},
+        headers=auth_headers,
+    ).json()
+    agent_id = agent["id"]
+    version = client.post(
+        f"/agents/{agent_id}/versions",
+        json={"version_label": "v1", "created_by": "bconn"},
+        headers=auth_headers,
+    ).json()
+    client.post(
+        "/deployments",
+        json={
+            "agent_id": agent_id,
+            "version_id": version["id"],
+            "environment": "dev",
+        },
+        headers=auth_headers,
+    )
+
+    resp = client.delete(f"/agents/{agent_id}", headers=auth_headers)
+    assert resp.status_code == 409, resp.text
+    assert "active deployment" in resp.json()["detail"]
+
+    # The agent (and its rows) survive the refused delete.
+    assert client.get(f"/agents/{agent_id}", headers=auth_headers).status_code == 200
+
+
+def test_delete_missing_agent_returns_404(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    missing = "00000000-0000-0000-0000-000000000000"
+    resp = client.delete(f"/agents/{missing}", headers=auth_headers)
     assert resp.status_code == 404

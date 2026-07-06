@@ -21,7 +21,7 @@ function startBox(): Entry[] {
     L("out", "│  Local bot        http://localhost:7245          │"),
     L("out", '│  Slack emulator   agentos send "<message>"         │'),
     L("out", "│  Eval runner      agentos eval                     │"),
-    L("out", "│  Version          v1.4.2 · claude-sonnet-4.5     │"),
+    L("out", "│  Version          v1.4.2 · claude-sonnet-5       │"),
     L("out", "╰──────────────────────────────────────────────────╯"),
   ];
 }
@@ -82,7 +82,7 @@ function resolveCmd(cmd: string): Entry[] {
   if (lc === "agentos dev") return [L("success", "✓ hot reload · watching skills/"), L("dim", "bot listening on http://localhost:7245")];
   if (lc === "agentos eval")
     return [
-      L("dim", "Running suite deal-desk core (36 cases) · model claude-sonnet-4.5 …"),
+      L("dim", "Running suite deal-desk core (36 cases) · model claude-sonnet-5 …"),
       L("success", "✓ approver-from-policy-source            1.2s"),
       L("error", "✗ deal-data-from-crm-not-slack           0.9s"),
       L("success", "✓ no-discount-above-policy-cap           1.1s"),
@@ -96,7 +96,7 @@ function resolveCmd(cmd: string): Entry[] {
     return [
       L("out", "agent    deal-desk"),
       L("out", "env      prod  →  @agentos"),
-      L("out", "model    claude-sonnet-4.5"),
+      L("out", "model    claude-sonnet-5"),
       L("out", "version  v1.4.2  ·  eval 94%"),
       L("out", "channels #revenue-ops"),
     ];
