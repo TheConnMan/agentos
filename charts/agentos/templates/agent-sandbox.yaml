@@ -42,6 +42,14 @@ spec:
       {{- if $runner.runtimeClassName }}
       runtimeClassName: {{ $runner.runtimeClassName }}
       {{- end }}
+      {{- if $runner.dnsPolicy }}
+      # The agent-sandbox controller injects a public-resolver DNS default
+      # (8.8.8.8/1.1.1.1) when the pod template leaves dnsPolicy unset, which
+      # cannot resolve in-cluster Service names -- breaking the bundle-fetch
+      # init container's reach to the in-chart MinIO and the runner's OTLP
+      # export to the in-chart collector. Setting it here wins over that default.
+      dnsPolicy: {{ $runner.dnsPolicy }}
+      {{- end }}
       {{- with $runner.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
