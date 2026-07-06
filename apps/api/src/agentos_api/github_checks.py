@@ -13,6 +13,21 @@ import httpx
 State = Literal["success", "failure", "pending", "error"]
 
 
+class GitHubReportError(Exception):
+    """The GitHub statuses API rejected the commit-status post.
+
+    Carries the upstream HTTP status so the caller can distinguish a client
+    fault (unknown repo/commit, bad token) from a genuine GitHub server fault
+    and map it to the right response, rather than letting every rejection bubble
+    as an opaque 500.
+    """
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 def eval_state(passed_count: int, total: int) -> tuple[State, str]:
     """Map an eval rollup to a commit-status (state, description)."""
 
@@ -56,5 +71,10 @@ class GitHubStatusReporter:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise GitHubReportError(
+                exc.response.status_code, exc.response.text.strip()
+            ) from exc
         return state

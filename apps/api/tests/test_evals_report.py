@@ -2,7 +2,9 @@
 
 from typing import Any
 
+import httpx
 from agentos_api.deps import get_github_reporter
+from agentos_api.github_checks import GitHubStatusReporter
 from agentos_api.main import create_app
 from fastapi.testclient import TestClient
 
@@ -70,3 +72,63 @@ def test_report_requires_api_key(client: Any) -> None:
         json={"repo_full_name": "o/r", "sha": "s", "passed_count": 1, "total": 1},
     )
     assert resp.status_code == 401
+
+
+def _reporter_rejecting_with(github_status: int) -> GitHubStatusReporter:
+    """A real reporter whose GitHub calls return the given error status."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(github_status, json={"message": "Not Found"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return GitHubStatusReporter(
+        client, api_url="https://api.github.com", token="t", context="agentos/evals"
+    )
+
+
+def test_report_unknown_repo_returns_404_not_500(
+    auth_headers: dict[str, str],
+) -> None:
+    # An eval report for a repo/commit GitHub does not know about must degrade to
+    # a clear 4xx, never a 500 (the audit MAJOR: report_eval 500s on stale/unknown
+    # repo state). GitHub answers 404 -> the API answers 404 with a clear detail.
+    app = create_app()
+    app.dependency_overrides[get_github_reporter] = (
+        lambda: _reporter_rejecting_with(404)
+    )
+    with TestClient(app) as client:
+        resp = client.post(
+            "/evals/report",
+            json={
+                "repo_full_name": "octo/ghost",
+                "sha": "deadbeef",
+                "passed_count": 1,
+                "total": 1,
+            },
+            headers=auth_headers,
+        )
+    assert resp.status_code == 404, resp.text
+    assert "octo/ghost" in resp.json()["detail"]
+
+
+def test_report_github_client_rejection_maps_to_422(
+    auth_headers: dict[str, str],
+) -> None:
+    # A non-404 GitHub client rejection (e.g. 422 bad sha, 403 token) is still a
+    # caller/input fault, not an API server fault: map to 422, not 500.
+    app = create_app()
+    app.dependency_overrides[get_github_reporter] = (
+        lambda: _reporter_rejecting_with(422)
+    )
+    with TestClient(app) as client:
+        resp = client.post(
+            "/evals/report",
+            json={
+                "repo_full_name": "octo/demo",
+                "sha": "bad",
+                "passed_count": 1,
+                "total": 1,
+            },
+            headers=auth_headers,
+        )
+    assert resp.status_code == 422, resp.text
