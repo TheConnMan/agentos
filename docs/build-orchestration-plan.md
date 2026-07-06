@@ -11,11 +11,11 @@
 
 How the v0.1 MVP gets built as a fleet of individually-verifiable background jobs: the task list with ordering and parallelization, the success criteria per task, the self-verification harness that lets each job prove its own work, and the dispatch/merge workflow. Companion to `mvp-build-plan.md` (the architecture spine) and `reference/detailed-architecture.md` §11 (the task DAG this refines).
 
-Author: 2026-07-05, after reviewing the AgentOS.html design canon against the build docs and auditing the verification substrate (k8scratch, toolchains, Playwright).
+Author: 2026-07-05, after reviewing the design canon against the build docs and auditing the verification substrate (k8scratch, toolchains, Playwright).
 
 ## 1. What the design file adds to the scope
 
-`AgentOS.html` is the design canon (per `claude-design-prompt.md` §4: the exported source outranks the prompt). Its feature index enumerates 18 shippable features in 6 groups plus 2 scaffolding items. Mapping against the MVP scope in `mvp-build-plan.md` §4 surfaced three deltas; Brian decided all three on 2026-07-05:
+The design canon (per `claude-design-prompt.md` §4: the exported source outranks the prompt) is authoritative. Its feature index enumerates 18 shippable features in 6 groups plus 2 scaffolding items. Mapping against the MVP scope in `mvp-build-plan.md` §4 surfaced three deltas; Brian decided all three on 2026-07-05:
 
 | Design feature | MVP docs say | Decision |
 |---|---|---|
@@ -32,7 +32,7 @@ Naming: repo and commits say **Relay**; the design and CLI say **agentos**. Trea
 Brian's calls, replacing `detailed-architecture.md` §9's "TypeScript end-to-end" lean:
 
 - **Backend: Python 3.13** — API server (**FastAPI**), dispatcher (**Slack Bolt for Python**, Socket Mode), worker (plain **redis-py against Valkey Streams** with consumer groups — the concurrency kernel is hand-rolled correctness logic either way; a framework like Celery/arq would obscure the finish-race CAS, and Streams give explicit ack + at-least-once + idempotency keys), runner (**claude-agent-sdk Python** — this is what the prototypes proved, so the proven code seeds production directly). Poetry or uv workspace, pytest, ruff, mypy.
-- **UI: React** — Vite + React + TypeScript, no meta-framework. Design tokens lifted verbatim from `AgentOS.html`'s `C = {...}` block. Playwright for E2E.
+- **UI: React** — Vite + React + TypeScript, no meta-framework. Design tokens lifted verbatim from the design canon's `C = {...}` block. Playwright for E2E.
 - **CLI: Rust** — clap + tokio + reqwest. The CLI is a good Rust fit: it's a standalone binary (the whole point is `agentos init/start/send/eval` on a dev laptop with nothing installed), it only speaks the frozen contracts over HTTP/NDJSON, and it's off the critical path so the slower iteration loop costs nothing. `agentos start` orchestrates the local runner container via Docker.
 - **The contract package (C1) becomes cross-language.** `packages/aci-protocol` and `packages/plugin-format` are authored as **Pydantic models (source of truth) → exported JSON Schema (committed) → generated TypeScript types (UI) and Rust types via typify (CLI)**. CI regenerates and diffs: a schema change that isn't backwards-compatible fails the build. This *strengthens* ADR-0005's frozen-ACI discipline — the versioned contract is now enforced across three languages by codegen, not convention.
 
@@ -46,7 +46,7 @@ The user requirement: every job must verify its own work with no human in the lo
 
 **V2 — UI verification: Playwright, two modes.**
 - *The gate:* a committed Playwright E2E suite asserting behavior (deploy flow completes, runs view renders the tool-call tree, eval matrix grid populates) — runs headless in CI against the compose stack. This is the deletion-test-passing regression net.
-- *The agent's eyes:* **`@playwright/mcp` added to this repo's `.mcp.json`.** Implementing agents drive the real browser interactively — click through the flow they just built, take screenshots, and diff against the corresponding `AgentOS.html` demo state (the design file renders locally, so the agent can screenshot design-vs-implementation side by side). The MCP is for verification-during-development and visual fidelity checks; the committed test suite is the merge gate. Both use the Chrome + Playwright 1.61 already on this machine.
+- *The agent's eyes:* **`@playwright/mcp` added to this repo's `.mcp.json`.** Implementing agents drive the real browser interactively — click through the flow they just built, take screenshots, and diff against the corresponding design-canon demo state (the design mockup renders locally, so the agent can screenshot design-vs-implementation side by side). The MCP is for verification-during-development and visual fidelity checks; the committed test suite is the merge gate. Both use the Chrome + Playwright 1.61 already on this machine.
 
 **V3 — cluster verification: k8scratch.** The scratch k3s cluster is alive, clean (prototype resources torn down), and reachable via the repo-local kubeconfig (`~/k8scratch/.kube/k8scratch.yaml`). It's where G1 (sandbox substrate), A1/A2 (Helm + security rails), and N1 (soak) verify. **Constraint: the box is 4 GB / 4 cores; the full-stack definition-of-done target is 8-10 vCPU / ~20 GB.** Plan: early cluster tasks (G1 sandbox lifecycle, A2 NetworkPolicy probes) fit in 4 GB with the observability stack left on the dev box; before the walking-skeleton integration gate, **resize the LXC to ≥8 vCPU / 16-20 GB** (Brian action, listed in §7). Fallback if resize is inconvenient: a `kind` cluster on the dev box for chart tests, with k8scratch reserved for sandbox/gVisor work — but the resize is strictly better because a resized k8scratch *is* the definition-of-done environment.
 
@@ -78,7 +78,7 @@ The DAG from `detailed-architecture.md` §11, adjusted for the stack decisions, 
 | **B1** | API server core: FastAPI + Postgres schema (agents/versions/deployments CRUD, auth, Langfuse proxy endpoints), OpenAPI emitted | `apps/api` | C1 | CRUD integration tests pass against real Postgres from the compose stack; OpenAPI spec committed; Langfuse proxy returns a reconstructed trace tree for a seeded trace | V0+V1 |
 | **D1** | Runner image + SDK adapter: productize the PT-2/PT-E prototype — streaming session server implementing full ACI v0.1, `AGENTOS_BUDGET` enforcement, `side_effect_flag`, plugin-bundle loading | `runner/` | C1 | ACI conformance suite (lives in `packages/aci-protocol`) passes: initial event + mid-run steer + interrupt + NDJSON stream + gen_ai spans in compose-stack Langfuse; budget ceiling halts a run; `@live` test proves real cache reuse | V0+V1 |
 | **E1** | Dispatcher: Bolt-python Socket Mode, <3s ack + placeholder, enqueue to Valkey Streams with idempotency key, reconnect supervision | `apps/dispatcher` | C1 | Simulated Slack event (Bolt test harness) → acked, placeholder posted, queued exactly once; duplicate retry deduped; no real workspace needed | V0+V1 |
-| **H1a** | UI shell + design-system port: Vite app, tokens/layout/nav from AgentOS.html, all views scaffolded against fixture data matching the design's data model (Agent, Trace, EvalCase, Version, Memory), Playwright suite skeleton | `apps/ui` | C1 | Nav + all seven views render pixel-faithful to the design's states 1-3 (Playwright screenshot diff vs AgentOS.html renders); zero backend calls yet | V0+V2 |
+| **H1a** | UI shell + design-system port: Vite app, tokens/layout/nav from the design canon, all views scaffolded against fixture data matching the design's data model (Agent, Trace, EvalCase, Version, Memory), Playwright suite skeleton | `apps/ui` | C1 | Nav + all seven views render pixel-faithful to the design's states 1-3 (Playwright screenshot diff vs design-canon renders); zero backend calls yet | V0+V2 |
 
 ### Wave 2 — Integration lanes (parallel after their deps)
 

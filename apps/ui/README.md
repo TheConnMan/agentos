@@ -1,8 +1,8 @@
 # apps/ui
 
 The AgentOS console: Vite + React + TypeScript, no meta-framework. Design tokens
-and every view are ported from the design canon (`AgentOS.html` at the repo
-root). This is task **H1a**: the shell running entirely on fixture data. **H1b**
+and every view are ported from the design canon (the original design mockup).
+This is task **H1a**: the shell running entirely on fixture data. **H1b**
 wires it to the real backend (B1/B2); **OB1** replaces the fixture Metrics/Logs
 with live data.
 

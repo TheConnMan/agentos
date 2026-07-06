@@ -7,7 +7,7 @@ tasks: H1a (shell, fixture data), H1b (wired to the real backend), OB1
 
 ## Load-bearing invariants
 
-- **`AgentOS.html` at the repo root is the design canon.** Every view, token,
+- **The original design mockup is the design canon.** Every view, token,
   and layout is ported from it verbatim (per `claude-design-prompt.md` §4:
   the exported source outranks the prompt). If a design question is
   ambiguous, open the canon and check its rendered state before improvising

@@ -30,9 +30,9 @@ The Python packages are one **uv workspace** (root `pyproject.toml`); ruff, mypy
 Concurrent agents share one `.git`; the primary checkout at the repo root is NOT yours. Before your first edit:
 
 ```bash
-git -C /home/user/git/curietech/agentos worktree add \
-  /home/user/git/curietech/agentos-<taskid> -b task/<taskid>-<desc> main
-cd /home/user/git/curietech/agentos-<taskid> && uv sync
+git -C <repo-root> worktree add \
+  <repo-root>-<taskid> -b task/<taskid>-<desc> main
+cd <repo-root>-<taskid> && uv sync
 ```
 
 Work exclusively in your worktree. Never run `git checkout`, `commit`, or `add` in the primary checkout. Stage only paths you own (never `git add -A`). If you changed dependencies, regenerate `uv.lock` in your own worktree (`uv lock`). The orchestrator merges your branch into main and removes your worktree; do not merge or delete branches yourself.
@@ -99,7 +99,7 @@ If your task needs a change to either package: **stop, do not work around it, an
 ## Playwright: two modes
 
 - **The merge gate is the committed E2E suite** under `apps/ui` (Playwright, headless, in CI against the compose stack). It asserts behavior (deploy flow completes, runs view renders the tool-call tree, eval matrix populates). This is the regression net; it must be green to merge.
-- **The `@playwright/mcp` server** (wired in `.mcp.json`) is for interactive verification *during* development: drive the real browser, click through the flow you just built, screenshot it, and diff against the corresponding `AgentOS.html` demo state (the design file renders locally). Use the MCP to check visual fidelity; commit assertions into the suite to make them a gate.
+- **The `@playwright/mcp` server** (wired in `.mcp.json`) is for interactive verification *during* development: drive the real browser, click through the flow you just built, screenshot it, and diff against the corresponding design-canon demo state (the design mockup renders locally). Use the MCP to check visual fidelity; commit assertions into the suite to make them a gate.
 
 ## k8scratch (verification tier V3)
 

@@ -1,4 +1,4 @@
-// Design tokens lifted verbatim from AgentOS.html's `C = {...}` block.
+// Design tokens lifted verbatim from the design canon's `C = {...}` block.
 // This is the single source of truth for color, font, radius; do not invent
 // new values (per the design system: elevation via 1px borders, not shadows).
 

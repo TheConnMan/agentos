@@ -142,7 +142,7 @@ sequenceDiagram
     W->>W: release thread lock, keep route until TTL
 ```
 
-The per-thread lock plus job-into-live-thread interleaving is the prod-hard kernel (named on [[agent-deployment-model]]); everything else is a state machine around it.
+The per-thread lock plus job-into-live-thread interleaving is the prod-hard kernel (named in the agent-deployment model); everything else is a state machine around it.
 
 ### 2b. Steering & retry rules (decided 2026-07-02)
 
@@ -242,9 +242,9 @@ Adds to the earlier tree: `agent-sandbox/` (Agent Sandbox controller wiring, `Sa
 | 3. Git flow + evals (2-3 wk) | CI story | GitHub App, branch->bot identities, eval Jobs, PR checks, eval matrix, `agentos` CLI with local emulation | prototype states 4-5 real |
 | 4. Prod-hard (2-4 wk) | first-client grade | Sandbox hibernation/resume hardening + thread locks + interleaving, streaming updates, cost kill-switches, credential broker v0, Helm polish + BYO toggles | soak test: concurrent threads + mid-thread batch job, no cross-talk |
 | 4b. v1.1 backlog (later) | workflow compiler + memory proposals | guided workflow interview, draft skill.md, success contract, tool and permission map, architecture recommendation, optional generated eval cases; automatic memory proposals with source evidence, scoped writes, policy or human gate, conflict handling, and telemetry/eval feedback | Interview Me creates editable draft artifacts or returns not ready to automate with missing decisions; memory proposals never silently write |
-| 5. Fleet + leave-behind seam (later) | state-6 | fleet dashboard, drift timeline, usage analytics; converges with [[agent-leave-behind-platform]] | TBD |
+| 5. Fleet + leave-behind seam (later) | state-6 | fleet dashboard, drift timeline, usage analytics; converges with the agent-leave-behind platform | TBD |
 
-Sequencing note (from [[curietech-agent-os]] 2026-07-01): first real client engagement funds phases 1-4; platform and plugin layers stay cleanly separated from day one.
+Sequencing note (from the CurieTech agent-OS synthesis, 2026-07-01): first real client engagement funds phases 1-4; platform and plugin layers stay cleanly separated from day one.
 
 ## 7b. v1.1 backlog: automatic memory generation (not needed for MVP)
 
@@ -282,7 +282,6 @@ This section is for the implementer agents. The lead decomposes work along secti
 Companion documents (same folder; the evidence behind every adopt decision):
 - `on-prem-architecture.md` — build-vs-adopt verdicts with verbatim license quotes and fetched URLs (Langfuse MIT-core split, Phoenix ELv2 disqualification, SigNoz alternative, Helm compositions, resource estimates).
 - `claude-design-prompt.md` — the UI spec: screens, states, design tokens, microcopy, demo states. The UI task implements THIS, not an invented design.
-- Wiki context (strategy, not implementation): `~/wiki/pages/supabase-for-agents.md`, `agent-deployment-model.md`, `agent-leave-behind-platform.md`, `curietech-agent-os.md`.
 
 External primary sources (verified 2026-07-02; re-check before relying on a changed behavior):
 - Claude Agent SDK: github.com/anthropics/claude-agent-sdk-python + code.claude.com/docs/en/agent-sdk (streaming-input mode, interrupt, OTel env vars, headless hosting).

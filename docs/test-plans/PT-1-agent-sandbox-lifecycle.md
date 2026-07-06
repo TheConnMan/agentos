@@ -50,8 +50,8 @@ The deliverable is a GO / NO-GO / PARTIAL memo on whether Agent Sandbox is the i
 # 1. Confirm the target is the scratch cluster, NOT a Curie env. Print server + context and eyeball it.
 kubectl config current-context
 kubectl cluster-info
-# HARD GATE: if the server host resolves to *.eks.amazonaws.com in account REDACTED-AWS-ACCT (ei-agents/staging)
-# or REDACTED-AWS-ACCT (prod), STOP — that is a shared Curie cluster, not the scratch host.
+# HARD GATE: if the server host resolves to *.eks.amazonaws.com in a shared CurieTech account
+# (ei-agents/staging or prod), STOP — that is a shared Curie cluster, not the scratch host.
 
 # 2. Install the agent-sandbox controller + CRDs (v0.5.0, the version verified 2026-07-04).
 VERSION=v0.5.0
@@ -171,4 +171,4 @@ On the scratch cluster, `kubectl delete namespace pt1` removes all experiment ob
 
 ## Blocker (as of 2026-07-04)
 
-Target cluster not yet confirmed. This plan must run on the **throwaway K8s scratch host** named in Brian's connection notes; those notes had not been located/confirmed at authoring time (a search subagent was dispatched — see the review's cover message). **Exact next step:** confirm the scratch host kubeconfig/context, verify `kubectl cluster-info` does NOT point at an `*.eks.amazonaws.com` Curie account (REDACTED-AWS-ACCT / REDACTED-AWS-ACCT), then run Setup. If no throwaway host exists, install `kind` locally and run there — every step except the specific storage-class/runtimeClass behavior is identical.
+Target cluster not yet confirmed. This plan must run on the **throwaway K8s scratch host** named in Brian's connection notes; those notes had not been located/confirmed at authoring time (a search subagent was dispatched — see the review's cover message). **Exact next step:** confirm the scratch host kubeconfig/context, verify `kubectl cluster-info` does NOT point at an `*.eks.amazonaws.com` shared CurieTech account (ei-agents/staging or prod), then run Setup. If no throwaway host exists, install `kind` locally and run there — every step except the specific storage-class/runtimeClass behavior is identical.
