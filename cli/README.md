@@ -16,8 +16,8 @@ Slack involved.
 | `agentos eval` | Run `evals/cases.json` through the runner as `eval_case` events; per-case pass/fail lines and a summary; nonzero exit on failure. |
 | `agentos steer "..."` | Inject a follow-up into the runner's live turn (POST `/v1/steer`); prints `no active turn` and exits nonzero on the runner's 409. |
 | `agentos interrupt` | Hard-stop the runner's live turn (POST `/v1/interrupt`); `--reason` is recorded with it. |
-| `agentos chat "..."` | Drive the whole system with the CLI acting **as** the Slack service, no Slack involved (see below). |
-| `agentos slack-sim "..."` | The real-Slack egress rung: post a synthetic thread as the bot in a real channel (`--channel`, `SLACK_BOT_TOKEN`), enqueue, and poll `conversations.replies` until the worker edits the placeholder. Use when validating real Slack egress without Socket Mode. |
+| `agentos chat "..."` | Drive the whole system with the CLI acting **as** the Slack service against the local compose stack, no Slack involved (see below). |
+| `agentos message "..."` | Drive the **deployed** Kubernetes release end to end with zero Slack: self-plumbs kubectl port-forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply (see below). |
 | `agentos status` / `agentos stop` | Session status / tear down the container. |
 | `agentos deploy` | Package the bundle as tar.gz and push it to the platform API (find-or-create agent, create version, upload bundle, create deployment). Auth via `--api-key` / `AGENTOS_API_KEY`. |
 
@@ -70,6 +70,54 @@ instead of real Slack. Use `--listen-host`/`--listen-port` when the worker runs
 off-box (default `localhost` on an ephemeral port). No Slack token or real Slack
 HTTP is involved. The full worker round trip is validated at the walking-skeleton
 gate; `chat` itself verifies the stub, the enqueue, and the ack-based completion.
+
+## `agentos message`: drive the deployed cluster with zero Slack
+
+`message` is `chat`'s engine with Kubernetes-aware auto-plumbing on top. Where
+`chat` targets a local compose stack you run yourself, `message` targets a
+**deployed** Helm release and wires everything itself, so a developer building an
+agent for **someone else's** Slack workspace can exercise the whole deployed
+machinery (Valkey queue -> worker -> claimed sandbox -> the real skill -> the
+reply) without any Slack access, tokens, or workspace.
+
+```bash
+agentos message "summarize the latest deploy"          # single deployed agent
+agentos message --channel CSIM123 "another question"   # pick the agent explicitly
+```
+
+What it does, in order:
+
+1. **Self-managed port-forwards** (children of the CLI, killed on exit): the
+   in-cluster Valkey (`svc/<release>-valkey`, local `56381`) for the enqueue, and
+   the API (`svc/<release>-api`, local `8123`) only when `--channel` is omitted,
+   to look up the default channel.
+2. **Channel default**: with no `--channel`, `GET /agents` and use the sole
+   deployed agent's `slack_channel`. Zero or multiple agents is an error naming
+   them and requiring `--channel` (the worker binds a channel to an agent by
+   exact equality, so guessing would route nowhere).
+3. **Reachable stub**: binds `0.0.0.0:<--listen-port>` (default `8155`) and
+   advertises a routable host so the in-cluster worker can post back to it.
+   `--listen-host` wins; otherwise the local IP the kernel would use to reach the
+   cluster is auto-detected.
+4. **Worker wiring** (`--wire`, the default): points the deployed worker at the
+   stub via `helm upgrade --reuse-values --set worker.slackApiBaseUrl=<url>` (take
+   `--chart` like the other ops verbs) and waits for the rollout. `--no-wire`
+   instead refuses to run unless the worker is already wired, printing the exact
+   command to apply.
+5. **Safety guard**: if the release is connected to a real Slack workspace (a
+   `<release>-dispatcher` deployment exists, which only renders when both Slack
+   tokens are set), wiring is refused unless `--force-wire`, since pointing the
+   worker at the stub would hijack that workspace's replies cluster-wide. In the
+   demo flow `message` runs **before** `connect-slack`, so the guard never fires;
+   and `connect-slack` clears `worker.slackApiBaseUrl` back to empty, un-wiring
+   the stub when real Slack is connected.
+6. **Enqueue + wait**: `XADD`s the exact `QueuedSlackEvent`, waits for the worker
+   to finalize (the same ack-based completion `chat` uses), prints the reply, and
+   emits a `continue this conversation: ...` line for multi-turn threads. On
+   timeout it prints stream diagnostics and exits nonzero.
+
+`--dry-run` prints the kubectl/helm command lines, the stub URL, and the enqueue
+description without executing anything.
 
 ## Verify
 

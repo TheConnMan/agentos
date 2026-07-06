@@ -1,6 +1,7 @@
 //! The `agentos` binary: init/start/send/eval a plugin against a local runner,
 //! stop/runner-status/steer/interrupt for the container lifecycle, chat to drive the
-//! whole system with the CLI acting as the Slack service, and deploy for the
+//! whole system with the CLI acting as the Slack service, message to drive a
+//! deployed Kubernetes release the same way with zero Slack, and deploy for the
 //! platform API. Task I1; contracts are frozen in packages/aci-protocol and
 //! packages/plugin-format.
 
@@ -9,8 +10,8 @@ use std::path::PathBuf;
 use agentos::chat::{self, ChatOpts};
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
+use agentos::message::{self, MessageOpts};
 use agentos::ops::{self, CommonOpts, ConnectSlackOpts, DownOpts, GoLiveOpts, UpOpts};
-use agentos::slack_sim::{self, SlackSimOpts};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -99,31 +100,77 @@ enum Command {
         #[arg(long)]
         url: Option<String>,
     },
-    /// Real-Slack egress without Socket Mode: post a synthetic thread as the bot
-    /// in a real channel, enqueue the dispatcher's event onto Valkey, and poll
-    /// conversations.replies until the worker edits the placeholder. For the
-    /// no-Slack variant use `chat`.
-    SlackSim {
-        /// The simulated user message text.
+    /// Drive the DEPLOYED Kubernetes release end to end with zero Slack contact.
+    /// Self-plumbs kubectl port-forwards to the in-cluster Valkey and API, points
+    /// the deployed worker at a local Slack Web API stub (helm upgrade
+    /// --reuse-values), enqueues the dispatcher's event, and prints the worker's
+    /// reply. Lets you exercise the full deployed machinery (queue -> worker ->
+    /// sandbox -> real skill -> reply) without any Slack workspace or tokens. For
+    /// the local compose-stack variant use `chat`.
+    Message {
+        /// The user message text.
         text: String,
-        /// Slack channel id to post into.
-        #[arg(long, env = "AGENTOS_SLACK_CHANNEL")]
-        channel: String,
-        /// Slack bot token (xoxb-...). Never printed.
-        #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
-        bot_token: String,
-        /// Valkey connection URL.
-        #[arg(long, env = "VALKEY_URL", default_value = slack_sim::DEFAULT_VALKEY_URL)]
-        valkey_url: String,
-        /// Stream the dispatcher enqueues onto.
-        #[arg(long, env = "AGENTOS_STREAM", default_value = slack_sim::DEFAULT_STREAM)]
-        stream: String,
+        /// Slack channel id to send as; must match the target agent's
+        /// slack_channel. Omit to use the sole deployed agent's channel (errors
+        /// if zero or multiple agents are deployed).
+        #[arg(long)]
+        channel: Option<String>,
+        /// Existing thread ts to continue a conversation; omit to start a new
+        /// thread. Pair with --channel to keep multi-turn context.
+        #[arg(long)]
+        thread: Option<String>,
+        /// Kubernetes namespace of the release.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Chart path for the wiring `helm upgrade` (run from the repo root for
+        /// the default).
+        #[arg(long, default_value = "charts/agentos")]
+        chart: String,
+        /// Host the in-cluster worker uses to reach the stub. Omit to auto-detect
+        /// the local IP the kernel would use to reach the cluster.
+        #[arg(long)]
+        listen_host: Option<String>,
+        /// Port the stub binds (0.0.0.0); the worker posts here.
+        #[arg(long, default_value_t = message::DEFAULT_LISTEN_PORT)]
+        listen_port: u16,
+        /// Local port the Valkey port-forward binds.
+        #[arg(long, default_value_t = message::DEFAULT_VALKEY_LOCAL_PORT)]
+        valkey_local_port: u16,
+        /// Valkey password (chart default `valkeypass`).
+        #[arg(long, default_value = message::DEFAULT_VALKEY_PASSWORD)]
+        valkey_password: String,
+        /// Local port the API port-forward binds (default-channel lookup).
+        #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
+        api_local_port: u16,
+        /// Platform API key for the default-channel lookup.
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        api_key: String,
         /// Synthetic Slack user id for the enqueued event.
-        #[arg(long, default_value = slack_sim::DEFAULT_USER)]
+        #[arg(long, default_value = message::DEFAULT_USER)]
         user: String,
+        /// Stream the dispatcher enqueues onto.
+        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        stream: String,
         /// How long to wait for the worker's reply before printing diagnostics.
-        #[arg(long, default_value_t = slack_sim::DEFAULT_TIMEOUT_SECS)]
+        #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
         timeout_secs: u64,
+        /// Skip pointing the worker at the stub. Wiring is on by default (helm
+        /// upgrade + rollout wait); with --no-wire the command refuses to run
+        /// unless the worker is already wired, printing the exact command to run.
+        #[arg(long = "no-wire")]
+        no_wire: bool,
+        /// Wire even when the release is connected to a real Slack workspace
+        /// (a dispatcher deployment exists). Without this the wiring is refused,
+        /// since the stub would hijack that workspace's replies cluster-wide.
+        #[arg(long)]
+        force_wire: bool,
+        /// Print the kubectl/helm commands, stub URL, and enqueue description that
+        /// a real run would produce, and exit without executing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Drive the whole system end to end with no Slack: the CLI runs a local
     /// Slack Web API stub, enqueues the dispatcher's event onto Valkey, and waits
@@ -234,7 +281,10 @@ enum Command {
         dry_run: bool,
     },
     /// Wire Slack credentials into a deployed release (helm upgrade
-    /// --reuse-values). Tokens are never printed.
+    /// --reuse-values). Tokens are never printed. Also clears
+    /// worker.slackApiBaseUrl back to empty, so connecting real Slack un-wires
+    /// any `agentos message` stub routing (otherwise the worker would keep
+    /// posting replies to a now-dead local stub instead of the Slack workspace).
     ConnectSlack {
         /// Kubernetes namespace.
         #[arg(long, default_value = "agentos")]
@@ -385,23 +435,45 @@ async fn main() -> Result<()> {
             url,
         } => commands::send(&text, &user, event_type.into(), url).await,
         Command::Eval { cases, url } => commands::eval(cases, url).await,
-        Command::SlackSim {
+        Command::Message {
             text,
             channel,
-            bot_token,
-            valkey_url,
-            stream,
+            thread,
+            namespace,
+            release,
+            chart,
+            listen_host,
+            listen_port,
+            valkey_local_port,
+            valkey_password,
+            api_local_port,
+            api_key,
             user,
+            stream,
             timeout_secs,
+            no_wire,
+            force_wire,
+            dry_run,
         } => {
-            slack_sim::slack_sim(SlackSimOpts {
+            message::message(MessageOpts {
                 text,
                 channel,
-                bot_token,
-                valkey_url,
-                stream,
+                thread,
+                namespace,
+                release,
+                chart,
+                listen_host,
+                listen_port,
+                valkey_local_port,
+                valkey_password,
+                api_local_port,
+                api_key,
                 user,
+                stream,
                 timeout_secs,
+                wire: !no_wire,
+                force_wire,
+                dry_run,
             })
             .await
         }

@@ -132,10 +132,16 @@ impl Drop for SlackStub {
 }
 
 impl SlackStub {
-    pub async fn start(host: &str, port: u16) -> Result<Self> {
-        let listener = TcpListener::bind(format!("{host}:{port}"))
+    /// Bind the stub on `bind_host:port` but advertise its base URL under
+    /// `advertise_host`. `chat` passes the same value for both (it binds and is
+    /// reached on the same local host); `message` binds `0.0.0.0` so an
+    /// in-cluster worker can reach it, and advertises the routable host it
+    /// detected. The advertised port is the actually-bound port, so an ephemeral
+    /// `port: 0` still produces a correct URL.
+    pub async fn start(bind_host: &str, port: u16, advertise_host: &str) -> Result<Self> {
+        let listener = TcpListener::bind(format!("{bind_host}:{port}"))
             .await
-            .with_context(|| format!("binding the Slack stub on {host}:{port}"))?;
+            .with_context(|| format!("binding the Slack stub on {bind_host}:{port}"))?;
         let addr = listener
             .local_addr()
             .context("reading the stub's local addr")?;
@@ -147,7 +153,7 @@ impl SlackStub {
             let _ = axum::serve(listener, app).await;
         });
         Ok(Self {
-            base_api_url: format!("http://{addr}/api/"),
+            base_api_url: format!("http://{advertise_host}:{}/api/", addr.port()),
             calls,
             server,
         })
@@ -189,7 +195,7 @@ async fn handle_call(
     Json(json!({ "ok": true, "ts": ts_out, "channel": channel, "text": text }))
 }
 
-enum Outcome {
+pub enum Outcome {
     /// The worker finished the turn; the final placeholder text.
     Replied(String),
     /// The worker finished the turn but never edited the placeholder.
@@ -199,8 +205,9 @@ enum Outcome {
 }
 
 /// Wait for the worker to consume and finalize the turn. Terminal signal is the
-/// XACK of our entry; the reply is the latest `chat.update` we captured.
-async fn await_reply(
+/// XACK of our entry; the reply is the latest `chat.update` we captured. Shared
+/// by `chat` and `message` (both stand up the same stub + enqueue + ack seam).
+pub async fn await_reply(
     stub: &mut SlackStub,
     conn: &mut redis::aio::MultiplexedConnection,
     stream: &str,
@@ -240,9 +247,9 @@ async fn await_reply(
 
 /// Print the one-liner that continues this thread: reusing the same channel and
 /// thread ts keeps the worker routing to the same agent and turn context.
-fn print_continue_hint(channel: &str, thread_ts: &str) {
+pub fn print_continue_hint(verb: &str, channel: &str, thread_ts: &str) {
     println!(
-        "continue this conversation: agentos chat --channel {channel} --thread {thread_ts} \"...\""
+        "continue this conversation: agentos {verb} --channel {channel} --thread {thread_ts} \"...\""
     );
 }
 
@@ -265,7 +272,7 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
     // before the stub binds or any id is minted.
     let mut conn = connect(&opts.valkey_url).await?;
 
-    let mut stub = SlackStub::start(&opts.listen_host, opts.listen_port).await?;
+    let mut stub = SlackStub::start(&opts.listen_host, opts.listen_port, &opts.listen_host).await?;
     println!(
         "slack stub listening; run the worker with SLACK_API_BASE_URL={}",
         stub.base_api_url()
@@ -307,12 +314,12 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             println!("reply    {reply}");
-            print_continue_hint(&channel, &thread_ts);
+            print_continue_hint("chat", &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             println!("the worker finished the turn but never edited the placeholder");
-            print_continue_hint(&channel, &thread_ts);
+            print_continue_hint("chat", &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {

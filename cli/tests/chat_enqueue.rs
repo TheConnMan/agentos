@@ -343,7 +343,7 @@ async fn entry_acked_tracks_the_worker_consuming_and_acking() {
 async fn stub_captures_form_encoded_chat_update_over_real_http() {
     // slack_sdk posts chat.update form-encoded by default; the stub must parse
     // it, capture it, and answer ok:true so the worker's SDK never errors.
-    let mut stub = SlackStub::start("localhost", 0).await.unwrap();
+    let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
     let base = stub.base_api_url().to_string();
     assert!(base.ends_with("/api/"), "base url: {base}");
 
@@ -376,7 +376,7 @@ async fn stub_captures_form_encoded_chat_update_over_real_http() {
 
 #[tokio::test]
 async fn stub_captures_json_body_and_never_404s_other_methods() {
-    let mut stub = SlackStub::start("localhost", 0).await.unwrap();
+    let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
     let base = stub.base_api_url().to_string();
     let http = reqwest::Client::new();
 

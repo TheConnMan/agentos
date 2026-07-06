@@ -300,10 +300,17 @@ worker:
   # before giving up. Must stay below the worker's per-thread lock TTL (120s) so
   # the lock never lapses mid-claim; raise it only on a slow cluster.
   claimTimeoutSeconds: 90
-  # Extra env for the worker container, list of {name, value}. Use it to point
-  # SLACK_API_BASE_URL at a Slack Web API stub for no-Slack middle-mode runs
-  # (the `agentos chat` CLI stub), or any other worker override the fixed env
-  # block does not cover.
+  # No-Slack egress routing. When non-empty, renders SLACK_API_BASE_URL on the
+  # worker Deployment so the worker's Slack sink posts placeholder edits at this
+  # base URL instead of real Slack -- the seam `agentos message` drives when it
+  # points the deployed worker at its local Slack Web API stub. Empty (the
+  # default) leaves the worker on real Slack. `agentos message --wire` sets this
+  # via `helm upgrade --reuse-values`; `agentos connect-slack` clears it back to
+  # empty so connecting real Slack un-wires any stub routing.
+  slackApiBaseUrl: ""
+  # Extra env for the worker container, list of {name, value}. For SLACK_API_BASE_URL
+  # prefer the first-class slackApiBaseUrl above; use extraEnv for any other
+  # worker override the fixed env block does not cover.
   extraEnv: []
   resources:
     requests: { cpu: 100m, memory: 192Mi }

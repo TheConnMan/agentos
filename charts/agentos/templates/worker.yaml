@@ -110,6 +110,14 @@ spec:
                   name: {{ include "agentos.secretName" . }}
                   key: agentCredentials
             {{- end }}
+            # No-Slack egress routing: when set, the worker's Slack sink posts its
+            # placeholder edits at this base URL (the `agentos message` CLI stub)
+            # instead of real Slack. Empty (the default) leaves the sink on real
+            # Slack. Rendered only when non-empty (values-not-templates).
+            {{- if .Values.worker.slackApiBaseUrl }}
+            - name: SLACK_API_BASE_URL
+              value: {{ .Values.worker.slackApiBaseUrl | quote }}
+            {{- end }}
             {{- with .Values.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

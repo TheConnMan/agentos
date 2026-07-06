@@ -173,7 +173,12 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     vec![OpsCommand::new("helm", args)]
 }
 
-/// `helm upgrade --reuse-values` injecting the Slack app/bot tokens.
+/// `helm upgrade --reuse-values` injecting the Slack app/bot tokens. It also
+/// clears `worker.slackApiBaseUrl` back to empty so connecting real Slack
+/// un-wires any `agentos message` stub routing the worker was pointed at --
+/// otherwise a prior `message --wire` would keep hijacking the worker's replies
+/// to a now-dead local stub instead of posting to the Slack workspace we just
+/// connected.
 pub fn connect_slack_commands(o: &ConnectSlackOpts) -> Vec<OpsCommand> {
     let args = vec![
         plain("upgrade"),
@@ -186,6 +191,8 @@ pub fn connect_slack_commands(o: &ConnectSlackOpts) -> Vec<OpsCommand> {
         secret_set("dispatcher.slack.appToken", &o.app_token),
         plain("--set"),
         secret_set("dispatcher.slack.botToken", &o.bot_token),
+        plain("--set"),
+        plain("worker.slackApiBaseUrl="),
     ];
     vec![OpsCommand::new("helm", args)]
 }
@@ -374,7 +381,7 @@ pub(crate) async fn run_streaming(cmd: &OpsCommand) -> Result<()> {
 }
 
 /// Run one command capturing stdout; returns (success, stdout, stderr).
-async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, String)> {
+pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, String)> {
     let output = Command::new(&cmd.program)
         .args(cmd.argv())
         .output()
@@ -732,6 +739,28 @@ mod tests {
         assert!(
             argv.contains("dispatcher.slack.botToken=xoxb-abcdefghijklmnop"),
             "{argv}"
+        );
+    }
+
+    #[test]
+    fn connect_slack_clears_the_worker_stub_routing() {
+        // Connecting real Slack must un-wire any `agentos message` stub routing,
+        // so the upgrade sets worker.slackApiBaseUrl back to empty.
+        let cmds = connect_slack_commands(&ConnectSlackOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            app_token: "xapp-1-x".into(),
+            bot_token: "xoxb-x".into(),
+        });
+        let line = cmds[0].display();
+        assert!(
+            line.contains("--set worker.slackApiBaseUrl="),
+            "connect-slack must clear the stub routing: {line}"
+        );
+        // Empty value, not a stray non-empty one.
+        assert!(
+            !line.contains("worker.slackApiBaseUrl=http"),
+            "must clear, not set, the stub URL: {line}"
         );
     }
 

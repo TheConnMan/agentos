@@ -1,4 +1,4 @@
-//! Shared machinery for the two Slack-facing drivers (`slack-sim` and `chat`).
+//! Shared machinery for the Slack-facing drivers (`chat` and `message`).
 //!
 //! Both mint the exact `QueuedSlackEvent` the dispatcher would produce, `XADD`
 //! it onto the real Valkey stream, and (on timeout) print the same stream
