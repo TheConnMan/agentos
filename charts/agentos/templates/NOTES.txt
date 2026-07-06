@@ -35,7 +35,7 @@ App services:
 {{- if include "agentos.dispatcher.enabled" . }}
   - dispatcher ({{ .Values.dispatcher.image.repository }}:{{ .Values.dispatcher.image.tag }}) [Slack Socket Mode, no Service]
 {{- else }}
-  - dispatcher: NOT deployed (no Slack tokens set) -- see "Connect Slack" below
+  - dispatcher: NOT deployed (no Slack tokens set) -- see "Go live" below
 {{- end }}
 {{- if .Values.worker.deploy }}
   - worker ({{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }})
@@ -79,20 +79,39 @@ Kernel isolation (gVisor, security.gvisor.mode={{ $gvisorMode }}):
 {{- end }}
 {{- if not (include "agentos.dispatcher.enabled" .) }}
 
-Connect Slack + switch to a real model:
+Go live (Slack + a real model):
   The dispatcher is not deployed (no Slack tokens) and the runner is in offline
-  fake-model mode. Upgrade with your Slack tokens and a model credential to go live.
-  The runner NetworkPolicy is fail-closed, so you must ALSO open egress to the
-  model API -- without it real model calls are denied. The flags below allow
-  Anthropic's published range (160.79.104.0/23, TCP 443); add more allowedEgress
-  entries for any MCP endpoints the runner needs.
+  fake-model mode. The `agentos` CLI wraps the go-live helm upgrades so you never
+  hand-write --set flags or leak a token on the command line (each reads its
+  secret from env and prints only masked values). All verbs default to
+  release/namespace {{ .Release.Name }}/{{ .Release.Namespace }}; add --dry-run to
+  print the exact helm/kubectl command first.
+
+  # 1. Switch off the fake model and open the fail-closed runner egress to the
+  #    model provider (defaults to Anthropic's range 160.79.104.0/23, TCP 443;
+  #    pass --egress-cidr/--egress-port for another provider or MCP endpoint).
+  AGENTOS_MODEL_CREDENTIALS=sk-ant-... \
+    agentos go-live --namespace {{ .Release.Namespace }} --release {{ .Release.Name }}
+
+  # 2. (optional) Exercise the deployed agent end to end with NO Slack workspace.
+  agentos message --namespace {{ .Release.Namespace }} --release {{ .Release.Name }} "hello"
+
+  # 3. Connect a real Slack workspace (renders the dispatcher). This also
+  #    un-wires any `message` stub routing.
+  SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-... \
+    agentos connect-slack --namespace {{ .Release.Namespace }} --release {{ .Release.Name }}
+
+  # Release health + access URLs at any point (read-only):
+  agentos status --namespace {{ .Release.Namespace }} --release {{ .Release.Name }}
+
+  Or via helm directly (the runner NetworkPolicy is fail-closed, so real model
+  calls need the egress allowlist too; add more allowedEgress entries for any MCP
+  endpoints the runner needs):
 
   helm upgrade {{ .Release.Name }} charts/agentos -n {{ .Release.Namespace }} --reuse-values \
-    --set dispatcher.slack.appToken=xapp-your-app-token \
-    --set dispatcher.slack.botToken=xoxb-your-bot-token \
-    --set dispatcher.slack.signingSecret=your-signing-secret \
+    --set dispatcher.slack.appToken=xapp-... --set dispatcher.slack.botToken=xoxb-... \
     --set agentSandbox.runner.fakeModel=false \
-    --set agentSandbox.runner.credentials=sk-ant-your-model-key \
+    --set agentSandbox.runner.credentials=sk-ant-... \
     --set 'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23' \
     --set 'security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP' \
     --set 'security.networkPolicy.allowedEgress[0].ports[0].port=443'
