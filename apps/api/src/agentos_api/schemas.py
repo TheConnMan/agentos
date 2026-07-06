@@ -15,6 +15,13 @@ class AgentCreate(BaseModel):
     repo_full_name: str | None = None
 
 
+class AgentUpdate(BaseModel):
+    """Partial update of a mutable agent field. Only slack_channel is updatable
+    (name and repo binding are identity); an omitted field is left unchanged."""
+
+    slack_channel: str | None = None
+
+
 class AgentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +65,19 @@ class BundleValidationError(BaseModel):
 
     detail: str = "bundle failed validation"
     errors: list[dict[str, str]]
+
+
+class BundleFile(BaseModel):
+    """One text file inside a stored bundle (path relative to the bundle root)."""
+
+    path: str
+    content: str
+
+
+class BundleFiles(BaseModel):
+    """The readable text surfaces of a version's stored bundle."""
+
+    files: list[BundleFile]
 
 
 class DeploymentCreate(BaseModel):

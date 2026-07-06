@@ -8,6 +8,7 @@ router; this module is pure intake logic.
 
 import io
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -93,3 +94,39 @@ def extract_and_validate(data: bytes, dest: Path) -> tuple[str, str, ValidationR
     extract(data, extension, dest)
     result = validate_bundle(bundle_root(dest))
     return extension, content_type, result
+
+
+def _collect_text_files(root: Path) -> list[tuple[str, str]]:
+    """The bundle's known text files as (bundle-relative posix path, content).
+
+    Deliberately an allowlist of the bundle's structured text surfaces -- the
+    manifest, the skill docs, and the eval cases -- so binaries (and anything
+    else) are skipped, not just filtered by a guessed encoding. Paths are
+    relative to the bundle root and posix so the UI reads a stable shape.
+    """
+
+    candidates: list[Path] = []
+    for fixed in (Path(".claude-plugin/plugin.json"), Path("evals/cases.json")):
+        if (root / fixed).is_file():
+            candidates.append(root / fixed)
+    candidates.extend(p for p in root.glob("skills/**/SKILL.md") if p.is_file())
+
+    files: list[tuple[str, str]] = []
+    for path in candidates:
+        files.append((path.relative_to(root).as_posix(), path.read_text("utf-8")))
+    return sorted(files, key=lambda item: item[0])
+
+
+def read_bundle_text_files(data: bytes) -> list[tuple[str, str]]:
+    """Extract an archive's bytes and return its known text files.
+
+    Mirrors the upload path (detect -> extract into a temp dir, guarding path
+    traversal -> unwrap to the bundle root) but reads the text surfaces instead of
+    validating. Returns (path, content) pairs; the caller shapes the response.
+    """
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp)
+        extension, _ = detect_format(data)
+        extract(data, extension, dest)
+        return _collect_text_files(bundle_root(dest))

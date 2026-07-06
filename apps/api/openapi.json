@@ -72,6 +72,24 @@
         "title": "AgentOut",
         "type": "object"
       },
+      "AgentUpdate": {
+        "description": "Partial update of a mutable agent field. Only slack_channel is updatable\n(name and repo binding are identity); an omitted field is left unchanged.",
+        "properties": {
+          "slack_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Channel"
+          }
+        },
+        "title": "AgentUpdate",
+        "type": "object"
+      },
       "Body_upload_bundle_agents__agent_id__versions__version_id__bundle_put": {
         "properties": {
           "file": {
@@ -115,6 +133,42 @@
           }
         },
         "title": "BudgetConfig",
+        "type": "object"
+      },
+      "BundleFile": {
+        "description": "One text file inside a stored bundle (path relative to the bundle root).",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "BundleFile",
+        "type": "object"
+      },
+      "BundleFiles": {
+        "description": "The readable text surfaces of a version's stored bundle.",
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/BundleFile"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "BundleFiles",
         "type": "object"
       },
       "BundleOut": {
@@ -1096,6 +1150,73 @@
         "tags": [
           "agents"
         ]
+      },
+      "patch": {
+        "operationId": "update_agent_agents__agent_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Agent",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/agents/{agent_id}/budget": {
@@ -1761,6 +1882,75 @@
         "summary": "Upload Bundle",
         "tags": [
           "bundles"
+        ]
+      }
+    },
+    "/agents/{agent_id}/versions/{version_id}/files": {
+      "get": {
+        "operationId": "read_version_files_agents__agent_id__versions__version_id__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleFiles"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Version Files",
+        "tags": [
+          "agents"
         ]
       }
     },
