@@ -294,6 +294,11 @@ worker:
   # The SandboxWarmPool the substrate claims from. Empty -> derived as
   # `<release>-runner-pool` (the name templates/agent-sandbox.yaml gives it).
   warmPool: ""
+  # Seconds claim() waits for a cold sandbox create (pod scheduling +
+  # bundle-fetch/extract init containers + runner boot + readiness) to bind
+  # before giving up. Must stay below the worker's per-thread lock TTL (120s) so
+  # the lock never lapses mid-claim; raise it only on a slow cluster.
+  claimTimeoutSeconds: 90
   # Extra env for the worker container, list of {name, value}. Use it to point
   # SLACK_API_BASE_URL at a Slack Web API stub for no-Slack middle-mode runs
   # (the `agentos chat` CLI stub), or any other worker override the fixed env
@@ -424,6 +429,16 @@ agentSandbox:
     budget:
       maxOutputTokensPerRun: 100000
       maxUsdPerDay: 5.0
+    # Readiness probe on the runner's ACI /healthz. A tight cadence turns a
+    # booted runner Ready fast, shaving the cold-create latency the worker's
+    # claim() waits on; failureThreshold is generous so a genuinely slow boot is
+    # tolerated without the pod being marked unready. Probe settings live here
+    # (not the template) per the chart's values-not-templates invariant.
+    readinessProbe:
+      initialDelaySeconds: 2
+      periodSeconds: 2
+      timeoutSeconds: 2
+      failureThreshold: 30
     # Per-claim env injection (the resume path injects AGENTOS_HISTORY_REF and
     # AGENTOS_SESSION_ID) must be able to override the template's baked env.
     envVarsInjectionPolicy: Overrides

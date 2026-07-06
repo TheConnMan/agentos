@@ -94,6 +94,10 @@ spec:
               value: {{ $warmPool | quote }}
             - name: AGENTOS_RUNNER_PORT
               value: {{ .Values.agentSandbox.runner.port | quote }}
+            # How long claim() waits for a cold sandbox to become ready before it
+            # gives up. Must stay below the worker's per-thread lock TTL (120s).
+            - name: AGENTOS_CLAIM_TIMEOUT_SECONDS
+              value: {{ .Values.worker.claimTimeoutSeconds | quote }}
             # Runner model passthrough: the worker injects these into every claim
             # (fake model needs no credential; a real credential comes from the
             # chart Secret and is only wired when one is configured).
