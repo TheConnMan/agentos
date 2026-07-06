@@ -1,3 +1,11 @@
 # tests/soak
 
-Owning task: **N1**. The soak/chaos suite that proves the definition-of-done: concurrent threads + a mid-thread batch job + sandbox-kill-mid-run + resume-rehydrate, asserting no cross-talk, no duplicate side effects, and sandbox-affined `cache_read_input_tokens > 0`. Runs on k8scratch (resized to the full definition-of-done target) and must pass three consecutive runs. This directory is reserved at R0 with this README only; **N1** authors the suite.
+This directory is reserved for the soak and chaos suite. The suite is not yet
+authored.
+
+When written, it proves the definition-of-done under sustained load: concurrent
+threads plus a mid-thread batch job, a sandbox killed mid-run, and a
+resume-rehydrate, asserting no cross-talk between threads, no duplicate side
+effects, and sandbox-affined `cache_read_input_tokens > 0`. It runs against a
+real cluster sized to the full definition-of-done target and must pass three
+consecutive runs.

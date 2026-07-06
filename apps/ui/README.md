@@ -2,9 +2,9 @@
 
 The AgentOS console: Vite + React + TypeScript, no meta-framework. Design tokens
 and every view are ported from the design canon (the original design mockup).
-This is task **H1a**: the shell running entirely on fixture data. **H1b**
-wires it to the real backend (B1/B2); **OB1** replaces the fixture Metrics/Logs
-with live data.
+This is the UI shell. It runs entirely on fixture data first, then is wired to
+the real backend; the Metrics/Logs tabs move from fixtures to live
+observability endpoints.
 
 ## Verify
 
@@ -54,28 +54,28 @@ can Connect Slack, create an agent, deploy, and reach the live state organically
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
-## Backend wiring (H1b + OB1 + L1)
+## Backend wiring
 
 Several paths now run against the real API; everything else stays on fixtures.
 
 **Wired (real API):**
-- Create agent + Deploy (H1b): the create-agent modal POSTs `/agents` and
+- Create agent + Deploy: the create-agent modal POSTs `/agents` and
   `/agents/{id}/versions`, packages the editor's skill.md into a plugin bundle
   client-side (jszip), and PUTs it to `/agents/{id}/versions/{vid}/bundle`. The
   bundle validator's 422 `errors[]` render inline under the editor.
-- Runs tab (Observability > Traces, H1b): reads `GET /langfuse/traces` and
+- Runs tab (Observability > Traces): reads `GET /langfuse/traces` and
   `/langfuse/traces/{id}` through the proxy and renders the real span tree.
-- Metrics tab (Observability > Metrics, OB1): summary stat cards from
+- Metrics tab (Observability > Metrics): summary stat cards from
   `GET /observability/metrics/summary` plus a selectable time-series chart from
   `/observability/metrics/series` (metric x granularity). Langfuse-backed, five
   metrics (runs, latency p95, tokens, cost, error rate). See the divergence note
   below.
-- Logs tab (Observability > Logs, OB1): the runner-pod log viewer over
+- Logs tab (Observability > Logs): the runner-pod log viewer over
   `GET /observability/runners/{namespace}/{pod}/logs`, with designed distinct
   states for 503 (no cluster), 404 (pod not found), and 502 (other cluster
   error).
-- Cost tab (Observability > Cost, L1): agent-scoped (an agent selector, since
-  the L1 endpoints are per agent). Total spend + daily chart from
+- Cost tab (Observability > Cost): agent-scoped (an agent selector, since
+  the cost endpoints are per agent). Total spend + daily chart from
   `GET /agents/{id}/cost` (honest empty state when the series is all zero, e.g. a
   fresh agent); budget display + edit against `GET/PUT /agents/{id}/budget`
   (client-side positive-number validation, server 422 surfaced inline); and the
@@ -84,7 +84,7 @@ Several paths now run against the real API; everything else stays on fixtures.
   banner. The wired Cost view is per-agent panels rather than the fixture fleet
   table (the API is per agent).
 
-**OB1 Metrics divergence (deliberate).** The design canon's Metrics tab is a
+**Metrics divergence (deliberate).** The design canon's Metrics tab is a
 Prometheus/PromQL surface (a `rate(...)` query bar, a request-rate hero, and
 p50/tool-calls/active-sessions panels). The real API is Langfuse aggregates over
 five metrics with no Prometheus, so the wired view keeps the card-grid +
@@ -109,7 +109,7 @@ single build serves both the fixture demo and the live run:
 
 **Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`,
 the observability calls `getMetricsSummary`/`getMetricSeries`/`getRunnerLogs`,
-and the L1 calls `getCost`/`getBudget`/`putBudget`/`getKillState`/`killAgent`/
+and the cost calls `getCost`/`getBudget`/`putBudget`/`getKillState`/`killAgent`/
 `resumeAgent`/`getAgents`), `bundle.ts` (jszip packaging + the testable
 `bundleFileTree`), `hooks.ts` (`useTraces`/`useTrace`/`useMetricsSummary`/
 `useMetricSeries`/`useAgents`/`useCost`), `config.ts` (the wiring gate). Deploy
@@ -134,7 +134,7 @@ version + stored bundle via the API, checks the malformed-skill.md validator
 error inline, and asserts the Runs list + span-tree drill-in. The default
 `pnpm exec playwright test` excludes it, so stackless CI stays green.
 
-The OB1 wired Metrics/Logs are covered in the **stackless** suite
+The wired Metrics/Logs are covered in the **stackless** suite
 (`e2e/observability-wired.spec.ts`) by running the app in `?api=1` mode and
 stubbing the observability endpoints with real-shaped responses via Playwright
 route interception (200 metrics, 503 no-cluster logs, 200 logs) — no backend
@@ -144,7 +144,7 @@ renders as the "Cluster error" state.
 
 Config reference: `.env.example`.
 
-## For H1b+ (wiring the rest)
+## Wiring the rest
 
 - Remaining data entry points are the `*ForLevel` / seeded exports in
   `src/fixtures` (`agentsForLevel`, `EVAL_CASES`, `VERSION_ROWS`, `logsForLevel`,
@@ -152,11 +152,11 @@ Config reference: `.env.example`.
 - The ACI contract types are imported for the fixture trace spans; the wired
   Runs path renders the API's `ObservationNode` tree directly.
 
-## Scope notes (H1a decisions)
+## Scope notes
 
 - Onboarding uses the classic create-agent modal (template picker + skill.md
   editor + Deploy), not the interview wizard (deferred).
 - The Observability Memory tab is a designed coming-soon stub; the full memory
   browser is deferred. The ACI `memory_ref` seam stays in the contract.
 - Metrics and Logs are scaffolded on deterministic fixture data matching the
-  design; OB1 wires them to Langfuse.
+  design; the observability endpoints wire them to Langfuse.

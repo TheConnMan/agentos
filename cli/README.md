@@ -1,6 +1,6 @@
 # cli
 
-Owning task: **I1**. The `agentos` CLI (Rust: clap + tokio + reqwest). It speaks
+The `agentos` CLI (Rust: clap + tokio + reqwest). It speaks
 only the frozen contracts (the generated `agentos-aci-protocol` crate over
 HTTP/NDJSON, and the platform API's committed openapi.json) and orchestrates a
 local runner container via Docker, so a plugin runs on a dev laptop with zero
@@ -69,8 +69,9 @@ URL `chat` prints on startup. The worker reads that env var and points its Slack
 sink's `AsyncWebClient` `base_url` at it, so `chat.update` edits land at the stub
 instead of real Slack. Use `--listen-host`/`--listen-port` when the worker runs
 off-box (default `localhost` on an ephemeral port). No Slack token or real Slack
-HTTP is involved. The full worker round trip is validated at the walking-skeleton
-gate; `chat` itself verifies the stub, the enqueue, and the ack-based completion.
+HTTP is involved. The full worker round trip is validated end to end against a
+live cluster; `chat` itself verifies the stub, the enqueue, and the ack-based
+completion.
 
 ## `agentos message`: drive the deployed cluster with zero Slack
 

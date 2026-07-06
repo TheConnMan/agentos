@@ -1,15 +1,15 @@
 # apps/dispatcher
 
-Owning task: **E1**. The Slack dispatcher: Slack Bolt for Python in Socket Mode.
+The Slack dispatcher: Slack Bolt for Python in Socket Mode.
 On an `app_mention` (channel) or direct `message` (DM) for the bot it acks the
 Socket Mode envelope fast, posts an in-thread placeholder reply, and enqueues a
 normalized job onto a Valkey Stream keyed by the Slack event id (idempotent),
 under reconnect supervision with graceful shutdown.
 
 It does exactly that and no more: routing, the finish-race, steer/interrupt, and
-run orchestration are the worker's job (F1), not the dispatcher's.
+run orchestration are the worker's job, not the dispatcher's.
 
-## The queue seam (what F1 consumes)
+## The queue seam (what the worker consumes)
 
 The dispatcher `XADD`s onto a Valkey Stream (`AGENTOS_STREAM`, default
 `agentos:runs`). Each entry carries one field, `payload`, holding the JSON of a
@@ -25,10 +25,10 @@ The dispatcher `XADD`s onto a Valkey Stream (`AGENTOS_STREAM`, default
 | `placeholder_ts` | ts of the placeholder reply already posted; the worker edits this message in place with the real response |
 | `received_at` | ISO-8601 UTC timestamp the dispatcher received it |
 
-F1 reconstructs it with `QueuedSlackEvent.from_stream_fields(fields)` (import from
+The worker reconstructs it with `QueuedSlackEvent.from_stream_fields(fields)` (import from
 `agentos_dispatcher`, or mirror the model). The model is defined inside the
 dispatcher because the dispatcher is the producer and owns the shape; if it later
-deserves promotion into a shared package, the orchestrator makes that call (the
+deserves promotion into a shared package, the maintainers make that call (the
 dispatcher does not touch `packages/`). The single-`payload`-field encoding keeps
 the seam explicit and lets fields be added without reshaping the Stream schema.
 
@@ -99,7 +99,7 @@ python -m agentos_dispatcher
 3. Set both env vars (plus `VALKEY_*` for the target Valkey) and run
    `python -m agentos_dispatcher`. @-mention the bot in a channel it is in, or DM
    it: you should see the placeholder reply appear and one entry land on the
-   Stream (`XLEN agentos:runs`). The worker (F1) consumes from there.
+   Stream (`XLEN agentos:runs`). The worker consumes from there.
 
 ## Verification (Slack-free)
 

@@ -1,7 +1,7 @@
 # runner
 
-Owning task: **D1**. The runner image and SDK adapter: the productized PT-2/PT-E
-prototype, a long-lived streaming session server that implements the full ACI
+The runner image and SDK adapter: the productized prototype,
+a long-lived streaming session server that implements the full ACI
 v0.1 contract from `packages/aci-protocol`. Built on `claude-agent-sdk` (Python).
 Runs inside a claimed Agent Sandbox; the CLI (`agentos start`) also runs it
 locally in Docker.
@@ -34,8 +34,8 @@ locally in Docker.
 
 One turn consumes the SDK generator at a time; steer and interrupt are
 side-channel injections whose output surfaces on the open `/v1/event` stream (the
-proven PT-2 steering pattern). The finish race (a steer arriving as a turn ends,
-409) is owned by the worker (F1).
+proven steering pattern). The finish race (a steer arriving as a turn ends,
+409) is owned by the worker.
 
 ## Environment
 

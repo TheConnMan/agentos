@@ -305,8 +305,9 @@ worker:
   # base URL instead of real Slack -- the seam `agentos message` drives when it
   # points the deployed worker at its local Slack Web API stub. Empty (the
   # default) leaves the worker on real Slack. `agentos message --wire` sets this
-  # via `helm upgrade --reuse-values`; `agentos connect-slack` clears it back to
-  # empty so connecting real Slack un-wires any stub routing.
+  # via `helm upgrade --reuse-values`; connecting real Slack (a `helm upgrade
+  # --reuse-values` that sets the dispatcher tokens) clears it back to empty in
+  # the same command, so that upgrade un-wires any stub routing.
   slackApiBaseUrl: ""
   # Extra env for the worker container, list of {name, value}. For SLACK_API_BASE_URL
   # prefer the first-class slackApiBaseUrl above; use extraEnv for any other
@@ -367,7 +368,7 @@ preflights:
       limits: { cpu: 250m, memory: 128Mi }
 
 # ---------------------------------------------------------------------------
-# Agent Sandbox substrate (G1). The runner SandboxTemplate + SandboxWarmPool
+# Agent Sandbox substrate. The runner SandboxTemplate + SandboxWarmPool
 # that the worker's sandbox substrate claims from (one claimed sandbox per
 # Slack thread). Requires the agent-sandbox CRDs (shipped in this chart's
 # crds/ directory, installed automatically on `helm install`) and the upstream
@@ -492,7 +493,7 @@ agentSandbox:
     resources:
       requests: { cpu: 50m, memory: 192Mi }
       limits: { cpu: "1", memory: 768Mi }
-    # --- A2 security rails on the runner surface ---
+    # --- security rails on the runner surface ---
     # Rail 3: container hardening. non-root + read-only rootfs + dropped caps +
     # no privilege escalation + RuntimeDefault seccomp. readOnlyRootFilesystem
     # needs writable scratch, so the chart mounts an emptyDir at each writablePath
@@ -533,12 +534,12 @@ agentSandbox:
       automountToken: false
 
 # ---------------------------------------------------------------------------
-# Security rails (A2). The four PT-3-proven rails shipped ON by default. They
+# Security rails. The four security-boundary rails shipped ON by default. They
 # attach to the agent-sandbox runner surface, so the NetworkPolicy / RBAC / probe
 # resources render only when agentSandbox.deploy is true (there are no runner
 # pods to protect otherwise) -- which keeps the default and dev renders identical
-# to a chart without A2. Each rail is individually toggleable, but the secure
-# posture is the default, per ADR-0006.
+# to a chart without the rails. Each rail is individually toggleable, but the
+# secure posture is the default, per ADR-0006.
 # ---------------------------------------------------------------------------
 security:
   # Rail 1: default-deny egress on runner sandboxes, with explicit allows for DNS
@@ -596,15 +597,15 @@ security:
     resources:
       requests: { cpu: 50m, memory: 32Mi }
       limits: { cpu: 200m, memory: 64Mi }
-  # The PT-3 security-boundary probe suite as a helm test. Re-runs the four
+  # The security-boundary probe suite as a helm test. Re-runs the four
   # claims against the chart's rendered defaults: egress+metadata blocked (with a
   # before/after control), cross-agent secret isolation, non-root/RO-rootfs, and
   # gVisor enforcement. See README "Security rails".
   probe:
     enabled: true
-    # Orchestrator image (must carry kubectl + bash); drives all three claims.
+    # Driver image (must carry kubectl + bash); drives all three claims.
     kubectlImage: alpine/k8s:1.31.2
-    # Egress-probe pod image (must carry curl + nslookup) the orchestrator execs
+    # Egress-probe pod image (must carry curl + nslookup) the driver pod execs
     # into to test egress under the chart's real NetworkPolicy.
     netshootImage: nicolaka/netshoot
     busyboxImage: busybox:1.36

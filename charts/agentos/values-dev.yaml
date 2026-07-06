@@ -3,7 +3,7 @@
 #   helm install agentos-dev charts/agentos -n agentos-dev --create-namespace \
 #     -f charts/agentos/values-dev.yaml
 #
-# Sized to fit a ~4 GB / 4-core scratch cluster (k8scratch). Sum of memory
+# Sized to fit a ~4 GB / 4-core scratch cluster. Sum of memory
 # requests here is ~1.7 GB, leaving headroom for the kubelet/system and for
 # ClickHouse/Langfuse to burst toward their limits. Everything is single-replica
 # and ClickHouse cluster mode is off. This mirrors compose.dev.yaml (same
@@ -63,7 +63,7 @@ otelCollector:
 # agentSandbox.deploy and controller.deploy to true (a bare install pulls the
 # GHCR runner and the registry.k8s.io agent-sandbox controller), which a
 # disconnected scratch cluster cannot satisfy. Turn both back off here so
-# values-dev renders no remote-pull sandbox resources; the G1 e2e re-enables the
+# values-dev renders no remote-pull sandbox resources; the sandbox e2e re-enables the
 # substrate explicitly with the backbone toggled down (see charts/agentos/README.md).
 # When it IS enabled for dev/e2e, use the locally-built, cluster-imported runner
 # image rather than the GHCR default, so an offline cluster never tries (and

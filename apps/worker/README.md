@@ -1,15 +1,15 @@
 # apps/worker
 
-Owning tasks: **F1** (the prod-hard concurrency kernel: routing rule, finish-race CAS, steer/interrupt, no-retry-after-side-effects, resume-rehydrate), **G1** (Agent Sandbox substrate module: warm pool, thread-to-sandbox affinity, claim/release), **K1** (eval runner module). F1 is single-owner and never split, with an escalated adversarial review roster. Reads Valkey Streams via redis-py consumer groups; drives claimed sandboxes running the D1 runner image.
+The worker is three parts: the concurrency kernel (routing rule, finish-race CAS, steer/interrupt, no-retry-after-side-effects, resume-rehydrate), the Agent Sandbox substrate module (warm pool, thread-to-sandbox affinity, claim/release), and the eval runner module. Reads Valkey Streams via redis-py consumer groups; drives claimed sandboxes running the runner image.
 
-## F2: deployment binding + kill switch (`agentos_worker.binding` + `agentos_worker.killswitch`)
+## Deployment binding + kill switch (`agentos_worker.binding` + `agentos_worker.killswitch`)
 
-Wires the kernel to the deployment tables and the L1 kill switch. Both are
-optional on the kernel: absent, it runs a generic sandbox (F1 behavior); present,
-it binds per-channel and gates killed agents.
+Wires the kernel to the deployment tables and the kill switch. Both are
+optional on the kernel: absent, it runs a generic sandbox (the kernel's default
+behavior); present, it binds per-channel and gates killed agents.
 
 **Binding** (`binding.py`): on each event, resolve `channel -> agent -> active
-deployment -> version` with one read-only SELECT over the B1/J1/L1 Postgres tables
+deployment -> version` with one read-only SELECT over the API, git-flow, and kill-switch Postgres tables
 (a thin query layer, not the API's ORM, to avoid pulling FastAPI into the worker).
 Prod wins over dev, then most recent. The kernel claims the sandbox with a boot
 env built from the resolution: `AGENTOS_BUDGET` (the agent's
@@ -21,11 +21,11 @@ edit and drop, never a crash.
 > Handoff: `AGENTOS_BUNDLE_REF` is a MinIO object key; the runner reads
 > `AGENTOS_PLUGIN_DIR` as a local mounted path and does not fetch. Fetching the
 > bundle key into the plugin dir is sandbox provisioning (an init container in the
-> G1 SandboxTemplate / A1 chart), owned there, not by the worker. Per-channel
+> sandbox substrate's SandboxTemplate / the chart), owned there, not by the worker. Per-channel
 > dev/prod bot-identity routing (the dispatcher carrying which bot was addressed)
-> is a J1/dispatcher refinement.
+> is a git-flow/dispatcher refinement.
 
-**Kill switch** (`killswitch.py`): subscribes to the L1 Valkey channel
+**Kill switch** (`killswitch.py`): subscribes to the kill-switch Valkey channel
 `agentos:kill-events`; on `kill` for an agent it interrupts that agent's live
 turns (a run registry maps agent -> active threads). New runs are refused while
 the flag `agentos:kill:<agent_id>` is set - the kernel checks the flag before
@@ -38,7 +38,7 @@ preference, unknown -> None, budget/env); the kill switch against real Valkey
 (flag gate, subscriber dispatch); and kernel-level behaviors (unmapped drop,
 boot-env on claim, killed-agent refusal, kill interrupts a live turn).
 
-## K1: the eval lane (`agentos_worker.eval`)
+## The eval lane (`agentos_worker.eval`)
 
 Runs an eval suite against a plugin version and records the grid the eval matrix
 and PR check read.
@@ -46,7 +46,7 @@ and PR check read.
 ```
 EvalSuite (cases: input + grader)
    -> EvalRunner: deliver each case as an ACI `eval_case` event over the runner's
-      HTTP channel (the F1 RunnerClient), take the `final` text as the answer
+      HTTP channel (the kernel's RunnerClient), take the `final` text as the answer
    -> Grader: exact | contains | regex -> pass/fail (deny-by-default; a case must
       name a grader)
    -> EvalRunResult: per-case rows + the "N/M passed" summary
@@ -67,7 +67,7 @@ when all set).
 **Handoffs (not in apps/worker):** the API's eval **matrix endpoint** reads the
 grid back from Langfuse filtered by the `version:` tag (a trace's `eval_pass`
 score is 1.0/0.0; query traces by tag, read each trace's score); the **PR-check**
-reporter (J1) turns the printed `EvalRunResult` summary into a GitHub commit
+reporter (the git-flow engine) turns the printed `EvalRunResult` summary into a GitHub commit
 status; the **UI** matrix tab renders the grid; the **Job fan-out** per version @
 sha on a PR webhook is the API's (a Job template runs this module). Per-case
 sandbox isolation (a fresh sandbox per case) is that Job-orchestration layer's
@@ -77,13 +77,13 @@ Tests (`apps/worker/tests/eval`): graders and rollups (unit); `EvalRunner`
 against a scriptable fake runner; `LangfuseEvalRecorder` against the REAL compose
 Langfuse (record + read back by version tag, never mocked).
 
-## F3: the eval-stream consumer (`agentos_worker.eval.stream`)
+## The eval-stream consumer (`agentos_worker.eval.stream`)
 
-Where K1 is the eval Job entrypoint (run one suite against one endpoint), F3 is the
+Where the eval lane is the eval Job entrypoint (run one suite against one endpoint), the eval-stream consumer is the
 long-running worker that turns a queued eval request into a full run. It is a second
 consumer group (`agentos-eval-workers`) on a distinct Valkey stream `agentos:evals`,
 running on its own connection so its blocking read never stalls the runs consumer.
-The K1-API git-flow is the producer; build against this written contract, not its
+The API's git-flow engine is the producer; build against this written contract, not its
 code.
 
 ```
@@ -101,7 +101,7 @@ holding an `EvalWorkItem` JSON object with `agent_id`, `version_id`, `sha`, `sui
 (the suite NAME, used to select/tag, not the cases themselves), `bundle_ref` (the
 MinIO object key), optional `target_url`, and `requested_at` (ISO-8601 UTC). The
 cases come FROM the bundle's own `evals/cases.json` (the `EvalSuite` JSON shape the
-K1 loader reads), never from the stream.
+eval lane's loader reads), never from the stream.
 
 Runtime rules (each has a provoking integration test in `tests/eval/test_stream.py`):
 
@@ -110,7 +110,7 @@ Runtime rules (each has a provoking integration test in `tests/eval/test_stream.
   and tags Langfuse. A missing/corrupt bundle or missing evals dir is a **failed run**
   (0/0) reported and acked, never a crash.
 - **`target_url` present -> eval it directly** (the dev/test shortcut). Absent ->
-  **provision a runner via the G1 substrate** (the same warm-pool `claim` F2 chat-runs
+  **provision a runner via the sandbox substrate** (the same warm-pool `claim` chat runs
   use, boot env carrying `AGENTOS_BUNDLE_REF` + budget), eval against it, and tear it
   down in a `finally`. A provisioning failure is a failed run reported and acked.
 - **XACK only after the report POST attempt completes** (success, or terminally failed
@@ -135,7 +135,7 @@ one consume->eval->report), the poison-pill drop, a missing-bundle failed run,
 ack-after-report even when the report terminally fails, and a provisioned-runner
 end-to-end (no `target_url`) that boots via the substrate and releases in a finally.
 
-## F1: the concurrency kernel (`agentos_worker.kernel` + `agentos_worker.consumer`)
+## The concurrency kernel (`agentos_worker.kernel` + `agentos_worker.consumer`)
 
 The kernel closes the loop: it consumes `QueuedSlackEvent` entries the dispatcher
 puts on the `agentos:runs` Valkey stream, routes each to a runner turn in a
@@ -146,8 +146,8 @@ the placeholder in place, and gets every failure mode right.
 XREADGROUP agentos:runs        Consumer (consumer group; XAUTOCLAIM reclaims a
    -> QueuedSlackEvent            dead consumer's pending entries after an idle
    -> Kernel.process_event        timeout, then reprocesses them idempotently)
-        -> substrate.lookup/claim/resume   (G1)
-        -> RunnerClient  POST /v1/event | /v1/steer | /v1/interrupt   (D1)
+        -> substrate.lookup/claim/resume   (sandbox substrate)
+        -> RunnerClient  POST /v1/event | /v1/steer | /v1/interrupt   (runner)
         -> SlackSink     chat.update the placeholder as frames stream
    -> XACK
 ```
@@ -185,15 +185,15 @@ Config surface (`WorkerConfig.from_env`): `VALKEY_*`, `SLACK_BOT_TOKEN`,
 `AGENTOS_RUNNER_PORT` for the substrate. Run with `python -m agentos_worker`.
 
 Tests: `uv run pytest apps/worker/tests/kernel -q` runs against the real Valkey
-from `compose.dev.yaml`, the real G1 substrate with a fake Kubernetes client whose
+from `compose.dev.yaml`, the real sandbox substrate with a fake Kubernetes client whose
 sandboxes resolve to a local in-process fake runner, and a recording Slack sink.
 Only Slack and the model behind the runner are faked.
 
-## G1: the sandbox substrate (`agentos_worker.sandbox`)
+## The sandbox substrate (`agentos_worker.sandbox`)
 
 The lifecycle seam between the worker kernel and kubernetes-sigs/agent-sandbox
 v0.5.0 (core `Sandbox` CRD + the extensions `SandboxClaim`/`SandboxWarmPool`/
-`SandboxTemplate`). F1 talks in `thread_key` (the Slack `thread_ts`) and
+`SandboxTemplate`). The kernel talks in `thread_key` (the Slack `thread_ts`) and
 `SandboxHandle`; everything Kubernetes-shaped stays behind this module.
 
 ```python
@@ -215,7 +215,7 @@ substrate.release(thread_ts)          # delete claim -> sandbox+pod reaped
 substrate.reap_orphans()              # periodic tick: claims with no live route
 ```
 
-Contract notes F1 must know:
+Contract notes the kernel must know:
 
 - **One live session per thread.** `claim()` is claim-or-adopt: a lost
   creation race deletes the loser's claim and returns the winner's handle. The
@@ -224,17 +224,17 @@ Contract notes F1 must know:
 - **Sub-second claims require a warm pool.** The chart's
   `agentSandbox.deploy=true` installs `<release>-runner` (SandboxTemplate) and
   `<release>-runner-pool` (SandboxWarmPool). Claims without per-claim env bind
-  a pre-warmed sandbox (0.04-0.07 s measured on k8scratch); claims **with**
+  a pre-warmed sandbox (0.04-0.07 s measured on a scratch k3s cluster); claims **with**
   env (the resume path) get a fresh sandbox instead (cold create, seconds not
   sub-second) because env cannot be injected into an already-running pod.
-- **Suspend/resume is a cold rehydrate (PT-1).** `suspend()` flips the Sandbox
+- **Suspend/resume is a cold rehydrate.** `suspend()` flips the Sandbox
   to `Suspended` (the pod is deleted) and records the caller-supplied history
   ref. `resume()` retires the old claim and creates a new one whose per-claim
   env injects `AGENTOS_HISTORY_REF` (+ the original `AGENTOS_SESSION_ID`); the
   runner passes that ref to the SDK as its `resume` session id. Never assume
   process or prompt-cache warmth across a suspend.
 - **Producing the history ref is the caller's job.** The frozen ACI `final`
-  frame does not carry the SDK session id today; if F1 needs it surfaced from
+  frame does not carry the SDK session id today; if the kernel needs it surfaced from
   the runner, that is a contract change to escalate, not to work around.
 - **Reaping.** `release()` deletes the claim (the claim owns its sandbox and
   pod). Routes that expire in Valkey leave orphaned claims; `reap_orphans()`

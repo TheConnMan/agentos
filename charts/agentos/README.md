@@ -1,13 +1,13 @@
 # charts/agentos
 
 The umbrella Helm chart that installs the whole AgentOS (Relay) stack on a
-single node. Owning tasks: **A1** (this: Langfuse + Postgres + Valkey +
+single node. It installs the backing-store stack (Langfuse + Postgres + Valkey +
 ClickHouse + MinIO + OTel Collector, dev profile, BYO toggles, the two
-preflights) and **A2** (security rails as chart defaults, added later).
+preflights) plus the security rails as chart defaults.
 
-The chart is a direct port of the proven `compose.dev.yaml` (V1 dev stack): same
+The chart is a direct port of the proven `compose.dev.yaml` dev stack: same
 images, same tags, same `:24.8` ClickHouse pin, same headless-bootstrapped
-Langfuse dev project. So V1 (compose) and V3 (this chart on k8scratch) verify
+Langfuse dev project. So the compose stack and this chart verify
 the identical stack. Rather than vendoring the upstream Langfuse chart and its
 Bitnami subcharts, each component is a first-class template here -- this keeps
 the single-node footprint controllable and avoids the Bitnami-catalog
@@ -205,14 +205,14 @@ exercises the SSE4.2 branch on an AVX-capable node. Read the verdict:
 
 **(b) NetworkPolicy-enforcement probe** (`preflights.networkPolicyProbe`). A
 `helm test` Job. A CNI that silently ignores NetworkPolicy is a security
-false-pass: A2's isolation policies would render but enforce nothing. The probe
+false-pass: the security rails' isolation policies would render but enforce nothing. The probe
 does a before/after egress check -- reach an external target with no policy
 (expect reachable), apply a default-deny-egress policy to itself (RFC1918
 private ranges stay allowed so the control path survives; the public target is
 denied), retry (expect blocked). It reports `enforcement=true` only if the after
 egress is actually blocked, and `enforcement=false` (fails loudly) otherwise.
 
-## Single-node footprint (measured on k8scratch, 4 GB / 4 core, k3s)
+## Single-node footprint (measured on a disposable single-node k3s cluster, 4 GB / 4 core)
 
 The dev profile fits the whole stack on one 4 GB node, but **tightly**: steady
 state is ~3.3 GB / ~82% node memory once Langfuse migrations settle. Langfuse
@@ -220,17 +220,17 @@ web is the anchor (~950 MB resident with the heap cap raised to 1 GB; its Node
 default heap of ~512 MB OOM-crashes under a tight container limit, so the dev
 profile sets `NODE_OPTIONS=--max-old-space-size` and a 1536 MB web limit).
 ClickHouse settles around ~255 MB single-replica with cluster mode off. This
-matches the build plan's anticipated resize: everything runs in 4 GB for
+matches the planned resize: everything runs in 4 GB for
 chart/security verification, and a resize to >=8 vCPU / 16-20 GB gives
-comfortable headroom for the walking-skeleton and soak gates.
+comfortable headroom for integration and soak testing.
 
-## Security rails (A2)
+## Security rails
 
-The four PT-3-proven rails ship **on by default** (ADR-0006). They attach to the
+The four security-boundary rails ship **on by default** (ADR-0006). They attach to the
 agent-sandbox runner surface, so their NetworkPolicy / RBAC / probe resources
 render only when `agentSandbox.deploy: true` (there are no runner pods to protect
 otherwise). With the sandbox off, the rendered manifests are byte-identical to a
-chart without A2.
+chart without the security rails.
 
 | Rail | What ships | Values |
 |---|---|---|
@@ -263,7 +263,7 @@ The class name and handler live on `security.gvisor.runtimeClassName` / `.handle
 set `security.gvisor.installRuntimeClass=true` to have the chart create the
 RuntimeClass object (the node must still provide the runtime).
 
-**Verifying the rails.** The PT-3 probe suite re-runs as a `helm test`:
+**Verifying the rails.** The security-boundary probe suite re-runs as a `helm test`:
 
 ```bash
 helm test <release> -n <ns>
@@ -274,11 +274,11 @@ kubectl logs -n <ns> <release>-security-probe-hardening      # claim 3
 Claim 1 does a before/after egress control (reachable under a temporary allow-all
 -> blocked under the chart default-deny) so a non-enforcing CNI is caught as a
 false-pass rather than trusted. Claim 4 reports honestly: if the gvisor
-runtimeclass is absent it is marked NOT-TESTABLE (per PT-3, never faked), with
-enforcement asserted separately by the preflight and proven live in PT-3
+runtimeclass is absent it is marked NOT-TESTABLE (per the security-boundary test plan, never faked), with
+enforcement asserted separately by the preflight and proven live in the security-boundary test plan
 (`uname` = `4.19.0-gvisor`).
 
-## What G1 (agent-sandbox subchart) needs to know
+## What the agent-sandbox subchart needs to know
 
 - **Fullname/labels:** resources are `<release>-<component>` and carry
   `app.kubernetes.io/{name,instance,component,managed-by}` plus `helm.sh/chart`.
@@ -291,15 +291,15 @@ enforcement asserted separately by the preflight and proven live in PT-3
   `<release>-valkey:6379` (password in secret key `valkeyPassword`); traces go
   to the collector at `<release>-otel-collector:4317/4318`, NOT to Langfuse
   directly.
-- **NetworkPolicy is enforced** on the k3s target (probe proves it), so the A2
+- **NetworkPolicy is enforced** on the k3s target (probe proves it), so the security rails'
   runner-egress policies will actually bite -- design the sandbox egress allow
   (model API + declared MCP endpoints) accordingly. RFC1918 vs public is a clean
   split point, as the probe's own deny policy demonstrates.
 - **Resource headroom:** on the current 4 GB node the backbone leaves little
-  room for bursty runner pods; G1's warm-pool sizing should assume the resize,
-  or run against the plan's `kind` fallback for pure lifecycle tests.
+  room for bursty runner pods; the sandbox substrate's warm-pool sizing should assume the resize,
+  or run against the planned `kind` fallback for pure lifecycle tests.
 
-## Agent Sandbox substrate (G1)
+## Agent Sandbox substrate
 
 `agentSandbox.deploy: true` (the default) adds the runner `SandboxTemplate`
 (`<release>-runner`) and `SandboxWarmPool` (`<release>-runner-pool`) that the
