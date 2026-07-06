@@ -174,6 +174,23 @@ enum Command {
         /// a real run would produce, and exit without executing anything.
         #[arg(long)]
         dry_run: bool,
+        /// Drive the LOCAL compose stack (`agentos local up`) instead of a
+        /// Kubernetes release: enqueue straight to the compose Valkey and let the
+        /// containerized worker answer. No kubectl, helm, or port-forwards.
+        /// Composes with --channel/--thread/--timeout-secs; rejects the
+        /// cluster-only flags.
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "namespace", "release", "chart", "listen_host", "listen_port",
+                "valkey_local_port", "api_local_port", "no_wire", "force_wire",
+            ]
+        )]
+        local: bool,
+        /// Local mode only: platform API base URL for the channel lookup
+        /// (default the compose API on http://localhost:8770).
+        #[arg(long, requires = "local")]
+        api_url: Option<String>,
     },
     /// Drive the whole system end to end with no Slack: the CLI runs a local
     /// Slack Web API stub, enqueues the dispatcher's event onto Valkey, and waits
@@ -414,6 +431,8 @@ async fn main() -> Result<()> {
             no_wire,
             force_wire,
             dry_run,
+            local,
+            api_url,
         } => {
             message::message(MessageOpts {
                 text,
@@ -434,6 +453,8 @@ async fn main() -> Result<()> {
                 wire: !no_wire,
                 force_wire,
                 dry_run,
+                local,
+                api_url,
             })
             .await
         }
@@ -555,5 +576,115 @@ async fn main() -> Result<()> {
             })
             .await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn clap_surface_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn message_local_composes_with_channel_thread_and_timeout() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "message",
+            "--local",
+            "--channel",
+            "C123",
+            "--thread",
+            "1.2",
+            "--timeout-secs",
+            "42",
+            "hello",
+        ])
+        .expect("--local composes with the shared flags");
+        match cli.command {
+            Command::Message {
+                local,
+                channel,
+                thread,
+                timeout_secs,
+                ..
+            } => {
+                assert!(local);
+                assert_eq!(channel.as_deref(), Some("C123"));
+                assert_eq!(thread.as_deref(), Some("1.2"));
+                assert_eq!(timeout_secs, 42);
+            }
+            _ => panic!("expected the message subcommand"),
+        }
+    }
+
+    #[test]
+    fn message_local_accepts_api_url() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "message",
+            "--local",
+            "--api-url",
+            "http://localhost:9999",
+            "hi",
+        ])
+        .expect("--api-url is allowed with --local");
+        match cli.command {
+            Command::Message { api_url, .. } => {
+                assert_eq!(api_url.as_deref(), Some("http://localhost:9999"))
+            }
+            _ => panic!("expected the message subcommand"),
+        }
+    }
+
+    #[test]
+    fn message_local_rejects_every_cluster_only_flag() {
+        // Each cluster-only flag must conflict with --local so a mixed invocation
+        // fails loudly instead of silently ignoring half the intent.
+        let cases: &[&[&str]] = &[
+            &["--namespace", "agentos"],
+            &["--release", "agentos"],
+            &["--chart", "charts/agentos"],
+            &["--listen-host", "1.2.3.4"],
+            &["--listen-port", "9000"],
+            &["--valkey-local-port", "5555"],
+            &["--api-local-port", "5556"],
+            &["--no-wire"],
+            &["--force-wire"],
+        ];
+        for extra in cases {
+            let mut argv = vec!["agentos", "message", "--local"];
+            argv.extend_from_slice(extra);
+            argv.push("hi");
+            // `Cli` is not Debug, so match rather than expect_err on the Ok arm.
+            let err = match Cli::try_parse_from(&argv) {
+                Ok(_) => panic!("--local must reject {extra:?}"),
+                Err(err) => err,
+            };
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+                "{extra:?} should conflict with --local, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn api_url_requires_local() {
+        let argv = [
+            "agentos",
+            "message",
+            "--api-url",
+            "http://localhost:8770",
+            "hi",
+        ];
+        let err = match Cli::try_parse_from(argv) {
+            Ok(_) => panic!("--api-url without --local is rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 }
