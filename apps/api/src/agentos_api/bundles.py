@@ -106,7 +106,7 @@ def _collect_text_files(root: Path) -> list[tuple[str, str]]:
     """
 
     candidates: list[Path] = []
-    for fixed in (Path(".claude-plugin/plugin.json"), Path("evals/cases.json")):
+    for fixed in (*_MANIFEST_LOCATIONS, Path("evals/cases.json")):
         if (root / fixed).is_file():
             candidates.append(root / fixed)
     candidates.extend(p for p in root.glob("skills/**/SKILL.md") if p.is_file())

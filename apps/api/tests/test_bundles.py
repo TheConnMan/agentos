@@ -82,6 +82,18 @@ def test_bad_manifest_is_rejected(tmp_path: Path) -> None:
     assert any(e.code.startswith("manifest.") for e in result.errors)
 
 
+def test_read_bundle_text_files_includes_bare_root_manifest() -> None:
+    # Upload validation accepts a manifest at bare root `plugin.json`, so the
+    # files listing must surface it too -- not only the `.claude-plugin/`
+    # location.
+    files = {
+        "plugin.json": MANIFEST,
+        "skills/alpha/SKILL.md": _skill("alpha"),
+    }
+    returned = dict(bundles.read_bundle_text_files(_tar_gz(files)))
+    assert returned["plugin.json"] == MANIFEST
+
+
 def test_non_archive_is_rejected(tmp_path: Path) -> None:
     try:
         bundles.extract_and_validate(b"not an archive", tmp_path)
