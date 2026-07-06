@@ -58,6 +58,23 @@ async def update_agent(
     return AgentOut.model_validate(agent)
 
 
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(agent_id: uuid.UUID, session: SessionDep) -> None:
+    # Deleting an agent cascades its versions and deployments rows (bundle
+    # objects in MinIO are left as-is, out of scope). Refuse while a deployment
+    # is still active so a live agent cannot be pulled out from under Slack
+    # traffic; the caller must stop it (kill/undeploy) first.
+    agent = await crud.get_agent(session, agent_id)
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+    if await crud.agent_has_active_deployment(session, agent_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "agent has an active deployment; stop it before deleting",
+        )
+    await crud.delete_agent(session, agent_id)
+
+
 @router.post(
     "/{agent_id}/versions",
     response_model=VersionOut,

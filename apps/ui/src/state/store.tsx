@@ -36,7 +36,7 @@ export function initialState(level: FixtureLevel): AppState {
     agentDetail: null,
     traceOpen: null,
     promoteForm: false,
-    defaultModel: "claude-sonnet-4.5",
+    defaultModel: "claude-sonnet-5",
     driftHover: null,
     slackTyping: false,
     showSuccess: false,

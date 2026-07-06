@@ -23,9 +23,9 @@ export interface MatrixVersion {
 }
 
 export const MATRIX_VERSIONS: MatrixVersion[] = [
-  { label: "v1.4.2 · sonnet-4.5", score: 97, col: 0 },
-  { label: "4f2c91a · sonnet-4.5", score: 94, col: 1 },
-  { label: "b7e02d1 · sonnet-4.5", score: 86, col: 2 },
+  { label: "v1.4.2 · sonnet-5", score: 97, col: 0 },
+  { label: "4f2c91a · sonnet-5", score: 94, col: 1 },
+  { label: "b7e02d1 · sonnet-5", score: 86, col: 2 },
   { label: "4f2c91a · haiku-4.5", score: 91, col: 3 },
 ];
 

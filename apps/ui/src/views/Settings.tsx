@@ -4,7 +4,7 @@ import { hoverBg } from "../lib/style";
 import { useStore } from "../state/store";
 
 const MODELS: [string, string][] = [
-  ["claude-sonnet-4.5", "Anthropic"],
+  ["claude-sonnet-5", "Anthropic"],
   ["claude-haiku-4.5", "Anthropic"],
   ["gpt-4o", "OpenRouter"],
   ["llama-3.3-70b", "OpenRouter"],

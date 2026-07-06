@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { C } from "../../tokens";
 import { Card, SectionTitle, Button, Dot, EmptyState } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
+import { deleteAgent } from "../../api/client";
 
 function Notice({ children }: { children: string }) {
   return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
@@ -9,7 +11,24 @@ function Notice({ children }: { children: string }) {
 
 export function WiredAgents() {
   const { dispatch } = useStore();
-  const { agents, loading, error } = useWired();
+  const { agents, loading, error, refetch } = useWired();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function onDelete(id: string, name: string) {
+    if (deletingId) return;
+    // Native confirm is an acceptable guard for this destructive action.
+    if (!window.confirm(`Delete agent "${name}"? This removes its versions and deployment history.`)) return;
+    setDeletingId(id);
+    try {
+      await deleteAgent(id);
+      dispatch({ type: "toast", message: `Deleted ${name}` });
+      refetch();
+    } catch (e: unknown) {
+      dispatch({ type: "toast", message: `Could not delete ${name}: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   if (loading) return <Notice>Loading agents…</Notice>;
   if (error) return <Notice>{`Could not load agents: ${error}`}</Notice>;
@@ -102,6 +121,25 @@ export function WiredAgents() {
                 style={{ marginLeft: "auto", background: "none", border: "none", color: C.link, fontSize: 13, cursor: "pointer" }}
               >
                 View traces →
+              </button>
+              <button
+                type="button"
+                data-testid="delete-agent"
+                aria-label={`Delete ${a.name}`}
+                title="Delete agent"
+                disabled={deletingId === a.id}
+                onClick={() => onDelete(a.id, a.name)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: C.destructive,
+                  fontSize: 13,
+                  cursor: deletingId === a.id ? "default" : "pointer",
+                  opacity: deletingId === a.id ? 0.5 : 1,
+                  padding: 0,
+                }}
+              >
+                {deletingId === a.id ? "Deleting…" : "Delete"}
               </button>
             </div>
           </Card>
