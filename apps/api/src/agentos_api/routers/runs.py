@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ..auth import require_api_key
 from ..deps import LangfuseDep
 from ..langfuse import build_tree
+from ..metrics import agent_trace_filter
 from ..schemas import TraceTree
 
 router = APIRouter(
@@ -15,8 +16,13 @@ router = APIRouter(
 
 
 @router.get("/traces")
-async def list_traces(lf: LangfuseDep, limit: int = 20) -> list[dict[str, object]]:
-    return await lf.list_traces(limit)
+async def list_traces(
+    lf: LangfuseDep, limit: int = 20, agent_id: str | None = None
+) -> list[dict[str, object]]:
+    # With agent_id, filter to that agent's runs by the trace-name token
+    # (agent-<id>); without it, list all recent traces.
+    name_contains = agent_trace_filter(agent_id) if agent_id else None
+    return await lf.list_traces(limit, name_contains)
 
 
 @router.get("/traces/{trace_id}", response_model=TraceTree)

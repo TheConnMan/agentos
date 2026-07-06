@@ -15,6 +15,28 @@ import httpx
 from .config import Settings
 from .schemas import ObservationNode
 
+# When filtering the trace list by an agent token, scan this many recent traces
+# and keep the matches. Langfuse's list API has no substring filter, so the
+# match is applied client-side over a bounded, newest-first scan.
+_TRACE_SCAN_LIMIT = 500
+
+
+def matching_traces(
+    traces: list[dict[str, Any]], name_contains: str, limit: int
+) -> list[dict[str, Any]]:
+    """Keep the traces whose `name` contains the token, capped at `limit`.
+
+    The scan is newest-first (Langfuse returns traces most-recent-first), so the
+    cap keeps the most recent matching runs.
+    """
+
+    out = [
+        t
+        for t in traces
+        if isinstance(t.get("name"), str) and name_contains in t["name"]
+    ]
+    return out[:limit]
+
 
 def build_tree(observations: list[dict[str, Any]]) -> list[ObservationNode]:
     """Reconstruct the nested observation tree from a flat observation list.
@@ -83,10 +105,17 @@ class LangfuseClient:
                 break
         return items
 
-    async def list_traces(self, limit: int) -> list[dict[str, Any]]:
-        body = await self._get("/api/public/traces", {"limit": limit})
-        traces: list[dict[str, Any]] = body.get("data", [])
-        return traces
+    async def list_traces(
+        self, limit: int, name_contains: str | None = None
+    ) -> list[dict[str, Any]]:
+        if name_contains is None:
+            body = await self._get("/api/public/traces", {"limit": limit})
+            traces: list[dict[str, Any]] = body.get("data", [])
+            return traces
+        # Filter to one agent's traces. Langfuse's list API has no substring
+        # filter, so scan the most recent traces and match `name contains` here.
+        scanned = await self._get("/api/public/traces", {"limit": _TRACE_SCAN_LIMIT})
+        return matching_traces(scanned.get("data", []), name_contains, limit)
 
     async def get_trace(self, trace_id: str) -> dict[str, Any]:
         return await self._get(f"/api/public/traces/{trace_id}", {})

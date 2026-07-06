@@ -1,11 +1,37 @@
 """Unit tests for the Langfuse metrics query builders (no I/O)."""
 
+import uuid
+
 from agentos_api.metrics import (
     _error_rate,
     _filters,
     _scalar_query,
+    agent_trace_filter,
     resolve_window,
 )
+
+
+def test_agent_trace_filter_is_the_agent_id_token() -> None:
+    # The runner names traces agentos-run:agent-<id>-thread-<ts>, so the per-agent
+    # filter must be the `agent-<id>` substring, not the agent's display name.
+    agent_id = uuid.UUID("00000000-0000-0000-0000-000000000042")
+    token = agent_trace_filter(agent_id)
+    assert token == "agent-00000000-0000-0000-0000-000000000042"
+    # The token is a substring of a real runner trace name.
+    assert token in f"agentos-run:{token}-thread-1720200000"
+
+
+def test_agent_filter_matches_the_runner_trace_name() -> None:
+    # A filter built from the id must select against the trace name via `contains`.
+    agent_id = uuid.uuid4()
+    token = agent_trace_filter(agent_id)
+    filters = _filters("observations", None, token)
+    assert {
+        "column": "traceName",
+        "operator": "contains",
+        "value": token,
+        "type": "string",
+    } in filters
 
 
 def test_resolve_window_uses_explicit_bounds() -> None:

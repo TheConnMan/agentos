@@ -94,12 +94,17 @@ async def get_cost(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"start/end must be ISO 8601 timestamps: {exc}",
         ) from exc
-    # Cost is filtered by the agent's trace-name token (metrics.series). Until
-    # the runner tags traces with an agent identifier (a D1 follow-up), this is a
-    # trace-name substring match, so a fresh agent with no matching traces reads
-    # zero -- the same MVP shape blessed for the OB1 metrics agent filter.
+    # Cost is filtered by the agent's trace-name token: the runner names traces
+    # agentos-run:agent-<id>-thread-<ts>, so we match traceName contains
+    # `agent-<id>`. A fresh agent with no matching traces reads zero.
     series = await metrics_service.series(
-        lf, "cost_usd", start_iso, end_iso, "day", None, agent.name
+        lf,
+        "cost_usd",
+        start_iso,
+        end_iso,
+        "day",
+        None,
+        metrics_service.agent_trace_filter(agent.id),
     )
     return CostReport(
         start=start_iso,

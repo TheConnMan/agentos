@@ -15,7 +15,7 @@ from .config import get_settings
 from .db import create_engine, create_sessionmaker
 from .evalqueue import EvalQueue
 from .github_checks import GitHubStatusReporter
-from .k8s import build_lazy_pod_log_reader
+from .k8s import build_lazy_pod_lister, build_lazy_pod_log_reader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
 from .routers import (
@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # read so an absent/expired credential does not surface as a boot-time ERROR
     # for a proxy most runs never touch.
     app.state.pod_log_reader = build_lazy_pod_log_reader(settings.kube_config_path)
+    app.state.pod_lister = build_lazy_pod_lister(settings.kube_config_path)
     valkey: redis.Redis = redis.from_url(settings.valkey_dsn())
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)

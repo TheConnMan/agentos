@@ -6,9 +6,9 @@ from starlette.concurrency import run_in_threadpool
 from .. import metrics as metrics_service
 from ..auth import require_api_key
 from ..config import get_settings
-from ..deps import LangfuseDep, PodLogReaderDep
+from ..deps import LangfuseDep, PodListerDep, PodLogReaderDep
 from ..k8s import NoClusterConfigured, PodLogError
-from ..schemas import MetricSeries, MetricsSummary, PodLogs
+from ..schemas import MetricSeries, MetricsSummary, PodLogs, RunnerPods
 
 router = APIRouter(
     prefix="/observability",
@@ -59,6 +59,26 @@ async def metrics_series(
     return await metrics_service.series(
         lf, metric, start_iso, end_iso, granularity, environment, agent
     )
+
+
+@router.get("/runners", response_model=RunnerPods)
+async def list_runner_pods(
+    lister: PodListerDep,
+    namespace: str | None = None,
+) -> RunnerPods:
+    settings = get_settings()
+    ns = namespace or settings.runner_namespace
+    try:
+        pods = await run_in_threadpool(
+            lister.list_runner_pods, ns, settings.runner_pod_label_selector
+        )
+    except NoClusterConfigured as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)
+        ) from exc
+    except PodLogError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return RunnerPods(namespace=ns, pods=pods)
 
 
 @router.get("/runners/{namespace}/{pod}/logs", response_model=PodLogs)

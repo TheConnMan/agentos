@@ -6,16 +6,31 @@ series, filterable by environment and by agent (a trace-name match; see the note
 below). Every number is a faithful proxy of a Langfuse aggregate.
 
 Agent filtering matches the Langfuse trace name (`name` on traces, `traceName`
-on observations). The runner names traces `agentos-run:<session>`, so until it
-also tags an explicit agent identifier the `agent` filter is a trace-name
-substring match; the query shape is already correct for a real agent tag.
+on observations) with a `contains` operator. The runner names traces
+`agentos-run:agent-<agent_id>-thread-<ts>`, so an agent's runs are exactly the
+traces whose name contains `agent-<agent_id>`. `agent_trace_filter` builds that
+token; callers pass it as the `agent` argument below.
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .langfuse import LangfuseClient
 from .schemas import MetricPoint, MetricSeries, MetricsSummary
+
+
+def agent_trace_filter(agent_id: uuid.UUID | str) -> str:
+    """The trace-name substring that selects one agent's runs.
+
+    The runner names every trace `agentos-run:agent-<agent_id>-thread-<ts>`, so
+    the agent's traces are those whose name contains `agent-<agent_id>`. This is
+    the value passed as the `agent` filter (a `contains` match on trace name);
+    matching on `agent.name` never matched a real trace name, which is why
+    per-agent cost/traces always read zero.
+    """
+
+    return f"agent-{agent_id}"
 
 SCALAR_METRICS = ("runs", "latency_p95_seconds", "tokens", "cost_usd")
 ALL_METRICS = (*SCALAR_METRICS, "error_rate")

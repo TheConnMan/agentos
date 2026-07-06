@@ -168,6 +168,13 @@ class PodLogs(BaseModel):
     logs: str
 
 
+class RunnerPods(BaseModel):
+    """The runner sandbox pods in a namespace (populates the Logs pod dropdown)."""
+
+    namespace: str
+    pods: list[str]
+
+
 class EvalCell(BaseModel):
     """One cell of the eval matrix: a case's result on a version."""
 
