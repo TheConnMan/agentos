@@ -20,6 +20,10 @@ from .schemas import ObservationNode
 # match is applied client-side over a bounded, newest-first scan.
 _TRACE_SCAN_LIMIT = 500
 
+# Langfuse's public list API caps page size at 100 and 400s anything larger, so
+# every list request is clamped to this and paginated to gather more.
+_MAX_PAGE_SIZE = 100
+
 
 def matching_traces(
     traces: list[dict[str, Any]], name_contains: str, limit: int
@@ -92,14 +96,26 @@ class LangfuseClient:
         return data
 
     async def _get_all(
-        self, path: str, params: dict[str, Any], page_size: int = 100, max_pages: int = 50
+        self,
+        path: str,
+        params: dict[str, Any],
+        max_items: int | None = None,
+        max_pages: int = 50,
     ) -> list[dict[str, Any]]:
-        """Fetch every page of a paginated list endpoint (data[] + meta.totalPages)."""
+        """Fetch pages of a paginated list endpoint (data[] + meta.totalPages).
+
+        Page size is clamped to Langfuse's hard cap of 100 (it 400s anything
+        larger). Stops once `max_items` are gathered (if set) or pages run out.
+        """
 
         items: list[dict[str, Any]] = []
         for page in range(1, max_pages + 1):
-            body = await self._get(path, {**params, "page": page, "limit": page_size})
+            body = await self._get(
+                path, {**params, "page": page, "limit": _MAX_PAGE_SIZE}
+            )
             items.extend(body.get("data", []))
+            if max_items is not None and len(items) >= max_items:
+                return items[:max_items]
             meta = body.get("meta") or {}
             if page >= int(meta.get("totalPages", page)):
                 break
@@ -109,13 +125,13 @@ class LangfuseClient:
         self, limit: int, name_contains: str | None = None
     ) -> list[dict[str, Any]]:
         if name_contains is None:
-            body = await self._get("/api/public/traces", {"limit": limit})
-            traces: list[dict[str, Any]] = body.get("data", [])
-            return traces
+            return await self._get_all("/api/public/traces", {}, max_items=limit)
         # Filter to one agent's traces. Langfuse's list API has no substring
         # filter, so scan the most recent traces and match `name contains` here.
-        scanned = await self._get("/api/public/traces", {"limit": _TRACE_SCAN_LIMIT})
-        return matching_traces(scanned.get("data", []), name_contains, limit)
+        scanned = await self._get_all(
+            "/api/public/traces", {}, max_items=_TRACE_SCAN_LIMIT
+        )
+        return matching_traces(scanned, name_contains, limit)
 
     async def get_trace(self, trace_id: str) -> dict[str, Any]:
         return await self._get(f"/api/public/traces/{trace_id}", {})

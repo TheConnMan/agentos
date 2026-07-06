@@ -33,6 +33,9 @@ spec:
         {{- include "agentos.labels" . | nindent 8 }}
         {{- include "agentos.selectorLabels" (dict "root" . "component" "api") | nindent 8 }}
     spec:
+      # The runner-logs proxy lists pods and reads pod logs via the K8s API, so
+      # the API pod runs as its own ServiceAccount (see api-rbac.yaml).
+      serviceAccountName: {{ include "agentos.fullname" . }}-api
       {{- with .Values.api.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
