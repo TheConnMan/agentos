@@ -270,13 +270,17 @@ spec:
             {{- end }}
             {{- end }}
           {{- end }}
-{{- if gt (int .Values.agentSandbox.warmPool.replicas) 0 }}
 {{/*
-Rendered only when replicas > 0. At the default 0 the pool is omitted entirely:
-an unbound warm pod cannot boot a real-model runner without a bundle (it raises
-PluginBundleError and crash-loops), and a real claim cold-creates anyway because
-per-claim env injection cannot bind a pre-warmed pod (envVarsInjectionPolicy
-Overrides). Raise replicas only for a fake-model/dev pool.
+The SandboxWarmPool is always rendered whenever the sandbox substrate is
+deployed, including at replicas 0. The worker's SandboxClaims reference this
+pool by name (spec.warmPoolRef.name); with the object absent every claim fails
+Ready=False reason=WarmPoolNotFound and the run times out. replicas 0 means no
+pre-warmed pods (claims cold-create sandboxes from the template) -- it must not
+mean no pool object. Raise replicas only for a fake-model/dev pool where an
+unbound warm pod boots cleanly (a real-model warm pod has no bundle and
+crash-loops, and a real claim cold-creates anyway because per-claim env
+injection cannot bind a pre-warmed pod, the envVarsInjectionPolicy Overrides
+gotcha).
 */}}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
@@ -292,5 +296,4 @@ spec:
     type: {{ .Values.agentSandbox.warmPool.updateStrategy }}
   sandboxTemplateRef:
     name: {{ include "agentos.fullname" . }}-runner
-{{- end }}
 {{- end }}
