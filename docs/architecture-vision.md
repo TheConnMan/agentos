@@ -1,0 +1,296 @@
+# Architecture Vision: Swappable Jobs Around an Opinionated Core
+
+AgentOS is a set of jobs with swappable components tied together by one
+opinionated core: the agent runner platform. The core (dispatcher, queue,
+worker kernel, sandbox substrate, runner behind the frozen ACI protocol, the
+API's git-flow engine, and the UI) is where the opinions live and where the
+black-line interfaces are strongest. Around it sit six jobs a production agent
+platform must do, each filled today by one curated default component, each
+replaceable behind a port without rewriting the system.
+
+The value framing matters as much as the wiring: the product is not a bag of
+integrations. It tells a developer which pieces they actually need to run
+agents in production (observability, evals, blob storage, a relational store,
+a harness, a channel), ships a working default for each, and keeps the seams
+clean enough that any one default can be swapped per job later. Hexagonal in
+spirit, with discipline: one implementation per port today, and each port is
+defined by where the code already draws the line, not by a speculative
+interface layer. This doc grounds each job in the code on main: where the
+boundary physically lives, the current adapter, the swap cost, and where the
+seam honestly is not clean yet.
+
+## The opinionated core
+
+The core is everything a swap must not touch: `apps/dispatcher` normalizes
+ingress into a queue event, `apps/worker` is the concurrency kernel (one live
+session per thread, steer vs interrupt, no retry after side effects), the
+sandbox substrate (`apps/worker/src/agentos_worker/sandbox/`) claims isolated
+runtimes on Kubernetes or Docker, `runner/` serves the ACI protocol inside the
+sandbox, `apps/api` owns agents/versions/deployments and the git-flow deploy
+engine, and `apps/ui` and `cli/` are the operator surfaces. The core's own
+internal seams are already contracts: `packages/aci-protocol` and
+`packages/plugin-format` are frozen, tri-language (Pydantic source of truth,
+committed JSON Schema, generated TypeScript and Rust), and guarded by a
+schema-compat CI test.
+
+## The six swappable jobs
+
+### 1. Harness / runtime (Claude Code today)
+
+**Port:** the frozen ACI session protocol in `packages/aci-protocol`:
+`SessionConfig` and its `AGENTOS_*` env mapping
+(`packages/aci-protocol/src/aci_protocol/session.py`) plus the NDJSON event
+union `text_delta | tool_note | final | error | side_effect_flag` and the
+inbound `event | interrupt` frames
+(`packages/aci-protocol/src/aci_protocol/events.py`). The worker, CLI, and UI
+all compile against the generated artifacts; none of them import the SDK.
+
+**Current adapter:** the runner. Inside the boundary it is deliberately
+claude-agent-sdk-coupled: `runner/src/agentos_runner/adapter.py` defines a
+`ModelSession` protocol and implements it with `ClaudeSDKClient` in
+streaming-input mode (native steer and interrupt), and `translate.py` maps SDK
+messages to ACI events.
+
+**Swap (candidates: ADK, Codex, Strands, other Claude Agent SDK variants):**
+implement a new ACI server (an HTTP process that accepts `/v1/event`,
+`/v1/steer`, `/v1/interrupt`, streams the NDJSON union, and honors the
+`SessionConfig` env contract), package it as a runner image. The platform
+does not change. The runner's conformance suite
+(`runner/src/agentos_runner/conformance.py`, driven by a scripted
+`ModelSession`) is the reusable acceptance test for any new implementation.
+
+**Leakage, stated honestly:** the harness port is entangled with the plugin
+format. `packages/plugin-format` is the Claude Code plugin shape verbatim (a
+deliberate distribution wedge), so a non-Claude harness must interpret Claude
+Code plugin bundles or translate them into its own configuration; "implement
+the ACI server" understates that work. Resume also assumes SDK-like history
+rehydration: `AGENTOS_HISTORY_REF` becomes the SDK `resume` session id
+(`adapter.py::build_options`); a harness without an equivalent must build its
+own history store.
+
+### 2. Observability / OTel store (Langfuse today)
+
+**Port:** OTLP into the collector on the write side; our API DTOs on the read
+side. Services never speak Langfuse directly: the runner exports gen_ai spans
+over OTLP-HTTP to the collector (`runner/src/agentos_runner/otel.py`), and the
+collector is the single component that authenticates and forwards to Langfuse
+(`charts/agentos/templates/otel-collector.yaml`, needed because Langfuse OTLP
+ingest is HTTP-only). On the read side the UI consumes only our API's schemas
+(`ObservationNode`, `MetricsSummary` in `apps/api/src/agentos_api/schemas.py`).
+
+**Current adapter:** `apps/api/src/agentos_api/langfuse.py` (trace list, tree
+reconstruction from `parentObservationId`, metrics queries) plus
+`apps/api/src/agentos_api/metrics.py`. Vendor glue lives where an adapter's
+glue should: the model-pricing seed Job is a chart hook
+(`charts/agentos/templates/langfuse-model-pricing.yaml`), config owned by the
+adapter, not code in the core.
+
+**Swap (candidates: Arize Phoenix, any OTLP-compatible trace backend):**
+repoint one collector exporter block and rewrite the read
+adapter behind the same API DTOs. The tree-building and metrics logic in
+`langfuse.py` is Langfuse-API-shaped (client-side substring scan, the Metrics
+API query object) and would be rewritten, not ported.
+
+**Leakage:** the runner stamps a `langfuse.trace.name` span attribute
+(`runner/src/agentos_runner/otel.py`), a vendor attribute on the otherwise
+neutral write path; a clean seam would use a neutral attribute the collector
+maps. The UI also reaches the read adapter through vendor-named routes
+(`/langfuse/traces` in `apps/ui/src/api/client.ts`), so the vendor name leaks
+into the URL namespace even though the payloads are ours.
+
+### 3. Evals (Langfuse datasets/scores today)
+
+**Port:** our own eval plane defines the schema; Langfuse is storage behind
+it. The write path is the `agentos:evals` Valkey stream carrying an
+`EvalWorkItem`, consumed by `apps/worker/src/agentos_worker/eval/stream.py`,
+with results shaped by our models (`eval/models.py`). The UI-facing read path
+is our API's matrix endpoint (`apps/api/src/agentos_api/routers/evals.py`)
+returning our `EvalMatrix` schema, and the PR gate is our `/evals/report`
+endpoint turning a rollup into a GitHub commit status.
+
+**Current adapter:** `eval/recorder.py` posts one Langfuse trace plus an
+`eval_pass` score per case via the public ingestion API, tagged
+`version:<v>` / `suite:<s>`; the matrix endpoint reads the grid back by those
+tags through the same `LangfuseClient`.
+
+**Swap (candidates: Arize, other eval stores; scorer libraries such as
+autoevals slot in above this port, changing how `passed` is computed, not
+where results are stored):** reimplement the recorder and the matrix read
+against the new store. The tag convention (`version:`/`suite:`) is our schema
+expressed in Langfuse's tag mechanism, so it translates, but it is
+convention, not a frozen contract.
+
+**Leakage:** the eval-case format is duplicated, not frozen: the CLI reads
+`evals/cases.json` (`{name, input, expect_contains}` in `cli/src/evals.rs`)
+and the platform's bundle loader reads the same shape independently
+(`eval/stream.py`); `docs/roadmap.md` section 2 already calls for converging
+and freezing it. Until then an eval-store swap has two format definitions to
+keep honest.
+
+### 4. Blob storage (MinIO today)
+
+**Port:** the S3 protocol. Both writers and readers construct plain boto3 S3
+clients with an `endpoint_url` and path-style addressing: the API's immutable
+bundle store (`apps/api/src/agentos_api/storage.py`) and the worker's
+read-side mirror (`apps/worker/src/agentos_worker/bundle_store.py`). On
+Kubernetes the chart's bundle-fetch init container fetches with `mc`
+(`charts/agentos/templates/agent-sandbox.yaml`), also pure S3 protocol.
+
+**Current adapter:** MinIO, deployed by the chart
+(`charts/agentos/templates/minio.yaml`).
+
+**Swap:** AWS S3, Cloudflare R2, or any S3-compatible store is config only
+(endpoint, keys, region). GCS is a real decision: either rely on its
+S3-interoperability mode (stays config-only) or introduce an actual storage
+interface, which does not exist today.
+
+**Leakage:** the port is a protocol, not a code interface, and it is
+instantiated in three places (API, worker, chart init container) that must be
+kept aligned by hand. Within the S3-compatible world that is fine; a non-S3
+backend would touch all three.
+
+### 5. Relational database (Postgres today)
+
+**Port:** SQL through SQLAlchemy 2.0 plus alembic migrations
+(`apps/api/src/agentos_api/models.py`, `apps/api/alembic/versions/`, four
+migrations). The schema is deliberately minimal: agents, agent_versions,
+deployments.
+
+**Current adapter:** the chart's Postgres
+(`charts/agentos/templates/postgres.yaml`); locally, the compose stack.
+
+**Swap:** any managed Postgres (RDS, Cloud SQL, Neon) is a connection-string
+change, and that is the realistic swap. A different SQL engine is a small
+refactor, not a rewrite.
+
+**Leakage:** two Postgres-isms are in the models: the
+`sqlalchemy.dialects.postgresql.UUID` column type (`models.py`) and
+schema-qualified tables plus a schema-scoped native enum
+(`db.py::SCHEMA`, the `Environment` enum). Both have portable SQLAlchemy
+equivalents if a non-Postgres target ever materializes.
+
+### 6. Communication channel (Slack today)
+
+**Port:** this is the least clean seam, and saying so is the point. The
+ingress contract is `QueuedSlackEvent`
+(`apps/dispatcher/src/agentos_dispatcher/queue.py`), Slack-shaped by name and
+semantics: `slack_event_id` as the idempotency key, `thread_ts` as the
+conversation key, `placeholder_ts` encoding Slack's edit-in-place reply
+model. The egress contract is the worker's `SlackSink` protocol
+(`apps/worker/src/agentos_worker/slack_sink.py`), a single
+`update(channel, ts, text)` built on `chat.update`. The mrkdwn dialect is
+correctly confined to the sink (`mrkdwn.py`), but the kernel does assume the
+edit-a-placeholder reply shape.
+
+**Current adapter:** `apps/dispatcher` (Bolt, Socket Mode) on ingress,
+`AsyncSlackSink` on egress.
+
+**Evidence the channel is already semi-swappable:** `agentos chat` and
+`agentos message` (`cli/src/chat.rs`, `cli/src/message.rs`) drive the entire
+deployed system with zero Slack contact by minting the exact
+`QueuedSlackEvent` wire payload (`cli/src/queue.rs`) and standing in as the
+Slack Web API. The Slack service swaps; the Slack protocol does not yet.
+
+**What a channel-neutral port looks like:** an ingress event of
+`{event_id, conversation_id, author, text, reply_handle, received_at}` and a
+`ReplySink` with post/update semantics per channel adapter. The reshaping
+cost is bounded: the queue payload (which `docs/roadmap.md` section 2 already
+wants promoted into `packages/aci-protocol`), the CLI's mirrored struct, the
+kernel's thread-lock and marker keys, and the channel-based deployment
+binding (`apps/worker/src/agentos_worker/binding.py`). Doing the promotion
+and the rename in one motion turns two roadmap debts into one change. A
+separate gap: the reply base URL is worker-global (`worker.slackApiBaseUrl`),
+so two ingress paths cannot coexist on one deployment until replies are
+routed per turn (roadmap section 3).
+
+## Component diagram
+
+```mermaid
+flowchart TB
+    subgraph channel["Job 6: communication channel"]
+        Slack["Slack via Bolt (today)"]
+        CLIStub["agentos chat / message stub (swap proof)"]
+    end
+
+    subgraph core["Opinionated core: agent runner platform"]
+        Dispatcher["apps/dispatcher"]
+        Queue["Valkey stream agentos:runs"]
+        Worker["apps/worker kernel"]
+        Substrate["sandbox substrate (k8s Agent Sandbox / Docker)"]
+        Runner["runner (ACI server)"]
+        API["apps/api (git-flow, bundles, read proxies)"]
+        UI["apps/ui console"]
+        Dispatcher --> Queue --> Worker --> Substrate --> Runner
+        UI --> API
+        Worker --> API
+    end
+
+    subgraph harness["Job 5: harness / runtime"]
+        SDK["claude-agent-sdk (today)"]
+        HarnessAlt["ADK, Codex, Strands (candidates)"]
+    end
+
+    subgraph obs["Job 1: observability store"]
+        Collector["OTel Collector"]
+        Langfuse["Langfuse (today) or Arize Phoenix"]
+        Collector --> Langfuse
+    end
+
+    subgraph evals["Job 2: evals"]
+        EvalStore["Langfuse scores (today) or Arize"]
+    end
+
+    subgraph blob["Job 3: blob storage"]
+        S3["MinIO (today), S3, GCS"]
+    end
+
+    subgraph db["Job 4: relational database"]
+        PG["Postgres (today) or managed SQL"]
+    end
+
+    Slack -- "QueuedSlackEvent" --> Dispatcher
+    CLIStub -- "same wire payload" --> Queue
+    Runner -- "frozen ACI protocol" --> SDK
+    Runner -- "OTLP HTTP" --> Collector
+    Worker -- "OTLP" --> Collector
+    API -- "read adapter (langfuse.py)" --> Langfuse
+    Worker -- "eval recorder" --> EvalStore
+    API -- "S3 protocol (boto3)" --> S3
+    Substrate -- "bundle-fetch init (mc)" --> S3
+    API -- "SQLAlchemy + alembic" --> PG
+```
+
+## Swap readiness
+
+| Job | Port contract | Current adapter | Grade | Cheapest next step |
+|---|---|---|---|---|
+| Harness / runtime | Frozen ACI protocol (`packages/aci-protocol`), tri-language, CI-guarded | claude-agent-sdk runner | A-: strongest seam in the system; docked for the plugin-format entanglement and SDK-shaped resume | Write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced |
+| Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for one vendor span attribute; read side isolated in one module | Rename `langfuse.trace.name` to a neutral attribute mapped in the collector; rename the `/langfuse/*` API routes |
+| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours, but the case format is duplicated and the tag convention is unfrozen | Converge the two `cases.json` definitions into one frozen schema (roadmap section 2) |
+| Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; three hand-aligned client sites; no interface for non-S3 | None needed until a non-S3 demand exists; document the three client sites as one seam |
+| Relational DB | SQLAlchemy 2.0 + alembic | Postgres | A-: managed-Postgres swap is a DSN change; two Postgres-isms in models | Leave as is; note the `postgresql.UUID` and schema-scoped enum as the two things a non-Postgres target would touch |
+| Communication | `QueuedSlackEvent` + `SlackSink` | Slack (Bolt + chat.update) | C: Slack-shaped names and edit-in-place semantics in the core's contract; service swappable (CLI stub), protocol not | Promote the queue payload into `aci-protocol` with channel-neutral field names in the same change |
+
+## What we deliberately do not abstract yet
+
+The second implementation teaches the interface. Every port above has exactly
+one implementation, and we resist writing adapter layers ahead of a real swap
+demand: a speculative `StorageInterface` or `ChannelAdapter` would encode
+guesses about the second implementation's needs and would be wrong in the
+ways that matter. Concretely, we do not yet abstract:
+
+- A blob-storage interface beyond the S3 protocol. GCS-native support waits
+  for a user who needs it; until then the protocol is the port.
+- A multi-channel adapter framework. The channel-neutral rename above is
+  cheap and worth doing; a pluggable channel registry is not, until a second
+  real channel exists.
+- A generic eval-store interface. The recorder is one file; the second store
+  defines what the interface must be.
+- Cross-database portability. Managed Postgres is the swap that will actually
+  happen; chasing MySQL compatibility now buys nothing.
+
+The discipline that keeps this honest is convention plus review: the boundary
+files above are known and small, cross-seam imports get flagged in review, and
+the two contracts that must not drift are frozen in CI. When a real swap
+demand arrives, the port gets promoted from convention to contract the way the
+ACI protocol already was.

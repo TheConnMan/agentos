@@ -90,7 +90,8 @@ below and the root `CLAUDE.md`.
 Sandbox (interactive runtime), Slack Bolt (Socket Mode), Valkey Streams
 (queue), Postgres (app state), the OTel Collector. AgentOS builds five things
 around that spine: the API, the dispatcher, the worker+runner glue, the UI,
-and the CLI.
+and the CLI. For where each adopted component's swap seam lives and how clean
+it is, see [architecture-vision.md](architecture-vision.md).
 
 ## Message flow: a Slack mention becomes a threaded reply
 
