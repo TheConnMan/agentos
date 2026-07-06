@@ -127,6 +127,22 @@ class WorkerConfig(BaseModel):
 
     key_prefix: str = "agentos:worker"
 
+    @property
+    def valkey_socket_timeout_s(self) -> float:
+        """Socket read timeout for the Valkey clients, kept above the block interval.
+
+        An idle blocking XREADGROUP blocks server-side for ``read_block_ms`` and
+        then returns an empty reply, but redis-py enforces the client
+        ``socket_timeout`` on that same read (its default is 5s). If the socket
+        timeout is not longer than the block, the socket read deadline fires at
+        the exact moment the block would return empty, so every idle cycle raises
+        a read timeout instead of returning empty and floods the logs. The extra
+        headroom past ``read_block_ms`` covers pod-to-pod RTT and Valkey
+        processing after the block elapses. Genuine connection blips still raise
+        and are logged as real transport errors.
+        """
+        return self.read_block_ms / 1000 + 5.0
+
     def done_key(self, slack_event_id: str) -> str:
         return f"{self.key_prefix}:done:{slack_event_id}"
 

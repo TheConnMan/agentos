@@ -30,6 +30,15 @@ def test_claim_timeout_default_stays_under_lock_ttl() -> None:
     assert _SUB.claim_timeout_seconds < WorkerConfig().lock_ttl_ms / 1000
 
 
+def test_valkey_socket_timeout_exceeds_the_block_interval() -> None:
+    # redis-py enforces the client socket_timeout on the blocking XREADGROUP, so
+    # it must sit above read_block_ms or every idle read raises a timeout instead
+    # of returning empty (log flood). Guard the invariant that keeps idle reads
+    # quiet across any read_block_ms tuning.
+    cfg = WorkerConfig()
+    assert cfg.valkey_socket_timeout_s > cfg.read_block_ms / 1000
+
+
 def test_docker_without_credential_or_fake_fails_loudly() -> None:
     with pytest.raises(SystemExit) as exc:
         _sandbox_client(WorkerConfig(), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB)

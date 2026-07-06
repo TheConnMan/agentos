@@ -38,7 +38,7 @@ use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
 pub const DEFAULT_USER: &str = "U-agentos-message";
-pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
+pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 /// Fixed stub port so the advertised URL is deterministic; `0` picks ephemeral.
 pub const DEFAULT_LISTEN_PORT: u16 = 8155;
 /// Local port the Valkey port-forward binds. Chosen to dodge the compose dev

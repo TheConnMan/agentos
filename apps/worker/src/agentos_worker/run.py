@@ -125,6 +125,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         password=config.valkey_password or None,
         db=config.valkey_db,
         decode_responses=True,
+        socket_timeout=config.valkey_socket_timeout_s,
     )
     sync_redis = redis.Redis(
         host=config.valkey_host,
@@ -132,6 +133,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         password=config.valkey_password or None,
         db=config.valkey_db,
         decode_responses=True,
+        socket_timeout=config.valkey_socket_timeout_s,
     )
     sub_config = _substrate_config(env)
     substrate = SandboxSubstrate(
@@ -175,6 +177,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         password=config.valkey_password or None,
         db=config.valkey_db,
         decode_responses=True,
+        socket_timeout=config.valkey_socket_timeout_s,
     )
     eval_http = httpx.AsyncClient(timeout=30.0)
     eval_consumer = EvalStreamConsumer(
