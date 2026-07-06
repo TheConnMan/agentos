@@ -263,6 +263,11 @@ worker:
   # The SandboxWarmPool the substrate claims from. Empty -> derived as
   # `<release>-runner-pool` (the name templates/agent-sandbox.yaml gives it).
   warmPool: ""
+  # Extra env for the worker container, list of {name, value}. Use it to point
+  # SLACK_API_BASE_URL at a Slack Web API stub for no-Slack middle-mode runs
+  # (the `agentos chat` CLI stub), or any other worker override the fixed env
+  # block does not cover.
+  extraEnv: []
   resources:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { cpu: "1", memory: 512Mi }
@@ -419,6 +424,16 @@ agentSandbox:
     # containerd handler installed (a node-level op the gVisor preflight checks);
     # set to "" to disable kernel isolation on clusters without runsc.
     runtimeClassName: gvisor
+    # Pod DNS policy for sandbox pods. Defaults to ClusterFirst because the
+    # bundle-fetch init container resolves the in-chart MinIO by Service name and
+    # the runner exports OTLP to the in-chart collector by Service name -- both
+    # need cluster DNS. Left unset, the agent-sandbox controller injects a
+    # public-resolver default (8.8.8.8/1.1.1.1) that cannot resolve those names,
+    # so the bundle-fetch init fails and bound sandboxes never bind. ClusterFirst
+    # queries CoreDNS (which the runner-allow-dns NetworkPolicy permits) and still
+    # forwards external names upstream, so real-model egress is unaffected. Set to
+    # "" only with fully external (BYO) MinIO + collector reached by IP/allowlist.
+    dnsPolicy: ClusterFirst
     # Rail 2: the runner ServiceAccount. Least privilege: no secret list/get on
     # its own. The per-agent secret Role (resourceNames-scoped to that agent's
     # credential Secret) is created per agent by the control plane, not the chart
