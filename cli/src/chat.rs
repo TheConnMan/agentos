@@ -319,7 +319,8 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            ui.payload(&reply);
+            ui.answer(&reply);
+            ui.print_tokens("\n");
             print_continue_hint("chat", &channel, &thread_ts);
             Ok(())
         }

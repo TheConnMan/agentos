@@ -609,7 +609,8 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            ui.payload(&reply);
+            ui.answer(&reply);
+            ui.print_tokens("\n");
             print_continue_hint("message --local", &channel, &thread_ts);
             Ok(())
         }
@@ -758,7 +759,8 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            ui.payload(&reply);
+            ui.answer(&reply);
+            ui.print_tokens("\n");
             print_continue_hint("message", &channel, &thread_ts);
             Ok(())
         }

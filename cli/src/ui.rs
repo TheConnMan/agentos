@@ -223,6 +223,14 @@ impl Ui {
         role(self.truecolor, 0xE6, 0xED, 0xF3, AnsiColor::White).bold()
     }
 
+    /// Bright white without bold: the streamed/returned agent answer. Same
+    /// foreground as `payload_style` (the brightest thing on screen) but not
+    /// bold, since a bold multi-line paragraph reads too heavy; short status
+    /// lines keep `payload`'s bold.
+    fn answer_style(&self) -> Style {
+        role(self.truecolor, 0xE6, 0xED, 0xF3, AnsiColor::White)
+    }
+
     fn ok_glyph(&self) -> &'static str {
         if self.unicode {
             "\u{2713}" // check mark
@@ -338,6 +346,15 @@ impl Ui {
     pub fn print_tokens(&self, s: &str) {
         let mut out = anstream::stdout();
         let _ = write!(out, "{s}");
+        let _ = out.flush();
+    }
+
+    /// Write agent answer text to stdout in the bright payload color (non-bold),
+    /// no trailing newline, flushed. Used for streamed tokens and returned replies.
+    pub fn answer(&self, s: &str) {
+        let styled = self.paint_out(self.answer_style(), s);
+        let mut out = anstream::stdout();
+        let _ = write!(out, "{styled}");
         let _ = out.flush();
     }
 

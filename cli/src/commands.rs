@@ -282,7 +282,7 @@ pub async fn send(
                 // pace with no per-delta newline. Track mid-line state so a later
                 // note closes an un-terminated line first.
                 Some(TurnPart::Token(token)) => {
-                    ui.print_tokens(&token);
+                    ui.answer(&token);
                     streamed = true;
                     at_line_start = token.ends_with('\n');
                 }
