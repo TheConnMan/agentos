@@ -36,6 +36,26 @@ class HelpPackConfig(BaseModel):
     reply: str = ""
 
 
+class SettingConfig(BaseModel):
+    """One declared user-editable runtime knob (mirrors behaviorpacks.Setting)."""
+
+    key: str
+    label: str = ""
+    kind: str = "str"
+    default: str = ""
+    help: str = ""
+    choices: list[str] = []
+    applies_live: bool = True
+
+
+class SettingsPackConfig(BaseModel):
+    """An agent's declarative allowlist of editable runtime knobs (schema only;
+    the override store + edit UI are a deferred runtime)."""
+
+    enabled: bool = False
+    settings: list[SettingConfig] = []
+
+
 class BehaviorPacksConfig(BaseModel):
     """An agent's opt-in behavior packs. Validated on write and stored as JSON on
     the agent row; the worker parses the same JSON at bind time."""
@@ -45,6 +65,7 @@ class BehaviorPacksConfig(BaseModel):
     tips: TipsPackConfig = TipsPackConfig()
     greeting: GreetingPackConfig = GreetingPackConfig()
     help: HelpPackConfig = HelpPackConfig()
+    settings: SettingsPackConfig = SettingsPackConfig()
 
 
 class AgentCreate(BaseModel):

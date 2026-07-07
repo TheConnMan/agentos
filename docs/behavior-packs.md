@@ -10,8 +10,11 @@ install:
   that never calls the model.
 - **help** -- a canned reply to a *bare* help / "what can you do" request, also
   without a model call (the niceties battery's help half).
+- **settings** -- a declarative allowlist of user-editable runtime knobs (the
+  template's user-settings battery), with platform-owned validation. Schema only
+  in this PR; the durable override store and edit UI are a deferred runtime.
 
-These three are illustrative, not the point. The point is the mechanism: a
+These example packs are illustrative, not the point. The point is the mechanism: a
 per-agent, opt-in, declarative config layer, resolved at bind time, that an owner
 enables for their own deployments with no effect on any other agent. New pack
 types slot into the same mechanism. The battery-by-battery mapping below shows
@@ -36,18 +39,35 @@ The substrate, end to end, minus the kernel call sites:
   `POST /agents`, and read/written via `GET|PUT /agents/{id}/behavior-packs`
   (mirrors the budget control endpoints). NULL reads as all-off.
 - **Logic** (`apps/worker/behaviorpacks.py`): `sample_tip(packs, seed)`,
-  `match_greeting(packs, text)`, and `match_help(packs, text)`, pure stdlib,
-  fully unit-tested. The two matchers share one bare-utterance core: they return
-  a reply only for a phrase said alone (or with trailing filler); a phrase glued
-  to a real request ("hi show me the report") returns `None` and falls through to
-  the model.
+  `match_greeting(packs, text)`, `match_help(packs, text)`, plus the settings
+  pack's `coerce_setting(setting, raw)` and `resolve_settings(packs, overrides)`.
+  Pure stdlib, fully unit-tested. The two matchers share one bare-utterance core:
+  they return a reply only for a phrase said alone (or with trailing filler); a
+  phrase glued to a real request ("hi show me the report") returns `None` and
+  falls through to the model. `resolve_settings` layers a validated override over
+  each declared default and ignores unknown/invalid keys, so a stale store can
+  never break resolution.
 - **Binding** (`apps/worker/binding.py`, not the sacred kernel): the resolver
   now selects `behavior_packs`, carries it on `ResolvedDeployment`, and exposes
   `BindingResolver.packs_for(resolved) -> BehaviorPacks`.
 
-## What is NOT built: the kernel wiring (needs F1 review)
+## What is NOT built: the deferred runtimes
 
-Both touches fire from inside `apps/worker/kernel.py`, which is the F1 "sacred"
+Two pieces are intentionally out of this PR, each a natural follow-up on top of
+the substrate here.
+
+### The settings-pack override store + edit UI
+
+The `settings` pack ships its schema and validation (`coerce_setting`,
+`resolve_settings`). What it does not ship is the durable per-agent override
+store the resolved values layer onto, and the surface (a Slack modal / an API
+route) an owner uses to change them live. `resolve_settings(packs, overrides)`
+is already the function that runtime will call; wiring a store into it is
+additive and touches neither the kernel nor a frozen contract.
+
+### The kernel wiring for tips/greeting/help (needs F1 review)
+
+These touches fire from inside `apps/worker/kernel.py`, which is the F1 "sacred"
 module: any change needs the escalated adversarial review (spec-vs-impl +
 side-effects-detective) per `apps/worker/CLAUDE.md`. The greeting short-circuit
 also brushes against kernel rule 3 ("the kernel never keyword-guesses intent"),
@@ -106,7 +126,7 @@ pack.
 | Working status / tips | **Pack** (`tips`) | Pure data (lines + tips) sampled by a platform function. Shipped. |
 | Greeting detection | **Pack** (`greeting`) | Data (phrases + reply), deterministic pre-model matcher. Shipped. |
 | Help / "what can you do" | **Pack** (`help`) | Same shape as greeting; the niceties battery's help half. Shipped. |
-| Runtime settings / knobs | **Candidate pack (schema only)** | The editable-settings allowlist is declarative and could be a pack; the store + live-override + edit UI is a stateful subsystem that overlaps AgentOS budgets/config. Deferred. |
+| Runtime settings / knobs | **Pack** (`settings`, schema) | The editable-settings allowlist is declarative; shipped with platform-owned validation (`coerce_setting`/`resolve_settings`). The durable override store + edit UI are a deferred runtime. |
 | Kill switch / control | **Already native** | AgentOS has it: `apps/worker/killswitch.py` + `Kernel` kill gate + the `/agents/{id}/kill` control endpoint. A pack would duplicate it. |
 | Activity log | **Already native (observability)** | Post-model observation is Langfuse tracing; the Slack "activity" ring buffer is stateful UI code, not declarative data. |
 | Logging setup | **Not per-agent** | Pure infra, identical for every agent; belongs to the platform, not a pack. |
