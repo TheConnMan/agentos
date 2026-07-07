@@ -89,6 +89,13 @@ langfuse:
     service:
       type: ClusterIP
       port: 3000
+      # Pinned NodePort used when service.type is flipped to NodePort (e.g. by
+      # `agentos up`). Empty lets Kubernetes allocate one from 30000-32767 --
+      # but an auto-allocated port changes on every helm install/upgrade, which
+      # breaks any URL or `agentos deploy --api-url` that hardcodes a port. The
+      # default pins it so a down/up cycle keeps the same URL. Override or set
+      # to "" to restore auto-allocation.
+      nodePort: 30000
     # Extra Node flags. The Langfuse web image is a Node app whose default heap
     # cap (~512Mi) OOM-crashes under a tight container limit; raise it in step
     # with the memory limit. Empty = leave the image default.
@@ -328,6 +335,13 @@ ui:
   service:
     type: ClusterIP
     port: 80
+    # Pinned NodePort used when service.type is flipped to NodePort (e.g. by
+    # `agentos up`). Empty lets Kubernetes allocate one from 30000-32767, but
+    # an auto-allocated port changes on every helm install/upgrade -- breaking
+    # `agentos deploy --api-url http://<host>:<port>/api` and any bookmarked
+    # URL across a redeploy. The default pins it so a down/up cycle keeps the
+    # same URL. Override or set to "" to restore auto-allocation.
+    nodePort: 30080
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { cpu: 250m, memory: 128Mi }
