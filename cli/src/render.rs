@@ -15,28 +15,41 @@ pub fn status_str(status: &SessionStatus) -> &'static str {
     }
 }
 
-/// Renders the outbound events of one turn into printable lines.
+/// One piece of a streamed turn, tagged by which stream it belongs on so the
+/// caller can route it: `Token` is agent answer text (raw payload -> stdout),
+/// `Note` is tool/side-effect chatter (dim diagnostics -> stderr), `Fail` is an
+/// error line (red diagnostics -> stderr), and `Status` is the final trailer
+/// (dim diagnostics -> stderr).
+pub enum TurnPart {
+    Token(String),
+    Note(String),
+    Fail(String),
+    Status(String),
+}
+
+/// Classifies the outbound events of one turn into stream-tagged parts.
 ///
-/// Text deltas print as-is. Tool notes and side-effect flags print as dim
-/// arrow/bang lines. The final frame prints a status trailer; its text is
-/// repeated only when nothing was streamed before it (so a turn that only
-/// yields a final still shows its answer, without duplicating streamed text).
+/// Text deltas are answer tokens. Tool notes and side-effect flags are notes.
+/// Error events are failures. The final frame becomes a status trailer, except
+/// when nothing was streamed before it and it carries text: then the answer is
+/// returned as a `Token` (so a turn that only yields a final still shows its
+/// answer to stdout) and the caller appends the status trailer itself.
 #[derive(Default)]
 pub struct TurnPrinter {
     streamed_text: bool,
 }
 
 impl TurnPrinter {
-    /// The printable line for one event, if any.
-    pub fn line_for(&mut self, event: &OutboundEvent) -> Option<String> {
+    /// The stream-tagged part for one event, if any.
+    pub fn part_for(&mut self, event: &OutboundEvent) -> Option<TurnPart> {
         match event {
             OutboundEvent::TextDelta { text, .. } => {
                 self.streamed_text = true;
-                Some(text.clone())
+                Some(TurnPart::Token(text.clone()))
             }
             OutboundEvent::ToolNote { text, tool, .. } => match tool {
-                Some(tool) => Some(format!("  -> [{tool}] {text}")),
-                None => Some(format!("  -> {text}")),
+                Some(tool) => Some(TurnPart::Note(format!("  -> [{tool}] {text}"))),
+                None => Some(TurnPart::Note(format!("  -> {text}"))),
             },
             OutboundEvent::SideEffectFlag { tool, detail, .. } => {
                 let tool = tool.as_deref().unwrap_or("unknown tool");
@@ -44,7 +57,9 @@ impl TurnPrinter {
                     .as_deref()
                     .map(|d| format!(": {d}"))
                     .unwrap_or_default();
-                Some(format!("  !  side effect via {tool}{detail}"))
+                Some(TurnPart::Note(format!(
+                    "  !  side effect via {tool}{detail}"
+                )))
             }
             OutboundEvent::ErrorEvent {
                 message,
@@ -55,14 +70,18 @@ impl TurnPrinter {
                     .as_deref()
                     .map(|c| format!(" [{c}]"))
                     .unwrap_or_default();
-                Some(format!("error{class}: {message}"))
+                Some(TurnPart::Fail(format!("error{class}: {message}")))
             }
             OutboundEvent::Final { text, status, .. } => {
-                let trailer = format!("-- final ({})", status_str(status));
                 if self.streamed_text || text.is_empty() {
-                    Some(trailer)
+                    Some(TurnPart::Status(format!(
+                        "-- final ({})",
+                        status_str(status)
+                    )))
                 } else {
-                    Some(format!("{text}\n{trailer}"))
+                    // Nothing streamed: surface the final answer as a token; the
+                    // caller prints it to stdout then adds the status trailer.
+                    Some(TurnPart::Token(text.clone()))
                 }
             }
         }
@@ -114,8 +133,15 @@ mod tests {
         PROTOCOL_VERSION.to_string()
     }
 
+    /// The text of a `Token`/`Note`/`Fail`/`Status` part, for assertions.
+    fn part_text(part: Option<TurnPart>) -> String {
+        match part.expect("a part") {
+            TurnPart::Token(s) | TurnPart::Note(s) | TurnPart::Fail(s) | TurnPart::Status(s) => s,
+        }
+    }
+
     #[test]
-    fn streams_deltas_then_summarizes_final_without_repeating_text() {
+    fn streams_deltas_as_tokens_then_final_is_a_status_without_repeating_text() {
         let mut printer = TurnPrinter::default();
         let delta = OutboundEvent::TextDelta {
             version: v(),
@@ -126,26 +152,43 @@ mod tests {
             text: "all done".into(),
             status: SessionStatus::Done,
         };
-        assert_eq!(printer.line_for(&delta).unwrap(), "all done");
-        assert_eq!(printer.line_for(&final_frame).unwrap(), "-- final (done)");
+        // A delta routes to stdout as a raw token.
+        assert!(matches!(printer.part_for(&delta), Some(TurnPart::Token(t)) if t == "all done"));
+        // After streaming, the final only contributes the status trailer.
+        assert!(
+            matches!(printer.part_for(&final_frame), Some(TurnPart::Status(s)) if s == "-- final (done)")
+        );
     }
 
     #[test]
-    fn prints_final_text_when_nothing_was_streamed() {
+    fn returns_final_text_as_a_token_when_nothing_was_streamed() {
         let mut printer = TurnPrinter::default();
         let final_frame = OutboundEvent::Final {
             version: v(),
             text: "quiet answer".into(),
             status: SessionStatus::IdleAwaitingInput,
         };
-        assert_eq!(
-            printer.line_for(&final_frame).unwrap(),
-            "quiet answer\n-- final (idle-awaiting-input)"
+        // The caller prints this token to stdout, then appends the status trailer.
+        assert!(
+            matches!(printer.part_for(&final_frame), Some(TurnPart::Token(t)) if t == "quiet answer")
         );
     }
 
     #[test]
-    fn renders_tool_notes_side_effects_and_errors() {
+    fn an_empty_final_is_a_status_even_without_streaming() {
+        let mut printer = TurnPrinter::default();
+        let final_frame = OutboundEvent::Final {
+            version: v(),
+            text: String::new(),
+            status: SessionStatus::Done,
+        };
+        assert!(
+            matches!(printer.part_for(&final_frame), Some(TurnPart::Status(s)) if s == "-- final (done)")
+        );
+    }
+
+    #[test]
+    fn routes_tool_notes_side_effects_and_errors_to_note_and_fail() {
         let mut printer = TurnPrinter::default();
         let note = OutboundEvent::ToolNote {
             version: v(),
@@ -162,15 +205,21 @@ mod tests {
             message: "boom".into(),
             classification: Some("budget".into()),
         };
+        // Tool note and side-effect flag are diagnostics -> Note (stderr).
+        assert!(matches!(printer.part_for(&note), Some(TurnPart::Note(_))));
         assert_eq!(
-            printer.line_for(&note).unwrap(),
+            part_text(printer.part_for(&note)),
             "  -> [Bash] running echo hi"
         );
         assert_eq!(
-            printer.line_for(&flag).unwrap(),
+            part_text(printer.part_for(&flag)),
             "  !  side effect via Bash"
         );
-        assert_eq!(printer.line_for(&error).unwrap(), "error [budget]: boom");
+        // Error events route to Fail (red stderr).
+        assert!(matches!(
+            printer.part_for(&error),
+            Some(TurnPart::Fail(f)) if f == "error [budget]: boom"
+        ));
     }
 
     #[test]

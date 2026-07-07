@@ -33,7 +33,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::api::{Agent, ApiClient};
 use crate::chat::{await_reply, print_continue_hint, resolve_targets, Outcome, SlackStub};
-use crate::ops::{plain, require_on_path, run_capture, run_streaming, OpsCommand};
+use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
 use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
@@ -378,7 +378,7 @@ async fn start_port_forward(
     local_port: u16,
     label: &str,
 ) -> Result<tokio::process::Child> {
-    println!("+ {}", cmd.display());
+    crate::ui::ui().plumbing(&format!("+ {}", cmd.display()));
     let child = tokio::process::Command::new(&cmd.program)
         .args(cmd.argv())
         .kill_on_drop(true)
@@ -438,12 +438,53 @@ async fn dispatcher_exists(opts: &MessageOpts) -> Result<bool> {
     Ok(ok)
 }
 
+/// Run one external command under a checklist `step`, capturing its stdio.
+/// Echoes the masked command line and replays the captured output as dim
+/// plumbing (both no-ops unless `--debug`, so default runs stay quiet and the
+/// helm/kubectl chatter is hidden). On success the step freezes done with
+/// `ok_detail`; on a nonzero exit it freezes failed, surfaces the captured
+/// stderr via `ui.failure`, and bails. Mirrors `ops::run_step`, which is scoped
+/// to that module.
+async fn run_wire_step(
+    cl: &crate::ui::Checklist,
+    label: &str,
+    ok_detail: &str,
+    cmd: &OpsCommand,
+) -> Result<()> {
+    let ui = crate::ui::ui();
+    ui.plumbing(&format!("+ {}", cmd.display()));
+    let step = cl.step(label);
+    let (ok, out, err) = run_capture(cmd).await?;
+    if ok {
+        step.done(ok_detail);
+    } else {
+        step.fail("failed");
+    }
+    for line in out.lines().chain(err.lines()) {
+        ui.plumbing(line);
+    }
+    if !ok {
+        let reason = err
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("command failed");
+        ui.failure(&format!("`{}` failed: {reason}", cmd.program));
+        bail!("`{}` exited nonzero", cmd.program);
+    }
+    Ok(())
+}
+
 /// Point the deployed worker at the stub via `helm upgrade` + rollout wait,
 /// unless it is already wired. Refuses a Slack-connected release without
 /// `--force-wire`.
 async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
+    let ui = crate::ui::ui();
     if current_worker_base_url(opts).await?.as_deref() == Some(url) {
-        println!("worker already wired to {url}; skipping helm upgrade");
+        ui.note(&format!(
+            "worker already wired to {url}; skipping helm upgrade"
+        ));
         return Ok(());
     }
     if !opts.force_wire && dispatcher_exists(opts).await? {
@@ -456,17 +497,20 @@ async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
         );
     }
     require_on_path("helm")?;
-    run_streaming(&wire_upgrade_command(
-        &opts.namespace,
-        &opts.release,
-        &opts.chart,
-        url,
-    ))
+    let cl = ui.checklist();
+    run_wire_step(
+        &cl,
+        "wiring worker to stub",
+        "wired",
+        &wire_upgrade_command(&opts.namespace, &opts.release, &opts.chart, url),
+    )
     .await?;
-    run_streaming(&worker_rollout_status_command(
-        &opts.namespace,
-        &opts.release,
-    ))
+    run_wire_step(
+        &cl,
+        "waiting for worker rollout",
+        "rolled out",
+        &worker_rollout_status_command(&opts.namespace, &opts.release),
+    )
     .await?;
     Ok(())
 }
@@ -481,21 +525,26 @@ async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
 /// fixed to `http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/`), so there is
 /// nothing to wire.
 async fn message_local(opts: MessageOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     let valkey_url = local_valkey_url(&opts.valkey_password);
     let api_base = local_api_base(opts.api_url.as_deref());
 
     if opts.dry_run {
-        println!("local mode (compose stack; no kubectl/helm)");
-        println!("enqueue onto redis {valkey_url}");
-        println!("stub advertised at http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/");
+        ui.payload_plain("local mode (compose stack; no kubectl/helm)");
+        ui.payload_plain(&format!("enqueue onto redis {valkey_url}"));
+        ui.payload_plain(&format!(
+            "stub advertised at http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/"
+        ));
         match opts.channel.as_deref() {
-            Some(channel) => println!("channel {channel}"),
-            None => println!("channel <the sole deployed agent via {api_base}/agents>"),
+            Some(channel) => ui.payload_plain(&format!("channel {channel}")),
+            None => ui.payload_plain(&format!(
+                "channel <the sole deployed agent via {api_base}/agents>"
+            )),
         }
-        println!(
+        ui.payload_plain(&format!(
             "enqueue a synthetic QueuedSlackEvent on stream {}",
             opts.stream
-        );
+        ));
         return Ok(());
     }
 
@@ -507,10 +556,10 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     // binds and is reachable; the advertised host is cosmetic here (the worker's
     // base URL is fixed in compose, not taken from this print).
     let mut stub = SlackStub::start("127.0.0.1", DEFAULT_LOCAL_STUB_PORT, "localhost").await?;
-    println!(
+    ui.note(&format!(
         "slack stub listening; the worker posts to {}",
         stub.base_api_url()
-    );
+    ));
 
     // Channel: explicit --channel, else the sole deployed agent from the compose
     // API (reached directly; routers mount at root, so the base carries no /api).
@@ -524,7 +573,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             select_channel(&agents, None)?
         }
     };
-    println!("routing to channel {channel}");
+    ui.note(&format!("routing to channel {channel}"));
 
     let (channel, thread_ts, placeholder_ts) =
         resolve_targets(Some(&channel), opts.thread.as_deref());
@@ -536,15 +585,17 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
         &placeholder_ts,
     );
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
-    println!(
+    ui.note(&format!(
         "enqueued {} on {} as {stream_id}",
         event.slack_event_id, opts.stream
-    );
-    println!(
+    ));
+    ui.note(&format!(
         "waiting up to {}s for the worker to finalize the turn...",
         opts.timeout_secs
-    );
+    ));
 
+    let cl = ui.checklist();
+    let step = cl.step("waiting for worker reply");
     let outcome = await_reply(
         &mut stub,
         &mut conn,
@@ -557,22 +608,22 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 
     match outcome {
         Outcome::Replied(reply) => {
-            println!("reply    {reply}");
+            step.done("");
+            ui.payload(&reply);
             print_continue_hint("message --local", &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
-            println!("the worker finished the turn but never edited the placeholder");
+            step.done("no edit");
+            ui.warn("the worker finished the turn but never edited the placeholder");
             print_continue_hint("message --local", &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
-            println!(
-                "TIMEOUT: the worker did not finalize within {}s. Stream diagnostics:",
-                opts.timeout_secs
-            );
+            step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            ui.note("stream diagnostics:");
             let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-            println!("{diag}");
+            ui.note(&diag);
             std::process::exit(1);
         }
     }
@@ -583,13 +634,14 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     if opts.local {
         return message_local(opts).await;
     }
+    let ui = crate::ui::ui();
     if opts.dry_run {
         let host = opts
             .listen_host
             .clone()
             .unwrap_or_else(|| "<auto-detected-local-ip>".to_string());
         for line in dry_run_lines(&opts, &host) {
-            println!("{line}");
+            ui.payload_plain(&line);
         }
         return Ok(());
     }
@@ -602,7 +654,9 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     let advertise_host = resolve_advertise_host(opts.listen_host.as_deref()).await?;
     let mut stub = SlackStub::start("0.0.0.0", opts.listen_port, &advertise_host).await?;
     let url = stub.base_api_url().to_string();
-    println!("slack stub listening; the worker will post to {url}");
+    ui.note(&format!(
+        "slack stub listening; the worker will post to {url}"
+    ));
 
     // Valkey port-forward for the enqueue (killed on drop at fn end).
     let _valkey_pf = start_port_forward(
@@ -646,7 +700,7 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             select_channel(&agents, None)?
         }
     };
-    println!("routing to channel {channel}");
+    ui.note(&format!("routing to channel {channel}"));
 
     // Wire the worker to the stub (default) or verify it is already wired.
     if opts.wire {
@@ -680,15 +734,17 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
         &placeholder_ts,
     );
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
-    println!(
+    ui.note(&format!(
         "enqueued {} on {} as {stream_id}",
         event.slack_event_id, opts.stream
-    );
-    println!(
+    ));
+    ui.note(&format!(
         "waiting up to {}s for the worker to finalize the turn...",
         opts.timeout_secs
-    );
+    ));
 
+    let cl = ui.checklist();
+    let step = cl.step("waiting for worker reply");
     let outcome = await_reply(
         &mut stub,
         &mut conn,
@@ -701,22 +757,22 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
 
     match outcome {
         Outcome::Replied(reply) => {
-            println!("reply    {reply}");
+            step.done("");
+            ui.payload(&reply);
             print_continue_hint("message", &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
-            println!("the worker finished the turn but never edited the placeholder");
+            step.done("no edit");
+            ui.warn("the worker finished the turn but never edited the placeholder");
             print_continue_hint("message", &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
-            println!(
-                "TIMEOUT: the worker did not finalize within {}s. Stream diagnostics:",
-                opts.timeout_secs
-            );
+            step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            ui.note("stream diagnostics:");
             let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-            println!("{diag}");
+            ui.note(&diag);
             std::process::exit(1);
         }
     }

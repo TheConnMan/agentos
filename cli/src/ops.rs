@@ -333,28 +333,6 @@ pub(crate) fn require_on_path(bin: &str) -> Result<()> {
     }
 }
 
-/// Print each command line (secrets masked) and exit without running anything.
-pub(crate) fn print_dry_run(cmds: &[OpsCommand]) {
-    for cmd in cmds {
-        println!("{}", cmd.display());
-    }
-}
-
-/// Run one command with inherited stdio (so helm/kubectl output streams live),
-/// echoing the masked command line first. Bails on a nonzero exit.
-pub(crate) async fn run_streaming(cmd: &OpsCommand) -> Result<()> {
-    println!("+ {}", cmd.display());
-    let status = Command::new(&cmd.program)
-        .args(cmd.argv())
-        .status()
-        .await
-        .with_context(|| format!("failed to invoke `{}`; is it on PATH?", cmd.program))?;
-    if !status.success() {
-        bail!("`{}` exited with {}", cmd.program, status);
-    }
-    Ok(())
-}
-
 /// Run one command capturing stdout; returns (success, stdout, stderr).
 pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, String)> {
     let output = Command::new(&cmd.program)
@@ -369,124 +347,207 @@ pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, Strin
     ))
 }
 
+/// Run one command under a checklist `step` labeled `label`, capturing its
+/// stdio. Echoes the masked command line and replays the captured output as dim
+/// plumbing (both no-ops unless `--debug`, so default runs stay quiet and the
+/// helm/kubectl/compose chatter is hidden). On success the step freezes done
+/// with `ok_detail`; on a nonzero exit it freezes failed, surfaces the captured
+/// stderr via `ui.failure`, and bails. Returns captured stdout.
+pub(crate) async fn run_step(
+    cl: &crate::ui::Checklist,
+    label: &str,
+    ok_detail: &str,
+    cmd: &OpsCommand,
+) -> Result<String> {
+    let ui = crate::ui::ui();
+    ui.plumbing(&format!("+ {}", cmd.display()));
+    let step = cl.step(label);
+    let (ok, out, err) = run_capture(cmd).await?;
+    if ok {
+        step.done(ok_detail);
+    } else {
+        step.fail("failed");
+    }
+    for line in out.lines().chain(err.lines()) {
+        ui.plumbing(line);
+    }
+    if !ok {
+        let reason = err
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("command failed");
+        ui.failure(&format!("`{}` failed: {reason}", cmd.program));
+        bail!("`{}` exited nonzero", cmd.program);
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Verb handlers
 // ---------------------------------------------------------------------------
 
 pub async fn up(opts: UpOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     let cmds = up_commands(&opts);
     if opts.credentials.is_some() {
-        println!(
-            "Real model enabled (credentials from AGENTOS_MODEL_CREDENTIALS); egress opened to the model provider."
-        );
+        ui.note("real model enabled; egress opened to the model provider");
     } else if !opts.fake_model {
-        println!("WARNING: no AGENTOS_MODEL_CREDENTIALS set -- installing with the fake model and sealed egress.");
-        println!("         Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and");
-        println!(
-            "         re-run `agentos up` (an idempotent helm upgrade) to enable the real model."
+        ui.warn(
+            "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model and sealed egress",
+        );
+        ui.note(
+            "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos up` to enable the real model.",
         );
     }
     if opts.common.dry_run {
-        print_dry_run(&cmds);
+        for cmd in &cmds {
+            ui.payload_plain(&cmd.display());
+        }
         return Ok(());
     }
     require_on_path("helm")?;
+    let cl = ui.checklist();
+    let label = format!("installing release {}", opts.common.release);
     for cmd in &cmds {
-        run_streaming(cmd).await?;
+        run_step(&cl, &label, "installed", cmd).await?;
     }
-    println!("\nInstalled. Run `agentos status` for pod health and URLs.");
+    ui.payload("agentos is up");
+    ui.note("Run `agentos status` for pod health and URLs.");
     Ok(())
 }
 
 pub async fn status(opts: CommonOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     if opts.dry_run {
-        print_dry_run(&status_commands(&opts));
+        for cmd in status_commands(&opts) {
+            ui.payload_plain(&cmd.display());
+        }
         return Ok(());
     }
     require_on_path("helm")?;
     require_on_path("kubectl")?;
 
-    // (a) Helm release state.
-    let (ok, out, err) = run_capture(&helm_status_cmd(&opts)).await?;
-    if ok {
-        let status_line = out
+    // (a) Helm release state -> a bright header line.
+    let (helm_ok, helm_out, helm_err) = run_capture(&helm_status_cmd(&opts)).await?;
+    let field = |name: &str, default: &str| -> String {
+        helm_out
             .lines()
-            .find(|l| l.trim_start().starts_with("STATUS:"))
-            .map(str::trim)
-            .unwrap_or("STATUS: unknown");
-        let revision = out
-            .lines()
-            .find(|l| l.trim_start().starts_with("REVISION:"))
-            .map(str::trim)
-            .unwrap_or("REVISION: ?");
-        println!("release  {} ({}, {})", opts.release, status_line, revision);
+            .find(|l| l.trim_start().starts_with(name))
+            .and_then(|l| l.split_once(':'))
+            .map(|(_, v)| v.trim().to_string())
+            .unwrap_or_else(|| default.to_string())
+    };
+    let (release_state, revision) = if helm_ok {
+        (field("STATUS:", "unknown"), field("REVISION:", "?"))
     } else {
-        println!(
-            "release  {} not found ({})",
+        ("not found".to_string(), "none".to_string())
+    };
+    ui.payload(&format!(
+        "agentos · namespace {} · revision {} · {}",
+        opts.namespace, revision, release_state
+    ));
+    if !helm_ok {
+        ui.note(&format!(
+            "release {} not found: {}",
             opts.release,
-            err.trim().lines().next().unwrap_or("no such release")
-        );
+            helm_err.trim().lines().next().unwrap_or("no such release")
+        ));
     }
 
     // (b) Pod health.
     let (ok, out, _) = run_capture(&pods_cmd(&opts)).await?;
-    if ok {
-        print_pod_summary(&out);
+    let (ready, total, unhealthy) = if ok {
+        print_pod_summary(&out)
     } else {
-        println!(
-            "pods     could not list pods in namespace {}",
+        ui.warn(&format!(
+            "could not list pods in namespace {}",
             opts.namespace
-        );
-    }
+        ));
+        (0, 0, Vec::new())
+    };
 
     // (c) URL discovery.
     let host = discover_host().await;
     print_service_url(&opts, "ui", "UI", &host, true).await;
     print_service_url(&opts, "langfuse-web", "Langfuse", &host, false).await;
 
+    // (d) Overall verdict.
+    if total > 0 && ready == total && unhealthy.is_empty() {
+        ui.success(&format!("healthy ({ready}/{total} pods ready)"));
+    } else if total == 0 {
+        ui.warn("no pods running");
+    } else {
+        let mut msg = format!("{ready}/{total} pods ready");
+        if !unhealthy.is_empty() {
+            msg.push_str(&format!("; not ready: {}", unhealthy.join(", ")));
+        }
+        ui.warn(&msg);
+    }
+
     Ok(())
 }
 
 pub async fn down(opts: DownOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     let cmds = down_commands(&opts.common);
     if opts.common.dry_run {
-        print_dry_run(&cmds);
+        for cmd in &cmds {
+            ui.payload_plain(&cmd.display());
+        }
         return Ok(());
     }
+    ui.warn(&format!(
+        "this uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'",
+        opts.common.release, opts.common.namespace
+    ));
     if !opts.yes && !confirm(&opts.common)? {
-        println!("aborted.");
+        ui.note("aborted");
         return Ok(());
     }
     require_on_path("helm")?;
     require_on_path("kubectl")?;
 
+    let cl = ui.checklist();
+
     // helm uninstall, tolerating an already-absent release.
     let uninstall = &cmds[0];
-    println!("+ {}", uninstall.display());
+    ui.plumbing(&format!("+ {}", uninstall.display()));
+    let step = cl.step("uninstalling release");
     let (ok, out, err) = run_capture(uninstall).await?;
+    let absent = !ok && (err.contains("not found") || out.contains("not found"));
     if ok {
-        print!("{out}");
-    } else if err.contains("not found") || out.contains("not found") {
-        println!("release {} already absent; continuing", opts.common.release);
+        step.done("removed");
+    } else if absent {
+        step.done("already absent");
     } else {
-        bail!("helm uninstall failed: {}", err.trim());
+        step.fail("failed");
+    }
+    for line in out.lines().chain(err.lines()) {
+        ui.plumbing(line);
+    }
+    if !ok && !absent {
+        ui.failure(&format!("helm uninstall failed: {}", err.trim()));
+        bail!("helm uninstall failed");
     }
 
     // Namespace sweep (runtime artifacts Helm does not own).
-    run_streaming(&cmds[1]).await?;
+    run_step(&cl, "sweeping namespaces", "removed", &cmds[1]).await?;
 
-    println!("\nTorn down. The agents.x-k8s.io CRDs are left in place intentionally.");
+    ui.payload("agentos is down");
+    ui.note("The agents.x-k8s.io CRDs are left in place intentionally.");
     Ok(())
 }
 
-/// Read a y/N confirmation from stdin for `down` when `--yes` is absent.
+/// Read a y/N confirmation from stderr/stdin for `down` when `--yes` is absent.
 fn confirm(o: &CommonOpts) -> Result<bool> {
     use std::io::Write;
-    print!(
+    eprint!(
         "This uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'. Continue? [y/N] ",
         o.release, o.namespace
     );
-    std::io::stdout().flush().ok();
+    std::io::stderr().flush().ok();
     let mut line = String::new();
     std::io::stdin()
         .read_line(&mut line)
@@ -494,20 +555,19 @@ fn confirm(o: &CommonOpts) -> Result<bool> {
     Ok(matches!(line.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
-/// Parse `kubectl get pods` tabular output into an "N/M ready" line plus any
-/// pods that are not Running/Completed, by name.
-fn print_pod_summary(pods_output: &str) {
+/// Render `kubectl get pods` output as a borderless table to stdout and return
+/// (ready count, total, names of pods not Running/Completed) so the caller can
+/// summarise overall health.
+fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
+    let ui = crate::ui::ui();
     let rows: Vec<&str> = pods_output
         .lines()
         .skip(1) // header
         .filter(|l| !l.trim().is_empty())
         .collect();
-    if rows.is_empty() {
-        println!("pods     none in namespace");
-        return;
-    }
     let mut ready = 0usize;
-    let mut unhealthy: Vec<&str> = Vec::new();
+    let mut unhealthy: Vec<String> = Vec::new();
+    let mut table_rows: Vec<Vec<String>> = Vec::new();
     for row in &rows {
         let cols: Vec<&str> = row.split_whitespace().collect();
         let name = cols.first().copied().unwrap_or("?");
@@ -522,13 +582,22 @@ fn print_pod_summary(pods_output: &str) {
             ready += 1;
         }
         if phase != "Running" && phase != "Completed" {
-            unhealthy.push(name);
+            unhealthy.push(name.to_string());
         }
+        table_rows.push(vec![
+            name.to_string(),
+            ready_col.to_string(),
+            phase.to_string(),
+        ]);
     }
-    println!("pods     {}/{} ready", ready, rows.len());
-    if !unhealthy.is_empty() {
-        println!("         not ready: {}", unhealthy.join(", "));
+    if !table_rows.is_empty() {
+        ui.payload_plain(&crate::ui::table(
+            &["pod", "ready", "status"],
+            &table_rows,
+            &[],
+        ));
     }
+    (ready, rows.len(), unhealthy)
 }
 
 /// Resolve the node host: the kubeconfig cluster server hostname, falling back
@@ -566,35 +635,43 @@ fn node_internal_ip(nodes_json: &str) -> Option<String> {
 /// Print one service's access URL: a NodePort URL when exposed, else the
 /// port-forward command to reach a ClusterIP service.
 async fn print_service_url(o: &CommonOpts, suffix: &str, label: &str, host: &str, api: bool) {
+    let ui = crate::ui::ui();
     let name = format!("{}-{}", o.release, suffix);
     let (ok, out, _) = match run_capture(&svc_cmd(o, suffix)).await {
         Ok(res) => res,
         Err(_) => {
-            println!("{label:9}service {name} not found");
+            ui.kv(label, &format!("service {name} not found"));
             return;
         }
     };
     if !ok {
-        println!("{label:9}service {name} not found");
+        ui.kv(label, &format!("service {name} not found"));
         return;
     }
     let suffix_path = if api { "/?api=1" } else { "" };
     match parse_service(&out) {
         Some((svc_type, node_port, _port)) if svc_type == "NodePort" => {
             if let Some(np) = node_port {
-                println!("{label:9}http://{host}:{np}{suffix_path}");
+                ui.kv(label, &ui.url(&format!("http://{host}:{np}{suffix_path}")));
             } else {
-                println!("{label:9}service {name} is NodePort but exposes no nodePort yet");
+                ui.kv(
+                    label,
+                    &format!("service {name} is NodePort but exposes no nodePort yet"),
+                );
             }
         }
         Some((_, _, port)) => {
             let local = if port == 0 { 8080 } else { port };
-            println!(
-                "{label:9}kubectl -n {} port-forward svc/{name} {local}:{port}  then http://localhost:{local}{suffix_path}",
-                o.namespace
+            let target = ui.url(&format!("http://localhost:{local}{suffix_path}"));
+            ui.kv(
+                label,
+                &format!(
+                    "kubectl -n {} port-forward svc/{name} {local}:{port}  then {target}",
+                    o.namespace
+                ),
             );
         }
-        None => println!("{label:9}could not read service {name}"),
+        None => ui.kv(label, &format!("could not read service {name}")),
     }
 }
 

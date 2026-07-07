@@ -6,9 +6,9 @@
 //! (or the `--dry-run` printer) consumes it, so argv construction stays
 //! unit-testable with no Docker daemon.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
-use crate::ops::{plain, print_dry_run, require_on_path, run_streaming, OpsCommand};
+use crate::ops::{plain, require_on_path, run_capture, run_step, OpsCommand};
 
 /// Default compose file, resolved relative to the cwd (run from the repo root).
 pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
@@ -81,62 +81,96 @@ pub fn status_command(o: &LocalOpts) -> OpsCommand {
 // ---------------------------------------------------------------------------
 
 pub async fn up(o: LocalOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     let cmd = up_command(&o);
     if o.dry_run {
-        print_dry_run(std::slice::from_ref(&cmd));
+        ui.payload_plain(&cmd.display());
         return Ok(());
     }
     require_on_path("docker")?;
-    run_streaming(&cmd).await?;
-    println!("\nDev stack is up. Endpoints:");
+    let cl = ui.checklist();
+    run_step(&cl, "starting dev stack", "up", &cmd).await?;
     for (label, url) in ENDPOINTS {
-        println!("  {label:16}{url}");
+        ui.kv(label, &ui.url(url));
     }
-    println!("\nDrive the local product loop (no Slack, no Kubernetes):");
-    println!(
-        "  agentos deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000"
+    ui.note("Drive the local product loop (no Slack, no Kubernetes):");
+    ui.note(
+        "  agentos deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
     );
-    println!("  agentos message --local \"<your question>\"");
+    ui.note("  agentos message --local \"<your question>\"");
     Ok(())
 }
 
 pub async fn status(o: LocalOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     let cmd = status_command(&o);
     if o.dry_run {
-        print_dry_run(std::slice::from_ref(&cmd));
+        ui.payload_plain(&cmd.display());
         return Ok(());
     }
     require_on_path("docker")?;
-    run_streaming(&cmd).await
-}
-
-pub async fn down(o: LocalDownOpts) -> Result<()> {
-    let cmd = down_command(&o);
-    if o.common.dry_run {
-        print_dry_run(std::slice::from_ref(&cmd));
-        return Ok(());
+    // `docker compose ps` output is itself the payload table.
+    let (ok, out, err) = run_capture(&cmd).await?;
+    if !ok {
+        for line in err.lines() {
+            ui.plumbing(line);
+        }
+        let reason = err
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("command failed");
+        ui.failure(&format!("`docker compose ps` failed: {reason}"));
+        bail!("`docker compose ps` exited nonzero");
     }
-    if o.wipe && !o.yes && !confirm_wipe(&o.common.file)? {
-        println!("aborted.");
-        return Ok(());
-    }
-    require_on_path("docker")?;
-    run_streaming(&cmd).await?;
-    if o.wipe {
-        println!("\nStack stopped and volumes wiped.");
-    } else {
-        println!("\nStack stopped; volumes kept (fast restart with `agentos local up`).");
+    for line in out.lines() {
+        ui.payload_plain(line);
     }
     Ok(())
 }
 
-/// Read a y/N confirmation from stdin before `--wipe` destroys volumes.
+pub async fn down(o: LocalDownOpts) -> Result<()> {
+    let ui = crate::ui::ui();
+    let cmd = down_command(&o);
+    if o.common.dry_run {
+        ui.payload_plain(&cmd.display());
+        return Ok(());
+    }
+    if o.wipe {
+        ui.warn(&format!(
+            "this destroys all volumes for the '{}' dev stack (Postgres, ClickHouse, MinIO, Valkey data)",
+            o.common.file
+        ));
+        if !o.yes && !confirm_wipe(&o.common.file)? {
+            ui.note("aborted");
+            return Ok(());
+        }
+    }
+    require_on_path("docker")?;
+    let cl = ui.checklist();
+    let label = if o.wipe {
+        "stopping stack and wiping volumes"
+    } else {
+        "stopping stack"
+    };
+    run_step(&cl, label, "stopped", &cmd).await?;
+    if o.wipe {
+        ui.payload("dev stack stopped; volumes wiped");
+    } else {
+        ui.payload("dev stack stopped");
+        ui.note("volumes kept (fast restart with `agentos local up`)");
+    }
+    Ok(())
+}
+
+/// Read a y/N confirmation from stderr/stdin before `--wipe` destroys volumes.
 fn confirm_wipe(file: &str) -> Result<bool> {
     use std::io::Write;
-    print!(
+    eprint!(
         "This destroys all volumes for the '{file}' dev stack (Postgres, ClickHouse, MinIO, Valkey data). Continue? [y/N] "
     );
-    std::io::stdout().flush().ok();
+    std::io::stderr().flush().ok();
     let mut line = String::new();
     std::io::stdin()
         .read_line(&mut line)

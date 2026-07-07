@@ -13,7 +13,7 @@ Slack involved.
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed. |
 | `agentos start` | Boot the runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network`/`--otel-endpoint` join the compose stack for traces. |
 | `agentos send "..."` | Emulate a Slack message: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side-effect flags, final). |
-| `agentos eval` | Run `evals/cases.json` through the runner as `eval_case` events; per-case pass/fail lines and a summary; nonzero exit on failure. |
+| `agentos eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per-case result table plus a pass/fail roll-up; nonzero exit on failure. |
 | `agentos steer "..."` | Inject a follow-up into the runner's live turn (POST `/v1/steer`); prints `no active turn` and exits nonzero on the runner's 409. |
 | `agentos interrupt` | Hard-stop the runner's live turn (POST `/v1/interrupt`); `--reason` is recorded with it. |
 | `agentos chat "..."` | Drive the whole system with the CLI acting **as** the Slack service against the local compose stack, no Slack involved (see below). |
@@ -27,6 +27,48 @@ Slack involved.
 run from the bundle directory and resolve the runner from it, or accept `--url`.
 `start --model <id>` forwards `AGENTOS_MODEL` into the container (omit for the
 SDK default); setting it makes token usage attributable in Langfuse traces.
+
+## Output
+
+Three global flags apply to every subcommand: `--debug` shows the verbose
+plumbing (helm/kubectl/compose command lines and their output, as dim lines),
+`-q`/`--quiet` prints the payload only (suppressing all progress and diagnostics
+on stderr), and `--color <auto|always|never>` (default `auto`) controls ANSI
+color.
+
+Stream discipline is strict: the **payload** (streamed agent reply tokens,
+resolved URLs, the status table, eval results, the deploy result, `runner-status`
+JSON, the worker reply) goes to **stdout**, and every **diagnostic**
+(waiting/helm/kubectl/rollout/port-forward chatter, spinners, progress, notes)
+goes to **stderr**. So the payload pipes and redirects cleanly while progress
+still shows on the terminal:
+
+```bash
+agentos message "..." | jq        # clean JSON on stdout, progress on stderr
+agentos message "..." > reply.txt  # reply captured, progress on the terminal
+agentos eval > results.txt         # results captured, progress on the terminal
+```
+
+On an interactive terminal, progress renders as a spinner-to-checkmark checklist
+(each step spins with a live dim elapsed counter, then freezes to a green `✓` or
+red `✗` with its elapsed time), a determinate bar for real totals (eval
+`N/total`), and streamed tokens that spin only until the first token then stream
+raw to stdout. Every wait resolves: a blown timeout ends in `✗ ... timed out
+after Ns`, never a hang. Compatibility is handled automatically:
+
+- **Auto-disable off a TTY.** Rendering is gated on `stderr.is_terminal()` plus
+  the cross-tool env standards. On a non-TTY, a pipe, `CI`, `TERM=dumb`,
+  `NO_COLOR`, or `CLICOLOR=0`, output is plain discrete status lines with no ANSI
+  and no `\r` redraws. `CLICOLOR_FORCE` / `--color=always` force color on;
+  `--color=never` forces it off. Color is resolved per stream, so a colored
+  terminal stderr never leaks ANSI into a redirected stdout.
+- **Graceful degradation.** The brand palette (success green, error red, amber
+  warn, dim grey plumbing, cyan URLs/ids, bold payload) is truecolor, degrading
+  to the 16 named ANSI colors where truecolor is unsupported (Apple Terminal,
+  tmux without passthrough).
+- **Never color-only.** Every status pairs a glyph with a word (`✓ pass`,
+  `✗ fail`, `⚠ warn`), and glyphs fall back to ASCII (`v`/`x`/`!`, `- \ | /`
+  spinner) in non-UTF-8 locales.
 
 ## `agentos chat`: the CLI as the Slack service
 
