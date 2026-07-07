@@ -10,8 +10,10 @@ from __future__ import annotations
 import uuid
 
 from agentos_worker.binding import (
+    BASE_URL_ENV,
     CREDENTIALS_ENV,
     FAKE_MODEL_ENV,
+    MODEL_ENV,
     BindingResolver,
     ResolvedDeployment,
     apply_model_env,
@@ -43,6 +45,51 @@ def test_apply_model_env_omits_both_when_unset() -> None:
     apply_model_env(env, WorkerConfig())  # defaults: fake_model=False, credentials=""
     assert FAKE_MODEL_ENV not in env
     assert CREDENTIALS_ENV not in env
+
+
+def test_apply_model_env_forwards_base_url_and_model_without_fake_flag() -> None:
+    base_url_env, model_env = BASE_URL_ENV, MODEL_ENV
+    assert base_url_env == "ANTHROPIC_BASE_URL"
+    assert model_env == "AGENTOS_MODEL"
+
+    env: dict[str, str] = {}
+    apply_model_env(
+        env,
+        WorkerConfig(model_base_url="http://ollama:11434", model="qwen3:4b"),
+    )
+
+    assert env[base_url_env] == "http://ollama:11434"
+    assert env[model_env] == "qwen3:4b"
+    assert FAKE_MODEL_ENV not in env
+
+
+def test_apply_model_env_forwards_base_url_without_model() -> None:
+    base_url_env, model_env = BASE_URL_ENV, MODEL_ENV
+
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig(model_base_url="http://ollama:11434"))
+
+    assert env[base_url_env] == "http://ollama:11434"
+    assert model_env not in env
+
+
+def test_apply_model_env_omits_base_url_and_model_by_default() -> None:
+    base_url_env, model_env = BASE_URL_ENV, MODEL_ENV
+
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig())
+
+    assert base_url_env not in env
+    assert model_env not in env
+
+
+def test_worker_config_reads_local_model_env() -> None:
+    config = WorkerConfig.from_env(
+        {"AGENTOS_MODEL_BASE_URL": "http://x:1", "AGENTOS_MODEL": "qwen3:4b"}
+    )
+
+    assert config.model_base_url == "http://x:1"
+    assert config.model == "qwen3:4b"
 
 
 def test_binding_boot_env_carries_fake_and_credentials() -> None:

@@ -17,13 +17,18 @@ from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_plugins
-from .sdk_auth import resolve_model_credential
+from .sdk_auth import resolve_base_url_override, resolve_model_credential
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
 
 
-def build_runner(config: RunnerConfig, *, fake_model: bool = False) -> SessionRunner:
+def build_runner(
+    config: RunnerConfig,
+    *,
+    fake_model: bool = False,
+    sdk_env: dict[str, str] | None = None,
+) -> SessionRunner:
     """Wire a SessionRunner backed by a real claude-agent-sdk session.
 
     ``fake_model`` (env ``AGENTOS_FAKE_MODEL``) swaps in the scripted fake session
@@ -44,6 +49,7 @@ def build_runner(config: RunnerConfig, *, fake_model: bool = False) -> SessionRu
             max_budget_usd=config.max_usd_per_day,
             resume=config.history_ref,
             task_budget_hint=config.session.budget.task_budget_hint,
+            env=sdk_env or {},
         )
         return ClaudeAgentSession(options)
 
@@ -69,10 +75,13 @@ def main() -> None:
     # forwarded ACI AGENTOS_CREDENTIALS reference onto it (a no-op for a fake
     # run, which needs no credential). Raises on an unsupported credential so the
     # process fails visibly before the port is up rather than after a real call.
+    override = None
     if not fake_model:
-        resolve_model_credential(os.environ)
+        override = resolve_base_url_override(os.environ)
+        if override is None:
+            resolve_model_credential(os.environ)
     config = RunnerConfig.from_env(os.environ)
-    runner = build_runner(config, fake_model=fake_model)
+    runner = build_runner(config, fake_model=fake_model, sdk_env=override)
     app = create_app(runner)
 
     async def _startup(_app: web.Application) -> None:
