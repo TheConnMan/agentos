@@ -16,6 +16,9 @@ spec:
       # The nginx-unprivileged base listens on 8080 (it cannot bind :80 as
       # non-root); the SPA Dockerfile serves there.
       targetPort: 8080
+      {{- if and (eq .Values.ui.service.type "NodePort") .Values.ui.service.nodePort }}
+      nodePort: {{ .Values.ui.service.nodePort }}
+      {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

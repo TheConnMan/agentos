@@ -45,6 +45,11 @@ App services:
 
 Reach the UI (port-forward):
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "agentos.fullname" . }}-ui {{ .Values.ui.service.port }}:{{ .Values.ui.service.port }}
+{{- if and (eq .Values.ui.service.type "NodePort") .Values.ui.service.nodePort }}
+When exposed as NodePort (`agentos up` does this by default), the UI is reachable at:
+  http://<any-node-ip>:{{ .Values.ui.service.nodePort }}
+The nodePort is pinned in values (ui.service.nodePort) so it survives a down/up cycle.
+{{- end }}
 {{- end }}
 
 Preflights:
@@ -125,6 +130,11 @@ Enable a real model and a Slack workspace:
 Reach the Langfuse UI (port-forward):
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "agentos.fullname" . }}-langfuse-web {{ .Values.langfuse.web.service.port }}:{{ .Values.langfuse.web.service.port }}
   open http://localhost:{{ .Values.langfuse.web.service.port }}
+{{- if and (eq .Values.langfuse.web.service.type "NodePort") .Values.langfuse.web.service.nodePort }}
+When exposed as NodePort (`agentos up` does this by default), Langfuse is reachable at:
+  http://<any-node-ip>:{{ .Values.langfuse.web.service.nodePort }}
+The nodePort is pinned in values (langfuse.web.service.nodePort) so it survives a down/up cycle.
+{{- end }}
   # Dev project keys (headless-bootstrapped): {{ .Values.langfuse.init.projectPublicKey }} / {{ .Values.langfuse.init.projectSecretKey }}
 
 App services send OTLP traces to the collector, NOT directly to Langfuse:

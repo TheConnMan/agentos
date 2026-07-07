@@ -13,6 +13,9 @@ spec:
     - name: http
       port: {{ .Values.langfuse.web.service.port }}
       targetPort: 3000
+      {{- if and (eq .Values.langfuse.web.service.type "NodePort") .Values.langfuse.web.service.nodePort }}
+      nodePort: {{ .Values.langfuse.web.service.nodePort }}
+      {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
