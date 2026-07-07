@@ -57,3 +57,30 @@ stack (API + worker alongside the backing stores), so
 "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with
 no Slack and no Kubernetes. See the middle-mode runbook in the
 [README](../README.md#quickstart).
+
+## First-install findings
+
+Notes from the first installs of the chart on fresh clusters, kept for the next
+operator.
+
+- **The agent-sandbox controller is opt-in.** The chart ships the agent-sandbox
+  CRDs, but the vendored controller is gated behind
+  `agentSandbox.controller.deploy`. A cluster that has the CRDs but no
+  controller silently never binds claims, so a first install must set
+  `agentSandbox.controller.deploy=true` unless the cluster already runs the
+  controller.
+- **gVisor stays off without runsc on the node.** Use the `values-e2e-nogvisor`
+  overlay on nodes without `runsc`. All other security rails were verified ON in
+  the first fresh-cluster install: default-deny egress, metadata-endpoint block,
+  read-only rootfs, non-root, and per-agent secret isolation.
+- **langfuse-web restarts ~2x during first boot** while ClickHouse and Postgres
+  come up, then stabilizes. This is startup ordering, not a crashloop; do not
+  treat the early restarts as a failure.
+- **Exactly one Slack Socket Mode owner at a time.** Stop a local dispatcher
+  before enabling `dispatcher.deploy=true` in the chart, and stop the in-cluster
+  dispatcher before switching back to a local one for dev.
+- **kube-router applies NetworkPolicy a few seconds after pod start.** A
+  brand-new pod can see open egress for the first seconds before the policy
+  lands. This is functionally irrelevant for runners (the first model call comes
+  later) but worth knowing when reading probe output from the first seconds of a
+  pod's life.
