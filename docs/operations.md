@@ -44,6 +44,19 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   installs sealed (canned replies) and `up` warns that replies stay canned
   until the env var is set and `up` is re-run. Pass `--fake-model` to force the
   sealed install even when the credential is present (a dev/CI escape hatch).
+  Pass `--allow-web-egress <CIDR>` (repeatable) to open runner egress on TCP 443
+  to each declared CIDR for skill/tool web access -- appended additively after
+  the model carve-out at index `[0]`, so it never weakens the model rule; omit it
+  and egress stays sealed. This is the platform enablement the weather example
+  (#36) needs, whose skill answers via a live web search: `agentos cluster up
+  --allow-web-egress 0.0.0.0/0` opens the open internet (still minus the
+  `169.254.169.254` metadata endpoint the chart carves out of `0.0.0.0/0`), or
+  narrow the CIDR to a specific web-search provider for a tighter posture. The
+  raw helm equivalent is
+  `--set 'security.networkPolicy.allowedEgress[1].cidr=0.0.0.0/0'` plus
+  `...[1].ports[0].protocol=TCP` and `...[1].ports[0].port=443` (index `[1]`
+  because the model entry is `[0]`; use index `[0]` instead when installing
+  sealed with no model credential, so the array has no gap).
 - `agentos cluster status` reports release health, pod readiness, and the access URLs;
   the UI URL carries `?api=1`, so it opens wired to the in-cluster API (the
   deployed UI proxies `/api/` there).
