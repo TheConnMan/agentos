@@ -19,6 +19,7 @@ pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
 /// `endpoints_match_compose_file` test, which asserts the file still maps them).
 const ENDPOINTS: &[(&str, &str)] = &[
     ("AgentOS API", "http://localhost:28000"),
+    ("AgentOS Console", "http://localhost:28080/?api=1"),
     ("Langfuse UI", "http://localhost:23000"),
     ("Postgres", "localhost:25432"),
     ("Valkey", "localhost:26379"),
@@ -255,6 +256,7 @@ mod tests {
         // Each printed host port must appear as a `"<host>:<container>"` mapping.
         for (label, host_port) in [
             ("AgentOS API", "28000"),
+            ("AgentOS Console", "28080"),
             ("Langfuse UI", "23000"),
             ("Postgres", "25432"),
             ("Valkey", "26379"),
@@ -273,5 +275,17 @@ mod tests {
                 "ENDPOINTS missing {host_port} for {label}"
             );
         }
+        // The console must be advertised in wired mode (?api=1); the published UI
+        // image is fixture-by-default and only talks to the API when the URL
+        // carries this param.
+        let console = ENDPOINTS
+            .iter()
+            .find(|(label, _)| *label == "AgentOS Console")
+            .expect("AgentOS Console endpoint present");
+        assert!(
+            console.1.contains("api=1"),
+            "AgentOS Console endpoint must be the wired ?api=1 URL, got {}",
+            console.1
+        );
     }
 }

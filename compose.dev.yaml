@@ -12,6 +12,7 @@
 # Host ports use a distinctive 2xxxx block (host port = "2" + the service's
 # container port) to avoid common service defaults and stay below the OS
 # ephemeral port range (32768+):
+#   AgentOS Console ... http://localhost:28080
 #   Langfuse UI ....... http://localhost:23000
 #   Postgres .......... localhost:25432
 #   Valkey ............ localhost:26379
@@ -267,6 +268,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 5s
+    restart: unless-stopped
+
+  # The AgentOS console: nginx serving the static SPA, reverse-proxying `/api/`
+  # to the compose `agentos-api` (single substrate, same wiring the chart's UI
+  # uses). Talks to NOTHING else. Published on host 28080 from the 2xxxx block.
+  # The image is fixture-by-default, so the CLI advertises the wired
+  # `http://localhost:28080/?api=1` URL and `local up` opens it connected to the API.
+  agentos-ui:
+    image: ghcr.io/curie-eng/agentos-ui:latest
+    depends_on:
+      agentos-api:
+        condition: service_healthy
+    environment:
+      AGENTOS_API_TARGET: http://agentos-api:8000
+    ports:
+      - "28080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
       start_period: 5s
     restart: unless-stopped
 
