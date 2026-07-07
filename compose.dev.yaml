@@ -163,7 +163,8 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["ollama", "pull", "qwen3:4b"]
+      AGENTOS_MODEL: ${AGENTOS_MODEL:-qwen3:4b}
+    entrypoint: ["/bin/sh", "-c", "ollama pull \"$$AGENTOS_MODEL\""]
     restart: "no"
 
   langfuse-worker:
@@ -396,7 +397,7 @@ services:
       - CLAUDE_CODE_OAUTH_TOKEN
       - AGENTOS_CREDENTIALS
       # Local-model demo enablement:
-      # COMPOSE_PROFILES=local-model AGENTOS_FAKE_MODEL=0 AGENTOS_MODEL_BASE_URL=http://ollama:11434 AGENTOS_MODEL=qwen3:4b AGENTOS_DOCKER_NETWORK=agentos_default docker compose -f compose.dev.yaml up -d --wait
+      # agentos local up --local-model
       # AGENTOS_DOCKER_NETWORK=agentos_default puts spawned runner containers on
       # the compose network so they resolve ollama by name, same as the
       # otel-collector trace path.

@@ -109,6 +109,15 @@ enum SkillAction {
         /// Setting it makes token usage attributable in Langfuse traces.
         #[arg(long)]
         model: Option<String>,
+        /// Run the named model through local Ollama.
+        #[arg(
+            long,
+            num_args = 0..=1,
+            default_missing_value = commands::DEFAULT_LOCAL_MODEL,
+            conflicts_with = "fake_model",
+            conflicts_with = "model"
+        )]
+        local_model: Option<String>,
     },
     /// Stop and remove the local runner container.
     Down,
@@ -155,6 +164,13 @@ enum LocalAction {
         /// Print the docker compose command and exit without executing.
         #[arg(long)]
         dry_run: bool,
+        /// Run the named model through local Ollama.
+        #[arg(
+            long,
+            num_args = 0..=1,
+            default_missing_value = commands::DEFAULT_LOCAL_MODEL
+        )]
+        local_model: Option<String>,
     },
     /// Stop the dev stack (docker compose down), keeping volumes.
     Down {
@@ -269,6 +285,14 @@ enum ClusterAction {
         /// is set (dev/CI escape hatch); suppresses the fake-model warning.
         #[arg(long)]
         fake_model: bool,
+        /// Run the named model through the chart inference deployment.
+        #[arg(
+            long,
+            num_args = 0..=1,
+            default_missing_value = commands::DEFAULT_LOCAL_MODEL,
+            conflicts_with = "fake_model"
+        )]
+        local_model: Option<String>,
         /// Extra `--set KEY=VAL` passed through to helm verbatim (repeatable).
         #[arg(long = "set", value_name = "KEY=VAL")]
         set: Vec<String>,
@@ -450,6 +474,7 @@ async fn main() -> Result<()> {
                 otel_endpoint,
                 budget,
                 model,
+                local_model,
             } => {
                 let image = artifacts::resolve_image(
                     image.as_deref(),
@@ -466,6 +491,7 @@ async fn main() -> Result<()> {
                     otel_endpoint,
                     budget,
                     model,
+                    local_model,
                 })
                 .await
             }
@@ -480,9 +506,18 @@ async fn main() -> Result<()> {
             SkillAction::Eval { cases, url } => commands::eval(cases, url).await,
         },
         Command::Local { action } => match action {
-            LocalAction::Up { file, dry_run } => {
+            LocalAction::Up {
+                file,
+                dry_run,
+                local_model,
+            } => {
                 let file = resolve_compose_file(file, dry_run).await?;
-                local::up(LocalOpts { file, dry_run }).await
+                local::up(LocalOpts {
+                    file,
+                    dry_run,
+                    local_model,
+                })
+                .await
             }
             LocalAction::Down {
                 file,
@@ -492,7 +527,11 @@ async fn main() -> Result<()> {
             } => {
                 let file = resolve_compose_file(file, dry_run).await?;
                 local::down(LocalDownOpts {
-                    common: LocalOpts { file, dry_run },
+                    common: LocalOpts {
+                        file,
+                        dry_run,
+                        local_model: None,
+                    },
                     wipe,
                     yes,
                 })
@@ -500,7 +539,12 @@ async fn main() -> Result<()> {
             }
             LocalAction::Status { file, dry_run } => {
                 let file = resolve_compose_file(file, dry_run).await?;
-                local::status(LocalOpts { file, dry_run }).await
+                local::status(LocalOpts {
+                    file,
+                    dry_run,
+                    local_model: None,
+                })
+                .await
             }
             LocalAction::Message {
                 text,
@@ -564,6 +608,7 @@ async fn main() -> Result<()> {
                 chart,
                 no_expose,
                 fake_model,
+                local_model,
                 set,
                 dry_run,
             } => {
@@ -575,10 +620,14 @@ async fn main() -> Result<()> {
                     std::path::Path::new("charts/agentos").is_dir(),
                 )?;
                 let chart = materialize_artifact(resolved, dry_run, "chart").await?;
-                let credentials = ops::resolve_up_credentials(
-                    fake_model,
-                    std::env::var("AGENTOS_MODEL_CREDENTIALS").ok(),
-                );
+                let credentials = if local_model.is_some() {
+                    None
+                } else {
+                    ops::resolve_up_credentials(
+                        fake_model,
+                        std::env::var("AGENTOS_MODEL_CREDENTIALS").ok(),
+                    )
+                };
                 ops::up(UpOpts {
                     common: CommonOpts {
                         namespace,
@@ -590,6 +639,7 @@ async fn main() -> Result<()> {
                     set,
                     fake_model,
                     credentials,
+                    local_model,
                 })
                 .await
             }

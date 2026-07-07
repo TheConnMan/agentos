@@ -208,24 +208,27 @@ through an Anthropic-compatible endpoint, so the demo answers for real and can
 drive a 1-2 tool-call loop with no Anthropic key. This is a DEMO / dev-loop path,
 NOT the production agent path. The fake model stays the zero-dependency default.
 
-For compose, start the local model profile and let the worker pass the endpoint
-into spawned runner containers:
+Use one flag on the CLI surface you are running:
 
 ```bash
-COMPOSE_PROFILES=local-model AGENTOS_FAKE_MODEL=0 AGENTOS_MODEL_BASE_URL=http://ollama:11434 AGENTOS_MODEL=qwen3:4b AGENTOS_DOCKER_NETWORK=agentos_default docker compose -f compose.dev.yaml up -d --wait
+agentos skill up --local-model
+agentos local up --local-model
+agentos cluster up --local-model
 ```
 
-`AGENTOS_DOCKER_NETWORK=agentos_default` puts each spawned runner container on
-the compose network so it resolves `ollama` by name, the same requirement the
-OTel trace path has for `otel-collector`.
-
-For a cluster demo, enable the in-cluster endpoint:
+Bare `--local-model` uses `qwen3:4b`. Override it by passing a model name:
 
 ```bash
-helm upgrade --install agentos charts/agentos --set inference.deploy=true
+agentos local up --local-model qwen3-coder:30b
 ```
 
-The chart renders the Ollama Service and Deployment, opens the runner egress
+`skill up` and `local up` run the model in a Docker container and point spawned
+runners at that endpoint. Both the `skill up --local-model` and compose paths
+persist the pulled model in a Docker volume, so a re-up is fast and does not
+re-download the model; the skill-path volume is named `<container>-ollama-data`
+(the compose path uses `ollama_data`) and can be reclaimed with
+`docker volume rm <volume>`. `cluster up` uses the in-chart inference Deployment;
+the chart renders the Ollama Service and Deployment, opens the runner egress
 carve-out automatically, and bakes `ANTHROPIC_BASE_URL` plus the inference model
 into the runner template.
 

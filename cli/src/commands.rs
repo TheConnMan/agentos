@@ -22,6 +22,9 @@ use crate::state::{self, RunnerState};
 
 pub const DEFAULT_PORT: u16 = 7245; // the design canon's local bot port
 pub const DEFAULT_BUDGET: &str = r#"{"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}"#;
+pub const DEFAULT_LOCAL_MODEL: &str = "qwen3:4b";
+pub const DEFAULT_OLLAMA_IMAGE: &str = "ollama/ollama:0.24.0";
+pub const OLLAMA_PORT: u16 = 11434;
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum SendType {
@@ -66,6 +69,7 @@ pub struct StartOpts {
     pub otel_endpoint: Option<String>,
     pub budget: String,
     pub model: Option<String>,
+    pub local_model: Option<String>,
 }
 
 pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
@@ -92,6 +96,13 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // it at boot anyway (real-model mode), with a worse error surface.
     let (plugin_name, manifest_version) = read_manifest(&plugin_dir)?;
 
+    if opts.local_model.is_some() && opts.fake_model {
+        bail!("--local-model cannot be combined with --fake-model");
+    }
+    if opts.local_model.is_some() && opts.model.is_some() {
+        bail!("--local-model cannot be combined with --model");
+    }
+
     if state::load(&plugin_dir)?.is_some() {
         bail!(
             "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos skill down' there first",
@@ -104,6 +115,53 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         .with_context(|| format!("--budget is not a valid ACI budget: {}", opts.budget))?;
 
     let session_id = format!("local-{}", unix_now());
+    let mut network = opts.network.clone();
+    let mut owned_network: Option<String> = None;
+    let mut ollama_container: Option<String> = None;
+    let mut model_base_url: Option<String> = None;
+    let mut model = opts.model.clone();
+
+    if let Some(local_model) = &opts.local_model {
+        let (net, owned) = match &opts.network {
+            Some(net) => (net.clone(), false),
+            None => (format!("{}-net", opts.name), true),
+        };
+        if owned {
+            // Only claim ownership (and teardown responsibility) when this call
+            // actually created the network; a pre-existing one is not ours to rm.
+            let created = docker::create_network(&net).await?;
+            if created {
+                owned_network = Some(net.clone());
+            }
+        }
+        let ollama = format!("{}-ollama", opts.name);
+        if let Err(err) = docker::run_ollama(&ollama, &net, DEFAULT_OLLAMA_IMAGE).await {
+            if let Some(net) = &owned_network {
+                let _ = docker::remove_network(net).await;
+            }
+            return Err(err.context("starting local model container"));
+        }
+        if let Err(err) = docker::wait_ollama_ready(&ollama, Duration::from_secs(120)).await {
+            let _ = docker::remove_container(&ollama).await;
+            if let Some(net) = &owned_network {
+                let _ = docker::remove_network(net).await;
+            }
+            return Err(err.context("waiting for local model container"));
+        }
+        if let Err(err) = docker::pull_model(&ollama, local_model).await {
+            let _ = docker::remove_container(&ollama).await;
+            if let Some(net) = &owned_network {
+                let _ = docker::remove_network(net).await;
+            }
+            return Err(err.context("pulling local model"));
+        }
+        let url = format!("http://{ollama}:{OLLAMA_PORT}");
+        network = Some(net);
+        ollama_container = Some(ollama);
+        model_base_url = Some(url);
+        model = Some(local_model.clone());
+    }
+
     let spec = StartSpec {
         image: opts.image.clone(),
         container_name: opts.name.clone(),
@@ -112,10 +170,11 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         session_id: session_id.clone(),
         sandbox_id: "local".into(),
         budget_json: opts.budget,
-        fake_model: opts.fake_model,
-        network: opts.network,
+        fake_model: opts.local_model.is_none() && opts.fake_model,
+        network,
         otel_endpoint: opts.otel_endpoint,
-        model: opts.model,
+        model_base_url: model_base_url.clone(),
+        model,
         passthrough_env: vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
     };
 
@@ -124,7 +183,18 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         "starting runner container '{}' from '{}'",
         opts.name, opts.image
     ));
-    let container_id = docker::docker(&spec.run_args()).await?;
+    let container_id = match docker::docker(&spec.run_args()).await {
+        Ok(id) => id,
+        Err(err) => {
+            if let Some(ollama) = &ollama_container {
+                let _ = docker::remove_container(ollama).await;
+            }
+            if let Some(net) = &owned_network {
+                let _ = docker::remove_network(net).await;
+            }
+            return Err(err.context("starting runner container"));
+        }
+    };
 
     let base_url = format!("http://localhost:{}", opts.port);
     let client = RunnerClient::new(&base_url)?;
@@ -135,6 +205,12 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         let logs = docker::container_logs(&opts.name, 40).await;
         ui.note(&logs);
         let _ = docker::remove_container(&opts.name).await;
+        if let Some(ollama) = &ollama_container {
+            let _ = docker::remove_container(ollama).await;
+        }
+        if let Some(net) = &owned_network {
+            let _ = docker::remove_network(net).await;
+        }
         ui.failure(&format!("runner failed to become healthy: {err}"));
         bail!("runner failed to become healthy: {err}");
     }
@@ -155,9 +231,18 @@ pub async fn start(opts: StartOpts) -> Result<()> {
             session_id,
             plugin_dir: plugin_dir.display().to_string(),
             fake_model: opts.fake_model,
+            ollama_container: ollama_container.clone(),
+            network: owned_network.clone(),
+            model_base_url: model_base_url.clone(),
         },
     ) {
         let _ = docker::remove_container(&opts.name).await;
+        if let Some(ollama) = &ollama_container {
+            let _ = docker::remove_container(ollama).await;
+        }
+        if let Some(net) = &owned_network {
+            let _ = docker::remove_network(net).await;
+        }
         return Err(err.context("recording runner state (container removed again)"));
     }
 
@@ -175,6 +260,14 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         ("Version", version),
     ];
     ui.payload_plain(&boxed_summary("agentos dev environment", &rows));
+    if let Some(local_model) = &opts.local_model {
+        ui.note(&format!(
+            "local model running in container '{}' from '{}' with model '{}'",
+            ollama_container.as_deref().unwrap_or("unknown"),
+            DEFAULT_OLLAMA_IMAGE,
+            local_model
+        ));
+    }
     let cwd = Path::new(".").canonicalize()?;
     if cwd != plugin_dir {
         ui.note(&format!(
@@ -205,6 +298,31 @@ pub async fn stop() -> Result<()> {
             ));
         }
         Err(err) => return Err(err),
+    }
+    if let Some(ollama) = &saved.ollama_container {
+        match docker::remove_container(ollama).await {
+            Ok(()) => ui.success(&format!("stopped and removed container '{ollama}'")),
+            Err(err) if err.to_string().contains("No such container") => {
+                ui.note(&format!("container '{ollama}' was already gone"));
+            }
+            Err(err) => ui.warn(&format!("could not remove container '{ollama}': {err}")),
+        }
+        // Keep the model-cache volume so the next `skill up` reuses the pulled
+        // model instead of re-downloading it (mirrors compose `down` keeping
+        // `ollama_data`). Removal is left to the user.
+        let volume = docker::ollama_volume(ollama);
+        ui.note(&format!(
+            "kept model-cache volume '{volume}' for fast re-up; remove it with 'docker volume rm {volume}'"
+        ));
+    }
+    if let Some(net) = &saved.network {
+        match docker::remove_network(net).await {
+            Ok(()) => ui.success(&format!("removed network '{net}'")),
+            Err(err) if err.to_string().contains("No such network") => {
+                ui.note(&format!("network '{net}' was already gone"));
+            }
+            Err(err) => ui.warn(&format!("could not remove network '{net}': {err}")),
+        }
     }
     state::remove(dir)?;
     Ok(())

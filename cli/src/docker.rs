@@ -6,6 +6,7 @@
 //! laptop that already has Docker if it can run the runner at all.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
@@ -23,6 +24,7 @@ pub struct StartSpec {
     pub fake_model: bool,
     pub network: Option<String>,
     pub otel_endpoint: Option<String>,
+    pub model_base_url: Option<String>,
     /// Model id forwarded as `AGENTOS_MODEL`; `None` leaves the runner on its
     /// SDK default.
     pub model: Option<String>,
@@ -60,6 +62,10 @@ impl StartSpec {
             args.push("-e".into());
             args.push(format!("AGENTOS_MODEL={model}"));
         }
+        if let Some(url) = &self.model_base_url {
+            args.push("-e".into());
+            args.push(format!("ANTHROPIC_BASE_URL={url}"));
+        }
         if let Some(network) = &self.network {
             args.push("--network".into());
             args.push(network.clone());
@@ -95,6 +101,97 @@ pub async fn docker(args: &[String]) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Create a docker network. Returns `Ok(true)` when this call created it and
+/// `Ok(false)` when the network already existed, so the caller only claims
+/// ownership (and thus teardown responsibility) for networks it actually made.
+pub async fn create_network(name: &str) -> Result<bool> {
+    let output = Command::new("docker")
+        .args(["network", "create", name])
+        .output()
+        .await
+        .context("failed to invoke docker; is Docker installed and on PATH?")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("already exists") {
+        return Ok(false);
+    }
+    bail!(
+        "docker network create failed ({}): {}",
+        output.status,
+        stderr.trim()
+    )
+}
+
+pub async fn remove_network(name: &str) -> Result<()> {
+    docker(&["network".into(), "rm".into(), name.to_string()])
+        .await
+        .map(|_| ())
+}
+
+/// The named volume that persists an ollama container's model cache
+/// (`/root/.ollama`) across `skill down`/`skill up`, so a repeat demo reuses
+/// the pulled model instead of re-downloading it.
+pub fn ollama_volume(container: &str) -> String {
+    format!("{container}-data")
+}
+
+/// The `docker run` argument vector (after the `docker` executable) that boots
+/// the ollama container. A named volume for `/root/.ollama` keeps the pulled
+/// model cached across teardown; Docker auto-creates it on first use.
+pub fn ollama_run_args(container: &str, network: &str, image: &str) -> Vec<String> {
+    vec![
+        "run".into(),
+        "-d".into(),
+        "--name".into(),
+        container.to_string(),
+        "--network".into(),
+        network.to_string(),
+        "-v".into(),
+        format!("{}:/root/.ollama", ollama_volume(container)),
+        image.to_string(),
+    ]
+}
+
+pub async fn run_ollama(container: &str, network: &str, image: &str) -> Result<String> {
+    docker(&ollama_run_args(container, network, image)).await
+}
+
+pub async fn wait_ollama_ready(container: &str, timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+    loop {
+        let output = Command::new("docker")
+            .args(["exec", container, "ollama", "list"])
+            .output()
+            .await
+            .context("failed to invoke docker; is Docker installed and on PATH?")?;
+        if output.status.success() {
+            return Ok(());
+        }
+        if started.elapsed() >= timeout {
+            bail!(
+                "ollama container '{container}' did not become ready within {}s: {}",
+                timeout.as_secs(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+pub async fn pull_model(container: &str, model: &str) -> Result<()> {
+    docker(&[
+        "exec".into(),
+        container.to_string(),
+        "ollama".into(),
+        "pull".into(),
+        model.to_string(),
+    ])
+    .await
+    .map(|_| ())
 }
 
 /// Best-effort container teardown (used for cleanup paths).
@@ -138,9 +235,20 @@ mod tests {
             fake_model: true,
             network: Some("agentos_default".into()),
             otel_endpoint: Some("http://otel-collector:4318".into()),
+            model_base_url: None,
             model: None,
             passthrough_env: vec!["AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST".into()],
         }
+    }
+
+    #[test]
+    fn ollama_run_args_mount_the_model_cache_volume() {
+        let args = ollama_run_args("agentos-ollama", "agentos-net", "ollama/ollama:0.24.0");
+        let joined = args.join(" ");
+        assert!(joined.starts_with("run -d --name agentos-ollama --network agentos-net"));
+        assert!(joined.contains("-v agentos-ollama-data:/root/.ollama"));
+        assert_eq!(args.last().unwrap(), "ollama/ollama:0.24.0");
+        assert_eq!(ollama_volume("agentos-ollama"), "agentos-ollama-data");
     }
 
     #[test]
@@ -181,5 +289,32 @@ mod tests {
             .run_args()
             .join(" ")
             .contains("-e AGENTOS_MODEL=claude-opus-4-8"));
+    }
+
+    #[test]
+    fn model_base_url_is_forwarded_when_set() {
+        let mut s = spec();
+        s.model_base_url = Some("http://x-ollama:11434".into());
+        assert!(s
+            .run_args()
+            .join(" ")
+            .contains("-e ANTHROPIC_BASE_URL=http://x-ollama:11434"));
+    }
+
+    #[test]
+    fn model_base_url_is_omitted_when_unset() {
+        let mut s = spec();
+        s.model_base_url = None;
+        assert!(!s.run_args().join(" ").contains("ANTHROPIC_BASE_URL"));
+    }
+
+    #[test]
+    fn real_model_with_model_base_url_still_omits_fake_flag() {
+        let mut s = spec();
+        s.fake_model = false;
+        s.model_base_url = Some("http://x-ollama:11434".into());
+        let joined = s.run_args().join(" ");
+        assert!(joined.contains("-e ANTHROPIC_BASE_URL=http://x-ollama:11434"));
+        assert!(!joined.contains("AGENTOS_FAKE_MODEL"));
     }
 }
