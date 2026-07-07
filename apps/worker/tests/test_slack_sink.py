@@ -36,6 +36,24 @@ def test_update_converts_markdown_to_mrkdwn() -> None:
     asyncio.run(sink.update(channel="C1", ts="1.1", text="**hi** [x](http://y)"))
 
     assert captured["text"] == "*hi* <http://y|x>"
+    assert "blocks" not in captured  # plain text path passes no blocks
+
+
+def test_update_renders_blocks_for_a_reply_convention() -> None:
+    sink = AsyncSlackSink("xoxb-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_chat_update(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    sink._client.chat_update = _fake_chat_update  # type: ignore[method-assign]
+
+    text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
+    asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
+
+    assert isinstance(captured.get("blocks"), list)
+    assert captured["blocks"][0]["type"] == "header"  # type: ignore[index]
+    assert captured["text"] == "body"  # accessibility fallback, not raw JSON
 
 
 def test_clear_status_sets_empty_assistant_status() -> None:
