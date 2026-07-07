@@ -12,6 +12,7 @@ use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAUL
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
 use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
+use agentos::ui::{self, ColorFlag, Ui};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -24,6 +25,30 @@ use clap::{Parser, Subcommand};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Show verbose plumbing (helm/kubectl/rollout/port-forward).
+    #[arg(
+        long,
+        global = true,
+        help = "Show verbose plumbing (helm/kubectl/rollout/port-forward)"
+    )]
+    debug: bool,
+    /// Payload only; suppress progress and diagnostics.
+    #[arg(
+        short = 'q',
+        long,
+        global = true,
+        help = "Payload only; suppress progress and diagnostics"
+    )]
+    quiet: bool,
+    /// Colorize output.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t = ColorFlag::Auto,
+        help = "Colorize output"
+    )]
+    color: ColorFlag,
 }
 
 #[derive(Subcommand)]
@@ -377,7 +402,9 @@ enum LocalAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    ui::init(Ui::from_process(cli.color, cli.debug, cli.quiet));
+    match cli.command {
         Command::Init { name, dir } => commands::init(&name, dir),
         Command::Start {
             plugin_dir,

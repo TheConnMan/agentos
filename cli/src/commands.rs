@@ -14,8 +14,8 @@ use clap::ValueEnum;
 use crate::api::{ApiClient, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
-use crate::evals::{case_line, load_cases, summary_line, turn_passes};
-use crate::render::{boxed_summary, TurnPrinter};
+use crate::evals::{load_cases, turn_passes};
+use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::{RunnerClient, SteerOutcome};
 use crate::scaffold::{read_manifest, scaffold};
 use crate::state::{self, RunnerState};
@@ -71,11 +71,15 @@ pub struct StartOpts {
 pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
     let dir = dir.unwrap_or_else(|| PathBuf::from(name));
     let created = scaffold(&dir, name)?;
-    println!("Initialized plugin bundle '{name}' in {}", dir.display());
+    let ui = crate::ui::ui();
+    ui.success(&format!(
+        "initialized plugin bundle '{name}' in {}",
+        dir.display()
+    ));
     for path in created {
-        println!("  created {}", path.display());
+        ui.note(&format!("created {}", path.display()));
     }
-    println!("\nNext: cd {} && agentos start", dir.display());
+    ui.note(&format!("Next: cd {} && agentos start", dir.display()));
     Ok(())
 }
 
@@ -115,19 +119,26 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         passthrough_env: vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
     };
 
-    println!(
-        "Starting runner container '{}' from image '{}'...",
+    let ui = crate::ui::ui();
+    ui.note(&format!(
+        "starting runner container '{}' from '{}'",
         opts.name, opts.image
-    );
+    ));
     let container_id = docker::docker(&spec.run_args()).await?;
 
     let base_url = format!("http://localhost:{}", opts.port);
     let client = RunnerClient::new(&base_url)?;
+    let cl = ui.checklist();
+    let step = cl.step("waiting for runner");
     if let Err(err) = client.wait_healthy(Duration::from_secs(60)).await {
+        step.fail("unhealthy");
         let logs = docker::container_logs(&opts.name, 40).await;
+        ui.note(&logs);
         let _ = docker::remove_container(&opts.name).await;
-        bail!("runner failed to become healthy: {err}\ncontainer logs:\n{logs}");
+        ui.failure(&format!("runner failed to become healthy: {err}"));
+        bail!("runner failed to become healthy: {err}");
     }
+    step.done("healthy");
 
     // State lives with the bundle: init gitignores .agentos/ there, and the
     // follow-up commands are documented to run from the bundle directory. If
@@ -160,31 +171,35 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         ("Eval runner", "agentos eval".to_string()),
         ("Version", version),
     ];
-    println!("{}", boxed_summary("agentos dev environment", &rows));
+    ui.payload_plain(&boxed_summary("agentos dev environment", &rows));
     let cwd = Path::new(".").canonicalize()?;
     if cwd != plugin_dir {
-        println!(
-            "\nState recorded in {}/.agentos/runner.json; run stop (and send/eval/status) from that directory. send and eval also accept --url.",
+        ui.note(&format!(
+            "State recorded in {}/.agentos/runner.json; run stop (and send/eval/status) from that directory. send and eval also accept --url.",
             plugin_dir.display()
-        );
+        ));
     }
     Ok(())
 }
 
 pub async fn stop() -> Result<()> {
     let dir = Path::new(".");
+    let ui = crate::ui::ui();
     let Some(saved) = state::load(dir)? else {
         bail!("no local runner recorded in .agentos/runner.json; run from the bundle directory");
     };
     match docker::remove_container(&saved.container_name).await {
-        Ok(()) => println!("Stopped and removed container '{}'", saved.container_name),
+        Ok(()) => ui.success(&format!(
+            "stopped and removed container '{}'",
+            saved.container_name
+        )),
         // The container being gone already is a success for stop: clear the
         // state instead of wedging start/stop on a stale runner.json.
         Err(err) if err.to_string().contains("No such container") => {
-            println!(
-                "Container '{}' was already gone; cleared stale state",
+            ui.note(&format!(
+                "container '{}' was already gone; cleared stale state",
                 saved.container_name
-            );
+            ));
         }
         Err(err) => return Err(err),
     }
@@ -196,21 +211,23 @@ pub async fn status(url: Option<String>) -> Result<()> {
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let status = client.status().await?;
-    println!("runner {url}");
-    println!("{}", serde_json::to_string_pretty(&status)?);
+    let ui = crate::ui::ui();
+    ui.note(&format!("runner {url}"));
+    ui.payload_plain(&serde_json::to_string_pretty(&status)?);
     Ok(())
 }
 
 pub async fn steer(text: &str, user: &str, url: Option<String>) -> Result<()> {
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
+    let ui = crate::ui::ui();
     match client.steer(text, user).await? {
         SteerOutcome::Delivered => {
-            println!("steered the live turn");
+            ui.success("steered the live turn");
             Ok(())
         }
         SteerOutcome::NoActiveTurn => {
-            println!("no active turn to steer; send a new message to start one");
+            ui.failure("no active turn to steer; send a new message to start one");
             std::process::exit(1);
         }
     }
@@ -220,7 +237,7 @@ pub async fn interrupt(reason: &str, url: Option<String>) -> Result<()> {
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     client.interrupt(reason).await?;
-    println!("interrupted the runner");
+    crate::ui::ui().success("interrupted the runner");
     Ok(())
 }
 
@@ -232,16 +249,83 @@ pub async fn send(
 ) -> Result<()> {
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
+    let ui = crate::ui::ui();
     let mut printer = TurnPrinter::default();
+
+    // A "thinking" spinner marks the wait for the first token; it is cleared the
+    // instant streaming begins (committing no line) so the agent answer streams
+    // clean. `streamed` tracks whether any answer token reached stdout;
+    // `at_line_start` tracks whether stdout is at a fresh line (no un-terminated
+    // streamed text) so a stderr diagnostic never glues onto a token line.
+    let cl = ui.checklist();
+    let mut step = Some(cl.step("thinking"));
+    let mut streamed = false;
+    let mut at_line_start = true;
+
     let events = client
         .send_event(event_type, text, user, |event| {
-            if let Some(line) = printer.line_for(event) {
-                println!("{line}");
+            let part = printer.part_for(event);
+            // Clear the "thinking" spinner on the FIRST rendered event of any
+            // kind (token, note, or failure). A Note/Fail is written to stderr
+            // immediately, so if one arrives before the first token it would
+            // garble the still-live spinner line unless we drop it first.
+            if matches!(
+                part,
+                Some(TurnPart::Token(_) | TurnPart::Note(_) | TurnPart::Fail(_))
+            ) {
+                if let Some(step) = step.take() {
+                    step.clear();
+                }
+            }
+            match part {
+                // Answer tokens are raw payload -> stdout, concatenated at network
+                // pace with no per-delta newline. Track mid-line state so a later
+                // note closes an un-terminated line first.
+                Some(TurnPart::Token(token)) => {
+                    ui.answer(&token);
+                    streamed = true;
+                    at_line_start = token.ends_with('\n');
+                }
+                // Tool notes and errors are diagnostics -> stderr. If stdout is
+                // mid-line, close that streamed line with a single newline first
+                // so the note does not glue onto the token text. Under `-q` the
+                // note itself is a no-op; the lone separating newline lands in
+                // the middle of the streamed answer, which is just whitespace and
+                // harmless to `| jq` (a median newline in the payload is fine).
+                Some(TurnPart::Note(msg)) => {
+                    if !at_line_start {
+                        ui.print_tokens("\n");
+                        at_line_start = true;
+                    }
+                    ui.note(&msg);
+                }
+                Some(TurnPart::Fail(msg)) => {
+                    if !at_line_start {
+                        ui.print_tokens("\n");
+                        at_line_start = true;
+                    }
+                    ui.failure(&msg);
+                }
+                // The status trailer is emitted once at the end from events.last().
+                Some(TurnPart::Status(_)) | None => {}
             }
         })
         .await?;
 
+    // Nothing ever streamed (e.g. an empty final): drop the spinner silently.
+    if let Some(step) = step.take() {
+        step.clear();
+    }
+
     if let Some(OutboundEvent::Final { status, .. }) = events.last() {
+        // Close the streamed answer on stdout only if the last thing written was
+        // un-terminated token text; if a note already added its own newline (or
+        // the last token ended in one) skip it to avoid a blank line. The status
+        // trailer is a diagnostic -> stderr.
+        if streamed && !at_line_start {
+            ui.print_tokens("\n");
+        }
+        ui.note(&format!("-- final ({})", status_str(status)));
         if *status == SessionStatus::ClassifiedFailure {
             std::process::exit(1);
         }
@@ -255,9 +339,13 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
     let cases = load_cases(&cases_path)?;
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
+    let ui = crate::ui::ui();
 
     let total = cases.len();
     let mut passed = 0usize;
+    // (name, passed, seconds) rows, rendered as one table once the run finishes.
+    let mut results: Vec<(String, bool, f64)> = Vec::with_capacity(total);
+    let bar = ui.progress_bar(total as u64, "running evals");
     for case in &cases {
         let started = Instant::now();
         let events = client
@@ -268,9 +356,33 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
         if ok {
             passed += 1;
         }
-        println!("{}", case_line(&case.name, ok, elapsed));
+        results.push((case.name.clone(), ok, elapsed));
+        bar.inc(1);
     }
-    println!("{}", summary_line(passed, total));
+    bar.finish();
+
+    // The result table is payload -> stdout; the roll-up verdict is a
+    // diagnostic -> stderr.
+    let rows: Vec<Vec<String>> = results
+        .iter()
+        .map(|(name, ok, seconds)| {
+            let result = if *ok {
+                format!("{} pass", '\u{2713}')
+            } else {
+                format!("{} fail", '\u{2717}')
+            };
+            vec![name.clone(), result, format!("{seconds:.1}s")]
+        })
+        .collect();
+    ui.payload_plain(&crate::ui::table(&["case", "result", "time"], &rows, &[2]));
+    if passed == total {
+        ui.success(&format!("{passed}/{total} passed"));
+    } else {
+        ui.warn(&format!(
+            "{passed}/{total} passed; {} failed",
+            total - passed
+        ));
+    }
     if passed < total {
         std::process::exit(1);
     }
@@ -328,51 +440,77 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         .unwrap_or_else(|| format!("{manifest_version}-{}", unix_now()));
     let created_by = std::env::var("USER").unwrap_or_else(|_| "agentos-cli".to_string());
 
+    let ui = crate::ui::ui();
     let archive = pack_tar_gz(&plugin_dir)?;
-    println!(
-        "Deploying '{plugin_name}' ({} bytes) as {label} to {} [{}]",
+    let env = opts.env.as_str();
+    ui.note(&format!(
+        "deploying {plugin_name} ({} bytes) to {} [{env}]",
         archive.len(),
         opts.api_url,
-        opts.env.as_str()
-    );
+    ));
 
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
-    let outcome = client
+    let cl = ui.checklist();
+    let step = cl.step(&format!("deploying {plugin_name}"));
+    let outcome = match client
         .deploy(
             &plugin_name,
             opts.slack_channel.as_deref(),
             &label,
             &created_by,
-            opts.env.as_str(),
+            env,
             archive,
         )
-        .await?;
-
-    println!("agent       {} ({})", outcome.agent.name, outcome.agent.id);
-    match &outcome.channel {
-        ChannelOutcome::Created(channel) => println!("channel     {channel}"),
-        ChannelOutcome::Updated { from, to } => {
-            println!("channel     updated to {to} (was {from})")
+        .await
+    {
+        Ok(outcome) => {
+            step.done(env);
+            outcome
         }
+        Err(err) => {
+            step.fail("failed");
+            return Err(err);
+        }
+    };
+
+    ui.payload(&format!("deployed {plugin_name} {label} -> {env}"));
+    ui.kv(
+        "agent",
+        &format!("{} ({})", outcome.agent.name, ui.url(&outcome.agent.id)),
+    );
+    ui.kv(
+        "version",
+        &format!(
+            "{} ({})",
+            outcome.version.version_label,
+            ui.url(&outcome.version.id)
+        ),
+    );
+    let channel = match &outcome.channel {
+        ChannelOutcome::Created(channel) => channel.clone(),
+        ChannelOutcome::Updated { from, to } => format!("updated to {to} (was {from})"),
         ChannelOutcome::Unchanged { channel, passed } => {
             if *passed {
-                println!("channel     unchanged ({channel})");
+                format!("unchanged ({channel})")
             } else {
-                println!("channel     unchanged ({channel}); pass --slack-channel to move it");
+                format!("unchanged ({channel}); pass --slack-channel to move it")
             }
         }
-    }
-    println!(
-        "version     {} ({})",
-        outcome.version.version_label, outcome.version.id
+    };
+    ui.kv("channel", &channel);
+    ui.kv(
+        "bundle",
+        &format!(
+            "{} sha256:{} {} bytes",
+            outcome.bundle.bundle_ref, outcome.bundle.bundle_sha256, outcome.bundle.size_bytes
+        ),
     );
-    println!(
-        "bundle      {} sha256:{} {} bytes",
-        outcome.bundle.bundle_ref, outcome.bundle.bundle_sha256, outcome.bundle.size_bytes
-    );
-    println!(
-        "deployment  {} [{}] {}",
-        outcome.deployment.id, outcome.deployment.environment, outcome.deployment.status
+    ui.kv(
+        "deployment",
+        &format!(
+            "{} [{}] {}",
+            outcome.deployment.id, outcome.deployment.environment, outcome.deployment.status
+        ),
     );
     Ok(())
 }

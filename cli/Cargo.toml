@@ -10,6 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
+anstream = "1"
+anstyle = "1"
+anstyle-query = "1"
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = [
     "tokio",
@@ -19,6 +22,7 @@ axum = { version = "0.8", default-features = false, features = [
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 futures-util = "0.3"
+indicatif = "0.17"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "stream",

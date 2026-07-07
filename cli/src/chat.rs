@@ -246,11 +246,13 @@ pub async fn await_reply(
 }
 
 /// Print the one-liner that continues this thread: reusing the same channel and
-/// thread ts keeps the worker routing to the same agent and turn context.
+/// thread ts keeps the worker routing to the same agent and turn context. A dim
+/// diagnostic (stderr, `--debug`-independent note) so it never pollutes the
+/// captured payload.
 pub fn print_continue_hint(verb: &str, channel: &str, thread_ts: &str) {
-    println!(
+    crate::ui::ui().note(&format!(
         "continue this conversation: agentos {verb} --channel {channel} --thread {thread_ts} \"...\""
-    );
+    ));
 }
 
 /// Resolve the channel and timestamps for a turn: an explicit `--channel` is
@@ -268,15 +270,16 @@ pub fn resolve_targets(channel: Option<&str>, thread: Option<&str>) -> (String, 
 
 /// The `agentos chat` handler.
 pub async fn chat(opts: ChatOpts) -> Result<()> {
+    let ui = crate::ui::ui();
     // Connect Valkey up front so a misconfigured stream or down stack fails fast,
     // before the stub binds or any id is minted.
     let mut conn = connect(&opts.valkey_url).await?;
 
     let mut stub = SlackStub::start(&opts.listen_host, opts.listen_port, &opts.listen_host).await?;
-    println!(
+    ui.note(&format!(
         "slack stub listening; run the worker with SLACK_API_BASE_URL={}",
         stub.base_api_url()
-    );
+    ));
 
     // Invent internally-consistent synthetic ids; the CLI is both the producer
     // and the Slack endpoint that receives them back. --channel/--thread let a
@@ -292,15 +295,17 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
         &placeholder_ts,
     );
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
-    println!(
+    ui.note(&format!(
         "enqueued {} on {} as {stream_id}",
         event.slack_event_id, opts.stream
-    );
-    println!(
+    ));
+    ui.note(&format!(
         "waiting up to {}s for the worker to finalize the turn...",
         opts.timeout_secs
-    );
+    ));
 
+    let cl = ui.checklist();
+    let step = cl.step("waiting for worker reply");
     let outcome = await_reply(
         &mut stub,
         &mut conn,
@@ -313,22 +318,23 @@ pub async fn chat(opts: ChatOpts) -> Result<()> {
 
     match outcome {
         Outcome::Replied(reply) => {
-            println!("reply    {reply}");
+            step.done("");
+            ui.answer(&reply);
+            ui.print_tokens("\n");
             print_continue_hint("chat", &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
-            println!("the worker finished the turn but never edited the placeholder");
+            step.done("no edit");
+            ui.warn("the worker finished the turn but never edited the placeholder");
             print_continue_hint("chat", &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
-            println!(
-                "TIMEOUT: the worker did not finalize within {}s. Stream diagnostics:",
-                opts.timeout_secs
-            );
+            step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            ui.note("stream diagnostics:");
             let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-            println!("{diag}");
+            ui.note(&diag);
             std::process::exit(1);
         }
     }
