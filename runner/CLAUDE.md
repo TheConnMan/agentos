@@ -3,7 +3,7 @@
 The runner image and SDK adapter: a long-lived `claude-agent-sdk`
 streaming session server implementing the full ACI v0.1 contract from
 `packages/aci-protocol`. Runs inside a claimed Agent Sandbox, or locally in
-Docker via `agentos start`. Full behavior spec in `runner/README.md`.
+Docker via `agentos skill up`. Full behavior spec in `runner/README.md`.
 
 ## Load-bearing invariants
 
@@ -38,7 +38,7 @@ Docker via `agentos start`. Full behavior spec in `runner/README.md`.
   side-channel injections whose output surfaces on the already-open
   `/v1/event` stream -- do not open a second concurrent generator for a steer.
 - **`AGENTOS_FAKE_MODEL` must stay a true offline no-op.** It exists so CI,
-  the CLI's `agentos start --fake-model`, and the chart's default runner pool
+  the CLI's `agentos skill up --fake-model`, and the chart's default runner pool
   can round-trip ACI events with zero credential and zero network call. Any
   change to the fake-model path must preserve "no model call, no network"
   or it breaks all three of those consumers silently.

@@ -1,12 +1,13 @@
-//! `agentos message`: drive the DEPLOYED Kubernetes release end to end from the
-//! CLI with zero Slack contact.
+//! Shared target noun message forms: drive the DEPLOYED Kubernetes release end
+//! to end from the CLI with zero Slack contact.
 //!
 //! Product rationale: a developer building an agent for someone else's Slack
 //! workspace can exercise the entire deployed machinery (Valkey queue -> worker
 //! -> claimed sandbox -> the real skill -> the reply) without any Slack access,
-//! tokens, or workspace. It is `agentos chat`'s engine (a local Slack Web API
-//! stub + the frozen `QueuedSlackEvent` enqueue + the ack-based completion
-//! signal) with Kubernetes-aware auto-plumbing bolted on top:
+//! tokens, or workspace. It is the retained chat helper engine, backed by a
+//! local Slack Web API stub plus the frozen `QueuedSlackEvent` enqueue and the
+//! ack-based completion signal, with Kubernetes-aware auto-plumbing bolted on
+//! top:
 //!
 //! 1. Self-managed `kubectl port-forward`s (children of this process, killed on
 //!    exit) reach the in-cluster Valkey (for the enqueue) and API (for the
@@ -69,7 +70,8 @@ pub const DEFAULT_LOCAL_STUB_PORT: u16 = DEFAULT_LISTEN_PORT;
 const VALKEY_REMOTE_PORT: u16 = 6379;
 const API_REMOTE_PORT: u16 = 8000;
 
-/// Options for `agentos message`, mirroring its clap flags.
+/// Options for the shared target noun message forms, mirroring their clap
+/// flags.
 pub struct MessageOpts {
     pub text: String,
     pub channel: Option<String>,
@@ -219,8 +221,8 @@ pub fn select_channel(agents: &[Agent], explicit: Option<&str>) -> Result<String
     }
     match agents {
         [] => bail!(
-            "no agents are deployed on the platform API; deploy one with `agentos deploy` \
-             or pass --channel <id>"
+            "no agents are deployed on the platform API; deploy one with `agentos local deploy` \
+             or `agentos cluster deploy`, or pass --channel <id>"
         ),
         [only] => Ok(only.slack_channel.clone()),
         many => {
@@ -420,7 +422,7 @@ async fn current_worker_base_url(opts: &MessageOpts) -> Result<Option<String>> {
     if !ok {
         bail!(
             "could not read the worker deployment '{}-worker' in namespace {} ({}). \
-             Is the release installed? Run `agentos up` first.",
+             Is the release installed? Run `agentos cluster up` first.",
             opts.release,
             opts.namespace,
             err.trim().lines().next().unwrap_or("kubectl get failed")
@@ -515,7 +517,7 @@ async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
     Ok(())
 }
 
-/// The `agentos message --local` handler: drive the compose stack directly.
+/// The `agentos local message` handler: drive the compose stack directly.
 ///
 /// The cluster path's self-plumbing (kubectl port-forwards, the wiring helm
 /// upgrade, the dispatcher guard) is all cluster-specific, so local mode keeps
@@ -611,13 +613,13 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             step.done("");
             ui.answer(&reply);
             ui.print_tokens("\n");
-            print_continue_hint("message --local", &channel, &thread_ts);
+            print_continue_hint("local message", &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
             ui.warn("the worker finished the turn but never edited the placeholder");
-            print_continue_hint("message --local", &channel, &thread_ts);
+            print_continue_hint("local message", &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
@@ -630,7 +632,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     }
 }
 
-/// The `agentos message` handler.
+/// The shared target noun message handler.
 pub async fn message(opts: MessageOpts) -> Result<()> {
     if opts.local {
         return message_local(opts).await;
@@ -761,13 +763,13 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             step.done("");
             ui.answer(&reply);
             ui.print_tokens("\n");
-            print_continue_hint("message", &channel, &thread_ts);
+            print_continue_hint("cluster message", &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
             ui.warn("the worker finished the turn but never edited the placeholder");
-            print_continue_hint("message", &channel, &thread_ts);
+            print_continue_hint("cluster message", &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {

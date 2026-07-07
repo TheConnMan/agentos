@@ -1,4 +1,4 @@
-//! `agentos eval`: run the bundle's eval cases through the local runner.
+//! `agentos skill eval`: run the bundle's eval cases through the local runner.
 //!
 //! Cases live in `evals/cases.json` (seeded by `agentos init`): an array of
 //! `{name, input, expect_contains}`. Each case round-trips an `eval_case` ACI

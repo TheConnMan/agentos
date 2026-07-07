@@ -95,9 +95,9 @@ pub async fn up(o: LocalOpts) -> Result<()> {
     }
     ui.note("Drive the local product loop (no Slack, no Kubernetes):");
     ui.note(
-        "  agentos deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
+        "  agentos local deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
     );
-    ui.note("  agentos message --local \"<your question>\"");
+    ui.note("  agentos local message \"<your question>\"");
     Ok(())
 }
 

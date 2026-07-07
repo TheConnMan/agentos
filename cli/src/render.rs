@@ -1,4 +1,4 @@
-//! Terminal rendering: per-event output lines and the boxed `start` summary.
+//! Terminal rendering: per-event output lines and the boxed `skill up` summary.
 //!
 //! The boxed summary follows the design canon (claude-design-prompt.md): a
 //! Supabase-style rounded box listing the local bot URL, the emulator and eval
@@ -88,7 +88,7 @@ impl TurnPrinter {
     }
 }
 
-/// Render the boxed environment summary the design specifies for `agentos start`.
+/// Render the boxed environment summary the design specifies for `agentos skill up`.
 pub fn boxed_summary(title: &str, rows: &[(&str, String)]) -> String {
     let label_width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
     let body: Vec<String> = rows
@@ -226,8 +226,11 @@ mod tests {
     fn boxed_summary_lines_are_flush() {
         let rows = [
             ("Local bot", "http://localhost:7245".to_string()),
-            ("Slack emulator", "agentos send \"<message>\"".to_string()),
-            ("Eval runner", "agentos eval".to_string()),
+            (
+                "Slack emulator",
+                "agentos skill message \"<message>\"".to_string(),
+            ),
+            ("Eval runner", "agentos skill eval".to_string()),
             ("Version", "dev @ 4f2c91a".to_string()),
         ];
         let boxed = boxed_summary("agentos dev environment", &rows);

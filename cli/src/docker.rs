@@ -1,6 +1,6 @@
 //! Local runner orchestration via the Docker CLI.
 //!
-//! `agentos start` boots the D1 runner image with the ACI-frozen boot env
+//! `agentos skill up` boots the D1 runner image with the ACI-frozen boot env
 //! (runner/README.md documents the recipe); `stop` tears it down. Shelling out
 //! to `docker` keeps the CLI dependency-light: the target machine is a dev
 //! laptop that already has Docker if it can run the runner at all.

@@ -16,7 +16,7 @@ use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
 use crate::evals::{load_cases, turn_passes};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
-use crate::runner::{RunnerClient, SteerOutcome};
+use crate::runner::RunnerClient;
 use crate::scaffold::{read_manifest, scaffold};
 use crate::state::{self, RunnerState};
 
@@ -55,7 +55,7 @@ impl DeployEnv {
     }
 }
 
-/// Options for `agentos start`, mirroring its clap flags.
+/// Options for `agentos skill up`, mirroring its clap flags.
 pub struct StartOpts {
     pub plugin_dir: PathBuf,
     pub image: String,
@@ -79,7 +79,7 @@ pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
     for path in created {
         ui.note(&format!("created {}", path.display()));
     }
-    ui.note(&format!("Next: cd {} && agentos start", dir.display()));
+    ui.note(&format!("Next: cd {} && agentos skill up", dir.display()));
     Ok(())
 }
 
@@ -94,7 +94,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
 
     if state::load(&plugin_dir)?.is_some() {
         bail!(
-            "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos stop' there first",
+            "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos skill down' there first",
             plugin_dir.display()
         );
     }
@@ -167,15 +167,18 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         .unwrap_or_else(|| format!("{plugin_name} @ {manifest_version}"));
     let rows = [
         ("Local bot", base_url),
-        ("Slack emulator", "agentos send \"<message>\"".to_string()),
-        ("Eval runner", "agentos eval".to_string()),
+        (
+            "Skill message",
+            "agentos skill message \"<message>\"".to_string(),
+        ),
+        ("Skill eval", "agentos skill eval".to_string()),
         ("Version", version),
     ];
     ui.payload_plain(&boxed_summary("agentos dev environment", &rows));
     let cwd = Path::new(".").canonicalize()?;
     if cwd != plugin_dir {
         ui.note(&format!(
-            "State recorded in {}/.agentos/runner.json; run stop (and send/eval/status) from that directory. send and eval also accept --url.",
+            "State recorded in {}/.agentos/runner.json; run skill down from that directory. skill message, skill eval, and skill status also work there. skill message and skill eval also accept --url.",
             plugin_dir.display()
         ));
     }
@@ -214,30 +217,6 @@ pub async fn status(url: Option<String>) -> Result<()> {
     let ui = crate::ui::ui();
     ui.note(&format!("runner {url}"));
     ui.payload_plain(&serde_json::to_string_pretty(&status)?);
-    Ok(())
-}
-
-pub async fn steer(text: &str, user: &str, url: Option<String>) -> Result<()> {
-    let url = resolve_url(url)?;
-    let client = RunnerClient::new(&url)?;
-    let ui = crate::ui::ui();
-    match client.steer(text, user).await? {
-        SteerOutcome::Delivered => {
-            ui.success("steered the live turn");
-            Ok(())
-        }
-        SteerOutcome::NoActiveTurn => {
-            ui.failure("no active turn to steer; send a new message to start one");
-            std::process::exit(1);
-        }
-    }
-}
-
-pub async fn interrupt(reason: &str, url: Option<String>) -> Result<()> {
-    let url = resolve_url(url)?;
-    let client = RunnerClient::new(&url)?;
-    client.interrupt(reason).await?;
-    crate::ui::ui().success("interrupted the runner");
     Ok(())
 }
 
@@ -391,8 +370,8 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
 
 /// Where the eval cases live: an explicit `--cases` wins; otherwise
 /// `evals/cases.json` in the current directory, falling back to the started
-/// runner's recorded bundle directory (so `agentos eval` works from wherever
-/// `agentos start` was run).
+/// runner's recorded bundle directory (so `agentos skill eval` works from
+/// wherever `agentos skill up` was run).
 pub fn resolve_cases_path(
     explicit: Option<PathBuf>,
     cwd: &Path,

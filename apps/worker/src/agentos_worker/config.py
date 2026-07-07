@@ -35,7 +35,7 @@ class WorkerConfig(BaseModel):
     # Slack
     slack_bot_token: str = ""
     # Optional Slack Web API base URL override. Unset = the real Slack API; set it
-    # to point chat.update at a local Slack stub (the CLI's `agentos chat`
+    # to point chat.update at a local Slack stub (the CLI's `agentos local message`
     # no-Slack middle-mode e2e).
     slack_api_base_url: str = ""
 

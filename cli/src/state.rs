@@ -1,7 +1,7 @@
-//! Local runner state: which container `agentos start` booted, and where.
+//! Local runner state: which container `agentos skill up` booted, and where.
 //!
-//! Written to `.agentos/runner.json` in the project directory so `send`,
-//! `eval`, `status`, and `stop` find the runner without flags. The file is
+//! Written to `.agentos/runner.json` in the project directory so `message`,
+//! `eval`, `cluster status`, and `cluster down` find the runner without flags. The file is
 //! local workstation state, never committed (init scaffolds the ignore rule).
 
 use std::path::{Path, PathBuf};

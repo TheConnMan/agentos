@@ -6,27 +6,79 @@ HTTP/NDJSON, and the platform API's committed openapi.json) and orchestrates a
 local runner container via Docker, so a plugin runs on a dev laptop with zero
 Slack involved.
 
-## Commands
+## Which target do I want?
+
+Every environment command takes a **target noun** in the middle: `skill`,
+`local`, or `cluster`. Pick the lightest one that answers your question.
+`agentos init` is the exception, a top-level verb that scaffolds a bundle on
+disk and targets no environment.
+
+| Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
+|---|---|---|---|---|---|
+| `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | none | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `message` `deploy` | Operate and drive a deployed cluster release. |
+
+The universal quartet `up`/`down`/`status`/`message` is on all three targets;
+`skill` adds `eval`, and `local`/`cluster` add `deploy`. The distinction that
+matters: `skill` is the **runner-only** loop, talking straight to a runner
+container's ACI HTTP surface with no platform in front; `local` and `cluster`
+put the **full platform** (queue, worker, sandbox) in front of the identical
+runner and ACI, so a `message` walks the same path a real Slack mention would.
+
+## `init` (top-level)
 
 | Command | What it does |
 |---|---|
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed. |
-| `agentos start` | Boot the runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network`/`--otel-endpoint` join the compose stack for traces. |
-| `agentos send "..."` | Emulate a Slack message: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side-effect flags, final). |
-| `agentos eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per-case result table plus a pass/fail roll-up; nonzero exit on failure. |
-| `agentos steer "..."` | Inject a follow-up into the runner's live turn (POST `/v1/steer`); prints `no active turn` and exits nonzero on the runner's 409. |
-| `agentos interrupt` | Hard-stop the runner's live turn (POST `/v1/interrupt`); `--reason` is recorded with it. |
-| `agentos chat "..."` | Drive the whole system with the CLI acting **as** the Slack service against the local compose stack, no Slack involved (see below). |
-| `agentos message "..."` | Drive the **deployed** Kubernetes release end to end with zero Slack: self-plumbs kubectl port-forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply (see below). |
-| `agentos message --local "..."` | Same roundtrip against the **local compose stack** (`agentos local up`) instead of a cluster: no kubectl/helm/port-forwards. Enqueues straight to the compose Valkey and lets the containerized worker answer. Channel via `--channel` or the sole deployed agent (looked up on the compose API, default `http://localhost:28000`, overridable with `--api-url`). |
-| `agentos status` / `agentos stop` | Session status / tear down the container. |
-| `agentos deploy` | Package the bundle as tar.gz and push it to the platform API (find-or-create agent, create version, upload bundle, create deployment). Auth via `--api-key` / `AGENTOS_API_KEY`. |
 
-`start` records the container in the bundle's `.agentos/runner.json`
-(gitignored by the scaffold); `send`/`eval`/`status`/`stop`/`steer`/`interrupt`
-run from the bundle directory and resolve the runner from it, or accept `--url`.
-`start --model <id>` forwards `AGENTOS_MODEL` into the container (omit for the
-SDK default); setting it makes token usage attributable in Langfuse traces.
+## `skill` target: runner-only, fully offline
+
+Boots just the runner container on the host Docker daemon and speaks its ACI
+HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
+
+| Command | What it does |
+|---|---|
+| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). |
+| `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
+| `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |
+| `agentos skill status` | Show the local runner's session status. |
+| `agentos skill down` | Stop and remove the local runner container. |
+
+`skill up` records the container in the bundle's `.agentos/runner.json`
+(gitignored by the scaffold); `skill message` / `skill eval` / `skill status` /
+`skill down` run from the bundle directory and resolve the runner from it, or
+accept `--url`. Setting `skill up --model <id>` makes token usage attributable
+in Langfuse traces.
+
+## `local` target: full platform via compose, no Slack
+
+Wraps the `compose.dev.yaml` stack (Postgres + Valkey + Langfuse + API +
+worker) so a `message` walks the real queue -> worker -> sandboxed runner ->
+reply path on one machine, no Slack and no Kubernetes. The compose API is
+published on host port `28000`.
+
+| Command | What it does |
+|---|---|
+| `agentos local up` | Bring the compose stack up (`docker compose up -d --wait`) and print URLs. |
+| `agentos local down` | Stop the compose stack (`docker compose down`), keeping volumes. |
+| `agentos local status` | Show the compose stack's service status (`docker compose ps`). |
+| `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
+| `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
+
+## `cluster` target: deployed Helm release
+
+Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
+`cilium` wrap theirs. Every operator verb takes `--dry-run`. Full runbook in
+[`docs/operations.md`](../docs/operations.md).
+
+| Command | What it does |
+|---|---|
+| `agentos cluster up` | Install or upgrade the release (`helm upgrade --install`). Exposes the UI and Langfuse on node ports; `--no-expose` keeps them ClusterIP-only. Set `AGENTOS_MODEL_CREDENTIALS` for a real model, or install sealed with canned replies. |
+| `agentos cluster down` | Uninstall the release and sweep its runtime namespaces (`helm uninstall` + `kubectl delete namespace`); prompts unless `--yes`. |
+| `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
+| `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
+| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API (`--api-url`, default `http://localhost:8000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
 
 ## Output
 
@@ -37,16 +89,16 @@ on stderr), and `--color <auto|always|never>` (default `auto`) controls ANSI
 color.
 
 Stream discipline is strict: the **payload** (streamed agent reply tokens,
-resolved URLs, the status table, eval results, the deploy result, `runner-status`
+resolved URLs, the status table, eval results, the deploy result, `skill status`
 JSON, the worker reply) goes to **stdout**, and every **diagnostic**
 (waiting/helm/kubectl/rollout/port-forward chatter, spinners, progress, notes)
 goes to **stderr**. So the payload pipes and redirects cleanly while progress
 still shows on the terminal:
 
 ```bash
-agentos message "..." | jq        # clean JSON on stdout, progress on stderr
-agentos message "..." > reply.txt  # reply captured, progress on the terminal
-agentos eval > results.txt         # results captured, progress on the terminal
+agentos cluster message "..." | jq         # clean JSON on stdout, progress on stderr
+agentos local message "..." > reply.txt    # reply captured, progress on the terminal
+agentos skill eval > results.txt           # results captured, progress on the terminal
 ```
 
 On an interactive terminal, progress renders as a spinner-to-checkmark checklist
@@ -70,63 +122,17 @@ after Ns`, never a hang. Compatibility is handled automatically:
   `✗ fail`, `⚠ warn`), and glyphs fall back to ASCII (`v`/`x`/`!`, `- \ | /`
   spinner) in non-UTF-8 locales.
 
-## `agentos chat`: the CLI as the Slack service
+## `agentos cluster message`: drive the deployed cluster with zero Slack
 
-`chat` exercises the real ingress-to-egress path with **no Slack at all**. It
-stands up a minimal Slack Web API stub locally, `XADD`s the exact
-`QueuedSlackEvent` the dispatcher would produce onto the real Valkey stream
-(synthetic `EvSIM-` ids and, by default, an invented internally-consistent
-channel plus thread/placeholder timestamps), then waits for the worker to
-consume and finalize the turn. Completion is the worker's XACK of the stream
-entry, not a timing guess: the worker acks only after the turn finalizes, so the
-latest `chat.update` the stub captured is the final reply (avoiding a throttled
-interim edit being mistaken for the answer). It prints the reply and exits 0, or
-on timeout prints stream diagnostics (`XLEN` + `XINFO GROUPS` + `XPENDING`) and
-exits nonzero.
-
-### Targeting a deployed agent and continuing a thread
-
-The worker binds a channel to an agent by **exact equality** on
-`agents.slack_channel`, so a random synthetic channel can never reach a deployed
-agent. Use `--channel <id>` to send as a specific channel: pass the same value
-you gave `deploy --slack-channel` and the worker routes the turn to that agent.
-Omit `--channel` to keep the old behavior (a throwaway synthetic channel).
+`cluster message` targets a **deployed** Helm release and wires everything
+itself, so a developer building an agent for someone else's Slack workspace can
+exercise the whole deployed machinery (Valkey queue -> worker -> claimed
+sandbox -> the real skill -> the reply) without any Slack access, tokens, or
+workspace.
 
 ```bash
-agentos deploy --slack-channel CSIM123 ...
-agentos chat --channel CSIM123 "first question"
-```
-
-Each turn mints a fresh thread ts by default, so a multi-turn conversation is
-otherwise impossible. On completion `chat` prints a `continue this
-conversation: ...` line with the channel and thread ts; copy-paste it (or pass
-`--thread <ts>` yourself) to send the next turn into the same thread:
-
-```bash
-agentos chat --channel CSIM123 --thread 1720000000.000100 "follow-up question"
-```
-
-Contract: run the worker with `SLACK_API_BASE_URL` pointing at the `/api/` base
-URL `chat` prints on startup. The worker reads that env var and points its Slack
-sink's `AsyncWebClient` `base_url` at it, so `chat.update` edits land at the stub
-instead of real Slack. Use `--listen-host`/`--listen-port` when the worker runs
-off-box (default `localhost` on an ephemeral port). No Slack token or real Slack
-HTTP is involved. The full worker round trip is validated end to end against a
-live cluster; `chat` itself verifies the stub, the enqueue, and the ack-based
-completion.
-
-## `agentos message`: drive the deployed cluster with zero Slack
-
-`message` is `chat`'s engine with Kubernetes-aware auto-plumbing on top. Where
-`chat` targets a local compose stack you run yourself, `message` targets a
-**deployed** Helm release and wires everything itself, so a developer building an
-agent for **someone else's** Slack workspace can exercise the whole deployed
-machinery (Valkey queue -> worker -> claimed sandbox -> the real skill -> the
-reply) without any Slack access, tokens, or workspace.
-
-```bash
-agentos message "summarize the latest deploy"          # single deployed agent
-agentos message --channel CSIM123 "another question"   # pick the agent explicitly
+agentos cluster message "summarize the latest deploy"
+agentos cluster message --channel CSIM123 "another question"
 ```
 
 What it does, in order:
@@ -157,23 +163,44 @@ What it does, in order:
    `worker.slackApiBaseUrl=` to empty in the same command) un-wires the stub when
    real Slack is connected.
 6. **Enqueue + wait**: `XADD`s the exact `QueuedSlackEvent`, waits for the worker
-   to finalize (the same ack-based completion `chat` uses), prints the reply, and
-   emits a `continue this conversation: ...` line for multi-turn threads. On
-   timeout it prints stream diagnostics and exits nonzero.
+   to finalize, prints the reply, and emits a `continue this conversation: ...`
+   line for multi turn threads. On timeout it prints stream diagnostics and
+   exits nonzero.
 
 `--dry-run` prints the kubectl/helm command lines, the stub URL, and the enqueue
 description without executing anything.
 
-### `--local`: the same roundtrip against the compose stack
+### Targeting a deployed agent and continuing a thread
 
-`agentos message --local` drives the local compose stack (`agentos local up`)
-instead of a Kubernetes release, so the whole loop is one machine with no
-cluster:
+The worker binds a channel to an agent by exact equality on
+`agents.slack_channel`, so a random synthetic channel can never reach a
+deployed agent. Use `--channel <id>` to send as a specific channel: pass the
+same value you gave `cluster deploy --slack-channel` and the worker routes the
+turn to that agent.
+
+```bash
+agentos cluster deploy --slack-channel CSIM123 ...
+agentos cluster message --channel CSIM123 "first question"
+```
+
+Each turn mints a fresh thread ts by default. On completion `cluster message`
+prints a `continue this conversation: ...` line with the channel and thread ts;
+copy paste it, or pass `--thread <ts>` yourself, to send the next turn into the
+same thread:
+
+```bash
+agentos cluster message --channel CSIM123 --thread 1720000000.000100 "follow up question"
+```
+
+## `agentos local message`: the same roundtrip against the compose stack
+
+`local message` drives the local compose stack (`agentos local up`) instead of a
+Kubernetes release, so the whole loop is one machine with no cluster:
 
 ```bash
 agentos local up
-agentos deploy --plugin-dir <dir> --slack-channel C-DEMO --api-url http://localhost:28000
-agentos message --local "what changed in the last deploy?"
+agentos local deploy --plugin-dir <dir> --slack-channel C-DEMO --api-url http://localhost:28000
+agentos local message "what changed in the last deploy?"
 ```
 
 Local mode keeps only the shared engine (stub + `QueuedSlackEvent` enqueue +
@@ -185,8 +212,9 @@ straight to the compose Valkey (`localhost:26379`) and the containerized
 container on the host Docker daemon. Channel comes from `--channel` or, when
 omitted, the sole deployed agent looked up on the compose API (`--api-url`,
 default `http://localhost:28000`; the API is reached directly, so no `/api`
-suffix). `--local` composes with `--channel`/`--thread`/`--timeout-secs` and
-rejects the cluster-only flags (`--namespace`, `--release`, `--force-wire`, ...)
+suffix). `local message` composes with `--channel`, `--thread`, and
+`--timeout-secs` and rejects the cluster only flags (`--namespace`,
+`--release`, `--force-wire`, ...)
 with a clear error. The compose worker runs the fake model by default (a canned
 reply, no credentials); export a credential and set `AGENTOS_FAKE_MODEL=0` in the
 compose environment for a real model.

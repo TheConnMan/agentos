@@ -207,9 +207,9 @@ services:
   #
   # These three services turn the backing stack above into a one-command local
   # product loop. `agentos local up` brings everything up, then:
-  #   agentos deploy --plugin-dir <dir> --slack-channel <C...> \
+  #   agentos local deploy --plugin-dir <dir> --slack-channel <C...> \
   #                  --api-url http://localhost:28000
-  #   agentos message --local "<question>"
+  #   agentos local message "<question>"
   # drives a real queue -> worker -> sandboxed runner -> reply roundtrip, no
   # Slack and no Kubernetes. They use the same published images the chart
   # deploys (only the worker adds a thin local docker-CLI overlay; see below).
@@ -233,8 +233,8 @@ services:
     restart: "no"
 
   # The platform API. On the compose network, reaching Postgres/Valkey/MinIO by
-  # service name. Published on host 28000 for the CLI (`agentos deploy`, and the
-  # `agentos message --local` channel lookup).
+  # service name. Published on host 28000 for the CLI (`agentos local deploy`, and the
+  # `agentos local message` channel lookup).
   agentos-api:
     image: ghcr.io/curie-eng/agentos-api:latest
     depends_on:
@@ -289,7 +289,7 @@ services:
   # written and tested against (the host-process middle mode): the worker reaches
   # the backing stores on their published host ports (localhost 25432/26379/29000),
   # dials each runner on the loopback host port Docker publishes for it, and
-  # reaches the `agentos message --local` Slack stub at localhost:8155.
+  # reaches the `agentos local message` Slack stub at localhost:8155.
   agentos-worker:
     build:
       context: compose

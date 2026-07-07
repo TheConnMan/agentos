@@ -3,7 +3,7 @@
 //! The layout matches the frozen `plugin-format` package: a manifest at
 //! `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md` with YAML
 //! frontmatter, a root `.mcp.json`, plus a CLI-local `evals/cases.json` seed
-//! for `agentos eval`. Names are kebab-case per the validator.
+//! for `agentos skill eval`. Names are kebab-case per the validator.
 
 use std::path::{Path, PathBuf};
 

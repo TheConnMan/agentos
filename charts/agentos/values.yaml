@@ -302,9 +302,9 @@ worker:
   claimTimeoutSeconds: 90
   # No-Slack egress routing. When non-empty, renders SLACK_API_BASE_URL on the
   # worker Deployment so the worker's Slack sink posts placeholder edits at this
-  # base URL instead of real Slack -- the seam `agentos message` drives when it
+  # base URL instead of real Slack -- the seam `agentos cluster message` drives when it
   # points the deployed worker at its local Slack Web API stub. Empty (the
-  # default) leaves the worker on real Slack. `agentos message --wire` sets this
+  # default) leaves the worker on real Slack. `agentos cluster message --wire` sets this
   # via `helm upgrade --reuse-values`; connecting real Slack (a `helm upgrade
   # --reuse-values` that sets the dispatcher tokens) clears it back to empty in
   # the same command, so that upgrade un-wires any stub routing.

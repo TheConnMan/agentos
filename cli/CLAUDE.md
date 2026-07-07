@@ -3,12 +3,11 @@
 The `agentos` CLI: Rust, clap + tokio + reqwest. Speaks only the
 frozen contracts (the generated `agentos-aci-protocol` crate over HTTP/NDJSON,
 and the platform API's committed `apps/api/openapi.json`) and orchestrates a
-local runner container via Docker. Two command families: the **runner-session**
-verbs (`init`, `start`, `send`, `eval`, `runner-status`, `steer`, `interrupt`,
-plus `deploy`/`chat`/`message`) drive a plugin against a local runner or a
-deployed release; the **operator lifecycle** verbs (`up`, `status`, `down`, and
-`local <up|down|status>`, in `src/ops.rs` + `src/local.rs`) are a thin wrapper
-over the `helm`/`kubectl`/`docker compose` binaries. Full command reference in
+local runner container via Docker. Three command families: `skill` drives a
+plugin against a local runner with `up`, `down`, `status`, `message`, and
+`eval`; `local` wraps the compose stack and local API with `up`, `down`,
+`status`, `message`, and `deploy`; `cluster` wraps Helm and the deployed
+release with `up`, `status`, `down`, `message`, and `deploy`. Full command reference in
 `cli/README.md`.
 
 ## Load-bearing invariants
@@ -24,12 +23,12 @@ over the `helm`/`kubectl`/`docker compose` binaries. Full command reference in
   Keep `reqwest`'s feature set minimal (`json`, `stream`, `multipart`) --
   adding a feature should come with a reason in the PR, not just convenience.
 - **The queue seam is mirrored, not imported, across languages.** The CLI
-  never talks to the dispatcher's Valkey Stream directly -- `agentos send`
+  never talks to the dispatcher's Valkey Stream directly -- `agentos skill message`
   talks straight to a local runner container's ACI HTTP surface
   (`/v1/event`, `/v1/steer`, `/v1/interrupt`), bypassing the
   dispatcher/worker entirely by design (that is the point: zero Slack, zero
   cluster). If a future task wires the CLI to the real dispatcher/worker
-  queue seam (the planned `agentos chat` middle mode), mirror the
+  queue seam (the future dispatcher or worker queue surface), mirror the
   `QueuedSlackEvent` shape rather than importing Python types into Rust --
   keep the contract-mirroring discipline explicit at the boundary.
 - **`agentos init` scaffolds the plugin-format shape verbatim.** The
@@ -37,21 +36,22 @@ over the `helm`/`kubectl`/`docker compose` binaries. Full command reference in
   `.mcp.json`) must stay byte-compatible with what `plugin_format.validate_bundle`
   accepts -- if `packages/plugin-format` changes, this scaffold needs
   updating in the same reviewed change, not independently.
-- **`start` records container state in `.agentos/runner.json`** (gitignored
-  by the scaffold) so `send`/`eval`/`runner-status`/`stop` can resolve the
+- **`skill up` records container state in `.agentos/runner.json`** (gitignored
+  by the scaffold) so `skill message`/`skill eval`/`skill status`/`skill down` can resolve the
   running container from the bundle directory alone. Do not add a second
   state-tracking file for the same purpose.
-- **The local runner-session verbs stay fully offline; the cluster-facing
-  verbs are the exception.** `init`, `start`, `send`, `eval`, `runner-status`,
-  `steer`, and `interrupt` must keep working with zero network access beyond
-  the local Docker daemon and the local runner container. `deploy` is the one
-  runner-session verb that leaves the machine: it packages the bundle as
+- **The local skill verbs stay fully offline; the local and cluster
+  target verbs are the exception.** `init`, `skill up`, `skill down`,
+  `skill status`, `skill message`, and `skill eval` must keep working with
+  zero network access beyond the local Docker daemon and the local runner
+  container. `deploy` is the one bundle shipping verb that leaves the machine: it packages the bundle as
   tar.gz and pushes to the platform API (find-or-create agent, create version,
   upload bundle, create deployment) authenticated via
-  `--api-key`/`AGENTOS_API_KEY`. `chat`/`message` and every operator verb
-  (`up`, `status`, `down`) reach a Valkey/API/cluster by design.
+  `--api-key`/`AGENTOS_API_KEY`. `local message`, `local deploy`,
+  `cluster message`, `cluster deploy`, and every operator verb
+  (`local up`, `local status`, `local down`, `cluster up`, `cluster status`, `cluster down`) reach a Valkey, API, or cluster by design.
 - **The operator verbs are a thin wrapper; the chart stays the source of
-  truth.** `up`/`status`/`down` (`src/ops.rs`) and
+  truth.** `cluster up`/`cluster status`/`cluster down` (`src/ops.rs`) and
   `local <up|down|status>` (`src/local.rs`) shell out to
   `helm`/`kubectl`/`docker compose` and never re-derive what a values file
   already declares. Each verb builds its command lines as a pure function
@@ -66,7 +66,7 @@ over the `helm`/`kubectl`/`docker compose` binaries. Full command reference in
   connected with a raw `helm upgrade --reuse-values` (setting the dispatcher
   tokens and clearing `worker.slackApiBaseUrl=` to un-wire any `message` stub
   routing), not a CLI verb; see the chart NOTES.
-- **`message` self-plumbs and guards against hijacking real Slack.** It manages
+- **`cluster message` self-plumbs and guards against hijacking real Slack.** It manages
   its own kubectl port-forwards (children killed on exit) and, when wiring the
   deployed worker to its local stub, refuses if a `<release>-dispatcher`
   Deployment exists (a real workspace is connected) unless `--force-wire`. Do
