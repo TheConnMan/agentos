@@ -166,6 +166,8 @@ export CLAUDE_CODE_OAUTH_TOKEN=...
 ../target/release/agentos skill eval
 ```
 
+A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos start` runs it from a clean clone. `agentos init` scaffolds this same weather template, so every fresh bundle starts as a runnable web-search skill to learn from and edit.
+
 For a fully offline round-trip (no credential, scripted replies), add
 `--fake-model` to `agentos skill up` — an explicit test-only mode that never reaches
 the Anthropic API.

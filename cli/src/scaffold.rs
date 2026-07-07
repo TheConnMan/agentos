@@ -31,7 +31,7 @@ fn manifest(name: &str) -> String {
 
 fn skill_md(name: &str) -> String {
     format!(
-        "---\nname: {name}\ndescription: What the {name} agent does and when to invoke it.\n---\n\n# {name}\n\n## When to run\n\nDescribe the situations where this skill applies.\n\n## Hard rules\n\n- State the facts this agent must never invent.\n- Name the sources answers must come from.\n"
+        "---\nname: {name}\ndescription: Look up a location's weather forecast using a live web search. Invoke whenever the user asks about the weather, whether to expect rain, temperature, or what to wear or plan for outdoor activities.\nallowed-tools:\n  - WebSearch\n  - WebFetch\n---\n\n# Weather\n\n## When to run\nThe user asks about the weather, a forecast, temperature, rain or snow chances, or whether a day suits an outdoor plan.\n\n## How to answer\n1. Determine the location and day. If the user named them, use them. If not, ask one short question instead of guessing.\n2. Run a web search for the forecast, e.g. `<city> weather forecast <day>`. Prefer a national weather service or a major forecast provider.\n3. Report, in two or three sentences: expected high and low, sky conditions, and precipitation chance. Include the location and day so there is no ambiguity.\n4. Name the source of the forecast at the end.\n\n## Hard rules\n\n- Never invent a forecast. If the search returns nothing usable, say so and name what you tried.\n- Temperatures in Fahrenheit first, Celsius in parentheses.\n- Keep the reply short enough to read in Slack without expanding.\n"
     )
 }
 
@@ -39,8 +39,8 @@ fn eval_cases(name: &str) -> String {
     serde_json::to_string_pretty(&serde_json::json!([
         {
             "name": format!("{name}-answers"),
-            "input": "Introduce yourself in one sentence.",
-            "expect_contains": [name],
+            "input": "What's the weather in San Francisco?",
+            "expect_contains": ["weather"],
         }
     ]))
     .expect("static eval cases serialize")
@@ -144,7 +144,13 @@ mod tests {
 
         let skill = std::fs::read_to_string(dir.path().join("skills/deal-desk/SKILL.md")).unwrap();
         assert!(skill.starts_with("---\nname: deal-desk\n"));
-        assert!(skill.contains("description:"));
+        assert!(skill.contains("description: Look up a location's weather forecast"));
+        assert!(skill.contains("allowed-tools:"));
+        assert!(skill.contains("- WebSearch"));
+        assert!(skill.contains("- WebFetch"));
+        assert!(skill.contains("# Weather"));
+        assert!(skill.contains("## How to answer"));
+        assert!(skill.contains("Never invent a forecast"));
 
         let mcp: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap())
@@ -156,6 +162,12 @@ mod tests {
         )
         .unwrap();
         assert!(cases.as_array().unwrap().len() == 1);
+        assert!(cases[0]["input"].as_str().unwrap().contains("weather"));
+        assert!(cases[0]["expect_contains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|needle| needle == "weather"));
 
         assert_eq!(
             read_manifest(dir.path()).unwrap(),
