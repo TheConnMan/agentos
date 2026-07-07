@@ -17,4 +17,4 @@ Format is lightweight (Michael Nygard style). An ADR is immutable once Accepted;
 
 - New contributors read `docs/adr/` to understand the shape of the system and the reasoning.
 - Decisions carry their evidence, so "why not X" is answerable without re-running a prototype.
-- The reference design (`docs/reference/detailed-architecture.md`) is the detailed spec; ADRs are the load-bearing choices distilled out of it plus what the prototypes proved.
+- The reference design (`docs/reference/detailed-architecture.md`, removed post-MVP; see git history) was the detailed spec; ADRs are the load-bearing choices distilled out of it plus what the prototypes proved.

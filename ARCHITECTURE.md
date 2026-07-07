@@ -9,14 +9,13 @@ back out.
 
 Every claim carries a repo path you can jump to. Paths are relative to the repo
 root. Where main does not yet contain something the design calls for, it is
-marked **not yet in main** rather than described as shipped; those items are the
-head of [`docs/roadmap.md`](docs/roadmap.md).
+marked **not yet in main** rather than described as shipped; those items are
+tracked in [GitHub issues](https://github.com/curie-eng/agentos/issues).
 
 The narrative "why" behind the big calls lives in the ADRs
-([`docs/adr/`](docs/adr/)) and the two plan docs
-([`docs/mvp-build-plan.md`](docs/mvp-build-plan.md),
-[`docs/build-orchestration-plan.md`](docs/build-orchestration-plan.md)); this
-doc is the "what talks to what."
+([`docs/adr/`](docs/adr/)); this doc is the "what talks to what." It supersedes
+the pre-build plans that the MVP was built from, which are preserved in git
+history.
 
 ## 1. One-paragraph frame
 
@@ -29,7 +28,7 @@ it over a frozen HTTP/NDJSON protocol, the runner makes the real model call and
 streams the reply back, and the worker edits that reply into the Slack
 placeholder. The same worker, unchanged, runs against a real Kubernetes cluster
 or a local Docker substrate; the CLI can stand in for Slack entirely. That
-substrate-agnosticism is the thin-shim thesis (§3) and it is the load-bearing
+substrate-agnosticism is the thin-shim thesis and it is the load-bearing
 design property of the whole system.
 
 ## 2. Component map
@@ -295,7 +294,7 @@ sequenceDiagram
 
 - **Git-flow fan-out** at [`apps/api/src/agentos_api/gitflow.py`](apps/api/src/agentos_api/gitflow.py): signature verify (`:35`), dev-branch archive+validate+store+create-Version (`:136`), prod-branch **promotes the same artifact without rebuilding** (`:172`), eval enqueue on a newly built dev version, deduped on redelivery (`:186`). Webhook receiver at [`apps/api/src/agentos_api/routers/github.py:20`](apps/api/src/agentos_api/routers/github.py).
 - **Eval stream** `agentos:evals` is produced by the API ([`apps/api/src/agentos_api/evalqueue.py:21`](apps/api/src/agentos_api/evalqueue.py)) and consumed by the worker's eval consumer, which is a **separate** consumer group from the runs kernel ([`apps/worker/src/agentos_worker/eval/stream.py:216`](apps/worker/src/agentos_worker/eval/stream.py)). It POSTs results to `/evals/report` ([`eval/stream.py:114`](apps/worker/src/agentos_worker/eval/stream.py)).
-- **The eval matrix endpoint** `GET /evals/matrix` reads pass/fail from Langfuse trace tags/metadata, not a scores join ([`apps/api/src/agentos_api/routers/evals.py:15`](apps/api/src/agentos_api/routers/evals.py)). Note: the API endpoint is live, but the UI matrix view is still fixture-backed (§8, [`docs/roadmap.md`](docs/roadmap.md)).
+- **The eval matrix endpoint** `GET /evals/matrix` reads pass/fail from Langfuse trace tags/metadata, not a scores join ([`apps/api/src/agentos_api/routers/evals.py:15`](apps/api/src/agentos_api/routers/evals.py)). Note: the API endpoint is live, but the UI matrix view is still fixture-backed (part of retiring the fixture surface, [issue #4](https://github.com/curie-eng/agentos/issues/4)).
 - **The manual path** (`GET /agents`, `/agents/{id}/versions`, `/agents/{id}/versions/{vid}/bundle`) and the webhook path terminate at the same `Version`/`Deployment` tables and the same `plugin_format.validate_bundle`, so a plugin authored in the browser, pushed by `agentos deploy`, or promoted by git-flow all go through one pipeline. Bundle store/fetch at [`apps/api/src/agentos_api/storage.py:22`](apps/api/src/agentos_api/storage.py) and [`apps/api/src/agentos_api/routers/bundles.py:79`](apps/api/src/agentos_api/routers/bundles.py).
 
 ## 6. The credential path
@@ -349,7 +348,7 @@ runner (OTLP spans, resource attr agentos.session_id)
 The `sandbox_id` is also known worker-side (the affinity store and
 `SandboxHandle`), so a trace, its session, and its serving sandbox all line up.
 Surfacing that in the UI run detail and adding a per-run sandbox-log proxy are
-the remaining pieces — see [`docs/roadmap.md`](docs/roadmap.md) §3.
+the remaining pieces — see [issue #16](https://github.com/curie-eng/agentos/issues/16).
 
 ## 8. UI: wired vs fixture
 
@@ -359,8 +358,8 @@ The UI ships one build that runs in two worlds, selected by `?api=1` (query) or
 - **Wired (real API):** Agents/Fleet, Runs/Traces, Metrics, Logs, Cost, and create/deploy are backed by `apps/api`.
 - **Fixture (showroom):** an `acme-corp` demo dataset ([`apps/ui/src/fixtures/`](apps/ui/src/fixtures/)) plus a scripted CLI-terminal view ([`apps/ui/src/views/Terminal.tsx`](apps/ui/src/views/Terminal.tsx)) render a self-contained demo. Several wired views (Evals matrix, Versions, Usage, Settings) are still honest `ComingSoon` placeholders ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)) so wired mode never leaks fixture data. The Memory tab is a permanent coming-soon empty-state ([`apps/ui/src/views/obs/MemoryStub.tsx`](apps/ui/src/views/obs/MemoryStub.tsx)) pending v1.1 memory generation.
 
-Retiring the fixture/showroom surface in favor of the real API everywhere is the
-**top roadmap item**; see [`docs/roadmap.md`](docs/roadmap.md).
+Retiring the fixture/showroom surface in favor of the real API everywhere is a
+top near-term item; see [issue #4](https://github.com/curie-eng/agentos/issues/4).
 
 ## 9. Frozen contracts
 
@@ -403,7 +402,7 @@ sandbox, and the trace confirmed in the in-cluster Langfuse (fake model). A
 subsequent rev-3 upgrade flipped on real model credentials and an in-cluster
 Slack dispatcher (Socket Mode connected from the cluster). The findings and the
 two chart fixes that install surfaced are recorded in
-[`docs/roadmap.md`](docs/roadmap.md) §8. The one remaining acceptance gate is the
+[`docs/operations.md`](docs/operations.md). The one remaining acceptance gate is the
 timed, README-only cold-start rehearsal (a fresh reader reaching an agent
 answering in Slack from the README alone).
 
@@ -439,5 +438,5 @@ plane, the chart with its security rails, the CLI, and the wired UI
 identity in the UI run detail, the N1 soak/chaos suite
 ([`tests/soak`](tests/soak) is a scaffold), the timed README-only cold-start
 rehearsal, the Interview-Me onboarding compiler, automatic memory generation, and
-non-Anthropic model providers. These are enumerated, ordered, in
-[`docs/roadmap.md`](docs/roadmap.md).
+non-Anthropic model providers. These are tracked in
+[GitHub issues](https://github.com/curie-eng/agentos/issues).

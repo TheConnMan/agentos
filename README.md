@@ -38,6 +38,10 @@ retiring the fixture/showroom surface. See "What is built vs deferred" in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#11-what-is-built-vs-deferred)
 for the precise built/in-progress split.
 
+Forward-looking work is planned and tracked in
+[GitHub issues](https://github.com/curie-eng/agentos/issues), with larger
+journeys filed as `epic`-labeled issues.
+
 ## Component map
 
 | Component | Language | What it owns |
@@ -239,11 +243,6 @@ zero-Slack `message` flow) is in [`docs/operations.md`](docs/operations.md).
   Sandbox as substrate, stateless-first sessions, Langfuse as the
   observability backbone, the frozen ACI, security rails as chart defaults,
   adopt-not-build boundaries), each with the live-cluster evidence behind it.
-- [`docs/mvp-build-plan.md`](docs/mvp-build-plan.md) and
-  [`docs/build-orchestration-plan.md`](docs/build-orchestration-plan.md) —
-  historical planning artifacts: the architecture spine and the task DAG this
-  repo was built along. Useful for understanding sequencing decisions; not
-  living documentation.
 - [`AGENTS.md`](AGENTS.md) — the operative rules for anyone (human or agent)
   working in this repo: the verify commands, the dev stack, the
   frozen-contract escalation rule, and the build gotchas. Each top-level

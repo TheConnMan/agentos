@@ -123,9 +123,9 @@ convention, not a frozen contract.
 **Leakage:** the eval-case format is duplicated, not frozen: the CLI reads
 `evals/cases.json` (`{name, input, expect_contains}` in `cli/src/evals.rs`)
 and the platform's bundle loader reads the same shape independently
-(`eval/stream.py`); `docs/roadmap.md` section 2 already calls for converging
-and freezing it. Until then an eval-store swap has two format definitions to
-keep honest.
+(`eval/stream.py`); [issue #8](https://github.com/curie-eng/agentos/issues/8)
+already calls for converging and freezing it. Until then an eval-store swap has
+two format definitions to keep honest.
 
 ### 4. Blob storage (MinIO today)
 
@@ -194,14 +194,15 @@ Slack Web API. The Slack service swaps; the Slack protocol does not yet.
 **What a channel-neutral port looks like:** an ingress event of
 `{event_id, conversation_id, author, text, reply_handle, received_at}` and a
 `ReplySink` with post/update semantics per channel adapter. The reshaping
-cost is bounded: the queue payload (which `docs/roadmap.md` section 2 already
-wants promoted into `packages/aci-protocol`), the CLI's mirrored struct, the
+cost is bounded: the queue payload (which
+[issue #7](https://github.com/curie-eng/agentos/issues/7) already wants promoted
+into `packages/aci-protocol`), the CLI's mirrored struct, the
 kernel's thread-lock and marker keys, and the channel-based deployment
 binding (`apps/worker/src/agentos_worker/binding.py`). Doing the promotion
-and the rename in one motion turns two roadmap debts into one change. A
+and the rename in one motion turns two contract debts into one change. A
 separate gap: the reply base URL is worker-global (`worker.slackApiBaseUrl`),
 so two ingress paths cannot coexist on one deployment until replies are
-routed per turn (roadmap section 3).
+routed per turn ([issue #19](https://github.com/curie-eng/agentos/issues/19)).
 
 ## Component diagram
 
@@ -266,7 +267,7 @@ flowchart TB
 |---|---|---|---|---|
 | Harness / runtime | Frozen ACI protocol (`packages/aci-protocol`), tri-language, CI-guarded | claude-agent-sdk runner | A-: strongest seam in the system; docked for the plugin-format entanglement and SDK-shaped resume | Write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced |
 | Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for one vendor span attribute; read side isolated in one module | Rename `langfuse.trace.name` to a neutral attribute mapped in the collector; rename the `/langfuse/*` API routes |
-| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours, but the case format is duplicated and the tag convention is unfrozen | Converge the two `cases.json` definitions into one frozen schema (roadmap section 2) |
+| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours, but the case format is duplicated and the tag convention is unfrozen | Converge the two `cases.json` definitions into one frozen schema ([issue #8](https://github.com/curie-eng/agentos/issues/8)) |
 | Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; three hand-aligned client sites; no interface for non-S3 | None needed until a non-S3 demand exists; document the three client sites as one seam |
 | Relational DB | SQLAlchemy 2.0 + alembic | Postgres | A-: managed-Postgres swap is a DSN change; two Postgres-isms in models | Leave as is; note the `postgresql.UUID` and schema-scoped enum as the two things a non-Postgres target would touch |
 | Communication | `QueuedSlackEvent` + `SlackSink` | Slack (Bolt + chat.update) | C: Slack-shaped names and edit-in-place semantics in the core's contract; service swappable (CLI stub), protocol not | Promote the queue payload into `aci-protocol` with channel-neutral field names in the same change |
