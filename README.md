@@ -175,7 +175,7 @@ the Anthropic API.
 **One-command middle mode** (the fastest path — no host-run worker, no cluster):
 
 ```bash
-agentos local up   # brings up the backing stores + API + a containerized worker
+agentos local up   # brings up the backing stores + API + a containerized worker + the console UI
 agentos local deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:28000
 agentos local message "what changed in the last deploy?"
 ```
@@ -184,7 +184,7 @@ agentos local message "what changed in the last deploy?"
 default), so there is nothing to hand-run. For a real model, export a credential
 and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
 below is the equivalent with a host-process worker, useful when iterating on the
-worker itself from source.
+worker itself from source. The console UI is served at `http://localhost:28080/?api=1`; open it to reach the console wired to your local compose API.
 
 `agentos local up` publishes the API on `:28000` (the compose host port); the
 hand-run `uvicorn` in Quickstart step 4 uses `:8000`. Point `deploy --api-url`
