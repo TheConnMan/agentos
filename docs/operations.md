@@ -30,9 +30,13 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
 
 ## Install and inspect
 
-- `agentos cluster up` runs `helm upgrade --install` of `charts/agentos` into the
-  `agentos` namespace, exposing the UI and Langfuse on node ports (pass
-  `--no-expose` to keep them ClusterIP-only). It reads
+- `agentos cluster up` runs `helm upgrade --install` using the chart resolved
+  from the version-pinned release asset by default, so a downloaded release
+  binary needs no repo checkout. Pass `--chart <path-or-tgz>` to override with a
+  local chart for chart development. For local development, override resolved
+  artifacts with `-f <compose>`, `--chart <path-or-tgz>`, and `--image <ref>`.
+  It installs into the `agentos` namespace, exposing the UI and Langfuse on node
+  ports (pass `--no-expose` to keep them ClusterIP-only). It reads
   `AGENTOS_MODEL_CREDENTIALS`: when the env var is set it switches the runner
   off the fake model, forwards the credential through the masked `--set`
   machinery (so `--dry-run` never prints it), and opens the runner's
@@ -69,9 +73,11 @@ reference and the multi-turn `--thread` flow are in
 
 ## Bridging to the local dev stack
 
-`agentos local up|down|status` wraps the `compose.dev.yaml` dev stack, so the
-inner loop and the cluster share one CLI. `local up` brings up the full product
-stack (API + worker alongside the backing stores, plus the console UI at
+`agentos local up|down|status` wraps the local compose stack. A no checkout
+release binary uses the pinned `compose.release.yaml` release asset, while repo
+development still uses `compose.dev.yaml`, so the inner loop and the cluster
+share one CLI. `local up` brings up the full product stack (API + worker
+alongside the backing stores, plus the console UI at
 `http://localhost:28080/?api=1`), so
 `agentos local deploy --api-url http://localhost:28000` then `agentos local message
 "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with

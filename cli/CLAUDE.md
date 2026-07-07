@@ -40,12 +40,16 @@ release with `up`, `status`, `down`, `message`, and `deploy`. Full command refer
   by the scaffold) so `skill message`/`skill eval`/`skill status`/`skill down` can resolve the
   running container from the bundle directory alone. Do not add a second
   state-tracking file for the same purpose.
-- **The local skill verbs stay fully offline; the local and cluster
-  target verbs are the exception.** `init`, `skill up`, `skill down`,
-  `skill status`, `skill message`, and `skill eval` must keep working with
-  zero network access beyond the local Docker daemon and the local runner
-  container. `deploy` is the one bundle shipping verb that leaves the machine: it packages the bundle as
-  tar.gz and pushes to the platform API (find-or-create agent, create version,
+- **The local skill verbs stay fully offline once their local inputs exist; the
+  local and cluster target verbs are the exception.** `init`, `skill up`,
+  `skill down`, `skill status`, `skill message`, and `skill eval` must keep
+  working with zero network access beyond the local Docker daemon and the local
+  runner container. `skill up` stays offline once the runner image is present
+  locally, or when `--image <local-tag>` names a local image. A release binary's
+  default runner image ref is pulled from GHCR on first run. `local deploy` and
+  `cluster deploy` are the bundle shipping verbs that leave the machine: they
+  package the bundle as
+  tar.gz and push to the platform API (find-or-create agent, create version,
   upload bundle, create deployment) authenticated via
   `--api-key`/`AGENTOS_API_KEY`. `local message`, `local deploy`,
   `cluster message`, `cluster deploy`, and every operator verb
@@ -58,6 +62,9 @@ release with `up`, `status`, `down`, `message`, and `deploy`. Full command refer
   returning `OpsCommand` vectors that the executor or the `--dry-run` printer
   consumes; keep that split so argv stays unit-testable with no cluster, and
   give any new verb a matching `--dry-run`.
+  Artifact resolution is a pure plan via `artifacts::resolve_*` plus a separate
+  fetch via `ensure_cached`; pure argv builders never fetch, and `--dry-run`
+  never touches the network.
 - **Credentials are masked, never printed.** Secret `helm --set` values use the
   `CmdArg::SecretSet` variant (only a masked prefix is echoed, in dry-run or the
   printed command line) and token flags read from env with `hide_env_values`.

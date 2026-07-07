@@ -1,3 +1,5 @@
+# Self contained no checkout release stack, published as a version pinned release asset for agentos local up on a release binary, while compose.dev.yaml remains the repo dev stack.
+#
 # AgentOS local dev stack.
 #
 # Postgres + Valkey + Langfuse v3 (web + worker + ClickHouse) + MinIO + OTel
@@ -12,7 +14,6 @@
 # Host ports use a distinctive 2xxxx block (host port = "2" + the service's
 # container port) to avoid common service defaults and stay below the OS
 # ephemeral port range (32768+):
-#   AgentOS Console ... http://localhost:28080
 #   Langfuse UI ....... http://localhost:23000
 #   Postgres .......... localhost:25432
 #   Valkey ............ localhost:26379
@@ -24,7 +25,7 @@
 # SIGILLs with exit 132 on CPUs without it; :24.8 still ships an SSE4.2 build.
 
 # Pin the Compose project name so `local up`/`down` target the same project
-# regardless of where this file sits (repo checkout or fetched cache dir).
+# regardless of which cache dir (v<version>) this file is fetched into.
 name: agentos
 
 x-langfuse-env: &langfuse-env
@@ -55,6 +56,47 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
   LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+configs:
+  otel_collector_config:
+    content: |
+      # OTel Collector config for the AgentOS dev stack.
+      #
+      # Receives OTLP from our services over BOTH gRPC (4317) and HTTP (4318), and
+      # forwards to Langfuse. Langfuse OTLP ingest is HTTP-only (gRPC is silently
+      # unsupported), so the collector is the adapter: services may speak gRPC, but
+      # the export to Langfuse is always otlphttp. Langfuse appends /v1/traces to the
+      # otlphttp endpoint's base path itself.
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+
+      processors:
+        batch: {}
+
+      exporters:
+        otlphttp/langfuse:
+          endpoint: http://langfuse-web:3000/api/public/otel
+          headers:
+            # Basic auth for the LANGFUSE_INIT project keys baked into compose.dev.yaml.
+            # Value is base64("<public-key>:<secret-key>"), supplied via .env.
+            Authorization: $${env:LANGFUSE_OTLP_AUTH_HEADER}
+        debug:
+          verbosity: normal
+
+      service:
+        telemetry:
+          metrics:
+            level: none
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [otlphttp/langfuse, debug]
 
 services:
   postgres:
@@ -201,8 +243,9 @@ services:
     environment:
       # base64("pk-lf-agentos-dev:sk-lf-agentos-dev"); matches the LANGFUSE_INIT keys above.
       LANGFUSE_OTLP_AUTH_HEADER: ${LANGFUSE_OTLP_AUTH_HEADER:-Basic cGstbGYtYWdlbnRvcy1kZXY6c2stbGYtYWdlbnRvcy1kZXY=}
-    volumes:
-      - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
+    configs:
+      - source: otel_collector_config
+        target: /etc/otel/collector-config.yaml
     ports:
       - "24317:4317"
       - "24318:4318"
@@ -212,9 +255,9 @@ services:
   #
   # These three services turn the backing stack above into a one-command local
   # product loop. `agentos local up` brings everything up, then:
-  #   agentos local deploy --plugin-dir <dir> --slack-channel <C...> \
+  #   agentos deploy --plugin-dir <dir> --slack-channel <C...> \
   #                  --api-url http://localhost:28000
-  #   agentos local message "<question>"
+  #   agentos message --local "<question>"
   # drives a real queue -> worker -> sandboxed runner -> reply roundtrip, no
   # Slack and no Kubernetes. They use the same published images the chart
   # deploys (only the worker adds a thin local docker-CLI overlay; see below).
@@ -238,8 +281,8 @@ services:
     restart: "no"
 
   # The platform API. On the compose network, reaching Postgres/Valkey/MinIO by
-  # service name. Published on host 28000 for the CLI (`agentos local deploy`, and the
-  # `agentos local message` channel lookup).
+  # service name. Published on host 28000 for the CLI (`agentos deploy`, and the
+  # `agentos message --local` channel lookup).
   agentos-api:
     image: ghcr.io/curie-eng/agentos-api:latest
     depends_on:
@@ -316,11 +359,9 @@ services:
   # written and tested against (the host-process middle mode): the worker reaches
   # the backing stores on their published host ports (localhost 25432/26379/29000),
   # dials each runner on the loopback host port Docker publishes for it, and
-  # reaches the `agentos local message` Slack stub at localhost:8155.
+  # reaches the `agentos message --local` Slack stub at localhost:8155.
   agentos-worker:
-    build:
-      context: compose
-      dockerfile: worker-local.Dockerfile
+    image: ghcr.io/curie-eng/agentos-worker-local:latest
     depends_on:
       postgres:
         condition: service_healthy

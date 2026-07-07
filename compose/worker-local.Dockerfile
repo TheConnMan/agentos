@@ -1,15 +1,17 @@
 # Local-dev overlay for the compose `agentos-worker` service ONLY.
 #
-# This is NOT the published image and is NOT used by the Helm deployment. The
-# hardened chart runs the worker with the KUBERNETES sandbox substrate, which
-# never shells out to docker, so the published worker image ships without a
-# docker CLI (dead weight and attack surface in production). The local compose
+# This is NOT the hardened worker image and is NOT used by the Helm deployment.
+# The hardened chart runs the worker with the KUBERNETES sandbox substrate,
+# which never shells out to docker, so the published worker image ships without
+# a docker CLI (dead weight and attack surface in production). The local compose
 # loop instead uses the DOCKER substrate (AGENTOS_SANDBOX_SUBSTRATE=docker),
 # which spawns runner containers on the host daemon via the mounted socket and
 # therefore needs the docker CLI. This overlay layers just the docker client
-# (not the daemon) onto the published image, leaving the release pipeline
-# untouched.
-FROM ghcr.io/curie-eng/agentos-worker:latest
+# (not the daemon) onto the published worker image. The release pipeline
+# publishes it as `agentos-worker-local` (BASE_TAG pins the base to the release
+# version) so `compose.release.yaml` can run the local loop with no checkout.
+ARG BASE_TAG=latest
+FROM ghcr.io/curie-eng/agentos-worker:${BASE_TAG}
 
 # Install only the static docker client binary from the official release tarball
 # (the tarball also carries dockerd/containerd, which we deliberately do not

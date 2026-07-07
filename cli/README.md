@@ -80,6 +80,26 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
 | `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API (`--api-url`, default `http://localhost:8000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
 
+### Artifact resolution
+
+Release builds resolve default artifacts from the binary version: `agentos local
+up` fetches the self contained `compose.release.yaml` release asset, so it
+works with no checkout, `agentos cluster up` uses the pinned chart release
+asset, and runner sessions (`agentos skill up`) use the pinned GHCR runner
+image. Fetched artifacts cache under
+`${XDG_CACHE_HOME:-$HOME/.cache}/agentos/<version>/`, so repeated
+`agentos cluster up` and `agentos local up` reuse the cache.
+
+Dev builds use the local `compose.dev.yaml`, `charts/agentos`, and
+`agentos-runner` when present. A dev binary run with no local artifact errors,
+telling you to pass `-f <compose>`, `--chart <path>`, or `--image <ref>` (or use
+a released binary); those same flags override the defaults. `--dry-run` prints
+the resolved argv without fetching.
+
+`agentos cluster message` is not yet wired through this resolver: it still defaults
+`--chart` to the repo-relative `charts/agentos`, so a no-checkout binary must
+pass `--chart <path-or-tgz>` explicitly for now.
+
 ## Output
 
 Three global flags apply to every subcommand: `--debug` shows the verbose

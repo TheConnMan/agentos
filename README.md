@@ -120,10 +120,27 @@ real workspace.
 
 ## Quickstart
 
-Everything below runs against the dev stack in `compose.dev.yaml`
-(Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel Collector). See
-[`AGENTS.md`](AGENTS.md) for the ports each service binds and the load-bearing
-gotchas.
+Operators should start from a binary downloaded from
+[GitHub Releases](https://github.com/curie-eng/agentos/releases):
+
+```bash
+curl -L -o agentos \
+  https://github.com/curie-eng/agentos/releases/download/v<version>/agentos-x86_64-unknown-linux-gnu
+chmod +x agentos
+./agentos up
+./agentos local up
+```
+
+A release binary needs no repo checkout for `agentos up` or `agentos local up`.
+It pulls the pinned chart release asset and the pinned `compose.release.yaml`
+matching the binary version, then caches them under `~/.cache/agentos/`. For
+local development overrides, pass `-f <compose>`, `--chart <path>`, or
+`--image <ref>`.
+
+Contributors can still run from a repo checkout against the dev stack in
+`compose.dev.yaml` (Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel
+Collector). See [`AGENTS.md`](AGENTS.md) for the ports each service binds and
+the load-bearing gotchas.
 
 ```bash
 # 1. Bring up the backing stack. The stack runs on baked defaults; copy
@@ -223,11 +240,11 @@ env AGENTOS_SANDBOX_SUBSTRATE=docker \
 For an offline round-trip add `AGENTOS_FAKE_MODEL=1` to the worker env and drop
 the credential. Without either, the worker refuses to start.
 
-Prefer a prebuilt binary? The
+Prefer a prebuilt binary for local commands? The
 [GitHub Releases](https://github.com/curie-eng/agentos/releases) page attaches
 `agentos-<target>` binaries on every tag push (`agentos-x86_64-unknown-linux-gnu`
 and `agentos-aarch64-apple-darwin`), so `v0.1.0` onward you can download the CLI
-instead of running `cargo build` (above).
+instead of running `cargo build` above.
 
 Each package documents its own deeper verify commands and gotchas in its own
 README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
@@ -251,7 +268,11 @@ enough to see the pieces move; it is not a substitute for those.
 
 The same `agentos` binary installs and runs the platform on a Kubernetes
 cluster, wrapping the umbrella Helm chart the way `linkerd` or `cilium` wrap
-theirs. The short version:
+theirs. A downloaded release binary resolves the pinned chart release asset for
+its version, and `agentos local up` likewise resolves the pinned
+`compose.release.yaml`, caching both under `~/.cache/agentos/` with no repo
+checkout needed.
+Use `--chart <path>` when developing the chart locally. The short version:
 
 - `agentos cluster up` runs `helm upgrade --install` of `charts/agentos`; it reads
   `AGENTOS_MODEL_CREDENTIALS` to enable a real model (absent, the release
