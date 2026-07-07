@@ -138,7 +138,7 @@ def test_tracer_provider_none_without_endpoint() -> None:
 
 
 def test_tracer_provider_built_with_endpoint() -> None:
-    otel = OtelConfig(endpoint="http://localhost:4318")
+    otel = OtelConfig(endpoint="http://localhost:24318")
     provider = build_tracer_provider(otel, "s1")
     assert isinstance(provider, TracerProvider)
     provider.shutdown()
@@ -147,7 +147,7 @@ def test_tracer_provider_built_with_endpoint() -> None:
 def test_resource_stamps_sandbox_id_when_present() -> None:
     # The sandbox id (ACI AGENTOS_SANDBOX_ID) lets a trace be attributed to the
     # concrete sandbox that produced it, not just the session.
-    otel = OtelConfig(endpoint="http://localhost:4318")
+    otel = OtelConfig(endpoint="http://localhost:24318")
     provider = build_tracer_provider(otel, "s1", "sandbox-abc")
     assert provider is not None
     attrs = provider.resource.attributes
@@ -159,7 +159,7 @@ def test_resource_stamps_sandbox_id_when_present() -> None:
 def test_resource_omits_sandbox_id_when_absent_or_empty() -> None:
     # Absent (default) and empty-string sandbox ids are both omitted rather than
     # stamped as an empty attribute value.
-    otel = OtelConfig(endpoint="http://localhost:4318")
+    otel = OtelConfig(endpoint="http://localhost:24318")
     for sandbox_id in (None, ""):
         provider = build_tracer_provider(otel, "s1", sandbox_id)
         assert provider is not None

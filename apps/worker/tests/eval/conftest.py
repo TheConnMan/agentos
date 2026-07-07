@@ -29,10 +29,10 @@ from aiohttp.test_utils import TestServer
 from botocore.client import Config as BotoConfig
 
 _VH = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VP = int(os.environ.get("TEST_VALKEY_PORT", "56379"))
+_VP = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
 _VPW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 _MINIO: dict[str, object] = {
-    "s3_endpoint_url": os.environ.get("TEST_S3_ENDPOINT_URL", "http://localhost:9002"),
+    "s3_endpoint_url": os.environ.get("TEST_S3_ENDPOINT_URL", "http://localhost:29000"),
     "s3_access_key": os.environ.get("TEST_S3_ACCESS_KEY", "minio"),
     "s3_secret_key": os.environ.get("TEST_S3_SECRET_KEY", "miniosecret"),
     "s3_region": "us-east-1",

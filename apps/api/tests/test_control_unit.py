@@ -12,7 +12,7 @@ from pydantic import ValidationError
 def test_valkey_dsn_honors_the_password_override() -> None:
     # The compose VALKEY_PASSWORD knob must reach the DSN the API connects with.
     assert Settings(valkey_password="s3cret").valkey_dsn() == (
-        "redis://:s3cret@localhost:56379/0"
+        "redis://:s3cret@localhost:26379/0"
     )
     # An explicit full URL overrides the parts.
     assert (

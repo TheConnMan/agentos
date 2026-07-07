@@ -110,7 +110,7 @@ def _post_event(base: str, text: str) -> list[dict[str, object]]:
 def substrate() -> Iterator[SandboxSubstrate]:
     client = redis.Redis(
         host=os.environ.get("TEST_VALKEY_HOST", "localhost"),
-        port=int(os.environ.get("TEST_VALKEY_PORT", "56379")),
+        port=int(os.environ.get("TEST_VALKEY_PORT", "26379")),
         password=os.environ.get("TEST_VALKEY_PW", "valkeypass") or None,
     )
     client.ping()

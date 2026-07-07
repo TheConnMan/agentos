@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Postgres (async driver). Dedicated `agentos` schema keeps our tables clear
     # of Langfuse's own tables on the same database.
     database_url: str = (
-        "postgresql+asyncpg://postgres:postgres@localhost:55434/postgres"
+        "postgresql+asyncpg://postgres:postgres@localhost:25432/postgres"
     )
     db_schema: str = "agentos"
 
@@ -24,12 +24,12 @@ class Settings(BaseSettings):
     api_key: str = "agentos-dev-key"
 
     # Langfuse proxy target (the dev project keys baked into compose.dev.yaml).
-    langfuse_host: str = "http://localhost:3001"
+    langfuse_host: str = "http://localhost:23000"
     langfuse_public_key: str = "pk-lf-agentos-dev"
     langfuse_secret_key: str = "sk-lf-agentos-dev"
 
-    # MinIO / S3 for immutable plugin bundles (compose stack MinIO on 9002).
-    s3_endpoint_url: str = "http://localhost:9002"
+    # MinIO / S3 for immutable plugin bundles (compose stack MinIO on 29000).
+    s3_endpoint_url: str = "http://localhost:29000"
     s3_access_key: str = "minio"
     s3_secret_key: str = "miniosecret"
     s3_region: str = "us-east-1"
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # honored; set valkey_url to override the whole DSN (e.g. TLS, other host).
     valkey_password: str = "valkeypass"
     valkey_host: str = "localhost"
-    valkey_port: int = 56379
+    valkey_port: int = 26379
     valkey_url: str | None = None
 
     # Observability (OB1). kube_config_path points the runner-logs proxy at a

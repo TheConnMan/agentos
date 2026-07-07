@@ -20,7 +20,7 @@ import redis.asyncio as aredis
 from agentos_worker.killswitch import KILL_CHANNEL, KillSwitch, kill_key
 
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "56379"))
+_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
 _VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 
 

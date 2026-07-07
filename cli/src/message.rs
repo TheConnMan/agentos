@@ -42,7 +42,7 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 /// Fixed stub port so the advertised URL is deterministic; `0` picks ephemeral.
 pub const DEFAULT_LISTEN_PORT: u16 = 8155;
 /// Local port the Valkey port-forward binds. Chosen to dodge the compose dev
-/// stack, which squats 56379.
+/// stack, which squats 26379.
 pub const DEFAULT_VALKEY_LOCAL_PORT: u16 = 56381;
 /// Local port the API port-forward binds (only used for the default-channel
 /// lookup when `--channel` is omitted).
@@ -54,10 +54,10 @@ pub const DEFAULT_API_KEY: &str = "agentos-dev-key";
 
 /// Local mode (`--local`): the compose Valkey's published host port
 /// (`compose.dev.yaml`), where the CLI enqueues and the compose worker consumes.
-pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 56379;
+pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 26379;
 /// Local mode: the compose API's published host port (`compose.dev.yaml`
 /// `agentos-api`), reached directly (routers mount at root, so no `/api`).
-pub const DEFAULT_LOCAL_API_URL: &str = "http://localhost:8770";
+pub const DEFAULT_LOCAL_API_URL: &str = "http://localhost:28000";
 /// Local mode: the fixed port the stub binds. It MUST equal the port in the
 /// compose worker's `SLACK_API_BASE_URL` (`http://localhost:8155/api/`) so the
 /// containerized worker's placeholder edits reach this stub. Same value as the
@@ -846,12 +846,12 @@ mod tests {
     fn local_valkey_url_targets_the_compose_valkey_with_the_password() {
         assert_eq!(
             local_valkey_url("valkeypass"),
-            "redis://:valkeypass@localhost:56379"
+            "redis://:valkeypass@localhost:26379"
         );
         // A custom password flows through unchanged.
         assert_eq!(
             local_valkey_url("s3cr3t"),
-            "redis://:s3cr3t@localhost:56379"
+            "redis://:s3cr3t@localhost:26379"
         );
     }
 

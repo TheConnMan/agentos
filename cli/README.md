@@ -18,7 +18,7 @@ Slack involved.
 | `agentos interrupt` | Hard-stop the runner's live turn (POST `/v1/interrupt`); `--reason` is recorded with it. |
 | `agentos chat "..."` | Drive the whole system with the CLI acting **as** the Slack service against the local compose stack, no Slack involved (see below). |
 | `agentos message "..."` | Drive the **deployed** Kubernetes release end to end with zero Slack: self-plumbs kubectl port-forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply (see below). |
-| `agentos message --local "..."` | Same roundtrip against the **local compose stack** (`agentos local up`) instead of a cluster: no kubectl/helm/port-forwards. Enqueues straight to the compose Valkey and lets the containerized worker answer. Channel via `--channel` or the sole deployed agent (looked up on the compose API, default `http://localhost:8770`, overridable with `--api-url`). |
+| `agentos message --local "..."` | Same roundtrip against the **local compose stack** (`agentos local up`) instead of a cluster: no kubectl/helm/port-forwards. Enqueues straight to the compose Valkey and lets the containerized worker answer. Channel via `--channel` or the sole deployed agent (looked up on the compose API, default `http://localhost:28000`, overridable with `--api-url`). |
 | `agentos status` / `agentos stop` | Session status / tear down the container. |
 | `agentos deploy` | Package the bundle as tar.gz and push it to the platform API (find-or-create agent, create version, upload bundle, create deployment). Auth via `--api-key` / `AGENTOS_API_KEY`. |
 
@@ -130,19 +130,19 @@ cluster:
 
 ```bash
 agentos local up
-agentos deploy --plugin-dir <dir> --slack-channel C-DEMO --api-url http://localhost:8770
+agentos deploy --plugin-dir <dir> --slack-channel C-DEMO --api-url http://localhost:28000
 agentos message --local "what changed in the last deploy?"
 ```
 
 Local mode keeps only the shared engine (stub + `QueuedSlackEvent` enqueue +
 ack-based completion) and drops every cluster-specific step: no kubectl, no
 `helm upgrade` wiring, no port-forwards, no dispatcher guard. It enqueues
-straight to the compose Valkey (`localhost:56379`) and the containerized
+straight to the compose Valkey (`localhost:26379`) and the containerized
 `agentos-worker` service (already pointed at the stub via a fixed
 `SLACK_API_BASE_URL=http://localhost:8155/api/`) answers by claiming a runner
 container on the host Docker daemon. Channel comes from `--channel` or, when
 omitted, the sole deployed agent looked up on the compose API (`--api-url`,
-default `http://localhost:8770`; the API is reached directly, so no `/api`
+default `http://localhost:28000`; the API is reached directly, so no `/api`
 suffix). `--local` composes with `--channel`/`--thread`/`--timeout-secs` and
 rejects the cluster-only flags (`--namespace`, `--release`, `--force-wire`, ...)
 with a clear error. The compose worker runs the fake model by default (a canned

@@ -2,7 +2,7 @@
 //! Slack stub exercised over real HTTP.
 //!
 //! The redis client is NOT mocked: the XADD runs against the compose dev Valkey
-//! (host port 56379, password `valkeypass`) on a unique test-scoped stream that
+//! (host port 26379, password `valkeypass`) on a unique test-scoped stream that
 //! the test deletes afterward. It never touches the real `agentos:runs` stream.
 //! The Slack stub is the real one; only its client (reqwest) stands in for the
 //! worker.
@@ -12,7 +12,7 @@ use std::time::Duration;
 use agentos::chat::{resolve_targets, SlackStub};
 use agentos::queue::{diagnostics, entry_acked, xadd, QueuedSlackEvent, WORKER_GROUP};
 
-const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:56379";
+const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
 
 fn valkey_url() -> String {
     std::env::var("TEST_VALKEY_URL").unwrap_or_else(|_| DEFAULT_VALKEY_URL.to_string())

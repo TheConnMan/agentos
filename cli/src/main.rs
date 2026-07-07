@@ -188,7 +188,7 @@ enum Command {
         )]
         local: bool,
         /// Local mode only: platform API base URL for the channel lookup
-        /// (default the compose API on http://localhost:8770).
+        /// (default the compose API on http://localhost:28000).
         #[arg(long, requires = "local")]
         api_url: Option<String>,
     },
@@ -678,7 +678,7 @@ mod tests {
             "agentos",
             "message",
             "--api-url",
-            "http://localhost:8770",
+            "http://localhost:28000",
             "hi",
         ];
         let err = match Cli::try_parse_from(argv) {

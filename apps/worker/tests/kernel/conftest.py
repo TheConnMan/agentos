@@ -34,7 +34,7 @@ from aiohttp.test_utils import TestServer
 from redis.asyncio import Redis as AsyncRedis
 
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "56379"))
+_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
 _VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 
 

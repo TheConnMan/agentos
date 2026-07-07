@@ -41,7 +41,7 @@ class WorkerConfig(BaseModel):
 
     # Postgres (read-only): resolve channel -> agent -> deployment -> version.
     # Matches the API's DATABASE_URL / DB_SCHEMA so the worker reads the same DB.
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:55434/postgres"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:25432/postgres"
     db_schema: str = "agentos"
 
     # Deployment-to-runtime binding. The plugin dir is the local path the runner
@@ -109,7 +109,7 @@ class WorkerConfig(BaseModel):
     eval_consumer_name: str = Field(default_factory=_default_consumer_name)
     # MinIO / S3 for plugin bundles (mirrors the API's env names). The consumer
     # fetches a version's bundle by bundle_ref and loads its evals/ suite.
-    s3_endpoint_url: str = "http://localhost:9002"
+    s3_endpoint_url: str = "http://localhost:29000"
     s3_access_key: str = "minio"
     s3_secret_key: str = "miniosecret"
     s3_region: str = "us-east-1"
@@ -121,7 +121,7 @@ class WorkerConfig(BaseModel):
     report_max_attempts: int = 3
     report_backoff_base_s: float = Field(default=0.5, gt=0)
     # Langfuse for recording eval scores (the matrix reads them back by version).
-    langfuse_host: str = "http://localhost:3001"
+    langfuse_host: str = "http://localhost:23000"
     langfuse_public_key: str = "pk-lf-agentos-dev"
     langfuse_secret_key: str = "sk-lf-agentos-dev"
 
