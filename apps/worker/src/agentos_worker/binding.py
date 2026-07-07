@@ -26,13 +26,16 @@ coupling the worker to a Slack token.
 
 from __future__ import annotations
 
+import json
 import uuid
+from typing import Any
 
 from aci_protocol import Budget
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from .behaviorpacks import BehaviorPacks
 from .config import WorkerConfig
 
 # Env vars the worker injects into a bound sandbox claim. AGENTOS_BUNDLE_REF is
@@ -50,6 +53,7 @@ _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
        a.max_usd_per_day AS max_usd_per_day,
        a.max_output_tokens_per_run AS max_output_tokens_per_run,
+       a.behavior_packs AS behavior_packs,
        v.id AS version_id,
        v.version_label AS version_label,
        v.bundle_ref AS bundle_ref
@@ -71,6 +75,9 @@ class ResolvedDeployment(BaseModel):
     bundle_ref: str | None
     max_usd_per_day: float | None
     max_output_tokens_per_run: int | None
+    # The agent's opt-in behavior packs (declarative JSON), or None for the
+    # all-off platform default. Parsed into a BehaviorPacks via packs_for().
+    behavior_packs: dict[str, Any] | None = None
 
 
 class BindingResolver:
@@ -88,7 +95,14 @@ class BindingResolver:
             row = result.mappings().first()
         if row is None:
             return None
-        return ResolvedDeployment.model_validate(dict(row))
+        data = dict(row)
+        # asyncpg returns JSONB as a str for a raw-text SELECT (no column type to
+        # trigger SQLAlchemy's json deserializer); decode it to the dict the model
+        # expects. A dict (or None) passes through untouched.
+        packs = data.get("behavior_packs")
+        if isinstance(packs, str):
+            data["behavior_packs"] = json.loads(packs)
+        return ResolvedDeployment.model_validate(data)
 
     async def repo_full_name(self, agent_id: uuid.UUID) -> str | None:
         """The agent's GitHub repo (owner/name), for the eval PR-check report."""
@@ -100,6 +114,14 @@ class BindingResolver:
             return None
         value: str | None = row[0]
         return value
+
+    def packs_for(self, resolved: ResolvedDeployment) -> BehaviorPacks:
+        """The agent's parsed behavior packs (all-off when none are configured).
+
+        The kernel wiring that samples a working line / short-circuits a greeting
+        consumes this; it is a separate, F1-reviewed change (docs/behavior-packs.md).
+        """
+        return BehaviorPacks.from_config(resolved.behavior_packs)
 
     def budget_for(self, resolved: ResolvedDeployment) -> Budget:
         """The AGENTOS_BUDGET for the agent, applying platform defaults for NULLs."""

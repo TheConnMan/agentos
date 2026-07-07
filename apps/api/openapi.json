@@ -3,6 +3,16 @@
     "schemas": {
       "AgentCreate": {
         "properties": {
+          "behavior_packs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BehaviorPacksConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -32,6 +42,18 @@
       },
       "AgentOut": {
         "properties": {
+          "behavior_packs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behavior Packs"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -67,6 +89,7 @@
           "name",
           "slack_channel",
           "repo_full_name",
+          "behavior_packs",
           "created_at"
         ],
         "title": "AgentOut",
@@ -88,6 +111,37 @@
           }
         },
         "title": "AgentUpdate",
+        "type": "object"
+      },
+      "BehaviorPacksConfig": {
+        "description": "An agent's opt-in behavior packs. Validated on write and stored as JSON on\nthe agent row; the worker parses the same JSON at bind time.",
+        "properties": {
+          "greeting": {
+            "$ref": "#/components/schemas/GreetingPackConfig",
+            "default": {
+              "enabled": false,
+              "phrases": [],
+              "reply": ""
+            }
+          },
+          "help": {
+            "$ref": "#/components/schemas/HelpPackConfig",
+            "default": {
+              "enabled": false,
+              "phrases": [],
+              "reply": ""
+            }
+          },
+          "tips": {
+            "$ref": "#/components/schemas/TipsPackConfig",
+            "default": {
+              "enabled": false,
+              "tips": [],
+              "working_lines": []
+            }
+          }
+        },
+        "title": "BehaviorPacksConfig",
         "type": "object"
       },
       "Body_upload_bundle_agents__agent_id__versions__version_id__bundle_put": {
@@ -478,6 +532,31 @@
         "title": "EvalReportResult",
         "type": "object"
       },
+      "GreetingPackConfig": {
+        "description": "The deterministic greeting short-circuit content for one agent.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "phrases": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Phrases",
+            "type": "array"
+          },
+          "reply": {
+            "default": "",
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "title": "GreetingPackConfig",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -489,6 +568,31 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HelpPackConfig": {
+        "description": "The deterministic help / \"what can you do\" short-circuit for one agent.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "phrases": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Phrases",
+            "type": "array"
+          },
+          "reply": {
+            "default": "",
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "title": "HelpPackConfig",
         "type": "object"
       },
       "KillState": {
@@ -732,6 +836,34 @@
           "pods"
         ],
         "title": "RunnerPods",
+        "type": "object"
+      },
+      "TipsPackConfig": {
+        "description": "The \"working...\" acknowledgment content for one agent. Mirrors the worker's\nagentos_worker.behaviorpacks.TipsPack (packs ride on agent config, not the\nfrozen ACI contract, so the shape is duplicated across the layers the way\nBudgetConfig mirrors the ACI Budget).",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "tips": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tips",
+            "type": "array"
+          },
+          "working_lines": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Working Lines",
+            "type": "array"
+          }
+        },
+        "title": "TipsPackConfig",
         "type": "object"
       },
       "TraceTree": {
@@ -1288,6 +1420,132 @@
         "summary": "Update Agent",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/agents/{agent_id}/behavior-packs": {
+      "get": {
+        "operationId": "get_behavior_packs_agents__agent_id__behavior_packs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BehaviorPacksConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Behavior Packs",
+        "tags": [
+          "control"
+        ]
+      },
+      "put": {
+        "operationId": "put_behavior_packs_agents__agent_id__behavior_packs_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BehaviorPacksConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BehaviorPacksConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Behavior Packs",
+        "tags": [
+          "control"
         ]
       }
     },

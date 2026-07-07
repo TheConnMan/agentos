@@ -8,9 +8,10 @@ agent_versions.commit_sha, deployments.bot_identity/commit_sha).
 import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Enum, ForeignKey, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import SCHEMA, Base
@@ -38,6 +39,15 @@ class Agent(Base):
     # NULL means platform defaults apply.
     max_usd_per_day: Mapped[float | None] = mapped_column(default=None)
     max_output_tokens_per_run: Mapped[int | None] = mapped_column(default=None)
+    # Per-agent behavior packs: declarative, opt-in UX touches the worker applies
+    # around a turn (a sampled "working..." line, a canned greeting reply). Stored
+    # as JSON here and resolved onto the deployment by the worker's binding layer;
+    # NULL means no packs (the platform default). The shape is validated by
+    # schemas.BehaviorPacksConfig on write and parsed by
+    # agentos_worker.behaviorpacks.BehaviorPacks on read.
+    behavior_packs: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     versions: Mapped[list["AgentVersion"]] = relationship(

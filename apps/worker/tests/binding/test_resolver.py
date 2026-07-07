@@ -226,6 +226,82 @@ def test_deployment_pointing_at_another_agents_version_does_not_resolve() -> Non
     asyncio.run(go())
 
 
+def test_behavior_packs_round_trip_and_parse() -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine, channel=channel, name=f"agent-{token}", max_usd=None, max_tokens=None
+            )
+            packs_json = (
+                '{"greeting": {"enabled": true, "phrases": ["hi"], "reply": "yo"}, '
+                '"tips": {"enabled": false, "working_lines": [], "tips": []}}'
+            )
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        f"UPDATE {_SCHEMA}.agents SET behavior_packs = CAST(:p AS jsonb) "
+                        "WHERE id = :id"
+                    ),
+                    {"p": packs_json, "id": agent_id},
+                )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref="bundles/x.zip"
+            )
+
+            resolved = await _resolver(engine).resolve(channel)
+            assert resolved is not None
+            packs = _resolver(engine).packs_for(resolved)
+            assert packs.greeting.enabled is True
+            assert packs.greeting.reply == "yo"
+
+            await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_no_packs_parses_to_all_off_default() -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine, channel=channel, name=f"agent-{token}", max_usd=None, max_tokens=None
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="dev", bundle_ref="bundles/x.zip"
+            )
+            resolved = await _resolver(engine).resolve(channel)
+            assert resolved is not None
+            assert resolved.behavior_packs is None
+            packs = _resolver(engine).packs_for(resolved)
+            assert packs.greeting.enabled is False
+            assert packs.tips.enabled is False
+
+            await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
 def test_unknown_channel_resolves_to_none() -> None:
     async def go() -> None:
         engine = create_async_engine(_DB_URL)
