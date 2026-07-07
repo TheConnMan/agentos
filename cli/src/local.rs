@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::ops::{plain, require_on_path, run_capture, run_step, OpsCommand};
 
-/// Default compose file, resolved relative to the cwd (run from the repo root).
+/// Dev-channel local-candidate filename probed by the artifact resolver.
 pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
 
 /// The service endpoints the dev stack exposes, as committed in

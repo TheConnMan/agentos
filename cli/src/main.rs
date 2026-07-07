@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use agentos::artifacts;
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
@@ -83,9 +84,9 @@ enum SkillAction {
         /// Plugin bundle directory.
         #[arg(long, default_value = ".")]
         plugin_dir: PathBuf,
-        /// Runner image to boot.
-        #[arg(long, default_value = "agentos-runner")]
-        image: String,
+        /// Runner image. Default: version-pinned `ghcr.io/curie-eng/agentos-runner:<version>` on release builds; local `agentos-runner` on dev builds. Pass to override.
+        #[arg(long)]
+        image: Option<String>,
         /// Host port for the local bot.
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
@@ -148,18 +149,18 @@ enum SkillAction {
 enum LocalAction {
     /// Bring the dev stack up (docker compose up -d --wait) and print URLs.
     Up {
-        /// Compose file (run from the repo root for the default).
-        #[arg(long, default_value = local::DEFAULT_COMPOSE_FILE)]
-        file: String,
+        /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
+        #[arg(short = 'f', long)]
+        file: Option<String>,
         /// Print the docker compose command and exit without executing.
         #[arg(long)]
         dry_run: bool,
     },
     /// Stop the dev stack (docker compose down), keeping volumes.
     Down {
-        /// Compose file (run from the repo root for the default).
-        #[arg(long, default_value = local::DEFAULT_COMPOSE_FILE)]
-        file: String,
+        /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
+        #[arg(short = 'f', long)]
+        file: Option<String>,
         /// Also destroy volumes (adds -v). Prompts for confirmation unless --yes.
         #[arg(long)]
         wipe: bool,
@@ -172,9 +173,9 @@ enum LocalAction {
     },
     /// Show the dev stack's service status (docker compose ps).
     Status {
-        /// Compose file (run from the repo root for the default).
-        #[arg(long, default_value = local::DEFAULT_COMPOSE_FILE)]
-        file: String,
+        /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
+        #[arg(short = 'f', long)]
+        file: Option<String>,
         /// Print the docker compose command and exit without executing.
         #[arg(long)]
         dry_run: bool,
@@ -258,9 +259,9 @@ enum ClusterAction {
         /// Helm release name.
         #[arg(long, default_value = "agentos")]
         release: String,
-        /// Chart path (run from the repo root for the default).
-        #[arg(long, default_value = "charts/agentos")]
-        chart: String,
+        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override.
+        #[arg(long)]
+        chart: Option<String>,
         /// Keep the UI and Langfuse services ClusterIP instead of NodePort.
         #[arg(long)]
         no_expose: bool,
@@ -397,6 +398,35 @@ enum ClusterAction {
     },
 }
 
+async fn resolve_compose_file(file: Option<String>, dry_run: bool) -> Result<String> {
+    let resolved = artifacts::resolve_compose(
+        file.as_deref(),
+        artifacts::Channel::current(),
+        artifacts::version(),
+        artifacts::cache_root,
+        std::path::Path::new(local::DEFAULT_COMPOSE_FILE).exists(),
+    )?;
+    materialize_artifact(resolved, dry_run, "compose").await
+}
+
+async fn materialize_artifact(
+    resolved: artifacts::Resolved,
+    dry_run: bool,
+    label: &str,
+) -> Result<String> {
+    if dry_run {
+        if let artifacts::Resolved::Fetch { url, .. } = &resolved {
+            ui::ui().note(&format!("{label} source: {}", ui::ui().url(url)));
+        }
+        Ok(resolved.planned_target().display().to_string())
+    } else {
+        Ok(artifacts::ensure_cached(&resolved)
+            .await?
+            .display()
+            .to_string())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -421,6 +451,11 @@ async fn main() -> Result<()> {
                 budget,
                 model,
             } => {
+                let image = artifacts::resolve_image(
+                    image.as_deref(),
+                    artifacts::Channel::current(),
+                    artifacts::version(),
+                );
                 commands::start(StartOpts {
                     plugin_dir,
                     image,
@@ -445,13 +480,17 @@ async fn main() -> Result<()> {
             SkillAction::Eval { cases, url } => commands::eval(cases, url).await,
         },
         Command::Local { action } => match action {
-            LocalAction::Up { file, dry_run } => local::up(LocalOpts { file, dry_run }).await,
+            LocalAction::Up { file, dry_run } => {
+                let file = resolve_compose_file(file, dry_run).await?;
+                local::up(LocalOpts { file, dry_run }).await
+            }
             LocalAction::Down {
                 file,
                 wipe,
                 yes,
                 dry_run,
             } => {
+                let file = resolve_compose_file(file, dry_run).await?;
                 local::down(LocalDownOpts {
                     common: LocalOpts { file, dry_run },
                     wipe,
@@ -460,6 +499,7 @@ async fn main() -> Result<()> {
                 .await
             }
             LocalAction::Status { file, dry_run } => {
+                let file = resolve_compose_file(file, dry_run).await?;
                 local::status(LocalOpts { file, dry_run }).await
             }
             LocalAction::Message {
@@ -527,6 +567,14 @@ async fn main() -> Result<()> {
                 set,
                 dry_run,
             } => {
+                let resolved = artifacts::resolve_chart(
+                    chart.as_deref(),
+                    artifacts::Channel::current(),
+                    artifacts::version(),
+                    artifacts::cache_root,
+                    std::path::Path::new("charts/agentos").is_dir(),
+                )?;
+                let chart = materialize_artifact(resolved, dry_run, "chart").await?;
                 let credentials = ops::resolve_up_credentials(
                     fake_model,
                     std::env::var("AGENTOS_MODEL_CREDENTIALS").ok(),
@@ -658,6 +706,43 @@ mod tests {
                 action: LocalAction::Message { api_key, .. },
             } => assert_eq!(api_key, "K"),
             _ => panic!("expected local message command"),
+        }
+    }
+
+    #[test]
+    fn local_short_file_flag_parses_for_all_verbs() {
+        let cases = [
+            (["agentos", "local", "up", "-f", "custom.yaml"], "up"),
+            (["agentos", "local", "down", "-f", "custom.yaml"], "down"),
+            (
+                ["agentos", "local", "status", "-f", "custom.yaml"],
+                "status",
+            ),
+        ];
+
+        for (argv, verb) in cases {
+            let cli = Cli::try_parse_from(argv).expect("local verb accepts -f");
+            match cli.command {
+                Command::Local {
+                    action: LocalAction::Up { file, .. },
+                } => {
+                    assert_eq!(verb, "up");
+                    assert_eq!(file.as_deref(), Some("custom.yaml"));
+                }
+                Command::Local {
+                    action: LocalAction::Down { file, .. },
+                } => {
+                    assert_eq!(verb, "down");
+                    assert_eq!(file.as_deref(), Some("custom.yaml"));
+                }
+                Command::Local {
+                    action: LocalAction::Status { file, .. },
+                } => {
+                    assert_eq!(verb, "status");
+                    assert_eq!(file.as_deref(), Some("custom.yaml"));
+                }
+                _ => panic!("expected the local subcommand"),
+            }
         }
     }
 }

@@ -76,6 +76,49 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  worker-local:
+    name: Build and push the worker-local overlay image
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compute version
+        id: ver
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: compose
+          file: compose/worker-local.Dockerfile
+          push: true
+          build-args: |
+            BASE_TAG=${{ steps.ver.outputs.v }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   cli-binaries:
     name: Build agentos CLI (${{ matrix.target }})
     if: startsWith(github.ref, 'refs/tags/v')
@@ -98,8 +141,19 @@ jobs:
           persist-credentials: false
       - name: Add target
         run: rustup target add ${{ matrix.target }}
+      - name: Assert tag matches Cargo.toml version
+        working-directory: cli
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag does not match cli/Cargo.toml version $pkg" >&2
+            exit 1
+          fi
       - name: Build release
         working-directory: cli
+        env:
+          AGENTOS_BUILD_CHANNEL: release
         run: cargo build --release --target ${{ matrix.target }}
       - name: Strip and name the binary
         run: |
@@ -114,10 +168,53 @@ jobs:
           path: dist/agentos-${{ matrix.target }}
           if-no-files-found: error
 
+  chart:
+    name: Package chart and release compose
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+      - name: Pin chart image tags to the release version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          before="$(grep -cE '^[[:space:]]*tag: latest$' charts/agentos/values.yaml)"
+          if [ "$before" -ne 5 ]; then
+            echo "expected 5 'tag: latest' entries in values.yaml, found $before" >&2
+            exit 1
+          fi
+          sed -i -E "s/^([[:space:]]*tag:) latest$/\1 \"${version}\"/" charts/agentos/values.yaml
+      - name: Package chart
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          helm package charts/agentos --version "$version" --app-version "$version" -d dist
+      - name: Pin and stage the release compose
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          sed -E "s|(ghcr.io/curie-eng/agentos-[a-z-]+):latest|\1:${version}|g" \
+            compose.release.yaml > dist/compose.release.yaml
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentos-chart
+          path: dist/agentos-*.tgz
+          if-no-files-found: error
+      - name: Upload release compose artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentos-compose
+          path: dist/compose.release.yaml
+          if-no-files-found: error
+
   release:
     name: Attach binaries to the GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [images, cli-binaries]
+    needs: [images, cli-binaries, chart, worker-local]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -131,5 +228,7 @@ jobs:
       - name: Create release with generated notes
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/agentos-*
+          files: |
+            dist/agentos-*
+            dist/compose.release.yaml
           generate_release_notes: true
