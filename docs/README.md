@@ -9,9 +9,18 @@ git history (`git log -- docs/`).
 - [`vision.md`](vision.md): the north star. What AgentOS is, who it is for, and
   what it could become. The document we hold new features against. Read this to
   understand *why* the project exists before *how* it works.
-- [`../ARCHITECTURE.md`](../ARCHITECTURE.md): the as-built architecture, with the
-  component map and the message-flow and deploy-flow sequence diagrams. Start
-  here.
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md): the as-built architecture reference
+  (the deep "what talks to what," with file:line citations). Start here for
+  detail.
+- [`diagrams/`](diagrams/): three focused, presentation-grade flow docs, each a
+  single clean diagram with narration. Start here to explain the system to
+  someone:
+  - [`diagrams/message-flow.md`](diagrams/message-flow.md): how a message comes
+    in and a reply goes out (the core loop).
+  - [`diagrams/kubernetes.md`](diagrams/kubernetes.md): the cluster and how a
+    sandbox pod is built.
+  - [`diagrams/aci.md`](diagrams/aci.md): the agent container interface, the
+    frozen contract between the worker and the agent in the box.
 - [`architecture.md`](architecture.md): a redirect stub pointing at the root
   `ARCHITECTURE.md` above.
 - [`architecture-vision.md`](architecture-vision.md): the forward-looking
