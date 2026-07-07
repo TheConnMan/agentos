@@ -56,30 +56,56 @@ journeys filed as `epic`-labeled issues.
 | [`packages/aci-protocol`](packages/aci-protocol/README.md) | Python (frozen, codegen to TS + Rust) | The ACI session protocol every lane speaks |
 | [`packages/plugin-format`](packages/plugin-format/README.md) | Python (frozen, codegen to JSON Schema) | The Claude Code plugin bundle shape, verbatim |
 
-## Three ways to talk to the system
+## Which target do I want?
 
-**Real Slack** — connect a workspace, `@mention` the bot in a channel or DM it.
-The dispatcher acks, posts a placeholder, and the worker routes the turn into
-a claimed sandbox; the placeholder is edited in place as the reply streams.
-See `apps/dispatcher/README.md`'s runbook for pointing at a real workspace.
+Every CLI command that touches an environment takes a **target noun** in the
+middle: `skill`, `local`, or `cluster`. Pick the lightest one that answers your
+question. (`agentos init` is the exception: it scaffolds a bundle on disk and
+targets no environment.)
 
-**Local CLI, no Slack at all** — `agentos start` boots the runner image in
-Docker (optionally `--fake-model` for a fully offline round-trip), then
-`agentos send "..."` emulates a Slack message against it and streams the
-NDJSON reply to your terminal. `agentos eval` runs a plugin's `evals/cases.json`
-the same way. This is the fastest inner loop for developing a plugin: zero
-Slack, zero cluster. See `cli/README.md`.
+| Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
+|---|---|---|---|---|---|
+| `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | none | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `message` `deploy` | Operate and drive a deployed cluster release. |
 
-**`agentos chat` (middle mode)** — drive the real deployed pipeline (worker →
-sandboxed runner) without a Slack workspace in between. `agentos deploy` pushes a
-bundle to the API, then a worker run with `AGENTOS_SANDBOX_SUBSTRATE=docker`
-claims runner containers locally instead of a cluster, and `agentos chat` sends a
-message through the same path a Slack mention would take. Middle mode defaults to
-a **real model**: export `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`)
-before starting the worker and it is forwarded into each runner container. For a
-fully offline round-trip, set `AGENTOS_FAKE_MODEL=1` — an explicit test-only knob;
-without a credential and without that flag the worker refuses to start rather than
-silently faking. See the middle-mode runbook below.
+The universal quartet `up`/`down`/`status`/`message` is on all three targets;
+`skill` adds `eval`, and `local`/`cluster` add `deploy`.
+
+The distinction that matters: `skill` is the **runner-only** loop, it boots just
+the runner container and talks straight to its ACI HTTP surface with no platform
+in front. `local` and `cluster` put the **full platform** (queue, worker,
+sandbox) in front of the identical runner and ACI, so a `message` walks the same
+path a real Slack mention would take.
+
+**`skill` (runner-only, fully offline).** `agentos skill up` boots the runner
+image in Docker (add `--fake-model` for a fully offline round-trip), then
+`agentos skill message "..."` sends a synthetic Slack event to it and streams
+the NDJSON reply to your terminal. `agentos skill eval` runs a plugin's
+`evals/cases.json` the same way. Abort a live `skill message` with Ctrl-C. This
+is the fastest inner loop for developing a plugin: zero Slack, zero platform,
+zero cluster. See `cli/README.md`.
+
+**`local` (full platform via compose, no Slack).** `agentos local up` brings up
+the compose stack, `agentos local deploy` pushes a bundle to the compose API,
+and `agentos local message "..."` drives a message through the real
+queue -> worker -> sandboxed runner -> reply path with no Slack and no
+Kubernetes. The compose worker runs the fake model by default; for a real model,
+export `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) and set
+`AGENTOS_FAKE_MODEL=0` in the compose environment. See the local runbook below.
+
+**`cluster` (deployed Helm release).** `agentos cluster up` installs the platform
+on Kubernetes and `agentos cluster message "..."` drives the deployed release end
+to end with no Slack. See
+[Operating a cluster install](#operating-a-cluster-install) and
+[`docs/operations.md`](docs/operations.md).
+
+**Real Slack (production).** With a workspace connected, `@mention` the bot in a
+channel or DM it: the dispatcher acks, posts a placeholder, and the worker routes
+the turn into a claimed sandbox; the placeholder is edited in place as the reply
+streams. This is the same platform the `local` and `cluster` targets exercise,
+with Slack in front. See `apps/dispatcher/README.md`'s runbook for pointing at a
+real workspace.
 
 ## Prerequisites
 
@@ -135,21 +161,21 @@ cd cli && cargo build --release
 # Real model is the default. Export a credential first (forwarded into the runner
 # container): CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or AGENTOS_CREDENTIALS.
 export CLAUDE_CODE_OAUTH_TOKEN=...
-../target/release/agentos start
-../target/release/agentos send "hello"
-../target/release/agentos eval
+../target/release/agentos skill up
+../target/release/agentos skill message "hello"
+../target/release/agentos skill eval
 ```
 
 For a fully offline round-trip (no credential, scripted replies), add
-`--fake-model` to `agentos start` — an explicit test-only mode that never reaches
+`--fake-model` to `agentos skill up` — an explicit test-only mode that never reaches
 the Anthropic API.
 
 **One-command middle mode** (the fastest path — no host-run worker, no cluster):
 
 ```bash
 agentos local up   # brings up the backing stores + API + a containerized worker
-agentos deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:28000
-agentos message --local "what changed in the last deploy?"
+agentos local deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:28000
+agentos local message "what changed in the last deploy?"
 ```
 
 `local up` runs the worker as the `agentos-worker` compose service (fake model by
@@ -162,13 +188,16 @@ worker itself from source.
 hand-run `uvicorn` in Quickstart step 4 uses `:8000`. Point `deploy --api-url`
 at whichever one you brought up.
 
-**Middle-mode runbook** (real deployed pipeline, no Slack, no cluster — the
+**Local runbook** (real deployed pipeline, no Slack, no cluster — the
 backing stack from the Quickstart plus the API on :8000 and the runner image
 built as above):
 
 ```bash
 # Deploy a plugin to the API (creates the agent bound to a Slack channel id).
-./target/release/agentos deploy --plugin-dir ./my-agent --slack-channel C-DEMO --env dev
+# This runbook hand-starts uvicorn on :8000 (Quickstart step 4), so pin
+# --api-url to it; local deploy otherwise defaults to the `local up` API on :28000.
+./target/release/agentos local deploy --plugin-dir ./my-agent --slack-channel C-DEMO \
+    --api-url http://localhost:8000 --env dev
 
 # Start a worker that claims runner containers via Docker. REAL MODEL is the
 # default: export your credential first (forwarded into each runner container).
@@ -178,15 +207,15 @@ built as above):
 export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=...
 env AGENTOS_SANDBOX_SUBSTRATE=docker \
     VALKEY_HOST=localhost VALKEY_PORT=26379 VALKEY_PASSWORD=valkeypass \
-    SLACK_API_BASE_URL=http://localhost:8137/api/ SLACK_BOT_TOKEN=xoxb-dev \
+    SLACK_API_BASE_URL=http://localhost:8155/api/ SLACK_BOT_TOKEN=xoxb-dev \
     AGENTOS_DOCKER_NETWORK=agentos_default \
     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
     uv run python -m agentos_worker &
 
 # Send a message through the same path a Slack mention takes; the fake-model
 # transcript is the identical command minus the credential, plus AGENTOS_FAKE_MODEL=1.
-./target/release/agentos chat "what changed in the last deploy?" \
-    --channel C-DEMO --listen-port 8137
+./target/release/agentos local message "what changed in the last deploy?" \
+    --channel C-DEMO
 ```
 
 For an offline round-trip add `AGENTOS_FAKE_MODEL=1` to the worker env and drop
@@ -222,14 +251,14 @@ The same `agentos` binary installs and runs the platform on a Kubernetes
 cluster, wrapping the umbrella Helm chart the way `linkerd` or `cilium` wrap
 theirs. The short version:
 
-- `agentos up` runs `helm upgrade --install` of `charts/agentos`; it reads
+- `agentos cluster up` runs `helm upgrade --install` of `charts/agentos`; it reads
   `AGENTOS_MODEL_CREDENTIALS` to enable a real model (absent, the release
   installs sealed with canned replies), and `--no-expose` keeps the UI and
   Langfuse ClusterIP-only. Connecting Slack is a raw `helm upgrade
   --reuse-values` (not a CLI verb; the chart's `NOTES.txt` prints it).
-- `agentos status` reports release health and access URLs; `agentos down`
+- `agentos cluster status` reports release health and access URLs; `agentos cluster down`
   uninstalls and sweeps the runtime namespaces. Every verb takes `--dry-run`.
-- `agentos message "..."` drives a deployed release end to end with no Slack.
+- `agentos cluster message "..."` drives a deployed release end to end with no Slack.
 
 Full runbook (the credential model, the Slack-connect command, and the
 zero-Slack `message` flow) is in [`docs/operations.md`](docs/operations.md).

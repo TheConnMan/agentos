@@ -185,8 +185,8 @@ edit-a-placeholder reply shape.
 **Current adapter:** `apps/dispatcher` (Bolt, Socket Mode) on ingress,
 `AsyncSlackSink` on egress.
 
-**Evidence the channel is already semi-swappable:** `agentos chat` and
-`agentos message` (`cli/src/chat.rs`, `cli/src/message.rs`) drive the entire
+**Evidence the channel is already semi-swappable:** `agentos local message` and
+`agentos cluster message` (`cli/src/chat.rs`, `cli/src/message.rs`) drive the entire
 deployed system with zero Slack contact by minting the exact
 `QueuedSlackEvent` wire payload (`cli/src/queue.rs`) and standing in as the
 Slack Web API. The Slack service swaps; the Slack protocol does not yet.
@@ -210,7 +210,7 @@ routed per turn ([issue #19](https://github.com/curie-eng/agentos/issues/19)).
 flowchart TB
     subgraph channel["Job 6: communication channel"]
         Slack["Slack via Bolt (today)"]
-        CLIStub["agentos chat / message stub (swap proof)"]
+        CLIStub["agentos local message / cluster message stub (swap proof)"]
     end
 
     subgraph core["Opinionated core: agent runner platform"]

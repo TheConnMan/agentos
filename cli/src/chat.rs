@@ -1,11 +1,13 @@
-//! `agentos chat`: drive the whole system end to end with no Slack at all.
+//! Shared Slack-stub machinery for driving the whole system end to end with no
+//! Slack at all. Used by the `local message` and `cluster message` verbs.
 //!
 //! The CLI *is* the Slack service. It stands up a minimal Slack Web API stub on
 //! a local port, XADDs the exact `QueuedSlackEvent` the dispatcher would produce
 //! onto the real Valkey stream (synthetic, internally-consistent ids since the
 //! CLI itself is the endpoint that receives them back), then waits for the
-//! worker to consume and finalize the turn. It prints the placeholder's final
-//! text and exits 0, or on timeout prints stream diagnostics and exits nonzero.
+//! worker to consume and finalize the turn. The caller prints the placeholder's
+//! final text and exits 0, or on timeout prints stream diagnostics and exits
+//! nonzero.
 //!
 //! Completion is the worker's XACK of our stream entry, not a timing guess: the
 //! worker acks an entry only after the turn finalizes (its last `chat.update`
@@ -32,8 +34,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 use crate::queue::{
-    self, connect, diagnostics, entry_acked, synthetic_channel, synthetic_thread_and_placeholder,
-    xadd, QueuedSlackEvent, WORKER_GROUP,
+    self, entry_acked, synthetic_channel, synthetic_thread_and_placeholder, WORKER_GROUP,
 };
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
@@ -47,23 +48,6 @@ pub const DEFAULT_LISTEN_PORT: u16 = 0;
 const ACK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Bounded drain after the ack to catch a final edit still in flight.
 const FINAL_DRAIN: Duration = Duration::from_millis(100);
-
-/// Options for `agentos chat`, mirroring its clap flags.
-pub struct ChatOpts {
-    pub text: String,
-    /// Channel to send as; `None` mints a throwaway synthetic channel. Set it
-    /// to the agent's slack_channel so the worker's exact-equality binding
-    /// routes the turn to a deployed agent.
-    pub channel: Option<String>,
-    /// Thread ts to continue; `None` starts a fresh thread.
-    pub thread: Option<String>,
-    pub valkey_url: String,
-    pub stream: String,
-    pub user: String,
-    pub timeout_secs: u64,
-    pub listen_host: String,
-    pub listen_port: u16,
-}
 
 /// One captured Slack Web API call at the stub.
 #[derive(Debug, Clone)]
@@ -266,78 +250,6 @@ pub fn resolve_targets(channel: Option<&str>, thread: Option<&str>) -> (String, 
     let (synthetic_thread_ts, placeholder_ts) = synthetic_thread_and_placeholder();
     let thread_ts = thread.map_or(synthetic_thread_ts, str::to_string);
     (channel, thread_ts, placeholder_ts)
-}
-
-/// The `agentos chat` handler.
-pub async fn chat(opts: ChatOpts) -> Result<()> {
-    let ui = crate::ui::ui();
-    // Connect Valkey up front so a misconfigured stream or down stack fails fast,
-    // before the stub binds or any id is minted.
-    let mut conn = connect(&opts.valkey_url).await?;
-
-    let mut stub = SlackStub::start(&opts.listen_host, opts.listen_port, &opts.listen_host).await?;
-    ui.note(&format!(
-        "slack stub listening; run the worker with SLACK_API_BASE_URL={}",
-        stub.base_api_url()
-    ));
-
-    // Invent internally-consistent synthetic ids; the CLI is both the producer
-    // and the Slack endpoint that receives them back. --channel/--thread let a
-    // caller target a deployed agent (whose slack_channel the worker binds on)
-    // and continue an existing thread; absent, both fall back to synthetic.
-    let (channel, thread_ts, placeholder_ts) =
-        resolve_targets(opts.channel.as_deref(), opts.thread.as_deref());
-    let event = QueuedSlackEvent::synthetic(
-        &channel,
-        &opts.user,
-        &opts.text,
-        &thread_ts,
-        &placeholder_ts,
-    );
-    let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
-    ui.note(&format!(
-        "enqueued {} on {} as {stream_id}",
-        event.slack_event_id, opts.stream
-    ));
-    ui.note(&format!(
-        "waiting up to {}s for the worker to finalize the turn...",
-        opts.timeout_secs
-    ));
-
-    let cl = ui.checklist();
-    let step = cl.step("waiting for worker reply");
-    let outcome = await_reply(
-        &mut stub,
-        &mut conn,
-        &opts.stream,
-        &stream_id,
-        &placeholder_ts,
-        Duration::from_secs(opts.timeout_secs),
-    )
-    .await;
-
-    match outcome {
-        Outcome::Replied(reply) => {
-            step.done("");
-            ui.answer(&reply);
-            ui.print_tokens("\n");
-            print_continue_hint("chat", &channel, &thread_ts);
-            Ok(())
-        }
-        Outcome::CompletedNoEdit => {
-            step.done("no edit");
-            ui.warn("the worker finished the turn but never edited the placeholder");
-            print_continue_hint("chat", &channel, &thread_ts);
-            Ok(())
-        }
-        Outcome::TimedOut => {
-            step.fail(&format!("timed out after {}s", opts.timeout_secs));
-            ui.note("stream diagnostics:");
-            let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-            ui.note(&diag);
-            std::process::exit(1);
-        }
-    }
 }
 
 #[cfg(test)]

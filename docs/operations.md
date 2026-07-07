@@ -1,9 +1,28 @@
-# Operating a cluster install
+# Operating the `cluster` target
 
-The same `agentos` binary installs and runs the platform on a Kubernetes
-cluster, wrapping the umbrella Helm chart the way `linkerd` or `cilium` wrap
-theirs. Every verb takes `--dry-run` to print the exact `helm`/`kubectl`
-command line (secrets masked) without executing.
+This doc is the runbook for the **`cluster`** target: the AgentOS platform
+running on a Kubernetes cluster (a Helm release). The same `agentos` binary
+installs and runs it, wrapping the umbrella Helm chart the way `linkerd` or
+`cilium` wrap theirs. Every verb takes `--dry-run` to print the exact
+`helm`/`kubectl` command line (secrets masked) without executing.
+
+`cluster` is the heaviest of three CLI targets. Reach for a lighter one when it
+answers your question:
+
+## Which target do I want?
+
+| Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
+|---|---|---|---|---|---|
+| `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | none | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `message` `deploy` | Operate and drive a deployed cluster release (this doc). |
+
+The universal quartet `up`/`down`/`status`/`message` is on all three targets;
+`skill` adds `eval`, and `local`/`cluster` add `deploy`. The `skill` target is
+the runner-only loop; `local` and `cluster` add the full platform in front of
+the identical runner and ACI. For the `skill` and `local` targets see
+[`cli/README.md`](../cli/README.md) and the
+[README](../README.md#which-target-do-i-want); the rest of this doc is `cluster`.
 
 Prerequisites: `kubectl` and `helm` on PATH, pointed at a reachable cluster
 (the `agents.x-k8s.io` Agent Sandbox CRDs and a NetworkPolicy-enforcing CNI are
@@ -11,7 +30,7 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
 
 ## Install and inspect
 
-- `agentos up` runs `helm upgrade --install` of `charts/agentos` into the
+- `agentos cluster up` runs `helm upgrade --install` of `charts/agentos` into the
   `agentos` namespace, exposing the UI and Langfuse on node ports (pass
   `--no-expose` to keep them ClusterIP-only). It reads
   `AGENTOS_MODEL_CREDENTIALS`: when the env var is set it switches the runner
@@ -21,10 +40,10 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   installs sealed (canned replies) and `up` warns that replies stay canned
   until the env var is set and `up` is re-run. Pass `--fake-model` to force the
   sealed install even when the credential is present (a dev/CI escape hatch).
-- `agentos status` reports release health, pod readiness, and the access URLs;
+- `agentos cluster status` reports release health, pod readiness, and the access URLs;
   the UI URL carries `?api=1`, so it opens wired to the in-cluster API (the
   deployed UI proxies `/api/` there).
-- `agentos down` uninstalls the release and sweeps its runtime namespaces; the
+- `agentos cluster down` uninstalls the release and sweeps its runtime namespaces; the
   `agents.x-k8s.io` CRDs are left in place. It prompts before deleting unless
   `--yes` is passed.
 
@@ -32,12 +51,12 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
 
 Connecting a real Slack workspace is a raw `helm upgrade --reuse-values` that
 sets the dispatcher's app and bot tokens and clears `worker.slackApiBaseUrl=`
-(un-wiring any `agentos message` stub routing). It is intentionally not a CLI
+(un-wiring any `agentos cluster message` stub routing). It is intentionally not a CLI
 verb; the chart's `NOTES.txt` prints the exact command after `up`.
 
 ## Driving a deployed cluster with zero Slack
 
-`agentos message "..."` exercises a deployed release end to end with no Slack
+`agentos cluster message "..."` exercises a deployed release end to end with no Slack
 at all: it stands up a local Slack API stub, self-manages the kubectl
 port-forwards, resolves the target agent's channel from the API, points the
 deployed worker at the stub (`helm upgrade --reuse-values`), enqueues the exact
@@ -53,7 +72,7 @@ reference and the multi-turn `--thread` flow are in
 `agentos local up|down|status` wraps the `compose.dev.yaml` dev stack, so the
 inner loop and the cluster share one CLI. `local up` brings up the full product
 stack (API + worker alongside the backing stores), so
-`agentos deploy --api-url http://localhost:28000` then `agentos message --local
+`agentos local deploy --api-url http://localhost:28000` then `agentos local message
 "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with
 no Slack and no Kubernetes. See the middle-mode runbook in the
 [README](../README.md#quickstart).

@@ -19,8 +19,8 @@ function startBox(): Entry[] {
   return [
     L("out", "╭─ agentos dev environment ──────────────────────────╮"),
     L("out", "│  Local bot        http://localhost:7245          │"),
-    L("out", '│  Slack emulator   agentos send "<message>"         │'),
-    L("out", "│  Eval runner      agentos eval                     │"),
+    L("out", '│  Skill message    agentos skill message "<message>" │'),
+    L("out", "│  Eval runner      agentos skill eval               │"),
     L("out", "│  Version          v1.4.2 · claude-sonnet-5       │"),
     L("out", "╰──────────────────────────────────────────────────╯"),
   ];
@@ -30,7 +30,7 @@ function seedTerm(): Entry[] {
   return [
     L("dim", "agentos cli v0 · acme-corp · env prod → @agentos"),
     ...startBox(),
-    L("dim", 'Type a command, or tap one below. Try: agentos send "@agentos ..."'),
+    L("dim", 'Type a command, or tap one below. Try: agentos skill message "@agentos ..."'),
   ];
 }
 
@@ -67,20 +67,21 @@ function resolveCmd(cmd: string): Entry[] {
     return [
       L("dim", "commands"),
       L("out", "  agentos init            scaffold a project"),
-      L("out", "  agentos start           run the local dev bot"),
+      L("out", "  agentos skill up        run the local dev bot"),
       L("out", "  agentos dev             hot-reload skills"),
-      L("out", '  agentos send "<msg>"    message the bot (threads)'),
-      L("out", "  agentos eval            run the eval suite"),
-      L("out", "  agentos deploy          deploy to Slack"),
-      L("out", "  agentos status          agent, model & env"),
+      L("out", '  agentos skill message   message the local skill'),
+      L("out", "  agentos skill eval      run the eval suite"),
+      L("out", "  agentos local deploy    deploy to local API"),
+      L("out", "  agentos cluster deploy  deploy to cluster"),
+      L("out", "  agentos cluster status  cluster health and URLs"),
       L("out", "  agentos logs            tail recent logs"),
       L("out", "  git push origin dev   push & queue eval check"),
       L("out", "  clear                 clear the screen"),
     ];
   if (lc === "agentos init") return [L("dim", "Creating agentos.toml, skills/, evals/ …"), L("success", "✓ Project initialized · edit skills/deal-desk/skill.md")];
-  if (lc === "agentos start") return startBox();
+  if (lc === "agentos skill up") return startBox();
   if (lc === "agentos dev") return [L("success", "✓ hot reload · watching skills/"), L("dim", "bot listening on http://localhost:7245")];
-  if (lc === "agentos eval")
+  if (lc === "agentos skill eval")
     return [
       L("dim", "Running suite deal-desk core (36 cases) · model claude-sonnet-5 …"),
       L("success", "✓ approver-from-policy-source            1.2s"),
@@ -91,8 +92,9 @@ function resolveCmd(cmd: string): Entry[] {
       L("dim", "─────────────────────────────"),
       L("out", "34/36 passed · 2 failures · 12.4s"),
     ];
-  if (lc === "agentos deploy") return [L("dim", "Bundling deal-desk · uploading …"), L("success", "✓ @agentos deployed to #revenue-ops · v1.4.2")];
-  if (lc === "agentos status")
+  if (lc === "agentos local deploy" || lc === "agentos cluster deploy")
+    return [L("dim", "Bundling deal-desk · uploading …"), L("success", "✓ @agentos deployed to #revenue-ops · v1.4.2")];
+  if (lc === "agentos cluster status")
     return [
       L("out", "agent    deal-desk"),
       L("out", "env      prod  →  @agentos"),
@@ -113,10 +115,10 @@ function resolveCmd(cmd: string): Entry[] {
       L("dim", "   4f2c91a..b7e02d1  dev -> dev"),
       L("success", "→ agentos: eval check queued on PR #42"),
     ];
-  if (lc.startsWith("agentos send")) {
+  if (lc.startsWith("agentos skill message")) {
     const m = cmd.match(/"([^"]*)"|'([^']*)'/);
-    const msg = (m && (m[1] || m[2])) || cmd.replace(/^agentos send\s*/i, "").trim();
-    if (!msg) return [L("error", 'usage: agentos send "<message>"')];
+    const msg = (m && (m[1] || m[2])) || cmd.replace(/^agentos skill message\s*/i, "").trim();
+    if (!msg) return [L("error", 'usage: agentos skill message "<message>"')];
     const r = botReply(msg);
     const tid = "tr_" + Math.random().toString(16).slice(2, 8);
     const dur = (0.8 + Math.random() * 1.6).toFixed(1);
@@ -168,9 +170,10 @@ function EntryRow({ e }: { e: Entry }) {
 }
 
 const CHIPS: [string, boolean][] = [
-  ["agentos eval", true],
-  ["agentos status", true],
-  ['agentos send "@agentos approve Northwind at 12%?"', false],
+  ["agentos skill up", true],
+  ["agentos skill eval", true],
+  ["agentos cluster status", true],
+  ['agentos skill message "@agentos approve Northwind at 12%?"', false],
   ["agentos logs", true],
   ["help", true],
   ["clear", true],

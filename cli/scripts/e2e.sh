@@ -62,7 +62,7 @@ cat > evals/e2e-cases.json <<'EOF'
 EOF
 
 echo
-echo "=== agentos start (fake model, offline) ==="
+echo "=== agentos skill up (fake model, offline) ==="
 START_ARGS=(--plugin-dir . --image "$IMAGE" --port "$PORT" --name "$CONTAINER" --fake-model)
 if [[ -n "${AGENTOS_E2E_NETWORK:-}" ]]; then
     START_ARGS+=(--network "$AGENTOS_E2E_NETWORK")
@@ -70,31 +70,31 @@ fi
 if [[ -n "${AGENTOS_E2E_OTEL:-}" ]]; then
     START_ARGS+=(--otel-endpoint "$AGENTOS_E2E_OTEL")
 fi
-"$BIN" start "${START_ARGS[@]}"
+"$BIN" skill up "${START_ARGS[@]}"
 
 echo
-echo "=== agentos status ==="
-"$BIN" status
+echo "=== agentos skill status ==="
+"$BIN" skill status
 
 echo
-echo "=== agentos send (synthetic event, streamed NDJSON reply) ==="
-"$BIN" send "@agentos can we approve the Meridian deal at 18% discount?"
+echo "=== agentos skill message (synthetic event, streamed NDJSON reply) ==="
+"$BIN" skill message "@agentos can we approve the Meridian deal at 18% discount?"
 
 echo
-echo "=== agentos eval ==="
-"$BIN" eval --cases evals/e2e-cases.json
+echo "=== agentos skill eval ==="
+"$BIN" skill eval --cases evals/e2e-cases.json
 
 if [[ -n "${AGENTOS_E2E_API_URL:-}" ]]; then
     echo
-    echo "=== agentos deploy (against the platform API) ==="
-    "$BIN" deploy --plugin-dir . \
+    echo "=== agentos cluster deploy (against the platform API) ==="
+    "$BIN" cluster deploy --plugin-dir . \
         --api-url "$AGENTOS_E2E_API_URL" \
         --api-key "${AGENTOS_E2E_API_KEY:-agentos-dev-key}"
 fi
 
 echo
-echo "=== agentos stop ==="
-"$BIN" stop
+echo "=== agentos skill down ==="
+"$BIN" skill down
 
 echo
 echo "E2E PASS"

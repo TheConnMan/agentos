@@ -7,7 +7,7 @@ For each entry it:
 
   1. fetches the version's immutable bundle from MinIO by ``bundle_ref`` and loads
      the suite from the bundle's own ``evals/cases.json`` (the same shape the CLI's
-     ``agentos eval`` reads); the ``suite`` field names it and tags Langfuse;
+     ``agentos skill eval`` reads); the ``suite`` field names it and tags Langfuse;
   2. runs the suite against the runner: ``target_url`` if given (the dev/test
      shortcut), otherwise provisions a sandbox for the version via the G1
      substrate (the same boot env F2 uses) and tears it down in a finally;

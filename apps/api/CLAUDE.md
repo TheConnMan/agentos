@@ -31,7 +31,8 @@ worker, Postgres, MinIO/S3, Langfuse, and GitHub.
   be "the exact artifact that passed on dev," not a fresh build.
 - **The plugin bundle validator (`plugin_format.validate_bundle`) is the only
   gate a bundle passes through**, whether it arrives via the CLI's
-  `agentos deploy`, the UI's create-agent modal, or a git push. Do not
+  `agentos local deploy` / `agentos cluster deploy`, the UI's create-agent
+  modal, or a git push. Do not
   duplicate validation logic in a new entry point; route through
   `bundles.py`.
 - **Observability endpoints are read-only proxies, not new stores.** The

@@ -108,7 +108,7 @@ flowchart TB
 | [`apps/worker`](apps/worker) | Python (redis-py) | Concurrency kernel, substrate, eval consumer |
 | [`runner`](runner) | Python (claude-agent-sdk) | ACI session server inside the sandbox |
 | [`apps/ui`](apps/ui) | React (Vite + TS) | Console: create/deploy, Runs, Metrics, Logs, Cost |
-| [`cli`](cli) | Rust (clap + tokio) | `agentos` binary: init/deploy/chat/eval, local runner |
+| [`cli`](cli) | Rust (clap + tokio) | `agentos` binary: init, skill, local, cluster surfaces |
 | [`charts/agentos`](charts/agentos) | Helm | Umbrella chart + security rails |
 | [`tests/soak`](tests/soak) | Python | Soak/chaos harness (scaffold) |
 
@@ -148,7 +148,7 @@ container differs.
 The worker reaches Slack only through a base URL
 ([`apps/worker/src/agentos_worker/config.py:146`](apps/worker/src/agentos_worker/config.py),
 `SLACK_API_BASE_URL`). In production that points at Slack's Web API. The CLI's
-`agentos chat` starts a local Slack Web API stub
+`agentos local message` path starts a local Slack Web API stub
 ([`cli/src/chat.rs`](cli/src/chat.rs)), prints the `SLACK_API_BASE_URL` to point
 the worker at it ([`cli/src/chat.rs:269`](cli/src/chat.rs)), enqueues a synthetic
 `QueuedSlackEvent` onto the very same `agentos:runs` stream the dispatcher uses,
@@ -295,7 +295,7 @@ sequenceDiagram
 - **Git-flow fan-out** at [`apps/api/src/agentos_api/gitflow.py`](apps/api/src/agentos_api/gitflow.py): signature verify (`:35`), dev-branch archive+validate+store+create-Version (`:136`), prod-branch **promotes the same artifact without rebuilding** (`:172`), eval enqueue on a newly built dev version, deduped on redelivery (`:186`). Webhook receiver at [`apps/api/src/agentos_api/routers/github.py:20`](apps/api/src/agentos_api/routers/github.py).
 - **Eval stream** `agentos:evals` is produced by the API ([`apps/api/src/agentos_api/evalqueue.py:21`](apps/api/src/agentos_api/evalqueue.py)) and consumed by the worker's eval consumer, which is a **separate** consumer group from the runs kernel ([`apps/worker/src/agentos_worker/eval/stream.py:216`](apps/worker/src/agentos_worker/eval/stream.py)). It POSTs results to `/evals/report` ([`eval/stream.py:114`](apps/worker/src/agentos_worker/eval/stream.py)).
 - **The eval matrix endpoint** `GET /evals/matrix` reads pass/fail from Langfuse trace tags/metadata, not a scores join ([`apps/api/src/agentos_api/routers/evals.py:15`](apps/api/src/agentos_api/routers/evals.py)). Note: the API endpoint is live, but the UI matrix view is still fixture-backed (part of retiring the fixture surface, [issue #4](https://github.com/curie-eng/agentos/issues/4)).
-- **The manual path** (`GET /agents`, `/agents/{id}/versions`, `/agents/{id}/versions/{vid}/bundle`) and the webhook path terminate at the same `Version`/`Deployment` tables and the same `plugin_format.validate_bundle`, so a plugin authored in the browser, pushed by `agentos deploy`, or promoted by git-flow all go through one pipeline. Bundle store/fetch at [`apps/api/src/agentos_api/storage.py:22`](apps/api/src/agentos_api/storage.py) and [`apps/api/src/agentos_api/routers/bundles.py:79`](apps/api/src/agentos_api/routers/bundles.py).
+- **The manual path** (`GET /agents`, `/agents/{id}/versions`, `/agents/{id}/versions/{vid}/bundle`) and the webhook path terminate at the same `Version`/`Deployment` tables and the same `plugin_format.validate_bundle`, so a plugin authored in the browser, pushed by `agentos local deploy`, or promoted by git-flow all go through one pipeline. Bundle store/fetch at [`apps/api/src/agentos_api/storage.py:22`](apps/api/src/agentos_api/storage.py) and [`apps/api/src/agentos_api/routers/bundles.py:79`](apps/api/src/agentos_api/routers/bundles.py).
 
 ## 6. The credential path
 

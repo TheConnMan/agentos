@@ -1,6 +1,6 @@
 //! Client for the platform API (apps/api, committed openapi.json contract).
 //!
-//! `agentos deploy` pushes a local bundle to the platform: find-or-create the
+//! `agentos cluster deploy` pushes a local bundle to the platform: find-or-create the
 //! agent, create a version, upload the tar.gz bundle (validated server-side by
 //! the frozen plugin-format package), and create a deployment. Auth is the
 //! X-API-Key header.

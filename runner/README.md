@@ -3,7 +3,7 @@
 The runner image and SDK adapter: the productized prototype,
 a long-lived streaming session server that implements the full ACI
 v0.1 contract from `packages/aci-protocol`. Built on `claude-agent-sdk` (Python).
-Runs inside a claimed Agent Sandbox; the CLI (`agentos start`) also runs it
+Runs inside a claimed Agent Sandbox; the CLI (`agentos skill up`) also runs it
 locally in Docker.
 
 ## What it does

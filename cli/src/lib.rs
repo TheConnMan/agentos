@@ -16,7 +16,10 @@ pub mod ndjson;
 pub mod ops;
 pub mod queue;
 pub mod render;
+pub mod retired;
 pub mod runner;
 pub mod scaffold;
 pub mod state;
 pub mod ui;
+
+pub use retired::retired_hint;

@@ -1,4 +1,4 @@
-//! `agentos up | status | down`: the operator
+//! `agentos cluster up | cluster status | cluster down`: the operator
 //! day-1 lifecycle, wrapping the Helm chart and `kubectl` the way linkerd or
 //! cilium wrap theirs -- a deliberately thin CLI over the chart, which stays the
 //! source of truth. Every verb shells out to the `helm`/`kubectl` binaries; the
@@ -202,7 +202,7 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     vec![OpsCommand::new("helm", args)]
 }
 
-/// The read-only commands `agentos status` runs (and prints under `--dry-run`).
+/// The read-only commands `agentos cluster status` runs (and prints under `--dry-run`).
 pub fn status_commands(o: &CommonOpts) -> Vec<OpsCommand> {
     vec![
         helm_status_cmd(o),
@@ -398,7 +398,7 @@ pub async fn up(opts: UpOpts) -> Result<()> {
             "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model and sealed egress",
         );
         ui.note(
-            "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos up` to enable the real model.",
+            "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.",
         );
     }
     if opts.common.dry_run {
@@ -414,7 +414,7 @@ pub async fn up(opts: UpOpts) -> Result<()> {
         run_step(&cl, &label, "installed", cmd).await?;
     }
     ui.payload("agentos is up");
-    ui.note("Run `agentos status` for pod health and URLs.");
+    ui.note("Run `agentos cluster status` for pod health and URLs.");
     Ok(())
 }
 
