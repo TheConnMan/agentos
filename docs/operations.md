@@ -53,7 +53,7 @@ reference and the multi-turn `--thread` flow are in
 `agentos local up|down|status` wraps the `compose.dev.yaml` dev stack, so the
 inner loop and the cluster share one CLI. `local up` brings up the full product
 stack (API + worker alongside the backing stores), so
-`agentos deploy --api-url http://localhost:8770` then `agentos message --local
+`agentos deploy --api-url http://localhost:28000` then `agentos message --local
 "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with
 no Slack and no Kubernetes. See the middle-mode runbook in the
 [README](../README.md#quickstart).

@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind
 
-COLLECTOR_ENDPOINT = "http://localhost:4318/v1/traces"
+COLLECTOR_ENDPOINT = "http://localhost:24318/v1/traces"
 TRACE_NAME = "h1b-ui-wire-demo"
 
 

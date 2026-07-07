@@ -10,10 +10,10 @@ import pytest
 import redis
 from agentos_dispatcher.config import DispatcherConfig
 
-# Compose defaults (compose.dev.yaml maps Valkey to host port 56379, password
+# Compose defaults (compose.dev.yaml maps Valkey to host port 26379, password
 # valkeypass). Overridable for CI via TEST_VALKEY_* env vars.
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "56379"))
+_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
 _VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 
 

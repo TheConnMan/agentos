@@ -24,8 +24,8 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy
-      # Integration tests dial the real dev stack (Postgres 55434, Valkey 56379,
-      # MinIO 9002, Langfuse 3001 + ClickHouse + OTel Collector). Boot it after
+      # Integration tests dial the real dev stack (Postgres 25432, Valkey 26379,
+      # MinIO 29000, Langfuse 23000 + ClickHouse + OTel Collector). Boot it after
       # ruff/mypy so cheap failures stay fast. The first up starts the one-shot
       # minio-init that creates the langfuse bucket alongside the long-lived
       # services; the second --waits only on the long-lived ones (minio-init is
@@ -49,7 +49,7 @@ jobs:
       - name: Wait for Langfuse to serve
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS http://localhost:3001/api/public/health >/dev/null 2>&1; then
+            if curl -fsS http://localhost:23000/api/public/health >/dev/null 2>&1; then
               echo "Langfuse ready after attempt ${i}"; exit 0
             fi
             sleep 3

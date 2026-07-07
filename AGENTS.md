@@ -82,12 +82,12 @@ Host ports (non-default host ports to avoid local collisions):
 
 | Service | Host port |
 |---|---|
-| Langfuse UI | http://localhost:3001 |
-| Postgres | localhost:55434 |
-| Valkey | localhost:56379 |
-| ClickHouse | HTTP 8124, native 9011 |
-| MinIO | S3 9002, console 9003 |
-| OTel Collector | gRPC 4317, HTTP 4318 |
+| Langfuse UI | http://localhost:23000 |
+| Postgres | localhost:25432 |
+| Valkey | localhost:26379 |
+| ClickHouse | HTTP 28123, native 29009 |
+| MinIO | S3 29000, console 29001 |
+| OTel Collector | gRPC 24317, HTTP 24318 |
 
 Config lives in `.env.example` (copy to the gitignored `.env` to override; the
 stack runs on the baked defaults without one). Load-bearing facts:
@@ -102,7 +102,7 @@ stack runs on the baked defaults without one). Load-bearing facts:
 - **Langfuse is bootstrapped headless** with a fixed dev project (`agentos-dev`)
   and keys `pk-lf-agentos-dev` / `sk-lf-agentos-dev`, so the OTel path
   authenticates on first boot with no manual key-minting. Read traces back via
-  `curl -u pk-lf-agentos-dev:sk-lf-agentos-dev http://localhost:3001/api/public/...`.
+  `curl -u pk-lf-agentos-dev:sk-lf-agentos-dev http://localhost:23000/api/public/...`.
 
 ## Frozen contracts: STOP and escalate
 

@@ -41,7 +41,7 @@ from agentos_worker.sandbox.types import ClaimView, SandboxView
 from redis.asyncio import Redis as AsyncRedis
 
 _VH = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VP = int(os.environ.get("TEST_VALKEY_PORT", "56379"))
+_VP = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
 _VPW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 CONTAINS = GraderKind.CONTAINS
 

@@ -18,7 +18,7 @@ import pytest
 from agentos_worker.eval import EvalCaseResult, EvalRunResult, LangfuseEvalRecorder
 from agentos_worker.eval.recorder import SCORE_NAME
 
-_LF_HOST = os.environ.get("TEST_LANGFUSE_HOST", "http://localhost:3001")
+_LF_HOST = os.environ.get("TEST_LANGFUSE_HOST", "http://localhost:23000")
 _LF_PK = os.environ.get("TEST_LANGFUSE_PUBLIC_KEY", "pk-lf-agentos-dev")
 _LF_SK = os.environ.get("TEST_LANGFUSE_SECRET_KEY", "sk-lf-agentos-dev")
 

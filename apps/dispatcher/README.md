@@ -65,7 +65,7 @@ Parsed by `DispatcherConfig.from_env(os.environ)`.
 | `SLACK_BOT_TOKEN` | "" | bot token (`xoxb-...`), Web API |
 | `SLACK_SIGNING_SECRET` | "" | optional; unused in Socket Mode, kept for Bolt App construction |
 | `VALKEY_HOST` | `localhost` | Valkey host (in-cluster: `valkey`) |
-| `VALKEY_PORT` | `6379` | Valkey port (compose maps it to `56379` on the host) |
+| `VALKEY_PORT` | `6379` | Valkey port (compose maps it to `26379` on the host) |
 | `VALKEY_PASSWORD` | "" | Valkey password (compose dev: `valkeypass`) |
 | `VALKEY_DB` | `0` | Valkey db index |
 | `AGENTOS_STREAM` | `agentos:runs` | Stream the jobs land on |
@@ -105,7 +105,7 @@ python -m agentos_dispatcher
 
 All tests run without a Slack workspace: the Slack Web API client and socket
 transport are the only things faked; Stream and dedupe assertions run against the
-real Valkey from `compose.dev.yaml` (host port `56379`). From the repo root:
+real Valkey from `compose.dev.yaml` (host port `26379`). From the repo root:
 
 ```bash
 docker compose -f compose.dev.yaml up -d valkey

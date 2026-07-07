@@ -148,7 +148,7 @@ the Anthropic API.
 
 ```bash
 agentos local up   # brings up the backing stores + API + a containerized worker
-agentos deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:8770
+agentos deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:28000
 agentos message --local "what changed in the last deploy?"
 ```
 
@@ -158,7 +158,7 @@ and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
 below is the equivalent with a host-process worker, useful when iterating on the
 worker itself from source.
 
-`agentos local up` publishes the API on `:8770` (the compose host port); the
+`agentos local up` publishes the API on `:28000` (the compose host port); the
 hand-run `uvicorn` in Quickstart step 4 uses `:8000`. Point `deploy --api-url`
 at whichever one you brought up.
 
@@ -177,7 +177,7 @@ built as above):
 # execute but emit no traces (the runner cannot resolve otel-collector).
 export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=...
 env AGENTOS_SANDBOX_SUBSTRATE=docker \
-    VALKEY_HOST=localhost VALKEY_PORT=56379 VALKEY_PASSWORD=valkeypass \
+    VALKEY_HOST=localhost VALKEY_PORT=26379 VALKEY_PASSWORD=valkeypass \
     SLACK_API_BASE_URL=http://localhost:8137/api/ SLACK_BOT_TOKEN=xoxb-dev \
     AGENTOS_DOCKER_NETWORK=agentos_default \
     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \

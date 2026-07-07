@@ -1,28 +1,26 @@
-# AgentOS dev stack (verification tier V1).
+# AgentOS local dev stack.
 #
-# Productizes the PT-4 setup: Postgres + Valkey + Langfuse v3 (web + worker +
-# ClickHouse) + MinIO + OTel Collector, on a single node (~2.3 GB at light load).
-# Every backend integration test and UI E2E runs against this stack; it is also
-# the seed of the A1 Helm dev profile (same components, same pinned versions).
+# Postgres + Valkey + Langfuse v3 (web + worker + ClickHouse) + MinIO + OTel
+# Collector, on a single node (~2.3 GB at light load). Every backend integration
+# test and UI E2E runs against this stack; it mirrors the Helm dev profile
+# (same components, same pinned versions).
 #
 # Bring up:   docker compose -f compose.dev.yaml up -d
 # Tear down:  docker compose -f compose.dev.yaml down        (keeps volumes; fast restart)
 # Wipe:       docker compose -f compose.dev.yaml down -v     (drops volumes; throwaway)
 #
-# Host ports are chosen to NOT collide with the CurieTech platform E2E stack
-# (which uses 55432, 8000, 3000, 8080, 9091):
-#   Langfuse UI ....... http://localhost:3001
-#   Postgres .......... localhost:55434
-#   Valkey ............ localhost:56379
-#   ClickHouse HTTP ... localhost:8124   (native TCP localhost:9011)
-#   MinIO S3 API ...... localhost:9002   (console localhost:9003)
-#   OTel Collector .... localhost:4317 (gRPC) / localhost:4318 (HTTP)
+# Host ports use a distinctive 2xxxx block (host port = "2" + the service's
+# container port) to avoid common service defaults and stay below the OS
+# ephemeral port range (32768+):
+#   Langfuse UI ....... http://localhost:23000
+#   Postgres .......... localhost:25432
+#   Valkey ............ localhost:26379
+#   ClickHouse HTTP ... localhost:28123   (native TCP localhost:29009)
+#   MinIO S3 API ...... localhost:29000   (console localhost:29001)
+#   OTel Collector .... localhost:24317 (gRPC) / localhost:24318 (HTTP)
 #
 # ClickHouse is pinned to :24.8 on purpose. Newer ClickHouse requires AVX and
 # SIGILLs with exit 132 on CPUs without it; :24.8 still ships an SSE4.2 build.
-# THIS HOST has only sse4_2 (no avx/avx2 in /proc/cpuinfo as of 2026-07-05), so
-# the pin is required here, not merely defensive. A1 turns this into a chart
-# preflight.
 
 x-langfuse-env: &langfuse-env
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
@@ -61,7 +59,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "55434:5432"
+      - "25432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -74,7 +72,7 @@ services:
     image: valkey/valkey:8-alpine
     command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:-valkeypass}"]
     ports:
-      - "56379:6379"
+      - "26379:6379"
     volumes:
       - valkey_data:/data
     healthcheck:
@@ -84,14 +82,14 @@ services:
       retries: 10
 
   clickhouse:
-    # Pinned to 24.8: newer ClickHouse needs AVX and crashes (exit 132) on this
-    # SSE4.2-only host. See the header comment.
+    # Pinned to 24.8: newer ClickHouse needs AVX and crashes (exit 132) on CPUs
+    # without AVX. See the header comment.
     image: clickhouse/clickhouse-server:24.8
     environment:
       CLICKHOUSE_PASSWORD: clickhouse
     ports:
-      - "8124:8123"
-      - "9011:9000"
+      - "28123:8123"
+      - "29009:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server
@@ -113,8 +111,8 @@ services:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniosecret
     ports:
-      - "9002:9000"
-      - "9003:9001"
+      - "29000:9000"
+      - "29001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -171,10 +169,10 @@ services:
       minio-init:
         condition: service_completed_successfully
     ports:
-      - "3001:3000"
+      - "23000:3000"
     environment:
       <<: *langfuse-env
-      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_URL: http://localhost:23000
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-dev-nextauth-secret-change-me}
       # Headless bootstrap so the OTel Collector has known keys to authenticate
       # with on first boot (no manual key-minting step). Dev-only values.
@@ -201,8 +199,8 @@ services:
     volumes:
       - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      - "24317:4317"
+      - "24318:4318"
     restart: unless-stopped
 
   # ---- AgentOS product services (the local product loop) --------------------
@@ -210,15 +208,14 @@ services:
   # These three services turn the backing stack above into a one-command local
   # product loop. `agentos local up` brings everything up, then:
   #   agentos deploy --plugin-dir <dir> --slack-channel <C...> \
-  #                  --api-url http://localhost:8770
+  #                  --api-url http://localhost:28000
   #   agentos message --local "<question>"
   # drives a real queue -> worker -> sandboxed runner -> reply roundtrip, no
   # Slack and no Kubernetes. They use the same published images the chart
   # deploys (only the worker adds a thin local docker-CLI overlay; see below).
   #
-  # The API host port 8770 is chosen to dodge the CurieTech platform E2E stack
-  # (8000/3000/8080/9091/55432) and every host port this compose file already
-  # publishes.
+  # The API host port 28000 comes from the dev stack's 2xxxx host-port block
+  # (host port = "2" + the service's container port).
 
   # One-shot: bring the Postgres schema to head before api/worker boot. The API
   # image ships the Alembic tree but its CMD only runs uvicorn, so migrations
@@ -236,7 +233,7 @@ services:
     restart: "no"
 
   # The platform API. On the compose network, reaching Postgres/Valkey/MinIO by
-  # service name. Published on host 8770 for the CLI (`agentos deploy`, and the
+  # service name. Published on host 28000 for the CLI (`agentos deploy`, and the
   # `agentos message --local` channel lookup).
   agentos-api:
     image: ghcr.io/curie-eng/agentos-api:latest
@@ -264,7 +261,7 @@ services:
       LANGFUSE_PUBLIC_KEY: pk-lf-agentos-dev
       LANGFUSE_SECRET_KEY: sk-lf-agentos-dev
     ports:
-      - "8770:8000"
+      - "28000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 5s
@@ -290,7 +287,7 @@ services:
   #
   # network_mode: host recreates the exact topology the Docker substrate was
   # written and tested against (the host-process middle mode): the worker reaches
-  # the backing stores on their published host ports (localhost 55434/56379/9002),
+  # the backing stores on their published host ports (localhost 25432/26379/29000),
   # dials each runner on the loopback host port Docker publishes for it, and
   # reaches the `agentos message --local` Slack stub at localhost:8155.
   agentos-worker:
@@ -321,15 +318,15 @@ services:
       - AGENTOS_RUNNER_IMAGE=ghcr.io/curie-eng/agentos-runner:latest
       - TMPDIR=/tmp/agentos-bundles
       - VALKEY_HOST=localhost
-      - VALKEY_PORT=56379
+      - VALKEY_PORT=26379
       - VALKEY_PASSWORD=${VALKEY_PASSWORD:-valkeypass}
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:55434/postgres
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:25432/postgres
       - DB_SCHEMA=agentos
-      - S3_ENDPOINT_URL=http://localhost:9002
+      - S3_ENDPOINT_URL=http://localhost:29000
       - S3_ACCESS_KEY=minio
       - S3_SECRET_KEY=miniosecret
       - BUNDLE_BUCKET=agentos-bundles
-      - AGENTOS_API_BASE_URL=http://localhost:8770
+      - AGENTOS_API_BASE_URL=http://localhost:28000
       - SLACK_API_BASE_URL=http://localhost:8155/api/
       - SLACK_BOT_TOKEN=xoxb-dev
       # Fake model by default (no credential needed). For a real model set

@@ -38,7 +38,7 @@ langfuse:
   telemetryEnabled: false
   enableExperimentalFeatures: true
   # NEXTAUTH_URL the browser reaches the web UI at. Override for a real ingress.
-  nextauthUrl: http://localhost:3001
+  nextauthUrl: http://localhost:23000
   # Dev-only secret material. Override in prod or set `existingSecret` to a
   # Secret carrying keys: langfuseEncryptionKey, langfuseSalt,
   # langfuseNextauthSecret. ENCRYPTION_KEY must be 64 hex chars (openssl rand -hex 32).

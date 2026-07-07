@@ -18,15 +18,15 @@ pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
 /// has the URLs in hand. Hardcoded to match the compose file (see the
 /// `endpoints_match_compose_file` test, which asserts the file still maps them).
 const ENDPOINTS: &[(&str, &str)] = &[
-    ("AgentOS API", "http://localhost:8770"),
-    ("Langfuse UI", "http://localhost:3001"),
-    ("Postgres", "localhost:55434"),
-    ("Valkey", "localhost:56379"),
-    ("ClickHouse HTTP", "localhost:8124"),
-    ("MinIO S3", "localhost:9002"),
-    ("MinIO console", "localhost:9003"),
-    ("OTel gRPC", "localhost:4317"),
-    ("OTel HTTP", "localhost:4318"),
+    ("AgentOS API", "http://localhost:28000"),
+    ("Langfuse UI", "http://localhost:23000"),
+    ("Postgres", "localhost:25432"),
+    ("Valkey", "localhost:26379"),
+    ("ClickHouse HTTP", "localhost:28123"),
+    ("MinIO S3", "localhost:29000"),
+    ("MinIO console", "localhost:29001"),
+    ("OTel gRPC", "localhost:24317"),
+    ("OTel HTTP", "localhost:24318"),
 ];
 
 /// Flags shared by every `local` verb.
@@ -94,7 +94,7 @@ pub async fn up(o: LocalOpts) -> Result<()> {
     }
     println!("\nDrive the local product loop (no Slack, no Kubernetes):");
     println!(
-        "  agentos deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:8770"
+        "  agentos deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000"
     );
     println!("  agentos message --local \"<your question>\"");
     Ok(())
@@ -220,15 +220,15 @@ mod tests {
                 .expect("read compose.dev.yaml");
         // Each printed host port must appear as a `"<host>:<container>"` mapping.
         for (label, host_port) in [
-            ("AgentOS API", "8770"),
-            ("Langfuse UI", "3001"),
-            ("Postgres", "55434"),
-            ("Valkey", "56379"),
-            ("ClickHouse HTTP", "8124"),
-            ("MinIO S3", "9002"),
-            ("MinIO console", "9003"),
-            ("OTel gRPC", "4317"),
-            ("OTel HTTP", "4318"),
+            ("AgentOS API", "28000"),
+            ("Langfuse UI", "23000"),
+            ("Postgres", "25432"),
+            ("Valkey", "26379"),
+            ("ClickHouse HTTP", "28123"),
+            ("MinIO S3", "29000"),
+            ("MinIO console", "29001"),
+            ("OTel gRPC", "24317"),
+            ("OTel HTTP", "24318"),
         ] {
             assert!(
                 compose.contains(&format!("\"{host_port}:")),

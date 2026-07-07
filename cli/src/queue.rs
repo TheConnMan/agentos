@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 pub const DEFAULT_STREAM: &str = "agentos:runs";
-pub const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:56379";
+pub const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
 /// The worker's consumer group (AGENTOS_CONSUMER_GROUP default); used to detect
 /// completion (the worker acks an entry only after the turn finalizes).
 pub const WORKER_GROUP: &str = "agentos-workers";
