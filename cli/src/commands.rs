@@ -254,10 +254,13 @@ pub async fn send(
 
     // A "thinking" spinner marks the wait for the first token; it is cleared the
     // instant streaming begins (committing no line) so the agent answer streams
-    // clean. `streamed` tracks whether any answer token reached stdout.
+    // clean. `streamed` tracks whether any answer token reached stdout;
+    // `at_line_start` tracks whether stdout is at a fresh line (no un-terminated
+    // streamed text) so a stderr diagnostic never glues onto a token line.
     let cl = ui.checklist();
     let mut step = Some(cl.step("thinking"));
     let mut streamed = false;
+    let mut at_line_start = true;
 
     let events = client
         .send_event(event_type, text, user, |event| {
@@ -276,14 +279,33 @@ pub async fn send(
             }
             match part {
                 // Answer tokens are raw payload -> stdout, concatenated at network
-                // pace with no per-delta newline.
+                // pace with no per-delta newline. Track mid-line state so a later
+                // note closes an un-terminated line first.
                 Some(TurnPart::Token(token)) => {
                     ui.print_tokens(&token);
                     streamed = true;
+                    at_line_start = token.ends_with('\n');
                 }
-                // Tool notes and errors are diagnostics -> stderr.
-                Some(TurnPart::Note(msg)) => ui.note(&msg),
-                Some(TurnPart::Fail(msg)) => ui.failure(&msg),
+                // Tool notes and errors are diagnostics -> stderr. If stdout is
+                // mid-line, close that streamed line with a single newline first
+                // so the note does not glue onto the token text. Under `-q` the
+                // note itself is a no-op; the lone separating newline lands in
+                // the middle of the streamed answer, which is just whitespace and
+                // harmless to `| jq` (a median newline in the payload is fine).
+                Some(TurnPart::Note(msg)) => {
+                    if !at_line_start {
+                        ui.print_tokens("\n");
+                        at_line_start = true;
+                    }
+                    ui.note(&msg);
+                }
+                Some(TurnPart::Fail(msg)) => {
+                    if !at_line_start {
+                        ui.print_tokens("\n");
+                        at_line_start = true;
+                    }
+                    ui.failure(&msg);
+                }
                 // The status trailer is emitted once at the end from events.last().
                 Some(TurnPart::Status(_)) | None => {}
             }
@@ -296,9 +318,11 @@ pub async fn send(
     }
 
     if let Some(OutboundEvent::Final { status, .. }) = events.last() {
-        // One trailing newline closes the streamed answer on stdout; the status
+        // Close the streamed answer on stdout only if the last thing written was
+        // un-terminated token text; if a note already added its own newline (or
+        // the last token ended in one) skip it to avoid a blank line. The status
         // trailer is a diagnostic -> stderr.
-        if streamed {
+        if streamed && !at_line_start {
             ui.print_tokens("\n");
         }
         ui.note(&format!("-- final ({})", status_str(status)));
