@@ -1,0 +1,9 @@
+[
+  {
+    "name": "weather-answers",
+    "input": "What's the weather in San Francisco?",
+    "expect_contains": [
+      "weather"
+    ]
+  }
+]
