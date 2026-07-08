@@ -75,8 +75,7 @@ Watch the run land in the console UI at `http://localhost:28080/?api=1`. Like
 `skill`, the local stack runs the fake model by default, so replies are scripted
 until you wire a real model.
 
-> If `local up` prints `agentos-ui-1 is unhealthy`, ignore it: that is a known
-> UI healthcheck quirk. The stack is fine and the UI answers on `:28080`.
+> The stack comes up clean; the UI answers on `:28080`.
 
 ### On a Kubernetes cluster (Helm)
 
@@ -85,9 +84,10 @@ Kubernetes, with runs traced in Langfuse. The short arc:
 
 ```bash
 agentos cluster up                    # install the platform (Helm release)
-kubectl port-forward svc/agentos-api 8000:8000 -n agentos &   # deploy needs this
-agentos cluster deploy --plugin-dir . # push the bundle to the in-cluster API
-kill %1
+agentos cluster status                # prints the UI URL, e.g. http://<node>:30080
+# The UI reverse-proxies /api to the in-cluster API, so deploy through it -- no
+# port-forward. Use the UI URL from `cluster status` with a /api suffix:
+agentos cluster deploy --plugin-dir . --api-url http://<node>:30080/api
 agentos cluster message "What's the weather in Paris?"
 agentos cluster down --yes            # uninstall
 ```
