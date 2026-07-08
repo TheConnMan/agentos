@@ -51,15 +51,51 @@ agentos skill down
 
 You should get a real answer instead of the canned loop.
 
-## Going further
+## Still have time? Run your skill on your local box or on a Kubernetes cluster
 
-The `skill` loop is the fastest way to iterate on a plugin, but it is only the
-runner. When you want the full platform (queue, worker, sandbox, traces):
+The `skill` loop is just the runner container. To see your skill run through the
+real product path (queue, worker, sandbox, traces), the same way a Slack mention
+would, put the full platform in front of it. Two options, lightest first.
 
-- **`local`** runs the whole platform via docker compose on your machine.
-- **`cluster`** runs it on Kubernetes as a Helm release, with tracing in
-  Langfuse.
+### On your local box (Docker stack)
 
-See [`docs/operations.md`](docs/operations.md) for the cluster runbook and
-[`cli/README.md`](cli/README.md) for the complete command reference. The
-[README](README.md#which-target-do-i-want) has a table to help you pick a target.
+`local` brings up the whole platform with docker compose (API, worker, backing
+stores, and the console UI) and runs your skill through it. Same runner, now with
+the queue and worker in front, all on your machine. Run these from your bundle
+directory:
+
+```bash
+agentos local up                      # start the full compose stack
+agentos local deploy --plugin-dir .   # push the bundle to the local API on :28000
+agentos local message "What's the weather in Paris?"
+agentos local down                    # tear it all down
+```
+
+Watch the run land in the console UI at `http://localhost:28080/?api=1`. Like
+`skill`, the local stack runs the fake model by default, so replies are scripted
+until you wire a real model.
+
+> If `local up` prints `agentos-ui-1 is unhealthy`, ignore it: that is a known
+> UI healthcheck quirk. The stack is fine and the UI answers on `:28080`.
+
+### On a Kubernetes cluster (Helm)
+
+`cluster` installs the platform as a Helm release and drives your skill on real
+Kubernetes, with runs traced in Langfuse. The short arc:
+
+```bash
+agentos cluster up                    # install the platform (Helm release)
+kubectl port-forward svc/agentos-api 8000:8000 -n agentos &   # deploy needs this
+agentos cluster deploy --plugin-dir . # push the bundle to the in-cluster API
+kill %1
+agentos cluster message "What's the weather in Paris?"
+agentos cluster down --yes            # uninstall
+```
+
+For a real model on the cluster, the runner model key is
+`--set agentSandbox.runner.model=<slug>` (not `runner.model`, which silently
+no-ops). The full cluster runbook, including credentials, web egress, and the
+Langfuse login, is in [`docs/operations.md`](docs/operations.md).
+
+See [`cli/README.md`](cli/README.md) for the complete command reference, and the
+[README](README.md#which-target-do-i-want) for a table to help you pick a target.
