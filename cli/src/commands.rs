@@ -162,6 +162,22 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         model = Some(local_model.clone());
     }
 
+    let mut passthrough_env: Vec<String> =
+        vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()];
+    // Forward the opaque model credential the runner resolves in sdk_auth (OAuth
+    // token, Anthropic API key, or an OpenRouter sk-or- key routed to the
+    // OpenRouter Anthropic endpoint). Without this, `skill up` cannot drive a
+    // real OpenRouter/BYO model even though the runner supports it -- the key
+    // never reaches the container in the env slot resolve_model_credential reads.
+    //
+    // Skip it under --local-model: the runner prioritizes an sk-or- credential
+    // and would rewrite the local Ollama base URL to OpenRouter, silently
+    // sending a local-model run to the remote provider. Local model needs no
+    // credential, so an sk-or- key sitting in the caller's env must not leak in.
+    if opts.local_model.is_none() {
+        passthrough_env.push("AGENTOS_CREDENTIALS".into());
+    }
+
     let spec = StartSpec {
         image: opts.image.clone(),
         container_name: opts.name.clone(),
@@ -175,7 +191,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         otel_endpoint: opts.otel_endpoint,
         model_base_url: model_base_url.clone(),
         model,
-        passthrough_env: vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
+        passthrough_env,
     };
 
     let ui = crate::ui::ui();
