@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Action, AppState, FixtureLevel } from "./types";
+import { isWired } from "../api/config";
 
 const max = (a: FixtureLevel, b: FixtureLevel): FixtureLevel =>
   (a > b ? a : b) as FixtureLevel;
@@ -235,16 +236,19 @@ export function StoreProvider({
     return () => clearTimeout(id);
   }, [state.toast]);
 
-  const value = useMemo<Store>(
-    () => ({
+  const value = useMemo<Store>(() => {
+    // Environments are real in wired mode; in the fixture demo they unlock at
+    // level 4 (GitHub connected). Keep the reducer's env clamp untouched — this
+    // is only the derived enablement the chrome reads.
+    const envAvailable = isWired() || state.level >= 4;
+    return {
       state,
       dispatch,
       slackOn: state.level >= 2,
-      ghOn: state.level >= 4,
-      envDev: state.level >= 4 && state.env === "dev",
-    }),
-    [state],
-  );
+      ghOn: envAvailable,
+      envDev: envAvailable && state.env === "dev",
+    };
+  }, [state]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

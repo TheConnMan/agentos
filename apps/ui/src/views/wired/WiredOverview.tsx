@@ -4,7 +4,8 @@ import { hoverBg } from "../../lib/style";
 import { formatLatency } from "../../lib/format";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
-import { useMetricsSummary, useTraces } from "../../api/hooks";
+import { useMetricsSummary, useTraces, useAllDeployments } from "../../api/hooks";
+import { hiddenAgentIdsForEnv } from "../../state/env";
 import { ConnectSlackPanel } from "../../components/ConnectSlackPanel";
 import type { AgentOut, RawTrace } from "../../api/client";
 
@@ -85,10 +86,16 @@ function traceMsg(t: RawTrace): string {
 }
 
 function LiveOverview({ agents }: { agents: AgentOut[] }) {
-  const { dispatch } = useStore();
-  const { justDeployed } = useWired();
-  const summary = useMetricsSummary(true, {});
+  const { state, dispatch } = useStore();
+  const { justDeployed, wired } = useWired();
+  const summary = useMetricsSummary(true, { environment: state.env });
   const traces = useTraces(true);
+  const deps = useAllDeployments(wired);
+  // Agents visible in the selected environment: hide only those deployed
+  // exclusively to the other env (undeployed agents stay visible). Fall back to
+  // the full list until deployments load so the count does not flash to zero.
+  const hiddenIds = deps.data ? hiddenAgentIdsForEnv(deps.data, state.env) : new Set<string>();
+  const scoped = deps.data ? agents.filter((a) => !hiddenIds.has(a.id)) : agents;
 
   const stat = (label: string, value: string) => (
     <Card key={label} style={{ padding: "16px 18px" }}>
@@ -102,7 +109,7 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
   const metric = (fmt: (d: NonNullable<typeof s>) => string): string =>
     s ? fmt(s) : summary.loading ? "…" : "—";
   const stats: [string, string][] = [
-    ["Agents", String(agents.length)],
+    ["Agents", String(scoped.length)],
     ["Runs (7d)", metric((d) => String(d.runs))],
     ["Latency p95", metric((d) => formatLatency(d.latency_p95_seconds))],
     ["Cost (7d)", metric((d) => "$" + d.cost_usd.toFixed(2))],
@@ -112,7 +119,7 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
   return (
     <div>
       {justDeployed ? <DeployedPanel name={justDeployed.name} channel={justDeployed.channel} /> : null}
-      <SectionTitle title="Overview" sub={`${agents.length} ${agents.length === 1 ? "agent" : "agents"} · live data`} />
+      <SectionTitle title="Overview" sub={`${scoped.length} ${scoped.length === 1 ? "agent" : "agents"} · ${state.env} · live data`} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 22 }}>
         {stats.map((x) => stat(x[0], x[1]))}
       </div>
@@ -159,7 +166,7 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
         </Card>
         <Card>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 14 }}>Agents</div>
-          {agents.map((a, i) => (
+          {scoped.map((a, i) => (
             <button
               key={a.id}
               type="button"

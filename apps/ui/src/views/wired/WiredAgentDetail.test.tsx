@@ -12,6 +12,7 @@ import {
   listDeployments,
   getVersionFiles,
   updateAgent,
+  createDeployment,
   type AgentOut,
   type VersionOut,
   type DeploymentOut,
@@ -27,8 +28,9 @@ vi.mock("../../api/config", async (importOriginal) => ({
 
 // Mock only the data-layer calls; preserve the real ApiError/BundleValidationError
 // classes (the hooks branch on `instanceof ApiError`) and the untouched helpers.
-// `updateAgent` is mocked so the channel-edit tests can assert the save button
-// issues the PATCH call with the right args without hitting the network.
+// `updateAgent` is mocked for the channel-edit tests; `createDeployment` for the
+// promote-to-prod tests; createVersion/uploadBundle are stubbed so the deploy path
+// never hits the network even though these tests don't exercise it.
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
   return {
@@ -38,9 +40,14 @@ vi.mock("../../api/client", async (importOriginal) => {
     listDeployments: vi.fn(),
     getVersionFiles: vi.fn(),
     updateAgent: vi.fn(),
+    createVersion: vi.fn(),
+    uploadBundle: vi.fn(),
+    createDeployment: vi.fn(),
   };
 });
 
+// The mocked agent carries a Slack channel ID (the channel-edit test pre-fills the
+// input with it; the promote/bundle tests only need the detail to render).
 const AGENT: AgentOut = {
   id: "a1",
   name: "deal-desk",
@@ -48,28 +55,38 @@ const AGENT: AgentOut = {
   created_at: "2026-07-01T00:00:00Z",
 };
 
-const VERSION: VersionOut = {
-  id: "v1",
+const version = (id: string, label: string): VersionOut => ({
+  id,
   agent_id: "a1",
-  version_label: "v0.1.0",
-  bundle_ref: "r",
-  bundle_sha256: "s",
+  version_label: label,
+  bundle_ref: "ref",
+  bundle_sha256: "sha",
   created_by: "ui",
   created_at: "2026-07-01T00:00:00Z",
-};
+});
 
-const DEPLOYMENT: DeploymentOut = {
-  id: "d1",
+const deployment = (version_id: string, environment: "prod" | "dev", deployed_at: string): DeploymentOut => ({
+  id: `dep-${version_id}-${environment}`,
   agent_id: "a1",
-  version_id: "v1",
-  environment: "prod",
+  version_id,
+  environment,
   bot_identity: null,
   commit_sha: null,
   status: "active",
-  deployed_at: "2026-07-01T00:00:00Z",
-};
+  deployed_at,
+});
 
-// A bundle with a SKILL.md AND the two non-skill files item 4 must surface.
+// v1 is the prod-active version (what the editor loads); v2 is the dev-active
+// version — the one promote-to-prod must ship. Both versions exist so the detail
+// renders and devActiveVersionId resolves to v2.
+const VERSIONS = [version("v1", "v0.1.0"), version("v2", "v0.2.0")];
+const DEPLOYMENTS = [
+  deployment("v1", "prod", "2026-07-05T00:00:00Z"),
+  deployment("v2", "dev", "2026-07-07T00:00:00Z"),
+];
+
+// A bundle with a SKILL.md AND the two non-skill files the bundle-tree test must
+// surface (item 4): the manifest and evals/cases.json.
 const FILES: BundleFiles = {
   files: [
     { path: "skills/deal-desk/SKILL.md", content: "---\nname: deal-desk\ndescription: d\n---\n# body" },
@@ -81,22 +98,24 @@ const FILES: BundleFiles = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getAgents).mockResolvedValue([AGENT]);
-  vi.mocked(listVersions).mockResolvedValue([VERSION]);
-  vi.mocked(listDeployments).mockResolvedValue([DEPLOYMENT]);
+  vi.mocked(listVersions).mockResolvedValue(VERSIONS);
+  vi.mocked(listDeployments).mockResolvedValue(DEPLOYMENTS);
   vi.mocked(getVersionFiles).mockResolvedValue(FILES);
   vi.mocked(updateAgent).mockResolvedValue({ ...AGENT, slack_channel: "C9999ZZZZ" });
+  vi.mocked(createDeployment).mockResolvedValue(deployment("v2", "prod", "2026-07-08T00:00:00Z"));
 });
 
 // Render the detail surface directly, dispatching openAgentDetail on mount so the
 // store points at the mocked agent (the same action the Agents list dispatches).
+function Harness() {
+  const { dispatch } = useStore();
+  useEffect(() => {
+    dispatch({ type: "openAgentDetail", id: AGENT.id });
+  }, [dispatch]);
+  return <WiredAgentDetail />;
+}
+
 function renderDetail() {
-  function Harness() {
-    const { dispatch } = useStore();
-    useEffect(() => {
-      dispatch({ type: "openAgentDetail", id: AGENT.id });
-    }, [dispatch]);
-    return <WiredAgentDetail />;
-  }
   // WiredAgentDetail consumes react-query hooks (useAgentVersions/useVersionFiles),
   // so it needs a QueryClientProvider. A fresh client per render with retry off,
   // mirroring main.tsx and hooks.rq.test.tsx, so error/404 sentinels resolve on the
@@ -181,5 +200,43 @@ describe("WiredAgentDetail — bundle tree (item 4)", () => {
 
     // SKILL.md is still present so the existing edit/deploy path is not lost.
     expect(screen.getAllByText("skills/deal-desk/SKILL.md").length).toBeGreaterThan(0);
+  });
+});
+
+describe("WiredAgentDetail — promote-to-prod (item 6)", () => {
+  it("promotes the dev-active version to prod on confirm, then refreshes", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    // The detail body renders once agents + versions + files have loaded.
+    expect(await screen.findByTestId("agent-detail-name")).toHaveTextContent("deal-desk");
+
+    const promote = await screen.findByRole("button", { name: "Promote to prod" });
+    expect(vi.mocked(listDeployments)).toHaveBeenCalledTimes(1);
+
+    await user.click(promote);
+    // Inline confirm (kill-switch pattern): nothing deployed until confirmed.
+    await user.click(await screen.findByRole("button", { name: "Confirm promote" }));
+
+    await waitFor(() => expect(vi.mocked(createDeployment)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createDeployment)).toHaveBeenCalledWith({
+      agent_id: "a1",
+      version_id: "v2",
+      environment: "prod",
+    });
+
+    // A refresh follows the promote (re-fetch versions + deployments).
+    await waitFor(() => expect(vi.mocked(listDeployments).mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("deploys nothing when the promote confirm is cancelled", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    const promote = await screen.findByRole("button", { name: "Promote to prod" });
+    await user.click(promote);
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(vi.mocked(createDeployment)).not.toHaveBeenCalled();
   });
 });

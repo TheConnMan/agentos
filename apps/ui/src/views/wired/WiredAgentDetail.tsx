@@ -89,6 +89,9 @@ export function WiredAgentDetail() {
   const [deployError, setDeployError] = useState<string | null>(null);
   const [issues, setIssues] = useState<BundleIssue[]>([]);
   const [deployedLabel, setDeployedLabel] = useState<string | null>(null);
+  const [confirmingPromote, setConfirmingPromote] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
 
   // Editable Slack channel (item 5). Seeded from the agent, re-seeded if it changes.
   const [channel, setChannel] = useState("");
@@ -107,6 +110,17 @@ export function WiredAgentDetail() {
   // are editable, the rest are read-only views.
   const allFiles = files.files ?? [];
   const skillFiles = useMemo(() => (files.files ?? []).filter((f) => isSkillFile(f.path)), [files.files]);
+
+  // The version currently active in dev — the one promote-to-prod ships. Newest
+  // active dev deployment whose version still exists; null when there is nothing
+  // in dev to promote (the button is then hidden).
+  const devActiveVersionId = useMemo(() => {
+    const dev = versions.deployments
+      .filter((d) => d.status === "active" && d.environment === "dev")
+      .sort((a, b) => b.deployed_at.localeCompare(a.deployed_at))
+      .find((d) => versions.versions.some((v) => v.id === d.version_id));
+    return dev?.version_id ?? null;
+  }, [versions.deployments, versions.versions]);
 
   useEffect(() => {
     // Reseed the editor whenever a new version's files arrive.
@@ -157,7 +171,7 @@ export function WiredAgentDetail() {
       const version = await createVersion(agentId, { version_label: label, created_by: "ui" });
       const archive = await buildBundleZipFromFiles(agent.name, merged);
       await uploadBundle(agentId, version.id, archive);
-      await createDeployment({ agent_id: agentId, version_id: version.id, environment: "prod" });
+      await createDeployment({ agent_id: agentId, version_id: version.id, environment: state.env });
       setDeployedLabel(label);
       dispatch({ type: "toast", message: `Deployed ${label}` });
       versions.reload(); // refetch versions + deployments -> active version flips to the new one
@@ -169,6 +183,25 @@ export function WiredAgentDetail() {
       }
     } finally {
       setDeploying(false);
+    }
+  };
+
+  // Promote the dev-active version to prod: a single createDeployment (prod gets
+  // the server-default active status — no gitflow bot_identity plumbing here),
+  // then refresh so the Versions/active state reflects the new prod deployment.
+  const promote = async () => {
+    if (!agentId || promoting || !devActiveVersionId) return;
+    setPromoting(true);
+    setPromoteError(null);
+    try {
+      await createDeployment({ agent_id: agentId, version_id: devActiveVersionId, environment: "prod" });
+      dispatch({ type: "toast", message: "Promoted dev → prod" });
+      setConfirmingPromote(false);
+      versions.reload();
+    } catch (e) {
+      setPromoteError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+    } finally {
+      setPromoting(false);
     }
   };
 
@@ -253,6 +286,29 @@ export function WiredAgentDetail() {
           )}
         </div>
       </div>
+
+      {devActiveVersionId ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          {confirmingPromote ? (
+            <>
+              <span style={{ fontSize: 12.5, color: C.text2, fontFamily: C.mono }}>Promote the dev-active version to prod?</span>
+              <Button label="Cancel" variant="ghost" size="sm" onClick={() => setConfirmingPromote(false)} />
+              {promoting ? (
+                <Button label="Promoting…" variant="primary" size="sm" disabled />
+              ) : (
+                <Button label="Confirm promote" variant="primary" size="sm" onClick={() => void promote()} />
+              )}
+            </>
+          ) : (
+            <Button label="Promote to prod" size="sm" onClick={() => setConfirmingPromote(true)} />
+          )}
+          {promoteError ? (
+            <span data-testid="promote-error" style={{ fontSize: 12, color: C.destructive, fontFamily: C.mono }}>
+              Promote failed: {promoteError}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {versions.loading ? (
         <Notice padding="34px 20px">Loading versions…</Notice>
