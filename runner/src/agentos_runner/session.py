@@ -20,6 +20,8 @@ Responsibilities layered on the translation:
 from __future__ import annotations
 
 import contextlib
+import logging
+import time
 from collections.abc import AsyncIterator, Callable
 
 import anyio
@@ -29,6 +31,7 @@ from aci_protocol import (
     Final,
     Interrupt,
     SessionStatus,
+    ToolNote,
     to_ndjson_line,
 )
 from claude_agent_sdk import ResultMessage
@@ -38,6 +41,8 @@ from .budget import BUDGET_CLASSIFICATION, BudgetTracker
 from .otel import RunTracer, _GenerationSpan
 from .side_effects import SideEffectClassifier
 from .translate import TurnState, translate_message
+
+logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], ModelSession]
 
@@ -146,6 +151,8 @@ class SessionRunner:
             raise RuntimeError("session not started")
 
         async with self._turn_lock:
+            start = time.monotonic()
+            logger.info("turn start session=%s user=%s", self._session_id, event.user)
             self._interrupt_requested = False
             self._turn_open = True
             state = TurnState()
@@ -157,6 +164,12 @@ class SessionRunner:
                 try:
                     async for line in self._drive_turn(event, state, tracker, gen):
                         yield line
+                    logger.info(
+                        "turn end session=%s status=%s duration_ms=%d",
+                        self._session_id,
+                        self._status.value,
+                        int((time.monotonic() - start) * 1000),
+                    )
                 except Exception as exc:  # noqa: BLE001 - the ACI stream must
                     # always terminate in a final; a raised SDK/transport error
                     # (CLI disconnect, auth expiry, model error) becomes a
@@ -164,6 +177,13 @@ class SessionRunner:
                     # stream. GeneratorExit (consumer disconnect) is a
                     # BaseException and is intentionally not caught here -- the
                     # finally handles that abandonment case.
+                    logger.error(
+                        "turn failed session=%s error_class=%s: %s duration_ms=%d",
+                        self._session_id,
+                        type(exc).__name__,
+                        exc,
+                        int((time.monotonic() - start) * 1000),
+                    )
                     self._turn_open = False
                     self._status = SessionStatus.CLASSIFIED_FAILURE
                     yield to_ndjson_line(
@@ -207,6 +227,14 @@ class SessionRunner:
             events = translate_message(message, state, self._classifier, gen)
 
             for outbound in events:
+                if isinstance(outbound, ToolNote):
+                    logger.info("tool call session=%s tool=%s", self._session_id, outbound.tool)
+                if isinstance(outbound, ErrorEvent):
+                    logger.warning(
+                        "model error session=%s classification=%s",
+                        self._session_id,
+                        outbound.classification,
+                    )
                 if isinstance(outbound, Final):
                     if budget_hit:
                         for line in self._budget_halt_lines():
@@ -246,6 +274,7 @@ class SessionRunner:
         tell a budget halt from any other classified failure.
         """
 
+        logger.warning("budget halt session=%s: output token budget exceeded", self._session_id)
         self._turn_open = False
         self._status = SessionStatus.CLASSIFIED_FAILURE
         return [
