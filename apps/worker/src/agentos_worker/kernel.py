@@ -43,7 +43,8 @@ from aci_protocol import (
 )
 from agentos_dispatcher.queue import QueuedSlackEvent
 
-from .binding import BindingResolver
+from .behaviorpacks import sample_load, sample_tip
+from .binding import BindingResolver, ResolvedDeployment
 from .config import WorkerConfig
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -229,6 +230,11 @@ class Kernel:
                     return
                 agent_id = resolved.agent_id
                 boot_env = self._binding.boot_env(resolved, thread)
+                # Personalize the shimmer: replace the dispatcher's generic status
+                # with this agent's sampled load line (+ tip). Best-effort and
+                # outside the concurrency-critical section, like the clear below.
+                if self._config.shimmer:
+                    await self._set_shimmer(qevent, resolved)
 
             attempt = 0
             while True:
@@ -331,6 +337,26 @@ class Kernel:
             channel=qevent.channel, ts=qevent.placeholder_ts, text=message
         )
         await self._markers.mark_done(qevent.slack_event_id)
+
+    async def _set_shimmer(self, qevent: QueuedSlackEvent, resolved: ResolvedDeployment) -> None:
+        """Set the shimmer caption to this agent's sampled load line (+ tip),
+        seeded by the thread ts. No-op when the agent enables neither pack, so the
+        dispatcher's generic status stays. Best-effort (the sink swallows errors)."""
+        assert self._binding is not None
+        packs = self._binding.packs_for(resolved)
+        load = sample_load(packs, qevent.thread_ts)
+        tip = sample_tip(packs, qevent.thread_ts)
+        if load and tip:
+            caption = f"{load}\n\nTip: {tip}"
+        elif load:
+            caption = load
+        elif tip:
+            caption = f"Tip: {tip}"
+        else:
+            return
+        await self._sink.set_status(
+            channel=qevent.channel, thread_ts=qevent.thread_ts, status=caption
+        )
 
     # -- internals ------------------------------------------------------------
 

@@ -23,6 +23,11 @@ class SlackSink(Protocol):
 
     async def update(self, *, channel: str, ts: str, text: str) -> None: ...
 
+    async def set_status(self, *, channel: str, thread_ts: str, status: str) -> None:
+        """Set the assistant-thread status (the "shimmer" caption) on the thread.
+        Best-effort so it never breaks a turn."""
+        ...
+
     async def clear_status(self, *, channel: str, thread_ts: str) -> None:
         """Clear any assistant-thread status (the "shimmer") on the thread. A
         no-op when shimmering is off; best-effort so it never breaks a turn."""
@@ -57,14 +62,17 @@ class AsyncSlackSink:
         else:
             await self._client.chat_update(channel=channel, ts=ts, text=rendered_text)
 
+    async def set_status(self, *, channel: str, thread_ts: str, status: str) -> None:
+        # Best-effort: a workspace without the assistant feature, or any transient
+        # error, must never fail the turn.
+        try:
+            await self._client.assistant_threads_setStatus(
+                channel_id=channel, thread_ts=thread_ts, status=status
+            )
+        except Exception as exc:  # noqa: BLE001 -- status set is best-effort
+            logger.debug("assistant set_status skipped for %s: %s", thread_ts, exc)
+
     async def clear_status(self, *, channel: str, thread_ts: str) -> None:
         # Clear the assistant-thread status by setting it empty (Slack only
         # auto-clears on a posted message, and we edit the placeholder instead).
-        # Best-effort: a workspace without the assistant feature, or any transient
-        # error, must never fail the turn -- the reply already went out.
-        try:
-            await self._client.assistant_threads_setStatus(
-                channel_id=channel, thread_ts=thread_ts, status=""
-            )
-        except Exception as exc:  # noqa: BLE001 -- status clear is best-effort
-            logger.debug("assistant clear_status skipped for %s: %s", thread_ts, exc)
+        await self.set_status(channel=channel, thread_ts=thread_ts, status="")
