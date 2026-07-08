@@ -640,8 +640,9 @@ fn confirm(o: &CommonOpts) -> Result<bool> {
 }
 
 /// Render `kubectl get pods` output as a borderless table to stdout and return
-/// (ready count, total, names of pods not Running/Completed) so the caller can
-/// summarise overall health.
+/// (ready count, steady state total, names of pods not Running) so the caller
+/// can summarise overall health. Terminal and terminating pods stay visible in
+/// the table but are excluded from the returned tally.
 fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
     let ui = crate::ui::ui();
     let rows: Vec<&str> = pods_output
@@ -650,6 +651,7 @@ fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
         .filter(|l| !l.trim().is_empty())
         .collect();
     let mut ready = 0usize;
+    let mut total = 0usize;
     let mut unhealthy: Vec<String> = Vec::new();
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     for row in &rows {
@@ -657,6 +659,15 @@ fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
         let name = cols.first().copied().unwrap_or("?");
         let ready_col = cols.get(1).copied().unwrap_or("");
         let phase = cols.get(2).copied().unwrap_or("");
+        table_rows.push(vec![
+            name.to_string(),
+            ready_col.to_string(),
+            phase.to_string(),
+        ]);
+        if matches!(phase, "Completed" | "Succeeded" | "Terminating") {
+            continue;
+        }
+        total += 1;
         // READY is "n/m": ready when the two sides match.
         let all_ready = ready_col
             .split_once('/')
@@ -665,14 +676,9 @@ fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
         if all_ready {
             ready += 1;
         }
-        if phase != "Running" && phase != "Completed" {
+        if phase != "Running" {
             unhealthy.push(name.to_string());
         }
-        table_rows.push(vec![
-            name.to_string(),
-            ready_col.to_string(),
-            phase.to_string(),
-        ]);
     }
     if !table_rows.is_empty() {
         ui.payload_plain(&crate::ui::table(
@@ -681,7 +687,7 @@ fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
             &[],
         ));
     }
-    (ready, rows.len(), unhealthy)
+    (ready, total, unhealthy)
 }
 
 /// Resolve the node host: the kubeconfig cluster server hostname, falling back
@@ -1216,5 +1222,39 @@ mod tests {
     fn pod_summary_does_not_panic_on_empty() {
         // Header only: no rows.
         print_pod_summary("NAME READY STATUS RESTARTS AGE");
+    }
+
+    #[test]
+    fn pod_summary_excludes_completed_and_terminating() {
+        let pods = r#"NAME READY STATUS RESTARTS AGE
+api0 1/1 Running 0 10m
+api1 1/1 Running 0 10m
+worker0 1/1 Running 0 10m
+worker1 1/1 Running 0 10m
+dispatcher0 1/1 Running 0 10m
+ui0 1/1 Running 0 10m
+postgres0 1/1 Running 0 10m
+valkey0 1/1 Running 0 10m
+langfuse0 1/1 Running 0 10m
+otel0 1/1 Running 0 10m
+runnerold 1/1 Terminating 0 2m
+preflight0 0/1 Completed 0 2m
+preflight1 0/1 Completed 0 2m
+job0 0/1 Succeeded 0 2m"#;
+
+        assert_eq!(print_pod_summary(pods), (10, 10, vec![]));
+    }
+
+    #[test]
+    fn pod_summary_flags_genuinely_unhealthy_steady_state_pod() {
+        let pods = r#"NAME READY STATUS RESTARTS AGE
+api0 1/1 Running 0 10m
+worker0 1/1 Running 0 10m
+dispatcher0 0/1 Pending 0 1m"#;
+
+        assert_eq!(
+            print_pod_summary(pods),
+            (2, 3, vec!["dispatcher0".to_string()])
+        );
     }
 }
