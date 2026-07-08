@@ -36,8 +36,9 @@ Both are blanked to `""` in override mode so an inherited OAuth token or Bearer
 token cannot take precedence over the placeholder + overridden base URL, nor
 leak as a Bearer header to the overridden (local/third-party) endpoint. This
 keeps override mode hermetic. (On the OpenRouter path, `resolve_model_credential`
-re-sets `ANTHROPIC_AUTH_TOKEN` to the real `sk-or-` key after applying this
-override, so the Bearer token still reaches OpenRouter.)
+re-sets `ANTHROPIC_API_KEY` to the real `sk-or-` key (the `x-api-key` header
+OpenRouter's Anthropic endpoint reads) after applying this override;
+`ANTHROPIC_AUTH_TOKEN` stays blank.)
 
 ### `AGENTOS_MODEL` (input)
 
@@ -47,9 +48,11 @@ The model name (e.g. `qwen3:4b`), passed through to `ClaudeAgentOptions.model`.
 
 An `sk-or-...` credential in `AGENTOS_CREDENTIALS` is auto-detected by
 `resolve_model_credential`. The runner sets
-`ANTHROPIC_BASE_URL=https://openrouter.ai/api`, places the real key in
-`ANTHROPIC_AUTH_TOKEN` for Bearer auth, and reuses this seam's non-empty
-`ANTHROPIC_API_KEY` placeholder plus blanked `CLAUDE_CODE_OAUTH_TOKEN`.
+`ANTHROPIC_BASE_URL=https://openrouter.ai/api` and places the real key in
+`ANTHROPIC_API_KEY` (sent as the `x-api-key` header, which OpenRouter's Anthropic
+Messages endpoint authenticates on), overriding this seam's `not-needed`
+placeholder, and leaves `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`
+blank.
 
 Prompt caching survives only on this native Anthropic Messages path, and only
 for Claude-family OpenRouter models.

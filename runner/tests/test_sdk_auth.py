@@ -61,15 +61,16 @@ def test_foreign_key_is_rejected_loudly(foreign: str) -> None:
     assert foreign not in msg  # the credential value never appears in the error
 
 
-def test_openrouter_key_is_plumbed_to_base_url_override() -> None:
+def test_openrouter_key_maps_to_api_key_not_bearer() -> None:
     env = {CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
     resolve_model_credential(env)
 
     assert env[BASE_URL_ENV] == OPENROUTER_BASE_URL
-    assert env[AUTH_TOKEN_ENV] == "sk-or-PLACEHOLDER"
-    # Empty string would fail the bundled Claude CLI auth gate.
-    assert env[API_KEY_ENV] == NO_OP_API_KEY
-    assert env[API_KEY_ENV] != ""
+    # The real key goes in ANTHROPIC_API_KEY (the x-api-key header OpenRouter's
+    # Anthropic endpoint reads), overriding the NO_OP_API_KEY placeholder.
+    assert env[API_KEY_ENV] == "sk-or-PLACEHOLDER"
+    # It must NOT land in ANTHROPIC_AUTH_TOKEN (Bearer); that stays blank.
+    assert env[AUTH_TOKEN_ENV] == ""
     assert env[OAUTH_TOKEN_ENV] == ""
 
 
@@ -146,19 +147,19 @@ def test_resolve_sdk_env_plain_anthropic_key_mutates_env() -> None:
 
 def test_resolve_sdk_env_openrouter_alone_mutates_env() -> None:
     # sk-or- credential, no preset base URL: returns None; env gets the
-    # OpenRouter base URL, the Bearer token, and the placeholder.
+    # OpenRouter base URL and the real key in ANTHROPIC_API_KEY (x-api-key).
     env = {CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
     assert resolve_sdk_env(env) is None
     assert env[BASE_URL_ENV] == OPENROUTER_BASE_URL
-    assert env[AUTH_TOKEN_ENV] == "sk-or-PLACEHOLDER"
-    assert env[API_KEY_ENV] == NO_OP_API_KEY
+    assert env[API_KEY_ENV] == "sk-or-PLACEHOLDER"
+    assert env[AUTH_TOKEN_ENV] == ""
 
 
-def test_resolve_sdk_env_openrouter_with_preset_base_url_sets_bearer() -> None:
+def test_resolve_sdk_env_openrouter_with_preset_base_url_sets_api_key() -> None:
     # P2 regression: an operator sets ANTHROPIC_BASE_URL AND passes an sk-or-
-    # credential. The sk-or- key must still be routed (Bearer token set), not
-    # skipped by the generic base-URL override.
+    # credential. The sk-or- key must still be routed (into ANTHROPIC_API_KEY, the
+    # x-api-key header), not skipped by the generic base-URL override.
     env = {BASE_URL_ENV: "https://openrouter.ai/api", CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
     assert resolve_sdk_env(env) is None
-    assert env[AUTH_TOKEN_ENV] == "sk-or-PLACEHOLDER"
-    assert env[API_KEY_ENV] == NO_OP_API_KEY
+    assert env[API_KEY_ENV] == "sk-or-PLACEHOLDER"
+    assert env[AUTH_TOKEN_ENV] == ""

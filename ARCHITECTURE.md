@@ -282,7 +282,7 @@ The runner's mapping is prefix-based and fails loud on anything it cannot use
 
 - `sk-ant-oat...` -> `CLAUDE_CODE_OAUTH_TOKEN` (checked first; OAuth tokens share the `sk-ant-` prefix).
 - `sk-ant-...` -> `ANTHROPIC_API_KEY`.
-- `sk-or-...` (OpenRouter) -> routed through the shared **base-URL-override seam**: base URL points at OpenRouter's native Anthropic Messages endpoint, the key becomes `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_API_KEY` is set to a non-empty placeholder so the bundled CLI's auth gate passes. Staying on the Anthropic wire format keeps prompt caching intact.
+- `sk-or-...` (OpenRouter) -> routed through the shared **base-URL-override seam**: base URL points at OpenRouter's native Anthropic Messages endpoint, and the real key is placed in `ANTHROPIC_API_KEY` (sent as the `x-api-key` header, which OpenRouter's Anthropic endpoint authenticates on), overriding the non-empty placeholder the seam sets; `ANTHROPIC_AUTH_TOKEN` is left blank. Staying on the Anthropic wire format keeps prompt caching intact.
 - `sk-...` (bare OpenAI-style) -> raises `UnsupportedCredentialError` rather than forwarding a key the Anthropic SDK cannot use.
 - Anything else -> treated as an OAuth token.
 
