@@ -384,6 +384,14 @@ export async function listDeployments(agentId: string): Promise<DeploymentOut[]>
   return jsonOrThrow<DeploymentOut[]>(resp);
 }
 
+// Every deployment across all agents (GET /deployments with no agent_id). Used
+// by the env-scoped Agents/Overview views to decide which agents are live in the
+// selected environment.
+export async function listAllDeployments(): Promise<DeploymentOut[]> {
+  const resp = await fetch(url("/deployments"), { headers: headers() });
+  return jsonOrThrow<DeploymentOut[]>(resp);
+}
+
 /**
  * Read the unwrapped files of a version's stored bundle (FX2 headline: the agent
  * detail surface renders and edits these). A 404 means no bundle is stored for

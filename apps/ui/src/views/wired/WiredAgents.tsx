@@ -3,6 +3,8 @@ import { C } from "../../tokens";
 import { Card, SectionTitle, Button, Dot, EmptyState } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
+import { useAllDeployments } from "../../api/hooks";
+import { hiddenAgentIdsForEnv } from "../../state/env";
 import { deleteAgent } from "../../api/client";
 
 function Notice({ children }: { children: string }) {
@@ -10,8 +12,9 @@ function Notice({ children }: { children: string }) {
 }
 
 export function WiredAgents() {
-  const { dispatch } = useStore();
-  const { agents, loading, error, refetch } = useWired();
+  const { state, dispatch } = useStore();
+  const { agents, loading, error, refetch, wired } = useWired();
+  const deps = useAllDeployments(wired);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function onDelete(id: string, name: string) {
@@ -32,6 +35,13 @@ export function WiredAgents() {
 
   if (loading) return <Notice>Loading agents…</Notice>;
   if (error) return <Notice>{`Could not load agents: ${error}`}</Notice>;
+
+  // Env-gating is best-effort: hide agents deployed exclusively to the other
+  // env, but never gate (and never error the view out) while deployments are
+  // still loading or the fetch failed — show the full list instead.
+  const gate = deps.data && !deps.error;
+  const hiddenIds = gate ? hiddenAgentIdsForEnv(deps.data ?? [], state.env) : new Set<string>();
+  const shown = agents.filter((a) => !hiddenIds.has(a.id));
 
   if (agents.length === 0) {
     return (
@@ -58,8 +68,11 @@ export function WiredAgents() {
           <Button label="New agent" variant="primary" icon="+" onClick={() => dispatch({ type: "openModal", modal: "new-agent" })} />
         </div>
       </div>
+      {shown.length === 0 ? (
+        <Notice>{`No agents deployed to ${state.env} yet.`}</Notice>
+      ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 16 }}>
-        {agents.map((a) => (
+        {shown.map((a) => (
           <Card key={a.id}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
               <Dot color={C.brand} size={9} />
@@ -143,6 +156,7 @@ export function WiredAgents() {
           </Card>
         ))}
       </div>
+      )}
     </div>
   );
 }
