@@ -16,7 +16,6 @@ import { Versions } from "./views/Versions";
 import { Connections } from "./views/Connections";
 import { Settings } from "./views/Settings";
 import { AgentDetail } from "./views/AgentDetail";
-import { Terminal } from "./views/Terminal";
 
 import { WiredOverview } from "./views/wired/WiredOverview";
 import { WiredAgents } from "./views/wired/WiredAgents";
@@ -30,7 +29,6 @@ import { WiredVersions } from "./views/wired/WiredVersions";
 function Main() {
   const { state } = useStore();
   const wired = isWired();
-  if (state.terminal) return <Terminal />;
   if (state.agentDetail) return wired ? <WiredAgentDetail /> : <AgentDetail />;
   switch (state.nav) {
     case "overview":

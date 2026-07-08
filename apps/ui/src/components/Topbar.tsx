@@ -1,5 +1,4 @@
 import { C } from "../tokens";
-import { hoverBg } from "../lib/style";
 import { useStore } from "../state/store";
 import type { Nav } from "../state/types";
 
@@ -55,7 +54,7 @@ export function Topbar() {
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
         <span style={{ color: C.muted }}>acme-corp</span>
         <span style={{ color: C.disabled }}>/</span>
-        <span style={{ color: C.text }}>{state.terminal ? "CLI view" : CRUMB[state.nav]}</span>
+        <span style={{ color: C.text }}>{CRUMB[state.nav]}</span>
       </div>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
         <div
@@ -72,25 +71,6 @@ export function Topbar() {
           {pill("PROD", isProd, "rgba(62,207,142,.15)", C.brand, () => !envDisabled && dispatch({ type: "setEnv", env: "prod" }))}
           {pill("DEV", envDev, "rgba(191,135,0,.18)", C.warn, () => ghOn && dispatch({ type: "setEnv", env: "dev" }))}
         </div>
-        <button
-          type="button"
-          onClick={() => dispatch({ type: "toggleTerminal" })}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            fontSize: 13,
-            padding: "6px 12px",
-            borderRadius: 7,
-            cursor: "pointer",
-            background: state.terminal ? C.hover : C.card,
-            color: state.terminal ? C.brand : C.text2,
-            border: "1px solid " + (state.terminal ? C.borderStrong : C.border),
-          }}
-          {...hoverBg(state.terminal ? C.hover : C.card, C.hover)}
-        >
-          <span style={{ fontFamily: C.mono, fontSize: 13 }}>❯_</span> CLI view
-        </button>
       </div>
     </div>
   );

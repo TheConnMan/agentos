@@ -17,7 +17,6 @@ export function initialState(level: FixtureLevel): AppState {
     level,
     nav: "overview",
     env: "prod",
-    terminal: false,
     obsTab: "traces",
     evalTab: "suite",
     metricRange: "6h",
@@ -55,7 +54,6 @@ function levelReset(s: AppState, level: FixtureLevel): AppState {
     nav: "overview",
     modal: null,
     agentDetail: null,
-    terminal: false,
     matrixRun: false,
     traceOpen: null,
     tracesAgentId: null,
@@ -74,7 +72,7 @@ export function reducer(s: AppState, a: Action): AppState {
     case "setLevel":
       return levelReset(s, a.level);
     case "go":
-      return { ...s, nav: a.nav, terminal: false, agentDetail: null, traceOpen: null, tracesAgentId: null };
+      return { ...s, nav: a.nav, agentDetail: null, traceOpen: null, tracesAgentId: null };
     case "openModal":
       return { ...s, modal: a.modal };
     case "closeModal":
@@ -83,8 +81,6 @@ export function reducer(s: AppState, a: Action): AppState {
       return { ...s, toast: a.message };
     case "setEnv":
       return { ...s, env: a.env };
-    case "toggleTerminal":
-      return { ...s, terminal: !s.terminal };
     case "setObsTab":
       return { ...s, obsTab: a.tab, traceOpen: null, tracesAgentId: null };
     case "viewTraces":
@@ -94,7 +90,6 @@ export function reducer(s: AppState, a: Action): AppState {
         ...s,
         nav: "observability",
         obsTab: "traces",
-        terminal: false,
         agentDetail: null,
         traceOpen: null,
         tracesAgentId: a.agentId,
@@ -141,7 +136,6 @@ export function reducer(s: AppState, a: Action): AppState {
         deployIssues: null,
         deployError: null,
         nav: "overview",
-        terminal: false,
         agentDetail: null,
         confetti: !s.confettiDone,
         confettiDone: true,

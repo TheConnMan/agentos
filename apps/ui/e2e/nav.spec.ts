@@ -22,9 +22,4 @@ test.describe("navigation", () => {
       await expect(page.getByText(marker).first()).toBeVisible();
     });
   }
-
-  test("CLI view flips to the terminal", async ({ page }) => {
-    await page.getByRole("button", { name: /CLI view/ }).click();
-    await expect(page.getByText("zsh — agentos")).toBeVisible();
-  });
 });
