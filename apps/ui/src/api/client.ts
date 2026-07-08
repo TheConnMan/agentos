@@ -394,10 +394,15 @@ export async function getVersionFiles(agentId: string, versionId: string): Promi
   return jsonOrThrow<BundleFiles>(resp);
 }
 
+export type DeploymentStatus = "active" | "inactive";
+
 export interface DeploymentCreate {
   agent_id: string;
   version_id: string;
   environment: Environment;
+  // Optional; the API's DeploymentCreate defaults to "active" server-side. The
+  // rollback path sets it explicitly to redeploy an old version as active.
+  status?: DeploymentStatus;
 }
 
 // Activate a version by creating a deployment for it (status defaults to active

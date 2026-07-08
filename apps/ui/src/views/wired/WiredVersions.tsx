@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { C } from "../../tokens";
-import { Card, SectionTitle, Chip, Dot } from "../../primitives";
+import { Button, Card, SectionTitle, Chip, Dot, Modal } from "../../primitives";
 import { useAgents, useAgentVersions } from "../../api/hooks";
 import { ComingSoon } from "./WiredStubs";
-import type { DeploymentOut, VersionOut } from "../../api/client";
+import { createDeployment, type DeploymentOut, type Environment, type VersionOut } from "../../api/client";
 
 function Notice({ children }: { children: ReactNode }) {
   return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
@@ -39,8 +39,45 @@ function statusColor(status: string | null): string {
 // (environment, status, deployed_at). No Eval column. Agent-scoped via a
 // selector, matching the Cost view. Falls back to ComingSoon when the API is
 // unreachable (there is no fixture leak in wired mode).
+// The version+environment a rollback confirmation is pending for. Local to the
+// table — no global ModalKind — so the confirm dialog is self-contained.
+interface RollbackTarget {
+  versionId: string;
+  versionLabel: string;
+  environment: Environment;
+}
+
 function VersionsTable({ agentId }: { agentId: string }) {
-  const { versions, deployments, activeVersionId, loading, error } = useAgentVersions(agentId);
+  const { versions, deployments, activeVersionId, loading, error, reload } = useAgentVersions(agentId);
+  const [target, setTarget] = useState<RollbackTarget | null>(null);
+  const [rolling, setRolling] = useState(false);
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
+
+  const confirmRollback = async () => {
+    if (!target || rolling) return;
+    setRolling(true);
+    setRollbackError(null);
+    try {
+      await createDeployment({
+        agent_id: agentId,
+        version_id: target.versionId,
+        environment: target.environment,
+        status: "active",
+      });
+      setTarget(null);
+      reload(); // refetch versions + deployments -> the rolled-back version becomes active
+    } catch (e) {
+      setRollbackError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRolling(false);
+    }
+  };
+
+  const cancelRollback = () => {
+    if (rolling) return;
+    setTarget(null);
+    setRollbackError(null);
+  };
 
   if (error) {
     return (
@@ -61,7 +98,7 @@ function VersionsTable({ agentId }: { agentId: string }) {
   }
 
   const rows = buildRows(versions, deployments);
-  const grid = "1.1fr 0.9fr 1fr 1.3fr 1fr";
+  const grid = "1.1fr 0.9fr 1fr 1.3fr 1fr 0.8fr";
   return (
     <Card>
       <div
@@ -75,13 +112,15 @@ function VersionsTable({ agentId }: { agentId: string }) {
           borderBottom: "1px solid " + C.border,
         }}
       >
-        {["Version", "Environment", "Status", "Deployed", "Created by"].map((c) => (
-          <div key={c}>{c}</div>
+        {["Version", "Environment", "Status", "Deployed", "Created by", ""].map((c, i) => (
+          <div key={c || `col-${i}`}>{c}</div>
         ))}
       </div>
       {rows.map((r, i) => {
-        const env = r.deployment?.environment ?? null;
-        const isActive = r.deployment?.status === "active" && r.version.id === activeVersionId;
+        const dep = r.deployment;
+        const env = dep?.environment ?? null;
+        const isActive = dep?.status === "active" && r.version.id === activeVersionId;
+        const canRollback = dep !== null && !isActive;
         return (
           <div
             key={`${r.version.id}-${r.deployment?.id ?? "none"}-${i}`}
@@ -113,16 +152,63 @@ function VersionsTable({ agentId }: { agentId: string }) {
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <Dot color={statusColor(r.deployment?.status ?? null)} size={7} />
-              <span style={{ fontSize: 12.5, color: C.text2 }}>{r.deployment?.status ?? "not deployed"}</span>
+              <Dot color={statusColor(dep?.status ?? null)} size={7} />
+              {/* The currently-served row reads "active" (the live version, named
+                  by the chip too); other rows show their raw deployment status. */}
+              <span data-testid="version-status" style={{ fontSize: 12.5, color: C.text2 }}>
+                {isActive ? "active" : (dep?.status ?? "not deployed")}
+              </span>
             </div>
             <span style={{ color: C.muted, fontFamily: C.mono, fontSize: 12 }}>
               {r.deployment ? new Date(r.deployment.deployed_at).toLocaleString() : "—"}
             </span>
             <span style={{ color: C.text2, fontFamily: C.mono, fontSize: 12 }}>{r.version.created_by}</span>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              {canRollback && dep ? (
+                <Button
+                  label="Roll back"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    setTarget({
+                      versionId: r.version.id,
+                      versionLabel: r.version.version_label,
+                      environment: dep.environment,
+                    })
+                  }
+                />
+              ) : null}
+            </div>
           </div>
         );
       })}
+      {target ? (
+        <Modal onClose={cancelRollback}>
+          <Card style={{ maxWidth: 420 }}>
+            <div style={{ fontSize: 15, fontWeight: 500, color: C.text, marginBottom: 8 }}>Roll back version</div>
+            <div style={{ fontSize: 13, color: C.text2, lineHeight: 1.5, marginBottom: 16 }}>
+              Redeploy{" "}
+              <span style={{ fontFamily: C.mono, color: C.text }}>{target.versionLabel}</span> to{" "}
+              <span style={{ fontFamily: C.mono, color: C.text }}>{target.environment}</span> as the active version.
+              This creates a new deployment; it does not remove existing history.
+            </div>
+            {rollbackError ? (
+              <div style={{ fontSize: 12.5, color: C.destructive, fontFamily: C.mono, marginBottom: 12 }}>
+                Roll back failed: {rollbackError}
+              </div>
+            ) : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Button label="Cancel" variant="ghost" onClick={cancelRollback} disabled={rolling} />
+              <Button
+                label={rolling ? "Rolling back…" : "Roll back"}
+                variant="primary"
+                onClick={() => void confirmRollback()}
+                disabled={rolling}
+              />
+            </div>
+          </Card>
+        </Modal>
+      ) : null}
     </Card>
   );
 }
