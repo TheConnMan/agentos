@@ -47,15 +47,25 @@ _WHITESPACE = re.compile(r"\s+")
 _RUN = re.compile(r"(.)\1{2,}")  # 3+ of the same char in a row
 
 
-class TipsPack(BaseModel):
-    """The "working..." acknowledgment content for one agent."""
+class LoadPack(BaseModel):
+    """Rotating "working..." load lines for one agent (the status of what it is
+    doing: "Working on it!", "Crunching the numbers..."). A separate pack from
+    tips so an agent can enable one without the other."""
 
     model_config = ConfigDict(frozen=True)
 
     enabled: bool = False
-    # Sampled for the first line ("Working on it!", "Crunching the numbers...").
-    working_lines: tuple[str, ...] = ()
-    # Sampled for an optional capability tip line ("I can rank leaks by $").
+    lines: tuple[str, ...] = ()
+
+
+class TipsPack(BaseModel):
+    """Rotating capability tips for one agent ("I can rank leaks by $"). Distinct
+    from load lines: a load line says what the agent is doing right now; a tip
+    advertises what it can do."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
     tips: tuple[str, ...] = ()
 
 
@@ -121,6 +131,7 @@ class BehaviorPacks(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    load: LoadPack = LoadPack()
     tips: TipsPack = TipsPack()
     greeting: GreetingPack = GreetingPack()
     help: HelpPack = HelpPack()
@@ -199,22 +210,25 @@ def match_help(packs: BehaviorPacks, text: str) -> str | None:
     return pack.reply if _matches_bare(pack.phrases, text) else None
 
 
+def sample_load(packs: BehaviorPacks, seed: str) -> str | None:
+    """The sampled "working..." load line for this agent, or None if the load
+    pack is disabled or empty. ``seed`` (e.g. the inbound message ts) makes the
+    choice vary per message while staying reproducible."""
+    pack = packs.load
+    if not pack.enabled:
+        return None
+    return _pick(pack.lines, seed, salt="w:") or None
+
+
 def sample_tip(packs: BehaviorPacks, seed: str) -> str | None:
-    """The sampled "working..." acknowledgment for this agent, or None if the
-    tips pack is disabled or has no content. ``seed`` (e.g. the inbound message
-    ts) makes the choice vary per message while staying reproducible."""
+    """The sampled capability tip for this agent, or None if the tips pack is
+    disabled or empty. Seeded independently of the load line so both can vary off
+    the same message ts. The display surface composes load + tip as it sees fit
+    (e.g. ``"{load}\\n\\nTip: {tip}"``)."""
     pack = packs.tips
     if not pack.enabled:
         return None
-    working = _pick(pack.working_lines, seed, salt="w:")
-    tip = _pick(pack.tips, seed, salt="t:")
-    if working and tip:
-        return f"{working}\n\nTip: {tip}"
-    if working:
-        return working
-    if tip:
-        return f"Tip: {tip}"
-    return None
+    return _pick(pack.tips, seed, salt="t:") or None
 
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})

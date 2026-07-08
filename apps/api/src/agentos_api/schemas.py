@@ -9,14 +9,22 @@ from pydantic import BaseModel, ConfigDict, Field
 from .models import Environment
 
 
-class TipsPackConfig(BaseModel):
-    """The "working..." acknowledgment content for one agent. Mirrors the worker's
-    agentos_worker.behaviorpacks.TipsPack (packs ride on agent config, not the
+class LoadPackConfig(BaseModel):
+    """Rotating "working..." load lines for one agent. Mirrors the worker's
+    agentos_worker.behaviorpacks.LoadPack (packs ride on agent config, not the
     frozen ACI contract, so the shape is duplicated across the layers the way
     BudgetConfig mirrors the ACI Budget)."""
 
     enabled: bool = False
-    working_lines: list[str] = []
+    lines: list[str] = []
+
+
+class TipsPackConfig(BaseModel):
+    """Rotating capability tips for one agent (mirrors behaviorpacks.TipsPack).
+    Separate from LoadPackConfig: a load line is what the agent is doing now, a
+    tip advertises what it can do."""
+
+    enabled: bool = False
     tips: list[str] = []
 
 
@@ -62,6 +70,7 @@ class BehaviorPacksConfig(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    load: LoadPackConfig = LoadPackConfig()
     tips: TipsPackConfig = TipsPackConfig()
     greeting: GreetingPackConfig = GreetingPackConfig()
     help: HelpPackConfig = HelpPackConfig()

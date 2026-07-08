@@ -243,7 +243,7 @@ def test_behavior_packs_round_trip_and_parse() -> None:
             )
             packs_json = (
                 '{"greeting": {"enabled": true, "phrases": ["hi"], "reply": "yo"}, '
-                '"tips": {"enabled": false, "working_lines": [], "tips": []}}'
+                '"load": {"enabled": true, "lines": ["Working..."]}}'
             )
             async with engine.begin() as conn:
                 await conn.execute(

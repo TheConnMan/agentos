@@ -12,6 +12,7 @@ from agentos_worker.behaviorpacks import (
     BehaviorPacks,
     GreetingPack,
     HelpPack,
+    LoadPack,
     Setting,
     SettingError,
     SettingsPack,
@@ -20,6 +21,7 @@ from agentos_worker.behaviorpacks import (
     match_greeting,
     match_help,
     resolve_settings,
+    sample_load,
     sample_tip,
 )
 
@@ -34,12 +36,14 @@ def _packs(
     *,
     greeting: GreetingPack | None = None,
     tips: TipsPack | None = None,
+    load: LoadPack | None = None,
     help: HelpPack | None = None,
     settings: SettingsPack | None = None,
 ) -> BehaviorPacks:
     return BehaviorPacks(
         greeting=greeting or GreetingPack(),
         tips=tips or TipsPack(),
+        load=load or LoadPack(),
         help=help or HelpPack(),
         settings=settings or SettingsPack(),
     )
@@ -127,44 +131,47 @@ def test_help_disabled_or_empty_never_matches() -> None:
     assert match_help(_packs(help=no_reply), "help") is None
 
 
-# -- tip sampler --------------------------------------------------------------
+# -- load + tip samplers (two independent packs) ------------------------------
 
-_TIPS = TipsPack(
-    enabled=True,
-    working_lines=("Working on it!", "Crunching the numbers..."),
-    tips=("I can rank leaks by recoverable $", "Ask me for the top 5"),
-)
+_LOAD = LoadPack(enabled=True, lines=("Working on it!", "Crunching the numbers..."))
+_TIPS = TipsPack(enabled=True, tips=("I can rank leaks by recoverable $", "Ask me for the top 5"))
 
 
-def test_sample_tip_is_deterministic_per_seed() -> None:
-    packs = _packs(tips=_TIPS)
+def test_samplers_are_deterministic_per_seed() -> None:
+    packs = _packs(load=_LOAD, tips=_TIPS)
+    assert sample_load(packs, "ts-123") == sample_load(packs, "ts-123")
     assert sample_tip(packs, "ts-123") == sample_tip(packs, "ts-123")
 
 
-def test_sample_tip_varies_across_seeds() -> None:
-    packs = _packs(tips=_TIPS)
-    seen = {sample_tip(packs, f"ts-{i}") for i in range(20)}
-    assert len(seen) > 1  # not a constant
+def test_samplers_vary_across_seeds() -> None:
+    packs = _packs(load=_LOAD, tips=_TIPS)
+    assert len({sample_load(packs, f"ts-{i}") for i in range(20)}) > 1
+    assert len({sample_tip(packs, f"ts-{i}") for i in range(20)}) > 1
 
 
-def test_sample_tip_composes_working_line_and_tip() -> None:
-    out = sample_tip(_packs(tips=_TIPS), "seed")
-    assert out is not None
-    assert "\n\nTip: " in out
-    first = out.split("\n\n", 1)[0]
-    assert first in _TIPS.working_lines
+def test_sample_load_returns_a_configured_line() -> None:
+    assert sample_load(_packs(load=_LOAD), "seed") in _LOAD.lines
 
 
-def test_sample_tip_disabled_or_empty_returns_none() -> None:
-    assert sample_tip(_packs(), "seed") is None
-    assert sample_tip(_packs(tips=TipsPack(enabled=True)), "seed") is None
+def test_sample_tip_returns_a_configured_tip() -> None:
+    assert sample_tip(_packs(tips=_TIPS), "seed") in _TIPS.tips
 
 
-def test_sample_tip_working_only_and_tip_only() -> None:
-    working_only = TipsPack(enabled=True, working_lines=("Just a sec",))
-    assert sample_tip(_packs(tips=working_only), "s") == "Just a sec"
-    tip_only = TipsPack(enabled=True, tips=("Try /help",))
-    assert sample_tip(_packs(tips=tip_only), "s") == "Tip: Try /help"
+def test_load_and_tips_sample_independently() -> None:
+    # Distinct salts: the two packs vary independently off the same seed, and
+    # each returns its own content only (no composition here).
+    packs = _packs(load=_LOAD, tips=_TIPS)
+    assert sample_load(packs, "s") in _LOAD.lines
+    assert sample_tip(packs, "s") in _TIPS.tips
+
+
+def test_each_pack_off_or_empty_returns_none() -> None:
+    # load off, tips on -> only tips; and vice versa.
+    assert sample_load(_packs(tips=_TIPS), "s") is None
+    assert sample_tip(_packs(load=_LOAD), "s") is None
+    # enabled but empty -> None.
+    assert sample_load(_packs(load=LoadPack(enabled=True)), "s") is None
+    assert sample_tip(_packs(tips=TipsPack(enabled=True)), "s") is None
 
 
 # -- settings pack (schema + coerce/resolve) ----------------------------------
