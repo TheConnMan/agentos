@@ -44,6 +44,12 @@ class TurnState:
 
     side_effect_emitted: bool = False
     error_classification: str | None = None
+    # Assistant text streamed during the turn, accumulated so a DONE result with
+    # an empty ``result`` can still deliver the model's answer. Reasoning models
+    # routed through OpenRouter (e.g. z-ai/glm-5.2) emit the answer as a TextBlock
+    # but their empty-signature thinking block trips the SDK's result extraction,
+    # leaving ``ResultMessage.result`` empty (issue #107).
+    assistant_text: str = ""
 
 
 def translate_message(
@@ -93,6 +99,7 @@ def _translate_assistant(
     for block in message.content:
         if isinstance(block, TextBlock):
             if block.text:
+                state.assistant_text += block.text
                 events.append(TextDelta(text=block.text))
         elif isinstance(block, ToolUseBlock):
             events.append(ToolNote(text=f"running tool {block.name}", tool=block.name))
@@ -125,4 +132,9 @@ def _translate_result(
         events.append(Final(text=text, status=SessionStatus.CLASSIFIED_FAILURE))
         return events
 
-    return [Final(text=message.result or "", status=SessionStatus.DONE)]
+    # The SDK's ``result`` is authoritative when present. When it is empty on an
+    # otherwise-successful turn, fall back to the assistant text streamed this turn
+    # so a reasoning model whose result-extraction returned empty (issue #107)
+    # still delivers its answer. Provider-agnostic: it only fires when result is
+    # empty, so non-reasoning models and the fake-model path are unaffected.
+    return [Final(text=message.result or state.assistant_text, status=SessionStatus.DONE)]

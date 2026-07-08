@@ -8,6 +8,7 @@ from claude_agent_sdk import (
     RateLimitEvent,
     ResultMessage,
     TextBlock,
+    ThinkingBlock,
     ToolUseBlock,
 )
 from claude_agent_sdk.types import RateLimitInfo
@@ -56,6 +57,44 @@ def test_result_success_is_final_done() -> None:
     assert [e.type for e in events] == ["final"]
     assert events[0].status == SessionStatus.DONE
     assert events[0].text == "answer"
+
+
+def test_reasoning_model_empty_result_falls_back_to_assistant_text() -> None:
+    # A reasoning model routed through OpenRouter (e.g. z-ai/glm-5.2) streams the
+    # answer as a TextBlock but the terminal ResultMessage reports success with an
+    # EMPTY result (the empty-signature thinking block trips result extraction).
+    # The delivered Final must carry the assistant text, not "".
+    state = TurnState()
+    assistant = AssistantMessage(
+        content=[
+            TextBlock(text="The sky is blue on a clear day."),
+            ThinkingBlock(thinking="the user asked...", signature=""),
+        ],
+        model="z-ai/glm-5.2",
+    )
+    _translate(assistant, state)  # accumulates text into state
+    result = ResultMessage(
+        subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+        num_turns=1, session_id="s", result="",
+    )
+    events = _translate(result, state)
+    assert [e.type for e in events] == ["final"]
+    assert events[0].status == SessionStatus.DONE
+    assert events[0].text == "The sky is blue on a clear day."
+
+
+def test_result_with_own_text_ignores_accumulated_fallback() -> None:
+    # When the ResultMessage carries its own result, it wins over accumulated text
+    # (non-reasoning models are unaffected by the empty-result fallback).
+    state = TurnState()
+    _translate(AssistantMessage(content=[TextBlock(text="streamed")], model="m"), state)
+    result = ResultMessage(
+        subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+        num_turns=1, session_id="s", result="authoritative",
+    )
+    events = _translate(result, state)
+    assert [e.type for e in events] == ["final"]
+    assert events[0].text == "authoritative"
 
 
 def test_result_error_is_error_then_classified_final() -> None:
