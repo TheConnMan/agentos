@@ -27,15 +27,19 @@
 //! the guard never fires there; and the helm upgrade that connects Slack clears
 //! `worker.slackApiBaseUrl` back to empty, un-wiring the stub in the same step.
 
+use std::env;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
 use crate::api::{Agent, ApiClient};
-use crate::chat::{await_reply, print_continue_hint, resolve_targets, Outcome, SlackStub};
+use crate::chat::{
+    await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
+};
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
 use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent};
+use crate::state::{save_turn, TurnContext, TurnVerb};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
 pub const DEFAULT_USER: &str = "U-agentos-message";
@@ -102,6 +106,35 @@ pub struct MessageOpts {
     /// Local mode only: platform API base URL for the channel lookup. None uses
     /// the compose API default ([`DEFAULT_LOCAL_API_URL`]).
     pub api_url: Option<String>,
+}
+
+fn persist_and_hint(opts: &MessageOpts, verb: TurnVerb, channel: &str, thread_ts: &str) {
+    let ui = crate::ui::ui();
+    let verb_str = match verb {
+        TurnVerb::Local => "local message",
+        TurnVerb::Cluster => "cluster message",
+    };
+    let ctx = TurnContext::from_turn(
+        opts,
+        verb,
+        channel,
+        thread_ts,
+        env::var("AGENTOS_API_KEY").ok(),
+    );
+
+    match env::current_dir().context("resolving the current working directory") {
+        Ok(cwd) => match save_turn(&cwd, &ctx) {
+            Ok(()) => ui.note(&continue_hint_line(verb_str)),
+            Err(err) => {
+                ui.warn(&format!("could not save turn context: {err}"));
+                ui.note(&continue_hint_long_line(verb_str, channel, thread_ts));
+            }
+        },
+        Err(err) => {
+            ui.warn(&format!("could not save turn context: {err}"));
+            ui.note(&continue_hint_long_line(verb_str, channel, thread_ts));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -613,13 +646,13 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             step.done("");
             ui.answer(&reply);
             ui.print_tokens("\n");
-            print_continue_hint("local message", &channel, &thread_ts);
+            persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
             ui.warn("the worker finished the turn but never edited the placeholder");
-            print_continue_hint("local message", &channel, &thread_ts);
+            persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
@@ -763,13 +796,13 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             step.done("");
             ui.answer(&reply);
             ui.print_tokens("\n");
-            print_continue_hint("cluster message", &channel, &thread_ts);
+            persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
             ui.warn("the worker finished the turn but never edited the placeholder");
-            print_continue_hint("cluster message", &channel, &thread_ts);
+            persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {

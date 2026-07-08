@@ -190,6 +190,15 @@ What it does, in order:
 `--dry-run` prints the kubectl/helm command lines, the stub URL, and the enqueue
 description without executing anything.
 
+Use `--continue` to reuse the last successful `cluster message` context from
+`.agentos/last-turn.json` in the current working directory, so only the new text
+is required. Explicit flags override the saved channel, thread, and transport
+settings, the verb must match, and the API key is re-read from
+`$AGENTOS_API_KEY` because the value is never stored. Note that `--continue`
+does not replay `--stream`, `--listen-port`, `--valkey-local-port`,
+`--api-local-port`, or `--user`, so pass any of those again explicitly if the
+original turn used a non-default value.
+
 ### Targeting a deployed agent and continuing a thread
 
 The worker binds a channel to an agent by exact equality on
@@ -238,6 +247,15 @@ suffix). `local message` composes with `--channel`, `--thread`, and
 with a clear error. The compose worker runs the fake model by default (a canned
 reply, no credentials); export a credential and set `AGENTOS_FAKE_MODEL=0` in the
 compose environment for a real model.
+
+Use `--continue` to reuse the last successful `local message` context from
+`.agentos/last-turn.json` in the current working directory, so only the new text
+is required. Explicit flags override the saved channel, thread, and transport
+settings, the verb must match, and the API key is re-read from
+`$AGENTOS_API_KEY` because the value is never stored. Note that `--continue`
+does not replay `--stream`, `--listen-port`, `--valkey-local-port`,
+`--api-local-port`, or `--user`, so pass any of those again explicitly if the
+original turn used a non-default value.
 
 ## Verify
 

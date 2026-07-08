@@ -36,6 +36,9 @@ build/
 # Local working files (plans, scratch, analysis) — never committed
 .projects/
 
+# Local AgentOS runner and turn state
+.agentos/
+
 # Big-plan server sidecars (belong with the .projects working copies, not the repo)
 *.snapshot
 *.comments.json

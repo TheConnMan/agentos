@@ -11,6 +11,7 @@ use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAUL
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
 use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
+use agentos::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
 use agentos::ui::{self, ColorFlag, Ui};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -209,6 +210,11 @@ enum LocalAction {
         /// thread. Pair with --channel to keep multi-turn context.
         #[arg(long)]
         thread: Option<String>,
+        /// Reuse the last turn's context (channel, thread, transport) recorded
+        /// in .agentos/last-turn.json in the working directory; type only the
+        /// new message text.
+        #[arg(long = "continue")]
+        r#continue: bool,
         /// Valkey password (compose default `valkeypass`).
         #[arg(long, default_value = message::DEFAULT_VALKEY_PASSWORD)]
         valkey_password: String,
@@ -225,8 +231,9 @@ enum LocalAction {
         #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
         stream: String,
         /// How long to wait for the worker's reply before printing diagnostics.
-        #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
-        timeout_secs: u64,
+        /// Default: 300 seconds.
+        #[arg(long)]
+        timeout_secs: Option<u64>,
         /// Print the queue and stub plan that a real run would produce, and exit.
         #[arg(long)]
         dry_run: bool,
@@ -346,16 +353,21 @@ enum ClusterAction {
         /// thread. Pair with --channel to keep multi-turn context.
         #[arg(long)]
         thread: Option<String>,
-        /// Kubernetes namespace of the release.
-        #[arg(long, default_value = "agentos")]
-        namespace: String,
-        /// Helm release name.
-        #[arg(long, default_value = "agentos")]
-        release: String,
+        /// Reuse the last turn's context (channel, thread, transport) recorded
+        /// in .agentos/last-turn.json in the working directory; type only the
+        /// new message text.
+        #[arg(long = "continue")]
+        r#continue: bool,
+        /// Kubernetes namespace of the release. Default: agentos.
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Helm release name. Default: agentos.
+        #[arg(long)]
+        release: Option<String>,
         /// Chart path for the wiring `helm upgrade` (run from the repo root for
-        /// the default).
-        #[arg(long, default_value = "charts/agentos")]
-        chart: String,
+        /// the default). Default: charts/agentos.
+        #[arg(long)]
+        chart: Option<String>,
         /// Host the in-cluster worker uses to reach the stub. Omit to auto-detect
         /// the local IP the kernel would use to reach the cluster.
         #[arg(long)]
@@ -385,8 +397,9 @@ enum ClusterAction {
         /// Defaults high because the worker kernel can retry a run up to 3 times
         /// with a 90s sandbox-claim timeout each (worst case near 270s of claim
         /// waits alone), so a shorter ceiling can time out while it is still working.
-        #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
-        timeout_secs: u64,
+        /// Default: 300 seconds.
+        #[arg(long)]
+        timeout_secs: Option<u64>,
         /// Skip pointing the worker at the stub. Wiring is on by default (helm
         /// upgrade + rollout wait); with --no-wire the command refuses to run
         /// unless the worker is already wired, printing the exact command to run.
@@ -555,6 +568,7 @@ async fn main() -> Result<()> {
                 text,
                 channel,
                 thread,
+                r#continue,
                 valkey_password,
                 api_url,
                 api_key,
@@ -563,10 +577,36 @@ async fn main() -> Result<()> {
                 timeout_secs,
                 dry_run,
             } => {
+                let state = if r#continue {
+                    match load_turn(&std::env::current_dir()?)? {
+                        Some(state) => Some(state),
+                        None => anyhow::bail!(
+                            "no previous turn recorded in .agentos/last-turn.json; run a message without --continue first"
+                        ),
+                    }
+                } else {
+                    None
+                };
+                let resolved = apply_continue(
+                    TurnVerb::Local,
+                    CliTurnArgs {
+                        channel,
+                        thread,
+                        namespace: None,
+                        release: None,
+                        chart: None,
+                        listen_host: None,
+                        timeout_secs,
+                        api_url,
+                        api_key,
+                    },
+                    state,
+                    std::env::var("AGENTOS_API_KEY").ok(),
+                )?;
                 message::message(MessageOpts {
                     text,
-                    channel,
-                    thread,
+                    channel: resolved.channel,
+                    thread: resolved.thread,
                     namespace: "agentos".into(),
                     release: "agentos".into(),
                     chart: "charts/agentos".into(),
@@ -575,15 +615,15 @@ async fn main() -> Result<()> {
                     valkey_local_port: message::DEFAULT_VALKEY_LOCAL_PORT,
                     valkey_password,
                     api_local_port: message::DEFAULT_API_LOCAL_PORT,
-                    api_key,
+                    api_key: resolved.api_key,
                     user,
                     stream,
-                    timeout_secs,
+                    timeout_secs: resolved.timeout_secs,
                     wire: true,
                     force_wire: false,
                     dry_run,
                     local: true,
-                    api_url,
+                    api_url: resolved.api_url,
                 })
                 .await
             }
@@ -682,6 +722,7 @@ async fn main() -> Result<()> {
                 text,
                 channel,
                 thread,
+                r#continue,
                 namespace,
                 release,
                 chart,
@@ -698,22 +739,48 @@ async fn main() -> Result<()> {
                 force_wire,
                 dry_run,
             } => {
+                let state = if r#continue {
+                    match load_turn(&std::env::current_dir()?)? {
+                        Some(state) => Some(state),
+                        None => anyhow::bail!(
+                            "no previous turn recorded in .agentos/last-turn.json; run a message without --continue first"
+                        ),
+                    }
+                } else {
+                    None
+                };
+                let resolved = apply_continue(
+                    TurnVerb::Cluster,
+                    CliTurnArgs {
+                        channel,
+                        thread,
+                        namespace,
+                        release,
+                        chart,
+                        listen_host,
+                        timeout_secs,
+                        api_url: None,
+                        api_key,
+                    },
+                    state,
+                    std::env::var("AGENTOS_API_KEY").ok(),
+                )?;
                 message::message(MessageOpts {
                     text,
-                    channel,
-                    thread,
-                    namespace,
-                    release,
-                    chart,
-                    listen_host,
+                    channel: resolved.channel,
+                    thread: resolved.thread,
+                    namespace: resolved.namespace,
+                    release: resolved.release,
+                    chart: resolved.chart,
+                    listen_host: resolved.listen_host,
                     listen_port,
                     valkey_local_port,
                     valkey_password,
                     api_local_port,
-                    api_key,
+                    api_key: resolved.api_key,
                     user,
                     stream,
-                    timeout_secs,
+                    timeout_secs: resolved.timeout_secs,
                     wire: !no_wire,
                     force_wire,
                     dry_run,
