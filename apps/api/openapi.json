@@ -113,6 +113,20 @@
         "title": "AgentUpdate",
         "type": "object"
       },
+      "AppConfig": {
+        "description": "Open app-level config the UI reads before auth (org/workspace name).",
+        "properties": {
+          "org_name": {
+            "title": "Org Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_name"
+        ],
+        "title": "AppConfig",
+        "type": "object"
+      },
       "BehaviorPacksConfig": {
         "description": "An agent's opt-in behavior packs. Validated on write and stored as JSON on\nthe agent row; the worker parses the same JSON at bind time.",
         "properties": {
@@ -2403,6 +2417,27 @@
         "summary": "Read Version Files",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "get_config_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Config",
+        "tags": [
+          "config"
         ]
       }
     },

@@ -269,6 +269,9 @@ api:
   # Single shared API key the UI and CLI authenticate with. Dev default; override
   # (or point at an existingSecret) in any shared deployment.
   apiKey: agentos-dev-key
+  # Human-readable org/workspace name the UI reads from the open /config endpoint.
+  # Override to white-label the app for a deployment.
+  orgName: AgentOS
   # HMAC secret the GitHub git-flow webhook authenticates inbound events with.
   githubWebhookSecret: dev-webhook-secret
   service:

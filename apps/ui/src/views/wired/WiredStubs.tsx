@@ -1,6 +1,7 @@
 import { C } from "../../tokens";
 import { Card, SectionTitle, Chip } from "../../primitives";
 import { ConnectSlackPanel } from "../../components/ConnectSlackPanel";
+import { useWired } from "../../state/wired";
 
 // Honest placeholders for the views not yet backend-driven, so wired mode never
 // leaks fixture data (no fictional deal-desk / eval cases / version rows). They
@@ -64,13 +65,23 @@ export function WiredUsage() {
 }
 
 export function WiredSettings() {
+  const { orgName } = useWired();
   return (
     <div>
       <SectionTitle title="Settings" />
-      <ComingSoon
-        title="Project settings are not wired yet"
-        body="Project name, default model, and provider keys are managed outside the console for now. This view will bind to real settings in a later pass."
-      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
+        <Card>
+          <div style={{ fontSize: 13, color: C.muted, marginBottom: 6 }}>Workspace name</div>
+          <div style={{ fontSize: 15, color: C.text }}>{orgName}</div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Configured on the server. Read-only here for now.
+          </div>
+        </Card>
+        <ComingSoon
+          title="More project settings are not wired yet"
+          body="Default model and provider keys are managed outside the console for now. This view will bind to real settings in a later pass."
+        />
+      </div>
     </div>
   );
 }

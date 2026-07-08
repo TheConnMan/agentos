@@ -21,6 +21,7 @@ from .langfuse import LangfuseClient
 from .routers import (
     agents,
     bundles,
+    config,
     control,
     deployments,
     evals,
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    app.include_router(config.router)
     app.include_router(agents.router)
     app.include_router(deployments.router)
     app.include_router(bundles.router)

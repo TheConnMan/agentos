@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { getAgents, type AgentOut } from "../api/client";
+import { getAgents, getConfig, type AgentOut } from "../api/client";
 import { isWired } from "../api/config";
+
+// Fallback workspace name shown while config is loading or when unwired.
+const DEFAULT_ORG_NAME = "AgentOS";
 
 // The real-data layer for wired mode. It fetches GET /agents and derives whether
 // the account is fresh (onboarding) or has agents (live shell). The fixture demo
@@ -12,9 +15,11 @@ export interface JustDeployed {
   channel: string;
 }
 
-interface WiredData {
+export interface WiredData {
   wired: boolean;
   agents: AgentOut[];
+  /** Configurable org/workspace name from GET /config; falls back to a default. */
+  orgName: string;
   loading: boolean;
   error: string | null;
   refetch: () => void;
@@ -29,6 +34,7 @@ const Ctx = createContext<WiredData | null>(null);
 export function WiredProvider({ children }: { children: ReactNode }) {
   const wired = isWired();
   const [agents, setAgents] = useState<AgentOut[]>([]);
+  const [orgName, setOrgName] = useState(DEFAULT_ORG_NAME);
   const [loading, setLoading] = useState(wired);
   const [error, setError] = useState<string | null>(null);
   const [justDeployed, setJustDeployed] = useState<JustDeployed | null>(null);
@@ -52,6 +58,13 @@ export function WiredProvider({ children }: { children: ReactNode }) {
         setError(String(e));
         setLoading(false);
       });
+    // Org name is chrome-only; a failure here must not block the agent list, so
+    // it swallows errors and keeps the default rather than surfacing on `error`.
+    getConfig()
+      .then((cfg) => {
+        if (live && cfg.org_name) setOrgName(cfg.org_name);
+      })
+      .catch(() => {});
     return () => {
       live = false;
     };
@@ -61,6 +74,7 @@ export function WiredProvider({ children }: { children: ReactNode }) {
     () => ({
       wired,
       agents,
+      orgName,
       loading,
       error,
       refetch,
@@ -68,7 +82,7 @@ export function WiredProvider({ children }: { children: ReactNode }) {
       markDeployed: (d) => setJustDeployed(d),
       clearDeployed: () => setJustDeployed(null),
     }),
-    [wired, agents, loading, error, refetch, justDeployed],
+    [wired, agents, orgName, loading, error, refetch, justDeployed],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

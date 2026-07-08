@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # Single shared API key. Dev-only default; override in any shared deployment.
     api_key: str = "agentos-dev-key"
 
+    # Human-readable org/workspace name the UI reads (open /config endpoint) to
+    # brand the app. Overridable via ORG_NAME for a white-labeled deployment.
+    org_name: str = "AgentOS"
+
     # Langfuse proxy target (the dev project keys baked into compose.dev.yaml).
     langfuse_host: str = "http://localhost:23000"
     langfuse_public_key: str = "pk-lf-agentos-dev"
