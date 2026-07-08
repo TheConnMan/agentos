@@ -4,8 +4,10 @@ Per-agent, opt-in UX touches applied around a turn, so an agent owner can enable
 them for their deployments without imposing them on every other agent on the
 install:
 
-- **tips** -- a sampled "working..." line (optionally with a capability tip)
-  shown while a turn runs.
+- **load** -- a sampled "working..." load line shown while a turn runs.
+- **tips** -- a sampled capability tip ("I can rank leaks by $"). Separate from
+  load: a load line is what the agent is doing now, a tip advertises what it can
+  do, and an agent can enable either without the other.
 - **greeting** -- a canned reply to a *bare* greeting ("hi", "hey there team")
   that never calls the model.
 - **help** -- a canned reply to a *bare* help / "what can you do" request, also
@@ -14,7 +16,7 @@ install:
   template's user-settings battery), with platform-owned validation. Schema only
   in this PR; the durable override store and edit UI are a deferred runtime.
 
-These example packs are illustrative, not the point. The point is the mechanism: a
+These are illustrative, not the point. The point is the mechanism: a
 per-agent, opt-in, declarative config layer, resolved at bind time, that an owner
 enables for their own deployments with no effect on any other agent. New pack
 types slot into the same mechanism. The battery-by-battery mapping below shows
@@ -38,15 +40,17 @@ The substrate, end to end, minus the kernel call sites:
   (migration `0005`), validated by `schemas.BehaviorPacksConfig`, accepted on
   `POST /agents`, and read/written via `GET|PUT /agents/{id}/behavior-packs`
   (mirrors the budget control endpoints). NULL reads as all-off.
-- **Logic** (`apps/worker/behaviorpacks.py`): `sample_tip(packs, seed)`,
-  `match_greeting(packs, text)`, `match_help(packs, text)`, plus the settings
-  pack's `coerce_setting(setting, raw)` and `resolve_settings(packs, overrides)`.
-  Pure stdlib, fully unit-tested. The two matchers share one bare-utterance core:
-  they return a reply only for a phrase said alone (or with trailing filler); a
-  phrase glued to a real request ("hi show me the report") returns `None` and
-  falls through to the model. `resolve_settings` layers a validated override over
-  each declared default and ignores unknown/invalid keys, so a stale store can
-  never break resolution.
+- **Logic** (`apps/worker/behaviorpacks.py`): `sample_load(packs, seed)`,
+  `sample_tip(packs, seed)`, `match_greeting(packs, text)`,
+  `match_help(packs, text)`, plus the settings pack's `coerce_setting(setting,
+  raw)` and `resolve_settings(packs, overrides)`. Pure stdlib, fully unit-tested.
+  `load` and `tips` sample independently off the same seed (distinct salts), each
+  returning only its own content; the display surface composes them. The two
+  matchers share one bare-utterance core: a reply only for a phrase said alone
+  (or with trailing filler); a phrase glued to a real request ("hi show me the
+  report") returns `None` and falls through to the model. `resolve_settings`
+  layers a validated override over each declared default and ignores
+  unknown/invalid keys, so a stale store can never break resolution.
 - **Binding** (`apps/worker/binding.py`, not the sacred kernel): the resolver
   now selects `behavior_packs`, carries it on `ResolvedDeployment`, and exposes
   `BindingResolver.packs_for(resolved) -> BehaviorPacks`.
@@ -93,12 +97,16 @@ The intended integration points, once that review is scheduled:
    *new* turn (a follow-up mid-thread is still a steer; do not short-circuit a
    thread with a live turn).
 
-2. **Tips first-edit** -- in `Kernel._consume`, seed the `_ThrottledReply` with
-   the sampled working line so the dispatcher's generic placeholder is replaced
-   by the per-agent line before the first `text_delta` arrives:
+2. **Load/tips first-edit** -- in `Kernel._consume`, seed the `_ThrottledReply`
+   with the sampled load line (optionally plus a tip) so the dispatcher's generic
+   placeholder is replaced by the per-agent line before the first `text_delta`
+   arrives. (This is also the surface the shimmer status can draw from instead of
+   generic text, once wired.)
 
    ```python
-   opener = sample_tip(packs, qevent.thread_ts)
+   load = sample_load(packs, qevent.thread_ts)
+   tip = sample_tip(packs, qevent.thread_ts)
+   opener = "\n\nTip: ".join(x for x in (load, tip) if x) or None
    if opener is not None:
        await self._sink.update(channel=..., ts=qevent.placeholder_ts, text=opener)
    ```
@@ -123,7 +131,8 @@ pack.
 
 | Battery | Disposition | Why |
 |---|---|---|
-| Working status / tips | **Pack** (`tips`) | Pure data (lines + tips) sampled by a platform function. Shipped. |
+| Working status (load lines) | **Pack** (`load`) | Pure data (rotating load lines) sampled by a platform function. |
+| Capability tips | **Pack** (`tips`) | Pure data (rotating tips), sampled independently of load lines. |
 | Greeting detection | **Pack** (`greeting`) | Data (phrases + reply), deterministic pre-model matcher. Shipped. |
 | Help / "what can you do" | **Pack** (`help`) | Same shape as greeting; the niceties battery's help half. Shipped. |
 | Runtime settings / knobs | **Pack** (`settings`, schema) | The editable-settings allowlist is declarative; shipped with platform-owned validation (`coerce_setting`/`resolve_settings`). The durable override store + edit UI are a deferred runtime. |

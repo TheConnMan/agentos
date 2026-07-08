@@ -53,11 +53,8 @@ def test_put_then_get_round_trips(
 ) -> None:
     agent = _create_agent(client, auth_headers)
     config = {
-        "tips": {
-            "enabled": True,
-            "working_lines": ["Working on it!"],
-            "tips": ["Ask me for the top 5"],
-        },
+        "load": {"enabled": True, "lines": ["Working on it!"]},
+        "tips": {"enabled": True, "tips": ["Ask me for the top 5"]},
         "greeting": {"enabled": True, "phrases": ["hey"], "reply": "hello!"},
         "help": {"enabled": True, "phrases": ["help"], "reply": "here is help"},
         "settings": {
@@ -75,7 +72,8 @@ def test_put_then_get_round_trips(
     resp = client.get(f"/agents/{agent['id']}/behavior-packs", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     got = resp.json()
-    assert got["tips"]["working_lines"] == ["Working on it!"]
+    assert got["load"]["lines"] == ["Working on it!"]
+    assert got["tips"]["tips"] == ["Ask me for the top 5"]
     assert got["greeting"]["reply"] == "hello!"
     assert got["help"]["reply"] == "here is help"
     assert got["settings"]["settings"][0]["key"] == "page_size"

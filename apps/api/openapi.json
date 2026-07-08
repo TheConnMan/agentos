@@ -132,6 +132,13 @@
               "reply": ""
             }
           },
+          "load": {
+            "$ref": "#/components/schemas/LoadPackConfig",
+            "default": {
+              "enabled": false,
+              "lines": []
+            }
+          },
           "settings": {
             "$ref": "#/components/schemas/SettingsPackConfig",
             "default": {
@@ -143,8 +150,7 @@
             "$ref": "#/components/schemas/TipsPackConfig",
             "default": {
               "enabled": false,
-              "tips": [],
-              "working_lines": []
+              "tips": []
             }
           }
         },
@@ -616,6 +622,26 @@
         "title": "KillState",
         "type": "object"
       },
+      "LoadPackConfig": {
+        "description": "Rotating \"working...\" load lines for one agent. Mirrors the worker's\nagentos_worker.behaviorpacks.LoadPack (packs ride on agent config, not the\nfrozen ACI contract, so the shape is duplicated across the layers the way\nBudgetConfig mirrors the ACI Budget).",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "title": "LoadPackConfig",
+        "type": "object"
+      },
       "MetricPoint": {
         "properties": {
           "ts": {
@@ -913,7 +939,7 @@
         "type": "object"
       },
       "TipsPackConfig": {
-        "description": "The \"working...\" acknowledgment content for one agent. Mirrors the worker's\nagentos_worker.behaviorpacks.TipsPack (packs ride on agent config, not the\nfrozen ACI contract, so the shape is duplicated across the layers the way\nBudgetConfig mirrors the ACI Budget).",
+        "description": "Rotating capability tips for one agent (mirrors behaviorpacks.TipsPack).\nSeparate from LoadPackConfig: a load line is what the agent is doing now, a\ntip advertises what it can do.",
         "properties": {
           "enabled": {
             "default": false,
@@ -926,14 +952,6 @@
               "type": "string"
             },
             "title": "Tips",
-            "type": "array"
-          },
-          "working_lines": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Working Lines",
             "type": "array"
           }
         },
