@@ -160,8 +160,8 @@ def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
     Shared by the runs binding and the eval consumer so both lanes boot the
     runner the same way: fake_model gates the canned model (no credential
     needed); credentials is forwarded only when set and never logged. The local
-    model demo path injects a generic Anthropic-compatible base URL and optional
-    model while leaving fake_model unset.
+    model demo path injects a generic Anthropic compatible base URL when
+    configured; an explicit model is forwarded whenever set.
     """
     if config.fake_model:
         env[FAKE_MODEL_ENV] = "1"
@@ -169,5 +169,5 @@ def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
         env[CREDENTIALS_ENV] = config.credentials
     if config.model_base_url:
         env[BASE_URL_ENV] = config.model_base_url
-        if config.model:
-            env[MODEL_ENV] = config.model
+    if config.model:
+        env[MODEL_ENV] = config.model
