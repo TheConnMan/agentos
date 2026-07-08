@@ -99,10 +99,14 @@ class FakeSink(SlackSink):
 
     def __init__(self) -> None:
         self.updates: list[tuple[str, str, str]] = []
+        self.status_sets: list[tuple[str, str, str]] = []
         self.status_clears: list[tuple[str, str]] = []
 
     async def update(self, *, channel: str, ts: str, text: str) -> None:
         self.updates.append((channel, ts, text))
+
+    async def set_status(self, *, channel: str, thread_ts: str, status: str) -> None:
+        self.status_sets.append((channel, thread_ts, status))
 
     async def clear_status(self, *, channel: str, thread_ts: str) -> None:
         self.status_clears.append((channel, thread_ts))

@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 from aci_protocol import Final, SessionStatus, TextDelta
 from agentos_dispatcher.queue import QueuedSlackEvent
+from agentos_worker.behaviorpacks import BehaviorPacks
 from agentos_worker.binding import (
     AGENT_ID_ENV,
     BUDGET_ENV,
@@ -43,6 +44,9 @@ class StubBinding:
         if resolved.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = resolved.bundle_ref
         return env
+
+    def packs_for(self, resolved: ResolvedDeployment) -> BehaviorPacks:
+        return BehaviorPacks.from_config(resolved.behavior_packs)
 
 
 def _resolved(agent_id: uuid.UUID, *, bundle: str | None = "bundles/x.zip") -> ResolvedDeployment:
@@ -185,5 +189,60 @@ def test_kill_interrupts_a_live_turn(make_harness) -> None:
 
             await t1
             assert h.sink.last_text == "stopped"
+
+    asyncio.run(go())
+
+
+def _resolved_with_packs(behavior_packs: dict) -> ResolvedDeployment:
+    return ResolvedDeployment(
+        agent_id=uuid.uuid4(),
+        version_id=uuid.uuid4(),
+        version_label="v1",
+        bundle_ref="bundles/x.zip",
+        max_usd_per_day=None,
+        max_output_tokens_per_run=None,
+        behavior_packs=behavior_packs,
+    )
+
+
+def test_shimmer_caption_uses_the_agents_load_pack(make_harness) -> None:
+    # Connector: with shimmer on, the kernel sets the assistant status to the
+    # agent's sampled load line (+ tip), not the dispatcher's generic text.
+    async def go() -> None:
+        packs = {
+            "load": {"enabled": True, "lines": ["Crunching the numbers..."]},
+            "tips": {"enabled": True, "tips": ["I can rank leaks by $"]},
+        }
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding, shimmer=True) as h:
+            h.runner.default_script = [Final(text="done", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", channel="C-bound", thread="tSh"))
+            assert h.sink.status_sets, "expected a shimmer caption to be set"
+            _, thread_ts, caption = h.sink.status_sets[-1]
+            assert thread_ts == "tSh"
+            assert caption == "Crunching the numbers...\n\nTip: I can rank leaks by $"
+
+    asyncio.run(go())
+
+
+def test_shimmer_no_caption_when_agent_has_no_load_or_tips(make_harness) -> None:
+    # Shimmer on but the agent enables neither pack: the kernel sets no caption,
+    # so the dispatcher's generic status stays.
+    async def go() -> None:
+        binding = StubBinding({"C-bound": _resolved_with_packs({})})
+        async with make_harness(binding=binding, shimmer=True) as h:
+            h.runner.default_script = [Final(text="done", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", channel="C-bound"))
+            assert h.sink.status_sets == []
+
+
+def test_shimmer_off_never_sets_a_caption(make_harness) -> None:
+    async def go() -> None:
+        packs = {"load": {"enabled": True, "lines": ["Working..."]}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:  # shimmer defaults off
+            h.runner.default_script = [Final(text="done", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", channel="C-bound"))
+            assert h.sink.status_sets == []
 
     asyncio.run(go())
