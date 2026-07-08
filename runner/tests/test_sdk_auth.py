@@ -8,10 +8,15 @@ from __future__ import annotations
 import pytest
 from agentos_runner.sdk_auth import (
     API_KEY_ENV,
+    AUTH_TOKEN_ENV,
+    BASE_URL_ENV,
     CREDENTIALS_ENV,
+    NO_OP_API_KEY,
     OAUTH_TOKEN_ENV,
+    OPENROUTER_BASE_URL,
     UnsupportedCredentialError,
     resolve_model_credential,
+    resolve_sdk_env,
 )
 
 
@@ -47,13 +52,33 @@ def test_explicit_sdk_credential_wins_over_agentos_credentials() -> None:
     assert API_KEY_ENV not in env
 
 
-@pytest.mark.parametrize("foreign", ["sk-or-PLACEHOLDER", "sk-PLACEHOLDER"])
+@pytest.mark.parametrize("foreign", ["sk-PLACEHOLDER"])
 def test_foreign_key_is_rejected_loudly(foreign: str) -> None:
     with pytest.raises(UnsupportedCredentialError) as exc:
         resolve_model_credential({CREDENTIALS_ENV: foreign})
     msg = str(exc.value)
     assert "Anthropic API key" in msg and "Claude Code OAuth token" in msg
     assert foreign not in msg  # the credential value never appears in the error
+
+
+def test_openrouter_key_is_plumbed_to_base_url_override() -> None:
+    env = {CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
+    resolve_model_credential(env)
+
+    assert env[BASE_URL_ENV] == OPENROUTER_BASE_URL
+    assert env[AUTH_TOKEN_ENV] == "sk-or-PLACEHOLDER"
+    # Empty string would fail the bundled Claude CLI auth gate.
+    assert env[API_KEY_ENV] == NO_OP_API_KEY
+    assert env[API_KEY_ENV] != ""
+    assert env[OAUTH_TOKEN_ENV] == ""
+
+
+def test_explicit_sdk_credential_wins_over_openrouter_reference() -> None:
+    env = {API_KEY_ENV: "sk-ant-EXPLICIT", CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
+    resolve_model_credential(env)
+
+    assert env[API_KEY_ENV] == "sk-ant-EXPLICIT"
+    assert BASE_URL_ENV not in env
 
 
 def test_no_credential_is_a_noop() -> None:
@@ -82,6 +107,9 @@ def test_base_url_override_sets_sdk_base_url_and_placeholder_api_key() -> None:
     # The OAuth token is blanked so an inherited token cannot win over the
     # placeholder + overridden base URL.
     assert override[OAUTH_TOKEN_ENV] == ""
+    # The Bearer token is blanked too so an inherited ANTHROPIC_AUTH_TOKEN
+    # cannot leak to the overridden (local/third-party) endpoint.
+    assert override[AUTH_TOKEN_ENV] == ""
 
 
 def test_base_url_override_is_absent_when_env_is_missing() -> None:
@@ -94,3 +122,43 @@ def test_base_url_override_is_absent_when_env_is_empty() -> None:
     from agentos_runner.sdk_auth import BASE_URL_ENV, resolve_base_url_override
 
     assert resolve_base_url_override({BASE_URL_ENV: ""}) is None
+
+
+def test_resolve_sdk_env_ollama_returns_override_dict() -> None:
+    # Base URL set, no sk-or- credential: generic override mode. Returns the
+    # override dict for ClaudeAgentOptions.env; the Bearer token is blanked.
+    env = {BASE_URL_ENV: "http://ollama:11434"}
+    override = resolve_sdk_env(env)
+
+    assert override is not None
+    assert override[BASE_URL_ENV] == "http://ollama:11434"
+    assert override[API_KEY_ENV] == NO_OP_API_KEY
+    assert override[AUTH_TOKEN_ENV] == ""
+
+
+def test_resolve_sdk_env_plain_anthropic_key_mutates_env() -> None:
+    # sk-ant- credential, no base URL: returns None, mutates env with the API key.
+    env = {CREDENTIALS_ENV: "sk-ant-PLACEHOLDER"}
+    assert resolve_sdk_env(env) is None
+    assert env[API_KEY_ENV] == "sk-ant-PLACEHOLDER"
+    assert BASE_URL_ENV not in env
+
+
+def test_resolve_sdk_env_openrouter_alone_mutates_env() -> None:
+    # sk-or- credential, no preset base URL: returns None; env gets the
+    # OpenRouter base URL, the Bearer token, and the placeholder.
+    env = {CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
+    assert resolve_sdk_env(env) is None
+    assert env[BASE_URL_ENV] == OPENROUTER_BASE_URL
+    assert env[AUTH_TOKEN_ENV] == "sk-or-PLACEHOLDER"
+    assert env[API_KEY_ENV] == NO_OP_API_KEY
+
+
+def test_resolve_sdk_env_openrouter_with_preset_base_url_sets_bearer() -> None:
+    # P2 regression: an operator sets ANTHROPIC_BASE_URL AND passes an sk-or-
+    # credential. The sk-or- key must still be routed (Bearer token set), not
+    # skipped by the generic base-URL override.
+    env = {BASE_URL_ENV: "https://openrouter.ai/api", CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
+    assert resolve_sdk_env(env) is None
+    assert env[AUTH_TOKEN_ENV] == "sk-or-PLACEHOLDER"
+    assert env[API_KEY_ENV] == NO_OP_API_KEY
