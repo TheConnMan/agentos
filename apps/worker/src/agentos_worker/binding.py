@@ -48,6 +48,8 @@ SESSION_ID_ENV = "AGENTOS_SESSION_ID"
 AGENT_ID_ENV = "AGENTOS_AGENT_ID"
 FAKE_MODEL_ENV = "AGENTOS_FAKE_MODEL"
 CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
+BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+MODEL_ENV = "AGENTOS_MODEL"
 
 _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
@@ -157,9 +159,15 @@ def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
 
     Shared by the runs binding and the eval consumer so both lanes boot the
     runner the same way: fake_model gates the canned model (no credential
-    needed); credentials is forwarded only when set and never logged.
+    needed); credentials is forwarded only when set and never logged. The local
+    model demo path injects a generic Anthropic-compatible base URL and optional
+    model while leaving fake_model unset.
     """
     if config.fake_model:
         env[FAKE_MODEL_ENV] = "1"
     if config.credentials:
         env[CREDENTIALS_ENV] = config.credentials
+    if config.model_base_url:
+        env[BASE_URL_ENV] = config.model_base_url
+        if config.model:
+            env[MODEL_ENV] = config.model

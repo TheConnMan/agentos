@@ -207,6 +207,23 @@ minio:
     limits: { cpu: 500m, memory: 512Mi }
 
 # ---------------------------------------------------------------------------
+# Local inference endpoint for demo clusters. Opt in only: fake model stays the
+# default, and production agent paths should use the external model allowlist.
+# ---------------------------------------------------------------------------
+inference:
+  deploy: false
+  image: ollama/ollama:0.24.0
+  model: qwen3:4b
+  port: 11434
+  pullModel: true
+  persistence:
+    enabled: false
+    size: 10Gi
+  resources: {}
+  service:
+    port: 11434
+
+# ---------------------------------------------------------------------------
 # OTel Collector. Receives OTLP (gRPC 4317 / HTTP 4318) from app services and
 # forwards to Langfuse over HTTP (Langfuse's OTLP ingest is HTTP-only). Deploy
 # false to send app traces to an external collector.

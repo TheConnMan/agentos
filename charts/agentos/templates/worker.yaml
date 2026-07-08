@@ -101,8 +101,9 @@ spec:
             # Runner model passthrough: the worker injects these into every claim
             # (fake model needs no credential; a real credential comes from the
             # chart Secret and is only wired when one is configured).
+            {{- $claimFakeModel := and .Values.agentSandbox.runner.fakeModel (not .Values.inference.deploy) }}
             - name: AGENTOS_FAKE_MODEL
-              value: {{ ternary "1" "0" .Values.agentSandbox.runner.fakeModel | quote }}
+              value: {{ ternary "1" "0" $claimFakeModel | quote }}
             {{- if .Values.agentSandbox.runner.credentials }}
             - name: AGENTOS_CREDENTIALS
               valueFrom:

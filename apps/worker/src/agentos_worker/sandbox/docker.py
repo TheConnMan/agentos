@@ -265,6 +265,16 @@ class DockerSandboxClient:
         tmp = tempfile.mkdtemp(prefix="agentos-bundle-")
         try:
             root = extract_bundle(data, Path(tmp))
+            # The mount is read-only and the runner is non-root (uid 1000), so the
+            # staged bundle must be group/other readable+traversable; mkdtemp
+            # defaults to 0700, which the non-root runner cannot enter.
+            os.chmod(tmp, 0o755)
+            for dirpath, dirnames, filenames in os.walk(tmp):
+                for d in dirnames:
+                    os.chmod(os.path.join(dirpath, d), 0o755)
+                for f in filenames:
+                    p = os.path.join(dirpath, f)
+                    os.chmod(p, os.stat(p).st_mode | 0o044)
         except Exception:
             shutil.rmtree(tmp, ignore_errors=True)
             raise

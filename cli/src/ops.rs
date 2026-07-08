@@ -18,6 +18,7 @@ use tokio::process::Command;
 pub struct OpsCommand {
     pub program: String,
     pub args: Vec<CmdArg>,
+    pub env: Vec<(String, String)>,
 }
 
 /// A single argv token. `SecretSet` is a `helm --set key=value` whose value is a
@@ -52,7 +53,13 @@ impl OpsCommand {
         Self {
             program: program.to_string(),
             args,
+            env: Vec::new(),
         }
+    }
+
+    pub fn with_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.env = env;
+        self
     }
 
     /// The argv tail (real values) handed to `tokio::process::Command`.
@@ -63,7 +70,13 @@ impl OpsCommand {
     /// The full shell-quoted command line with secrets masked, one line as it
     /// would be typed into a shell.
     pub fn display(&self) -> String {
-        let mut parts = vec![shell_quote(&self.program)];
+        let mut env = self.env.clone();
+        env.sort();
+        let mut parts: Vec<String> = env
+            .iter()
+            .map(|(key, value)| shell_quote(&format!("{key}={value}")))
+            .collect();
+        parts.push(shell_quote(&self.program));
         for a in &self.args {
             parts.push(shell_quote(&a.masked()));
         }
@@ -129,6 +142,7 @@ pub struct UpOpts {
     /// `AGENTOS_MODEL_CREDENTIALS`. `Some(non-empty)` enables the real model and
     /// opens egress to the provider; `None` installs sealed (fake model).
     pub credentials: Option<String>,
+    pub local_model: Option<String>,
 }
 
 pub struct DownOpts {
@@ -177,7 +191,12 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
         args.push(plain("--set"));
         args.push(plain("langfuse.web.service.type=NodePort"));
     }
-    if let Some(credentials) = &o.credentials {
+    if let Some(model) = &o.local_model {
+        args.push(plain("--set"));
+        args.push(plain("inference.deploy=true"));
+        args.push(plain("--set"));
+        args.push(plain(format!("inference.model={model}")));
+    } else if let Some(credentials) = &o.credentials {
         args.push(plain("--set"));
         args.push(plain("agentSandbox.runner.fakeModel=false"));
         args.push(plain("--set"));
@@ -337,6 +356,7 @@ pub(crate) fn require_on_path(bin: &str) -> Result<()> {
 pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, String)> {
     let output = Command::new(&cmd.program)
         .args(cmd.argv())
+        .envs(cmd.env.iter().cloned())
         .output()
         .await
         .with_context(|| format!("failed to invoke `{}`; is it on PATH?", cmd.program))?;
@@ -393,6 +413,8 @@ pub async fn up(opts: UpOpts) -> Result<()> {
     let cmds = up_commands(&opts);
     if opts.credentials.is_some() {
         ui.note("real model enabled; egress opened to the model provider");
+    } else if opts.local_model.is_some() {
+        ui.note("local model enabled; installing the chart inference deployment");
     } else if !opts.fake_model {
         ui.warn(
             "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model and sealed egress",
@@ -710,6 +732,7 @@ mod tests {
             set: vec![],
             fake_model: false,
             credentials: None,
+            local_model: None,
         });
         assert_eq!(cmds.len(), 1);
         let line = cmds[0].display();
@@ -729,6 +752,7 @@ mod tests {
             set: vec![],
             fake_model: false,
             credentials: None,
+            local_model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("NodePort"), "{line}");
@@ -744,6 +768,7 @@ mod tests {
             set: vec!["worker.replicas=2".into(), "dispatcher.deploy=false".into()],
             fake_model: false,
             credentials: None,
+            local_model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -763,6 +788,7 @@ mod tests {
             set: vec![],
             fake_model: false,
             credentials: None,
+            local_model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("agentSandbox.runner.fakeModel"), "{line}");
@@ -781,6 +807,7 @@ mod tests {
             set: vec![],
             fake_model: true,
             credentials: None,
+            local_model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("agentSandbox.runner"), "{line}");
@@ -796,6 +823,7 @@ mod tests {
             set: vec![],
             fake_model: false,
             credentials: Some("sk-ant-secretsecret".into()),
+            local_model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -841,6 +869,52 @@ mod tests {
         // Empty and absent both mean sealed.
         assert_eq!(resolve_up_credentials(false, Some(String::new())), None);
         assert_eq!(resolve_up_credentials(false, None), None);
+    }
+
+    #[test]
+    fn with_env_stores_the_pairs() {
+        let cmd =
+            OpsCommand::new("docker", vec![plain("ps")]).with_env(vec![("A".into(), "1".into())]);
+        assert_eq!(cmd.env, vec![("A".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn display_renders_sorted_env_before_program() {
+        let cmd = OpsCommand::new("docker", vec![plain("ps")])
+            .with_env(vec![("B".into(), "2".into()), ("A".into(), "1".into())]);
+        assert!(cmd.display().starts_with("A=1 "));
+    }
+
+    #[test]
+    fn up_local_model_adds_inference_sets() {
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: true,
+            set: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: Some("qwen3:4b".into()),
+        });
+        let line = cmds[0].display();
+        assert!(line.contains("--set inference.deploy=true"), "{line}");
+        assert!(line.contains("--set inference.model=qwen3:4b"), "{line}");
+    }
+
+    #[test]
+    fn up_without_local_model_omits_inference_sets() {
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: true,
+            set: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(!line.contains("inference.deploy"), "{line}");
+        assert!(!line.contains("inference.model"), "{line}");
     }
 
     #[test]

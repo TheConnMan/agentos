@@ -202,11 +202,18 @@ spec:
             - name: HOME
               value: {{ $runner.hardening.home | quote }}
             {{- end }}
-            {{- if $runner.fakeModel }}
+            {{- if and $runner.fakeModel (not .Values.inference.deploy) }}
             - name: AGENTOS_FAKE_MODEL
               value: "1"
             {{- end }}
-            {{- if $runner.model }}
+            {{- if .Values.inference.deploy }}
+            # Local inference is baked into the warm template so claims keep the
+            # fast bind path while the runner targets the in-cluster endpoint.
+            - name: ANTHROPIC_BASE_URL
+              value: http://{{ include "agentos.fullname" . }}-inference:{{ .Values.inference.service.port }}
+            - name: AGENTOS_MODEL
+              value: {{ .Values.inference.model | quote }}
+            {{- else if $runner.model }}
             # Default model for real runs, baked into the pod template (not
             # per-claim). Per-claim injection would force a cold create
             # (envVarsInjectionPolicy Overrides), so baking it keeps warm-pool

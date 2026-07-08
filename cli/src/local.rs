@@ -8,6 +8,7 @@
 
 use anyhow::{bail, Context, Result};
 
+use crate::commands::OLLAMA_PORT;
 use crate::ops::{plain, require_on_path, run_capture, run_step, OpsCommand};
 
 /// Dev-channel local-candidate filename probed by the artifact resolver.
@@ -34,6 +35,7 @@ const ENDPOINTS: &[(&str, &str)] = &[
 pub struct LocalOpts {
     pub file: String,
     pub dry_run: bool,
+    pub local_model: Option<String>,
 }
 
 pub struct LocalDownOpts {
@@ -59,6 +61,34 @@ fn compose(file: &str, tail: &[&str]) -> OpsCommand {
 
 /// `docker compose -f <file> up -d --wait`.
 pub fn up_command(o: &LocalOpts) -> OpsCommand {
+    if let Some(model) = &o.local_model {
+        return OpsCommand::new(
+            "docker",
+            vec![
+                plain("compose"),
+                plain("--profile"),
+                plain("local-model"),
+                plain("-f"),
+                plain(&o.file),
+                plain("up"),
+                plain("-d"),
+                plain("--wait"),
+            ],
+        )
+        .with_env(vec![
+            ("AGENTOS_FAKE_MODEL".into(), "0".into()),
+            (
+                "AGENTOS_MODEL_BASE_URL".into(),
+                format!("http://ollama:{OLLAMA_PORT}"),
+            ),
+            ("AGENTOS_MODEL".into(), model.clone()),
+            ("AGENTOS_DOCKER_NETWORK".into(), "agentos_default".into()),
+            // Pin the compose project name so the default network is always
+            // `agentos_default`, regardless of the working-directory basename
+            // (which is what compose otherwise derives the project name from).
+            ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
+        ]);
+    }
     compose(&o.file, &["up", "-d", "--wait"])
 }
 
@@ -187,6 +217,15 @@ mod tests {
         LocalOpts {
             file: file.into(),
             dry_run: false,
+            local_model: None,
+        }
+    }
+
+    fn opts_with_local_model(file: &str, model: &str) -> LocalOpts {
+        LocalOpts {
+            file: file.into(),
+            dry_run: false,
+            local_model: Some(model.into()),
         }
     }
 
@@ -197,6 +236,32 @@ mod tests {
             cmd.display(),
             "docker compose -f compose.dev.yaml up -d --wait"
         );
+    }
+
+    #[test]
+    fn up_local_model_uses_profile_and_env() {
+        let cmd = up_command(&opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b"));
+        let display = cmd.display();
+        assert!(display.contains("--profile local-model"), "{display}");
+        assert!(display.contains("up -d --wait"), "{display}");
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+        assert!(cmd.env.contains(&(
+            String::from("AGENTOS_MODEL_BASE_URL"),
+            String::from("http://ollama:11434"),
+        )));
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+        assert!(cmd.env.contains(&(
+            String::from("AGENTOS_DOCKER_NETWORK"),
+            String::from("agentos_default"),
+        )));
+        assert!(cmd.env.contains(&(
+            String::from("COMPOSE_PROJECT_NAME"),
+            String::from("agentos"),
+        )));
     }
 
     #[test]

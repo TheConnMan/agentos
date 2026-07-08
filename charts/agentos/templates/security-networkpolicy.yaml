@@ -115,6 +115,34 @@ spec:
       ports:
         - { protocol: TCP, port: 9000 }
 {{- end }}
+{{- if .Values.inference.deploy }}
+---
+{{/* Allow the runner to reach THIS release's in-cluster inference endpoint.
+     Keeping it as a pod carve-out preserves the external egress allowlist's
+     fail-closed default. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" . }}-runner-allow-inference
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" . "component" "runner-sandbox") | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "agentos.selectorLabels" (dict "root" . "component" "inference") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.inference.port }} }
+{{- end }}
 {{- if $np.allowedEgress }}
 ---
 apiVersion: networking.k8s.io/v1

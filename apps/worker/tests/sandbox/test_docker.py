@@ -195,6 +195,22 @@ def test_get_sandbox_treats_dead_container_as_gone() -> None:
         assert client.get_sandbox("t1") is None, dead
 
 
+def test_prepare_bundle_is_readable_by_nonroot_runner() -> None:
+    # The staged bundle is bind-mounted :ro into a runner running as uid 1000, so
+    # the tree must be group/other traversable+readable. mkdtemp defaults to 0700,
+    # which the non-root runner cannot enter -- _prepare_bundle must widen it.
+    client = _RecordingDocker(
+        image="agentos-runner", bundle_store=_FakeBundleStore(_plugin_tar_gz(wrapper=None))
+    )
+    root = Path(client._prepare_bundle("t1", "bundles/b.tar.gz"))
+    nested_dir = root / ".claude-plugin"
+    nested_file = nested_dir / "plugin.json"
+
+    assert root.stat().st_mode & 0o005 == 0o005  # root dir: o+rx
+    assert nested_dir.stat().st_mode & 0o005 == 0o005  # nested dir: o+rx
+    assert nested_file.stat().st_mode & 0o004 == 0o004  # nested file: o+r
+
+
 def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
     import tempfile
 

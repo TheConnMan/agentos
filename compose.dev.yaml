@@ -141,6 +141,32 @@ services:
       "
     restart: "no"
 
+  ollama:
+    image: ollama/ollama:0.24.0
+    profiles: [local-model]
+    ports:
+      - "21434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 10s
+
+  ollama-pull:
+    image: ollama/ollama:0.24.0
+    profiles: [local-model]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      AGENTOS_MODEL: ${AGENTOS_MODEL:-qwen3:4b}
+    entrypoint: ["/bin/sh", "-c", "ollama pull \"$$AGENTOS_MODEL\""]
+    restart: "no"
+
   langfuse-worker:
     image: langfuse/langfuse-worker:3
     depends_on:
@@ -330,6 +356,13 @@ services:
         condition: service_healthy
       agentos-migrate:
         condition: service_completed_successfully
+      # When the local-model profile is on, wait for the one-shot model pull to
+      # finish (and treat its clean exit as expected success, so `up --wait`
+      # doesn't read it as a failure). required: false keeps the default profile
+      # working: ollama-pull isn't created then, so the worker starts normally.
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
     network_mode: host
     user: "0"
     volumes:
@@ -363,6 +396,14 @@ services:
       - ANTHROPIC_API_KEY
       - CLAUDE_CODE_OAUTH_TOKEN
       - AGENTOS_CREDENTIALS
+      # Local-model demo enablement:
+      # agentos local up --local-model
+      # AGENTOS_DOCKER_NETWORK=agentos_default puts spawned runner containers on
+      # the compose network so they resolve ollama by name, same as the
+      # otel-collector trace path.
+      - AGENTOS_MODEL_BASE_URL=${AGENTOS_MODEL_BASE_URL:-}
+      - AGENTOS_MODEL=${AGENTOS_MODEL:-}
+      - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-}
     restart: unless-stopped
 
 volumes:
@@ -371,3 +412,4 @@ volumes:
   clickhouse_data:
   clickhouse_logs:
   minio_data:
+  ollama_data:

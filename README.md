@@ -203,6 +203,47 @@ and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
 below is the equivalent with a host-process worker, useful when iterating on the
 worker itself from source. The console UI is served at `http://localhost:28080/?api=1`; open it to reach the console wired to your local compose API.
 
+**Local-model demo mode** is an opt-in offline path that runs a real local model
+through an Anthropic-compatible endpoint, so the demo answers for real and can
+drive a 1-2 tool-call loop with no Anthropic key. This is a DEMO / dev-loop path,
+NOT the production agent path. The fake model stays the zero-dependency default.
+
+Use one flag on the CLI surface you are running:
+
+```bash
+agentos skill up --local-model
+agentos local up --local-model
+agentos cluster up --local-model
+```
+
+Bare `--local-model` uses `qwen3:4b`. Override it by passing a model name:
+
+```bash
+agentos local up --local-model qwen3-coder:30b
+```
+
+`skill up` and `local up` run the model in a Docker container and point spawned
+runners at that endpoint. Both the `skill up --local-model` and compose paths
+persist the pulled model in a Docker volume, so a re-up is fast and does not
+re-download the model; the skill-path volume is named `<container>-ollama-data`
+(the compose path uses `ollama_data`) and can be reclaimed with
+`docker volume rm <volume>`. `cluster up` uses the in-chart inference Deployment;
+the chart renders the Ollama Service and Deployment, opens the runner egress
+carve-out automatically, and bakes `ANTHROPIC_BASE_URL` plus the inference model
+into the runner template.
+
+| Model | Loaded (Q4) | Min box | Notes |
+|---|---|---|---|
+| qwen3:4b | ~2.5GB | 8GB | demo default; clears the 1-2 tool-call bar |
+| qwen3-coder:30b | ~17-19GB | 32GB | MoE 30B/3.3B-active; real agentic-coding upgrade |
+| gemma4:e4b | ~5GB | 16GB | "4.5B effective" name understates RAM; needs Ollama >=0.31.x |
+
+Gotchas: Ollama 0.24.0 fails `gemma4` with `unknown model architecture`; qwen3
+works on 0.24.0 and gemma4 needs >=0.31.x. Gemma HF repos are gated and return
+HTTP 400 on `hf.co/google/...`; use a non-gated mirror such as
+`hf.co/unsloth/gemma-4-E4B-it-GGUF:<quant>`. RAM sizing tracks the loaded
+footprint, not the "effective params" marketing number.
+
 `agentos local up` publishes the API on `:28000` (the compose host port); the
 hand-run `uvicorn` in Quickstart step 4 uses `:8000`. Point `deploy --api-url`
 at whichever one you brought up.

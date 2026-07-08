@@ -88,10 +88,11 @@ def _sandbox_client(
     shares the substrate this client backs, so the choice applies to both lanes.
 
     Local middle mode defaults to a REAL model. Fake model is an explicit
-    offline/test opt-in, so a Docker worker with neither a model credential nor
-    ``AGENTOS_FAKE_MODEL`` fails loudly here rather than booting a real runner
-    that would fail cryptically or silently degrading to a fake. A credential can
-    be an SDK var (``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_API_KEY``) or the ACI
+    offline/test opt-in, so a Docker worker with neither a model credential,
+    ``AGENTOS_MODEL_BASE_URL``, nor ``AGENTOS_FAKE_MODEL`` fails loudly here
+    rather than booting a real runner that would fail cryptically or silently
+    degrading to a fake. A credential can be an SDK var
+    (``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_API_KEY``) or the ACI
     ``AGENTOS_CREDENTIALS`` reference, which the runner maps onto an SDK var.
     """
     substrate = env.get("AGENTOS_SANDBOX_SUBSTRATE", "kubernetes").lower()
@@ -99,12 +100,14 @@ def _sandbox_client(
         has_credential = bool(config.credentials) or any(
             v in env for v in _MODEL_CREDENTIAL_ENV
         )
-        if not config.fake_model and not has_credential:
+        has_local_model = bool(config.model_base_url)
+        if not config.fake_model and not has_credential and not has_local_model:
             raise SystemExit(
                 "Local middle mode (AGENTOS_SANDBOX_SUBSTRATE=docker) defaults to a "
                 "real model, but no model credential is set. Export "
                 "AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_API_KEY "
-                "before starting the worker, or set AGENTOS_FAKE_MODEL=1 for an "
+                "before starting the worker, set AGENTOS_MODEL_BASE_URL to a local "
+                "endpoint for local-model mode, or set AGENTOS_FAKE_MODEL=1 for an "
                 "offline/test run."
             )
         return DockerSandboxClient(

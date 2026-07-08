@@ -67,6 +67,15 @@ def test_docker_with_agentos_credentials_reference_builds_docker_client() -> Non
     assert isinstance(client, DockerSandboxClient)
 
 
+def test_docker_with_model_base_url_builds_docker_client_without_credential() -> None:
+    client = _sandbox_client(
+        WorkerConfig(model_base_url="http://ollama:11434"),
+        {"AGENTOS_SANDBOX_SUBSTRATE": "docker"},
+        _SUB,
+    )
+    assert isinstance(client, DockerSandboxClient)
+
+
 def test_docker_with_explicit_fake_model_builds_docker_client() -> None:
     client = _sandbox_client(
         WorkerConfig(fake_model=True), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB

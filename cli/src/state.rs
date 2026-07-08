@@ -22,6 +22,12 @@ pub struct RunnerState {
     pub session_id: String,
     pub plugin_dir: String,
     pub fake_model: bool,
+    #[serde(default)]
+    pub ollama_container: Option<String>,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub model_base_url: Option<String>,
 }
 
 fn state_path(dir: &Path) -> PathBuf {
@@ -70,6 +76,9 @@ mod tests {
             session_id: "local-1".into(),
             plugin_dir: "/tmp/deal-desk".into(),
             fake_model: true,
+            ollama_container: None,
+            network: None,
+            model_base_url: None,
         }
     }
 
@@ -89,5 +98,41 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(STATE_DIR)).unwrap();
         std::fs::write(dir.path().join(STATE_DIR).join(STATE_FILE), "not json").unwrap();
         assert!(load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn round_trip_preserves_local_model_runner_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = RunnerState {
+            ollama_container: Some("agentos-ollama".into()),
+            network: Some("agentos_default".into()),
+            model_base_url: Some("http://ollama:11434".into()),
+            ..sample()
+        };
+        save(dir.path(), &state).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), Some(state));
+    }
+
+    #[test]
+    fn load_accepts_older_state_without_local_model_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(STATE_DIR)).unwrap();
+        std::fs::write(
+            dir.path().join(STATE_DIR).join(STATE_FILE),
+            r#"{
+  "container_id": "abc123",
+  "container_name": "agentos-runner-local",
+  "image": "agentos-runner",
+  "port": 7245,
+  "base_url": "http://localhost:7245",
+  "session_id": "local-1",
+  "plugin_dir": "/tmp/deal-desk",
+  "fake_model": true
+}"#,
+        )
+        .unwrap();
+        let loaded = load(dir.path()).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().ollama_container, None);
     }
 }

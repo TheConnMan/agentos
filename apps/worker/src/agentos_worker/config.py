@@ -58,6 +58,10 @@ class WorkerConfig(BaseModel):
     # model call; it is never logged and never required when fake_model is on.
     fake_model: bool = False
     credentials: str = ""
+    # Local model demo path: the worker can point the runner at an
+    # Anthropic-compatible local endpoint without changing the fake-model default.
+    model_base_url: str = ""
+    model: str = ""
 
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = "agentos:runs"
@@ -166,6 +170,8 @@ class WorkerConfig(BaseModel):
         _s(values, "bundle_plugin_dir", env, "AGENTOS_PLUGIN_DIR")
         _b(values, "fake_model", env, "AGENTOS_FAKE_MODEL")
         _s(values, "credentials", env, "AGENTOS_CREDENTIALS")
+        _s(values, "model_base_url", env, "AGENTOS_MODEL_BASE_URL")
+        _s(values, "model", env, "AGENTOS_MODEL")
         _s(values, "eval_stream", env, "AGENTOS_EVAL_STREAM")
         _s(values, "eval_consumer_group", env, "AGENTOS_EVAL_CONSUMER_GROUP")
         _s(values, "s3_endpoint_url", env, "S3_ENDPOINT_URL")

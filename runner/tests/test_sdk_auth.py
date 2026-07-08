@@ -60,3 +60,37 @@ def test_no_credential_is_a_noop() -> None:
     env: dict[str, str] = {}
     resolve_model_credential(env)
     assert env == {}
+
+
+def test_base_url_override_sets_sdk_base_url_and_placeholder_api_key() -> None:
+    from agentos_runner.sdk_auth import (
+        BASE_URL_ENV,
+        NO_OP_API_KEY,
+        resolve_base_url_override,
+    )
+
+    assert BASE_URL_ENV == "ANTHROPIC_BASE_URL"
+
+    override = resolve_base_url_override({BASE_URL_ENV: "http://ollama:11434"})
+
+    assert override is not None
+    assert override[BASE_URL_ENV] == "http://ollama:11434"
+    # The placeholder API key must be NON-EMPTY: an empty ANTHROPIC_API_KEY makes
+    # the bundled Claude CLI report "not logged in" and skip the endpoint call.
+    assert override[API_KEY_ENV] == NO_OP_API_KEY
+    assert override[API_KEY_ENV] != ""
+    # The OAuth token is blanked so an inherited token cannot win over the
+    # placeholder + overridden base URL.
+    assert override[OAUTH_TOKEN_ENV] == ""
+
+
+def test_base_url_override_is_absent_when_env_is_missing() -> None:
+    from agentos_runner.sdk_auth import resolve_base_url_override
+
+    assert resolve_base_url_override({}) is None
+
+
+def test_base_url_override_is_absent_when_env_is_empty() -> None:
+    from agentos_runner.sdk_auth import BASE_URL_ENV, resolve_base_url_override
+
+    assert resolve_base_url_override({BASE_URL_ENV: ""}) is None
