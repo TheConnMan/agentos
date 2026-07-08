@@ -181,7 +181,21 @@ jobs:
       - name: Slack profile parses and includes the dispatcher
         run: |
           export SLACK_APP_TOKEN=xapp-ci SLACK_BOT_TOKEN=xoxb-ci
-          docker compose -f compose.release.yaml --profile slack config -q
-          docker compose -f compose.release.yaml --profile slack config --services \
+          # The dispatcher depends on valkey (a core service), so the slack
+          # profile is paired with a base profile; the CLI does the same.
+          docker compose -f compose.release.yaml --profile full --profile slack config -q
+          docker compose -f compose.release.yaml --profile full --profile slack config --services \
             | grep -qx agentos-dispatcher \
             || { echo "agentos-dispatcher must be present under the slack profile" >&2; exit 1; }
+      # `agentos local up --minimal` selects the `core` profile and plain
+      # `agentos local up` the `full` profile; assert the release stack renders
+      # exactly those service counts so a profile regression cannot silently
+      # start the wrong set.
+      - name: Core profile renders 7 services
+        run: |
+          count=$(docker compose -f compose.release.yaml --profile core config --services | wc -l)
+          [ "$count" -eq 7 ] || { echo "core profile must render 7 services, got $count" >&2; exit 1; }
+      - name: Full profile renders 12 services
+        run: |
+          count=$(docker compose -f compose.release.yaml --profile full config --services | wc -l)
+          [ "$count" -eq 12 ] || { echo "full profile must render 12 services, got $count" >&2; exit 1; }

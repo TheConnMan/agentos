@@ -59,13 +59,15 @@ would, put the full platform in front of it. Two options, lightest first.
 
 ### On your local box (Docker stack)
 
-`local` brings up the whole platform with docker compose (API, worker, backing
-stores, and the console UI) and runs your skill through it. Same runner, now with
-the queue and worker in front, all on your machine. Run these from your bundle
-directory:
+`local` brings up the platform with docker compose and runs your skill through
+it. `agentos local up` uses the `full` profile, which includes Langfuse and the
+console UI. `agentos local up --minimal` boots only the 7 core services for low
+RAM machines and the CLI turn path. Same runner, now with the queue and worker
+in front, all on your machine. Run these from your bundle directory:
 
 ```bash
-agentos local up                      # start the full compose stack
+agentos local up                      # full profile
+# or: agentos local up --minimal      # core profile
 agentos local deploy --plugin-dir .   # push the bundle to the local API on :28000
 agentos local message "What's the weather in Paris?"
 agentos local down                    # tear it all down

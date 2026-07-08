@@ -92,8 +92,10 @@ is the fastest inner loop for developing a plugin: zero Slack, zero platform,
 zero cluster. See `cli/README.md`.
 
 **`local` (full platform via compose, no Slack).** `agentos local up` brings up
-the compose stack, `agentos local deploy` pushes a bundle to the compose API,
-and `agentos local message "..."` drives a message through the real
+the `full` compose profile by default. `agentos local up --minimal` brings up
+the smaller `core` profile (API, worker, Postgres, Valkey, MinIO). Then
+`agentos local deploy` pushes a bundle to the compose API, and
+`agentos local message "..."` drives a message through the real
 queue -> worker -> sandboxed runner -> reply path with no Slack and no
 Kubernetes. The compose worker runs the fake model by default; for a real model,
 export `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) and set
@@ -112,17 +114,21 @@ streams. This is the same platform the `local` and `cluster` targets exercise,
 with Slack in front. See `apps/dispatcher/README.md`'s runbook for pointing at a
 real workspace.
 
-**Connect a real Slack workspace (local).** The `local` target is Slack-free by
-default, but you can exercise real Slack routing, mentions and threads on the
-compose stack without a cluster. Export the two Slack tokens, empty
-`SLACK_API_BASE_URL` to un-wire the worker's Slack stub, and bring up the
-optional `slack` profile (the `agentos-dispatcher` service in
-`compose.release.yaml`):
+**Connect a real Slack workspace (local).** The `local` target uses the Slack
+stub by default, but you can exercise real Slack routing, mentions and threads
+on the compose stack without a cluster. Export the two Slack tokens, empty
+`SLACK_API_BASE_URL` to un-wire the worker's Slack stub, and start the optional
+dispatcher:
 
 ```bash
 export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
 export SLACK_API_BASE_URL=          # empty un-wires the worker's Slack stub
-docker compose -f compose.release.yaml --profile slack up -d
+agentos local up --slack
+
+# Raw Docker needs the base profile plus Slack (the dispatcher depends on
+# valkey, a core service), for either compose file:
+docker compose --profile full --profile slack -f compose.dev.yaml up -d
+docker compose --profile full --profile slack -f compose.release.yaml up -d
 ```
 
 Slack allows exactly one Socket Mode owner per app token at a time, so do not
@@ -172,7 +178,7 @@ the load-bearing gotchas.
 # 1. Bring up the backing stack. The stack runs on baked defaults; copy
 #    .env.example to the gitignored .env only if you need to override anything.
 cp .env.example .env    # optional
-docker compose -f compose.dev.yaml up -d
+docker compose --profile full -f compose.dev.yaml up -d
 docker compose -f compose.dev.yaml ps    # wait for all services healthy
 
 # 2. Install the Python workspace (uv workspace: aci-protocol, plugin-format,
@@ -218,7 +224,8 @@ the Anthropic API.
 **One-command middle mode** (the fastest path — no host-run worker, no cluster):
 
 ```bash
-agentos local up   # brings up the backing stores + API + a containerized worker + the console UI
+agentos local up   # full profile: stores + API + worker + Langfuse + UI
+# or: agentos local up --minimal   # core profile: stores + API + worker only
 agentos local deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:28000
 agentos local message "what changed in the last deploy?"
 ```
@@ -227,7 +234,8 @@ agentos local message "what changed in the last deploy?"
 default), so there is nothing to hand-run. For a real model, export a credential
 and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
 below is the equivalent with a host-process worker, useful when iterating on the
-worker itself from source. The console UI is served at `http://localhost:28080/?api=1`; open it to reach the console wired to your local compose API.
+worker itself from source. The console UI is served at
+`http://localhost:28080/?api=1` when you use the default `full` profile.
 
 **Local-model demo mode** is an opt-in offline path that runs a real local model
 through an Anthropic-compatible endpoint, so the demo answers for real and can
@@ -246,6 +254,13 @@ Bare `--local-model` uses `qwen3:4b`. Override it by passing a model name:
 
 ```bash
 agentos local up --local-model qwen3-coder:30b
+```
+
+Combine `--minimal` with `--local-model` when you want the core local loop plus
+Ollama, without Langfuse or the UI:
+
+```bash
+agentos local up --minimal --local-model
 ```
 
 `skill up` and `local up` run the model in a Docker container and point spawned

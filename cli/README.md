@@ -16,7 +16,7 @@ disk and targets no environment.
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
 | `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
-| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | none | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
 | `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `message` `deploy` | Operate and drive a deployed cluster release. |
 
 The universal quartet `up`/`down`/`status`/`message` is on all three targets;
@@ -53,14 +53,16 @@ in Langfuse traces.
 
 ## `local` target: full platform via compose, no Slack
 
-Wraps the `compose.dev.yaml` stack (Postgres + Valkey + Langfuse + API +
-worker) so a `message` walks the real queue -> worker -> sandboxed runner ->
-reply path on one machine, no Slack and no Kubernetes. The compose API is
-published on host port `28000`.
+Wraps the `compose.dev.yaml` stack so a `message` walks the real
+queue -> worker -> sandboxed runner -> reply path on one machine, no Slack and
+no Kubernetes. `agentos local up` uses the `full` compose profile by default.
+`agentos local up --minimal` uses the smaller `core` profile. The compose API is
+published on host port `28000`. Add `agentos local up --slack` to also start
+the optional Slack dispatcher.
 
 | Command | What it does |
 |---|---|
-| `agentos local up` | Bring the compose stack up (`docker compose up -d --wait`) and print URLs. |
+| `agentos local up` | Bring the compose stack up (`docker compose --profile full up -d --wait` by default, `docker compose --profile core up -d --wait` with `--minimal`) and print URLs. Add `--slack` to append `--profile slack`. |
 | `agentos local down` | Stop the compose stack (`docker compose down`), keeping volumes. |
 | `agentos local status` | Show the compose stack's service status (`docker compose ps`). |
 | `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |

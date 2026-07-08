@@ -7,9 +7,13 @@
 # test and UI E2E runs against this stack; it mirrors the Helm dev profile
 # (same components, same pinned versions).
 #
-# Bring up:   docker compose -f compose.dev.yaml up -d
-# Tear down:  docker compose -f compose.dev.yaml down        (keeps volumes; fast restart)
-# Wipe:       docker compose -f compose.dev.yaml down -v     (drops volumes; throwaway)
+# Bring up full:  docker compose --profile full -f compose.release.yaml up -d
+# Bring up core:  docker compose --profile core -f compose.release.yaml up -d
+# core = postgres, valkey, minio, minio-init, agentos-migrate, agentos-api, agentos-worker
+# full = core + clickhouse, langfuse-web, langfuse-worker, otel-collector, agentos-ui
+# The CLI `agentos local up` wraps these compose profile invocations.
+# Tear down:  docker compose -f compose.release.yaml down        (keeps volumes; fast restart)
+# Wipe:       docker compose -f compose.release.yaml down -v     (drops volumes; throwaway)
 #
 # Host ports use a distinctive 2xxxx block (host port = "2" + the service's
 # container port) to avoid common service defaults and stay below the OS
@@ -98,9 +102,16 @@ configs:
             processors: [batch]
             exporters: [otlphttp/langfuse, debug]
 
+# `core` is the minimal stack for `agentos local message`; `full` is the whole
+# release stack. Core services belong to both profiles. `agentos local up` selects
+# `full`, and `agentos local up --minimal` selects `core`.
+x-core-profiles: &core_profiles [core, full]
+x-full-profiles: &full_profiles [full]
+
 services:
   postgres:
     image: postgres:16-alpine
+    profiles: *core_profiles
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -117,6 +128,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
+    profiles: *core_profiles
     command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:-valkeypass}"]
     ports:
       - "26379:6379"
@@ -132,6 +144,7 @@ services:
     # Pinned to 24.8: newer ClickHouse needs AVX and crashes (exit 132) on CPUs
     # without AVX. See the header comment.
     image: clickhouse/clickhouse-server:24.8
+    profiles: *full_profiles
     environment:
       CLICKHOUSE_PASSWORD: clickhouse
     ports:
@@ -153,6 +166,7 @@ services:
 
   minio:
     image: minio/minio
+    profiles: *core_profiles
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: minio
@@ -172,6 +186,7 @@ services:
   # Creates the langfuse bucket so the web/worker never race a missing bucket.
   minio-init:
     image: minio/mc
+    profiles: *core_profiles
     depends_on:
       minio:
         condition: service_healthy
@@ -185,6 +200,7 @@ services:
 
   langfuse-worker:
     image: langfuse/langfuse-worker:3
+    profiles: *full_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -204,6 +220,7 @@ services:
 
   langfuse-web:
     image: langfuse/langfuse:3
+    profiles: *full_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -236,6 +253,7 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
+    profiles: *full_profiles
     command: ["--config=/etc/otel/collector-config.yaml"]
     depends_on:
       langfuse-web:
@@ -271,6 +289,7 @@ services:
   # creates the `agentos` schema, so this also gates on Postgres being reachable.
   agentos-migrate:
     image: ghcr.io/curie-eng/agentos-api:latest
+    profiles: *core_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -285,6 +304,7 @@ services:
   # `agentos message --local` channel lookup).
   agentos-api:
     image: ghcr.io/curie-eng/agentos-api:latest
+    profiles: *core_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -325,6 +345,7 @@ services:
   # `http://localhost:28080/?api=1` URL and `local up` opens it connected to the API.
   agentos-ui:
     image: ghcr.io/curie-eng/agentos-ui:latest
+    profiles: *full_profiles
     depends_on:
       agentos-api:
         condition: service_healthy
@@ -362,6 +383,7 @@ services:
   # reaches the `agentos message --local` Slack stub at localhost:8155.
   agentos-worker:
     image: ghcr.io/curie-eng/agentos-worker-local:latest
+    profiles: *core_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -428,7 +450,8 @@ services:
   # Enable it (see README "Connect a real Slack workspace"):
   #   export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
   #   export SLACK_API_BASE_URL=          # empty: un-wire the worker's stub
-  #   docker compose -f compose.release.yaml --profile slack up -d
+  #   docker compose --profile full --profile slack -f compose.release.yaml up -d
+  #   (the dispatcher depends on valkey, so pair `slack` with a base profile)
   #
   # CAVEAT: Slack allows exactly ONE Socket Mode owner per app token at a time
   # (docs/operations.md). A local dispatcher and a cluster dispatcher on the same
