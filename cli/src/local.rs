@@ -9,6 +9,7 @@
 use anyhow::{bail, Context, Result};
 
 use crate::commands::OLLAMA_PORT;
+use crate::docker;
 use crate::ops::{plain, require_on_path, run_capture, run_step, OpsCommand};
 
 /// Dev-channel local-candidate filename probed by the artifact resolver.
@@ -166,6 +167,10 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
     let cmd = down_command(&o);
     if o.common.dry_run {
         ui.payload_plain(&cmd.display());
+        ui.payload_plain(&format!(
+            "docker rm -f $(docker ps -a --filter label={} -q)",
+            docker::SANDBOX_LABEL
+        ));
         return Ok(());
     }
     if o.wipe {
@@ -186,6 +191,10 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
         "stopping stack"
     };
     run_step(&cl, label, "stopped", &cmd).await?;
+    let count = docker::reap_labeled(docker::SANDBOX_LABEL).await?;
+    if count > 0 {
+        ui.note(&format!("removed {count} runner container(s)"));
+    }
     if o.wipe {
         ui.payload("dev stack stopped; volumes wiped");
     } else {

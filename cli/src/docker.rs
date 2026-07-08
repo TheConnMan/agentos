@@ -201,6 +201,39 @@ pub async fn remove_container(name_or_id: &str) -> Result<()> {
         .map(|_| ())
 }
 
+/// Remove all containers matching a Docker label filter. Best-effort on the
+/// list step (if no containers match or Docker is unreachable we silently
+/// return 0); bails on a removal failure.
+pub async fn reap_labeled(label: &str) -> Result<usize> {
+    let list_args: Vec<String> = vec![
+        "ps".into(),
+        "-a".into(),
+        "--filter".into(),
+        format!("label={label}"),
+        "-q".into(),
+    ];
+    let ids = match docker(&list_args).await {
+        Ok(out) => out
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+        Err(_) => return Ok(0),
+    };
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let count = ids.len();
+    let mut rm_args: Vec<String> = vec!["rm".into(), "-f".into()];
+    rm_args.extend(ids);
+    docker(&rm_args).await?;
+    Ok(count)
+}
+
+/// The label that worker-local stamps on every runner container it spawns.
+pub const SANDBOX_LABEL: &str = "agentos.dev/managed-by=agentos-sandbox-substrate";
+
 /// The last log lines of a container, for boot-failure diagnostics.
 pub async fn container_logs(name_or_id: &str, tail: u32) -> String {
     let args: Vec<String> = vec![
