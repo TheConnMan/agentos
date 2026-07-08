@@ -33,69 +33,58 @@ design property of the whole system.
 
 ## 2. Component map
 
+This is the static "who talks to whom." For the flows through it, read the
+focused diagram docs, each a single clean picture:
+
+- **[How a message comes in and a reply goes out](docs/diagrams/message-flow.md)** — the core loop.
+- **[Kubernetes architecture](docs/diagrams/kubernetes.md)** — the cluster and how a sandbox pod is built.
+- **[The ACI](docs/diagrams/aci.md)** — the frozen contract between the worker and the agent in the box.
+
 ```mermaid
 flowchart TB
-    Slack["Slack workspace<br/>(Socket Mode)"]
-    GH["GitHub<br/>(push webhook)"]
-    CLIuser["Developer laptop"]
+    Slack["Slack"]
+    CLI["CLI / laptop"]
+    GH["GitHub push"]
 
-    subgraph platform["apps/ (Python services)"]
-        Dispatcher["apps/dispatcher<br/>Slack Bolt, Socket Mode"]
-        Worker["apps/worker<br/>concurrency kernel"]
-        API["apps/api<br/>FastAPI"]
+    subgraph core["Agent runner core (apps/)"]
+        Dispatcher["dispatcher<br/>ingress + dedupe"]
+        Queue["Valkey<br/>queue + routing"]
+        Worker["worker kernel<br/>one session per thread"]
+        API["api<br/>git-flow · bundles · read proxy"]
     end
 
-    subgraph queue["Valkey (redis-py)"]
-        Runs["stream: agentos:runs"]
-        Evals["stream: agentos:evals"]
-        Locks["thread locks · dedupe keys ·<br/>affinity routes · kill events"]
-    end
+    Sandbox["runner pod<br/>Claude Code + skill"]
+    Anthropic["Model<br/>(Anthropic default)"]
 
-    subgraph substrate["Sandbox substrate (SandboxClient)"]
-        K8s["KubernetesSandboxClient<br/>(agent-sandbox claims)"]
-        Docker["DockerSandboxClient<br/>(local middle mode)"]
-        Runner["runner/<br/>claude-agent-sdk<br/>ACI over NDJSON"]
-        K8s --> Runner
-        Docker --> Runner
-    end
-
-    PG[("Postgres<br/>agents / versions / deployments")]
-    Store[("MinIO / S3<br/>plugin bundles")]
-    Anthropic["Anthropic API"]
+    UI["ui console"]
+    Store[("MinIO / S3<br/>skill bundles")]
+    PG[("Postgres<br/>agents · versions · deployments")]
 
     subgraph obs["Observability"]
-        Collector["OTel Collector<br/>OTLP gRPC+HTTP in, HTTP out"]
-        Langfuse["Langfuse v3<br/>(+ ClickHouse)"]
-        Collector --> Langfuse
+        OTel["OTel Collector"]
+        LF["Langfuse (+ ClickHouse)"]
+        OTel --> LF
     end
 
-    UI["apps/ui<br/>React console"]
-    CLI["cli/<br/>agentos (Rust)"]
-
-    Slack -- "app_mention / message" --> Dispatcher
-    Dispatcher -- "XADD QueuedSlackEvent" --> Runs
-    Runs -- "XREADGROUP" --> Worker
-    Worker -- "claim / resume" --> K8s
-    Worker -- "claim / resume" --> Docker
-    Worker -- "POST /v1/event,/steer,/interrupt" --> Runner
-    Worker -- "chat.update placeholder" --> Slack
-    Runner -- "model call" --> Anthropic
-    Runner -- "OTLP spans" --> Collector
-    Worker -- "OTLP spans" --> Collector
-
-    GH -- "push (dev/prod branch)" --> API
-    API -- "validated bundle" --> Store
-    API -- "agents/versions/deployments" --> PG
-    API -- "XADD eval jobs" --> Evals
-    Evals -- "XREADGROUP" --> Worker
-    Store -. "bundle-fetch init container" .-> Runner
-
-    UI -- "same-origin /api" --> API
-    API -- "trace/metric proxy" --> Langfuse
-    CLIuser --> CLI
-    CLI -- "deploy (tar.gz)" --> API
-    CLI -- "chat: XADD synthetic event<br/>+ local Slack stub" --> Runs
+    Slack --> Dispatcher
+    CLI --> Dispatcher
+    CLI --> API
+    GH --> API
+    Dispatcher --> Queue --> Worker --> Sandbox --> Anthropic
+    Sandbox -. bundle-fetch .-> Store
+    API --> Store
+    API --> PG
+    UI --> API
+    Worker --> OTel
+    Sandbox --> OTel
+    API -- read --> LF
 ```
+
+The reply travels back out the way it came in — sandbox to worker to the
+originating thread — kept off the diagram to avoid a tangle of return arrows;
+[the message-flow doc](docs/diagrams/message-flow.md) shows that round trip.
+Two substrate implementations sit behind the single `runner pod` box
+(Kubernetes for production, Docker for local); §3 covers that seam.
 
 ### Directory ownership and language
 
@@ -176,7 +165,7 @@ sequenceDiagram
 
     U->>D: app_mention / DM message
     D->>V: SET dedupe:<event_id> NX EX ttl
-    Note over D: retried delivery finds the key set,<br/>is dropped (still acked, never re-posted)
+    Note over D: retried delivery finds the key set, is dropped (still acked, never re-posted)
     D->>U: post placeholder ("On it...")
     D->>V: XADD agentos:runs {QueuedSlackEvent}
 
@@ -189,7 +178,7 @@ sequenceDiagram
         W->>R: POST /v1/event {message}
     else turn already live for this thread
         W->>R: POST /v1/steer {text}
-        Note over W,R: 409 if the turn finished first (finish race);<br/>worker opens a fresh turn on the same idle sandbox
+        Note over W,R: 409 if the turn finished first (finish race), worker opens a fresh turn on the same idle sandbox
     end
 
     R->>A: model call (streaming)
@@ -230,36 +219,9 @@ is what routes a thread back to its sandbox.
 ## 5. Data flow: a git push deploys a bundle and runs evals
 
 A push is HMAC-verified, archived, validated, and stored as an immutable
-versioned bundle. A dev-branch push builds the artifact; a prod-branch push
-promotes that same artifact without rebuilding.
-
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant GH as GitHub
-    participant API as apps/api (gitflow.py)
-    participant PF as plugin-format validator
-    participant S3 as MinIO / S3
-    participant PG as Postgres
-
-    Dev->>GH: git push (dev or prod branch)
-    GH->>API: POST /github/webhook (push, HMAC-signed)
-    API->>API: verify_signature(x-hub-signature-256)
-    alt push to dev branch
-        API->>API: clone_and_archive(sha)
-        API->>PF: validate_bundle(archived tree)
-        PF-->>API: ValidationResult (path-qualified errors)
-        API->>S3: store immutable versioned bundle
-        API->>PG: create Version + Deployment (env=dev)
-        Note over API: the dev bot identity now serves this sha
-    else push to prod branch
-        API->>PG: find the already-built Version for this sha
-        API->>PG: create Deployment (env=prod)
-        Note over API: promotes the same artifact, no separate prod build
-    end
-```
-
-A newly built dev version additionally fans out its eval suite as a CI check:
+versioned bundle. A **dev-branch** push builds the artifact and fans out its
+eval suite as a CI check; a **prod-branch** push promotes that same artifact
+without rebuilding. One diagram, both branches:
 
 ```mermaid
 sequenceDiagram
@@ -271,25 +233,29 @@ sequenceDiagram
     participant PG as Postgres
     participant V as Valkey (agentos:evals)
     participant W as Worker eval consumer
-    participant R as Runner
     participant LF as Langfuse
 
-    Dev->>GH: git push (dev branch)
+    Dev->>GH: git push (dev or prod branch)
     GH->>API: POST /github/webhook (push, HMAC-signed)
     API->>API: verify_signature(x-hub-signature-256)
-    API->>API: clone_and_archive(sha)
-    API->>PF: validate_bundle(archived tree)
-    PF-->>API: ValidationResult (path-qualified errors)
-    API->>S3: store immutable versioned bundle
-    API->>PG: create Version + Deployment (env=dev)
-    API->>V: XADD agentos:evals {job} (one per new version, deduped)
-
-    W->>V: XREADGROUP (eval consumer group)
-    W->>S3: load eval cases from the bundle
-    W->>R: run each case in a provisioned runner
-    R--)LF: record trace with eval / suite tags
-    W->>API: POST /evals/report
-    API->>GH: set commit status (pass/fail)
+    alt push to dev branch
+        API->>API: clone_and_archive(sha)
+        API->>PF: validate_bundle(archived tree)
+        PF-->>API: ValidationResult (path-qualified errors)
+        API->>S3: store immutable versioned bundle
+        API->>PG: create Version + Deployment (env=dev)
+        Note over API: the dev bot now serves this sha
+        API->>V: XADD agentos:evals {job} (deduped)
+        W->>V: XREADGROUP (separate eval consumer group)
+        W->>S3: load eval cases from the bundle
+        W-->>LF: run each case, record trace with eval tags
+        W->>API: POST /evals/report
+        API->>GH: set commit status (pass/fail)
+    else push to prod branch
+        API->>PG: find the already-built Version for this sha
+        API->>PG: create Deployment (env=prod)
+        Note over API: promotes the same artifact, no rebuild
+    end
 ```
 
 - **Git-flow fan-out** at [`apps/api/src/agentos_api/gitflow.py`](apps/api/src/agentos_api/gitflow.py): signature verify (`:35`), dev-branch archive+validate+store+create-Version (`:136`), prod-branch **promotes the same artifact without rebuilding** (`:172`), eval enqueue on a newly built dev version, deduped on redelivery (`:186`). Webhook receiver at [`apps/api/src/agentos_api/routers/github.py:20`](apps/api/src/agentos_api/routers/github.py).
@@ -316,8 +282,11 @@ The runner's mapping is prefix-based and fails loud on anything it cannot use
 
 - `sk-ant-oat...` -> `CLAUDE_CODE_OAUTH_TOKEN` (checked first; OAuth tokens share the `sk-ant-` prefix).
 - `sk-ant-...` -> `ANTHROPIC_API_KEY`.
-- `sk-...` (OpenAI-style, OpenRouter `sk-or-`) -> raises `UnsupportedCredentialError` rather than forwarding a key the Anthropic SDK cannot use.
+- `sk-or-...` (OpenRouter) -> routed through the shared **base-URL-override seam**: base URL points at OpenRouter's native Anthropic Messages endpoint, the key becomes `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_API_KEY` is set to a non-empty placeholder so the bundled CLI's auth gate passes. Staying on the Anthropic wire format keeps prompt caching intact.
+- `sk-...` (bare OpenAI-style) -> raises `UnsupportedCredentialError` rather than forwarding a key the Anthropic SDK cannot use.
 - Anything else -> treated as an OAuth token.
+
+The same base-URL-override seam ([`resolve_base_url_override`](runner/src/agentos_runner/sdk_auth.py)) also targets a **bundled local model** (opt-in Ollama / Qwen3 demo mode, `--local-model`), so the SDK can talk to any Anthropic-compatible endpoint without a real Anthropic credential.
 
 An explicit SDK credential already in the env always wins; the mapping is a
 no-op when `AGENTOS_CREDENTIALS` is unset.
