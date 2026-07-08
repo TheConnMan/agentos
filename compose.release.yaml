@@ -395,8 +395,12 @@ services:
       - S3_SECRET_KEY=miniosecret
       - BUNDLE_BUCKET=agentos-bundles
       - AGENTOS_API_BASE_URL=http://localhost:28000
-      - SLACK_API_BASE_URL=http://localhost:8155/api/
-      - SLACK_BOT_TOKEN=xoxb-dev
+      # Slack stub by default (the `agentos message --local` emulator at :8155).
+      # To connect a real workspace instead, export SLACK_BOT_TOKEN=xoxb-... and
+      # set SLACK_API_BASE_URL= (empty) to point the worker at real slack.com,
+      # then bring up the `slack` profile (agentos-dispatcher above). See README.
+      - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}
       # Fake model by default (no credential needed). For a real model set
       # AGENTOS_FAKE_MODEL=0 and provide a credential in your SHELL (never in this
       # file): the bare names below forward it from your environment only if set.
@@ -405,6 +409,46 @@ services:
       - CLAUDE_CODE_OAUTH_TOKEN
       - AGENTOS_CREDENTIALS
       - AGENTOS_MODEL
+    restart: unless-stopped
+
+  # OPTIONAL real-Slack ingress for local development, OFF by default.
+  #
+  # `local` is Slack-free by design: the worker above talks to the
+  # `agentos message --local` stub (its SLACK_API_BASE_URL / SLACK_BOT_TOKEN
+  # defaults below), so the product loop runs with zero external dependency. This
+  # service is the opt-in that swaps that stub for a real Slack workspace, letting
+  # you exercise routing, mentions and threads on the compose stack without a
+  # cluster -- a faster loop for dispatcher / Slack-routing work.
+  #
+  # It reuses the SAME dispatcher image and env contract the Helm chart renders
+  # (charts/agentos/templates/dispatcher.yaml). Socket Mode dials Slack OUTBOUND
+  # over a websocket, so it needs no inbound port, no Service, and no public
+  # ingress or tunnel: a laptop dispatcher connects fine.
+  #
+  # Enable it (see README "Connect a real Slack workspace"):
+  #   export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
+  #   export SLACK_API_BASE_URL=          # empty: un-wire the worker's stub
+  #   docker compose -f compose.release.yaml --profile slack up -d
+  #
+  # CAVEAT: Slack allows exactly ONE Socket Mode owner per app token at a time
+  # (docs/operations.md). A local dispatcher and a cluster dispatcher on the same
+  # Slack app CONFLICT, so this is either/or per app -- run one, never both. That
+  # is why this service is behind the `slack` profile and off by default.
+  agentos-dispatcher:
+    image: ghcr.io/curie-eng/agentos-dispatcher:latest
+    profiles: [slack]
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-valkeypass}
+      # Provide these in your SHELL, never in this file. The `slack` profile is
+      # meaningless without them; a token-less dispatcher just backoff-reconnects.
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
     restart: unless-stopped
 
 volumes:

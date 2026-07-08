@@ -112,6 +112,27 @@ streams. This is the same platform the `local` and `cluster` targets exercise,
 with Slack in front. See `apps/dispatcher/README.md`'s runbook for pointing at a
 real workspace.
 
+**Connect a real Slack workspace (local).** The `local` target is Slack-free by
+default, but you can exercise real Slack routing, mentions and threads on the
+compose stack without a cluster. Export the two Slack tokens, empty
+`SLACK_API_BASE_URL` to un-wire the worker's Slack stub, and bring up the
+optional `slack` profile (the `agentos-dispatcher` service in
+`compose.release.yaml`):
+
+```bash
+export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
+export SLACK_API_BASE_URL=          # empty un-wires the worker's Slack stub
+docker compose -f compose.release.yaml --profile slack up -d
+```
+
+Slack allows exactly one Socket Mode owner per app token at a time, so do not
+also run a cluster dispatcher on the same Slack app: it is either/or per app.
+Because these are shell exports they persist for the session, so a later plain
+`agentos local up` in the same shell keeps the worker pointed at real Slack
+(empty `SLACK_API_BASE_URL`) with the real bot token but no dispatcher feeding
+the queue; open a fresh shell (or `unset SLACK_API_BASE_URL`) to return to the
+Slack-free stub.
+
 ## Prerequisites
 
 - **[uv](https://docs.astral.sh/uv/)**: the Python workspace manager.
