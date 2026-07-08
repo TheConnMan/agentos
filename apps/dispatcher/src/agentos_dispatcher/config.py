@@ -18,6 +18,7 @@ Env mapping:
     AGENTOS_DEDUPE_PREFIX      -> dedupe_prefix
     AGENTOS_DEDUPE_TTL_SECONDS -> dedupe_ttl_seconds
     AGENTOS_PLACEHOLDER_TEXT   -> placeholder_text
+    AGENTOS_SHIMMER            -> shimmer (assistant-thread status while working)
     AGENTOS_BACKOFF_INITIAL_SECONDS -> backoff_initial_seconds
     AGENTOS_BACKOFF_MAX_SECONDS     -> backoff_max_seconds
     AGENTOS_BACKOFF_MULTIPLIER      -> backoff_multiplier
@@ -48,6 +49,11 @@ class DispatcherConfig(BaseModel):
     dedupe_ttl_seconds: int = 3600
 
     placeholder_text: str = "On it. Working on your request."
+    # When true, also set a Slack assistant-thread status (the native "shimmer"
+    # on the app name) to placeholder_text while a turn runs. The worker clears it
+    # when the turn ends. Off by default; requires the app's assistant feature +
+    # assistant:write scope (see slack-app-manifest.yaml).
+    shimmer: bool = False
 
     backoff_initial_seconds: float = Field(default=1.0, gt=0)
     backoff_max_seconds: float = Field(default=30.0, gt=0)
@@ -73,6 +79,7 @@ class DispatcherConfig(BaseModel):
         _set_str(values, "dedupe_prefix", env, "AGENTOS_DEDUPE_PREFIX")
         _set_int(values, "dedupe_ttl_seconds", env, "AGENTOS_DEDUPE_TTL_SECONDS")
         _set_str(values, "placeholder_text", env, "AGENTOS_PLACEHOLDER_TEXT")
+        _set_bool(values, "shimmer", env, "AGENTOS_SHIMMER")
         _set_float(values, "backoff_initial_seconds", env, "AGENTOS_BACKOFF_INITIAL_SECONDS")
         _set_float(values, "backoff_max_seconds", env, "AGENTOS_BACKOFF_MAX_SECONDS")
         _set_float(values, "backoff_multiplier", env, "AGENTOS_BACKOFF_MULTIPLIER")
@@ -98,3 +105,10 @@ def _set_float(
 ) -> None:
     if var in env:
         values[key] = float(env[var])
+
+
+def _set_bool(
+    values: dict[str, Any], key: str, env: Mapping[str, str], var: str
+) -> None:
+    if var in env:
+        values[key] = env[var].strip().lower() in ("1", "true", "yes", "on")

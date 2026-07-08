@@ -36,3 +36,29 @@ def test_update_converts_markdown_to_mrkdwn() -> None:
     asyncio.run(sink.update(channel="C1", ts="1.1", text="**hi** [x](http://y)"))
 
     assert captured["text"] == "*hi* <http://y|x>"
+
+
+def test_clear_status_sets_empty_assistant_status() -> None:
+    sink = AsyncSlackSink("xoxb-test")
+    captured: dict[str, str] = {}
+
+    async def _fake_set_status(*, channel_id: str, thread_ts: str, status: str) -> None:
+        captured.update(channel_id=channel_id, thread_ts=thread_ts, status=status)
+
+    sink._client.assistant_threads_setStatus = _fake_set_status  # type: ignore[method-assign]
+
+    asyncio.run(sink.clear_status(channel="C1", thread_ts="1.1"))
+
+    assert captured == {"channel_id": "C1", "thread_ts": "1.1", "status": ""}
+
+
+def test_clear_status_is_best_effort_on_error() -> None:
+    sink = AsyncSlackSink("xoxb-test")
+
+    async def _boom(**_kwargs: object) -> None:
+        raise RuntimeError("workspace has no assistant feature")
+
+    sink._client.assistant_threads_setStatus = _boom  # type: ignore[method-assign]
+
+    # Must not raise -- clearing the shimmer can never fail a completed turn.
+    asyncio.run(sink.clear_status(channel="C1", thread_ts="1.1"))

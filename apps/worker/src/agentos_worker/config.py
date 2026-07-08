@@ -59,6 +59,11 @@ class WorkerConfig(BaseModel):
     fake_model: bool = False
     credentials: str = ""
 
+    # When true, clear the Slack assistant-thread status (the "shimmer" the
+    # dispatcher set) once a turn ends -- editing the placeholder does not
+    # auto-clear it. Off by default; pairs with the dispatcher's AGENTOS_SHIMMER.
+    shimmer: bool = False
+
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = "agentos:runs"
     consumer_group: str = "agentos-workers"
@@ -165,6 +170,7 @@ class WorkerConfig(BaseModel):
         _s(values, "db_schema", env, "DB_SCHEMA")
         _s(values, "bundle_plugin_dir", env, "AGENTOS_PLUGIN_DIR")
         _b(values, "fake_model", env, "AGENTOS_FAKE_MODEL")
+        _b(values, "shimmer", env, "AGENTOS_SHIMMER")
         _s(values, "credentials", env, "AGENTOS_CREDENTIALS")
         _s(values, "eval_stream", env, "AGENTOS_EVAL_STREAM")
         _s(values, "eval_consumer_group", env, "AGENTOS_EVAL_CONSUMER_GROUP")

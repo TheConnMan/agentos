@@ -87,6 +87,17 @@ def process_event(
     )
     placeholder_ts = placeholder["ts"]
 
+    if config.shimmer:
+        # Native Slack "shimmer": set the assistant-thread status so the app name
+        # shimmers while we work. Best-effort -- a workspace without the assistant
+        # feature just skips it; the worker clears the status when the turn ends.
+        try:
+            web_client.assistant_threads_setStatus(
+                channel_id=channel, thread_ts=thread_ts, status=config.placeholder_text
+            )
+        except Exception as exc:  # noqa: BLE001 -- shimmer is best-effort, never fatal
+            log.debug("assistant setStatus skipped for %s: %s", slack_event_id, exc)
+
     queued = QueuedSlackEvent(
         slack_event_id=slack_event_id,
         thread_ts=thread_ts,

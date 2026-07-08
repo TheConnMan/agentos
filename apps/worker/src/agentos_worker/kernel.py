@@ -261,6 +261,14 @@ class Kernel:
                 await asyncio.sleep(self._backoff(attempt))
         finally:
             release_order()
+            # Clear the assistant-thread "shimmer" the dispatcher set, on every
+            # exit path (success, escalate, drop, or error). Best-effort and
+            # idempotent -- it never repeats an action or blocks the turn, so it
+            # is safe outside the concurrency-critical section above.
+            if self._config.shimmer:
+                await self._sink.clear_status(
+                    channel=qevent.channel, thread_ts=qevent.thread_ts
+                )
 
     def _acquire_order_entry(self, thread: str) -> _LockEntry:
         entry = self._order_locks.get(thread)

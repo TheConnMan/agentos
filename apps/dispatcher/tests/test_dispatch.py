@@ -122,6 +122,26 @@ def test_envelope_acked_placeholder_posted_and_enqueued(
     assert queued.placeholder_ts == BOT_TS
 
 
+def test_shimmer_sets_assistant_status_after_placeholder(
+    redis_client: redis.Redis, config: DispatcherConfig
+) -> None:
+    shimmer_config = config.model_copy(update={"shimmer": True})
+    app, web_client = _build(shimmer_config, redis_client)
+    web_client.assistant_threads_setStatus = MagicMock()  # type: ignore[method-assign]
+    handler = SocketModeHandler(app, app_token="xapp-test")
+    sock = FakeSocketClient()
+
+    handler.handle(sock, _events_api_request("env-1", "Ev-shim", _mention_event()))
+    _drain(app)
+
+    # The shimmer status is set on the same thread as the placeholder.
+    web_client.assistant_threads_setStatus.assert_called_once_with(
+        channel_id="C123", thread_ts="1700.0001", status=shimmer_config.placeholder_text
+    )
+    # And the normal placeholder + enqueue still happen.
+    assert redis_client.xlen(config.stream) == 1
+
+
 def test_duplicate_delivery_enqueues_exactly_once(
     redis_client: redis.Redis, config: DispatcherConfig
 ) -> None:
