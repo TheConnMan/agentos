@@ -15,6 +15,8 @@ install:
 - **settings** -- a declarative allowlist of user-editable runtime knobs (the
   template's user-settings battery), with platform-owned validation. Schema only
   in this PR; the durable override store and edit UI are a deferred runtime.
+- **nav** -- the no-dead-ends hub button: a way back to the agent's home/help
+  screen, appended to a structured reply's buttons when none links there.
 
 These are illustrative, not the point. The point is the mechanism: a
 per-agent, opt-in, declarative config layer, resolved at bind time, that an owner
@@ -140,7 +142,7 @@ pack.
 | Activity log | **Already native (observability)** | Post-model observation is Langfuse tracing; the Slack "activity" ring buffer is stateful UI code, not declarative data. |
 | Logging setup | **Not per-agent** | Pure infra, identical for every agent; belongs to the platform, not a pack. |
 | Block Kit rendering | **Not applicable** | AgentOS streams text + `chat_update` mrkdwn; there is no structured `Reply` object to render. Would need a Block Kit reply model first. |
-| Navigation (back/up) | **Not applicable** | Presupposes the Block Kit `Reply` model above. |
+| Navigation (back/up) | **Pack** (`nav`) | The hub button is declarative (label + command); `ensure_hub_button` is the platform-owned no-dead-ends policy over a reply's buttons. Viable now that buttons render + respond; applying it during render is the deferred wiring. |
 | HTTP backoff, vision, polling-worker | **Runner/plugin code** | These are agentkit *libraries*. As packs they would run battery code in the worker, breaking sandbox isolation. They belong in the runner/plugin. |
 | Integrations (Jira/NetSuite/CPQ) | **MCP servers** | External-system connectors are the plugin's `.mcp.json` surface in AgentOS, not declarative UX data. |
 | Proactive notifier / digest | **Domain logic** | Revenue-leak's alerting policy; not a reusable battery. |

@@ -13,11 +13,13 @@ from agentos_worker.behaviorpacks import (
     GreetingPack,
     HelpPack,
     LoadPack,
+    NavPack,
     Setting,
     SettingError,
     SettingsPack,
     TipsPack,
     coerce_setting,
+    ensure_hub_button,
     match_greeting,
     match_help,
     resolve_settings,
@@ -39,6 +41,7 @@ def _packs(
     load: LoadPack | None = None,
     help: HelpPack | None = None,
     settings: SettingsPack | None = None,
+    nav: NavPack | None = None,
 ) -> BehaviorPacks:
     return BehaviorPacks(
         greeting=greeting or GreetingPack(),
@@ -46,6 +49,7 @@ def _packs(
         load=load or LoadPack(),
         help=help or HelpPack(),
         settings=settings or SettingsPack(),
+        nav=nav or NavPack(),
     )
 
 
@@ -237,3 +241,35 @@ def test_from_config_roundtrip_and_none() -> None:
     )
     assert parsed.greeting.enabled is True
     assert match_greeting(parsed, "hi") == "yo"
+
+
+# -- nav pack (no-dead-ends hub button) ---------------------------------------
+
+_NAV = NavPack(enabled=True, hub_label="Help", hub_command="help")
+
+
+def test_nav_appends_left_arrow_hub_when_no_back_button() -> None:
+    out = ensure_hub_button(_packs(nav=_NAV), [("Details", "details")])
+    assert out == [("Details", "details"), ("← Help", "help")]
+
+
+def test_nav_appends_up_arrow_hub_when_a_back_button_is_present() -> None:
+    # A "← Reports" back means the hub is above -> use the up arrow.
+    out = ensure_hub_button(_packs(nav=_NAV), [("← Reports", "reports")])
+    assert out[-1] == ("↑ Help", "help")
+
+
+def test_nav_appends_hub_to_empty_buttons() -> None:
+    assert ensure_hub_button(_packs(nav=_NAV), []) == [("← Help", "help")]
+
+
+def test_nav_does_not_duplicate_an_existing_hub_link() -> None:
+    buttons = [("Home", "help")]  # already links to the hub command
+    assert ensure_hub_button(_packs(nav=_NAV), buttons) == buttons
+
+
+def test_nav_off_or_unconfigured_leaves_buttons_untouched() -> None:
+    buttons = [("Details", "details")]
+    assert ensure_hub_button(_packs(), buttons) == buttons  # nav disabled
+    no_cmd = NavPack(enabled=True, hub_label="Help", hub_command="")
+    assert ensure_hub_button(_packs(nav=no_cmd), buttons) == buttons

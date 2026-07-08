@@ -139,6 +139,14 @@
               "lines": []
             }
           },
+          "nav": {
+            "$ref": "#/components/schemas/NavPackConfig",
+            "default": {
+              "enabled": false,
+              "hub_command": "",
+              "hub_label": ""
+            }
+          },
           "settings": {
             "$ref": "#/components/schemas/SettingsPackConfig",
             "default": {
@@ -739,6 +747,28 @@
           "error_rate"
         ],
         "title": "MetricsSummary",
+        "type": "object"
+      },
+      "NavPackConfig": {
+        "description": "The no-dead-ends hub button for one agent (mirrors behaviorpacks.NavPack).",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "hub_command": {
+            "default": "",
+            "title": "Hub Command",
+            "type": "string"
+          },
+          "hub_label": {
+            "default": "",
+            "title": "Hub Label",
+            "type": "string"
+          }
+        },
+        "title": "NavPackConfig",
         "type": "object"
       },
       "ObservationNode": {
