@@ -158,3 +158,30 @@ jobs:
       # webServer builds and serves the preview for the run.
       - name: E2E (Playwright, stackless)
         run: pnpm exec playwright test
+
+  compose:
+    name: Compose (release stack validates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # compose.release.yaml (the `agentos local up` stack) has no other CI
+      # coverage. Validate it parses with the Slack profile off (default: the
+      # optional dispatcher is absent) and on (dispatcher rendered), and assert
+      # the profile actually gates the service, so the #111 opt-in cannot silently
+      # break the default zero-Slack `agentos local up`.
+      - name: Default profile parses and omits the dispatcher
+        run: |
+          docker compose -f compose.release.yaml config -q
+          if docker compose -f compose.release.yaml config --services | grep -qx agentos-dispatcher; then
+            echo "agentos-dispatcher must NOT be present without the slack profile" >&2
+            exit 1
+          fi
+      - name: Slack profile parses and includes the dispatcher
+        run: |
+          export SLACK_APP_TOKEN=xapp-ci SLACK_BOT_TOKEN=xoxb-ci
+          docker compose -f compose.release.yaml --profile slack config -q
+          docker compose -f compose.release.yaml --profile slack config --services \
+            | grep -qx agentos-dispatcher \
+            || { echo "agentos-dispatcher must be present under the slack profile" >&2; exit 1; }
