@@ -229,14 +229,14 @@ pub async fn await_reply(
     }
 }
 
-/// Print the one-liner that continues this thread: reusing the same channel and
-/// thread ts keeps the worker routing to the same agent and turn context. A dim
-/// diagnostic (stderr, `--debug`-independent note) so it never pollutes the
-/// captured payload.
-pub fn print_continue_hint(verb: &str, channel: &str, thread_ts: &str) {
-    crate::ui::ui().note(&format!(
-        "continue this conversation: agentos {verb} --channel {channel} --thread {thread_ts} \"...\""
-    ));
+pub fn continue_hint_line(verb: &str) -> String {
+    format!("continue this conversation: agentos {verb} --continue \"...\"")
+}
+
+pub fn continue_hint_long_line(verb: &str, channel: &str, thread_ts: &str) -> String {
+    format!(
+        "continue this conversation: agentos {verb} --channel '{channel}' --thread {thread_ts} \"...\""
+    )
 }
 
 /// Resolve the channel and timestamps for a turn: an explicit `--channel` is
@@ -292,5 +292,23 @@ mod tests {
             ..update.clone()
         };
         assert_eq!(placeholder_update_text(&post, "1.2"), None);
+    }
+
+    #[test]
+    fn continue_hint_is_the_short_form() {
+        let line = continue_hint_line("cluster message");
+
+        assert!(line.contains("--continue"));
+        assert!(line.contains("agentos cluster message"));
+        assert!(!line.contains("--channel"));
+        assert!(!line.contains("--thread"));
+    }
+
+    #[test]
+    fn long_fallback_hint_quotes_the_channel() {
+        let line = continue_hint_long_line("local message", "#local-dev", "123.45");
+
+        assert!(line.contains("'#local-dev'"));
+        assert!(line.contains("--thread 123.45"));
     }
 }
