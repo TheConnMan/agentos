@@ -404,6 +404,7 @@ services:
       - ANTHROPIC_API_KEY
       - CLAUDE_CODE_OAUTH_TOKEN
       - AGENTOS_CREDENTIALS
+      - AGENTOS_MODEL
     restart: unless-stopped
 
 volumes:

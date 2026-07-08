@@ -63,6 +63,14 @@ def test_apply_model_env_forwards_base_url_and_model_without_fake_flag() -> None
     assert FAKE_MODEL_ENV not in env
 
 
+def test_apply_model_env_forwards_model_without_base_url() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig(credentials="sk-or-xyz", model="z-ai/glm-5.2"))
+    assert env[MODEL_ENV] == "z-ai/glm-5.2"
+    assert env[CREDENTIALS_ENV] == "sk-or-xyz"
+    assert BASE_URL_ENV not in env
+
+
 def test_apply_model_env_forwards_base_url_without_model() -> None:
     base_url_env, model_env = BASE_URL_ENV, MODEL_ENV
 
