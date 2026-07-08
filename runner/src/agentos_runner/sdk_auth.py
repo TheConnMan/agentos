@@ -14,9 +14,10 @@ prefix, so the more specific OAuth prefix is checked first):
 - ``sk-ant-oat...`` is a Claude Code OAuth token -> ``CLAUDE_CODE_OAUTH_TOKEN``.
 - ``sk-ant-...`` (any other) is an Anthropic API key -> ``ANTHROPIC_API_KEY``.
 - ``sk-or-...`` (OpenRouter) is routed through the base-URL-override seam:
-  base URL -> OpenRouter's Anthropic endpoint, key -> ``ANTHROPIC_AUTH_TOKEN``,
-  and ``ANTHROPIC_API_KEY`` -> the non-empty placeholder. A bare ``sk-...``
-  OpenAI-style key is still rejected loudly. Other providers are post-MVP.
+  base URL -> OpenRouter's Anthropic endpoint, key -> ``ANTHROPIC_API_KEY``
+  (the ``x-api-key`` header OpenRouter reads), and ``ANTHROPIC_AUTH_TOKEN``
+  left blank. A bare ``sk-...`` OpenAI-style key is still rejected loudly.
+  Other providers are post-MVP.
 - Anything else is treated as a Claude Code OAuth token ->
   ``CLAUDE_CODE_OAUTH_TOKEN``.
 
@@ -99,15 +100,16 @@ def resolve_model_credential(env: MutableMapping[str, str]) -> None:
     elif credential.startswith("sk-or-"):
         # OpenRouter: reuse the shared base-URL-override seam to target OpenRouter's
         # native Anthropic Messages endpoint (the SDK appends /v1/messages). The real
-        # key is Bearer auth via ANTHROPIC_AUTH_TOKEN; ANTHROPIC_API_KEY stays the
-        # non-empty NO_OP_API_KEY placeholder so the CLI auth gate passes. Staying on
-        # the Anthropic wire format keeps prompt caching intact (the OpenAI
+        # key goes in ANTHROPIC_API_KEY (sent as the x-api-key header, which is what
+        # OpenRouter's Anthropic endpoint reads), overriding the NO_OP_API_KEY
+        # placeholder the override just set; ANTHROPIC_AUTH_TOKEN stays blank. Staying
+        # on the Anthropic wire format keeps prompt caching intact (the OpenAI
         # chat-completions path silently breaks it at ~10x cost).
         env[BASE_URL_ENV] = OPENROUTER_BASE_URL
         override = resolve_base_url_override(env)
         assert override is not None  # base URL was just set
         env.update(override)
-        env[AUTH_TOKEN_ENV] = credential
+        env[API_KEY_ENV] = credential  # real key -> x-api-key (what OpenRouter reads)
     elif credential.startswith("sk-"):
         # OpenAI-style ("sk-...") and similar. Fail loudly rather than
         # forwarding a key the Anthropic SDK cannot use.
@@ -123,10 +125,11 @@ def resolve_sdk_env(env: MutableMapping[str, str]) -> dict[str, str] | None:
     """Decide the SDK auth env from the boot env.
 
     An ``sk-or-`` OpenRouter credential is routed by ``resolve_model_credential``
-    (which sets the OpenRouter base URL, the Bearer token, and the placeholder)
-    even when ``ANTHROPIC_BASE_URL`` is already set, so its Bearer token is never
-    dropped. Otherwise a generic base-URL override wins when configured, and a
-    plain Anthropic credential falls through to ``resolve_model_credential``.
+    (which sets the OpenRouter base URL and the real key in ``ANTHROPIC_API_KEY``,
+    the ``x-api-key`` header OpenRouter reads) even when ``ANTHROPIC_BASE_URL`` is
+    already set, so its key is never dropped. Otherwise a generic base-URL override
+    wins when configured, and a plain Anthropic credential falls through to
+    ``resolve_model_credential``.
     Returns the override dict to pass as ``ClaudeAgentOptions.env`` (base-URL
     override mode), or ``None`` when resolution mutated ``env`` in place.
     """
