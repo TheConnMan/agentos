@@ -135,6 +135,10 @@ pub struct UpOpts {
     pub chart: String,
     pub no_expose: bool,
     pub set: Vec<String>,
+    /// Operator declared CIDRs to open runner egress to for skill or tool web
+    /// access, additive to the model carve out. Empty means fail closed by
+    /// default.
+    pub allow_web_egress: Vec<String>,
     /// Whether `--fake-model` was passed (forces the sealed install and
     /// suppresses the fake-model warning even when the env credential is set).
     pub fake_model: bool,
@@ -158,7 +162,27 @@ pub struct DownOpts {
 /// installed: Anthropic's published API range over TLS. The runner policy is
 /// fail-closed, so a real model call needs this allowlist entry too.
 const MODEL_EGRESS_CIDR: &str = "160.79.104.0/23";
-const MODEL_EGRESS_PORT: u16 = 443;
+/// Egress port shared by every runner allowlist entry (model + web): TLS only.
+const EGRESS_TCP_PORT: u16 = 443;
+
+/// Push the three `helm --set` args for one `security.networkPolicy.allowedEgress`
+/// entry (cidr + TCP port) at `idx`. Both the model carve-out and each declared
+/// web destination emit this identical shape, so they share one emitter to keep
+/// the array contiguous and the argv byte-identical across sources.
+fn push_egress_rule(args: &mut Vec<CmdArg>, idx: usize, cidr: &str, port: u16) {
+    args.push(plain("--set"));
+    args.push(plain(format!(
+        "security.networkPolicy.allowedEgress[{idx}].cidr={cidr}"
+    )));
+    args.push(plain("--set"));
+    args.push(plain(format!(
+        "security.networkPolicy.allowedEgress[{idx}].ports[0].protocol=TCP"
+    )));
+    args.push(plain("--set"));
+    args.push(plain(format!(
+        "security.networkPolicy.allowedEgress[{idx}].ports[0].port={port}"
+    )));
+}
 
 /// Resolve the model credential `up` installs with. `--fake-model` forces the
 /// sealed install regardless of the environment; otherwise a non-empty
@@ -170,11 +194,41 @@ pub fn resolve_up_credentials(fake_model: bool, env_value: Option<String>) -> Op
     env_value.filter(|v| !v.is_empty())
 }
 
+/// Validate every operator-supplied `--allow-web-egress` value is a real CIDR
+/// (`addr/prefix`) before it is interpolated into a `helm --set` argument. A
+/// value containing a comma or `=` would otherwise be split by helm into
+/// multiple `--set` assignments and could overwrite the model rule at index
+/// `[0]`; requiring a parseable `IpAddr` plus an in-range prefix naturally
+/// rejects those (and whitespace) because they fail to parse.
+pub fn validate_web_egress_cidrs(cidrs: &[String]) -> Result<()> {
+    for cidr in cidrs {
+        let (addr, prefix) = cidr.split_once('/').ok_or_else(|| {
+            anyhow::anyhow!("`--allow-web-egress` value `{cidr}` is not a CIDR (expected addr/prefix, e.g. 10.0.0.0/8)")
+        })?;
+        let ip: std::net::IpAddr = addr.parse().map_err(|_| {
+            anyhow::anyhow!(
+                "`--allow-web-egress` value `{cidr}` has an unparseable address `{addr}`"
+            )
+        })?;
+        let bits: u8 = prefix.parse().map_err(|_| {
+            anyhow::anyhow!(
+                "`--allow-web-egress` value `{cidr}` has an unparseable prefix `{prefix}`"
+            )
+        })?;
+        let max = if ip.is_ipv4() { 32 } else { 128 };
+        if bits > max {
+            bail!("`--allow-web-egress` value `{cidr}` has an out-of-range prefix `/{bits}` (max /{max})");
+        }
+    }
+    Ok(())
+}
+
 /// `helm upgrade --install` for the release, exposing the UI and Langfuse on
 /// node ports unless `--no-expose`, plus any pass-through `--set` values. When a
 /// model credential is present it also switches the fake model off, forwards the
-/// credential (masked when printed), and opens the fail-closed runner egress to
-/// the model provider.
+/// credential (masked when printed), opens the fail-closed runner egress to the
+/// model provider, and then adds declared web destinations additively after the
+/// model carve out.
 pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     let mut args = vec![
         plain("upgrade"),
@@ -196,23 +250,23 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
         args.push(plain("inference.deploy=true"));
         args.push(plain("--set"));
         args.push(plain(format!("inference.model={model}")));
-    } else if let Some(credentials) = &o.credentials {
+    }
+    // Egress allowlist entries share one running index so the array stays
+    // contiguous no matter which sources contribute: the model carve-out (only
+    // when a credential is present) takes the first slot, then each declared web
+    // destination follows in order.
+    let mut egress_idx = 0;
+    if let Some(credentials) = &o.credentials {
         args.push(plain("--set"));
         args.push(plain("agentSandbox.runner.fakeModel=false"));
         args.push(plain("--set"));
         args.push(secret_set("agentSandbox.runner.credentials", credentials));
-        args.push(plain("--set"));
-        args.push(plain(format!(
-            "security.networkPolicy.allowedEgress[0].cidr={MODEL_EGRESS_CIDR}"
-        )));
-        args.push(plain("--set"));
-        args.push(plain(
-            "security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP",
-        ));
-        args.push(plain("--set"));
-        args.push(plain(format!(
-            "security.networkPolicy.allowedEgress[0].ports[0].port={MODEL_EGRESS_PORT}"
-        )));
+        push_egress_rule(&mut args, egress_idx, MODEL_EGRESS_CIDR, EGRESS_TCP_PORT);
+        egress_idx += 1;
+    }
+    for cidr in &o.allow_web_egress {
+        push_egress_rule(&mut args, egress_idx, cidr, EGRESS_TCP_PORT);
+        egress_idx += 1;
     }
     for s in &o.set {
         args.push(plain("--set"));
@@ -410,6 +464,8 @@ pub(crate) async fn run_step(
 
 pub async fn up(opts: UpOpts) -> Result<()> {
     let ui = crate::ui::ui();
+    validate_web_egress_cidrs(&opts.allow_web_egress)
+        .context("invalid --allow-web-egress value")?;
     let cmds = up_commands(&opts);
     if opts.credentials.is_some() {
         ui.note("real model enabled; egress opened to the model provider");
@@ -417,11 +473,17 @@ pub async fn up(opts: UpOpts) -> Result<()> {
         ui.note("local model enabled; installing the chart inference deployment");
     } else if !opts.fake_model {
         ui.warn(
-            "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model and sealed egress",
+            "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model (model egress stays sealed)",
         );
         ui.note(
             "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.",
         );
+    }
+    if !opts.allow_web_egress.is_empty() {
+        ui.note(&format!(
+            "web egress opened to {} declared destination(s)",
+            opts.allow_web_egress.len()
+        ));
     }
     if opts.common.dry_run {
         for cmd in &cmds {
@@ -730,6 +792,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: false,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: None,
             local_model: None,
@@ -750,6 +813,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: true,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: None,
             local_model: None,
@@ -766,6 +830,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: true,
             set: vec!["worker.replicas=2".into(), "dispatcher.deploy=false".into()],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: None,
             local_model: None,
@@ -786,6 +851,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: false,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: None,
             local_model: None,
@@ -805,6 +871,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: false,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: true,
             credentials: None,
             local_model: None,
@@ -821,6 +888,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: false,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: Some("sk-ant-secretsecret".into()),
             local_model: None,
@@ -892,6 +960,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: true,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: None,
             local_model: Some("qwen3:4b".into()),
@@ -908,6 +977,7 @@ mod tests {
             chart: "charts/agentos".into(),
             no_expose: true,
             set: vec![],
+            allow_web_egress: vec![],
             fake_model: false,
             credentials: None,
             local_model: None,
@@ -915,6 +985,146 @@ mod tests {
         let line = cmds[0].display();
         assert!(!line.contains("inference.deploy"), "{line}");
         assert!(!line.contains("inference.model"), "{line}");
+    }
+
+    #[test]
+    fn up_opens_web_egress_after_model() {
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: false,
+            set: vec![],
+            allow_web_egress: vec!["203.0.113.0/24".into()],
+            fake_model: false,
+            credentials: Some("sk-ant-secretsecret".into()),
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[1].cidr=203.0.113.0/24'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[1].ports[0].protocol=TCP'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[1].ports[0].port=443'"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn up_web_egress_without_model_uses_index_zero() {
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: false,
+            set: vec![],
+            allow_web_egress: vec!["0.0.0.0/0".into()],
+            fake_model: true,
+            credentials: None,
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(!line.contains("160.79.104.0/23"), "{line}");
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=0.0.0.0/0'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].ports[0].port=443'"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn up_web_egress_multiple_cidrs_contiguous() {
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: false,
+            set: vec![],
+            allow_web_egress: vec!["203.0.113.0/24".into(), "198.51.100.0/24".into()],
+            fake_model: false,
+            credentials: Some("sk-ant-secretsecret".into()),
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[1].cidr=203.0.113.0/24'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[2].cidr=198.51.100.0/24'"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn up_no_web_egress_stays_sealed() {
+        let sealed_cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: false,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+        });
+        let sealed_line = sealed_cmds[0].display();
+        assert!(!sealed_line.contains("allowedEgress"), "{sealed_line}");
+
+        let model_cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            no_expose: false,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: Some("sk-ant-secretsecret".into()),
+            local_model: None,
+        });
+        let model_line = model_cmds[0].display();
+        assert!(!model_line.contains("allowedEgress[1]"), "{model_line}");
+    }
+
+    #[test]
+    fn validate_web_egress_cidrs_accepts_valid_and_rejects_bad() {
+        // Valid IPv4 CIDR and both catch-all forms pass.
+        assert!(validate_web_egress_cidrs(&["203.0.113.0/24".into()]).is_ok());
+        assert!(validate_web_egress_cidrs(&["0.0.0.0/0".into()]).is_ok());
+        assert!(validate_web_egress_cidrs(&["::/0".into()]).is_ok());
+
+        // A value with a comma is rejected (would split into multiple --set).
+        let err = validate_web_egress_cidrs(&[
+            "10.0.0.0/8,security.networkPolicy.allowedEgress[0].cidr=0.0.0.0/0".into(),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("10.0.0.0/8,"), "{err}");
+
+        // A value with an `=` is rejected.
+        assert!(validate_web_egress_cidrs(&["10.0.0.0/8=x".into()]).is_err());
+
+        // A bare address with no /prefix is rejected.
+        assert!(validate_web_egress_cidrs(&["10.0.0.0".into()]).is_err());
+
+        // An out-of-range prefix is rejected.
+        assert!(validate_web_egress_cidrs(&["10.0.0.0/33".into()]).is_err());
     }
 
     #[test]

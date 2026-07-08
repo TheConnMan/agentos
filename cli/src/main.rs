@@ -293,6 +293,11 @@ enum ClusterAction {
             conflicts_with = "fake_model"
         )]
         local_model: Option<String>,
+        /// Open runner egress to a declared destination for skill web access,
+        /// repeatable CIDR, TCP 443. Additive to the model egress; omit to stay
+        /// fully sealed.
+        #[arg(long = "allow-web-egress", value_name = "CIDR")]
+        allow_web_egress: Vec<String>,
         /// Extra `--set KEY=VAL` passed through to helm verbatim (repeatable).
         #[arg(long = "set", value_name = "KEY=VAL")]
         set: Vec<String>,
@@ -609,6 +614,7 @@ async fn main() -> Result<()> {
                 no_expose,
                 fake_model,
                 local_model,
+                allow_web_egress,
                 set,
                 dry_run,
             } => {
@@ -637,6 +643,7 @@ async fn main() -> Result<()> {
                     chart,
                     no_expose,
                     set,
+                    allow_web_egress,
                     fake_model,
                     credentials,
                     local_model,

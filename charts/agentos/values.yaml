@@ -582,10 +582,13 @@ security:
     # Allow DNS egress so the runner can resolve its allowed hosts.
     allowDNS: true
     dnsNamespace: kube-system
-    # Egress allowlist = model API + declared MCP endpoints. Each entry is
-    # {cidr, ports: [{protocol, port}]}. EMPTY by default: a fresh install denies
-    # ALL egress except DNS until the operator declares where the model API and
-    # MCP servers live. Deliberately fail-closed -- an unset allowlist must never
+    # Egress allowlist = model API + declared MCP endpoints + any operator-declared
+    # skill/tool web-access egress (e.g. a web-search provider a skill calls). Each
+    # entry is {cidr, ports: [{protocol, port}]}, appended additively -- the
+    # `agentos cluster up --allow-web-egress <CIDR>` flag adds entries here after the model
+    # carve-out at index [0] without weakening it. EMPTY by default: a fresh install
+    # denies ALL egress except DNS until the operator declares where the model API
+    # and MCP servers live. Deliberately fail-closed -- an unset allowlist must never
     # mean "allow everything".
     allowedEgress: []
     #  - cidr: 160.79.104.0/23           # e.g. api.anthropic.com

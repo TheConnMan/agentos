@@ -244,6 +244,20 @@ default: a fresh install denies all egress except DNS until the operator declare
 where the model API and MCP endpoints live (`{cidr, ports}` entries). An unset
 allowlist never means allow-all.
 
+**Skill/tool web access.** The same allowlist also carries outbound web access a
+skill or tool needs (e.g. a web-search provider). `agentos cluster up --allow-web-egress
+<CIDR>` (repeatable) appends one entry per CIDR on TCP 443, additive to the model
+rule at index `[0]` and without weakening it; the raw helm equivalent is `--set
+'security.networkPolicy.allowedEgress[1].cidr=<CIDR>'` plus
+`...[1].ports[0].protocol=TCP` and `...[1].ports[0].port=443` (index `[1]`
+because the model entry is `[0]`; use index `[0]` instead when installing sealed
+with no model credential, so the array has no gap). This is the platform enablement the weather
+example (#36) depends on -- its skill answers via a live web search, which the
+sealed default denies. `--allow-web-egress 0.0.0.0/0` opens the open internet
+(still minus the `169.254.169.254` metadata endpoint the chart carves out of
+`0.0.0.0/0`); narrow the CIDR to a specific provider for a tighter posture. Omit
+the flag and the install stays fully sealed.
+
 **gVisor needs runsc on the node**, and `security.gvisor.mode` is a tri-state
 (default `auto`):
 
