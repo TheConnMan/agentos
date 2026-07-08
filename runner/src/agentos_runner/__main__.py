@@ -17,7 +17,7 @@ from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_plugins
-from .sdk_auth import resolve_base_url_override, resolve_model_credential
+from .sdk_auth import resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
@@ -77,9 +77,7 @@ def main() -> None:
     # process fails visibly before the port is up rather than after a real call.
     override = None
     if not fake_model:
-        override = resolve_base_url_override(os.environ)
-        if override is None:
-            resolve_model_credential(os.environ)
+        override = resolve_sdk_env(os.environ)
     config = RunnerConfig.from_env(os.environ)
     runner = build_runner(config, fake_model=fake_model, sdk_env=override)
     app = create_app(runner)

@@ -9,8 +9,8 @@ A generic, provider-agnostic base-URL override. When configured, the runner
 points the claude-agent-sdk (and the bundled `claude` CLI it spawns) at a local
 or third-party endpoint instead of real Anthropic, using a no-op placeholder in
 place of a credential. Local Ollama is the FIRST implementation (issue #46).
-OpenRouter (issue #24) is the NEXT consumer: it reuses this seam rather than
-forking a parallel path. This is one seam, many providers.
+OpenRouter (issue #24) is implemented as a worked example of the same seam
+rather than a parallel path. This is one seam, many providers.
 
 ## Env contract
 
@@ -30,15 +30,29 @@ the CLI auth gate. It is deliberately not `sk-...` shaped so it can never be
 mistaken for a real credential, and paired with the overridden base URL it
 cannot authenticate against real Anthropic.
 
-### `CLAUDE_CODE_OAUTH_TOKEN` (output, set by the runner)
+### `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_AUTH_TOKEN` (output, set by the runner)
 
-Blanked to `""` in override mode so an inherited OAuth token cannot take
-precedence over the placeholder + overridden base URL. This keeps override mode
-hermetic.
+Both are blanked to `""` in override mode so an inherited OAuth token or Bearer
+token cannot take precedence over the placeholder + overridden base URL, nor
+leak as a Bearer header to the overridden (local/third-party) endpoint. This
+keeps override mode hermetic. (On the OpenRouter path, `resolve_model_credential`
+re-sets `ANTHROPIC_AUTH_TOKEN` to the real `sk-or-` key after applying this
+override, so the Bearer token still reaches OpenRouter.)
 
 ### `AGENTOS_MODEL` (input)
 
 The model name (e.g. `qwen3:4b`), passed through to `ClaudeAgentOptions.model`.
+
+## OpenRouter mapping
+
+An `sk-or-...` credential in `AGENTOS_CREDENTIALS` is auto-detected by
+`resolve_model_credential`. The runner sets
+`ANTHROPIC_BASE_URL=https://openrouter.ai/api`, places the real key in
+`ANTHROPIC_AUTH_TOKEN` for Bearer auth, and reuses this seam's non-empty
+`ANTHROPIC_API_KEY` placeholder plus blanked `CLAUDE_CODE_OAUTH_TOKEN`.
+
+Prompt caching survives only on this native Anthropic Messages path, and only
+for Claude-family OpenRouter models.
 
 ## How it arrives
 

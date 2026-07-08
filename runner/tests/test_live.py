@@ -1,10 +1,12 @@
 """LIVE smoke against a real claude-agent-sdk session.
 
-Runs only when a real credential is present (``CLAUDE_CODE_OAUTH_TOKEN`` or
-``ANTHROPIC_API_KEY``). Without one, every test here is skipped and reported as
-such -- the suite never fabricates a live result. Mirrors the PT-2 proofs: a
-trivial message is answered, a mid-run steer changes course, and turn 2 shows a
-warm prompt cache (``cache_read_input_tokens > 0``).
+The Anthropic-path tests run only when a real credential is present
+(``CLAUDE_CODE_OAUTH_TOKEN`` or ``ANTHROPIC_API_KEY``). Without one, those tests
+are skipped and reported as such -- the suite never fabricates a live result.
+Mirrors the PT-2 proofs: a trivial message is answered, a mid-run steer changes
+course, and turn 2 shows a warm prompt cache
+(``cache_read_input_tokens > 0``).
+A third live test covers the OpenRouter path, gated on ``OPENROUTER_API_KEY``.
 """
 
 import os
@@ -17,13 +19,13 @@ from agentos_runner.adapter import ClaudeAgentSession
 from agentos_runner.session import SessionRunner
 
 _HAS_CRED = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+_OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-pytestmark = pytest.mark.skipif(
+
+@pytest.mark.skipif(
     not _HAS_CRED,
     reason="no live credential (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY) in env",
 )
-
-
 def test_live_runner_answers_trivial_message() -> None:
     options = build_options(
         plugins=[], model=None,
@@ -56,6 +58,10 @@ def test_live_runner_answers_trivial_message() -> None:
     assert events[-1].status == SessionStatus.DONE
 
 
+@pytest.mark.skipif(
+    not _HAS_CRED,
+    reason="no live credential (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY) in env",
+)
 def test_live_steer_and_cache_reuse() -> None:
     # Steering + prompt-cache reuse at the SDK level (the PT-2 pattern): a mid-run
     # steer redirects the agent, and turn 2 reads the cache the first turn wrote.
@@ -118,3 +124,47 @@ def test_live_steer_and_cache_reuse() -> None:
     result = anyio.run(go)
     assert result["redirected"], "mid-run steer did not change course"
     assert result["turn2_cache_read"] > 0, "no prompt-cache reuse on turn 2"
+
+
+@pytest.mark.skipif(
+    not _OPENROUTER_KEY,
+    reason="no OPENROUTER_API_KEY (sk-or-...) in env",
+)
+def test_live_openrouter_cache_reuse() -> None:
+    from agentos_runner.sdk_auth import CREDENTIALS_ENV, resolve_model_credential
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+
+    env: dict[str, str] = {CREDENTIALS_ENV: _OPENROUTER_KEY}
+    resolve_model_credential(env)
+    model = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5")
+
+    async def go() -> dict:
+        usages: list[dict] = []
+        opts = ClaudeAgentOptions(
+            model=model,
+            env=env,
+            max_turns=2,
+            permission_mode="bypassPermissions",
+            system_prompt="You are a terse test agent. " * 40,
+        )
+        async with ClaudeSDKClient(opts) as client:
+            await client.query("Reply with the single word: alpha")
+            async for msg in client.receive_response():
+                if isinstance(msg, ResultMessage):
+                    if isinstance(msg.usage, dict):
+                        usages.append(msg.usage)
+                    break
+
+            await client.query("Reply with the single word: beta")
+            async for msg in client.receive_response():
+                if isinstance(msg, ResultMessage):
+                    if isinstance(msg.usage, dict):
+                        usages.append(msg.usage)
+                    break
+
+        return usages[-1] if usages else {}
+
+    usage = anyio.run(go)
+    assert int((usage or {}).get("cache_read_input_tokens") or 0) > 0, (
+        "no prompt-cache reuse on turn 2 through the OpenRouter path"
+    )
