@@ -162,6 +162,50 @@ def test_agentos_credentials_forwarded_by_name_never_as_value() -> None:
     assert "AGENTOS_CREDENTIALS=sk-ant-PLACEHOLDER-secret" not in envs
 
 
+def test_ambient_sdk_creds_not_forwarded_when_agentos_credentials_set() -> None:
+    # BYO model: an explicit AGENTOS_CREDENTIALS is present, and the operator's
+    # shell also carries ambient SDK tokens. Positive selection forwards exactly
+    # AGENTOS_CREDENTIALS by name and does NOT forward the ambient SDK vars (which
+    # would re-inject the operator's token and shadow the BYO credential in the
+    # runner).
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={
+            "CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER-oauth",
+            "ANTHROPIC_API_KEY": "sk-ant-PLACEHOLDER-key",
+            "AGENTOS_CREDENTIALS": "sk-or-PLACEHOLDER-byo",
+        },
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    argv = client.calls[0]
+    envs = _flag_values(argv, "-e")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient OAuth token not forwarded by name
+    assert "ANTHROPIC_API_KEY" not in envs  # ambient API key not forwarded by name
+    assert "AGENTOS_CREDENTIALS" in envs  # explicit BYO reference still forwarded by name
+    assert all("PLACEHOLDER" not in a for a in argv)  # no secret value leaks into argv
+
+
+def test_ambient_sdk_creds_forwarded_when_agentos_credentials_empty() -> None:
+    # Legacy real-model path: an empty AGENTOS_CREDENTIALS placeholder (a blank
+    # line in compose's .env) must NOT suppress a real ambient OAuth token.
+    # Positive selection keys on VALUE-truthiness, not key-presence, so an empty
+    # AGENTOS_CREDENTIALS is treated as absent and the ambient SDK var is forwarded.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={
+            "AGENTOS_CREDENTIALS": "",
+            "CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER-oauth",
+        },
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    argv = client.calls[0]
+    envs = _flag_values(argv, "-e")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in envs  # ambient OAuth token forwarded by name
+    assert all("PLACEHOLDER" not in a for a in argv)  # the value never leaks into argv
+
+
 def test_get_sandbox_reports_published_port_and_mode() -> None:
     client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
     client.outputs = {

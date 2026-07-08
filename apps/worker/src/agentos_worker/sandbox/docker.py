@@ -60,13 +60,14 @@ logger = logging.getLogger(__name__)
 # is published to is Docker-assigned and read back per-container.
 RUNNER_CONTAINER_PORT = 8080
 
-# Credentials the runner needs, all forwarded into the container BY NAME (docker
+# The ambient SDK credential vars, forwarded into the container BY NAME (docker
 # reads the value from the worker env; this code never does, and no secret ever
-# lands in the docker argv). AGENTOS_CREDENTIALS is the ACI reference the runner
-# maps onto an SDK var; the SDK vars authenticate directly. Mirrors the CLI
-# (cli/src/docker.rs, cli/src/commands.rs).
-CREDENTIAL_PASSTHROUGH_ENV = (
-    CREDENTIALS_ENV,
+# lands in the docker argv). These authenticate the runner directly on the legacy
+# real-Anthropic path, and are forwarded only when no explicit AGENTOS_CREDENTIALS
+# is chosen. AGENTOS_CREDENTIALS (the ACI reference the runner maps onto an SDK
+# var) is selected positively and alone. Mirrors the CLI (cli/src/docker.rs,
+# cli/src/commands.rs).
+_SDK_PASSTHROUGH_ENV = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_API_KEY",
 )
@@ -170,13 +171,21 @@ class DockerSandboxClient:
         for key, value in sorted(env.items()):
             if key not in _WORKER_OWNED_ENV:
                 args += ["-e", f"{key}={value}"]
-        # Forward every credential BY NAME only (no value in the argv) when the
-        # worker has it set, so a real-model run authenticates without this code
-        # ever reading the token and without the secret landing in the docker
-        # process arguments. Fake-model runs simply have none set.
-        for var in CREDENTIAL_PASSTHROUGH_ENV:
-            if var in self._environ:
-                args += ["-e", var]
+        # Forward exactly one model credential into the runner, always BY NAME (docker
+        # reads the value from the worker env; the secret never lands in the argv). An
+        # explicit AGENTOS_CREDENTIALS is the operator's chosen BYO credential and is
+        # forwarded alone, so an ambient SDK token (leaked into the worker via compose's
+        # .env auto-load or the operator shell) can neither shadow it nor ride into the
+        # sandbox. With no BYO credential set, fall back to the ambient SDK credential(s)
+        # for the legacy real-Anthropic path. Selection keys on the worker environ (the
+        # by-name forward reads the value from there); an empty AGENTOS_CREDENTIALS is
+        # treated as unset.
+        if self._environ.get(CREDENTIALS_ENV):
+            args += ["-e", CREDENTIALS_ENV]
+        else:
+            for var in _SDK_PASSTHROUGH_ENV:
+                if var in self._environ:
+                    args += ["-e", var]
         args.append(self._image)
 
         try:

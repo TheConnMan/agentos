@@ -47,6 +47,15 @@ def test_apply_model_env_omits_both_when_unset() -> None:
     assert CREDENTIALS_ENV not in env
 
 
+def test_apply_model_env_leaves_sdk_creds_absent_without_credentials() -> None:
+    # No BYO credential -> the SDK vars are neither added nor blanked, so the
+    # legacy ambient-token real-model path still flows the operator's token.
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig())
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+
+
 def test_apply_model_env_forwards_base_url_and_model_without_fake_flag() -> None:
     base_url_env, model_env = BASE_URL_ENV, MODEL_ENV
     assert base_url_env == "ANTHROPIC_BASE_URL"
