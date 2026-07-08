@@ -91,6 +91,35 @@ def _mention_event(text: str = "hi there") -> dict[str, Any]:
     }
 
 
+def _block_action_request(
+    envelope_id: str,
+    *,
+    action_id: str = "reports",
+    value: str | None = None,
+    trigger_id: str | None = None,
+    message: dict[str, Any] | None = None,
+) -> SocketModeRequest:
+    action: dict[str, Any] = {"type": "button", "action_id": action_id, "action_ts": "1.5"}
+    if value is not None:
+        action["value"] = value
+    return SocketModeRequest(
+        type="interactive",
+        envelope_id=envelope_id,
+        payload={
+            "type": "block_actions",
+            "trigger_id": trigger_id or f"trig-{envelope_id}",
+            "team": {"id": "T1"},
+            "user": {"id": "U123"},
+            "api_app_id": "A1",
+            "token": "verif",
+            "container": {"type": "message", "message_ts": "1700.0001"},
+            "channel": {"id": "C123"},
+            "message": message or {"ts": "1700.0001", "thread_ts": "1700.0001"},
+            "actions": [action],
+        },
+    )
+
+
 def test_envelope_acked_placeholder_posted_and_enqueued(
     redis_client: redis.Redis, config: DispatcherConfig
 ) -> None:
@@ -204,6 +233,61 @@ def test_message_in_channel_is_ignored(
     # Ordinary channel chatter is acked but never enqueued.
     assert sock.acked_envelope_ids == ["env-1"]
     assert redis_client.xlen(config.stream) == 0
+
+
+def test_button_click_enqueues_a_turn(
+    redis_client: redis.Redis, config: DispatcherConfig
+) -> None:
+    app, web_client = _build(config, redis_client)
+    handler = SocketModeHandler(app, app_token="xapp-test")
+    sock = FakeSocketClient()
+
+    handler.handle(sock, _block_action_request("env-1", action_id="reports"))
+    _drain(app)
+
+    # A placeholder is posted in the clicked message's thread, and one turn is
+    # enqueued whose text is the button's command (its action_id here).
+    web_client.chat_postMessage.assert_called_once_with(
+        channel="C123", thread_ts="1700.0001", text=config.placeholder_text
+    )
+    assert redis_client.xlen(config.stream) == 1
+    _, fields = redis_client.xrange(config.stream)[0]
+    queued = QueuedSlackEvent.from_stream_fields(fields)
+    assert queued.text == "reports"
+    assert queued.channel == "C123"
+    assert queued.thread_ts == "1700.0001"
+    assert queued.placeholder_ts == BOT_TS
+    assert queued.slack_event_id == "action-trig-env-1"
+
+
+def test_button_click_prefers_value_over_action_id(
+    redis_client: redis.Redis, config: DispatcherConfig
+) -> None:
+    app, _ = _build(config, redis_client)
+    handler = SocketModeHandler(app, app_token="xapp-test")
+    sock = FakeSocketClient()
+
+    handler.handle(sock, _block_action_request("env-1", action_id="btn", value="show top 5"))
+    _drain(app)
+
+    _, fields = redis_client.xrange(config.stream)[0]
+    assert QueuedSlackEvent.from_stream_fields(fields).text == "show top 5"
+
+
+def test_duplicate_click_enqueues_exactly_once(
+    redis_client: redis.Redis, config: DispatcherConfig
+) -> None:
+    app, web_client = _build(config, redis_client)
+    handler = SocketModeHandler(app, app_token="xapp-test")
+    sock = FakeSocketClient()
+
+    # Same interaction (trigger_id) redelivered: dedupe drops the second.
+    handler.handle(sock, _block_action_request("env-1", trigger_id="trig-dup"))
+    handler.handle(sock, _block_action_request("env-2", trigger_id="trig-dup"))
+    _drain(app)
+
+    assert web_client.chat_postMessage.call_count == 1
+    assert redis_client.xlen(config.stream) == 1
 
 
 def test_bot_authored_message_is_ignored(
