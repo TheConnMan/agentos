@@ -23,6 +23,13 @@ oauth_config:
       - groups:history
       - im:history
       - im:read
+      # Required only if you enable the shimmer status (AGENTOS_SHIMMER): lets the
+      # dispatcher/worker call assistant.threads.setStatus. You must ALSO turn on
+      # the "Agents & AI Apps" feature in the app config (api.slack.com/apps ->
+      # your app -> Agents & AI Apps) for setStatus to be accepted -- that toggle
+      # has no stable manifest key, so it is a one-click manual step. Harmless to
+      # keep the scope even with shimmer off.
+      - assistant:write
 settings:
   socket_mode_enabled: true
   event_subscriptions:

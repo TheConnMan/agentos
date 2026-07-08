@@ -70,6 +70,29 @@ def test_new_turn_streams_to_slack_and_acks(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_shimmer_clears_status_when_the_turn_ends(make_harness) -> None:
+    # With shimmer on, the kernel clears the assistant-thread status the
+    # dispatcher set, on the turn's terminal exit (a plain success here).
+    async def go() -> None:
+        async with make_harness(shimmer=True) as h:
+            h.runner.default_script = [Final(text="done", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tS"))
+            assert ("C1", "tS") in h.sink.status_clears
+
+    asyncio.run(go())
+
+
+def test_no_status_clear_when_shimmer_is_off(make_harness) -> None:
+    # Default (shimmer off): the kernel never touches the assistant status.
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="done", status=DONE)]
+            await h.kernel.process_event(_qevent("hi"))
+            assert h.sink.status_clears == []
+
+    asyncio.run(go())
+
+
 def test_followup_steers_the_live_turn(make_harness) -> None:
     async def go() -> None:
         async with make_harness() as h:

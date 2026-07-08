@@ -95,13 +95,17 @@ def make_config(names: dict[str, str], **overrides: object) -> WorkerConfig:
 
 
 class FakeSink(SlackSink):
-    """Records every chat.update the kernel makes."""
+    """Records every chat.update and status-clear the kernel makes."""
 
     def __init__(self) -> None:
         self.updates: list[tuple[str, str, str]] = []
+        self.status_clears: list[tuple[str, str]] = []
 
     async def update(self, *, channel: str, ts: str, text: str) -> None:
         self.updates.append((channel, ts, text))
+
+    async def clear_status(self, *, channel: str, thread_ts: str) -> None:
+        self.status_clears.append((channel, thread_ts))
 
     @property
     def last_text(self) -> str | None:
