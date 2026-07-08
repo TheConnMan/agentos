@@ -1,6 +1,8 @@
 import { C } from "../tokens";
 import { hoverBg } from "../lib/style";
 import { useStore } from "../state/store";
+import { useWired } from "../state/wired";
+import { isWired } from "../api/config";
 import type { Nav } from "../state/types";
 
 const CRUMB: Record<Nav, string> = {
@@ -15,6 +17,8 @@ const CRUMB: Record<Nav, string> = {
 
 export function Topbar() {
   const { state, dispatch, ghOn, envDev } = useStore();
+  const wired = useWired();
+  const orgName = isWired() ? wired.orgName : "acme-corp";
   const envDisabled = !ghOn;
   const isProd = state.env === "prod" && !envDev;
 
@@ -53,7 +57,7 @@ export function Topbar() {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-        <span style={{ color: C.muted }}>acme-corp</span>
+        <span style={{ color: C.muted }}>{orgName}</span>
         <span style={{ color: C.disabled }}>/</span>
         <span style={{ color: C.text }}>{state.terminal ? "CLI view" : CRUMB[state.nav]}</span>
       </div>

@@ -11,6 +11,7 @@ import {
   createDeployment,
   listTraces,
   listRunnerPods,
+  getConfig,
 } from "./client";
 
 afterEach(() => {
@@ -89,6 +90,14 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/langfuse/traces?limit=20");
     await listTraces(5, "agent-uuid-1");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/langfuse/traces?limit=5&agent_id=agent-uuid-1");
+  });
+
+  it("reads the open /config endpoint and returns the parsed org name", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { org_name: "Globex Corporation" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const config = await getConfig();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/config");
+    expect(config.org_name).toBe("Globex Corporation");
   });
 
   it("lists runner pods and surfaces a 503 no-cluster as ApiError(status=503)", async () => {

@@ -85,7 +85,7 @@ export function Sidebar() {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            acme-corp
+            {isWired() ? wired.orgName : "acme-corp"}
           </div>
           <div style={{ fontSize: 11, color: C.muted }}>production</div>
         </div>

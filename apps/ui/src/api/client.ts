@@ -3,6 +3,11 @@
 
 import { API_PREFIX, apiKey } from "./config";
 
+// Open (unauthenticated) app config: the configurable org/workspace name.
+export interface AppConfig {
+  org_name: string;
+}
+
 export interface AgentOut {
   id: string;
   name: string;
@@ -311,6 +316,13 @@ export interface KillState {
 export async function getAgents(): Promise<AgentOut[]> {
   const resp = await fetch(url("/agents"), { headers: headers() });
   return jsonOrThrow<AgentOut[]>(resp);
+}
+
+// The open /config endpoint (no API key required) carries the configurable
+// org/workspace name the shared chrome renders.
+export async function getConfig(): Promise<AppConfig> {
+  const resp = await fetch(url("/config"));
+  return jsonOrThrow<AppConfig>(resp);
 }
 
 // Delete an agent (cascades its versions/deployments server-side; 204 No Content

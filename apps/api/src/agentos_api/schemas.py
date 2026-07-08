@@ -9,6 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from .models import Environment
 
 
+class AppConfig(BaseModel):
+    """Open app-level config the UI reads before auth (org/workspace name)."""
+
+    org_name: str
+
+
 class LoadPackConfig(BaseModel):
     """Rotating "working..." load lines for one agent. Mirrors the worker's
     agentos_worker.behaviorpacks.LoadPack (packs ride on agent config, not the
