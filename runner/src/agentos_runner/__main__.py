@@ -8,7 +8,9 @@ or connect failure fails the process visibly rather than after the port is up.
 
 from __future__ import annotations
 
+import logging
 import os
+import sys
 
 from aiohttp import web
 
@@ -17,10 +19,12 @@ from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_plugins
-from .sdk_auth import resolve_sdk_env
+from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
+
+logger = logging.getLogger(__name__)
 
 
 def build_runner(
@@ -70,20 +74,37 @@ def build_runner(
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     fake_model = os.environ.get("AGENTOS_FAKE_MODEL", "").lower() in ("1", "true", "yes")
+    logger.info("runner starting fake_model=%s", fake_model)
     # A real session authenticates from the SDK's own credential env; map the
     # forwarded ACI AGENTOS_CREDENTIALS reference onto it (a no-op for a fake
     # run, which needs no credential). Raises on an unsupported credential so the
     # process fails visibly before the port is up rather than after a real call.
     override = None
     if not fake_model:
-        override = resolve_sdk_env(os.environ)
+        try:
+            override = resolve_sdk_env(os.environ)
+        except UnsupportedCredentialError as exc:
+            logger.error("credential resolution failed: %s", exc)
+            raise
     config = RunnerConfig.from_env(os.environ)
+    logger.info(
+        "runner configured session=%s model=%s port=%d",
+        config.session.session_id,
+        config.model,
+        config.port,
+    )
     runner = build_runner(config, fake_model=fake_model, sdk_env=override)
     app = create_app(runner)
 
     async def _startup(_app: web.Application) -> None:
-        await runner.start()
+        try:
+            await runner.start()
+        except Exception as exc:
+            logger.error("session start failed error_class=%s: %s", type(exc).__name__, exc)
+            raise
+        logger.info("session started session=%s", config.session.session_id)
 
     app.on_startup.append(_startup)
     web.run_app(app, host="0.0.0.0", port=config.port)

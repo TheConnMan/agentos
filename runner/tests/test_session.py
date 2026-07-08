@@ -1,5 +1,7 @@
 """SessionRunner: turn streaming, interrupt reclassification, rehydrate options."""
 
+import logging
+
 import anyio
 from aci_protocol import Event, Interrupt, SessionStatus, parse_ndjson
 from agentos_runner import RunTracer, SideEffectClassifier, build_options
@@ -45,6 +47,20 @@ def test_happy_turn_stream_shape() -> None:
     assert events[-1].status == SessionStatus.DONE
     assert fake.queries == ["go"]  # the event text was pushed into the session
     assert runner.status == SessionStatus.DONE
+
+
+def test_turn_lifecycle_logged(caplog) -> None:
+    runner, _ = _runner()
+    event = Event(type="message", text="go", user="U-log", ts="1")
+
+    with caplog.at_level(logging.INFO, logger="agentos_runner.session"):
+        events = _drain(runner, event)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert events[-1].status == SessionStatus.DONE
+    assert any("turn start" in message and "user=U-log" in message for message in messages)
+    assert any("turn end" in message and "status=done" in message for message in messages)
+    assert any("tool call" in message and "tool=Bash" in message for message in messages)
 
 
 def test_bare_interrupt_yields_idle_final() -> None:
@@ -133,6 +149,106 @@ def test_sdk_exception_still_terminates_in_final() -> None:
     assert events[0].classification == "runner-error"
     assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
     assert runner.status == SessionStatus.CLASSIFIED_FAILURE
+
+
+def test_sdk_exception_logs_turn_failure(caplog) -> None:
+    class RaisingSession:
+        async def connect(self) -> None: ...
+
+        async def query(self, text: str) -> None:
+            raise RuntimeError("authentication_failed")
+
+        async def receive_turn(self):  # pragma: no cover - never reached
+            if False:
+                yield None
+
+        async def interrupt(self) -> None: ...
+
+        async def close(self) -> None: ...
+
+    runner = SessionRunner(
+        session_factory=RaisingSession,
+        ceiling=0,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="t",
+    )
+    with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
+        events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert [e.type for e in events] == ["error", "final"]
+    assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
+    assert any(
+        record.levelno == logging.ERROR
+        and "turn failed" in record.getMessage()
+        and "RuntimeError" in record.getMessage()
+        for record in caplog.records
+    )
+    assert any("authentication_failed" in message for message in messages)
+
+
+def test_budget_halt_logged(caplog) -> None:
+    script = [
+        AssistantMessage(
+            content=[TextBlock(text="thinking hard")],
+            model="fake",
+            usage={"output_tokens": 500},
+        ),
+        ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=1,
+            is_error=False,
+            num_turns=1,
+            session_id="s",
+            result="done",
+            usage={"output_tokens": 500},
+        ),
+    ]
+    runner, _ = _runner(lambda: script, ceiling=10)
+
+    with caplog.at_level(logging.WARNING, logger="agentos_runner.session"):
+        events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
+
+    assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
+    assert any(
+        record.levelno == logging.WARNING and "budget halt" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_error_result_body_not_logged(caplog) -> None:
+    # An error *result* turn builds ErrorEvent(message=result); the "model error"
+    # WARNING must log only the structural classification, never the result body
+    # (which is the model output / Final.text). No prior interrupt, so the turn is
+    # a plain classified failure and translate takes the ErrorEvent(message=text)
+    # branch.
+    sentinel = "SENTINEL-RESULT-BODY-7c2e"
+    script = [
+        AssistantMessage(content=[TextBlock(text="working")], model="m"),
+        ResultMessage(
+            subtype="error_during_execution", duration_ms=1, duration_api_ms=1,
+            is_error=True, num_turns=1, session_id="s", result=sentinel,
+        ),
+    ]
+    runner, _ = _runner(lambda: script)
+
+    with caplog.at_level(logging.WARNING, logger="agentos_runner.session"):
+        events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
+
+    assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
+    assert all(sentinel not in record.getMessage() for record in caplog.records)
+
+
+def test_turn_logging_does_not_include_message_body(caplog) -> None:
+    runner, _ = _runner()
+    sentinel = "SENTINEL-SECRET-BODY-9f3a"
+
+    with caplog.at_level(logging.INFO, logger="agentos_runner.session"):
+        _drain(runner, Event(type="message", text=sentinel, user="U", ts="1"))
+
+    assert all(sentinel not in record.getMessage() for record in caplog.records)
 
 
 def test_steer_rejected_once_final_is_produced() -> None:
