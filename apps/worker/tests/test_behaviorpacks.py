@@ -7,13 +7,19 @@ greeting glued to a real request), and tip sampling is deterministic per seed.
 
 from __future__ import annotations
 
+import pytest
 from agentos_worker.behaviorpacks import (
     BehaviorPacks,
     GreetingPack,
     HelpPack,
+    Setting,
+    SettingError,
+    SettingsPack,
     TipsPack,
+    coerce_setting,
     match_greeting,
     match_help,
+    resolve_settings,
     sample_tip,
 )
 
@@ -29,11 +35,13 @@ def _packs(
     greeting: GreetingPack | None = None,
     tips: TipsPack | None = None,
     help: HelpPack | None = None,
+    settings: SettingsPack | None = None,
 ) -> BehaviorPacks:
     return BehaviorPacks(
         greeting=greeting or GreetingPack(),
         tips=tips or TipsPack(),
         help=help or HelpPack(),
+        settings=settings or SettingsPack(),
     )
 
 
@@ -157,6 +165,61 @@ def test_sample_tip_working_only_and_tip_only() -> None:
     assert sample_tip(_packs(tips=working_only), "s") == "Just a sec"
     tip_only = TipsPack(enabled=True, tips=("Try /help",))
     assert sample_tip(_packs(tips=tip_only), "s") == "Tip: Try /help"
+
+
+# -- settings pack (schema + coerce/resolve) ----------------------------------
+
+_SETTINGS = SettingsPack(
+    enabled=True,
+    settings=(
+        Setting(key="page_size", kind="int", default="5"),
+        Setting(key="notify", kind="bool", default="false"),
+        Setting(key="severity", kind="choice", default="High", choices=("Low", "High")),
+        Setting(key="label", kind="str", default="leaks"),
+    ),
+)
+
+
+def test_coerce_setting_validates_each_kind() -> None:
+    assert coerce_setting(Setting(key="n", kind="int"), " 7 ") == "7"
+    assert coerce_setting(Setting(key="b", kind="bool"), "ON") == "true"
+    assert coerce_setting(Setting(key="b", kind="bool"), "no") == "false"
+    ch = Setting(key="c", kind="choice", choices=("a", "b"))
+    assert coerce_setting(ch, "b") == "b"
+    assert coerce_setting(Setting(key="s", kind="str"), "hi") == "hi"
+
+
+def test_coerce_setting_rejects_bad_values() -> None:
+    for setting, raw in [
+        (Setting(key="n", kind="int"), "x"),
+        (Setting(key="n", kind="int"), "0"),
+        (Setting(key="b", kind="bool"), "maybe"),
+        (Setting(key="c", kind="choice", choices=("a",)), "z"),
+        (Setting(key="s", kind="str"), "   "),
+    ]:
+        with pytest.raises(SettingError):
+            coerce_setting(setting, raw)
+
+
+def test_resolve_settings_override_wins_else_default() -> None:
+    resolved = resolve_settings(_packs(settings=_SETTINGS), {"page_size": "12", "notify": "yes"})
+    assert resolved["page_size"] == "12"  # override
+    assert resolved["notify"] == "true"  # override, normalized
+    assert resolved["severity"] == "High"  # default
+    assert resolved["label"] == "leaks"  # default
+
+
+def test_resolve_settings_ignores_invalid_and_unknown() -> None:
+    resolved = resolve_settings(
+        _packs(settings=_SETTINGS),
+        {"page_size": "-3", "bogus": "x"},  # invalid value + unknown key
+    )
+    assert resolved["page_size"] == "5"  # invalid override -> default
+    assert "bogus" not in resolved  # unknown key dropped
+
+
+def test_resolve_settings_disabled_is_empty() -> None:
+    assert resolve_settings(_packs(), {"page_size": "9"}) == {}
 
 
 def test_from_config_roundtrip_and_none() -> None:

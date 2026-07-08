@@ -87,6 +87,35 @@ class HelpPack(BaseModel):
     reply: str = ""
 
 
+class Setting(BaseModel):
+    """One user-editable runtime knob, declared by the agent. Ported from the
+    template's user-settings battery, minus the env-var backing (in AgentOS the
+    pack itself is the config surface)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    label: str = ""
+    kind: str = "str"  # "int" | "bool" | "choice" | "str"
+    default: str = ""
+    help: str = ""
+    choices: tuple[str, ...] = ()  # for kind == "choice"
+    # False -> the value only takes effect on the next restart (metadata for a UI).
+    applies_live: bool = True
+
+
+class SettingsPack(BaseModel):
+    """An agent's declarative allowlist of editable runtime knobs. This ships the
+    schema + validation only; the durable override store and the edit UI are the
+    deferred runtime (see docs/behavior-packs.md), the same way the tips/greeting
+    kernel wiring is deferred."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    settings: tuple[Setting, ...] = ()
+
+
 class BehaviorPacks(BaseModel):
     """An agent's full set of packs; every field defaults to disabled/empty."""
 
@@ -95,6 +124,7 @@ class BehaviorPacks(BaseModel):
     tips: TipsPack = TipsPack()
     greeting: GreetingPack = GreetingPack()
     help: HelpPack = HelpPack()
+    settings: SettingsPack = SettingsPack()
 
     @classmethod
     def from_config(cls, data: Mapping[str, Any] | None) -> BehaviorPacks:
@@ -185,3 +215,66 @@ def sample_tip(packs: BehaviorPacks, seed: str) -> str | None:
     if tip:
         return f"Tip: {tip}"
     return None
+
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
+
+
+class SettingError(ValueError):
+    """A user-facing validation message for a rejected setting value."""
+
+
+def coerce_setting(setting: Setting, raw: str) -> str:
+    """Validate + normalize a raw string to its stored form for ``setting``.
+    Raises ``SettingError`` with a user-facing message on bad input. Pure; the
+    platform owns this so an agent only supplies the declarative Setting."""
+    value = (raw or "").strip()
+    if setting.kind == "int":
+        try:
+            n = int(value)
+        except ValueError:
+            raise SettingError("must be a whole number") from None
+        if n < 1:
+            raise SettingError("must be 1 or more")
+        return str(n)
+    if setting.kind == "bool":
+        low = value.lower()
+        if low in _TRUTHY:
+            return "true"
+        if low in _FALSY:
+            return "false"
+        raise SettingError("use on or off")
+    if setting.kind == "choice":
+        if value not in setting.choices:
+            raise SettingError(f"choose one of: {', '.join(setting.choices)}")
+        return value
+    if not value:
+        raise SettingError("cannot be empty")
+    return value
+
+
+def resolve_settings(packs: BehaviorPacks, overrides: Mapping[str, str]) -> dict[str, str]:
+    """The effective value per declared setting: a valid override wins, else the
+    default. Unknown override keys and values that fail validation are ignored so
+    a stale or corrupt store can never break resolution. Returns {} when the pack
+    is disabled. This is the function the deferred override store / edit UI will
+    call; shipping it now makes the schema usable and testable."""
+    pack = packs.settings
+    if not pack.enabled:
+        return {}
+    resolved: dict[str, str] = {}
+    for setting in pack.settings:
+        raw = overrides.get(setting.key)
+        if raw is not None:
+            try:
+                resolved[setting.key] = coerce_setting(setting, raw)
+                continue
+            except SettingError:
+                pass  # invalid override -> fall back to the default
+        # An empty/invalid default (e.g. an opt-in left blank) is kept verbatim.
+        try:
+            resolved[setting.key] = coerce_setting(setting, setting.default)
+        except SettingError:
+            resolved[setting.key] = setting.default
+    return resolved

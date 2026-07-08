@@ -132,6 +132,13 @@
               "reply": ""
             }
           },
+          "settings": {
+            "$ref": "#/components/schemas/SettingsPackConfig",
+            "default": {
+              "enabled": false,
+              "settings": []
+            }
+          },
           "tips": {
             "$ref": "#/components/schemas/TipsPackConfig",
             "default": {
@@ -836,6 +843,73 @@
           "pods"
         ],
         "title": "RunnerPods",
+        "type": "object"
+      },
+      "SettingConfig": {
+        "description": "One declared user-editable runtime knob (mirrors behaviorpacks.Setting).",
+        "properties": {
+          "applies_live": {
+            "default": true,
+            "title": "Applies Live",
+            "type": "boolean"
+          },
+          "choices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "default": {
+            "default": "",
+            "title": "Default",
+            "type": "string"
+          },
+          "help": {
+            "default": "",
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "default": "str",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "SettingConfig",
+        "type": "object"
+      },
+      "SettingsPackConfig": {
+        "description": "An agent's declarative allowlist of editable runtime knobs (schema only;\nthe override store + edit UI are a deferred runtime).",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "settings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettingConfig"
+            },
+            "title": "Settings",
+            "type": "array"
+          }
+        },
+        "title": "SettingsPackConfig",
         "type": "object"
       },
       "TipsPackConfig": {
