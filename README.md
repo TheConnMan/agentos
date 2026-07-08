@@ -7,6 +7,10 @@ Slack, author a Claude-Code-format plugin (skills + tools + MCP), deploy it as
 a versioned bot identity, and get traces, evals, budgets, and git-flow for
 free.
 
+New here? Read [`docs/vision.md`](docs/vision.md) for what AgentOS is, who it
+is for, and what it could become. It is the north star we hold new features
+against.
+
 "Relay" is this project's internal codename (repo, commits, internal docs);
 "agentos" is the product-surface name — the CLI binary, the bot handle, the
 console. Both names refer to the same system.

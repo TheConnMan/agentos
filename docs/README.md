@@ -6,6 +6,9 @@ git history (`git log -- docs/`).
 
 ## Living documentation
 
+- [`vision.md`](vision.md): the north star. What AgentOS is, who it is for, and
+  what it could become. The document we hold new features against. Read this to
+  understand *why* the project exists before *how* it works.
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md): the as-built architecture, with the
   component map and the message-flow and deploy-flow sequence diagrams. Start
   here.
