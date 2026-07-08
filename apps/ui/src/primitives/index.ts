@@ -6,6 +6,7 @@ export { Card } from "./Card";
 export { CopyButton } from "./CopyButton";
 export { SectionTitle } from "./SectionTitle";
 export { EmptyState } from "./EmptyState";
+export { Notice } from "./Notice";
 export { Sparkline, AreaChart } from "./Charts";
 export { Tabs } from "./Tabs";
 export { Modal } from "./Modal";

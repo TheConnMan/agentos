@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
 import { C } from "../../tokens";
-import { Card, Chip, Dot, EmptyState } from "../../primitives";
+import { Card, Chip, Dot, EmptyState, Notice } from "../../primitives";
 import { hoverBg } from "../../lib/style";
 import { useStore } from "../../state/store";
 import { useTraces, useTrace } from "../../api/hooks";
@@ -11,12 +10,6 @@ function str(o: RawTrace, key: string): string | null {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : null;
 }
 
-function Notice({ children }: { children: ReactNode }) {
-  return (
-    <div style={{ padding: "40px 20px", textAlign: "center", color: C.muted, fontSize: 13.5 }}>{children}</div>
-  );
-}
-
 // Live Runs list: real Langfuse traces via the API proxy. Rendered in place of
 // the fixture list when the app is wired to a backend.
 export function RealTracesList() {
@@ -25,12 +18,12 @@ export function RealTracesList() {
   const { data, loading, error } = useTraces(true, agentId);
   const grid = "1.9fr 1.1fr 1fr";
 
-  if (loading) return <Notice>Loading traces…</Notice>;
-  if (error) return <Notice>Could not load traces: {error}</Notice>;
+  if (loading) return <Notice padding="40px 20px" fontSize={13.5}>Loading traces…</Notice>;
+  if (error) return <Notice padding="40px 20px" fontSize={13.5}>Could not load traces: {error}</Notice>;
   const traces = data ?? [];
   if (traces.length === 0)
     return (
-      <Notice>
+      <Notice padding="40px 20px" fontSize={13.5}>
         {agentId
           ? "No traces for this agent yet. Send it a message to generate one."
           : "No traces yet. Send the agent a message to generate one."}
@@ -213,8 +206,8 @@ export function RealTraceDetail() {
       >
         ← Traces
       </button>
-      {loading ? <Notice>Loading trace…</Notice> : null}
-      {error ? <Notice>Could not load trace: {error}</Notice> : null}
+      {loading ? <Notice padding="40px 20px" fontSize={13.5}>Loading trace…</Notice> : null}
+      {error ? <Notice padding="40px 20px" fontSize={13.5}>Could not load trace: {error}</Notice> : null}
       {notFound ? (
         <EmptyState
           title="No spans recorded for this run yet"

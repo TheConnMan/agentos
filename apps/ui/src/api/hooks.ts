@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   getTrace,
   listTraces,
@@ -30,42 +30,44 @@ interface Async<T> {
   error: string | null;
 }
 
+// Shared mapping from a react-query result to the legacy Async<T> shape.
+// `gate` is the hook's enable predicate: loading must read false whenever the
+// hook is gated off, matching the pre-react-query hooks (which seeded
+// `loading: enabled` / `loading: !!id` and never flipped it on while disabled).
+// react-query keeps status "pending" for a disabled query, so we AND it with
+// the gate rather than surfacing isPending directly. Errors keep the exact
+// `String(e)` stringification the old catch handlers used, and data defaults to
+// null (never undefined).
+function asyncFrom<T>(
+  gate: boolean,
+  query: { data: T | undefined; error: unknown; isPending: boolean; isFetching: boolean },
+): Async<T> {
+  return {
+    data: query.data ?? null,
+    loading: gate && (query.isPending || query.isFetching),
+    error: query.error ? String(query.error) : null,
+  };
+}
+
 // Fetch the real Langfuse trace list through the API proxy. Used only in wired
 // mode; the fixture Traces list is rendered otherwise.
 export function useTraces(enabled: boolean, agentId?: string | null): Async<RawTrace[]> {
-  const [state, setState] = useState<Async<RawTrace[]>>({ data: null, loading: enabled, error: null });
-  useEffect(() => {
-    if (!enabled) return;
-    let live = true;
-    setState({ data: null, loading: true, error: null });
-    listTraces(20, agentId ?? undefined)
-      .then((data) => live && setState({ data, loading: false, error: null }))
-      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
-    return () => {
-      live = false;
-    };
-  }, [enabled, agentId]);
-  return state;
+  const query = useQuery({
+    queryKey: ["traces", agentId ?? null],
+    enabled,
+    queryFn: () => listTraces(20, agentId ?? undefined),
+  });
+  return asyncFrom(enabled, query);
 }
 
 // Fetch the metrics summary (scalar stat row) for the filter.
 export function useMetricsSummary(enabled: boolean, filter: MetricFilter): Async<MetricsSummary> {
-  const [state, setState] = useState<Async<MetricsSummary>>({ data: null, loading: enabled, error: null });
-  const key = JSON.stringify(filter);
-  useEffect(() => {
-    if (!enabled) return;
-    let live = true;
-    setState({ data: null, loading: true, error: null });
-    getMetricsSummary(filter)
-      .then((data) => live && setState({ data, loading: false, error: null }))
-      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
-    return () => {
-      live = false;
-    };
-    // filter is captured by value via its JSON key.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, key]);
-  return state;
+  const query = useQuery({
+    queryKey: ["metricsSummary", filter],
+    enabled,
+    queryFn: () => getMetricsSummary(filter),
+  });
+  return asyncFrom(enabled, query);
 }
 
 // Fetch one metric as a time series for the chart.
@@ -75,55 +77,32 @@ export function useMetricSeries(
   granularity: Granularity,
   filter: MetricFilter,
 ): Async<MetricSeries> {
-  const [state, setState] = useState<Async<MetricSeries>>({ data: null, loading: enabled, error: null });
-  const key = JSON.stringify(filter);
-  useEffect(() => {
-    if (!enabled) return;
-    let live = true;
-    setState({ data: null, loading: true, error: null });
-    getMetricSeries(metric, granularity, filter)
-      .then((data) => live && setState({ data, loading: false, error: null }))
-      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, metric, granularity, key]);
-  return state;
+  const query = useQuery({
+    queryKey: ["metricSeries", metric, granularity, filter],
+    enabled,
+    queryFn: () => getMetricSeries(metric, granularity, filter),
+  });
+  return asyncFrom(enabled, query);
 }
 
 // Fetch the agent list (for the Cost view's agent selector).
 export function useAgents(enabled: boolean): Async<AgentOut[]> {
-  const [state, setState] = useState<Async<AgentOut[]>>({ data: null, loading: enabled, error: null });
-  useEffect(() => {
-    if (!enabled) return;
-    let live = true;
-    setState({ data: null, loading: true, error: null });
-    getAgents()
-      .then((data) => live && setState({ data, loading: false, error: null }))
-      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
-    return () => {
-      live = false;
-    };
-  }, [enabled]);
-  return state;
+  const query = useQuery({
+    queryKey: ["agents"],
+    enabled,
+    queryFn: () => getAgents(),
+  });
+  return asyncFrom(enabled, query);
 }
 
 // Fetch the per-agent cost report (total + daily points).
 export function useCost(agentId: string | null): Async<CostReport> {
-  const [state, setState] = useState<Async<CostReport>>({ data: null, loading: !!agentId, error: null });
-  useEffect(() => {
-    if (!agentId) return;
-    let live = true;
-    setState({ data: null, loading: true, error: null });
-    getCost(agentId)
-      .then((data) => live && setState({ data, loading: false, error: null }))
-      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
-    return () => {
-      live = false;
-    };
-  }, [agentId]);
-  return state;
+  const query = useQuery({
+    queryKey: ["cost", agentId],
+    enabled: !!agentId,
+    queryFn: () => getCost(agentId!),
+  });
+  return asyncFrom(!!agentId, query);
 }
 
 interface TraceAsync extends Async<TraceTree> {
@@ -135,26 +114,28 @@ interface TraceAsync extends Async<TraceTree> {
 
 // Fetch a single reconstructed trace tree by id.
 export function useTrace(traceId: string | null): TraceAsync {
-  const [state, setState] = useState<TraceAsync>({ data: null, loading: !!traceId, error: null, notFound: false });
-  useEffect(() => {
-    if (!traceId) return;
-    let live = true;
-    setState({ data: null, loading: true, error: null, notFound: false });
-    getTrace(traceId)
-      .then((data) => live && setState({ data, loading: false, error: null, notFound: false }))
-      .catch((e: unknown) => {
-        if (!live) return;
-        if (e instanceof ApiError && e.status === 404) {
-          setState({ data: null, loading: false, error: null, notFound: true });
-        } else {
-          setState({ data: null, loading: false, error: String(e), notFound: false });
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [traceId]);
-  return state;
+  const gate = !!traceId;
+  // A 404 is resolved (not thrown) into a sentinel so it surfaces as
+  // notFound=true with error===null, exactly as the old catch handler did.
+  const query = useQuery({
+    queryKey: ["trace", traceId],
+    enabled: gate,
+    queryFn: async (): Promise<{ data: TraceTree | null; notFound: boolean }> => {
+      try {
+        const data = await getTrace(traceId!);
+        return { data, notFound: false };
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return { data: null, notFound: true };
+        throw e;
+      }
+    },
+  });
+  return {
+    data: query.data?.data ?? null,
+    loading: gate && (query.isPending || query.isFetching),
+    error: query.error ? String(query.error) : null,
+    notFound: query.data?.notFound ?? false,
+  };
 }
 
 // ---- FX2: agent detail — versions + active version + bundle files ----
@@ -189,37 +170,32 @@ export function pickActiveVersion(versions: VersionOut[], deployments: Deploymen
 }
 
 export function useAgentVersions(agentId: string | null): AgentVersionsData {
-  const [versions, setVersions] = useState<VersionOut[]>([]);
-  const [deployments, setDeployments] = useState<DeploymentOut[]>([]);
-  const [loading, setLoading] = useState(!!agentId);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-  const reload = () => setReloadKey((n) => n + 1);
-
-  useEffect(() => {
-    if (!agentId) return;
-    let live = true;
-    setLoading(true);
-    setError(null);
-    Promise.all([listVersions(agentId), listDeployments(agentId)])
-      .then(([vs, ds]) => {
-        if (!live) return;
-        setVersions(vs);
-        setDeployments(ds);
-        setLoading(false);
-      })
-      .catch((e: unknown) => {
-        if (!live) return;
-        setError(String(e));
-        setLoading(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [agentId, reloadKey]);
-
+  const gate = !!agentId;
+  // Keep the two-call Promise.all semantics in a single query so both lists
+  // resolve together; reload() maps to refetch(), which re-runs the pair while
+  // the previously fetched lists stay visible (loading flips true via isFetching
+  // during the refetch, as it did when the old reloadKey re-ran the effect).
+  const query = useQuery({
+    queryKey: ["agentVersions", agentId],
+    enabled: gate,
+    queryFn: async () => {
+      const [versions, deployments] = await Promise.all([listVersions(agentId!), listDeployments(agentId!)]);
+      return { versions, deployments };
+    },
+  });
+  const versions = query.data?.versions ?? [];
+  const deployments = query.data?.deployments ?? [];
   const activeVersionId = pickActiveVersion(versions, deployments);
-  return { versions, deployments, activeVersionId, loading, error, reload };
+  return {
+    versions,
+    deployments,
+    activeVersionId,
+    loading: gate && (query.isPending || query.isFetching),
+    error: query.error ? String(query.error) : null,
+    reload: () => {
+      void query.refetch();
+    },
+  };
 }
 
 export interface VersionFilesData {
@@ -231,29 +207,27 @@ export interface VersionFilesData {
 }
 
 export function useVersionFiles(agentId: string | null, versionId: string | null, reloadKey = 0): VersionFilesData {
-  const [state, setState] = useState<VersionFilesData>({
-    files: null,
-    loading: !!(agentId && versionId),
-    error: null,
-    noBundle: false,
+  const gate = !!(agentId && versionId);
+  // reloadKey is folded into the queryKey so bumping it re-runs the fetch, the
+  // same way it was an effect dependency before. A 404 resolves to a sentinel
+  // (noBundle=true, error===null) instead of throwing.
+  const query = useQuery({
+    queryKey: ["versionFiles", agentId, versionId, reloadKey],
+    enabled: gate,
+    queryFn: async (): Promise<{ files: BundleFile[] | null; noBundle: boolean }> => {
+      try {
+        const data = await getVersionFiles(agentId!, versionId!);
+        return { files: data.files, noBundle: false };
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return { files: null, noBundle: true };
+        throw e;
+      }
+    },
   });
-  useEffect(() => {
-    if (!agentId || !versionId) return;
-    let live = true;
-    setState({ files: null, loading: true, error: null, noBundle: false });
-    getVersionFiles(agentId, versionId)
-      .then((data) => live && setState({ files: data.files, loading: false, error: null, noBundle: false }))
-      .catch((e: unknown) => {
-        if (!live) return;
-        if (e instanceof ApiError && e.status === 404) {
-          setState({ files: null, loading: false, error: null, noBundle: true });
-        } else {
-          setState({ files: null, loading: false, error: String(e), noBundle: false });
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [agentId, versionId, reloadKey]);
-  return state;
+  return {
+    files: query.data?.files ?? null,
+    loading: gate && (query.isPending || query.isFetching),
+    error: query.error ? String(query.error) : null,
+    noBundle: query.data?.noBundle ?? false,
+  };
 }

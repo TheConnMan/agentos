@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { C } from "../../tokens";
-import { Card, Button, AreaChart, Chip } from "../../primitives";
+import { Card, Button, AreaChart, Chip, Notice } from "../../primitives";
 import { useAgents, useCost } from "../../api/hooks";
 import {
   getBudget,
@@ -11,10 +11,6 @@ import {
   ApiError,
   type BudgetConfig,
 } from "../../api/client";
-
-function Notice({ children }: { children: ReactNode }) {
-  return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
-}
 
 const numInput = {
   width: 160,

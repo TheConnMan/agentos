@@ -1,13 +1,9 @@
 import { useState } from "react";
 import { C } from "../../tokens";
-import { Card, SectionTitle, Button, Dot, EmptyState } from "../../primitives";
+import { Card, SectionTitle, Button, Dot, EmptyState, Notice } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 import { deleteAgent } from "../../api/client";
-
-function Notice({ children }: { children: string }) {
-  return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
-}
 
 export function WiredAgents() {
   const { dispatch } = useStore();
