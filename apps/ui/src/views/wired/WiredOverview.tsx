@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
 import { C } from "../../tokens";
-import { Card, SectionTitle, Button, Dot } from "../../primitives";
+import { Card, SectionTitle, Button, Dot, Notice } from "../../primitives";
 import { hoverBg } from "../../lib/style";
 import { formatLatency } from "../../lib/format";
 import { useStore } from "../../state/store";
@@ -8,10 +7,6 @@ import { useWired } from "../../state/wired";
 import { useMetricsSummary, useTraces } from "../../api/hooks";
 import { ConnectSlackPanel } from "../../components/ConnectSlackPanel";
 import type { AgentOut, RawTrace } from "../../api/client";
-
-function Notice({ children }: { children: ReactNode }) {
-  return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
-}
 
 // Honest post-deploy panel: the real next step, not a fictional "replied in 42ms".
 function DeployedPanel({ name, channel }: { name: string; channel: string }) {

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { C } from "../../tokens";
-import { Button, Card, Chip, Dot } from "../../primitives";
+import { Button, Card, Chip, Dot, Notice } from "../../primitives";
 import { SkillEditor } from "../../components/SkillEditor";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
@@ -15,10 +15,6 @@ import {
   type BundleIssue,
 } from "../../api/client";
 import { buildBundleZipFromFiles, nextVersionLabel } from "../../api/bundle";
-
-function Notice({ children }: { children: ReactNode }) {
-  return <div style={{ padding: "34px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
-}
 
 function isSkillFile(path: string): boolean {
   return path.endsWith("/SKILL.md") || path === "SKILL.md";
@@ -110,7 +106,7 @@ export function WiredAgentDetail() {
     return (
       <div>
         {backLink}
-        <Notice>Agent not found.</Notice>
+        <Notice padding="34px 20px">Agent not found.</Notice>
       </div>
     );
   }
@@ -132,13 +128,13 @@ export function WiredAgentDetail() {
       </div>
 
       {versions.loading ? (
-        <Notice>Loading versions…</Notice>
+        <Notice padding="34px 20px">Loading versions…</Notice>
       ) : versions.error ? (
-        <Notice>{`Could not load versions: ${versions.error}`}</Notice>
+        <Notice padding="34px 20px">{`Could not load versions: ${versions.error}`}</Notice>
       ) : versions.versions.length === 0 ? (
-        <Notice>No versions yet for this agent.</Notice>
+        <Notice padding="34px 20px">No versions yet for this agent.</Notice>
       ) : files.loading ? (
-        <Notice>Loading skills…</Notice>
+        <Notice padding="34px 20px">Loading skills…</Notice>
       ) : files.noBundle ? (
         <Card>
           <div data-testid="agent-detail-nobundle" style={{ padding: "8px 4px", color: C.text2, fontSize: 13.5 }}>
@@ -147,10 +143,10 @@ export function WiredAgentDetail() {
           </div>
         </Card>
       ) : files.error ? (
-        <Notice>{`Could not load skills: ${files.error}`}</Notice>
+        <Notice padding="34px 20px">{`Could not load skills: ${files.error}`}</Notice>
       ) : skillFiles.length === 0 ? (
         <Card>
-          <Notice>This bundle has no skills/*/SKILL.md files.</Notice>
+          <Notice padding="34px 20px">This bundle has no skills/*/SKILL.md files.</Notice>
         </Card>
       ) : (
         <div>

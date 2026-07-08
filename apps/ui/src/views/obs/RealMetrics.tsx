@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { C } from "../../tokens";
-import { Card, Chip, AreaChart } from "../../primitives";
+import { Card, Chip, AreaChart, Notice } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useMetricsSummary, useMetricSeries } from "../../api/hooks";
 import { formatLatency } from "../../lib/format";
@@ -33,10 +33,6 @@ function fmt(key: MetricKey, v: number): string {
 
 function summaryValue(s: MetricsSummary, key: MetricKey): number {
   return s[key];
-}
-
-function Notice({ children }: { children: ReactNode }) {
-  return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
 }
 
 // Wired Metrics tab: the summary stat row + a selectable time-series chart, both

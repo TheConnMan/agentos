@@ -1,13 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { C } from "../../tokens";
-import { Card, SectionTitle, Chip, Dot } from "../../primitives";
+import { Card, SectionTitle, Chip, Dot, Notice } from "../../primitives";
 import { useAgents, useAgentVersions } from "../../api/hooks";
 import { ComingSoon } from "./WiredStubs";
 import type { DeploymentOut, VersionOut } from "../../api/client";
-
-function Notice({ children }: { children: ReactNode }) {
-  return <div style={{ padding: "30px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>{children}</div>;
-}
 
 export interface Row {
   version: VersionOut;
