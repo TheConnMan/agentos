@@ -64,6 +64,14 @@ class SettingsPackConfig(BaseModel):
     settings: list[SettingConfig] = []
 
 
+class NavPackConfig(BaseModel):
+    """The no-dead-ends hub button for one agent (mirrors behaviorpacks.NavPack)."""
+
+    enabled: bool = False
+    hub_label: str = ""
+    hub_command: str = ""
+
+
 class BehaviorPacksConfig(BaseModel):
     """An agent's opt-in behavior packs. Validated on write and stored as JSON on
     the agent row; the worker parses the same JSON at bind time."""
@@ -75,6 +83,7 @@ class BehaviorPacksConfig(BaseModel):
     greeting: GreetingPackConfig = GreetingPackConfig()
     help: HelpPackConfig = HelpPackConfig()
     settings: SettingsPackConfig = SettingsPackConfig()
+    nav: NavPackConfig = NavPackConfig()
 
 
 class AgentCreate(BaseModel):

@@ -63,6 +63,7 @@ def test_put_then_get_round_trips(
                 {"key": "page_size", "kind": "int", "default": "5"},
             ],
         },
+        "nav": {"enabled": True, "hub_label": "Help", "hub_command": "help"},
     }
     resp = client.put(
         f"/agents/{agent['id']}/behavior-packs", json=config, headers=auth_headers
@@ -77,6 +78,7 @@ def test_put_then_get_round_trips(
     assert got["greeting"]["reply"] == "hello!"
     assert got["help"]["reply"] == "here is help"
     assert got["settings"]["settings"][0]["key"] == "page_size"
+    assert got["nav"]["hub_command"] == "help"
 
     # And it surfaces on the agent read model too.
     resp = client.get(f"/agents/{agent['id']}", headers=auth_headers)

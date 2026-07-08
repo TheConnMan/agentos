@@ -126,6 +126,18 @@ class SettingsPack(BaseModel):
     settings: tuple[Setting, ...] = ()
 
 
+class NavPack(BaseModel):
+    """The no-dead-ends hub button for one agent: a way back to the home/help
+    screen, appended to a structured reply's buttons when none already links
+    there. Data-only; the platform owns the append policy (ensure_hub_button)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    hub_label: str = ""  # display text, e.g. "Help", "Home"
+    hub_command: str = ""  # the action_id/command that returns to the hub
+
+
 class BehaviorPacks(BaseModel):
     """An agent's full set of packs; every field defaults to disabled/empty."""
 
@@ -136,6 +148,7 @@ class BehaviorPacks(BaseModel):
     greeting: GreetingPack = GreetingPack()
     help: HelpPack = HelpPack()
     settings: SettingsPack = SettingsPack()
+    nav: NavPack = NavPack()
 
     @classmethod
     def from_config(cls, data: Mapping[str, Any] | None) -> BehaviorPacks:
@@ -292,3 +305,24 @@ def resolve_settings(packs: BehaviorPacks, overrides: Mapping[str, str]) -> dict
         except SettingError:
             resolved[setting.key] = setting.default
     return resolved
+
+
+def ensure_hub_button(
+    packs: BehaviorPacks, buttons: Sequence[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """The no-dead-ends policy: return ``buttons`` with the agent's hub button
+    appended, unless nav is off or a button already links to the hub. The arrow
+    is ``^`` (up) when a back button is already present (the hub is above), else
+    ``<-`` (the hub is where you came from). Pure and idempotent; operates on
+    (label, command) pairs so it needs no reply model. The display surface calls
+    this on a rendered reply's buttons (deferred wiring, see docs)."""
+    nav = packs.nav
+    result = list(buttons)
+    if not nav.enabled or not nav.hub_command:
+        return result
+    if any(command == nav.hub_command for _, command in result):
+        return result
+    arrow = "↑" if any(label.lstrip().startswith("←") for label, _ in result) else "←"
+    label = f"{arrow} {nav.hub_label}".strip()
+    result.append((label, nav.hub_command))
+    return result
