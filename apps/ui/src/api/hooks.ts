@@ -8,6 +8,7 @@ import {
   getCost,
   listVersions,
   listDeployments,
+  listAllDeployments,
   getVersionFiles,
   ApiError,
   type RawTrace,
@@ -100,6 +101,25 @@ export function useAgents(enabled: boolean): Async<AgentOut[]> {
     let live = true;
     setState({ data: null, loading: true, error: null });
     getAgents()
+      .then((data) => live && setState({ data, loading: false, error: null }))
+      .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
+    return () => {
+      live = false;
+    };
+  }, [enabled]);
+  return state;
+}
+
+// Fetch every deployment across all agents, for env-scoping the Agents/Overview
+// views. Refetches on mount (navigating back after a promote/deploy remounts the
+// view), which is enough to reflect a fresh deployment.
+export function useAllDeployments(enabled: boolean): Async<DeploymentOut[]> {
+  const [state, setState] = useState<Async<DeploymentOut[]>>({ data: null, loading: enabled, error: null });
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    setState({ data: null, loading: true, error: null });
+    listAllDeployments()
       .then((data) => live && setState({ data, loading: false, error: null }))
       .catch((e: unknown) => live && setState({ data: null, loading: false, error: String(e) }));
     return () => {

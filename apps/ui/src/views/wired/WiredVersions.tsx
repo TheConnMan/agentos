@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { C } from "../../tokens";
 import { Card, SectionTitle, Chip, Dot } from "../../primitives";
+import { useStore } from "../../state/store";
 import { useAgents, useAgentVersions } from "../../api/hooks";
 import { ComingSoon } from "./WiredStubs";
 import type { DeploymentOut, VersionOut } from "../../api/client";
@@ -40,6 +41,7 @@ function statusColor(status: string | null): string {
 // selector, matching the Cost view. Falls back to ComingSoon when the API is
 // unreachable (there is no fixture leak in wired mode).
 function VersionsTable({ agentId }: { agentId: string }) {
+  const { state } = useStore();
   const { versions, deployments, activeVersionId, loading, error } = useAgentVersions(agentId);
 
   if (error) {
@@ -60,7 +62,9 @@ function VersionsTable({ agentId }: { agentId: string }) {
     );
   }
 
-  const rows = buildRows(versions, deployments);
+  // Only deployments in the selected environment; the env chip still renders.
+  const scopedDeployments = deployments.filter((d) => d.environment === state.env);
+  const rows = buildRows(versions, scopedDeployments);
   const grid = "1.1fr 0.9fr 1fr 1.3fr 1fr";
   return (
     <Card>
