@@ -13,7 +13,7 @@ from typing import Protocol
 
 from slack_sdk.web.async_client import AsyncWebClient
 
-from .mrkdwn import to_mrkdwn
+from .blocks import render
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,18 @@ class AsyncSlackSink:
             self._client = AsyncWebClient(token=token)
 
     async def update(self, *, channel: str, ts: str, text: str) -> None:
-        # The runner emits Markdown; Slack renders mrkdwn. Convert here, at the
-        # real-Slack seam, so both streamed partials and the final edit render
-        # correctly without the kernel knowing about Slack's dialect.
-        await self._client.chat_update(channel=channel, ts=ts, text=to_mrkdwn(text))
+        # The runner emits Markdown; Slack renders mrkdwn. ``render`` converts to
+        # mrkdwn and, if the reply carries a complete ``agentos-reply`` block,
+        # returns Block Kit to render instead -- keeping this dialect/structure
+        # knowledge at the real-Slack seam, out of the kernel. A half-streamed or
+        # malformed block falls back to text, so partials never show raw JSON.
+        rendered_text, blocks = render(text)
+        if blocks is not None:
+            await self._client.chat_update(
+                channel=channel, ts=ts, text=rendered_text, blocks=blocks
+            )
+        else:
+            await self._client.chat_update(channel=channel, ts=ts, text=rendered_text)
 
     async def clear_status(self, *, channel: str, thread_ts: str) -> None:
         # Clear the assistant-thread status by setting it empty (Slack only
