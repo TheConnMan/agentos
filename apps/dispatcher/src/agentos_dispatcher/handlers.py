@@ -17,6 +17,7 @@ dispatcher's.
 """
 
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -101,6 +102,75 @@ def process_event(
     return stream_id
 
 
+def action_command(action: dict[str, Any]) -> str:
+    """The command a clicked Block Kit action carries: its ``value`` if set, else
+    its ``action_id`` (the ss-template convention where a button's id is the
+    command it runs)."""
+    value = action.get("value")
+    return str(value) if value else str(action.get("action_id", ""))
+
+
+def process_action(
+    *,
+    body: dict[str, Any],
+    web_client: WebClient,
+    redis_client: "Redis",
+    config: DispatcherConfig,
+    clock: Clock = _utc_now_iso,
+    logger: logging.Logger | None = None,
+) -> str | None:
+    """Normalize a Block Kit button click into a turn: dedupe, post an in-thread
+    placeholder, and enqueue a ``QueuedSlackEvent`` whose text is the button's
+    command. The worker answers it exactly as if the user had typed that command.
+
+    Same four steps as ``process_event`` (ack is Bolt's, before this runs); no
+    decision about *how* the turn is answered lives here -- that is the worker's.
+    """
+    log = logger or logging.getLogger(__name__)
+
+    actions = body.get("actions") or []
+    if not actions:
+        return None
+    command = action_command(actions[0])
+    if not command:
+        return None
+
+    # A click carries no Slack event_id, so synthesize a stable idempotency key
+    # from the interaction; a re-delivered click cannot enqueue (or post a second
+    # placeholder) twice, same as the event dedupe.
+    interaction = body.get("trigger_id") or (
+        f"{actions[0].get('action_ts', '')}-{actions[0].get('action_id', '')}"
+    )
+    slack_event_id = f"action-{interaction}"
+    if not claim_event(redis_client, config, slack_event_id):
+        log.info("duplicate block action %s, skipping", slack_event_id)
+        return None
+
+    channel = body["channel"]["id"]
+    message = body.get("message") or {}
+    # Reply in the clicked message's thread (its thread_ts, or its own ts if root).
+    thread_ts = message.get("thread_ts") or message.get("ts") or ""
+    user = (body.get("user") or {}).get("id", "")
+
+    placeholder = web_client.chat_postMessage(
+        channel=channel,
+        thread_ts=thread_ts,
+        text=config.placeholder_text,
+    )
+    queued = QueuedSlackEvent(
+        slack_event_id=slack_event_id,
+        thread_ts=thread_ts,
+        channel=channel,
+        user=user,
+        text=command,
+        placeholder_ts=placeholder["ts"],
+        received_at=clock(),
+    )
+    stream_id = enqueue(redis_client, config, queued)
+    log.info("enqueued block action %s as stream entry %s", slack_event_id, stream_id)
+    return stream_id
+
+
 def register_handlers(
     app: App,
     *,
@@ -110,7 +180,7 @@ def register_handlers(
     clock: Clock = _utc_now_iso,
     logger: logging.Logger | None = None,
 ) -> None:
-    """Wire the app_mention and (direct-message) message listeners onto the app."""
+    """Wire the app_mention, (direct-message) message, and block-action listeners."""
 
     @app.event("app_mention")
     def _on_app_mention(body: dict[str, Any], event: dict[str, Any]) -> None:
@@ -131,6 +201,20 @@ def register_handlers(
         process_event(
             body=body,
             event=event,
+            web_client=web_client,
+            redis_client=redis_client,
+            config=config,
+            clock=clock,
+            logger=logger,
+        )
+
+    # Any Block Kit button click (a reply's action) becomes a turn. The catch-all
+    # matches every action_id; ack first (Bolt's 3s budget), then normalize+enqueue.
+    @app.action(re.compile(r".+"))
+    def _on_action(ack: Callable[..., None], body: dict[str, Any]) -> None:
+        ack()
+        process_action(
+            body=body,
             web_client=web_client,
             redis_client=redis_client,
             config=config,

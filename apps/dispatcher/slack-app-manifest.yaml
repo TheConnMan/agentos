@@ -3,8 +3,9 @@
 # Paste this at https://api.slack.com/apps -> Create New App -> From a manifest,
 # to create the app the dispatcher connects to. It encodes exactly what the
 # dispatcher runbook (README "point it at a real workspace") requires: Socket
-# Mode on, the six bot scopes, and the app_mention + message.im event
-# subscriptions. After creating: generate an App-Level Token with
+# Mode on, the bot scopes, the app_mention + message.im event subscriptions, and
+# interactivity on (so button clicks arrive over Socket Mode). After creating:
+# generate an App-Level Token with
 # connections:write -> SLACK_APP_TOKEN; install to the workspace and copy the
 # Bot User OAuth Token -> SLACK_BOT_TOKEN.
 display_information:
@@ -30,6 +31,9 @@ settings:
       - app_mention
       - message.im
   interactivity:
-    is_enabled: false
+    # Enabled so Slack delivers block_actions (button clicks) over Socket Mode;
+    # the dispatcher turns a click into a turn (its action id/value becomes the
+    # message). No request URL is needed under Socket Mode.
+    is_enabled: true
   org_deploy_enabled: false
   token_rotation_enabled: false
