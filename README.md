@@ -7,9 +7,10 @@ Slack, author a Claude-Code-format plugin (skills + tools + MCP), deploy it as
 a versioned bot identity, and get traces, evals, budgets, and git-flow for
 free.
 
-New here? Read [`docs/vision.md`](docs/vision.md) for what AgentOS is, who it
-is for, and what it could become. It is the north star we hold new features
-against.
+New here? Start with [`QUICKSTART.md`](QUICKSTART.md) to get your first agent
+reply in about a minute. Then read [`docs/vision.md`](docs/vision.md) for what
+AgentOS is, who it is for, and what it could become. It is the north star we
+hold new features against.
 
 "Relay" is this project's internal codename (repo, commits, internal docs);
 "agentos" is the product-surface name — the CLI binary, the bot handle, the
@@ -131,11 +132,11 @@ Operators should start from a binary downloaded from
 curl -L -o agentos \
   https://github.com/curie-eng/agentos/releases/download/v<version>/agentos-x86_64-unknown-linux-gnu
 chmod +x agentos
-./agentos up
+./agentos cluster up
 ./agentos local up
 ```
 
-A release binary needs no repo checkout for `agentos up` or `agentos local up`.
+A release binary needs no repo checkout for `agentos cluster up` or `agentos local up`.
 It pulls the pinned chart release asset and the pinned `compose.release.yaml`
 matching the binary version, then caches them under `~/.cache/agentos/`. For
 local development overrides, pass `-f <compose>`, `--chart <path>`, or
@@ -187,7 +188,7 @@ export CLAUDE_CODE_OAUTH_TOKEN=...
 ../target/release/agentos skill eval
 ```
 
-A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos start` runs it from a clean clone. `agentos init` scaffolds this same weather template, so every fresh bundle starts as a runnable web-search skill to learn from and edit.
+A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos skill up` runs it from a clean clone. `agentos init` scaffolds this same weather template, so every fresh bundle starts as a runnable web-search skill to learn from and edit.
 
 For a fully offline round-trip (no credential, scripted replies), add
 `--fake-model` to `agentos skill up` — an explicit test-only mode that never reaches

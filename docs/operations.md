@@ -71,6 +71,24 @@ sets the dispatcher's app and bot tokens and clears `worker.slackApiBaseUrl=`
 (un-wiring any `agentos cluster message` stub routing). It is intentionally not a CLI
 verb; the chart's `NOTES.txt` prints the exact command after `up`.
 
+## Deploy a bundle to the cluster
+
+Before `agentos cluster message` can drive an agent, a bundle must be deployed to
+the in-cluster platform API with `agentos cluster deploy`. Unlike `cluster
+message`, `cluster deploy` does not self-manage a port-forward, so its default
+`--api-url http://localhost:8000` is unreachable until you forward the API
+service yourself. Run the port-forward first, deploy, then release it:
+
+```bash
+kubectl port-forward svc/agentos-api 8000:8000 -n agentos &
+agentos cluster deploy --plugin-dir <bundle-dir> \
+  --api-url http://localhost:8000 --api-key agentos-dev-key
+kill %1   # cluster message plumbs its own forwards, so this one is no longer needed
+```
+
+Without a deploy, `agentos cluster message` fails with `no agents are deployed on
+the platform API`.
+
 ## Driving a deployed cluster with zero Slack
 
 `agentos cluster message "..."` exercises a deployed release end to end with no Slack
