@@ -107,9 +107,27 @@ MINIO_SVC="$FULLNAME-minio"
 SECRET_NAME="$FULLNAME-secrets"
 MINIO_BUCKET="agentos-bundles"
 MINIO_USER="minio"
+# Ownership label stamped on any namespace THIS script creates. The script only
+# ever deletes a namespace carrying this label, so pointing --namespace at a
+# pre-existing namespace (e.g. `default`) can never destroy it.
+OWNED_LABEL="agentos-e2e-harness/owned"
 
 banner() { echo; echo "== $* =="; }
 fail() { echo; echo "FAIL: $*"; exit 1; }
+
+# ns_is_owned <ns> : true iff the namespace exists AND carries the ownership label.
+ns_is_owned() {
+  local ns="$1" val
+  val="$(kubectl get ns "$ns" -o "jsonpath={.metadata.labels['agentos-e2e-harness/owned']}" 2>/dev/null || echo "")"
+  [[ "$val" == "true" ]]
+}
+
+# create_owned_ns <ns> : create the namespace and stamp the ownership label on it.
+create_owned_ns() {
+  local ns="$1"
+  kubectl create ns "$ns"
+  kubectl label ns "$ns" "${OWNED_LABEL}=true" --overwrite >/dev/null
+}
 
 # --------------------------------------------------------------------------
 # Guardrails
@@ -130,7 +148,12 @@ teardown() {
   fi
   banner "TEARDOWN"
   helm uninstall "$RELEASE" -n "$NAMESPACE" --no-hooks >/dev/null 2>&1 || true
-  kubectl delete ns "$NAMESPACE" --wait=false >/dev/null 2>&1 || true
+  # Only ever delete a namespace THIS script created (carries the ownership label).
+  if ns_is_owned "$NAMESPACE"; then
+    kubectl delete ns "$NAMESPACE" --wait=false >/dev/null 2>&1 || true
+  else
+    echo "namespace $NAMESPACE not owned by this harness; leaving it in place"
+  fi
   return $rc
 }
 trap teardown EXIT
@@ -139,18 +162,32 @@ trap teardown EXIT
 # Helpers
 # --------------------------------------------------------------------------
 
-# exec_echo <label> <exec-args...> : run a kubectl exec, echo the command and its
-# raw stdout, and capture the output in the global EXEC_OUT for the caller.
+# exec_echo <label> <exec-args...> : run a kubectl exec, echo the command, its
+# exit code, and its stdout/stderr SEPARATELY. Captures stdout into the global
+# EXEC_OUT, stderr into EXEC_ERR, and the exit code into EXEC_RC for the caller.
+# Verdicts MUST key on EXEC_OUT (stdout) only -- folding stderr into the captured
+# value can make an empty result look non-empty (e.g. a "Permission denied" line)
+# and yield a false PASS.
 exec_echo() {
   local label="$1"; shift
   echo "--- $label"
   echo "\$ kubectl exec $POD_NAME -n $NAMESPACE $*"
+  local out_file err_file
+  out_file="$(mktemp /tmp/e2e-exec-out.XXXXXX)"
+  err_file="$(mktemp /tmp/e2e-exec-err.XXXXXX)"
   set +e
-  EXEC_OUT="$(kubectl exec "$POD_NAME" -n "$NAMESPACE" "$@" 2>&1)"
-  local ec=$?
+  kubectl exec "$POD_NAME" -n "$NAMESPACE" "$@" >"$out_file" 2>"$err_file"
+  EXEC_RC=$?
   set -e
-  echo "[exit $ec] output:"
+  EXEC_OUT="$(cat "$out_file")"
+  EXEC_ERR="$(cat "$err_file")"
+  rm -f "$out_file" "$err_file"
+  echo "[exit $EXEC_RC] stdout:"
   printf '%s\n' "$EXEC_OUT" | sed 's/^/    /'
+  if [[ -n "$EXEC_ERR" ]]; then
+    echo "stderr:"
+    printf '%s\n' "$EXEC_ERR" | sed 's/^/    /'
+  fi
 }
 
 # build_bound_pod : read the installed SandboxTemplate, extract its podTemplate,
@@ -272,8 +309,9 @@ run_assertions() {
   # empty config.json result below is meaningful (not a no-op fetch).
   exec_echo "positive control: bundle manifest present" \
     -c runner -- sh -c 'find /bundles/current -name plugin.json'
-  local manifest="$EXEC_OUT"
-  if [[ -z "${manifest//[[:space:]]/}" ]]; then
+  # Bundle present only if the exec succeeded AND the manifest path printed on
+  # STDOUT (stderr like "Permission denied" must never count as present).
+  if [[ "$EXEC_RC" -ne 0 || -z "${EXEC_OUT//[[:space:]]/}" ]]; then
     banner "DIAGNOSTICS (positive control failed)"
     kubectl logs "$POD_NAME" -n "$NAMESPACE" -c bundle-fetch || true
     kubectl logs "$POD_NAME" -n "$NAMESPACE" -c bundle-extract || true
@@ -321,15 +359,25 @@ run_assertions() {
 banner "PRECHECK context=$CURRENT_CTX namespace=$NAMESPACE release=$RELEASE"
 
 if kubectl get ns "$NAMESPACE" >/dev/null 2>&1; then
-  banner "namespace $NAMESPACE already exists -- cleaning up before run"
-  helm uninstall "$RELEASE" -n "$NAMESPACE" --no-hooks >/dev/null 2>&1 || true
-  kubectl delete ns "$NAMESPACE" --wait=true --timeout=120s >/dev/null 2>&1 || true
+  # Only reclaim a namespace WE created. An unlabeled pre-existing namespace
+  # (e.g. `default`, or someone else's) must never be deleted by this harness.
+  if ns_is_owned "$NAMESPACE"; then
+    banner "namespace $NAMESPACE already exists (harness-owned) -- cleaning up before run"
+    helm uninstall "$RELEASE" -n "$NAMESPACE" --no-hooks >/dev/null 2>&1 || true
+    kubectl delete ns "$NAMESPACE" --wait=true --timeout=120s >/dev/null 2>&1 || true
+  else
+    fail "namespace $NAMESPACE already exists and is NOT owned by this harness (missing label ${OWNED_LABEL}=true). Remove it manually or pick another --namespace."
+  fi
 fi
+
+# Pre-create the namespace stamped with the ownership label so teardown/cleanup
+# can only ever delete a namespace this script created.
+create_owned_ns "$NAMESPACE"
 
 banner "INSTALL trimmed chart"
 install_chart() {
   helm install "$RELEASE" "$CHART_PATH" \
-    -n "$NAMESPACE" --create-namespace --no-hooks \
+    -n "$NAMESPACE" --no-hooks \
     -f "$CHART_PATH/values-e2e-nogvisor.yaml" \
     -f "$CHART_PATH/values-e2e-harness.yaml"
 }
@@ -338,7 +386,11 @@ install_chart() {
 if ! install_chart; then
   echo "helm install failed once (likely transient API churn on shared node); retrying in 5s..."
   sleep 5
-  kubectl delete ns "$NAMESPACE" --wait=true --timeout=60s >/dev/null 2>&1 || true
+  # Recreate the labeled namespace before retrying; only ever delete our own.
+  if ns_is_owned "$NAMESPACE"; then
+    kubectl delete ns "$NAMESPACE" --wait=true --timeout=60s >/dev/null 2>&1 || true
+  fi
+  create_owned_ns "$NAMESPACE"
   install_chart || fail "helm install failed twice"
 fi
 
