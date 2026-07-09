@@ -567,6 +567,103 @@
         "title": "EvalReportResult",
         "type": "object"
       },
+      "EvalTriggerRequest": {
+        "description": "Ask for an on-demand platform eval run for an agent (issue #10).\n\nEnqueues the same EvalJobRequest the git-push fan-out uses, minus the\npush-only gate. With no version_id the agent's active dev deployment is\nevaluated; suite falls back to Settings.eval_default_suite when omitted.",
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "suite": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite"
+          },
+          "target_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Url"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "agent_id"
+        ],
+        "title": "EvalTriggerRequest",
+        "type": "object"
+      },
+      "EvalTriggerResult": {
+        "description": "The enqueued eval job's stream id plus the resolved job identity.",
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "bundle_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Ref"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "stream_id": {
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "agent_id",
+          "version_id",
+          "sha",
+          "suite",
+          "bundle_ref"
+        ],
+        "title": "EvalTriggerResult",
+        "type": "object"
+      },
       "GreetingPackConfig": {
         "description": "The deterministic greeting short-circuit content for one agent.",
         "properties": {
@@ -2749,6 +2846,65 @@
           }
         },
         "summary": "Report Eval",
+        "tags": [
+          "evals"
+        ]
+      }
+    },
+    "/evals/trigger": {
+      "post": {
+        "operationId": "trigger_eval_evals_trigger_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalTriggerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalTriggerResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Eval",
         "tags": [
           "evals"
         ]

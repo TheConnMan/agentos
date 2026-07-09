@@ -2,15 +2,91 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from .. import crud
 from ..auth import require_api_key
-from ..deps import GitHubReporterDep, LangfuseDep
+from ..config import get_settings
+from ..deps import EvalQueueDep, GitHubReporterDep, LangfuseDep, SessionDep
+from ..evalqueue import EvalJobRequest, now_iso
 from ..evals import build_matrix
 from ..github_checks import GitHubReportError
-from ..schemas import EvalMatrix, EvalReport, EvalReportResult
+from ..models import Environment
+from ..schemas import (
+    EvalMatrix,
+    EvalReport,
+    EvalReportResult,
+    EvalTriggerRequest,
+    EvalTriggerResult,
+)
 
 router = APIRouter(
     prefix="/evals", tags=["evals"], dependencies=[Depends(require_api_key)]
 )
+
+
+@router.post("/trigger", response_model=EvalTriggerResult)
+async def trigger_eval(
+    body: EvalTriggerRequest, session: SessionDep, queue: EvalQueueDep
+) -> EvalTriggerResult:
+    # On-demand sibling of the git-push eval fan-out (gitflow.process_push):
+    # enqueue the SAME EvalJobRequest onto agentos:evals, minus the push-only
+    # gate. This does NOT parse the eval-case format (worker/CLI concern); it
+    # only resolves and emits agent_id/version_id/sha/suite/bundle_ref.
+    agent = await crud.get_agent(session, body.agent_id)
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+
+    if body.version_id is not None:
+        version = await crud.get_version(session, body.version_id)
+        if version is None or version.agent_id != agent.id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "version not found for this agent"
+            )
+        sha = version.commit_sha
+    else:
+        deployment = await crud.get_active_deployment(
+            session, agent.id, Environment.dev
+        )
+        if deployment is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "agent has no active dev deployment to evaluate",
+            )
+        version = await crud.get_version(session, deployment.version_id)
+        if version is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "deployed version not found"
+            )
+        sha = version.commit_sha or deployment.commit_sha
+
+    if sha is None:
+        # A version with no commit sha cannot be keyed in eval traces; this is a
+        # caller/data problem, surfaced as a clean 4xx rather than a 500 on the
+        # required-string EvalJobRequest.sha field.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "resolved version has no commit sha; cannot run eval",
+        )
+
+    suite = body.suite or get_settings().eval_default_suite
+    stream_id = await queue.enqueue(
+        EvalJobRequest(
+            agent_id=agent.id,
+            version_id=version.id,
+            sha=sha,
+            suite=suite,
+            bundle_ref=version.bundle_ref,
+            target_url=body.target_url,
+            requested_at=now_iso(),
+        )
+    )
+    return EvalTriggerResult(
+        stream_id=stream_id,
+        agent_id=agent.id,
+        version_id=version.id,
+        sha=sha,
+        suite=suite,
+        bundle_ref=version.bundle_ref,
+    )
 
 
 @router.get("/matrix", response_model=EvalMatrix)

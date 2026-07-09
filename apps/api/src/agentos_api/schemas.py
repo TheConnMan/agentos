@@ -283,6 +283,31 @@ class EvalMatrix(BaseModel):
     rows: list[EvalMatrixRow]
 
 
+class EvalTriggerRequest(BaseModel):
+    """Ask for an on-demand platform eval run for an agent (issue #10).
+
+    Enqueues the same EvalJobRequest the git-push fan-out uses, minus the
+    push-only gate. With no version_id the agent's active dev deployment is
+    evaluated; suite falls back to Settings.eval_default_suite when omitted.
+    """
+
+    agent_id: uuid.UUID
+    version_id: uuid.UUID | None = None
+    suite: str | None = None
+    target_url: str | None = None
+
+
+class EvalTriggerResult(BaseModel):
+    """The enqueued eval job's stream id plus the resolved job identity."""
+
+    stream_id: str
+    agent_id: uuid.UUID
+    version_id: uuid.UUID
+    sha: str
+    suite: str
+    bundle_ref: str | None
+
+
 class EvalReport(BaseModel):
     """An eval run's rollup, reported so the API can post the PR check."""
 

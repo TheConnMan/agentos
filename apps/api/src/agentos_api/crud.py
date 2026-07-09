@@ -212,6 +212,28 @@ async def create_deployment(
     )
 
 
+async def get_active_deployment(
+    session: AsyncSession, agent_id: uuid.UUID, environment: Environment
+) -> Deployment | None:
+    """The agent's current active deployment in an environment (most recent).
+
+    Git-flow appends a new active Deployment row per push without superseding
+    older ones, so "current" is the latest active row for the environment.
+    """
+
+    result: Deployment | None = await session.scalar(
+        select(Deployment)
+        .where(
+            Deployment.agent_id == agent_id,
+            Deployment.environment == environment,
+            Deployment.status == "active",
+        )
+        .order_by(Deployment.deployed_at.desc())
+        .limit(1)
+    )
+    return result
+
+
 async def list_deployments(
     session: AsyncSession, agent_id: uuid.UUID | None = None
 ) -> list[Deployment]:
