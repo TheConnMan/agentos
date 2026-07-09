@@ -370,8 +370,7 @@ enum ClusterAction {
         /// Helm release name. Default: agentos.
         #[arg(long)]
         release: Option<String>,
-        /// Chart path for the wiring `helm upgrade` (run from the repo root for
-        /// the default). Default: charts/agentos.
+        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override.
         #[arg(long)]
         chart: Option<String>,
         /// Host the in-cluster worker uses to reach the stub. Omit to auto-detect
@@ -779,13 +778,21 @@ async fn main() -> Result<()> {
                     state,
                     std::env::var("AGENTOS_API_KEY").ok(),
                 )?;
+                let resolved_chart = artifacts::resolve_chart(
+                    resolved.chart.as_deref(),
+                    artifacts::Channel::current(),
+                    artifacts::version(),
+                    artifacts::cache_root,
+                    std::path::Path::new("charts/agentos").is_dir(),
+                )?;
+                let chart = materialize_artifact(resolved_chart, dry_run, "chart").await?;
                 message::message(MessageOpts {
                     text,
                     channel: resolved.channel,
                     thread: resolved.thread,
                     namespace: resolved.namespace,
                     release: resolved.release,
-                    chart: resolved.chart,
+                    chart,
                     listen_host: resolved.listen_host,
                     listen_port,
                     valkey_local_port,
