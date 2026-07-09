@@ -10,6 +10,13 @@ name: Release images and binaries
 # (runner/Dockerfile) plus the four app services. Every image builds from the
 # repo root: the Python images resolve the uv workspace, and the UI resolves the
 # frozen ACI generated TS its @aci alias points at (outside apps/ui).
+#
+# MULTI-ARCH: every published image is a linux/amd64 + linux/arm64 manifest.
+# Each arch builds on its own native GitHub-hosted runner (arm64 runners are free
+# for public repos), pushes the single-arch image by digest, and a per-image
+# `merge` job assembles the multi-arch manifest with `docker buildx imagetools
+# create` -- no QEMU emulation on the critical path. The gha build cache is
+# scoped per image+arch so the two arches never clobber each other's cache.
 
 on:
   push:
@@ -21,32 +28,88 @@ permissions:
   packages: write
 
 jobs:
-  images:
-    name: Build and push ${{ matrix.name }} image
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.name }} image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        name: [runner, api, dispatcher, worker, ui]
+        platform: [linux/amd64, linux/arm64]
         include:
           - name: runner
-            context: .
             dockerfile: runner/Dockerfile
           - name: api
-            context: .
             dockerfile: apps/api/Dockerfile
           - name: dispatcher
-            context: .
             dockerfile: apps/dispatcher/Dockerfile
           - name: worker
-            context: .
             dockerfile: apps/worker/Dockerfile
           - name: ui
-            context: .
             dockerfile: apps/ui/Dockerfile
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-image-${{ matrix.name }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge ${{ matrix.name }} manifest
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [runner, api, dispatcher, worker, ui]
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-image-${{ matrix.name }}-*
+          merge-multiple: true
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Log in to GHCR
@@ -65,21 +128,30 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046  # intentional word-splitting: expand -t <tag> flags and the digest ref list into separate args
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}@sha256:%s ' *)
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}:${{ steps.meta.outputs.version }}
 
-  worker-local:
-    name: Build and push the worker-local overlay image
-    needs: [images]
-    runs-on: ubuntu-latest
+  worker-local-build:
+    name: Build worker-local overlay (${{ matrix.platform }})
+    needs: [merge]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
     steps:
       - uses: actions/checkout@v7
         with:
@@ -105,23 +177,71 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: compose
+          file: compose/worker-local.Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_TAG=${{ steps.ver.outputs.v }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=worker-local-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=worker-local-${{ matrix.arch }}
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-worker-local-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  worker-local-merge:
+    name: Merge worker-local manifest
+    needs: [worker-local-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-worker-local-*
+          merge-multiple: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: compose
-          file: compose/worker-local.Dockerfile
-          push: true
-          build-args: |
-            BASE_TAG=${{ steps.ver.outputs.v }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046  # intentional word-splitting: expand -t <tag> flags and the digest ref list into separate args
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/agentos-worker-local@sha256:%s ' *)
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/agentos-worker-local:${{ steps.meta.outputs.version }}
 
   cli-binaries:
     name: Build agentos CLI (${{ matrix.target }})
@@ -217,7 +337,7 @@ jobs:
   release:
     name: Attach binaries to the GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [images, cli-binaries, chart, worker-local]
+    needs: [merge, cli-binaries, chart, worker-local-merge]
     runs-on: ubuntu-latest
     permissions:
       contents: write

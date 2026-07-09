@@ -386,8 +386,9 @@ then the whole workspace pytest suite against the live services — jobs `python
 `rust`, `contracts-ts`, and `ui` (lint + vitest + build + headless Playwright).
 
 **Release** ([`.github/workflows/release.yaml`](.github/workflows/release.yaml))
-publishes `ghcr.io/curie-eng/agentos-{runner,api,dispatcher,worker,ui}` (both
-`latest` and long-SHA tags) on every push to `main`; a `v*` tag additionally
+publishes `ghcr.io/curie-eng/agentos-{runner,api,dispatcher,worker,ui}` as
+multi-arch (`linux/amd64` + `linux/arm64`) manifests (both `latest` and long-SHA
+tags) on every push to `main`; a `v*` tag additionally
 cuts a GitHub Release with CLI binaries for `x86_64-unknown-linux-gnu` and
 `aarch64-apple-darwin`.
 
