@@ -136,7 +136,8 @@ When exposed as NodePort (`agentos up` does this by default), Langfuse is reacha
   http://<any-node-ip>:{{ .Values.langfuse.web.service.nodePort }}
 The nodePort is pinned in values (langfuse.web.service.nodePort) so it survives a down/up cycle.
 {{- end }}
-  # Dev project keys (headless-bootstrapped): {{ .Values.langfuse.init.projectPublicKey }} / {{ .Values.langfuse.init.projectSecretKey }}
+  # Dev project public key (headless-bootstrapped): {{ .Values.langfuse.init.projectPublicKey }}
+  # The project secret key is stored in the {{ include "agentos.secretName" . }} Secret (key langfuseInitProjectSecretKey), not printed here.
 
 App services send OTLP traces to the collector, NOT directly to Langfuse:
   {{ include "agentos.fullname" . }}-otel-collector:{{ .Values.otelCollector.service.grpcPort }} (gRPC) / :{{ .Values.otelCollector.service.httpPort }} (HTTP)

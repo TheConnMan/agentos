@@ -76,7 +76,10 @@ spec:
             - name: LANGFUSE_PUBLIC_KEY
               value: {{ .Values.langfuse.init.projectPublicKey | quote }}
             - name: LANGFUSE_SECRET_KEY
-              value: {{ .Values.langfuse.init.projectSecretKey | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langfuse.existingSecret | default (include "agentos.secretName" .) }}
+                  key: langfuseInitProjectSecretKey
             - name: S3_ENDPOINT_URL
               value: http://{{ include "agentos.minio.host" . }}:{{ .Values.minio.port }}
             - name: S3_ACCESS_KEY
