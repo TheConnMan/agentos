@@ -118,7 +118,7 @@ def _sandbox_client(
                 "Docker substrate selected but OTEL_EXPORTER_OTLP_ENDPOINT is "
                 "unset; runner traces will not be exported"
             )
-        return DockerSandboxClient(
+        client = DockerSandboxClient(
             image=env.get("AGENTOS_RUNNER_IMAGE", "agentos-runner"),
             bundle_store=BundleStore(config),
             network=env.get("AGENTOS_DOCKER_NETWORK") or None,
@@ -126,6 +126,10 @@ def _sandbox_client(
             default_plugin_dir=config.bundle_plugin_dir,
             environ=env,
         )
+        # Prewarm the runner image once at startup so the first claim window is
+        # not gated on a cold pull. Best-effort inside ensure_image.
+        client.ensure_image()
+        return client
     return KubernetesSandboxClient(sub_config.namespace)
 
 

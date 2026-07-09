@@ -19,7 +19,7 @@ from aci_protocol import (
     TextDelta,
 )
 from agentos_dispatcher.queue import QueuedSlackEvent
-from agentos_worker.behaviorpacks import BehaviorPacks
+from agentos_worker.behaviorpacks import BehaviorPacks, NavPack
 
 DONE = SessionStatus.DONE
 IDLE = SessionStatus.IDLE_AWAITING_INPUT
@@ -508,5 +508,69 @@ def test_default_streaming_edits_more_than_once(make_harness) -> None:
 
             assert len(h.sink.updates) > 1
             assert h.sink.last_text == "abc final"
+
+    asyncio.run(go())
+
+
+def test_booting_state_edits_placeholder_before_answer(make_harness) -> None:
+    # A fresh-claim turn edits the placeholder to the booting caption at the very
+    # start of the attempt, before the sandbox-claim wait, so the "booting a
+    # runner" state is visible ahead of the streamed answer on the same message.
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [
+                TextDelta(text="Hello "),
+                TextDelta(text="world"),
+                Final(text="Hello world", status=DONE),
+            ]
+            ev = _qevent("hi", thread="tBOOT", placeholder="ph-boot")
+            await h.kernel.process_event(ev)
+
+            booting = h.config.booting_text
+            on_ph = [
+                (i, u)
+                for i, u in enumerate(h.sink.updates)
+                if u[0] == ev.channel and u[1] == ev.placeholder_ts
+            ]
+            booting_idxs = [i for i, u in on_ph if u[2] == booting]
+            answer_idxs = [i for i, u in on_ph if u[2] != booting]
+            assert booting_idxs, "the booting caption was never edited onto the placeholder"
+            assert answer_idxs, "no streamed-answer update landed on the placeholder"
+            assert min(booting_idxs) < min(answer_idxs), (
+                "the booting caption must precede the first streamed-answer update"
+            )
+
+    asyncio.run(go())
+
+
+def test_booting_update_failure_never_fails_the_turn(make_harness) -> None:
+    # The booting edit is best-effort: if the Slack update for the booting caption
+    # raises, the turn still runs to its normal terminal answer. Inject a failure
+    # on the first booting-caption update and prove both that it fired and that the
+    # turn completed anyway.
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="all good", status=DONE)]
+
+            booting = h.config.booting_text
+            original_update = h.sink.update
+            fired = {"n": 0}
+
+            async def flaky_update(
+                *, channel: str, ts: str, text: str, nav: NavPack | None = None
+            ) -> None:
+                if text == booting and fired["n"] == 0:
+                    fired["n"] += 1
+                    raise RuntimeError("injected Slack failure on booting update")
+                await original_update(channel=channel, ts=ts, text=text, nav=nav)
+
+            h.sink.update = flaky_update  # type: ignore[method-assign]
+
+            ev = _qevent("hi", thread="tBOOTFAIL", placeholder="ph-boot-fail")
+            await h.kernel.process_event(ev)
+
+            assert fired["n"] > 0, "the booting update was never attempted"
+            assert h.sink.last_text == "all good"
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
 
     asyncio.run(go())

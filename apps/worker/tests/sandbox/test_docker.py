@@ -8,11 +8,12 @@ parsing (port + operating mode) are exercised for real.
 from __future__ import annotations
 
 import io
+import logging
 import tarfile
 from pathlib import Path
 
 from agentos_worker.bundle_store import extract_bundle
-from agentos_worker.sandbox.docker import DockerSandboxClient
+from agentos_worker.sandbox.docker import DockerError, DockerSandboxClient
 
 
 class _FakeBundleStore:
@@ -303,3 +304,79 @@ def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
         root = extract_bundle(_plugin_tar_gz(wrapper=None), Path(tmp))
         assert root == Path(tmp)
         assert (root / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_ensure_image_pulls_when_absent() -> None:
+    # docker image inspect returns "" (with check=False) when the image is not
+    # cached locally, so ensure_image must pull it -- the IfNotPresent + prewarm.
+    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client.outputs = {}  # "image" inspect -> "" == absent
+    client.ensure_image()
+    assert ["image", "inspect", "agentos-runner"] in client.calls
+    assert ["pull", "agentos-runner"] in client.calls
+    inspect_at = client.calls.index(["image", "inspect", "agentos-runner"])
+    pull_at = client.calls.index(["pull", "agentos-runner"])
+    assert inspect_at < pull_at  # inspect first, then pull
+
+
+def test_ensure_image_skips_pull_when_present() -> None:
+    # A non-empty inspect means the image is already cached: no pull, so an
+    # offline run with the image present must not touch the network.
+    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client.outputs = {"image": '[{"Id":"sha256:cafef00d"}]'}
+    client.ensure_image()
+    assert ["image", "inspect", "agentos-runner"] in client.calls
+    assert all(argv[0] != "pull" for argv in client.calls)
+
+
+def test_ensure_image_is_best_effort_on_pull_failure(caplog) -> None:
+    # A pull failure (offline, registry down) must NOT crash worker startup: a
+    # truly-missing image still fails clearly later at claim time. The warning
+    # names only the image -- never the argv or the docker stderr.
+    class _PullFailsDocker(DockerSandboxClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+            self.calls: list[list[str]] = []
+
+        def _docker(self, args: list[str], *, check: bool = True) -> str:
+            self.calls.append(args)
+            if args[0] == "pull":
+                raise DockerError(
+                    "docker pull failed (1): SENTINEL_STDERR_LEAK"
+                )
+            return ""  # inspect: absent
+
+    client = _PullFailsDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    with caplog.at_level(logging.WARNING, logger="agentos_worker.sandbox.docker"):
+        client.ensure_image()  # must return normally, no exception propagates
+    assert ["pull", "agentos-runner"] in client.calls
+    text = caplog.text
+    assert "agentos-runner" in text  # the warning names the image
+    assert "SENTINEL_STDERR_LEAK" not in text  # but never dumps the stderr
+
+
+def test_ensure_image_is_best_effort_when_docker_unavailable(caplog) -> None:
+    # A missing docker binary (or unreachable daemon) makes subprocess.run raise
+    # FileNotFoundError/OSError REGARDLESS of check=False, and that raise happens
+    # at the inspect step -- before any pull. That OSError must NOT crash worker
+    # startup: ensure_image is best-effort end to end, so the inspect call must be
+    # guarded too. The warning still names only the image, never the argv.
+    class _DockerUnavailable(DockerSandboxClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+            self.calls: list[list[str]] = []
+
+        def _docker(self, args: list[str], *, check: bool = True) -> str:
+            self.calls.append(args)
+            if args[:2] == ["image", "inspect"]:
+                # subprocess.run(["docker", ...]) raises this when the docker
+                # binary is absent, independent of check=False.
+                raise FileNotFoundError("docker")
+            return ""
+
+    client = _DockerUnavailable(image="agentos-runner", bundle_store=_FakeBundleStore())
+    with caplog.at_level(logging.WARNING, logger="agentos_worker.sandbox.docker"):
+        client.ensure_image()  # must return normally, no exception propagates
+    assert ["image", "inspect", "agentos-runner"] in client.calls
+    assert "agentos-runner" in caplog.text  # the warning names the image
+    assert "docker inspect" not in caplog.text  # but never dumps the argv

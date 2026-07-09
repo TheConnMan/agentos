@@ -16,6 +16,12 @@ from agentos_worker.sandbox import DockerSandboxClient, SubstrateConfig
 
 _SUB = SubstrateConfig(namespace="default", warm_pool="pool")
 
+# A non-secret placeholder credential. The docker fail-closed gate only checks
+# that a credential env var is PRESENT, so the value is irrelevant; keep it an
+# obvious placeholder behind a named constant so the secret scanner never
+# mistakes it for a real token.
+_FAKE_SDK_CRED = "oauth-PLACEHOLDER"
+
 
 def test_substrate_config_claim_timeout_defaults_to_90s() -> None:
     assert _substrate_config({}).claim_timeout_seconds == 90.0
@@ -49,18 +55,26 @@ def test_docker_without_credential_or_fake_fails_loudly() -> None:
     assert "AGENTOS_FAKE_MODEL" in msg
 
 
-def test_docker_with_sdk_credential_builds_docker_client() -> None:
+def test_docker_with_sdk_credential_builds_docker_client(monkeypatch) -> None:
+    # Keep hermetic: after Stream B, _sandbox_client prewarms the image via
+    # DockerSandboxClient.ensure_image; stub it so this test never shells docker.
+    monkeypatch.setattr(
+        DockerSandboxClient, "ensure_image", lambda self: None, raising=False
+    )
     client = _sandbox_client(
         WorkerConfig(),
-        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": "oauth-PLACEHOLDER"},
+        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": _FAKE_SDK_CRED},
         _SUB,
     )
     assert isinstance(client, DockerSandboxClient)
 
 
-def test_docker_with_agentos_credentials_reference_builds_docker_client() -> None:
+def test_docker_with_agentos_credentials_reference_builds_docker_client(monkeypatch) -> None:
     # AGENTOS_CREDENTIALS alone is a valid credential: forwarded by name and
     # mapped onto an SDK var by the runner, so the gate must accept it.
+    monkeypatch.setattr(
+        DockerSandboxClient, "ensure_image", lambda self: None, raising=False
+    )
     client = _sandbox_client(
         WorkerConfig(credentials="sk-ant-PLACEHOLDER"),
         {"AGENTOS_SANDBOX_SUBSTRATE": "docker"},
@@ -69,7 +83,10 @@ def test_docker_with_agentos_credentials_reference_builds_docker_client() -> Non
     assert isinstance(client, DockerSandboxClient)
 
 
-def test_docker_with_model_base_url_builds_docker_client_without_credential() -> None:
+def test_docker_with_model_base_url_builds_docker_client_without_credential(monkeypatch) -> None:
+    monkeypatch.setattr(
+        DockerSandboxClient, "ensure_image", lambda self: None, raising=False
+    )
     client = _sandbox_client(
         WorkerConfig(model_base_url="http://ollama:11434"),
         {"AGENTOS_SANDBOX_SUBSTRATE": "docker"},
@@ -78,7 +95,10 @@ def test_docker_with_model_base_url_builds_docker_client_without_credential() ->
     assert isinstance(client, DockerSandboxClient)
 
 
-def test_docker_with_explicit_fake_model_builds_docker_client() -> None:
+def test_docker_with_explicit_fake_model_builds_docker_client(monkeypatch) -> None:
+    monkeypatch.setattr(
+        DockerSandboxClient, "ensure_image", lambda self: None, raising=False
+    )
     client = _sandbox_client(
         WorkerConfig(fake_model=True), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB
     )
@@ -115,3 +135,21 @@ def test_docker_with_otlp_endpoint_does_not_warn(caplog) -> None:
         r for r in caplog.records
         if r.name == "agentos_worker.run" and "OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage()
     ]
+
+
+def test_sandbox_client_docker_prepulls_image(monkeypatch) -> None:
+    # _sandbox_client must prewarm the runner image exactly once at startup,
+    # inside the docker branch, so the first claim is not gated on a cold pull.
+    calls: list[object] = []
+    monkeypatch.setattr(
+        DockerSandboxClient,
+        "ensure_image",
+        lambda self: calls.append(self),
+        raising=False,
+    )
+    _sandbox_client(
+        WorkerConfig(),
+        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": _FAKE_SDK_CRED},
+        _SUB,
+    )
+    assert len(calls) == 1
