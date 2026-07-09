@@ -60,14 +60,16 @@ def _resolved(agent_id: uuid.UUID, *, bundle: str | None = "bundles/x.zip") -> R
     )
 
 
-def _qevent(text: str, *, channel: str, thread: str = "th-1") -> QueuedSlackEvent:
+def _qevent(
+    text: str, *, channel: str, thread: str = "th-1", placeholder: str = "p-1"
+) -> QueuedSlackEvent:
     return QueuedSlackEvent(
         slack_event_id=uuid.uuid4().hex,
         thread_ts=thread,
         channel=channel,
         user="U1",
         text=text,
-        placeholder_ts="p-1",
+        placeholder_ts=placeholder,
         received_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -341,5 +343,163 @@ def test_bound_agent_without_nav_gets_no_hub_button(make_harness) -> None:
                 for e in b["elements"]
             ]
             assert "help" not in ids
+
+    asyncio.run(go())
+
+
+# -- greeting/help pre-model short-circuit (ADR-0018) --------------------------
+# The kernel wiring under test (in ``_route_and_start``, under the per-thread
+# lock, BEFORE claiming a sandbox): if an ENABLED greeting/help pack matches the
+# message text AND the thread is provably fresh (``substrate.lookup(thread) is
+# None`` -- no existing route), short-circuit -- deliver the canned reply onto the
+# placeholder, mark the event done, and DO NOT claim a sandbox or call start_turn.
+# A thread that already has a route is NEVER short-circuited (rule 1: it steers).
+#
+# Observables used here (mirroring the harness the other kernel tests use):
+#   * canned reply delivered   -> h.sink.last_text / h.sink.updates
+#   * event marked done        -> done_key exists in Valkey
+#   * start_turn NEVER called   -> h.runner.opened == []   (the fake runner records
+#                                   every /v1/event, which is start_turn, in .opened)
+#   * NO sandbox claimed        -> h.fake_k8s.claim_envs == []  (the real substrate
+#                                   creates a claim only via the fake K8s client,
+#                                   which records every create in .claim_envs)
+#   * steered (live thread)     -> h.runner.steers == [<follow-up text>]
+#
+# No additive harness change is needed: a FRESH thread has never been claimed, so
+# the real substrate's lookup() returns None on its own; a LIVE thread is set up
+# exactly as the existing steer test does (a first turn held active via runner.hold),
+# which leaves a route in Valkey so lookup() returns a handle.
+
+_GREET = "Hey! I'm your revenue assistant -- ask me anything."
+_HELP = "I can rank revenue leaks by $ impact and draft the outreach for you."
+
+
+def test_fresh_thread_greeting_short_circuits_no_sandbox_no_model(make_harness) -> None:
+    # THE HEADLINE COST WIN: a bare "hi" opening a fresh thread is answered from
+    # the placeholder with the agent's canned greeting -- no sandbox, no model.
+    async def go() -> None:
+        packs = {"greeting": {"enabled": True, "phrases": ["hi", "hello"], "reply": _GREET}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:
+            # If the short-circuit did NOT fire, the runner would serve this and the
+            # turn would complete with "MODEL"; the assertions below would then fail
+            # on opened/last_text/claim_envs -- i.e. the feature is missing.
+            h.runner.default_script = [Final(text="MODEL", status=DONE)]
+            ev = _qevent("hi", channel="C-bound", thread="tGreet")
+
+            await h.kernel.process_event(ev)
+
+            # The canned greeting was delivered onto the placeholder...
+            assert h.sink.last_text == _GREET
+            assert any(ts == "p-1" and text == _GREET for _c, ts, text in h.sink.updates)
+            # ...the event is done...
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            # ...and NO model turn was started and NO sandbox was claimed.
+            assert h.runner.opened == []
+            assert h.fake_k8s.claim_envs == []
+
+    asyncio.run(go())
+
+
+def test_mid_live_thread_greeting_steers_and_is_not_short_circuited(make_harness) -> None:
+    # RULE 1 provoking test: a greeting arriving on a thread that ALREADY has a
+    # live turn must STEER into that turn -- the short-circuit must NOT swallow it
+    # (that would drop a steer to a live turn). A wiring that matches "hi" before
+    # the lookup-is-None gate (e.g. in process_event, as the doc first sketched)
+    # would deliver the canned greeting and drop the steer -> this test fails.
+    async def go() -> None:
+        packs = {"greeting": {"enabled": True, "phrases": ["hi", "hello"], "reply": _GREET}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="working")]
+            h.runner.tail = [Final(text="done", status=DONE)]
+
+            # First turn opens and hangs active, leaving a live route on the thread.
+            e1 = _qevent("do the thing", channel="C-bound", thread="tLive", placeholder="ph-1")
+            t1 = asyncio.create_task(h.kernel.process_event(e1))
+            await _wait_until(lambda: h.runner.turn_active)
+
+            # Follow-up greeting on the SAME (now non-fresh) thread.
+            e2 = _qevent("hi", channel="C-bound", thread="tLive", placeholder="ph-2")
+            await h.kernel.process_event(e2)
+
+            # It steered into the live turn; no second turn was opened.
+            assert h.runner.steers == ["hi"]
+            assert h.runner.opened == ["do the thing"]
+            # The canned greeting was NEVER delivered (the short-circuit did not fire).
+            assert all(_GREET not in text for _c, _ts, text in h.sink.updates)
+            # The follow-up's placeholder was retired as a fold, not a canned reply.
+            folded = [u for u in h.sink.updates if u[1] == "ph-2"]
+            assert folded and "folded" in folded[-1][2].lower()
+
+            hold.set()
+            await t1
+
+    asyncio.run(go())
+
+
+def test_fresh_thread_help_short_circuits_no_sandbox_no_model(make_harness) -> None:
+    # The help half of the niceties battery: a bare "help" on a fresh thread is
+    # answered canned (greeting-then-help chain; greeting absent here, help fires).
+    async def go() -> None:
+        packs = {"help": {"enabled": True, "phrases": ["help", "what can you do"], "reply": _HELP}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:
+            h.runner.default_script = [Final(text="MODEL", status=DONE)]
+            ev = _qevent("help", channel="C-bound", thread="tHelp")
+
+            await h.kernel.process_event(ev)
+
+            assert h.sink.last_text == _HELP
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert h.runner.opened == []
+            assert h.fake_k8s.claim_envs == []
+
+    asyncio.run(go())
+
+
+def test_fresh_thread_non_matching_message_runs_a_normal_turn(make_harness) -> None:
+    # The short-circuit fires ONLY on a match: a real request on a fresh thread,
+    # even with the greeting pack enabled, claims a sandbox and runs the model.
+    async def go() -> None:
+        packs = {"greeting": {"enabled": True, "phrases": ["hi", "hello"], "reply": _GREET}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:
+            h.runner.default_script = [
+                TextDelta(text="Your pipeline "),
+                Final(text="Your pipeline is $2.1M.", status=DONE),
+            ]
+            ev = _qevent("what's my pipeline?", channel="C-bound", thread="tReal")
+
+            await h.kernel.process_event(ev)
+
+            # Normal path: model turn started, sandbox claimed, streamed reply.
+            assert h.runner.opened == ["what's my pipeline?"]
+            assert h.sink.last_text == "Your pipeline is $2.1M."
+            assert len(h.fake_k8s.claim_envs) == 1
+            assert h.sink.last_text != _GREET
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+
+    asyncio.run(go())
+
+
+def test_disabled_greeting_pack_never_short_circuits(make_harness) -> None:
+    # Opt-in: with the greeting pack DISABLED, even a bare "hi" runs a normal turn
+    # (match_greeting returns None for a disabled pack).
+    async def go() -> None:
+        packs = {"greeting": {"enabled": False, "phrases": ["hi", "hello"], "reply": _GREET}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:
+            h.runner.default_script = [Final(text="MODEL", status=DONE)]
+            ev = _qevent("hi", channel="C-bound", thread="tOff")
+
+            await h.kernel.process_event(ev)
+
+            assert h.runner.opened == ["hi"]
+            assert h.sink.last_text == "MODEL"
+            assert len(h.fake_k8s.claim_envs) == 1
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
 
     asyncio.run(go())
