@@ -57,7 +57,7 @@ connection and exits the loop without reconnecting. The Socket Mode adapter
 
 ## Config surface (env vars)
 
-Parsed by `DispatcherConfig.from_env(os.environ)`.
+Read from the environment by `DispatcherConfig()` (a `pydantic_settings.BaseSettings`).
 
 | env var | default | meaning |
 |---|---|---|

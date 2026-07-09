@@ -245,7 +245,7 @@ async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
 def main(env: Mapping[str, str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     resolved = env if env is not None else os.environ
-    config = WorkerConfig.from_env(resolved)
+    config = WorkerConfig()
     asyncio.run(_run(config, resolved))
 
 

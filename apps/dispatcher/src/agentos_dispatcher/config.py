@@ -1,9 +1,10 @@
-"""Typed configuration for the dispatcher, parsed from the process environment.
+"""Typed configuration for the dispatcher, read from the process environment.
 
 The dispatcher needs two Slack tokens (an app-level token for Socket Mode and a
 bot token for Web API calls), a Valkey connection, and the stream/dedupe/backoff
-knobs. ``DispatcherConfig.from_env`` is the single sanctioned parser; it mirrors
-the env-var handling style of ``aci_protocol.session.SessionConfig``.
+knobs. ``DispatcherConfig`` is a ``pydantic_settings.BaseSettings`` (the house
+pattern, see ``apps/api``): construct it with no arguments and it reads the
+environment on init, falling back to the defaults below for anything absent.
 
 Env mapping:
     SLACK_APP_TOKEN            -> slack_app_token   (xapp-..., Socket Mode)
@@ -24,16 +25,79 @@ Env mapping:
     AGENTOS_BACKOFF_MULTIPLIER      -> backoff_multiplier
 """
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BeforeValidator, Field
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import (
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+)
 
 
-class DispatcherConfig(BaseModel):
+class _AliasOnlyEnvSource(EnvSettingsSource):
+    """Env source that reads an aliased field ONLY from its ``validation_alias``.
+
+    ``populate_by_name=True`` is set so tests can construct the config with
+    field-name kwargs. But in pydantic-settings that same flag makes the default
+    env source append the bare uppercased field name as a fallback env key for
+    every aliased field -- so ``stream`` (alias ``AGENTOS_STREAM``) would also
+    silently read a stray ``STREAM``. That breaks the behavior-preserving
+    contract of the refactor. We drop the field-name fallback for aliased
+    fields; non-aliased fields keep reading their plain uppercased name, and
+    kwarg population is untouched (it runs through the init source, not here).
+    """
+
+    def _extract_field_info(
+        self, field: FieldInfo, field_name: str
+    ) -> list[tuple[str, str, bool]]:
+        infos = super()._extract_field_info(field, field_name)
+        if field.validation_alias is not None:
+            infos = [info for info in infos if info[0] != field_name]
+        return infos
+
+
+def _parse_bool(value: object) -> bool:
+    """Parse the truthy env-string set the dispatcher has always accepted.
+
+    A real bool passes through (so kwarg construction in tests is unchanged); any
+    other string is truthy only when it is one of the accepted tokens, matching
+    the previous hand-rolled ``_set_bool``.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+Bool = Annotated[bool, BeforeValidator(_parse_bool)]
+
+
+class DispatcherConfig(BaseSettings):
     """Everything the dispatcher needs to run, in one typed object."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = SettingsConfigDict(
+        frozen=True, populate_by_name=True, extra="ignore"
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Swap the env source so aliased fields read only their alias."""
+        return (
+            init_settings,
+            _AliasOnlyEnvSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     slack_app_token: str = ""
     slack_bot_token: str = ""
@@ -44,71 +108,34 @@ class DispatcherConfig(BaseModel):
     valkey_password: str = ""
     valkey_db: int = 0
 
-    stream: str = "agentos:runs"
-    dedupe_prefix: str = "agentos:dedupe:"
-    dedupe_ttl_seconds: int = 3600
+    stream: str = Field(default="agentos:runs", validation_alias="AGENTOS_STREAM")
+    dedupe_prefix: str = Field(
+        default="agentos:dedupe:", validation_alias="AGENTOS_DEDUPE_PREFIX"
+    )
+    dedupe_ttl_seconds: int = Field(
+        default=3600, validation_alias="AGENTOS_DEDUPE_TTL_SECONDS"
+    )
 
-    placeholder_text: str = "On it. Working on your request."
+    placeholder_text: str = Field(
+        default="On it. Working on your request.",
+        validation_alias="AGENTOS_PLACEHOLDER_TEXT",
+    )
     # When true, also set a Slack assistant-thread status (the native "shimmer"
     # on the app name) to placeholder_text while a turn runs. The worker clears it
     # when the turn ends. Off by default; requires the app's assistant feature +
     # assistant:write scope (see slack-app-manifest.yaml).
-    shimmer: bool = False
+    shimmer: Bool = Field(default=False, validation_alias="AGENTOS_SHIMMER")
 
-    backoff_initial_seconds: float = Field(default=1.0, gt=0)
-    backoff_max_seconds: float = Field(default=30.0, gt=0)
-    backoff_multiplier: float = Field(default=2.0, gt=1)
+    backoff_initial_seconds: float = Field(
+        default=1.0, gt=0, validation_alias="AGENTOS_BACKOFF_INITIAL_SECONDS"
+    )
+    backoff_max_seconds: float = Field(
+        default=30.0, gt=0, validation_alias="AGENTOS_BACKOFF_MAX_SECONDS"
+    )
+    backoff_multiplier: float = Field(
+        default=2.0, gt=1, validation_alias="AGENTOS_BACKOFF_MULTIPLIER"
+    )
 
     def dedupe_key(self, slack_event_id: str) -> str:
         """The Valkey key that guards a single Slack event id against retries."""
         return f"{self.dedupe_prefix}{slack_event_id}"
-
-    @classmethod
-    def from_env(cls, env: Mapping[str, str]) -> "DispatcherConfig":
-        """Build a config from a process-environment mapping, using defaults for
-        anything absent."""
-        values: dict[str, Any] = {}
-        _set_str(values, "slack_app_token", env, "SLACK_APP_TOKEN")
-        _set_str(values, "slack_bot_token", env, "SLACK_BOT_TOKEN")
-        _set_str(values, "slack_signing_secret", env, "SLACK_SIGNING_SECRET")
-        _set_str(values, "valkey_host", env, "VALKEY_HOST")
-        _set_int(values, "valkey_port", env, "VALKEY_PORT")
-        _set_str(values, "valkey_password", env, "VALKEY_PASSWORD")
-        _set_int(values, "valkey_db", env, "VALKEY_DB")
-        _set_str(values, "stream", env, "AGENTOS_STREAM")
-        _set_str(values, "dedupe_prefix", env, "AGENTOS_DEDUPE_PREFIX")
-        _set_int(values, "dedupe_ttl_seconds", env, "AGENTOS_DEDUPE_TTL_SECONDS")
-        _set_str(values, "placeholder_text", env, "AGENTOS_PLACEHOLDER_TEXT")
-        _set_bool(values, "shimmer", env, "AGENTOS_SHIMMER")
-        _set_float(values, "backoff_initial_seconds", env, "AGENTOS_BACKOFF_INITIAL_SECONDS")
-        _set_float(values, "backoff_max_seconds", env, "AGENTOS_BACKOFF_MAX_SECONDS")
-        _set_float(values, "backoff_multiplier", env, "AGENTOS_BACKOFF_MULTIPLIER")
-        return cls(**values)
-
-
-def _set_str(
-    values: dict[str, Any], key: str, env: Mapping[str, str], var: str
-) -> None:
-    if var in env:
-        values[key] = env[var]
-
-
-def _set_int(
-    values: dict[str, Any], key: str, env: Mapping[str, str], var: str
-) -> None:
-    if var in env:
-        values[key] = int(env[var])
-
-
-def _set_float(
-    values: dict[str, Any], key: str, env: Mapping[str, str], var: str
-) -> None:
-    if var in env:
-        values[key] = float(env[var])
-
-
-def _set_bool(
-    values: dict[str, Any], key: str, env: Mapping[str, str], var: str
-) -> None:
-    if var in env:
-        values[key] = env[var].strip().lower() in ("1", "true", "yes", "on")
