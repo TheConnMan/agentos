@@ -42,6 +42,57 @@ def matching_traces(
     return out[:limit]
 
 
+# The OTel resource attribute the runner stamps (runner/otel.py) so a trace is
+# attributable to the concrete sandbox that served it.
+_SANDBOX_ATTR = "agentos.sandbox_id"
+
+
+def _probe_sandbox_attr(bag: Any) -> str | None:
+    """Return a non-empty `agentos.sandbox_id` from one attribute bag, or None.
+
+    Checks the bag itself plus the common keys Langfuse uses to carry OTel
+    resource/metadata attributes (``metadata`` / ``resourceAttributes`` /
+    ``resource``, each optionally wrapping an ``attributes`` sub-dict). The bare
+    ``sandbox_id`` key is accepted too. Non-string / empty values are ignored.
+    """
+
+    if not isinstance(bag, dict):
+        return None
+    candidates: list[dict[str, Any]] = [bag]
+    for nest in ("metadata", "resourceAttributes", "resource"):
+        nested = bag.get(nest)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+            inner = nested.get("attributes")
+            if isinstance(inner, dict):
+                candidates.append(inner)
+    for cand in candidates:
+        hit = cand.get(_SANDBOX_ATTR) or cand.get("sandbox_id")
+        if isinstance(hit, str) and hit.strip():
+            return hit
+    return None
+
+
+def hoist_sandbox_id(
+    trace: dict[str, Any], observations: list[dict[str, Any]]
+) -> str | None:
+    """Lift the runner's sandbox id out of a trace, or None when absent.
+
+    Checks, in order, the trace-level resource/metadata attributes then the
+    first observation's resource attributes, so the id resolves regardless of
+    whether Langfuse surfaces the OTel resource attr on the trace or only on an
+    observation. Only a present, non-empty attribute is returned -- no value is
+    invented.
+    """
+
+    hit = _probe_sandbox_attr(trace)
+    if hit:
+        return hit
+    if observations:
+        return _probe_sandbox_attr(observations[0])
+    return None
+
+
 def build_tree(observations: list[dict[str, Any]]) -> list[ObservationNode]:
     """Reconstruct the nested observation tree from a flat observation list.
 

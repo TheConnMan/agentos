@@ -50,6 +50,9 @@ export interface AppState {
   // When set (wired mode), the Traces list opens pre-filtered to this agent id;
   // null means all agents. Set by an agent card's "View traces" action.
   tracesAgentId: string | null;
+  // When set, the Logs tab opens preselected to this runner pod / sandbox id.
+  // Set by the trace detail's "View sandbox logs" action; null otherwise.
+  logsPod: string | null;
   promoteForm: boolean;
   defaultModel: string;
   driftHover: string | null;
@@ -73,6 +76,7 @@ export type Action =
   | { type: "setMetricRange"; range: MetricRange }
   | { type: "openTrace"; id: string }
   | { type: "closeTrace" }
+  | { type: "openLogs"; sandboxId: string }
   | { type: "openAgentDetail"; id: string }
   | { type: "closeAgentDetail" }
   | { type: "deployStart" }

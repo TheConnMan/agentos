@@ -1005,6 +1005,17 @@
       "TraceTree": {
         "description": "A trace plus its reconstructed observation tree.",
         "properties": {
+          "sandbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sandbox Id"
+          },
           "trace": {
             "additionalProperties": true,
             "title": "Trace",

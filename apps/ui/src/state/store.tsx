@@ -36,6 +36,7 @@ export function initialState(level: FixtureLevel): AppState {
     agentDetail: null,
     traceOpen: null,
     tracesAgentId: null,
+    logsPod: null,
     promoteForm: false,
     defaultModel: "claude-sonnet-5",
     driftHover: null,
@@ -58,6 +59,7 @@ function levelReset(s: AppState, level: FixtureLevel): AppState {
     matrixRun: false,
     traceOpen: null,
     tracesAgentId: null,
+    logsPod: null,
     obsTab: "traces",
     promoteForm: false,
     agentDeployed: level >= 3,
@@ -73,7 +75,7 @@ export function reducer(s: AppState, a: Action): AppState {
     case "setLevel":
       return levelReset(s, a.level);
     case "go":
-      return { ...s, nav: a.nav, agentDetail: null, traceOpen: null, tracesAgentId: null };
+      return { ...s, nav: a.nav, agentDetail: null, traceOpen: null, tracesAgentId: null, logsPod: null };
     case "openModal":
       return { ...s, modal: a.modal };
     case "closeModal":
@@ -83,7 +85,9 @@ export function reducer(s: AppState, a: Action): AppState {
     case "setEnv":
       return { ...s, env: a.env };
     case "setObsTab":
-      return { ...s, obsTab: a.tab, traceOpen: null, tracesAgentId: null };
+      // A manual tab switch clears any sandbox-logs prefill (openLogs sets the
+      // tab directly, so its prefill survives; a subsequent user click drops it).
+      return { ...s, obsTab: a.tab, traceOpen: null, tracesAgentId: null, logsPod: null };
     case "viewTraces":
       // Jump to the Traces tab pre-filtered to one agent (wired mode). The
       // fixture Traces list ignores the filter; the wired list applies it.
@@ -103,6 +107,19 @@ export function reducer(s: AppState, a: Action): AppState {
       return { ...s, traceOpen: a.id };
     case "closeTrace":
       return { ...s, traceOpen: null, promoteForm: false };
+    case "openLogs":
+      // Jump from a trace's detail into the Logs tab preselected to the serving
+      // sandbox. The sandbox id doubles as the pod-name prefill (RealLogs notes
+      // the sandbox_id<->pod-name assumption).
+      return {
+        ...s,
+        nav: "observability",
+        obsTab: "logs",
+        traceOpen: null,
+        agentDetail: null,
+        tracesAgentId: null,
+        logsPod: a.sandboxId,
+      };
     case "openAgentDetail":
       return { ...s, agentDetail: a.id };
     case "closeAgentDetail":
