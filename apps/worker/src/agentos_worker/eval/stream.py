@@ -39,15 +39,6 @@ import httpx
 from aci_protocol import Budget
 from pydantic import BaseModel
 from redis.asyncio import Redis
-from redis.exceptions import (
-    ConnectionError as RedisConnectionError,
-)
-from redis.exceptions import (
-    ResponseError,
-)
-from redis.exceptions import (
-    TimeoutError as RedisTimeoutError,
-)
 
 from ..binding import (
     BUDGET_ENV,
@@ -60,6 +51,7 @@ from ..bundle_store import BundleStore
 from ..config import WorkerConfig
 from ..sandbox import SandboxSubstrate
 from ..sandbox.types import SandboxError
+from ..stream_consumer import ReadLoopSpec, StreamConsumer, StreamEntry
 from .models import EvalRunResult, EvalSuite
 from .recorder import LangfuseEvalRecorder
 from .run import run_eval_suite
@@ -70,7 +62,6 @@ logger = logging.getLogger(__name__)
 _EVAL_READ_ERROR_BACKOFF_S = 0.5
 
 STREAM_PAYLOAD_FIELD = "payload"
-StreamEntry = tuple[str, dict[str, str]]
 
 
 class EvalWorkItem(BaseModel):
@@ -178,7 +169,7 @@ def _safe_extract(data: bytes, dest: Path) -> None:
     raise ValueError("bundle is not a recognized zip or tar archive")
 
 
-class EvalStreamConsumer:
+class EvalStreamConsumer(StreamConsumer):
     """Reads agentos:evals, runs each suite, records, reports, then acks."""
 
     def __init__(
@@ -192,14 +183,13 @@ class EvalStreamConsumer:
         recorder: LangfuseEvalRecorder,
         repo_lookup: Any,
     ) -> None:
-        self._redis = redis
+        super().__init__(redis)
         self._config = config
         self._bundles = bundle_store
         self._substrate = substrate
         self._reporter = reporter
         self._recorder = recorder
         self._repo_lookup = repo_lookup
-        self._stop = asyncio.Event()
         # Entry ids this consumer is handling right now. XAUTOCLAIM would
         # otherwise reclaim our own still-pending (long-running) eval and
         # re-run it in parallel; skipping these ids prevents that self-reclaim.
@@ -212,60 +202,35 @@ class EvalStreamConsumer:
         # dropping items produced while the worker was down would silently skip
         # required checks, violating the "an eval is never lost" guarantee this
         # consumer is built around. So a fresh group SHOULD pick up the backlog.
-        try:
-            await self._redis.xgroup_create(
-                self._config.eval_stream,
-                self._config.eval_consumer_group,
-                id="0",
-                mkstream=True,
-            )
-        except ResponseError as exc:
-            if "BUSYGROUP" not in str(exc):
-                raise
-
-    def request_stop(self) -> None:
-        self._stop.set()
+        await self._ensure_group(
+            self._config.eval_stream, self._config.eval_consumer_group, start_id="0"
+        )
 
     async def run(self) -> None:
         await self.ensure_group()
         await asyncio.gather(self._read_loop(), self._reclaim_loop())
 
     async def _read_loop(self) -> None:
-        while not self._stop.is_set():
-            # count=1 is load-bearing, not a tunable: this consumer handles an
-            # entry inline (evals are heavy and run sequentially), and only the
-            # entry inside _handle is tracked as in-flight. Claiming a batch would
-            # leave the un-handled tail claimed-but-untracked, where the reclaim
-            # loop could re-run one before the read loop reaches it (a duplicate
-            # report). Peer replicas in the group provide the parallelism instead.
-            try:
-                resp = await self._redis.xreadgroup(
-                    self._config.eval_consumer_group,
-                    self._config.eval_consumer_name,
-                    {self._config.eval_stream: ">"},
-                    count=1,
-                    block=self._config.read_block_ms,
-                )
-            except RedisTimeoutError as exc:
-                # Same transient-transport guard as the runs consumer: a blocking
-                # read timeout is the routine idle case, not a fault -- log at
-                # DEBUG so an idle eval worker doesn't flood WARNING. Still back
-                # off + retry rather than letting it kill the eval loop.
-                logger.debug("eval stream read timed out (idle); retrying: %s", exc)
-                await self._sleep_or_stop(_EVAL_READ_ERROR_BACKOFF_S)
-                continue
-            except RedisConnectionError as exc:
-                # A real connection blip (Valkey failover): transient but worth a
-                # WARNING. Back off and retry.
-                logger.warning("eval stream read failed transiently; retrying: %s", exc)
-                await self._sleep_or_stop(_EVAL_READ_ERROR_BACKOFF_S)
-                continue
-            if not resp:
-                continue
-            streams = cast("list[tuple[str, list[StreamEntry]]]", resp)
-            for _stream, entries in streams:
-                for entry_id, fields in entries:
-                    await self._handle(entry_id, fields)
+        # count=1 is load-bearing, not a tunable: this consumer handles an entry
+        # inline (evals are heavy and run sequentially), and only the entry inside
+        # _handle is tracked as in-flight. Claiming a batch would leave the
+        # un-handled tail claimed-but-untracked, where the reclaim loop could
+        # re-run one before the read loop reaches it (a duplicate report). Peer
+        # replicas in the group provide the parallelism instead.
+        await self._consume(
+            ReadLoopSpec(
+                stream=self._config.eval_stream,
+                group=self._config.eval_consumer_group,
+                consumer=self._config.eval_consumer_name,
+                count=1,
+                block_ms=self._config.read_block_ms,
+                backoff_s=_EVAL_READ_ERROR_BACKOFF_S,
+                timeout_msg="eval stream read timed out (idle); retrying: %s",
+                connection_msg="eval stream read failed transiently; retrying: %s",
+                logger=logger,
+            ),
+            self._handle,
+        )
 
     async def _reclaim_loop(self) -> None:
         """Periodically reclaim entries a dead consumer left pending and re-run
@@ -323,12 +288,6 @@ class EvalStreamConsumer:
             await self._ack(entry_id)
         finally:
             self._inflight_ids.discard(entry_id)
-
-    async def _sleep_or_stop(self, seconds: float) -> None:
-        try:
-            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
-        except TimeoutError:
-            pass
 
     async def _run_and_report(self, item: EvalWorkItem) -> EvalRunResult:
         repo = await self._repo_lookup.repo_full_name(item.agent_id)
@@ -410,6 +369,6 @@ class EvalStreamConsumer:
         )
 
     async def _ack(self, entry_id: str) -> None:
-        await self._redis.xack(
+        await self._xack(
             self._config.eval_stream, self._config.eval_consumer_group, entry_id
         )
