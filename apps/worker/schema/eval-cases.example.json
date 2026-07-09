@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "grader": {
+        "case_sensitive": false,
+        "expected": "weather",
+        "kind": "contains"
+      },
+      "id": "example-answers",
+      "input": "What's the weather in San Francisco?"
+    }
+  ],
+  "name": "example"
+}

@@ -45,20 +45,26 @@ echo "=== agentos init ==="
 cd "$WORKDIR/deal-desk"
 
 # Eval cases matched to the runner's offline fake-model script (fake.py):
-# the scripted turn streams "Looking into it", a Bash tool note, "all done".
+# the scripted turn streams "Looking into it", a Bash tool note, then a final
+# frame whose text is "all done". The graded answer is the FINAL text only, so
+# every grader below must be satisfied by "all done" (interim streamed text such
+# as "looking into it" is no longer graded).
 cat > evals/e2e-cases.json <<'EOF'
-[
-  {
-    "name": "streams-progress",
-    "input": "what is the status?",
-    "expect_contains": ["looking into it"]
-  },
-  {
-    "name": "finishes-the-turn",
-    "input": "wrap it up",
-    "expect_contains": ["all done"]
-  }
-]
+{
+  "name": "e2e",
+  "cases": [
+    {
+      "id": "finishes-the-turn",
+      "input": "wrap it up",
+      "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false }
+    },
+    {
+      "id": "reports-done",
+      "input": "what is the status?",
+      "grader": { "kind": "contains", "expected": "done", "case_sensitive": false }
+    }
+  ]
+}
 EOF
 
 echo

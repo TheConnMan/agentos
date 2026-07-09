@@ -13,13 +13,16 @@ provisioned-runner end-to-end (no ``target_url``) that tears the sandbox down.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
+import tarfile
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -36,6 +39,7 @@ from agentos_worker.eval import (
     Grader,
     GraderKind,
     LangfuseEvalRecorder,
+    load_suite_from_bundle,
 )
 from agentos_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
 from agentos_worker.sandbox.types import ClaimView, SandboxView
@@ -681,3 +685,28 @@ def test_worker_boot_after_an_outage_skips_stale_backlog_but_runs_recent() -> No
             await client.aclose()
 
     asyncio.run(go())
+
+
+def test_committed_fixture_loads_from_bundle_with_name_override(
+    eval_cases_example_path: Path,
+) -> None:
+    """A tar bundle carrying the committed cross-language fixture bytes at
+    evals/cases.json loads through load_suite_from_bundle: the payload suite-name
+    override wins over the file's name, and the case grades weather text True.
+    Proves the scaffold output is platform-loadable (the latent bug in issue #8).
+    """
+    fixture_bytes = eval_cases_example_path.read_bytes()
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        info = tarfile.TarInfo(name="evals/cases.json")
+        info.size = len(fixture_bytes)
+        tf.addfile(info, io.BytesIO(fixture_bytes))
+    tar_bytes = buf.getvalue()
+
+    suite = load_suite_from_bundle(tar_bytes, "override-suite-name")
+
+    assert suite is not None
+    assert suite.name == "override-suite-name"  # payload override at stream.py:160
+    assert len(suite.cases) == 1
+    assert suite.cases[0].grader.grade("it's sunny weather today") is True

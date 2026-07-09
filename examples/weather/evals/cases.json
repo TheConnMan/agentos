@@ -1,9 +1,14 @@
-[
-  {
-    "name": "weather-answers",
-    "input": "What's the weather in San Francisco?",
-    "expect_contains": [
-      "weather"
-    ]
-  }
-]
+{
+  "name": "weather",
+  "cases": [
+    {
+      "id": "weather-answers",
+      "input": "What's the weather in San Francisco?",
+      "grader": {
+        "kind": "contains",
+        "expected": "weather",
+        "case_sensitive": false
+      }
+    }
+  ]
+}
