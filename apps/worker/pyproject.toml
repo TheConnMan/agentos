@@ -8,6 +8,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "kubernetes>=31.0",
     "aci-protocol",
+    "plugin-format",
     "agentos-dispatcher",
     "aiohttp>=3.11",
     "slack-sdk>=3.43",
