@@ -90,6 +90,22 @@ describe("reducer state machine", () => {
     expect(s.traceOpen).toBeNull();
   });
 
+  it("openLogs jumps to the logs tab preselected to the serving sandbox", () => {
+    const s = reducer(at(3), { type: "openLogs", sandboxId: "sbx-42" });
+    expect(s.nav).toBe("observability");
+    expect(s.obsTab).toBe("logs");
+    expect(s.logsPod).toBe("sbx-42");
+    expect(s.traceOpen).toBeNull();
+  });
+
+  it("a manual tab switch or nav clears the sandbox-logs prefill", () => {
+    let s = reducer(at(3), { type: "openLogs", sandboxId: "sbx-42" });
+    s = reducer(s, { type: "setObsTab", tab: "traces" });
+    expect(s.logsPod).toBeNull();
+    s = reducer(reducer(at(3), { type: "openLogs", sandboxId: "sbx-9" }), { type: "go", nav: "agents" });
+    expect(s.logsPod).toBeNull();
+  });
+
   it("changing tab or nav clears the agent trace filter", () => {
     let s = reducer(at(3), { type: "viewTraces", agentId: "agent-123" });
     s = reducer(s, { type: "setObsTab", tab: "metrics" });

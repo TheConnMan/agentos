@@ -58,6 +58,36 @@ def test_get_trace_returns_reconstructed_tree(
     assert body["tree"][0]["children"][0]["type"] == "GENERATION"
 
 
+def test_get_trace_surfaces_sandbox_id_from_observation(
+    auth_headers: dict[str, str],
+) -> None:
+    # The endpoint hoists agentos.sandbox_id onto the typed TraceTree field even
+    # when Langfuse carries it only on an observation (not the trace).
+    observations = [
+        {
+            "id": "r",
+            "type": "SPAN",
+            "name": "agent.run",
+            "startTime": "1",
+            "metadata": {"agentos.sandbox_id": "sbx-proxy"},
+        },
+    ]
+    with _app_with(observations) as client:
+        resp = client.get("/langfuse/traces/abc", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["sandbox_id"] == "sbx-proxy"
+
+
+def test_get_trace_sandbox_id_null_when_absent(
+    auth_headers: dict[str, str],
+) -> None:
+    observations = [{"id": "r", "type": "SPAN", "name": "agent.run", "startTime": "1"}]
+    with _app_with(observations) as client:
+        resp = client.get("/langfuse/traces/abc", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["sandbox_id"] is None
+
+
 def test_get_trace_404_when_no_observations(
     auth_headers: dict[str, str],
 ) -> None:

@@ -167,15 +167,14 @@ function SpanRow({ node, depth }: { node: ObservationNode; depth: number }) {
   );
 }
 
-// Pull the runner's sandbox id from a trace's OTel resource/metadata, if present
-// (set by the runner as `agentos.sandbox_id`: the Docker container name locally,
-// the sandbox pod name on k8s). Returns null when absent, so the UI degrades
-// silently on traces emitted before the attribute existed.
-export function sandboxIdFromTrace(trace: RawTrace | null | undefined): string | null {
-  if (!trace || typeof trace !== "object") return null;
-  const candidates: unknown[] = [trace];
+// Probe one payload for the runner's OTel resource attribute (`agentos.sandbox_id`,
+// the Docker container name locally / the sandbox pod name on k8s). Checks the
+// object itself plus the keys Langfuse may nest resource/metadata attributes under.
+function probeSandboxAttr(source: unknown): string | null {
+  if (!source || typeof source !== "object") return null;
+  const candidates: unknown[] = [source];
   for (const key of ["metadata", "resourceAttributes", "resource"]) {
-    const v = (trace as Record<string, unknown>)[key];
+    const v = (source as Record<string, unknown>)[key];
     if (v && typeof v === "object") {
       candidates.push(v);
       const nested = (v as Record<string, unknown>).attributes;
@@ -190,12 +189,28 @@ export function sandboxIdFromTrace(trace: RawTrace | null | undefined): string |
   return null;
 }
 
+// Resolve the serving sandbox id. Prefers the API's typed field (TraceTree
+// `sandbox_id`, hoisted server-side from the trace/observation resource attrs);
+// falls back to probing the raw trace payload for older traces that predate the
+// hoist. Accepts either a full TraceTree or a bare trace dict (the probe path).
+// Returns null when absent, so the UI degrades silently.
+export function sandboxIdFromTrace(source: RawTrace | null | undefined): string | null {
+  if (!source || typeof source !== "object") return null;
+  const typed = (source as Record<string, unknown>)["sandbox_id"];
+  if (typeof typed === "string" && typed.trim() !== "") return typed;
+  const rec = source as Record<string, unknown>;
+  return probeSandboxAttr(rec) ?? probeSandboxAttr(rec["trace"]);
+}
+
 // Live trace drill-in: the reconstructed observation tree from the API proxy.
 export function RealTraceDetail() {
   const { state, dispatch } = useStore();
   const { data, loading, error, notFound } = useTrace(state.traceOpen);
   const traceName = data ? (str(data.trace as RawTrace, "name") ?? state.traceOpen) : state.traceOpen;
-  const sandboxId = sandboxIdFromTrace(data?.trace as RawTrace | undefined);
+  // Prefer the API's typed field; fall back to probing the raw trace payload.
+  const typedSandboxId =
+    typeof data?.sandbox_id === "string" && data.sandbox_id.trim() !== "" ? data.sandbox_id : null;
+  const sandboxId = typedSandboxId ?? sandboxIdFromTrace(data?.trace as RawTrace | undefined);
 
   return (
     <div>
@@ -231,6 +246,24 @@ export function RealTraceDetail() {
             >
               <Dot color={C.mutedStatus} size={6} />
               Served by sandbox <span style={{ color: C.text2 }}>{sandboxId}</span>
+              <button
+                type="button"
+                data-testid="view-sandbox-logs"
+                onClick={() => dispatch({ type: "openLogs", sandboxId })}
+                style={{
+                  marginLeft: 6,
+                  background: "transparent",
+                  border: "1px solid " + C.border,
+                  borderRadius: 20,
+                  padding: "2px 10px",
+                  color: C.link,
+                  fontFamily: C.mono,
+                  fontSize: 11.5,
+                  cursor: "pointer",
+                }}
+              >
+                View sandbox logs →
+              </button>
             </div>
           ) : null}
           <Card>

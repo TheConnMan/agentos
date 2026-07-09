@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { C } from "../../tokens";
 import { Button, Dot } from "../../primitives";
+import { useStore } from "../../state/store";
 import { getRunnerLogs, listRunnerPods, ApiError, type PodLogs } from "../../api/client";
 
 type Result =
@@ -68,14 +69,20 @@ function resultFromError(e: unknown): Result {
 // distinct cluster states are designed (503 no cluster, 404 pod not found, 502
 // other). On the dev box (no cluster) the 503 degraded state is expected.
 export function RealLogs() {
+  // When the trace detail's "View sandbox logs" set a prefill, preselect it. The
+  // sandbox_id doubles as the pod name: docker names the container after the
+  // sandbox, and on k8s the sandbox pod name is ASSUMED equal (to be confirmed on
+  // the cluster). Absent that identity, the prefill is a best-effort preselect.
+  const { state } = useStore();
+  const prefill = state.logsPod;
   const [namespace, setNamespace] = useState("agentos");
   const [pods, setPods] = useState<Pods>({ kind: "loading" });
-  const [selected, setSelected] = useState<string>(ALL);
+  const [selected, setSelected] = useState<string>(prefill ?? ALL);
   const [result, setResult] = useState<Result>({ kind: "idle" });
 
-  const loadPods = useCallback(async (ns: string) => {
+  const loadPods = useCallback(async (ns: string, keep: string = ALL) => {
     setPods({ kind: "loading" });
-    setSelected(ALL);
+    setSelected(keep);
     setResult({ kind: "idle" });
     try {
       const data = await listRunnerPods(ns.trim() || undefined);
@@ -89,9 +96,11 @@ export function RealLogs() {
     }
   }, []);
 
+  // Load pods on mount and whenever a new sandbox prefill arrives, keeping the
+  // prefilled pod selected across the reload (a namespace change resets to ALL).
   useEffect(() => {
-    void loadPods("agentos");
-  }, [loadPods]);
+    void loadPods("agentos", prefill ?? ALL);
+  }, [loadPods, prefill]);
 
   // Aggregate logs across every listed pod, one labeled block per pod. A single
   // pod short-circuits to the plain per-pod result so its distinct error states
@@ -143,7 +152,12 @@ export function RealLogs() {
     await fetchAll(ns, list);
   };
 
-  const podOptions = pods.kind === "ok" ? pods.pods : [];
+  const fetchedPods = pods.kind === "ok" ? pods.pods : [];
+  // Keep the selected pod in the dropdown even when the fetched list doesn't
+  // include it (a prefilled sandbox id, or a dev box with no cluster / empty
+  // list), so the <select> value always has a matching <option>.
+  const podOptions =
+    selected !== ALL && !fetchedPods.includes(selected) ? [selected, ...fetchedPods] : fetchedPods;
   const canFetch = pods.kind !== "loading";
 
   return (
@@ -167,7 +181,7 @@ export function RealLogs() {
           onChange={(e) => setSelected(e.target.value)}
           style={{ ...inputStyle, flex: 1, minWidth: 200 }}
         >
-          <option value={ALL}>{`All runner pods${podOptions.length ? ` (${podOptions.length})` : ""}`}</option>
+          <option value={ALL}>{`All runner pods${fetchedPods.length ? ` (${fetchedPods.length})` : ""}`}</option>
           {podOptions.map((p) => (
             <option key={p} value={p}>
               {p}

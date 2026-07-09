@@ -215,6 +215,9 @@ class TraceTree(BaseModel):
 
     trace: dict[str, Any]
     tree: list[ObservationNode]
+    # The runner's sandbox id (agentos.sandbox_id), hoisted out of the trace/
+    # observation resource attributes; None when the trace predates the attr.
+    sandbox_id: str | None = None
 
 
 class MetricsSummary(BaseModel):

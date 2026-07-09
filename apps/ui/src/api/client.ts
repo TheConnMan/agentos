@@ -52,6 +52,9 @@ export interface ObservationNode {
 export interface TraceTree {
   trace: Record<string, unknown>;
   tree: ObservationNode[];
+  // The serving sandbox id (agentos.sandbox_id), hoisted server-side from the
+  // trace/observation resource attributes; null when the trace predates it.
+  sandbox_id: string | null;
 }
 
 // A raw Langfuse trace row (opaque; we read a few well-known fields defensively).
