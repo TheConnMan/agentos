@@ -28,6 +28,9 @@ git history (`git log -- docs/`).
   adopted component's swap seam lives.
 - [`operations.md`](operations.md): running a cluster install, plus
   operator-facing findings from early installs.
+- [`slack-local-runbook.md`](slack-local-runbook.md): connect your own Slack
+  app to the local compose stack to exercise real mentions and threads without a
+  cluster.
 
 Forward-looking work is planned and tracked in
 [GitHub issues](https://github.com/curie-eng/agentos/issues), with larger
