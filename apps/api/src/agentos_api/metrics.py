@@ -32,7 +32,7 @@ def agent_trace_filter(agent_id: uuid.UUID | str) -> str:
 
     return f"agent-{agent_id}"
 
-SCALAR_METRICS = ("runs", "latency_p95_seconds", "tokens", "cost_usd")
+SCALAR_METRICS = ("runs", "latency_p95_ms", "tokens", "cost_usd")
 ALL_METRICS = (*SCALAR_METRICS, "error_rate")
 
 # metric -> (view, measure, aggregation, result-key, is_integer)
@@ -40,7 +40,7 @@ ALL_METRICS = (*SCALAR_METRICS, "error_rate")
 # (a run with many tool/generation spans would otherwise skew a span-weighted p95).
 _SPEC: dict[str, tuple[str, str, str, str, bool]] = {
     "runs": ("traces", "count", "count", "count_count", True),
-    "latency_p95_seconds": ("traces", "latency", "p95", "p95_latency", False),
+    "latency_p95_ms": ("traces", "latency", "p95", "p95_latency", False),
     "tokens": ("observations", "totalTokens", "sum", "sum_totalTokens", True),
     "cost_usd": ("observations", "totalCost", "sum", "sum_totalCost", False),
 }
@@ -149,7 +149,7 @@ async def summary(
         start=start,
         end=end,
         runs=int(scalars["runs"]),
-        latency_p95_seconds=scalars["latency_p95_seconds"],
+        latency_p95_ms=scalars["latency_p95_ms"],
         tokens=int(scalars["tokens"]),
         cost_usd=scalars["cost_usd"],
         error_rate=_error_rate(level_rows),

@@ -13,7 +13,7 @@ const SUMMARY = {
   start: "2026-06-28",
   end: "2026-07-05",
   runs: 0,
-  latency_p95_seconds: 0,
+  latency_p95_ms: 0,
   tokens: 0,
   cost_usd: 0,
   error_rate: 0,

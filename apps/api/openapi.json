@@ -734,8 +734,8 @@
             "title": "Error Rate",
             "type": "number"
           },
-          "latency_p95_seconds": {
-            "title": "Latency P95 Seconds",
+          "latency_p95_ms": {
+            "title": "Latency P95 Ms",
             "type": "number"
           },
           "runs": {
@@ -755,7 +755,7 @@
           "start",
           "end",
           "runs",
-          "latency_p95_seconds",
+          "latency_p95_ms",
           "tokens",
           "cost_usd",
           "error_rate"

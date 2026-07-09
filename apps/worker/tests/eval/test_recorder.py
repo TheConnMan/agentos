@@ -45,6 +45,31 @@ async def _score_for_trace(client: httpx.AsyncClient, trace_id: str) -> float | 
     return None
 
 
+def test_empty_run_skips_the_ingestion_post() -> None:
+    # A run with no case results must not POST a hollow ingestion batch; it
+    # returns [] before touching the network.
+    async def go() -> None:
+        posts: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            posts.append(request)
+            return httpx.Response(200, json={})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            recorder = LangfuseEvalRecorder(
+                base_url="http://langfuse.invalid",
+                public_key="pk",
+                secret_key="sk",
+                client=client,
+            )
+            run = EvalRunResult(version="v-empty", suite="empty-suite", results=[])
+            assert await recorder.record(run) == []
+        assert posts == []  # no /api/public/ingestion call was made
+
+    asyncio.run(go())
+
+
 def test_records_per_case_results_and_reads_them_back() -> None:
     async def go() -> None:
         async with httpx.AsyncClient(timeout=30.0) as client:

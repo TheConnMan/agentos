@@ -223,7 +223,7 @@ class MetricsSummary(BaseModel):
     start: str
     end: str
     runs: int
-    latency_p95_seconds: float
+    latency_p95_ms: float
     tokens: int
     cost_usd: float
     error_rate: float

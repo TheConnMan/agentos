@@ -41,6 +41,8 @@ from .sandbox import (
 from .slack_sink import AsyncSlackSink
 from .threadlock import ThreadLock
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Runtime:
@@ -109,6 +111,11 @@ def _sandbox_client(
                 "before starting the worker, set AGENTOS_MODEL_BASE_URL to a local "
                 "endpoint for local-model mode, or set AGENTOS_FAKE_MODEL=1 for an "
                 "offline/test run."
+            )
+        if not env.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+            logger.warning(
+                "Docker substrate selected but OTEL_EXPORTER_OTLP_ENDPOINT is "
+                "unset; runner traces will not be exported"
             )
         return DockerSandboxClient(
             image=env.get("AGENTOS_RUNNER_IMAGE", "agentos-runner"),

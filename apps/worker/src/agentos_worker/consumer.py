@@ -108,12 +108,18 @@ class Consumer:
                     count=self._config.read_count,
                     block=self._config.read_block_ms,
                 )
-            except (RedisTimeoutError, RedisConnectionError) as exc:
-                # The blocking read timed out or the connection blipped (real
-                # pod-to-pod RTT, a Valkey failover). Both are transient: log and
-                # retry rather than letting the exception kill the read loop (and
-                # with it the whole worker). A short pause avoids a hot spin if
-                # Valkey is briefly unreachable; redis-py reconnects on the retry.
+            except RedisTimeoutError as exc:
+                # A blocking-read timeout is the routine idle case (no entries
+                # arrived within read_block_ms plus the socket timeout margin), not
+                # a fault -- log at DEBUG so an idle worker doesn't flood WARNING.
+                # Still back off + retry rather than letting it kill the read loop.
+                logger.debug("stream read timed out (idle); retrying: %s", exc)
+                await self._sleep_or_stop(_READ_ERROR_BACKOFF_S)
+                continue
+            except RedisConnectionError as exc:
+                # A real connection fault (a Valkey failover, pod-to-pod blip):
+                # transient but worth a WARNING. Back off and retry; redis-py
+                # reconnects on the next attempt.
                 logger.warning("stream read failed transiently; retrying: %s", exc)
                 await self._sleep_or_stop(_READ_ERROR_BACKOFF_S)
                 continue
