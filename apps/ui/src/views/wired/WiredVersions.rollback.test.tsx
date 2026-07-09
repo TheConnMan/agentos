@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { PropsWithChildren } from "react";
-import { createElement } from "react";
+import { Fragment, createElement, useEffect, type PropsWithChildren } from "react";
 import { WiredVersions } from "./WiredVersions";
+import { StoreProvider, useStore } from "../../state/store";
 import type { AgentOut, DeploymentOut, VersionOut } from "../../api/client";
 import { createDeployment, getAgents, listDeployments, listVersions } from "../../api/client";
 
@@ -65,14 +65,16 @@ const AGENT: AgentOut = {
   created_at: "2026-06-01T00:00:00Z",
 };
 
-// v2 is the version the agent currently serves; v1 was previously deployed (to
-// dev) and is no longer active. Append-only: v1's deployment record is left as
-// "active" — pickActiveVersion ranks prod-first then newest, so v2 (prod) wins
-// and v1's row is a previously-deployed, non-active row.
+// v2 is the version the agent currently serves; v1 was previously deployed and is
+// no longer active. Both deployments live in the "dev" environment so the
+// env-scoped versions table (which filters rows to the selected env) shows both
+// rows once the store is switched to dev. Append-only: v1's record is left as
+// "active" — pickActiveVersion ranks by newest here (same env), so v2 wins and
+// v1's row is a previously-deployed, non-active row.
 const V_OLD = mkVersion("v1", "v0.1.0", "2026-07-01T00:00:00Z");
 const V_ACTIVE = mkVersion("v2", "v0.1.1", "2026-07-05T00:00:00Z");
 const DEP_OLD = mkDep("dep-old", "v1", "dev", "2026-07-02T00:00:00Z", "active");
-const DEP_ACTIVE = mkDep("dep-active", "v2", "prod", "2026-07-06T00:00:00Z", "active");
+const DEP_ACTIVE = mkDep("dep-active", "v2", "dev", "2026-07-06T00:00:00Z", "active");
 
 const VERSIONS = [V_OLD, V_ACTIVE];
 const DEPLOYMENTS = [DEP_OLD, DEP_ACTIVE];
@@ -98,12 +100,29 @@ async function rowFor(label: string): Promise<HTMLElement> {
 const ROLLBACK = /roll ?back/i;
 const CANCEL = /cancel/i;
 
+// The versions table is env-scoped: it reads the store's selected environment and
+// only shows deployment rows in that env. Flip the store to "dev" (the env both
+// fixture deployments live in) on mount so the previously-deployed and active rows
+// both render.
+function EnvDev({ children }: PropsWithChildren) {
+  const { dispatch } = useStore();
+  useEffect(() => {
+    dispatch({ type: "setEnv", env: "dev" });
+  }, [dispatch]);
+  return createElement(Fragment, null, children);
+}
+
 // A fresh client per render with retry off, mirroring main.tsx, so the wired
-// hooks (now react-query) resolve on the first response instead of retrying.
+// hooks (now react-query) resolve on the first response instead of retrying. The
+// StoreProvider supplies the env the table scopes to (WiredVersions uses useStore).
 function wrapper() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return ({ children }: PropsWithChildren) =>
-    createElement(QueryClientProvider, { client }, children);
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(StoreProvider, null, createElement(EnvDev, null, children)),
+    );
 }
 
 describe("WiredVersions rollback", () => {

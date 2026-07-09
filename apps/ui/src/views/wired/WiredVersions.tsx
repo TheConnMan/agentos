@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { C } from "../../tokens";
 import { Button, Card, SectionTitle, Chip, Dot, Modal, Notice } from "../../primitives";
+import { useStore } from "../../state/store";
 import { useAgents, useAgentVersions } from "../../api/hooks";
 import { ComingSoon } from "./WiredStubs";
 import { createDeployment, type DeploymentOut, type Environment, type VersionOut } from "../../api/client";
@@ -44,6 +45,7 @@ interface RollbackTarget {
 }
 
 function VersionsTable({ agentId }: { agentId: string }) {
+  const { state } = useStore();
   const { versions, deployments, activeVersionId, loading, error, reload } = useAgentVersions(agentId);
   const [target, setTarget] = useState<RollbackTarget | null>(null);
   const [rolling, setRolling] = useState(false);
@@ -93,7 +95,12 @@ function VersionsTable({ agentId }: { agentId: string }) {
     );
   }
 
-  const rows = buildRows(versions, deployments);
+  // Scope to the selected environment first, then join with versions. Rollback
+  // eligibility (previously-deployed, non-active) composes on top: a row shows
+  // only if its deployment is in state.env, and gets a Roll back button if
+  // eligible. The rollback column keeps the 6-col grid from the rollback work.
+  const scopedDeployments = deployments.filter((d) => d.environment === state.env);
+  const rows = buildRows(versions, scopedDeployments);
   const grid = "1.1fr 0.9fr 1fr 1.3fr 1fr 0.8fr";
   return (
     <Card>

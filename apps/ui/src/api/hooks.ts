@@ -8,6 +8,7 @@ import {
   getCost,
   listVersions,
   listDeployments,
+  listAllDeployments,
   getVersionFiles,
   ApiError,
   type RawTrace,
@@ -91,6 +92,18 @@ export function useAgents(enabled: boolean): Async<AgentOut[]> {
     queryKey: ["agents"],
     enabled,
     queryFn: () => getAgents(),
+  });
+  return asyncFrom(enabled, query);
+}
+
+// Fetch every deployment across all agents, for env-scoping the Agents/Overview
+// views. Gated on wired mode; reload happens naturally via react-query when the
+// view remounts after a promote/deploy.
+export function useAllDeployments(enabled: boolean): Async<DeploymentOut[]> {
+  const query = useQuery({
+    queryKey: ["allDeployments"],
+    enabled,
+    queryFn: () => listAllDeployments(),
   });
   return asyncFrom(enabled, query);
 }
