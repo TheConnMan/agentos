@@ -87,10 +87,10 @@ Kernel isolation (gVisor, security.gvisor.mode={{ $gvisorMode }}):
 Enable a real model and a Slack workspace:
   The dispatcher is not deployed (no Slack tokens set). If you also installed
   without AGENTOS_MODEL_CREDENTIALS, the runner is in offline fake-model mode and
-  replies are canned. The `agentos cluster up`/`cluster message`/`cluster status` verbs default to
+  replies are canned. The `agentos cluster up`/`cluster comms`/`cluster message`/`cluster status` verbs default to
   release/namespace {{ .Release.Name }}/{{ .Release.Namespace }} (add --dry-run to
-  print the exact helm/kubectl command first); the Slack workspace is wired with a
-  raw helm upgrade.
+  print the exact helm/kubectl command first); the Slack workspace is wired with
+  `agentos cluster comms --slack`.
 
   # 1. Enable the real model: set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key)
   #    and re-run `agentos cluster up` -- an idempotent helm upgrade that switches the fake
@@ -101,12 +101,13 @@ Enable a real model and a Slack workspace:
   # 2. (optional) Exercise the deployed agent end to end with NO Slack workspace.
   agentos cluster message --namespace {{ .Release.Namespace }} --release {{ .Release.Name }} "hello"
 
-  # 3. Wire a real Slack workspace (renders the dispatcher). The trailing
-  #    worker.slackApiBaseUrl= clears any `agentos cluster message` stub wiring (a
-  #    harmless no-op otherwise).
-  helm upgrade {{ .Release.Name }} charts/agentos -n {{ .Release.Namespace }} --reuse-values \
-    --set dispatcher.slack.appToken=xapp-... --set dispatcher.slack.botToken=xoxb-... \
-    --set worker.slackApiBaseUrl=
+  # 3. Wire a real Slack workspace (renders the dispatcher). The command
+  #    reads SLACK_APP_TOKEN / SLACK_BOT_TOKEN from the env and clears any
+  #    `agentos cluster message` stub wiring by setting worker.slackApiBaseUrl=.
+  #    It also restarts the worker (and, on connect, the dispatcher) so the
+  #    new tokens take effect.
+  SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-... \
+    agentos cluster comms --slack --namespace {{ .Release.Namespace }} --release {{ .Release.Name }}
 
   # Release health + access URLs at any point (read-only):
   agentos cluster status --namespace {{ .Release.Namespace }} --release {{ .Release.Name }}

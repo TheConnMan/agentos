@@ -19,6 +19,7 @@ pub struct OpsCommand {
     pub program: String,
     pub args: Vec<CmdArg>,
     pub env: Vec<(String, String)>,
+    pub secret_env: Vec<(String, String)>,
 }
 
 /// A single argv token. `SecretSet` is a `helm --set key=value` whose value is a
@@ -54,11 +55,17 @@ impl OpsCommand {
             program: program.to_string(),
             args,
             env: Vec::new(),
+            secret_env: Vec::new(),
         }
     }
 
     pub fn with_env(mut self, env: Vec<(String, String)>) -> Self {
         self.env = env;
+        self
+    }
+
+    pub fn with_secret_env(mut self, secret_env: Vec<(String, String)>) -> Self {
+        self.secret_env = secret_env;
         self
     }
 
@@ -70,12 +77,18 @@ impl OpsCommand {
     /// The full shell-quoted command line with secrets masked, one line as it
     /// would be typed into a shell.
     pub fn display(&self) -> String {
-        let mut env = self.env.clone();
-        env.sort();
-        let mut parts: Vec<String> = env
+        let mut env: Vec<String> = self
+            .env
             .iter()
-            .map(|(key, value)| shell_quote(&format!("{key}={value}")))
+            .map(|(key, value)| format!("{key}={value}"))
+            .chain(
+                self.secret_env
+                    .iter()
+                    .map(|(key, value)| format!("{key}={}", mask_secret(value))),
+            )
             .collect();
+        env.sort();
+        let mut parts: Vec<String> = env.iter().map(|item| shell_quote(item)).collect();
         parts.push(shell_quote(&self.program));
         for a in &self.args {
             parts.push(shell_quote(&a.masked()));
@@ -88,7 +101,7 @@ pub(crate) fn plain(s: impl Into<String>) -> CmdArg {
     CmdArg::Plain(s.into())
 }
 
-fn secret_set(key: &str, value: &str) -> CmdArg {
+pub(crate) fn secret_set(key: &str, value: &str) -> CmdArg {
     CmdArg::SecretSet {
         key: key.to_string(),
         value: value.to_string(),
@@ -410,7 +423,7 @@ pub(crate) fn require_on_path(bin: &str) -> Result<()> {
 pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, String)> {
     let output = Command::new(&cmd.program)
         .args(cmd.argv())
-        .envs(cmd.env.iter().cloned())
+        .envs(cmd.env.iter().chain(cmd.secret_env.iter()).cloned())
         .output()
         .await
         .with_context(|| format!("failed to invoke `{}`; is it on PATH?", cmd.program))?;
@@ -1176,6 +1189,18 @@ mod tests {
         );
         assert_eq!(shell_quote("a[0]=b"), "'a[0]=b'");
         assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn display_masks_secret_env_values() {
+        let line = OpsCommand::new("docker", vec![plain("ps")])
+            .with_secret_env(vec![(
+                "SLACK_BOT_TOKEN".into(),
+                "xoxb-1-secretsecret".into(),
+            )])
+            .display();
+        assert!(line.contains("SLACK_BOT_TOKEN=xoxb-1-s***"), "{line}");
+        assert!(!line.contains("secretsecret"), "secret leaked: {line}");
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod artifacts;
 pub mod bundle;
 pub mod chat;
 pub mod commands;
+pub mod comms;
 pub mod docker;
 pub mod evals;
 pub mod local;

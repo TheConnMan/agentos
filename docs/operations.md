@@ -14,13 +14,13 @@ answers your question:
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
 | `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
-| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | none | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
-| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `message` `deploy` | Operate and drive a deployed cluster release (this doc). |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `deploy` | Operate and drive a deployed cluster release (this doc). |
 
 The universal quartet `up`/`down`/`status`/`message` is on all three targets;
-`skill` adds `eval`, and `local`/`cluster` add `deploy`. The `skill` target is
-the runner-only loop; `local` and `cluster` add the full platform in front of
-the identical runner and ACI. For the `skill` and `local` targets see
+`skill` adds `eval`, while `local` and `cluster` add `comms` plus `deploy`. The `skill`
+target is the runner-only loop; `local` and `cluster` add the full platform in
+front of the identical runner and ACI. For the `skill` and `local` targets see
 [`cli/README.md`](../cli/README.md) and the
 [README](../README.md#which-target-do-i-want); the rest of this doc is `cluster`.
 
@@ -66,10 +66,66 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
 
 ## Connecting Slack
 
-Connecting a real Slack workspace is a raw `helm upgrade --reuse-values` that
-sets the dispatcher's app and bot tokens and clears `worker.slackApiBaseUrl=`
-(un-wiring any `agentos cluster message` stub routing). It is intentionally not a CLI
-verb; the chart's `NOTES.txt` prints the exact command after `up`.
+Use `agentos cluster comms --slack` to wire a real Slack workspace onto the
+release. It is a thin `helm upgrade --reuse-values` wrapper that sets the
+dispatcher's app and bot tokens and, on connect, clears
+`worker.slackApiBaseUrl=` to un-wire any `agentos cluster message` stub routing.
+After the upgrade it also restarts and waits for the worker (and, on connect,
+the dispatcher) so the running pods pick up the changed tokens, since a
+Secret change alone does not roll pods whose token comes from a
+`secretKeyRef` env var.
+
+Connect:
+
+```bash
+SLACK_APP_TOKEN=xapp-... \
+SLACK_BOT_TOKEN=xoxb-... \
+agentos cluster comms --slack
+```
+
+Disconnect:
+
+```bash
+agentos cluster comms --slack --disconnect
+```
+
+Dry run:
+
+```bash
+SLACK_APP_TOKEN=xapp-... \
+SLACK_BOT_TOKEN=xoxb-... \
+agentos cluster comms --slack --dry-run
+```
+
+The env-backed token values are masked in dry-run output and are never printed
+in full.
+
+### Local compose comms
+
+Use `agentos local comms --slack` to wire the compose stack to a real Slack
+workspace. It reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, masks both values
+in printed commands, starts the dispatcher, and points the worker at real
+Slack.
+
+Disconnect:
+
+```bash
+agentos local comms --slack --disconnect
+```
+
+Disconnect stops the dispatcher and restores the local Slack stub so
+`agentos local message` keeps working.
+
+Dry run:
+
+```bash
+SLACK_APP_TOKEN=xapp-... \
+SLACK_BOT_TOKEN=xoxb-... \
+agentos local comms --slack --dry-run
+```
+
+Dry run prints the compose command with masked token values and does not change
+the stack.
 
 ## Deploy a bundle to the cluster
 
