@@ -166,8 +166,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # compose.release.yaml (the `agentos local up` stack) has no other CI
-      # coverage. Validate it parses with the Slack profile off (default: the
+      - name: Generate the release compose
+        run: python3 compose/generate_release_compose.py > compose.release.yaml
+      # compose.release.yaml is generated from compose.dev.yaml (the single
+      # source of truth) by compose/generate_release_compose.py; the release
+      # asset itself has no other CI coverage. Validate the generated stack
+      # parses with the Slack profile off (default: the
       # optional dispatcher is absent) and on (dispatcher rendered), and assert
       # the profile actually gates the service, so the #111 opt-in cannot silently
       # break the default zero-Slack `agentos local up`.

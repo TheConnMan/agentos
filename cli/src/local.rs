@@ -567,12 +567,6 @@ mod tests {
     }
 
     #[test]
-    fn release_compose_file_declares_core_and_full_profiles() {
-        let compose = read_compose("compose.release.yaml");
-        assert_core_full_bindings(&compose, "compose.release.yaml");
-    }
-
-    #[test]
     fn compose_file_makes_worker_slack_stub_overridable() {
         let compose = read_compose("compose.dev.yaml");
         assert!(compose.contains(
