@@ -58,10 +58,21 @@ component and rail detail in `charts/agentos/README.md`.
 
 ## Verify
 
+Static / chart-authoring checks (they render manifests but NEVER run a container,
+so they cannot catch a bug that only surfaces at runtime):
 ```bash
 helm lint charts/agentos
 helm template charts/agentos -f charts/agentos/values-dev.yaml   # chart-authoring check, no cluster contact
 ```
+
+Runtime check (the cheap default for a chart/sandbox/bundle change): installs a
+trimmed slice, runs the bundle-fetch init pair, and exec-asserts on the runner:
+```bash
+bash scripts/chart-runtime-e2e.sh                                # from repo root
+```
+A ticket whose AC is a runtime check (like #56, the bundle-fetch credential
+isolation) is only satisfied by running this and pasting its output -- lint /
+template do not exercise the init container or the live runner.
 
 Cluster verification (a disposable local cluster, `kind` or `k3s`):
 ```bash

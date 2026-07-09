@@ -145,6 +145,16 @@ just that unit tests pass.
   behavior (values, state transitions, emitted events, trace contents). Avoid
   hollow "does it render / does an element exist" checks and any AI-vision or
   screenshot-polling assertions -- they mask weak architecture and rot fast.
+- **A runtime acceptance criterion is not satisfied by static verification.** When
+  a ticket's AC is a runtime/observable check -- an exec command, an HTTP response,
+  a rendered-then-running behavior -- you MUST run that exact check against a
+  running cluster and paste its output; `helm lint`, `helm template`, typecheck,
+  and render do NOT count. Why: static checks never run the init container or the
+  live binary, so they cannot see the behavior the AC is about (#56, a
+  credential-isolation bug in the bundle-fetch init container, was nearly shipped
+  green on lint + template alone). How to apply: for chart / sandbox / bundle
+  changes, `bash scripts/chart-runtime-e2e.sh` (from repo root) is the one-command
+  way to install a trimmed slice, run the init containers, and exec-assert.
 
 ## Playwright: two modes
 
@@ -160,8 +170,12 @@ just that unit tests pass.
 ## Cluster verification
 
 Chart, sandbox, and soak verification need a real cluster; a disposable local
-`kind` or `k3s` cluster works. See [`charts/agentos/CLAUDE.md`](charts/agentos/CLAUDE.md)
-for the install and probe commands.
+`kind` or `k3s` cluster works. The cheap default for a chart/sandbox/bundle
+change is `bash scripts/chart-runtime-e2e.sh` (from repo root): it installs a
+trimmed slice, runs the bundle-fetch init pair, and exec-asserts on the runner --
+the one-command way to satisfy a runtime AC. See
+[`charts/agentos/CLAUDE.md`](charts/agentos/CLAUDE.md) for the install and probe
+commands.
 
 ## Branch and commit conventions
 
