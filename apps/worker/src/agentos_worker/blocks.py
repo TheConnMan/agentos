@@ -43,14 +43,18 @@ _FENCE_OPEN = "```agentos-reply"
 @dataclass
 class Reply:
     """A formatted reply, independent of Block Kit. ``text`` is markdown (also
-    the plain-text fallback); ``header`` a header block; ``fields`` a two-column
-    section; ``buttons`` an actions block of ``(label, action_id)`` pairs;
-    ``footer`` a trailing context line."""
+    the plain-text fallback); ``status`` a leading context line (rendered
+    as-authored, like ``footer``); ``header`` a header block; ``fields`` a
+    two-column section; ``buttons`` an actions block of ``(label, action_id)``
+    pairs; ``links`` an actions block of ``(label, url)`` URL buttons; ``footer``
+    a trailing context line."""
 
     text: str = ""
+    status: str | None = None
     header: str | None = None
     fields: list[tuple[str, str]] = field(default_factory=list)
     buttons: list[tuple[str, str]] = field(default_factory=list)
+    links: list[tuple[str, str]] = field(default_factory=list)
     footer: str | None = None
 
 
@@ -79,12 +83,20 @@ def chunk(text: str, limit: int = _CHUNK_TARGET) -> list[str]:
     return out
 
 
+def _button_shell(label: str) -> dict[str, Any]:
+    """The shared button element; callers add either ``action_id`` (interactive,
+    dispatcher-handled) or ``url`` (a navigational link button)."""
+    return {"type": "button", "text": {"type": "plain_text", "text": label, "emoji": True}}
+
+
 def _button(label: str, action_id: str) -> dict[str, Any]:
-    return {
-        "type": "button",
-        "text": {"type": "plain_text", "text": label, "emoji": True},
-        "action_id": action_id,
-    }
+    return {**_button_shell(label), "action_id": action_id}
+
+
+def _context_block(text: str) -> dict[str, Any]:
+    """A context block (small greyed line) rendering ``text`` as-authored mrkdwn.
+    Used for the leading ``status`` line and the trailing ``footer``."""
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
 
 
 def _is_nav(label: str) -> bool:
@@ -92,9 +104,24 @@ def _is_nav(label: str) -> bool:
     return label.lstrip()[:1] in ("←", "↑")
 
 
+def _is_http_url(url: str) -> bool:
+    """A link button's url must be an absolute http(s) URL; Slack rejects the
+    whole message otherwise. Anything else (empty, relative, other scheme) is
+    dropped so one bad link never breaks the reply."""
+    u = url.strip().lower()
+    return u.startswith("http://") or u.startswith("https://")
+
+
+def _link_button(label: str, url: str) -> dict[str, Any]:
+    """A URL button: interactive without the dispatcher (carries ``url``, no
+    ``action_id``)."""
+    return {**_button_shell(label), "url": url}
+
+
 def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
-    """Render a ``Reply`` to a Block Kit blocks array. Order: header -> fields ->
-    body section(s) (chunked) -> buttons (nav-leftmost) -> footer.
+    """Render a ``Reply`` to a Block Kit blocks array. Order: status (context) ->
+    header -> fields -> body section(s) (chunked) -> buttons (nav-leftmost) ->
+    links (URL buttons) -> footer.
 
     ``nav`` is the agent's no-dead-ends hub button: when present and enabled, the
     hub button is appended to the reply's buttons (via ``ensure_hub_button``, the
@@ -102,6 +129,8 @@ def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
     is None or disabled the output is byte-identical to no-nav; ``ensure_hub_button``
     also no-ops when a button already links to the hub."""
     blocks: list[dict[str, Any]] = []
+    if reply.status:
+        blocks.append(_context_block(reply.status))
     if reply.header:
         blocks.append({"type": "header", "text": {"type": "plain_text", "text": reply.header}})
     if reply.fields:
@@ -123,8 +152,16 @@ def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
         blocks.append(
             {"type": "actions", "elements": [_button(label, aid) for label, aid in ordered]}
         )
+    valid_links = [(label, url) for label, url in reply.links if _is_http_url(url)]
+    if valid_links:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [_link_button(label, url) for label, url in valid_links],
+            }
+        )
     if reply.footer:
-        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": reply.footer}]})
+        blocks.append(_context_block(reply.footer))
     return blocks
 
 
@@ -151,13 +188,16 @@ def parse_reply(text: str) -> Reply | None:
         return None
     if not isinstance(data, dict):
         return None
+    status = data.get("status")
     header = data.get("header")
     footer = data.get("footer")
     return Reply(
         text=str(data.get("text", "")),
+        status=str(status) if status is not None else None,
         header=str(header) if header is not None else None,
         fields=_pairs(data.get("fields")),
         buttons=_pairs(data.get("buttons")),
+        links=_pairs(data.get("links")),
         footer=str(footer) if footer is not None else None,
     )
 

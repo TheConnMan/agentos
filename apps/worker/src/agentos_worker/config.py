@@ -141,6 +141,14 @@ class WorkerConfig(BaseSettings):
     # auto-clear it. Off by default; pairs with the dispatcher's AGENTOS_SHIMMER.
     shimmer: Bool = Field(default=False, validation_alias="AGENTOS_SHIMMER")
 
+    # When true, suppress intermediate placeholder edits while streaming so the
+    # placeholder gets exactly one chat.update (the final) -- rate-limit friendly
+    # and flicker-free; pair with the shimmer for liveness. Default false
+    # preserves live-edit streaming.
+    slack_no_edit_streaming: Bool = Field(
+        default=False, validation_alias="AGENTOS_SLACK_NO_EDIT_STREAMING"
+    )
+
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = Field(default="agentos:runs", validation_alias="AGENTOS_STREAM")
     consumer_group: str = Field(

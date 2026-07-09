@@ -471,3 +471,42 @@ def test_kernel_delivers_claim_token_as_bearer_header(make_harness) -> None:
             await t1
 
     asyncio.run(go())
+
+
+# --- #31: no-edit streaming mode ----------------------------------------------
+
+_MULTI_DELTA = [
+    TextDelta(text="a"),
+    TextDelta(text="b"),
+    TextDelta(text="c"),
+    Final(text="abc final", status=DONE),
+]
+
+
+def test_no_edit_streaming_edits_placeholder_once(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness(slack_no_edit_streaming=True) as h:
+            # Multiple TextDeltas stream, but in no-edit mode the placeholder is
+            # edited EXACTLY once -- the final. No intermediate chat.update calls.
+            h.runner.default_script = list(_MULTI_DELTA)
+            await h.kernel.process_event(_qevent("go"))
+
+            assert len(h.sink.updates) == 1
+            assert h.sink.last_text == "abc final"
+
+    asyncio.run(go())
+
+
+def test_default_streaming_edits_more_than_once(make_harness) -> None:
+    async def go() -> None:
+        # Deletion-test guard: with no-edit OFF (default; conftest sets
+        # slack_edit_min_interval_s=0.0) the SAME multi-delta script produces
+        # more than one edit, proving the flag actually changes behavior.
+        async with make_harness() as h:
+            h.runner.default_script = list(_MULTI_DELTA)
+            await h.kernel.process_event(_qevent("go"))
+
+            assert len(h.sink.updates) > 1
+            assert h.sink.last_text == "abc final"
+
+    asyncio.run(go())
