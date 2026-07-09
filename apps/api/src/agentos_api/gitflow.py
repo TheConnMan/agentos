@@ -11,6 +11,7 @@ GitHub API.
 import hashlib
 import hmac
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +27,16 @@ from .schemas import WebhookResult
 from .storage import BundleStore
 
 _ZERO_SHA = "0" * 40
+# A full lowercase-hex git object id: SHA-1 (40) or SHA-256 (64).
+# Unanchored on purpose; paired with fullmatch below so a trailing newline
+# (which `$` would tolerate) is rejected.
+_SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _is_valid_sha(sha: str) -> bool:
+    """True only for a full lowercase-hex SHA-1 or SHA-256 object id."""
+
+    return bool(_SHA_RE.fullmatch(sha))
 
 
 class GitFlowError(Exception):
@@ -67,6 +78,8 @@ def clone_and_archive(clone_url: str, sha: str, settings: Settings) -> bytes:
 
     if not clone_url.startswith(settings.git_allowed_schemes):
         raise GitFlowError(f"clone url scheme not allowed: {clone_url}")
+    if not _is_valid_sha(sha):
+        raise GitFlowError(f"invalid commit sha: {sha!r}")
 
     tmp = tempfile.mkdtemp(prefix="gitflow-")
     env = {
@@ -84,7 +97,7 @@ def clone_and_archive(clone_url: str, sha: str, settings: Settings) -> bytes:
                 timeout=120,
             )
             archived = subprocess.run(
-                ["git", "-C", tmp, "archive", "--format=tar", sha],
+                ["git", "-C", tmp, "archive", "--format=tar", "--", sha],
                 check=True,
                 capture_output=True,
                 env=env,
@@ -112,7 +125,7 @@ async def process_push(
     environment = environment_for_ref(ref if isinstance(ref, str) else None, settings)
     if environment is None:
         return WebhookResult(status="ignored")
-    if not isinstance(after, str) or after == _ZERO_SHA:
+    if not isinstance(after, str) or after == _ZERO_SHA or not _is_valid_sha(after):
         return WebhookResult(status="ignored")
     if not isinstance(repo, dict):
         return WebhookResult(status="ignored")
