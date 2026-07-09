@@ -242,8 +242,13 @@ class SessionRunner:
             if _is_auth_rejection(message):
                 # A rejected model credential is terminal: stop the live session
                 # so the SDK/CLI does not keep retrying with backoff to the wall,
-                # then surface a distinct, immediate classified failure.
-                await self._session.interrupt()
+                # then surface a distinct, immediate classified failure. Suppress
+                # a failing interrupt (a wedged transport -- the very state a bad
+                # credential can cause) so it cannot propagate to the generic
+                # retryable ``runner-error`` handler and defeat the fast-fail; the
+                # terminal ``model-credential-rejected`` error is emitted regardless.
+                with contextlib.suppress(Exception):
+                    await self._session.interrupt()
                 for line in self._auth_halt_lines():
                     yield line
                 return

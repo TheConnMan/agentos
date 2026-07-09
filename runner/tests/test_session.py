@@ -226,6 +226,40 @@ def test_auth_rejection_fails_fast_not_retried(caplog) -> None:
     )
 
 
+def test_auth_fast_fail_survives_a_wedged_interrupt(caplog) -> None:
+    # Hardening for the fast-fail: if interrupt() itself RAISES (a wedged
+    # transport -- the very state a bad credential can cause), the exception must
+    # NOT propagate to the generic *retryable* runner-error handler. The turn must
+    # still surface the terminal model-credential-rejected classification so the
+    # auth failure is never retried back into the ~2min hang.
+    class WedgedInterruptSession(FakeModelSession):
+        async def interrupt(self) -> None:
+            self.interrupts += 1
+            raise RuntimeError("transport wedged")
+
+    script = [AssistantMessage(content=[], model="m", error="authentication_failed")]
+    fake = WedgedInterruptSession(lambda: script)
+    runner = SessionRunner(
+        session_factory=lambda: fake,
+        ceiling=0,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="t",
+    )
+
+    with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
+        events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
+
+    # Still the terminal credential-rejected classification -- NOT the retryable
+    # generic "runner-error", even though interrupt() raised.
+    assert [e.type for e in events] == ["error", "final"]
+    assert events[0].classification == "model-credential-rejected"
+    assert "runner-error" not in [getattr(e, "classification", None) for e in events]
+    assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
+    assert runner.status == SessionStatus.CLASSIFIED_FAILURE
+    assert fake.interrupts >= 1  # the interrupt was attempted (and swallowed)
+
+
 def test_transient_model_error_is_not_fast_failed() -> None:
     # A transient AssistantMessage.error (e.g. a hard rate-limit) is NOT a
     # credential rejection: it must flow through translation unchanged and reach
