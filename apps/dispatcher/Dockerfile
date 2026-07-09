@@ -6,7 +6,8 @@
 #   docker build -f apps/dispatcher/Dockerfile -t agentos-dispatcher .
 #
 # Socket Mode means no inbound HTTP: the process dials Slack out, so there is no
-# server port. The chart uses a process-liveness probe, not an HTTP probe.
+# server port. The chart uses a heartbeat-file exec liveness probe (a daemon
+# thread touches a file the probe checks for freshness), not an HTTP probe.
 FROM python:3.13-slim AS builder
 RUN pip install --no-cache-dir uv==0.10.7
 WORKDIR /app

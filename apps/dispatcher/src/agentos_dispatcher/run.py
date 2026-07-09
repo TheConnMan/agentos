@@ -11,6 +11,7 @@ import signal
 
 from .app import SocketModeConnection, build_app, build_redis, build_web_client
 from .config import DispatcherConfig
+from .heartbeat import start_heartbeat
 from .supervisor import BackoffPolicy, Supervisor
 
 
@@ -37,16 +38,21 @@ def main() -> None:
     config = DispatcherConfig()
 
     supervisor = build_supervisor(config, logger=logger)
+    hb_stop = start_heartbeat(config.heartbeat_file, config.heartbeat_interval_s)
 
     def _handle_signal(signum: int, _frame: object) -> None:
         logger.info("received signal %s, shutting down", signum)
+        hb_stop.set()
         supervisor.request_stop()
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
     logger.info("dispatcher starting")
-    supervisor.run()
+    try:
+        supervisor.run()
+    finally:
+        hb_stop.set()
     logger.info("dispatcher stopped")
 
 

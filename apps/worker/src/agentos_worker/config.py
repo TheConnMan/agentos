@@ -225,6 +225,16 @@ class WorkerConfig(BaseSettings):
     langfuse_public_key: str = "pk-lf-agentos-dev"
     langfuse_secret_key: str = "sk-lf-agentos-dev"
 
+    # The worker's asyncio loop touches heartbeat_file every heartbeat_interval_s
+    # so an exec liveness probe can restart a pod whose event loop has wedged.
+    heartbeat_file: str = Field(
+        default="/tmp/agentos-worker.heartbeat",
+        validation_alias="AGENTOS_HEARTBEAT_FILE",
+    )
+    heartbeat_interval_s: float = Field(
+        default=10.0, validation_alias="AGENTOS_HEARTBEAT_INTERVAL_SECONDS"
+    )
+
     key_prefix: str = "agentos:worker"
 
     @property

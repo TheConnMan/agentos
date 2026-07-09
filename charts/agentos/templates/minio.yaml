@@ -67,6 +67,14 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.minio.resources | nindent 12 }}
           volumeMounts:

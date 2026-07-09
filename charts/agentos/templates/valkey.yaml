@@ -63,6 +63,13 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "valkey-cli -a \"$VALKEY_PASSWORD\" ping | grep -q PONG"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.valkey.resources | nindent 12 }}
           volumeMounts:

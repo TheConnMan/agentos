@@ -68,6 +68,14 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
           volumeMounts:

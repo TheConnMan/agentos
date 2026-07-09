@@ -94,6 +94,11 @@ spec:
               value: {{ $warmPool | quote }}
             - name: AGENTOS_RUNNER_PORT
               value: {{ .Values.agentSandbox.runner.port | quote }}
+            # Heartbeat file the worker's asyncio loop touches each tick; the
+            # exec probes below read this same path so template and app cannot
+            # drift.
+            - name: AGENTOS_HEARTBEAT_FILE
+              value: /tmp/agentos-worker.heartbeat
             # How long claim() waits for a cold sandbox to become ready before it
             # gives up. Must stay below the worker's per-thread lock TTL (120s).
             - name: AGENTOS_CLAIM_TIMEOUT_SECONDS
@@ -122,6 +127,10 @@ spec:
             {{- with .Values.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          # No HTTP port on the worker, so an exec probe checks a heartbeat file
+          # the asyncio event loop touches each tick. A wedged loop stops
+          # touching it -> the file goes stale -> the probe fails -> restart.
+          {{- include "agentos.heartbeatProbes" . | nindent 10 }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
 {{- end }}

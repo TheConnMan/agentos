@@ -26,6 +26,7 @@ from .bundle_store import BundleStore
 from .config import WorkerConfig
 from .consumer import Consumer
 from .eval import EvalReporter, EvalStreamConsumer, LangfuseEvalRecorder
+from .heartbeat import run_heartbeat
 from .kernel import Kernel
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -227,10 +228,15 @@ async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
 
     loop = asyncio.get_running_loop()
 
+    # Liveness heartbeat runs on this same event loop, so a wedged loop stops
+    # touching the file and the k8s exec probe restarts the pod (issue #71).
+    hb_stop = asyncio.Event()
+
     def _stop() -> None:
         rt.consumer.request_stop()
         rt.killswitch.request_stop()
         rt.eval_consumer.request_stop()
+        hb_stop.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _stop)
@@ -238,7 +244,10 @@ async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
     logging.getLogger("agentos_worker").info("worker starting")
     try:
         await asyncio.gather(
-            rt.consumer.run(), rt.killswitch.run(), rt.eval_consumer.run()
+            rt.consumer.run(),
+            rt.killswitch.run(),
+            rt.eval_consumer.run(),
+            run_heartbeat(config.heartbeat_file, config.heartbeat_interval_s, hb_stop),
         )
     finally:
         await rt.runner.close()
