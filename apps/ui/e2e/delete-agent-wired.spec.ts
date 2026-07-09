@@ -23,7 +23,7 @@ async function stubAgents(page: Page, deleteStatus: 204 | 409) {
     return route.fulfill(json(409, { detail: "agent has an active deployment; stop it before deleting" }));
   });
   await page.route("**/api/observability/metrics/summary*", (route) => route.fulfill(json(200, {
-    start: "s", end: "e", runs: 0, latency_p95_seconds: 0, tokens: 0, cost_usd: 0, error_rate: 0,
+    start: "s", end: "e", runs: 0, latency_p95_ms: 0, tokens: 0, cost_usd: 0, error_rate: 0,
   })));
   await page.route("**/api/langfuse/traces*", (route) => route.fulfill(json(200, [])));
 }

@@ -9,7 +9,7 @@ import type { MetricsSummary, MetricKey, Granularity, MetricFilter } from "../..
 // The five metrics the OB1 API exposes (Langfuse-backed; no Prometheus).
 const METRICS: { key: MetricKey; label: string; unit: string }[] = [
   { key: "runs", label: "Runs", unit: "" },
-  { key: "latency_p95_seconds", label: "Latency p95", unit: "s" },
+  { key: "latency_p95_ms", label: "Latency p95", unit: "ms" },
   { key: "tokens", label: "Tokens", unit: "" },
   { key: "cost_usd", label: "Cost", unit: "$" },
   { key: "error_rate", label: "Error rate", unit: "%" },
@@ -20,7 +20,7 @@ function fmt(key: MetricKey, v: number): string {
   switch (key) {
     case "runs":
       return String(Math.round(v));
-    case "latency_p95_seconds":
+    case "latency_p95_ms":
       return formatLatency(v);
     case "tokens":
       return v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v));

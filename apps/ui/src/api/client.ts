@@ -193,14 +193,14 @@ export async function getTrace(traceId: string): Promise<TraceTree> {
 
 // ---- observability (OB1): Langfuse-backed metrics + runner-pod log proxy ----
 
-export type MetricKey = "runs" | "latency_p95_seconds" | "tokens" | "cost_usd" | "error_rate";
+export type MetricKey = "runs" | "latency_p95_ms" | "tokens" | "cost_usd" | "error_rate";
 export type Granularity = "hour" | "day" | "week";
 
 export interface MetricsSummary {
   start: string;
   end: string;
   runs: number;
-  latency_p95_seconds: number;
+  latency_p95_ms: number;
   tokens: number;
   cost_usd: number;
   error_rate: number;
