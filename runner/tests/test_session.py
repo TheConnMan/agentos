@@ -188,6 +188,65 @@ def test_sdk_exception_logs_turn_failure(caplog) -> None:
     assert any("authentication_failed" in message for message in messages)
 
 
+def test_auth_rejection_fails_fast_not_retried(caplog) -> None:
+    # A rejected model credential (provider 401/403 -> AssistantMessage.error
+    # "authentication_failed") must surface a DISTINCT, immediate classified
+    # failure -- not a generic error streamed while the SDK/CLI retries with
+    # backoff to the ~2min wall. The script places messages AFTER the auth error
+    # that must never be consumed (proving the turn aborted at the rejection and
+    # did not keep driving the session).
+    sentinel = "SHOULD-NOT-APPEAR-AFTER-AUTH-FAIL"
+    script = [
+        AssistantMessage(content=[], model="m", error="authentication_failed"),
+        AssistantMessage(content=[TextBlock(text=sentinel)], model="m"),
+        ResultMessage(
+            subtype="success", duration_ms=1, duration_api_ms=1,
+            is_error=False, num_turns=1, session_id="s", result=sentinel,
+        ),
+    ]
+    runner, fake = _runner(lambda: script)
+
+    with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
+        events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
+
+    # Distinct, terminal, credential-rejected classification (not "runner-error",
+    # not "budget-exceeded", not the raw SDK "authentication_failed").
+    assert [e.type for e in events] == ["error", "final"]
+    assert events[0].classification == "model-credential-rejected"
+    assert "AGENTOS_CREDENTIALS" in events[0].message
+    assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
+    assert runner.status == SessionStatus.CLASSIFIED_FAILURE
+    # Fast-fail: aborted at the rejection, never consuming later messages, and
+    # interrupted the live session so the CLI stops retrying.
+    assert all(sentinel not in getattr(e, "text", "") for e in events)
+    assert fake.interrupts >= 1
+    assert any(
+        record.levelno == logging.ERROR and "auth failure" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_transient_model_error_is_not_fast_failed() -> None:
+    # A transient AssistantMessage.error (e.g. a hard rate-limit) is NOT a
+    # credential rejection: it must flow through translation unchanged and reach
+    # the model's own terminal result, so genuine retry/backoff is preserved.
+    script = [
+        AssistantMessage(content=[], model="m", error="rate_limit"),
+        ResultMessage(
+            subtype="success", duration_ms=1, duration_api_ms=1,
+            is_error=False, num_turns=1, session_id="s", result="recovered",
+        ),
+    ]
+    runner, fake = _runner(lambda: script)
+    events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
+
+    classifications = [getattr(e, "classification", None) for e in events]
+    assert "model-credential-rejected" not in classifications
+    assert "rate_limit" in classifications  # translated, non-terminal
+    assert events[-1].status == SessionStatus.DONE  # reached the model's result
+    assert fake.interrupts == 0  # not aborted
+
+
 def test_budget_halt_logged(caplog) -> None:
     script = [
         AssistantMessage(

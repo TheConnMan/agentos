@@ -34,7 +34,7 @@ from aci_protocol import (
     ToolNote,
     to_ndjson_line,
 )
-from claude_agent_sdk import ResultMessage
+from claude_agent_sdk import AssistantMessage, ResultMessage
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
@@ -45,6 +45,30 @@ from .translate import TurnState, translate_message
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], ModelSession]
+
+# The SDK surfaces a provider auth rejection (HTTP 401/403 -- e.g. a placeholder,
+# revoked, or wrong model key) as an ``AssistantMessage.error`` of this code
+# (see ``claude_agent_sdk.types.AssistantMessageError``). Unlike a 5xx or a rate
+# limit, a rejected credential is terminal and NON-retryable: retrying it only
+# burns wall time (the SDK/CLI otherwise backs off and re-attempts until a ~2min
+# timeout, surfacing as a generic hang). The runner fails the turn fast on this
+# signal instead of streaming a non-terminal error and continuing to drive the
+# session.
+_AUTH_REJECTION_SDK_CODE = "authentication_failed"
+
+# Classification carried on the fast-fail error event so consumers (F1's retry
+# rules) can tell a rejected credential from a transient failure and NOT retry
+# it -- distinct from both a budget halt and a generic runner error.
+AUTH_REJECTED_CLASSIFICATION = "model-credential-rejected"
+
+
+def _is_auth_rejection(message: object) -> bool:
+    """True when an SDK message reports a provider credential rejection (401/403)."""
+
+    return (
+        isinstance(message, AssistantMessage)
+        and getattr(message, "error", None) == _AUTH_REJECTION_SDK_CODE
+    )
 
 
 class SessionRunner:
@@ -215,6 +239,14 @@ class SessionRunner:
         assert self._session is not None
         await self._session.query(event.text)
         async for message in self._session.receive_turn():
+            if _is_auth_rejection(message):
+                # A rejected model credential is terminal: stop the live session
+                # so the SDK/CLI does not keep retrying with backoff to the wall,
+                # then surface a distinct, immediate classified failure.
+                await self._session.interrupt()
+                for line in self._auth_halt_lines():
+                    yield line
+                return
             usage = getattr(message, "usage", None)
             # The terminal result carries the authoritative turn total; streaming
             # assistant messages carry per-message output. Fold them differently
@@ -287,6 +319,35 @@ class SessionRunner:
             to_ndjson_line(
                 Final(
                     text="run halted: output token budget exceeded",
+                    status=SessionStatus.CLASSIFIED_FAILURE,
+                )
+            ),
+        ]
+
+    def _auth_halt_lines(self) -> list[str]:
+        """The error+final pair emitted when the provider rejects the credential.
+
+        Distinct from a budget halt and a generic runner error so downstream
+        retry rules do NOT retry a rejected credential (retrying only burns the
+        wall). The message names ``AGENTOS_CREDENTIALS`` since that is the ACI
+        reference the operator must fix; it carries no credential value.
+        """
+
+        logger.error(
+            "auth failure session=%s: model credential rejected by provider", self._session_id
+        )
+        self._turn_open = False
+        self._status = SessionStatus.CLASSIFIED_FAILURE
+        return [
+            to_ndjson_line(
+                ErrorEvent(
+                    message="model credential rejected by provider (check AGENTOS_CREDENTIALS)",
+                    classification=AUTH_REJECTED_CLASSIFICATION,
+                )
+            ),
+            to_ndjson_line(
+                Final(
+                    text="run failed: model credential rejected by provider",
                     status=SessionStatus.CLASSIFIED_FAILURE,
                 )
             ),
