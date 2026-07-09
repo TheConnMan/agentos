@@ -13,6 +13,7 @@ from typing import Protocol
 
 from slack_sdk.web.async_client import AsyncWebClient
 
+from .behaviorpacks import NavPack
 from .blocks import render
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,9 @@ logger = logging.getLogger(__name__)
 class SlackSink(Protocol):
     """Edit a message in place. The kernel throttles how often it calls this."""
 
-    async def update(self, *, channel: str, ts: str, text: str) -> None: ...
+    async def update(
+        self, *, channel: str, ts: str, text: str, nav: NavPack | None = None
+    ) -> None: ...
 
     async def set_status(self, *, channel: str, thread_ts: str, status: str) -> None:
         """Set the assistant-thread status (the "shimmer" caption) on the thread.
@@ -48,13 +51,17 @@ class AsyncSlackSink:
         else:
             self._client = AsyncWebClient(token=token)
 
-    async def update(self, *, channel: str, ts: str, text: str) -> None:
+    async def update(
+        self, *, channel: str, ts: str, text: str, nav: NavPack | None = None
+    ) -> None:
         # The runner emits Markdown; Slack renders mrkdwn. ``render`` converts to
         # mrkdwn and, if the reply carries a complete ``agentos-reply`` block,
         # returns Block Kit to render instead -- keeping this dialect/structure
         # knowledge at the real-Slack seam, out of the kernel. A half-streamed or
         # malformed block falls back to text, so partials never show raw JSON.
-        rendered_text, blocks = render(text)
+        # ``nav`` (the agent's hub-button pack, threaded from the kernel) appends
+        # the no-dead-ends hub button to a structured reply; None leaves it be.
+        rendered_text, blocks = render(text, nav)
         if blocks is not None:
             await self._client.chat_update(
                 channel=channel, ts=ts, text=rendered_text, blocks=blocks

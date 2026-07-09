@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pytest
 import redis
 from aci_protocol import Final, OutboundEvent, SessionStatus
+from agentos_worker.behaviorpacks import NavPack
 from agentos_worker.config import WorkerConfig
 from agentos_worker.kernel import Kernel
 from agentos_worker.markers import Markers
@@ -99,11 +100,16 @@ class FakeSink(SlackSink):
 
     def __init__(self) -> None:
         self.updates: list[tuple[str, str, str]] = []
+        # The nav pack (if any) threaded to each update, parallel to ``updates``.
+        self.update_navs: list[NavPack | None] = []
         self.status_sets: list[tuple[str, str, str]] = []
         self.status_clears: list[tuple[str, str]] = []
 
-    async def update(self, *, channel: str, ts: str, text: str) -> None:
+    async def update(
+        self, *, channel: str, ts: str, text: str, nav: NavPack | None = None
+    ) -> None:
         self.updates.append((channel, ts, text))
+        self.update_navs.append(nav)
 
     async def set_status(self, *, channel: str, thread_ts: str, status: str) -> None:
         self.status_sets.append((channel, thread_ts, status))
@@ -114,6 +120,10 @@ class FakeSink(SlackSink):
     @property
     def last_text(self) -> str | None:
         return self.updates[-1][2] if self.updates else None
+
+    @property
+    def last_nav(self) -> NavPack | None:
+        return self.update_navs[-1] if self.update_navs else None
 
 
 # --- Fake Kubernetes client (sandboxes resolve to 127.0.0.1) ------------------

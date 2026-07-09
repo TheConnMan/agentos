@@ -43,8 +43,8 @@ from aci_protocol import (
 )
 from agentos_dispatcher.queue import QueuedSlackEvent
 
-from .behaviorpacks import sample_load, sample_tip
-from .binding import BindingResolver, ResolvedDeployment
+from .behaviorpacks import BehaviorPacks, NavPack, sample_load, sample_tip
+from .binding import BindingResolver
 from .config import WorkerConfig
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -105,13 +105,26 @@ class _StreamAccumulator:
 class _ThrottledReply:
     """Coalesces chat.update edits while streaming; always flushes the final."""
 
-    def __init__(self, sink: SlackSink, *, channel: str, ts: str, min_interval_s: float) -> None:
+    def __init__(
+        self,
+        sink: SlackSink,
+        *,
+        channel: str,
+        ts: str,
+        min_interval_s: float,
+        nav: NavPack | None = None,
+    ) -> None:
         self._sink = sink
         self._channel = channel
         self._ts = ts
         self._min_interval_s = min_interval_s
         self._last = 0.0
         self._last_text: str | None = None
+        # The bound agent's hub-button pack, forwarded to the sink so a render of
+        # a COMPLETE structured reply can add the no-dead-ends hub button (in
+        # practice the final flush, which is the update that carries one). None
+        # when unbound/disabled.
+        self._nav = nav
 
     async def stream(self, text: str) -> None:
         if not text or text == self._last_text:
@@ -121,13 +134,15 @@ class _ThrottledReply:
             return
         self._last = now
         self._last_text = text
-        await self._sink.update(channel=self._channel, ts=self._ts, text=text)
+        await self._sink.update(channel=self._channel, ts=self._ts, text=text, nav=self._nav)
 
     async def finalize(self, text: str) -> None:
         if text == self._last_text:
             return
         self._last_text = text
-        await self._sink.update(channel=self._channel, ts=self._ts, text=text or "(no response)")
+        await self._sink.update(
+            channel=self._channel, ts=self._ts, text=text or "(no response)", nav=self._nav
+        )
 
 
 class Kernel:
@@ -213,6 +228,7 @@ class Kernel:
             # polite drop, not a crash.
             boot_env: dict[str, str] | None = None
             agent_id: uuid.UUID | None = None
+            nav: NavPack | None = None
             if self._binding is not None:
                 resolved = await self._binding.resolve(qevent.channel)
                 if resolved is None:
@@ -230,16 +246,21 @@ class Kernel:
                     return
                 agent_id = resolved.agent_id
                 boot_env = self._binding.boot_env(resolved, thread)
+                # Resolve the agent's packs once here (a pure parse, no I/O) and
+                # reuse: the nav pack is threaded to the final render, the same
+                # packs feed the shimmer below.
+                packs = self._binding.packs_for(resolved)
+                nav = packs.nav
                 # Personalize the shimmer: replace the dispatcher's generic status
                 # with this agent's sampled load line (+ tip). Best-effort and
                 # outside the concurrency-critical section, like the clear below.
                 if self._config.shimmer:
-                    await self._set_shimmer(qevent, resolved)
+                    await self._set_shimmer(qevent, packs)
 
             attempt = 0
             while True:
                 attempt += 1
-                outcome = await self._attempt(qevent, release_order, boot_env, agent_id)
+                outcome = await self._attempt(qevent, release_order, boot_env, agent_id, nav)
 
                 if outcome.terminal_ok:
                     await self._markers.mark_done(event_id)
@@ -338,12 +359,10 @@ class Kernel:
         )
         await self._markers.mark_done(qevent.slack_event_id)
 
-    async def _set_shimmer(self, qevent: QueuedSlackEvent, resolved: ResolvedDeployment) -> None:
+    async def _set_shimmer(self, qevent: QueuedSlackEvent, packs: BehaviorPacks) -> None:
         """Set the shimmer caption to this agent's sampled load line (+ tip),
         seeded by the thread ts. No-op when the agent enables neither pack, so the
         dispatcher's generic status stays. Best-effort (the sink swallows errors)."""
-        assert self._binding is not None
-        packs = self._binding.packs_for(resolved)
         load = sample_load(packs, qevent.thread_ts)
         tip = sample_tip(packs, qevent.thread_ts)
         if load and tip:
@@ -366,6 +385,7 @@ class Kernel:
         release_order: Callable[[], None],
         boot_env: dict[str, str] | None = None,
         agent_id: uuid.UUID | None = None,
+        nav: NavPack | None = None,
     ) -> TurnOutcome:
         thread = qevent.thread_ts
         event = self._to_event(qevent)
@@ -420,7 +440,7 @@ class Kernel:
                 and await self._killswitch.is_killed(agent_id)
             ):
                 await self.interrupt_thread(thread, f"agent {agent_id} killed by operator")
-            return await self._consume(qevent, route.turn)
+            return await self._consume(qevent, route.turn, nav)
         finally:
             self._unregister_run(agent_id, thread)
 
@@ -447,13 +467,16 @@ class Kernel:
         except SuspendedThreadError:
             return await asyncio.to_thread(self._substrate.resume, thread)
 
-    async def _consume(self, qevent: QueuedSlackEvent, turn: TurnStream) -> TurnOutcome:
+    async def _consume(
+        self, qevent: QueuedSlackEvent, turn: TurnStream, nav: NavPack | None = None
+    ) -> TurnOutcome:
         acc = _StreamAccumulator()
         reply = _ThrottledReply(
             self._sink,
             channel=qevent.channel,
             ts=qevent.placeholder_ts,
             min_interval_s=self._config.slack_edit_min_interval_s,
+            nav=nav,
         )
         try:
             # ``async with`` releases the aiohttp response on every exit path

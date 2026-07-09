@@ -243,6 +243,22 @@ def test_from_config_roundtrip_and_none() -> None:
     assert match_greeting(parsed, "hi") == "yo"
 
 
+def test_from_config_malformed_nested_pack_falls_back_all_off() -> None:
+    # A nested field with the wrong type would raise pydantic.ValidationError;
+    # from_config must be TOTAL and fall back to an all-off BehaviorPacks() so a
+    # corrupt packs blob on an agent row can never brick that agent's turns.
+    packs = BehaviorPacks.from_config({"nav": {"enabled": "banana"}})
+    assert packs == BehaviorPacks()
+    assert packs.nav.enabled is False
+
+
+def test_from_config_non_dict_falls_back_all_off() -> None:
+    # A non-mapping blob (a decoded JSON array/scalar) also defaults to all-off,
+    # never raising.
+    for bad in (["nav"], "nav", 42):
+        assert BehaviorPacks.from_config(bad) == BehaviorPacks()  # type: ignore[arg-type]
+
+
 # -- nav pack (no-dead-ends hub button) ---------------------------------------
 
 _NAV = NavPack(enabled=True, hub_label="Help", hub_command="help")

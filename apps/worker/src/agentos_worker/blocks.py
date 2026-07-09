@@ -30,6 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .behaviorpacks import BehaviorPacks, NavPack, ensure_hub_button
 from .mrkdwn import to_mrkdwn
 
 # Slack hard-caps a section's text at 3000 chars; stay under it with margin.
@@ -91,9 +92,15 @@ def _is_nav(label: str) -> bool:
     return label.lstrip()[:1] in ("←", "↑")
 
 
-def to_blocks(reply: Reply) -> list[dict[str, Any]]:
+def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
     """Render a ``Reply`` to a Block Kit blocks array. Order: header -> fields ->
-    body section(s) (chunked) -> buttons (nav-leftmost) -> footer."""
+    body section(s) (chunked) -> buttons (nav-leftmost) -> footer.
+
+    ``nav`` is the agent's no-dead-ends hub button: when present and enabled, the
+    hub button is appended to the reply's buttons (via ``ensure_hub_button``, the
+    platform-owned append policy) before the actions block is built. When ``nav``
+    is None or disabled the output is byte-identical to no-nav; ``ensure_hub_button``
+    also no-ops when a button already links to the hub."""
     blocks: list[dict[str, Any]] = []
     if reply.header:
         blocks.append({"type": "header", "text": {"type": "plain_text", "text": reply.header}})
@@ -106,8 +113,13 @@ def to_blocks(reply: Reply) -> list[dict[str, Any]]:
         )
     for piece in chunk(to_mrkdwn(reply.text)):
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": piece}})
-    if reply.buttons:
-        ordered = sorted(reply.buttons, key=lambda b: 0 if _is_nav(b[0]) else 1)
+    # ``reply.buttons`` are already (label, action_id) pairs, the same (label,
+    # command) shape ensure_hub_button operates on, so no conversion is needed.
+    buttons = (
+        reply.buttons if nav is None else ensure_hub_button(BehaviorPacks(nav=nav), reply.buttons)
+    )
+    if buttons:
+        ordered = sorted(buttons, key=lambda b: 0 if _is_nav(b[0]) else 1)
         blocks.append(
             {"type": "actions", "elements": [_button(label, aid) for label, aid in ordered]}
         )
@@ -150,17 +162,20 @@ def parse_reply(text: str) -> Reply | None:
     )
 
 
-def render(text: str) -> tuple[str, list[dict[str, Any]] | None]:
+def render(text: str, nav: NavPack | None = None) -> tuple[str, list[dict[str, Any]] | None]:
     """Map an outbound reply string to ``(text, blocks)`` for ``chat.update``.
 
     - A complete ``agentos-reply`` block -> (plain fallback text, blocks).
     - A half-streamed block (fence opened, not closed) -> (text before the fence,
       None), so streaming never shows raw JSON.
     - Anything else -> (mrkdwn text, None), the existing plain path.
+
+    ``nav`` (the agent's hub-button pack, threaded from the kernel) is applied to
+    a complete structured reply's buttons; None/disabled leaves output unchanged.
     """
     reply = parse_reply(text)
     if reply is not None:
-        return (to_mrkdwn(reply.text) or "(reply)", to_blocks(reply))
+        return (to_mrkdwn(reply.text) or "(reply)", to_blocks(reply, nav))
     open_at = text.find(_FENCE_OPEN)
     if open_at != -1:
         prefix = text[:open_at].strip()

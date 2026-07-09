@@ -2,7 +2,29 @@
 
 from __future__ import annotations
 
+from agentos_worker.behaviorpacks import NavPack
 from agentos_worker.blocks import Reply, chunk, parse_reply, render, to_blocks
+
+# An enabled nav pack, same shape as tests/test_behaviorpacks.py.
+_NAV = NavPack(enabled=True, hub_label="Help", hub_command="help")
+
+
+def _action_ids(blocks: list[dict]) -> list[str]:
+    return [
+        e["action_id"]
+        for b in blocks
+        if b["type"] == "actions"
+        for e in b["elements"]
+    ]
+
+
+def _action_labels(blocks: list[dict]) -> list[str]:
+    return [
+        e["text"]["text"]
+        for b in blocks
+        if b["type"] == "actions"
+        for e in b["elements"]
+    ]
 
 _BLOCK = """Here you go:
 
@@ -76,3 +98,44 @@ def test_render_plain_text_is_mrkdwn() -> None:
     text, blocks = render("**hi** [x](http://y)")
     assert blocks is None
     assert text == "*hi* <http://y|x>"
+
+
+# -- nav pack wiring into the render path -------------------------------------
+# Contract: to_blocks(reply, nav=None) / render(text, nav=None) gain an optional
+# nav: NavPack | None. When nav is enabled, the hub button is appended to the
+# actions block before it is emitted; when nav is None/disabled, output is
+# byte-identical to today (no hub button).
+
+
+def test_to_blocks_appends_hub_button_when_nav_enabled() -> None:
+    reply = Reply(text="x", buttons=[("Details", "details")])
+    blocks = to_blocks(reply, nav=_NAV)
+    assert "help" in _action_ids(blocks)  # the hub command reached the actions block
+    assert "← Help" in _action_labels(blocks)  # left-arrow: no back button present
+
+
+def test_to_blocks_nav_none_is_identical_to_no_nav() -> None:
+    reply = Reply(text="x", buttons=[("Details", "details")])
+    assert to_blocks(reply, nav=None) == to_blocks(reply)
+    assert "help" not in _action_ids(to_blocks(reply, nav=None))
+
+
+def test_to_blocks_disabled_nav_adds_no_hub_button() -> None:
+    disabled = NavPack(enabled=False, hub_label="Help", hub_command="help")
+    reply = Reply(text="x", buttons=[("Details", "details")])
+    assert to_blocks(reply, nav=disabled) == to_blocks(reply)
+    assert "help" not in _action_ids(to_blocks(reply, nav=disabled))
+
+
+def test_render_applies_nav_hub_button() -> None:
+    # _BLOCK already carries a "← Back" nav button, so the hub is above -> "↑".
+    _text, blocks = render(_BLOCK, nav=_NAV)
+    assert blocks is not None
+    assert "help" in _action_ids(blocks)
+    assert "↑ Help" in _action_labels(blocks)
+
+
+def test_render_without_nav_has_no_hub_button() -> None:
+    _text, blocks = render(_BLOCK)
+    assert blocks is not None
+    assert "help" not in _action_ids(blocks)
