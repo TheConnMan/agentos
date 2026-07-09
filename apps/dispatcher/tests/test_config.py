@@ -14,6 +14,55 @@ import pytest
 from agentos_dispatcher.config import DispatcherConfig
 
 
+def _clear_all_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Delete every env var the config could read, for a clean-env baseline.
+
+    ``BaseSettings`` reads the environment for every field, so the compose-stack
+    Valkey vars (``VALKEY_HOST`` ...) may be set ambiently; strip them all so the
+    defaults assertions see only the code defaults.
+    """
+    for name, field in DispatcherConfig.model_fields.items():
+        alias = field.validation_alias
+        key = alias if isinstance(alias, str) else name.upper()
+        monkeypatch.delenv(key, raising=False)
+
+
+# Every env var the OLD hand-rolled ``DispatcherConfig.from_env`` (on
+# ``origin/main``) read, paired with a distinct sentinel and its expected
+# coerced value. Names are the exact old ones -- the override test proves no
+# name drifted and no read was dropped.
+_DISPATCHER_OVERRIDES: dict[str, tuple[str, str, object]] = {
+    # env var name -> (field name, raw env value, expected coerced value)
+    "SLACK_APP_TOKEN": ("slack_app_token", "xapp-sentinel", "xapp-sentinel"),
+    "SLACK_BOT_TOKEN": ("slack_bot_token", "xoxb-sentinel", "xoxb-sentinel"),
+    "SLACK_SIGNING_SECRET": (
+        "slack_signing_secret",
+        "sign-sentinel",
+        "sign-sentinel",
+    ),
+    "VALKEY_HOST": ("valkey_host", "valkey.host.example", "valkey.host.example"),
+    "VALKEY_PORT": ("valkey_port", "6380", 6380),
+    "VALKEY_PASSWORD": ("valkey_password", "vk-pass", "vk-pass"),
+    "VALKEY_DB": ("valkey_db", "7", 7),
+    "AGENTOS_STREAM": ("stream", "sentinel:runs", "sentinel:runs"),
+    "AGENTOS_DEDUPE_PREFIX": (
+        "dedupe_prefix",
+        "sentinel:dedupe:",
+        "sentinel:dedupe:",
+    ),
+    "AGENTOS_DEDUPE_TTL_SECONDS": ("dedupe_ttl_seconds", "7200", 7200),
+    "AGENTOS_PLACEHOLDER_TEXT": (
+        "placeholder_text",
+        "Sentinel placeholder.",
+        "Sentinel placeholder.",
+    ),
+    "AGENTOS_SHIMMER": ("shimmer", "true", True),
+    "AGENTOS_BACKOFF_INITIAL_SECONDS": ("backoff_initial_seconds", "2.5", 2.5),
+    "AGENTOS_BACKOFF_MAX_SECONDS": ("backoff_max_seconds", "45.5", 45.5),
+    "AGENTOS_BACKOFF_MULTIPLIER": ("backoff_multiplier", "3.5", 3.5),
+}
+
+
 def test_aliased_field_ignores_bare_field_name_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -55,3 +104,96 @@ def test_non_aliased_field_still_reads_plain_env(
     monkeypatch.setenv("VALKEY_HOST", "valkey.internal")
 
     assert DispatcherConfig().valkey_host == "valkey.internal"
+
+
+# --- Env-var parity vs the pre-pydantic from_env (review #178) ---------------
+
+
+def test_defaults_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clean env: every field must equal the exact default the old from_env produced.
+
+    Every field is enumerated; a drifted default is a silent prod break.
+    """
+    _clear_all_config_env(monkeypatch)
+
+    config = DispatcherConfig()
+
+    assert config.slack_app_token == ""
+    assert config.slack_bot_token == ""
+    assert config.slack_signing_secret == ""
+    assert config.valkey_host == "localhost"
+    assert config.valkey_port == 6379
+    assert config.valkey_password == ""
+    assert config.valkey_db == 0
+    assert config.stream == "agentos:runs"
+    assert config.dedupe_prefix == "agentos:dedupe:"
+    assert config.dedupe_ttl_seconds == 3600
+    assert config.placeholder_text == "On it. Working on your request."
+    assert config.shimmer is False
+    assert config.backoff_initial_seconds == 1.0
+    assert config.backoff_max_seconds == 30.0
+    assert config.backoff_multiplier == 2.0
+
+
+def test_overrides_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every env var the old from_env read, set under its EXACT old name, must be
+    read into the right field with the right coercion.
+
+    Proves no env-var name drifted and no read was dropped.
+    """
+    _clear_all_config_env(monkeypatch)
+    for env_var, (_field, raw, _expected) in _DISPATCHER_OVERRIDES.items():
+        monkeypatch.setenv(env_var, raw)
+
+    config = DispatcherConfig()
+
+    for env_var, (field, _raw, expected) in _DISPATCHER_OVERRIDES.items():
+        actual = getattr(config, field)
+        assert actual == expected, f"{env_var} -> {field}: {actual!r} != {expected!r}"
+        assert type(actual) is type(expected), (
+            f"{env_var} -> {field}: type {type(actual)} != {type(expected)}"
+        )
+
+
+# --- Per-service bool divergence (review #178) -------------------------------
+#
+# The old dispatcher ``_set_bool`` accepted ("1", "true", "yes", "on") as truthy
+# -- it DOES treat "on" as truthy, unlike the worker's ``_b``. These lock that.
+
+
+@pytest.mark.parametrize(
+    "token", ["1", "true", "yes", "on", "ON", "On", " on ", "TRUE"]
+)
+def test_bool_dispatcher_truthy_tokens_including_on(
+    monkeypatch: pytest.MonkeyPatch, token: str
+) -> None:
+    """The dispatcher truthy set includes "on" (case/space-insensitive)."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_SHIMMER", token)
+
+    assert DispatcherConfig().shimmer is True
+
+
+@pytest.mark.parametrize("token", ["0", "no", "off", "", "maybe"])
+def test_bool_dispatcher_falsy_tokens(
+    monkeypatch: pytest.MonkeyPatch, token: str
+) -> None:
+    """Falsy tokens ("off" included) parse to False."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_SHIMMER", token)
+
+    assert DispatcherConfig().shimmer is False
+
+
+def test_bool_on_divergence_between_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTOS_SHIMMER=on: dispatcher True, worker False -- the documented per-service split."""
+    from agentos_worker.config import WorkerConfig
+
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.delenv("AGENTOS_SHIMMER", raising=False)
+    monkeypatch.setenv("AGENTOS_SHIMMER", "on")
+
+    assert DispatcherConfig().shimmer is True
+    assert WorkerConfig().shimmer is False
