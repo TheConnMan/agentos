@@ -26,17 +26,15 @@ acked, not a crash; a failing eval case is a failed count in the report.
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
-import tarfile
 import tempfile
 import uuid
-import zipfile
 from pathlib import Path
 from typing import Any, cast
 
 import httpx
 from aci_protocol import Budget
+from plugin_format import safe_extract
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.exceptions import (
@@ -147,7 +145,7 @@ def load_suite_from_bundle(data: bytes, suite_name: str) -> EvalSuite | None:
     try:
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp)
-            _safe_extract(data, dest)
+            safe_extract(data, dest)
             cases = next(
                 (p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None
             )
@@ -158,24 +156,6 @@ def load_suite_from_bundle(data: bytes, suite_name: str) -> EvalSuite | None:
         logger.exception("could not load eval suite from bundle")
         return None
     return EvalSuite(name=suite_name, cases=loaded.cases)
-
-
-def _safe_extract(data: bytes, dest: Path) -> None:
-    if zipfile.is_zipfile(io.BytesIO(data)):
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for name in zf.namelist():
-                if Path(name).is_absolute() or ".." in Path(name).parts:
-                    raise ValueError(f"unsafe path in bundle: {name}")
-            zf.extractall(dest)
-        return
-    for mode in ("r:gz", "r:"):
-        try:
-            with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
-                tf.extractall(dest, filter="data")
-            return
-        except tarfile.TarError:
-            continue
-    raise ValueError("bundle is not a recognized zip or tar archive")
 
 
 class EvalStreamConsumer:

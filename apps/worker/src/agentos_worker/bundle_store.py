@@ -15,23 +15,17 @@ the plugin root the runner sees matches the root the API validated on upload.
 
 from __future__ import annotations
 
-import io
-import tarfile
-import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import boto3
 from botocore.client import Config as BotoConfig
+from plugin_format import bundle_root, safe_extract
 
 from .config import WorkerConfig
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
-
-# Where the plugin manifest lives; used only to locate the bundle root inside an
-# archive that wraps everything in one folder. Mirrors bundles._MANIFEST_LOCATIONS.
-_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
 
 
 class BundleStore:
@@ -56,46 +50,16 @@ class BundleStore:
         return body
 
 
-def _has_manifest(directory: Path) -> bool:
-    return any((directory / loc).is_file() for loc in _MANIFEST_LOCATIONS)
-
-
-def _bundle_root(extracted: Path) -> Path:
-    """The plugin root: unwrap a single top-level folder if it carries the
-    manifest (matches the API's ``bundles.bundle_root``)."""
-    if _has_manifest(extracted):
-        return extracted
-    subdirs = [p for p in extracted.iterdir() if p.is_dir()]
-    if len(subdirs) == 1 and _has_manifest(subdirs[0]):
-        return subdirs[0]
-    return extracted
-
-
-def _safe_extract(data: bytes, dest: Path) -> None:
-    """Extract a zip or tar(.gz) archive into ``dest``, refusing path traversal."""
-    if zipfile.is_zipfile(io.BytesIO(data)):
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for name in zf.namelist():
-                if Path(name).is_absolute() or ".." in Path(name).parts:
-                    raise ValueError(f"unsafe path in bundle: {name}")
-            zf.extractall(dest)
-        return
-    for mode in ("r:gz", "r:"):
-        try:
-            with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
-                tf.extractall(dest, filter="data")
-            return
-        except tarfile.TarError:
-            continue
-    raise ValueError("bundle is not a recognized zip or tar archive")
-
-
 def extract_bundle(data: bytes, dest: Path) -> Path:
     """Extract ``data`` into ``dest`` and return the plugin root to mount.
 
     The returned path is ``dest`` when the archive is flat, or its single
     wrapper subdir when the manifest sits one level down -- the same root the
     API validated, so the runner reads the plugin from the expected layout.
+    Extraction and unwrap route through ``plugin_format`` (the single audited
+    home for the traversal/symlink/special-file guards); an unsafe or
+    unrecognized archive raises ``plugin_format.UnsupportedArchive``, which the
+    Docker-substrate caller already treats as a fetch failure.
     """
-    _safe_extract(data, dest)
-    return _bundle_root(dest)
+    safe_extract(data, dest)
+    return bundle_root(dest)

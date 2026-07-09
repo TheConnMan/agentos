@@ -6,6 +6,7 @@ is a frozen interface (see the package README); a change stops the task and
 escalates to the orchestrator.
 """
 
+from .archive import UnsupportedArchive, bundle_root, safe_extract
 from .models import (
     Author,
     McpConfig,
@@ -27,4 +28,7 @@ __all__ = [
     "validate_bundle",
     "ValidationResult",
     "ValidationIssue",
+    "safe_extract",
+    "bundle_root",
+    "UnsupportedArchive",
 ]
