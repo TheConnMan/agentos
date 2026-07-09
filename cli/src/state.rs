@@ -152,7 +152,7 @@ pub struct ResolvedTurnArgs {
     pub thread: Option<String>,
     pub namespace: String,
     pub release: String,
-    pub chart: String,
+    pub chart: Option<String>,
     pub listen_host: Option<String>,
     pub timeout_secs: u64,
     pub api_url: Option<String>,
@@ -205,8 +205,7 @@ pub fn apply_continue(
             .unwrap_or_else(|| "agentos".to_string()),
         chart: cli
             .chart
-            .or_else(|| state.as_ref().map(|state| state.chart.clone()))
-            .unwrap_or_else(|| "charts/agentos".to_string()),
+            .or_else(|| state.as_ref().map(|state| state.chart.clone())),
         listen_host: cli
             .listen_host
             .or_else(|| state.as_ref().and_then(|state| state.listen_host.clone())),
@@ -500,7 +499,7 @@ mod tests {
         assert_eq!(resolved.thread, Some("1.2".into()));
         assert_eq!(resolved.namespace, "explicit-ns");
         assert_eq!(resolved.release, "explicit-release");
-        assert_eq!(resolved.chart, "charts/explicit");
+        assert_eq!(resolved.chart.as_deref(), Some("charts/explicit"));
         assert_eq!(resolved.listen_host.as_deref(), Some("192.0.2.10"));
         assert_eq!(resolved.timeout_secs, 12);
         assert_eq!(resolved.api_url.as_deref(), Some("http://explicit-api"));
@@ -530,7 +529,7 @@ mod tests {
         assert_eq!(resolved.thread, Some("9.9".into()));
         assert_eq!(resolved.namespace, "persisted-ns");
         assert_eq!(resolved.release, "persisted-release");
-        assert_eq!(resolved.chart, "charts/persisted");
+        assert_eq!(resolved.chart.as_deref(), Some("charts/persisted"));
         assert_eq!(resolved.listen_host.as_deref(), Some("127.0.0.1"));
         assert_eq!(resolved.timeout_secs, 777);
         assert_eq!(resolved.api_url.as_deref(), Some("http://persisted-api"));
@@ -546,7 +545,7 @@ mod tests {
         assert_eq!(resolved.thread, None);
         assert_eq!(resolved.namespace, "agentos");
         assert_eq!(resolved.release, "agentos");
-        assert_eq!(resolved.chart, "charts/agentos");
+        assert_eq!(resolved.chart, None);
         assert_eq!(resolved.timeout_secs, DEFAULT_TIMEOUT_SECS);
     }
 
