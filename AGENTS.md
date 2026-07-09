@@ -123,6 +123,29 @@ proceed. This also applies whenever an adopted component (Langfuse, Agent
 Sandbox, Bolt) cannot do what a spec claims: stop and raise it with the evidence
 rather than silently diverging.
 
+## E2E verification is mandatory
+
+Almost everything here is end-to-end testable, and the CLI makes it cheap: local
+skills, the compose dev stack, and a disposable local k8s cluster (kind/k3s) let
+you exercise a change against the real product loop, not a mock. So every
+behavior-bearing change must be verified end-to-end before it is called done --
+drive the actual surface (the `agentos` CLI, the deployed compose services, a
+real sandbox on-cluster) with realistic input and assert the real outcome, not
+just that unit tests pass.
+
+- **In-repo tests are the durable net.** Prefer landing unit + integration tests
+  (and a Playwright/e2e assertion where a UI or full-flow path changed) in the
+  same PR. These are what keep the change working after you leave.
+- **A hands-on e2e pass is non-negotiable on top of that.** Even when CI is
+  green, run the changed path yourself through the CLI / docker / cluster and
+  confirm the observable behavior. CI runs against frozen fixtures; a live pass
+  catches config drift, deploy-pipeline regressions, and "is my code path even
+  wired" gaps that unit tests cannot see.
+- **Assert outcomes, not presence.** Use strong, deterministic assertions on real
+  behavior (values, state transitions, emitted events, trace contents). Avoid
+  hollow "does it render / does an element exist" checks and any AI-vision or
+  screenshot-polling assertions -- they mask weak architecture and rot fast.
+
 ## Playwright: two modes
 
 - **The merge gate is the committed E2E suite** under `apps/ui` (Playwright,
