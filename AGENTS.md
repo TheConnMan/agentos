@@ -67,16 +67,20 @@ pass by weakening assertions is a regression.
 
 ## The dev stack: compose.dev.yaml
 
-One command brings up the whole backing stack (Postgres + Valkey + Langfuse v3 +
-ClickHouse + MinIO + OTel Collector). Every backend integration test and UI E2E
-runs against it.
+The compose stack now has two profiles. `full` brings up the whole backing
+stack (Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel Collector).
+`core` brings up the smaller local product loop (Postgres + Valkey + MinIO +
+API + worker). Every backend integration test and UI E2E runs against `full`.
 
 ```bash
-docker compose -f compose.dev.yaml up -d     # bring up (idempotent)
+docker compose --profile full -f compose.dev.yaml up -d   # full stack
+docker compose --profile core -f compose.dev.yaml up -d   # 7-service minimal stack (no Langfuse/ClickHouse/OTel/UI)
 docker compose -f compose.dev.yaml ps        # check health
 docker compose -f compose.dev.yaml down      # stop, KEEP volumes (fast restart)
 docker compose -f compose.dev.yaml down -v   # stop and WIPE volumes (throwaway)
 ```
+
+Add `--profile slack` through `agentos local up --slack` to start the optional dispatcher for real Slack.
 
 Host ports (non-default host ports to avoid local collisions):
 

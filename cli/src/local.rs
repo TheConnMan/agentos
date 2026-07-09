@@ -19,24 +19,30 @@ pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
 /// `compose.dev.yaml`'s port mappings. Printed after `local up` so the operator
 /// has the URLs in hand. Hardcoded to match the compose file (see the
 /// `endpoints_match_compose_file` test, which asserts the file still maps them).
-const ENDPOINTS: &[(&str, &str)] = &[
-    ("AgentOS API", "http://localhost:28000"),
-    ("AgentOS Console", "http://localhost:28080/?api=1"),
-    ("Langfuse UI", "http://localhost:23000"),
-    ("Postgres", "localhost:25432"),
-    ("Valkey", "localhost:26379"),
-    ("ClickHouse HTTP", "localhost:28123"),
-    ("MinIO S3", "localhost:29000"),
-    ("MinIO console", "localhost:29001"),
-    ("OTel gRPC", "localhost:24317"),
-    ("OTel HTTP", "localhost:24318"),
+///
+/// The `core` flag marks endpoints backed by a service in the `core` profile
+/// (started under `--minimal`); the rest are `full`-only and are hidden under
+/// `--minimal` so `up` never advertises a URL for a service it did not start.
+const ENDPOINTS: &[(&str, &str, bool)] = &[
+    ("AgentOS API", "http://localhost:28000", true),
+    ("AgentOS Console", "http://localhost:28080/?api=1", false),
+    ("Langfuse UI", "http://localhost:23000", false),
+    ("Postgres", "localhost:25432", true),
+    ("Valkey", "localhost:26379", true),
+    ("ClickHouse HTTP", "localhost:28123", false),
+    ("MinIO S3", "localhost:29000", true),
+    ("MinIO console", "localhost:29001", true),
+    ("OTel gRPC", "localhost:24317", false),
+    ("OTel HTTP", "localhost:24318", false),
 ];
 
 /// Flags shared by every `local` verb.
 pub struct LocalOpts {
     pub file: String,
     pub dry_run: bool,
+    pub minimal: bool,
     pub local_model: Option<String>,
+    pub slack: bool,
 }
 
 pub struct LocalDownOpts {
@@ -60,23 +66,28 @@ fn compose(file: &str, tail: &[&str]) -> OpsCommand {
     OpsCommand::new("docker", args)
 }
 
-/// `docker compose -f <file> up -d --wait`.
+/// `docker compose --profile <core|full> [--profile local-model] [--profile slack] -f <file> up -d --wait`.
 pub fn up_command(o: &LocalOpts) -> OpsCommand {
+    let profile = if o.minimal { "core" } else { "full" };
+    let mut args = vec![plain("compose"), plain("--profile"), plain(profile)];
+    if o.local_model.is_some() {
+        args.push(plain("--profile"));
+        args.push(plain("local-model"));
+    }
+    if o.slack {
+        args.push(plain("--profile"));
+        args.push(plain("slack"));
+    }
+    args.extend([
+        plain("-f"),
+        plain(&o.file),
+        plain("up"),
+        plain("-d"),
+        plain("--wait"),
+    ]);
+    let mut cmd = OpsCommand::new("docker", args);
     if let Some(model) = &o.local_model {
-        return OpsCommand::new(
-            "docker",
-            vec![
-                plain("compose"),
-                plain("--profile"),
-                plain("local-model"),
-                plain("-f"),
-                plain(&o.file),
-                plain("up"),
-                plain("-d"),
-                plain("--wait"),
-            ],
-        )
-        .with_env(vec![
+        cmd = cmd.with_env(vec![
             ("AGENTOS_FAKE_MODEL".into(), "0".into()),
             (
                 "AGENTOS_MODEL_BASE_URL".into(),
@@ -90,7 +101,7 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
             ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
         ]);
     }
-    compose(&o.file, &["up", "-d", "--wait"])
+    cmd
 }
 
 /// `docker compose -f <file> down` (keep volumes), or `... down -v` with
@@ -122,8 +133,15 @@ pub async fn up(o: LocalOpts) -> Result<()> {
     require_on_path("docker")?;
     let cl = ui.checklist();
     run_step(&cl, "starting dev stack", "up", &cmd).await?;
-    for (label, url) in ENDPOINTS {
-        ui.kv(label, &ui.url(url));
+    for (label, url, is_core) in ENDPOINTS {
+        // Under `--minimal` only the `core` services started, so advertise only
+        // their endpoints; the `full`-only URLs would 404.
+        if !o.minimal || *is_core {
+            ui.kv(label, &ui.url(url));
+        }
+    }
+    if o.slack {
+        ui.note("Slack dispatcher started (Socket Mode; no host port).");
     }
     ui.note("Drive the local product loop (no Slack, no Kubernetes):");
     ui.note(
@@ -226,7 +244,9 @@ mod tests {
         LocalOpts {
             file: file.into(),
             dry_run: false,
+            minimal: false,
             local_model: None,
+            slack: false,
         }
     }
 
@@ -234,8 +254,15 @@ mod tests {
         LocalOpts {
             file: file.into(),
             dry_run: false,
+            minimal: false,
             local_model: Some(model.into()),
+            slack: false,
         }
+    }
+
+    fn read_compose(name: &str) -> String {
+        std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), name))
+            .unwrap_or_else(|e| panic!("read {name}: {e}"))
     }
 
     #[test]
@@ -243,7 +270,7 @@ mod tests {
         let cmd = up_command(&opts(DEFAULT_COMPOSE_FILE));
         assert_eq!(
             cmd.display(),
-            "docker compose -f compose.dev.yaml up -d --wait"
+            "docker compose --profile full -f compose.dev.yaml up -d --wait"
         );
     }
 
@@ -251,6 +278,7 @@ mod tests {
     fn up_local_model_uses_profile_and_env() {
         let cmd = up_command(&opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b"));
         let display = cmd.display();
+        assert!(display.contains("--profile full"), "{display}");
         assert!(display.contains("--profile local-model"), "{display}");
         assert!(display.contains("up -d --wait"), "{display}");
         assert!(cmd
@@ -267,6 +295,68 @@ mod tests {
             String::from("AGENTOS_DOCKER_NETWORK"),
             String::from("agentos_default"),
         )));
+        assert!(cmd.env.contains(&(
+            String::from("COMPOSE_PROJECT_NAME"),
+            String::from("agentos"),
+        )));
+    }
+
+    #[test]
+    fn up_slack_appends_slack_profile() {
+        let mut opts = opts(DEFAULT_COMPOSE_FILE);
+        opts.slack = true;
+        let cmd = up_command(&opts);
+        assert_eq!(
+            cmd.display(),
+            "docker compose --profile full --profile slack -f compose.dev.yaml up -d --wait"
+        );
+    }
+
+    #[test]
+    fn up_minimal_slack_uses_core_and_slack() {
+        let mut opts = opts(DEFAULT_COMPOSE_FILE);
+        opts.minimal = true;
+        opts.slack = true;
+        let display = up_command(&opts).display();
+        assert!(display.contains("--profile core"), "{display}");
+        assert!(display.contains("--profile slack"), "{display}");
+        assert!(!display.contains("--profile full"), "{display}");
+    }
+
+    #[test]
+    fn up_local_model_and_slack_keep_profile_order() {
+        let mut opts = opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b");
+        opts.slack = true;
+        let display = up_command(&opts).display();
+        assert!(
+            display.contains("--profile full --profile local-model --profile slack"),
+            "{display}"
+        );
+    }
+
+    #[test]
+    fn up_minimal_uses_core_profile() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.minimal = true;
+        let cmd = up_command(&o);
+        assert_eq!(
+            cmd.display(),
+            "docker compose --profile core -f compose.dev.yaml up -d --wait"
+        );
+    }
+
+    #[test]
+    fn minimal_and_local_model_combine() {
+        let mut o = opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b");
+        o.minimal = true;
+        let cmd = up_command(&o);
+        let display = cmd.display();
+        assert!(display.contains("--profile core"), "{display}");
+        assert!(display.contains("--profile local-model"), "{display}");
+        assert!(!display.contains("--profile full"), "{display}");
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
         assert!(cmd.env.contains(&(
             String::from("COMPOSE_PROJECT_NAME"),
             String::from("agentos"),
@@ -324,9 +414,7 @@ mod tests {
     /// file" the task asks for, kept mechanical).
     #[test]
     fn endpoints_match_compose_file() {
-        let compose =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../compose.dev.yaml"))
-                .expect("read compose.dev.yaml");
+        let compose = read_compose("compose.dev.yaml");
         // Each printed host port must appear as a `"<host>:<container>"` mapping.
         for (label, host_port) in [
             ("AgentOS API", "28000"),
@@ -345,7 +433,7 @@ mod tests {
                 "compose.dev.yaml no longer maps host port {host_port} for {label}"
             );
             assert!(
-                ENDPOINTS.iter().any(|(_, url)| url.contains(host_port)),
+                ENDPOINTS.iter().any(|(_, url, _)| url.contains(host_port)),
                 "ENDPOINTS missing {host_port} for {label}"
             );
         }
@@ -354,12 +442,156 @@ mod tests {
         // carries this param.
         let console = ENDPOINTS
             .iter()
-            .find(|(label, _)| *label == "AgentOS Console")
+            .find(|(label, _, _)| *label == "AgentOS Console")
             .expect("AgentOS Console endpoint present");
         assert!(
             console.1.contains("api=1"),
             "AgentOS Console endpoint must be the wired ?api=1 URL, got {}",
             console.1
         );
+    }
+
+    /// The 7 services that must carry `profiles: *core_profiles`.
+    const CORE_SERVICES: &[&str] = &[
+        "postgres",
+        "valkey",
+        "minio",
+        "minio-init",
+        "agentos-migrate",
+        "agentos-api",
+        "agentos-worker",
+    ];
+
+    /// The 5 services that must carry `profiles: *full_profiles`.
+    const FULL_SERVICES: &[&str] = &[
+        "clickhouse",
+        "langfuse-worker",
+        "langfuse-web",
+        "otel-collector",
+        "agentos-ui",
+    ];
+
+    /// Return the YAML block for `service`: everything from its `  <service>:`
+    /// header up to the next top-level (2-space-indented) service header. Used
+    /// to assert a profile anchor lives inside the *right* service block, so a
+    /// per-service profile swap fails the test rather than passing on counts.
+    fn service_block<'a>(compose: &'a str, service: &str) -> &'a str {
+        let header = format!("\n  {service}:\n");
+        let start = compose
+            .find(&header)
+            .unwrap_or_else(|| panic!("service {service} not found"));
+        let after = start + header.len();
+        let rest = &compose[after..];
+        // The next service header is the next "\n  " whose following char is not
+        // a space (deeper-indented keys start with "\n    ").
+        let end = rest
+            .match_indices("\n  ")
+            .find(|(i, _)| rest[i + 3..].starts_with(|c: char| c != ' '))
+            .map(|(i, _)| i)
+            .unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    /// Assert the shared core(7)/full(5) profile binding in a compose file:
+    /// the anchors are declared, the counts hold, AND each service block carries
+    /// the anchor it should (so swapping a service's profile fails the test).
+    fn assert_core_full_bindings(compose: &str, file: &str) {
+        assert!(
+            compose.contains("x-core-profiles: &core_profiles [core, full]"),
+            "{file} missing core anchor"
+        );
+        assert!(
+            compose.contains("x-full-profiles: &full_profiles [full]"),
+            "{file} missing full anchor"
+        );
+        assert_eq!(
+            compose.matches("profiles: *core_profiles").count(),
+            7,
+            "{file} core-profile count"
+        );
+        assert_eq!(
+            compose.matches("profiles: *full_profiles").count(),
+            5,
+            "{file} full-profile count"
+        );
+        for service in CORE_SERVICES {
+            let block = service_block(compose, service);
+            assert!(
+                block.contains("profiles: *core_profiles"),
+                "{file}: {service} block must bind *core_profiles"
+            );
+            assert!(
+                !block.contains("profiles: *full_profiles"),
+                "{file}: {service} block must not bind *full_profiles"
+            );
+        }
+        for service in FULL_SERVICES {
+            let block = service_block(compose, service);
+            assert!(
+                block.contains("profiles: *full_profiles"),
+                "{file}: {service} block must bind *full_profiles"
+            );
+            assert!(
+                !block.contains("profiles: *core_profiles"),
+                "{file}: {service} block must not bind *core_profiles"
+            );
+        }
+    }
+
+    /// Lock which endpoints are advertised under `--minimal`: exactly the five
+    /// backed by a `core`-profile service. A core/full mislabel here would print
+    /// a dead URL (or hide a live one) under `--minimal`.
+    #[test]
+    fn minimal_advertises_only_core_endpoints() {
+        let core: Vec<&str> = ENDPOINTS
+            .iter()
+            .filter(|(_, _, is_core)| *is_core)
+            .map(|(label, _, _)| *label)
+            .collect();
+        assert_eq!(
+            core,
+            vec![
+                "AgentOS API",
+                "Postgres",
+                "Valkey",
+                "MinIO S3",
+                "MinIO console",
+            ]
+        );
+    }
+
+    #[test]
+    fn compose_file_declares_core_and_full_profiles() {
+        let compose = read_compose("compose.dev.yaml");
+        assert_core_full_bindings(&compose, "compose.dev.yaml");
+    }
+
+    #[test]
+    fn release_compose_file_declares_core_and_full_profiles() {
+        let compose = read_compose("compose.release.yaml");
+        assert_core_full_bindings(&compose, "compose.release.yaml");
+    }
+
+    #[test]
+    fn compose_file_makes_worker_slack_stub_overridable() {
+        let compose = read_compose("compose.dev.yaml");
+        assert!(compose.contains(
+            "      - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}"
+        ));
+        assert!(compose.contains("      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}"));
+    }
+
+    #[test]
+    fn compose_file_declares_slack_dispatcher_profile() {
+        let compose = read_compose("compose.dev.yaml");
+        let dispatcher = compose
+            .split("  agentos-dispatcher:")
+            .nth(1)
+            .expect("agentos-dispatcher service present");
+        assert!(dispatcher.contains("    profiles: [slack]"));
+        assert!(!dispatcher.contains("profiles: *core_profiles"));
+        assert!(!dispatcher.contains("profiles: *full_profiles"));
+        assert!(dispatcher.contains("      VALKEY_HOST: valkey"));
+        assert!(dispatcher.contains("      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}"));
     }
 }

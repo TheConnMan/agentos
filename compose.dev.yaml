@@ -5,7 +5,11 @@
 # test and UI E2E runs against this stack; it mirrors the Helm dev profile
 # (same components, same pinned versions).
 #
-# Bring up:   docker compose -f compose.dev.yaml up -d
+# Bring up full:  docker compose --profile full -f compose.dev.yaml up -d
+# Bring up core:  docker compose --profile core -f compose.dev.yaml up -d
+# core = postgres, valkey, minio, minio-init, agentos-migrate, agentos-api, agentos-worker
+# full = core + clickhouse, langfuse-web, langfuse-worker, otel-collector, agentos-ui
+# The CLI `agentos local up` wraps these compose profile invocations.
 # Tear down:  docker compose -f compose.dev.yaml down        (keeps volumes; fast restart)
 # Wipe:       docker compose -f compose.dev.yaml down -v     (drops volumes; throwaway)
 #
@@ -56,9 +60,16 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
 
+# `core` is the minimal stack for `agentos local message`; `full` is the whole
+# dev stack. Core services belong to both profiles. `agentos local up` selects
+# `full`, and `agentos local up --minimal` selects `core`.
+x-core-profiles: &core_profiles [core, full]
+x-full-profiles: &full_profiles [full]
+
 services:
   postgres:
     image: postgres:16-alpine
+    profiles: *core_profiles
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -75,6 +86,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
+    profiles: *core_profiles
     command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:-valkeypass}"]
     ports:
       - "26379:6379"
@@ -90,6 +102,7 @@ services:
     # Pinned to 24.8: newer ClickHouse needs AVX and crashes (exit 132) on CPUs
     # without AVX. See the header comment.
     image: clickhouse/clickhouse-server:24.8
+    profiles: *full_profiles
     environment:
       CLICKHOUSE_PASSWORD: clickhouse
     ports:
@@ -111,6 +124,7 @@ services:
 
   minio:
     image: minio/minio
+    profiles: *core_profiles
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: minio
@@ -130,6 +144,7 @@ services:
   # Creates the langfuse bucket so the web/worker never race a missing bucket.
   minio-init:
     image: minio/mc
+    profiles: *core_profiles
     depends_on:
       minio:
         condition: service_healthy
@@ -169,6 +184,7 @@ services:
 
   langfuse-worker:
     image: langfuse/langfuse-worker:3
+    profiles: *full_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -188,6 +204,7 @@ services:
 
   langfuse-web:
     image: langfuse/langfuse:3
+    profiles: *full_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -220,6 +237,7 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
+    profiles: *full_profiles
     command: ["--config=/etc/otel/collector-config.yaml"]
     depends_on:
       langfuse-web:
@@ -254,6 +272,7 @@ services:
   # creates the `agentos` schema, so this also gates on Postgres being reachable.
   agentos-migrate:
     image: ghcr.io/curie-eng/agentos-api:latest
+    profiles: *core_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -268,6 +287,7 @@ services:
   # `agentos local message` channel lookup).
   agentos-api:
     image: ghcr.io/curie-eng/agentos-api:latest
+    profiles: *core_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -308,6 +328,7 @@ services:
   # `http://localhost:28080/?api=1` URL and `local up` opens it connected to the API.
   agentos-ui:
     image: ghcr.io/curie-eng/agentos-ui:latest
+    profiles: *full_profiles
     depends_on:
       agentos-api:
         condition: service_healthy
@@ -347,6 +368,7 @@ services:
     build:
       context: compose
       dockerfile: worker-local.Dockerfile
+    profiles: *core_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -387,8 +409,8 @@ services:
       - S3_SECRET_KEY=miniosecret
       - BUNDLE_BUCKET=agentos-bundles
       - AGENTOS_API_BASE_URL=http://localhost:28000
-      - SLACK_API_BASE_URL=http://localhost:8155/api/
-      - SLACK_BOT_TOKEN=xoxb-dev
+      - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}
       # Fake model by default (no credential needed). For a real model set
       # AGENTOS_FAKE_MODEL=0 and provide a credential in your SHELL (never in this
       # file): the bare names below forward it from your environment only if set.
@@ -404,6 +426,37 @@ services:
       - AGENTOS_MODEL_BASE_URL=${AGENTOS_MODEL_BASE_URL:-}
       - AGENTOS_MODEL=${AGENTOS_MODEL:-}
       - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-}
+    restart: unless-stopped
+
+  # Optional real Slack ingress for local development.
+  #
+  # This service swaps the worker's Slack stub for a real workspace on the
+  # compose stack. It is opt in through the `slack` profile and disabled by
+  # default, so the normal local loop stays offline.
+  #
+  # Enable it:
+  #   export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
+  #   export SLACK_API_BASE_URL=          # empty: un-wire the worker's stub
+  #   docker compose --profile full --profile slack -f compose.dev.yaml up -d
+  #   (or: agentos local up --slack)
+  #
+  # Caveat: Slack allows exactly one Socket Mode owner per app token at a time.
+  # A local dispatcher and a cluster dispatcher on the same Slack app conflict.
+  # Use one dispatcher per app. This is why the service is behind the `slack`
+  # profile and disabled by default.
+  agentos-dispatcher:
+    image: ghcr.io/curie-eng/agentos-dispatcher:latest
+    profiles: [slack]
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-valkeypass}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
     restart: unless-stopped
 
 volumes:

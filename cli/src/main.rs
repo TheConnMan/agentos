@@ -157,7 +157,7 @@ enum SkillAction {
 /// Subcommands of `agentos local`.
 #[derive(Subcommand)]
 enum LocalAction {
-    /// Bring the dev stack up (docker compose up -d --wait) and print URLs.
+    /// Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.
     Up {
         /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
         #[arg(short = 'f', long)]
@@ -165,6 +165,9 @@ enum LocalAction {
         /// Print the docker compose command and exit without executing.
         #[arg(long)]
         dry_run: bool,
+        /// Bring up only the 7 core services (skip Langfuse/ClickHouse/OTel/UI).
+        #[arg(long)]
+        minimal: bool,
         /// Run the named model through local Ollama.
         #[arg(
             long,
@@ -172,6 +175,9 @@ enum LocalAction {
             default_missing_value = commands::DEFAULT_LOCAL_MODEL
         )]
         local_model: Option<String>,
+        /// Also start the optional Slack dispatcher (adds --profile slack).
+        #[arg(long)]
+        slack: bool,
     },
     /// Stop the dev stack (docker compose down), keeping volumes.
     Down {
@@ -527,13 +533,17 @@ async fn main() -> Result<()> {
             LocalAction::Up {
                 file,
                 dry_run,
+                minimal,
                 local_model,
+                slack,
             } => {
                 let file = resolve_compose_file(file, dry_run).await?;
                 local::up(LocalOpts {
                     file,
                     dry_run,
+                    minimal,
                     local_model,
+                    slack,
                 })
                 .await
             }
@@ -548,7 +558,9 @@ async fn main() -> Result<()> {
                     common: LocalOpts {
                         file,
                         dry_run,
+                        minimal: false,
                         local_model: None,
+                        slack: false,
                     },
                     wipe,
                     yes,
@@ -560,7 +572,9 @@ async fn main() -> Result<()> {
                 local::status(LocalOpts {
                     file,
                     dry_run,
+                    minimal: false,
                     local_model: None,
+                    slack: false,
                 })
                 .await
             }
@@ -867,6 +881,30 @@ mod tests {
                 }
                 _ => panic!("expected the local subcommand"),
             }
+        }
+    }
+
+    #[test]
+    fn local_up_parses_minimal_flag() {
+        let cli = Cli::try_parse_from(["agentos", "local", "up", "--minimal"])
+            .expect("local up --minimal should parse");
+        match cli.command {
+            Command::Local {
+                action: LocalAction::Up { minimal, .. },
+            } => assert!(minimal),
+            _ => panic!("expected local up command"),
+        }
+    }
+
+    #[test]
+    fn local_up_parses_slack_flag() {
+        let cli = Cli::try_parse_from(["agentos", "local", "up", "--slack"])
+            .expect("local up --slack should parse");
+        match cli.command {
+            Command::Local {
+                action: LocalAction::Up { slack, .. },
+            } => assert!(slack),
+            _ => panic!("expected local up command"),
         }
     }
 }
