@@ -19,6 +19,7 @@ export function Button({
   full,
   disabled,
   title,
+  testId,
   onClick,
 }: {
   label: ReactNode;
@@ -28,6 +29,7 @@ export function Button({
   full?: boolean;
   disabled?: boolean;
   title?: string;
+  testId?: string;
   onClick?: () => void;
 }) {
   const base = VARIANTS[variant];
@@ -51,7 +53,7 @@ export function Button({
   };
   const hover = disabled ? {} : hoverBg(base.bg, base.hbg);
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={title} style={style} {...hover}>
+    <button type="button" onClick={onClick} disabled={disabled} title={title} data-testid={testId} style={style} {...hover}>
       {icon ? <span style={{ fontFamily: C.mono, fontSize: 12 }}>{icon}</span> : null}
       {label}
     </button>
