@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use redis::aio::MultiplexedConnection;
+use redis::streams::{StreamInfoGroupsReply, StreamPendingCountReply, StreamPendingReply};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -148,15 +150,10 @@ async fn group_last_delivered(
     stream: &str,
     group_name: &str,
 ) -> Option<String> {
-    let groups: Vec<Vec<(String, redis::Value)>> = redis::cmd("XINFO")
-        .arg("GROUPS")
-        .arg(stream)
-        .query_async(conn)
-        .await
-        .ok()?;
-    for group in &groups {
-        if group_field(group, "name").as_deref() == Some(group_name) {
-            return group_field(group, "last-delivered-id");
+    let reply: StreamInfoGroupsReply = conn.xinfo_groups(stream).await.ok()?;
+    for g in &reply.groups {
+        if g.name == group_name {
+            return Some(g.last_delivered_id.clone());
         }
     }
     None
@@ -168,15 +165,10 @@ async fn entry_pending(
     group: &str,
     entry_id: &str,
 ) -> bool {
-    let res: redis::RedisResult<redis::Value> = redis::cmd("XPENDING")
-        .arg(stream)
-        .arg(group)
-        .arg(entry_id)
-        .arg(entry_id)
-        .arg(1)
-        .query_async(conn)
+    let reply: redis::RedisResult<StreamPendingCountReply> = conn
+        .xpending_count(stream, group, entry_id, entry_id, 1)
         .await;
-    matches!(res, Ok(redis::Value::Array(items)) if !items.is_empty())
+    matches!(reply, Ok(r) if !r.ids.is_empty())
 }
 
 fn parse_stream_id(id: &str) -> Option<(u64, u64)> {
@@ -212,28 +204,18 @@ pub async fn diagnostics(
         Err(err) => lines.push(format!("  XLEN unavailable: {err}")),
     }
 
-    match redis::cmd("XINFO")
-        .arg("GROUPS")
-        .arg(stream)
-        .query_async::<Vec<Vec<(String, redis::Value)>>>(conn)
-        .await
-    {
-        Ok(groups) if groups.is_empty() => {
+    match conn.xinfo_groups::<_, StreamInfoGroupsReply>(stream).await {
+        Ok(reply) if reply.groups.is_empty() => {
             lines.push("  no consumer groups: the worker is not consuming this stream".into());
         }
-        Ok(groups) => {
-            for group in &groups {
-                let rendered: Vec<String> = group
-                    .iter()
-                    .map(|(k, v)| format!("{k}={}", render_value(v)))
-                    .collect();
-                lines.push(format!("  group {}", rendered.join(" ")));
-                if let Some(name) = group_field(group, "name") {
-                    lines.push(format!(
-                        "  XPENDING {name}: {}",
-                        xpending(conn, stream, &name).await
-                    ));
-                }
+        Ok(reply) => {
+            for g in &reply.groups {
+                lines.push(format!("  group {}", render_group(g)));
+                lines.push(format!(
+                    "  XPENDING {}: {}",
+                    g.name,
+                    xpending(conn, stream, &g.name).await
+                ));
             }
         }
         Err(err) => lines.push(format!("  XINFO GROUPS unavailable: {err}")),
@@ -242,37 +224,43 @@ pub async fn diagnostics(
     lines.join("\n")
 }
 
+/// Render a consumer group's typed XINFO fields as space-joined `key=value`
+/// pairs for the diagnostics printout.
+fn render_group(g: &redis::streams::StreamInfoGroup) -> String {
+    format!(
+        "name={} consumers={} pending={} last-delivered-id={} entries-read={:?} lag={:?}",
+        g.name, g.consumers, g.pending, g.last_delivered_id, g.entries_read, g.lag
+    )
+}
+
 async fn xpending(conn: &mut MultiplexedConnection, stream: &str, group: &str) -> String {
-    match redis::cmd("XPENDING")
-        .arg(stream)
-        .arg(group)
-        .query_async::<redis::Value>(conn)
+    match conn
+        .xpending::<_, _, StreamPendingReply>(stream, group)
         .await
     {
-        Ok(value) => render_value(&value),
+        Ok(reply) => render_pending(&reply),
         Err(err) => format!("unavailable: {err}"),
     }
 }
 
-fn group_field(group: &[(String, redis::Value)], key: &str) -> Option<String> {
-    group
-        .iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| render_value(v))
-}
-
-/// Render a Redis reply value for the diagnostics printout.
-fn render_value(value: &redis::Value) -> String {
-    match value {
-        redis::Value::Nil => "nil".into(),
-        redis::Value::Int(i) => i.to_string(),
-        redis::Value::BulkString(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        redis::Value::SimpleString(s) => s.clone(),
-        redis::Value::Array(items) | redis::Value::Set(items) => {
-            let parts: Vec<String> = items.iter().map(render_value).collect();
-            format!("[{}]", parts.join(","))
+/// Render a summary XPENDING reply for the diagnostics printout.
+fn render_pending(reply: &StreamPendingReply) -> String {
+    match reply {
+        StreamPendingReply::Empty => "empty".to_string(),
+        StreamPendingReply::Data(d) => {
+            let consumers: Vec<String> = d
+                .consumers
+                .iter()
+                .map(|c| format!("{}:{}", c.name, c.pending))
+                .collect();
+            format!(
+                "count={} start-id={} end-id={} consumers=[{}]",
+                d.count,
+                d.start_id,
+                d.end_id,
+                consumers.join(",")
+            )
         }
-        other => format!("{other:?}"),
     }
 }
 
@@ -343,15 +331,5 @@ mod tests {
         assert!(!id_ge("4-9", "5-0"));
         // Unparseable compares false (not-yet-delivered).
         assert!(!id_ge("0-0", "not-an-id"));
-    }
-
-    #[test]
-    fn render_value_formats_the_shapes_xinfo_returns() {
-        assert_eq!(render_value(&redis::Value::Int(3)), "3");
-        assert_eq!(
-            render_value(&redis::Value::BulkString(b"agentos-workers".to_vec())),
-            "agentos-workers"
-        );
-        assert_eq!(render_value(&redis::Value::Nil), "nil");
     }
 }
