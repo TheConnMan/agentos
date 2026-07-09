@@ -6,6 +6,9 @@ git history (`git log -- docs/`).
 
 ## Living documentation
 
+- [`onboarding.md`](onboarding.md): the local dev onboarding path for a new
+  engineer, from a fresh clone to a verified local turn with no Slack and no
+  cluster.
 - [`vision.md`](vision.md): the north star. What AgentOS is, who it is for, and
   what it could become. The document we hold new features against. Read this to
   understand *why* the project exists before *how* it works.
