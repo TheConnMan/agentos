@@ -7,10 +7,12 @@ router; this module is pure intake logic.
 """
 
 import io
+import stat
 import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 from plugin_format import ValidationResult, validate_bundle
 
@@ -48,18 +50,27 @@ def extract(data: bytes, extension: str, dest: Path) -> None:
 
     if extension == ".zip":
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for name in zf.namelist():
+            # zip has no built-in equivalent of tar's filter="data", so guard
+            # traversal and symlink entries by hand: a symlink like
+            # `x -> ../../etc/passwd` passes a name-only `..` check yet escapes
+            # `dest` when followed (the tar path below is covered by filter="data").
+            for info in zf.infolist():
+                name = info.filename
                 if Path(name).is_absolute() or ".." in Path(name).parts:
                     raise UnsupportedArchive(f"unsafe path in archive: {name}")
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    raise UnsupportedArchive(f"symlink entry not allowed in archive: {name}")
             zf.extractall(dest)
-    elif extension == ".tar.gz":
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-            # filter="data" (py3.12+) blocks absolute paths, traversal, and
-            # special files.
+        return
+    mode: Literal["r:gz", "r:"] = "r:gz" if extension == ".tar.gz" else "r:"
+    with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
+        try:
+            # filter="data" (py3.12+) blocks absolute paths, traversal, symlinks,
+            # and special files; surface a rejection as UnsupportedArchive so the
+            # upload route answers 4xx rather than 500.
             tf.extractall(dest, filter="data")
-    else:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tf:
-            tf.extractall(dest, filter="data")
+        except tarfile.FilterError as exc:
+            raise UnsupportedArchive(f"unsafe entry in archive: {exc}") from exc
 
 
 # Where the frozen validator looks for the manifest; used here only to locate

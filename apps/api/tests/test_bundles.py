@@ -6,6 +6,7 @@ Postgres from the compose stack (per B2 constraints).
 
 import hashlib
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -44,6 +45,41 @@ def _zip(files: dict[str, str]) -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         for rel, content in files.items():
             zf.writestr(rel, content)
+    return buf.getvalue()
+
+
+def _dir_with_symlink(tmp_path: Path) -> Path:
+    """A working tree a plugin author might archive: a real manifest plus a
+    symlink whose name is innocent (no ``..``) but which escapes the bundle."""
+    outside = tmp_path / "outside_secret.txt"
+    outside.write_text("credentials that must not leak")
+    work = tmp_path / "work"
+    (work / ".claude-plugin").mkdir(parents=True)
+    (work / ".claude-plugin" / "plugin.json").write_text(MANIFEST)
+    os.symlink(outside, work / "config.json")
+    return work
+
+
+def _zip_from_dir(root: Path) -> bytes:
+    """Zip a tree the way ``zip --symlinks`` does: a real symlink is stored as a
+    symlink entry (unix mode in external_attr), not its target's bytes."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                info = zipfile.ZipInfo(rel)
+                info.external_attr = os.lstat(path).st_mode << 16
+                zf.writestr(info, os.readlink(path))
+            elif path.is_file():
+                zf.write(path, rel)
+    return buf.getvalue()
+
+
+def _tar_gz_from_dir(root: Path) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        tf.add(root, arcname=".", recursive=True)
     return buf.getvalue()
 
 
@@ -100,6 +136,32 @@ def test_non_archive_is_rejected(tmp_path: Path) -> None:
     except bundles.UnsupportedArchive:
         return
     raise AssertionError("expected UnsupportedArchive")
+
+
+def test_zip_bundle_with_a_symlink_is_rejected(tmp_path: Path) -> None:
+    # Real scenario: a bundle is zipped from a tree containing a symlink pointing
+    # outside itself. The link name is innocent (no `..`), so a name-only guard
+    # passes it, yet extracting it would materialize a link that reads a file
+    # outside the bundle. Build the zip from an actual on-disk symlink.
+    data = _zip_from_dir(_dir_with_symlink(tmp_path))
+    try:
+        bundles.extract(data, ".zip", tmp_path / "out")
+    except bundles.UnsupportedArchive as exc:
+        assert "symlink" in str(exc)
+        return
+    raise AssertionError("expected UnsupportedArchive for a symlinked bundle")
+
+
+def test_tar_bundle_with_a_symlink_is_rejected(tmp_path: Path) -> None:
+    # Same real scenario via tar.gz: tarfile filter="data" rejects the symlink
+    # member; extract surfaces it as UnsupportedArchive (a clean 4xx), not a 500.
+    data = _tar_gz_from_dir(_dir_with_symlink(tmp_path))
+    try:
+        bundles.extract(data, ".tar.gz", tmp_path / "out")
+    except bundles.UnsupportedArchive as exc:
+        assert "unsafe entry" in str(exc)
+        return
+    raise AssertionError("expected UnsupportedArchive for a symlinked tar bundle")
 
 
 # --- full round trip against real MinIO + Postgres -----------------------

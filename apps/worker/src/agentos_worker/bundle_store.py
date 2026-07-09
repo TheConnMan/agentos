@@ -16,6 +16,7 @@ the plugin root the runner sees matches the root the API validated on upload.
 from __future__ import annotations
 
 import io
+import stat
 import tarfile
 import zipfile
 from pathlib import Path
@@ -71,23 +72,45 @@ def _bundle_root(extracted: Path) -> Path:
     return extracted
 
 
-def _safe_extract(data: bytes, dest: Path) -> None:
-    """Extract a zip or tar(.gz) archive into ``dest``, refusing path traversal."""
+def safe_extract(data: bytes, dest: Path) -> None:
+    """Extract a zip or tar(.gz) archive into ``dest``, refusing unsafe entries.
+
+    Unsafe means anything that could write or point outside ``dest``: absolute
+    paths, ``..`` traversal, and symlink entries. The tar path delegates to
+    ``tarfile``'s ``filter="data"`` (py3.12+), which already rejects all three.
+    The zip path has no equivalent built-in, so it is checked here: ``zipfile``
+    would otherwise recreate a symlink entry verbatim, and a symlink such as
+    ``config -> ../../etc/passwd`` passes a name-only ``..`` check yet escapes
+    the extraction dir when followed. This is the single archive extractor for
+    the worker; ``eval.stream`` imports it rather than duplicating the logic.
+    """
     if zipfile.is_zipfile(io.BytesIO(data)):
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for name in zf.namelist():
+            for info in zf.infolist():
+                name = info.filename
                 if Path(name).is_absolute() or ".." in Path(name).parts:
                     raise ValueError(f"unsafe path in bundle: {name}")
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    raise ValueError(f"symlink entry not allowed in bundle: {name}")
             zf.extractall(dest)
         return
+    open_error: tarfile.TarError | None = None
     for mode in ("r:gz", "r:"):
         try:
-            with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
-                tf.extractall(dest, filter="data")
-            return
-        except tarfile.TarError:
+            tf = tarfile.open(fileobj=io.BytesIO(data), mode=mode)
+        except tarfile.TarError as exc:
+            open_error = exc  # wrong compression for this mode; try the next
             continue
-    raise ValueError("bundle is not a recognized zip or tar archive")
+        with tf:
+            try:
+                tf.extractall(dest, filter="data")
+            except tarfile.FilterError as exc:
+                # filter="data" rejects symlinks, absolute paths, traversal, and
+                # special files. Surface it as an unsafe-entry error instead of
+                # letting it fall through and be misreported as "unrecognized".
+                raise ValueError(f"unsafe entry in bundle: {exc}") from exc
+        return
+    raise ValueError("bundle is not a recognized zip or tar archive") from open_error
 
 
 def extract_bundle(data: bytes, dest: Path) -> Path:
@@ -97,5 +120,5 @@ def extract_bundle(data: bytes, dest: Path) -> Path:
     wrapper subdir when the manifest sits one level down -- the same root the
     API validated, so the runner reads the plugin from the expected layout.
     """
-    _safe_extract(data, dest)
+    safe_extract(data, dest)
     return _bundle_root(dest)
