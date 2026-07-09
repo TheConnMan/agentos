@@ -173,6 +173,25 @@ for the install and probe commands.
   commit messages, and never add `Co-Authored-By` lines referencing AI.**
 - No dashes/emdashes in prose content; no emojis in code or docs.
 
+## Decisions: ADR vs. GitHub issue
+
+Two different tools; do not conflate them.
+
+- Write an **ADR** (`docs/adr/`, see ADR-0001) only for a **cross-cutting
+  architectural decision that closes the door on alternatives.** It is a choice
+  about the *shape* of the system (a contract, a seam, a substrate, an invariant)
+  that is expensive to reverse and whose *why* a future contributor must understand
+  before touching that area. An ADR is not just what we chose; it **must record what
+  we decided against and why** (the alternatives and their rejection). If no real
+  alternative is being closed off, it is not an ADR.
+- Write a **GitHub issue** (with a rich description) for a **feature**, however
+  large. A new CLI command, a UI surface, a connector: it may be a lot of code, but
+  it is deletable and does not change the architecture, so it is a feature, not an
+  architectural decision. The issue carries the what and the why; the *how* lives in
+  the PR. An issue may cite an ADR.
+- **When in doubt, write the issue.** Promote to an ADR only when the same decision
+  gets re-explained across a third issue or PR.
+
 ## Gotchas discovered during the build
 
 - **Deployment-to-runtime binding is wired; it binds per fresh mention.** The
