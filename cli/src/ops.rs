@@ -319,6 +319,8 @@ fn pods_cmd(o: &CommonOpts) -> OpsCommand {
             plain("pods"),
             plain("-n"),
             plain(&o.namespace),
+            plain("-o"),
+            plain("json"),
         ],
     )
 }
@@ -556,7 +558,11 @@ pub async fn status(opts: CommonOpts) -> Result<()> {
     // (b) Pod health.
     let (ok, out, _) = run_capture(&pods_cmd(&opts)).await?;
     let (ready, total, unhealthy) = if ok {
-        print_pod_summary(&out)
+        let items: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&out)
+            .ok()
+            .and_then(|v| v.get("items").and_then(|i| i.as_array()).cloned())
+            .unwrap_or_default();
+        print_pod_summary(&items)
     } else {
         ui.warn(&format!(
             "could not list pods in namespace {}",
@@ -656,41 +662,67 @@ fn confirm(o: &CommonOpts) -> Result<bool> {
 /// (ready count, steady state total, names of pods not Running) so the caller
 /// can summarise overall health. Terminal and terminating pods stay visible in
 /// the table but are excluded from the returned tally.
-fn print_pod_summary(pods_output: &str) -> (usize, usize, Vec<String>) {
+fn print_pod_summary(pods: &[serde_json::Value]) -> (usize, usize, Vec<String>) {
     let ui = crate::ui::ui();
-    let rows: Vec<&str> = pods_output
-        .lines()
-        .skip(1) // header
-        .filter(|l| !l.trim().is_empty())
-        .collect();
     let mut ready = 0usize;
     let mut total = 0usize;
     let mut unhealthy: Vec<String> = Vec::new();
     let mut table_rows: Vec<Vec<String>> = Vec::new();
-    for row in &rows {
-        let cols: Vec<&str> = row.split_whitespace().collect();
-        let name = cols.first().copied().unwrap_or("?");
-        let ready_col = cols.get(1).copied().unwrap_or("");
-        let phase = cols.get(2).copied().unwrap_or("");
-        table_rows.push(vec![
-            name.to_string(),
-            ready_col.to_string(),
-            phase.to_string(),
-        ]);
-        if matches!(phase, "Completed" | "Succeeded" | "Terminating") {
+    for pod in pods {
+        let name = pod
+            .get("metadata")
+            .and_then(|m| m.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let terminating = pod
+            .get("metadata")
+            .and_then(|m| m.get("deletionTimestamp"))
+            .is_some();
+        let phase = pod
+            .get("status")
+            .and_then(|s| s.get("phase"))
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
+        let reason = pod
+            .get("status")
+            .and_then(|s| s.get("reason"))
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+        let containers = pod
+            .get("status")
+            .and_then(|s| s.get("containerStatuses"))
+            .and_then(|c| c.as_array());
+        let (ready_n, total_m) = match containers {
+            Some(cs) => {
+                let m = cs.len();
+                let n = cs
+                    .iter()
+                    .filter(|c| c.get("ready").and_then(|r| r.as_bool()) == Some(true))
+                    .count();
+                (n, m)
+            }
+            None => (0, 0),
+        };
+        let ready_col = format!("{ready_n}/{total_m}");
+        let display_status = if terminating {
+            "Terminating"
+        } else if !reason.is_empty() {
+            reason
+        } else {
+            phase
+        };
+        table_rows.push(vec![name.clone(), ready_col, display_status.to_string()]);
+        if phase == "Succeeded" || reason == "Completed" || terminating {
             continue;
         }
         total += 1;
-        // READY is "n/m": ready when the two sides match.
-        let all_ready = ready_col
-            .split_once('/')
-            .map(|(a, b)| a == b && a != "0")
-            .unwrap_or(false);
+        let all_ready = total_m > 0 && ready_n == total_m;
         if all_ready {
             ready += 1;
         }
         if phase != "Running" {
-            unhealthy.push(name.to_string());
+            unhealthy.push(name);
         }
     }
     if !table_rows.is_empty() {
@@ -1162,7 +1194,7 @@ mod tests {
         let cmds = status_commands(&common());
         let lines: Vec<String> = cmds.iter().map(OpsCommand::display).collect();
         assert_eq!(lines[0], "helm status agentos -n agentos");
-        assert_eq!(lines[1], "kubectl get pods -n agentos");
+        assert_eq!(lines[1], "kubectl get pods -n agentos -o json");
         assert_eq!(lines[2], "kubectl get svc agentos-ui -n agentos -o json");
         assert_eq!(
             lines[3],
@@ -1245,40 +1277,45 @@ mod tests {
 
     #[test]
     fn pod_summary_does_not_panic_on_empty() {
-        // Header only: no rows.
-        print_pod_summary("NAME READY STATUS RESTARTS AGE");
+        // No items: empty items array.
+        let items: Vec<serde_json::Value> = Vec::new();
+        let _ = print_pod_summary(&items);
     }
 
     #[test]
     fn pod_summary_excludes_completed_and_terminating() {
-        let pods = r#"NAME READY STATUS RESTARTS AGE
-api0 1/1 Running 0 10m
-api1 1/1 Running 0 10m
-worker0 1/1 Running 0 10m
-worker1 1/1 Running 0 10m
-dispatcher0 1/1 Running 0 10m
-ui0 1/1 Running 0 10m
-postgres0 1/1 Running 0 10m
-valkey0 1/1 Running 0 10m
-langfuse0 1/1 Running 0 10m
-otel0 1/1 Running 0 10m
-runnerold 1/1 Terminating 0 2m
-preflight0 0/1 Completed 0 2m
-preflight1 0/1 Completed 0 2m
-job0 0/1 Succeeded 0 2m"#;
+        let json = r#"[
+            {"metadata":{"name":"api0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"api1"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"worker0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"worker1"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"dispatcher0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"ui0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"postgres0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"valkey0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"langfuse0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"otel0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"runnerold","deletionTimestamp":"2024-01-01T00:00:00Z"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"preflight0"},"status":{"phase":"Succeeded","reason":"Completed","containerStatuses":[{"ready":false,"restartCount":0}]}},
+            {"metadata":{"name":"preflight1"},"status":{"phase":"Succeeded","reason":"Completed","containerStatuses":[{"ready":false,"restartCount":0}]}},
+            {"metadata":{"name":"job0"},"status":{"phase":"Succeeded","containerStatuses":[{"ready":false,"restartCount":0}]}}
+        ]"#;
 
-        assert_eq!(print_pod_summary(pods), (10, 10, vec![]));
+        let items: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
+        assert_eq!(print_pod_summary(&items), (10, 10, vec![]));
     }
 
     #[test]
     fn pod_summary_flags_genuinely_unhealthy_steady_state_pod() {
-        let pods = r#"NAME READY STATUS RESTARTS AGE
-api0 1/1 Running 0 10m
-worker0 1/1 Running 0 10m
-dispatcher0 0/1 Pending 0 1m"#;
+        let json = r#"[
+            {"metadata":{"name":"api0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"worker0"},"status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}},
+            {"metadata":{"name":"dispatcher0"},"status":{"phase":"Pending","containerStatuses":[]}}
+        ]"#;
 
+        let items: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
         assert_eq!(
-            print_pod_summary(pods),
+            print_pod_summary(&items),
             (2, 3, vec!["dispatcher0".to_string()])
         );
     }
