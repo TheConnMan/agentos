@@ -554,6 +554,9 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
     let created_by = std::env::var("USER").unwrap_or_else(|_| "agentos-cli".to_string());
 
     let ui = crate::ui::ui();
+    if let Some(channel) = opts.slack_channel.as_deref() {
+        validate_slack_channel(channel)?;
+    }
     let archive = pack_tar_gz(&plugin_dir)?;
     let env = opts.env.as_str();
     ui.note(&format!(
@@ -628,6 +631,24 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
     Ok(())
 }
 
+/// Reject a Slack channel value that is a `#name` rather than a channel ID.
+///
+/// Real Slack events carry the channel **ID** (e.g. `C0123ABCD`), and the
+/// worker's binding resolver matches on that ID, so a `#name` value is stored
+/// verbatim and never routes -- a silently dead binding. Fail the deploy up
+/// front instead.
+fn validate_slack_channel(channel: &str) -> Result<()> {
+    if channel.trim_start().starts_with('#') {
+        bail!(
+            "slack channel {channel:?} is a name, not an ID: real Slack events carry the \
+             channel ID (e.g. C0123ABCD) and the worker routes on it, so a #name binding \
+             never receives messages. Pass the channel ID instead -- find it in the \
+             channel's About tab, or the channel URL (.../archives/C0123ABCD)."
+        );
+    }
+    Ok(())
+}
+
 fn resolve_url(explicit: Option<String>) -> Result<String> {
     if let Some(url) = explicit {
         return Ok(url);
@@ -662,7 +683,7 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_cases_path;
+    use super::{resolve_cases_path, validate_slack_channel};
     use std::path::PathBuf;
 
     #[test]
@@ -699,5 +720,21 @@ mod tests {
         let cwd = tempfile::tempdir().unwrap();
         let err = resolve_cases_path(None, cwd.path(), None).unwrap_err();
         assert!(err.to_string().contains("--cases"), "{err}");
+    }
+
+    #[test]
+    fn rejects_hash_prefixed_channel_name() {
+        let err = validate_slack_channel("#testing").unwrap_err().to_string();
+        assert!(err.contains("channel ID"), "{err}");
+    }
+
+    #[test]
+    fn accepts_channel_id() {
+        assert!(validate_slack_channel("C0BF2CL1U2F").is_ok());
+    }
+
+    #[test]
+    fn rejects_leading_whitespace_hash() {
+        assert!(validate_slack_channel("  #testing").is_err());
     }
 }
