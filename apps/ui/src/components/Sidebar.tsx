@@ -94,7 +94,7 @@ export function Sidebar() {
 
       <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {ITEMS.map(([id, label]) => {
-          const active = state.nav === id && !state.agentDetail && !state.terminal;
+          const active = state.nav === id && !state.agentDetail;
           const badge = badges[id];
           return (
             <button

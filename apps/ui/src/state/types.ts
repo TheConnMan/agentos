@@ -30,7 +30,6 @@ export interface AppState {
   level: FixtureLevel;
   nav: Nav;
   env: Env;
-  terminal: boolean;
   obsTab: ObsTab;
   evalTab: EvalTab;
   metricRange: MetricRange;
@@ -68,7 +67,6 @@ export type Action =
   | { type: "closeModal" }
   | { type: "toast"; message: string | null }
   | { type: "setEnv"; env: Env }
-  | { type: "toggleTerminal" }
   | { type: "setObsTab"; tab: ObsTab }
   | { type: "viewTraces"; agentId: string | null }
   | { type: "setEvalTab"; tab: EvalTab }
