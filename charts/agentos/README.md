@@ -233,11 +233,12 @@ comfortable headroom for integration and soak testing.
 
 ## Security rails
 
-The four security-boundary rails ship **on by default** (ADR-0006). They attach to the
-agent-sandbox runner surface, so their NetworkPolicy / RBAC / probe resources
+The security-boundary rails ship **on by default** (ADR-0006). The runner-surface
+rails attach to the agent-sandbox, so their NetworkPolicy / RBAC / probe resources
 render only when `agentSandbox.deploy: true` (there are no runner pods to protect
 otherwise). With the sandbox off, the rendered manifests are byte-identical to a
-chart without the security rails.
+chart without those rails. The data-tier ingress rail is independent of the
+sandbox and renders whenever an in-chart store is deployed.
 
 | Rail | What ships | Values |
 |---|---|---|
@@ -245,6 +246,7 @@ chart without the security rails.
 | 2. Per-agent secret isolation | Least-privilege runner ServiceAccount (no secret get/list, token not mounted). The per-agent `resourceNames`-scoped Role is bound by the control plane per agent. | `agentSandbox.runner.serviceAccount.*` |
 | 3. Non-root / read-only rootfs | Pod + container securityContext on the runner: `runAsNonRoot`, uid 1000, `readOnlyRootFilesystem`, drop ALL caps, no privilege escalation, RuntimeDefault seccomp, plus writable emptyDir scratch (`/tmp`, `/home/runner`) and `HOME`. | `agentSandbox.runner.hardening.*` |
 | 4. gVisor kernel isolation | `runtimeClassName` on runner pods, driven by the `security.gvisor.mode` tri-state (`auto`/`require`/`off`) + a preflight that fails the install if the RuntimeClass is missing or downgraded, firing in `require` (always) and in `auto` for real-model runs + an optional RuntimeClass object. | `security.gvisor.*`, `security.gvisorPreflight.*` |
+| 5. Data-tier ingress isolation | Per deployed store (Postgres, MinIO, ClickHouse, Valkey): a default-deny-ingress NetworkPolicy plus a scoped-allow that permits ingress on the store's ports ONLY from this release's app pods (`name`+`instance` label). Blocks any co-tenant pod from opening `Postgres:5432` etc. | `security.dataTierNetworkPolicy.*` |
 
 **Fail-closed egress.** `security.networkPolicy.allowedEgress` is EMPTY by
 default: a fresh install denies all egress except DNS until the operator declares
@@ -264,6 +266,17 @@ sealed default denies. `--allow-web-egress 0.0.0.0/0` opens the open internet
 (still minus the `169.254.169.254` metadata endpoint the chart carves out of
 `0.0.0.0/0`); narrow the CIDR to a specific provider for a tighter posture. Omit
 the flag and the install stays fully sealed.
+
+**Data-tier ingress isolation.** The backing stores hold every credential and all
+trace/app data, so `security.dataTierNetworkPolicy.enabled` (default `true`)
+wraps each DEPLOYED in-chart store in a default-deny-ingress NetworkPolicy plus a
+scoped-allow that only admits this release's own app pods (matched by
+`app.kubernetes.io/name` + `app.kubernetes.io/instance`) on the store's ports.
+Without it, any pod in a NetworkPolicy-enforcing cluster could open `Postgres:5432`
+and exfiltrate. BYO stores (`<store>.deploy: false`) are external and get no
+policy. Claim 5 of the security probe verifies it empirically (an app-labeled pod
+reaches each store while a non-app-labeled pod is blocked), which also catches a
+non-enforcing CNI.
 
 **gVisor needs runsc on the node**, and `security.gvisor.mode` is a tri-state
 (default `auto`):
@@ -292,7 +305,7 @@ RuntimeClass object (the node must still provide the runtime).
 
 ```bash
 helm test <release> -n <ns>
-kubectl logs -n <ns> job/<release>-security-probe            # claims 1, 2, 4
+kubectl logs -n <ns> job/<release>-security-probe            # claims 1, 2, 4, 5
 kubectl logs -n <ns> <release>-security-probe-hardening      # claim 3
 ```
 
