@@ -41,6 +41,8 @@ from .sandbox import (
 from .slack_sink import AsyncSlackSink
 from .threadlock import ThreadLock
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Runtime:
@@ -109,6 +111,16 @@ def _sandbox_client(
                 "before starting the worker, set AGENTOS_MODEL_BASE_URL to a local "
                 "endpoint for local-model mode, or set AGENTOS_FAKE_MODEL=1 for an "
                 "offline/test run."
+            )
+        if not env.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+            # A silent no-telemetry config is a common footgun in local middle
+            # mode: runs execute but no traces reach Langfuse. Warn at boot so it
+            # is caught early rather than debugged as "the Runs view is empty".
+            logger.warning(
+                "AGENTOS_SANDBOX_SUBSTRATE=docker but OTEL_EXPORTER_OTLP_ENDPOINT "
+                "is not set: runner containers will emit no traces. Set it (e.g. "
+                "http://otel-collector:4318, joined via AGENTOS_DOCKER_NETWORK) to "
+                "enable OTLP export."
             )
         return DockerSandboxClient(
             image=env.get("AGENTOS_RUNNER_IMAGE", "agentos-runner"),

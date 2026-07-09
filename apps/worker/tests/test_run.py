@@ -7,6 +7,8 @@ AGENTOS_FAKE_MODEL must fail loudly instead of silently degrading to a fake.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from agentos_worker.config import WorkerConfig
 from agentos_worker.run import _sandbox_client, _substrate_config
@@ -81,3 +83,26 @@ def test_docker_with_explicit_fake_model_builds_docker_client() -> None:
         WorkerConfig(fake_model=True), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB
     )
     assert isinstance(client, DockerSandboxClient)
+
+
+def test_docker_without_otel_endpoint_warns(caplog: pytest.LogCaptureFixture) -> None:
+    # A Docker worker with no OTLP endpoint runs fine but emits no traces; the
+    # worker warns at boot so the silent no-telemetry config is caught early.
+    with caplog.at_level(logging.WARNING, logger="agentos_worker.run"):
+        _sandbox_client(
+            WorkerConfig(fake_model=True), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB
+        )
+    assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.message for r in caplog.records)
+
+
+def test_docker_with_otel_endpoint_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="agentos_worker.run"):
+        _sandbox_client(
+            WorkerConfig(fake_model=True),
+            {
+                "AGENTOS_SANDBOX_SUBSTRATE": "docker",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel-collector:4318",
+            },
+            _SUB,
+        )
+    assert not any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.message for r in caplog.records)

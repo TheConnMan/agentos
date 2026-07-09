@@ -15,8 +15,14 @@ from typing import Any
 
 import httpx
 import pytest
-from agentos_worker.eval import EvalCaseResult, EvalRunResult, LangfuseEvalRecorder
+from agentos_worker.eval import (
+    EvalCaseResult,
+    EvalRunResult,
+    EvalSuite,
+    LangfuseEvalRecorder,
+)
 from agentos_worker.eval.recorder import SCORE_NAME
+from agentos_worker.eval.run import run_eval_suite
 
 _LF_HOST = os.environ.get("TEST_LANGFUSE_HOST", "http://localhost:23000")
 _LF_PK = os.environ.get("TEST_LANGFUSE_PUBLIC_KEY", "pk-lf-agentos-dev")
@@ -86,5 +92,39 @@ def test_records_per_case_results_and_reads_them_back() -> None:
             for trace in traces:
                 expected = 1.0 if (trace.get("metadata") or {}).get("passed") else 0.0
                 assert await _score_for_trace(client, trace["id"]) == expected
+
+    asyncio.run(go())
+
+
+def test_empty_suite_run_writes_no_langfuse_trace() -> None:
+    # Real scenario: a plugin ships an eval suite with no cases (or a 0/0
+    # replay). Running it must not write observation-less trace shells -- keep
+    # the honest empty state. Drive the real run_eval_suite entrypoint over an
+    # empty suite (0 cases => 0 runner calls => a real empty result) and assert
+    # nothing is ingested. Only Langfuse's HTTP is spied (the external-service
+    # rule); the eval run path itself is exercised for real.
+    async def go() -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(207, json={"errors": []})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            recorder = LangfuseEvalRecorder(
+                base_url="http://langfuse.invalid",
+                public_key="pk",
+                secret_key="sk",
+                client=client,
+            )
+            result = await run_eval_suite(
+                EvalSuite(name="empty", cases=[]),
+                base_url="http://runner.invalid",
+                version="v1",
+                recorder=recorder,
+            )
+
+        assert result.results == []
+        assert requests == []  # 0-case run -> no ingestion, no observation-less shell
 
     asyncio.run(go())

@@ -246,9 +246,17 @@ class EvalStreamConsumer:
                     count=1,
                     block=self._config.read_block_ms,
                 )
-            except (RedisTimeoutError, RedisConnectionError) as exc:
-                # Same transient-transport guard as the runs consumer: a blocking
-                # read timeout or connection blip must not kill the eval loop.
+            except RedisTimeoutError:
+                # The routine case: the blocking read hit its block window with no
+                # eval entries. This fires every poll cycle on an idle worker, so
+                # log at DEBUG rather than flooding logs with WARNINGs.
+                logger.debug("eval stream read timed out (idle); retrying")
+                await self._sleep_or_stop(_EVAL_READ_ERROR_BACKOFF_S)
+                continue
+            except RedisConnectionError as exc:
+                # A real transport blip (Valkey failover, pod-to-pod drop): keep
+                # WARNING so genuine failures stay visible. It must still not kill
+                # the eval loop.
                 logger.warning("eval stream read failed transiently; retrying: %s", exc)
                 await self._sleep_or_stop(_EVAL_READ_ERROR_BACKOFF_S)
                 continue

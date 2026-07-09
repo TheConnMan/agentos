@@ -46,6 +46,12 @@ class LangfuseEvalRecorder:
 
     async def record(self, run: EvalRunResult) -> list[str]:
         """Ingest one trace + score per case. Returns the created trace ids."""
+        if not run.results:
+            # A run with no case results (a 0/0 replay, an empty suite, or a
+            # failed-to-load bundle reported with results=[]) has nothing to
+            # observe. Posting it would create observation-less trace shells;
+            # keep the honest empty state and write nothing.
+            return []
         now = _now_iso()
         batch: list[dict[str, Any]] = []
         trace_ids: list[str] = []
