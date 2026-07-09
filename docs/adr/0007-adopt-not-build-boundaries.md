@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-A small team (CT is ~7 people) cannot maintain a bespoke telemetry datastore, eval engine, queue, or agent runtime and still ship a product. The guiding principle from the on-prem research (`docs/reference/on-prem-architecture.md`, removed post-MVP; see git history) is to minimize what gets built and lean on license-clean open source for everything else.
+A small team cannot maintain a bespoke telemetry datastore, eval engine, queue, or agent runtime and still ship a product. The guiding principle from the on-prem research (`docs/reference/on-prem-architecture.md`, removed post-MVP; see git history) is to minimize what gets built and lean on license-clean open source for everything else.
 
 ## Decision
 
