@@ -9,6 +9,7 @@ import {
   createVersion,
   uploadBundle,
   createDeployment,
+  updateAgent,
   BundleValidationError,
   ApiError,
   type BundleFile,
@@ -20,6 +21,52 @@ function isSkillFile(path: string): boolean {
   return path.endsWith("/SKILL.md") || path === "SKILL.md";
 }
 
+// Read-only view of a non-SKILL bundle file (manifest, evals/cases.json, …). Only
+// SKILL.md files are editable; everything else in the tree is viewable, not edited.
+function FileView({ path, content }: { path: string; content: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div
+        style={{
+          padding: "8px 14px",
+          borderBottom: "1px solid " + C.border,
+          fontFamily: C.mono,
+          fontSize: 12,
+          color: C.muted,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span style={{ color: C.text2 }}>{path}</span>
+        <span style={{ marginLeft: "auto", fontSize: 11 }}>read-only</span>
+      </div>
+      <pre
+        data-testid="file-view"
+        style={{
+          margin: 0,
+          padding: "12px 16px",
+          height: 360,
+          overflow: "auto",
+          background: C.darkest,
+          color: C.text2,
+          fontFamily: C.mono,
+          fontSize: 12.5,
+          lineHeight: 1.55,
+          whiteSpace: "pre",
+        }}
+      >
+        {content}
+      </pre>
+    </div>
+  );
+}
+
+// The worker resolves agents.slack_channel against the Slack channel ID, not the
+// name. Soft check (mirrors NewAgentModal): a non-ID value warns but still saves;
+// only an empty value blocks. Copied CLI-synthetic channels are arbitrary strings.
+const CHANNEL_ID_RE = /^[CDG][A-Z0-9]+$/;
+
 // The wired agent-detail surface (FX2 headline). Opens from the Agents list:
 // loads the agent's active version, shows its bundle's skills, lets you edit each
 // skills/*/SKILL.md in the same editor as the create modal, and ships a new
@@ -27,7 +74,7 @@ function isSkillFile(path: string): boolean {
 // deployment) carrying the edited content — nothing else in the bundle is lost.
 export function WiredAgentDetail() {
   const { state, dispatch } = useStore();
-  const { agents } = useWired();
+  const { agents, refetch } = useWired();
   const agentId = state.agentDetail;
   const agent = agents.find((a) => a.id === agentId) ?? null;
 
@@ -43,6 +90,22 @@ export function WiredAgentDetail() {
   const [issues, setIssues] = useState<BundleIssue[]>([]);
   const [deployedLabel, setDeployedLabel] = useState<string | null>(null);
 
+  // Editable Slack channel (item 5). Seeded from the agent, re-seeded if it changes.
+  const [channel, setChannel] = useState("");
+  const [savingChannel, setSavingChannel] = useState(false);
+  const [channelError, setChannelError] = useState<string | null>(null);
+  const channelValue = channel.trim();
+  const channelBlank = channelValue === "";
+  const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
+
+  useEffect(() => {
+    setChannel(agent?.slack_channel ?? "");
+    setChannelError(null);
+  }, [agent?.id, agent?.slack_channel]);
+
+  // The whole bundle tree (item 4): every file is browsable; only SKILL.md files
+  // are editable, the rest are read-only views.
+  const allFiles = files.files ?? [];
   const skillFiles = useMemo(() => (files.files ?? []).filter((f) => isSkillFile(f.path)), [files.files]);
 
   useEffect(() => {
@@ -50,12 +113,29 @@ export function WiredAgentDetail() {
     const map: Record<string, string> = {};
     for (const f of files.files ?? []) map[f.path] = f.content;
     setEdited(map);
-    setSelectedPath(skillFiles[0]?.path ?? null);
+    // Prefer a SKILL.md so the edit/deploy path is front and center, else the
+    // first file in the tree.
+    setSelectedPath(skillFiles[0]?.path ?? files.files?.[0]?.path ?? null);
     setDeployError(null);
     setIssues([]);
     // skillFiles is derived from files.files, so files.files is the real dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files.files]);
+
+  const saveChannel = async () => {
+    if (!agent || savingChannel || channelBlank) return;
+    setSavingChannel(true);
+    setChannelError(null);
+    try {
+      await updateAgent(agent.id, { slack_channel: channelValue });
+      refetch(); // refresh the wired agent data so the displayed channel updates
+      dispatch({ type: "toast", message: `Channel set to ${channelValue}` });
+    } catch (e) {
+      setChannelError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingChannel(false);
+    }
+  };
 
   // Return to the Agents list this detail was opened from. closeAgentDetail's
   // reducer lands on Overview, so navigate explicitly instead.
@@ -124,7 +204,54 @@ export function WiredAgentDetail() {
             active {activeVersion.version_label}
           </Chip>
         ) : null}
-        <span style={{ marginLeft: "auto", fontSize: 12.5, color: C.muted, fontFamily: C.mono }}>{agent.slack_channel}</span>
+        <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: C.muted, fontFamily: C.mono }}>channel</span>
+            <input
+              data-testid="channel-input"
+              value={channel}
+              onChange={(e) => {
+                setChannel(e.target.value);
+                setChannelError(null);
+              }}
+              placeholder="C0123ABCD"
+              style={{
+                background: C.input,
+                border: "1px solid " + (channelLooksOff ? C.warn : C.borderStrong),
+                borderRadius: 7,
+                padding: "5px 9px",
+                color: C.text,
+                fontFamily: C.mono,
+                fontSize: 12.5,
+                width: 150,
+              }}
+            />
+            <Button
+              label={savingChannel ? "Saving…" : "Save"}
+              variant="secondary"
+              size="sm"
+              testId="channel-save"
+              disabled={channelBlank || savingChannel}
+              title={channelBlank ? "Enter the Slack channel ID first" : undefined}
+              onClick={() => void saveChannel()}
+            />
+          </div>
+          {channelLooksOff ? (
+            <div data-testid="channel-warn" style={{ fontSize: 11, color: C.warn, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
+              That does not look like a channel ID (C…). Mentions match on the ID, not the name — save anyway if you are
+              using the CLI.
+            </div>
+          ) : null}
+          {channelError ? (
+            <div data-testid="channel-error" style={{ fontSize: 11, color: C.destructive, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
+              Could not update channel: {channelError}
+            </div>
+          ) : (
+            <div style={{ fontSize: 10.5, color: C.muted, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
+              Saved to the stored config; the live worker keeps its channel until the next deploy.
+            </div>
+          )}
+        </div>
       </div>
 
       {versions.loading ? (
@@ -144,34 +271,38 @@ export function WiredAgentDetail() {
         </Card>
       ) : files.error ? (
         <Notice padding="34px 20px">{`Could not load skills: ${files.error}`}</Notice>
-      ) : skillFiles.length === 0 ? (
+      ) : allFiles.length === 0 ? (
         <Card>
-          <Notice padding="34px 20px">This bundle has no skills/*/SKILL.md files.</Notice>
+          <Notice padding="34px 20px">This bundle has no files.</Notice>
         </Card>
       ) : (
         <div>
-          {skillFiles.length > 1 ? (
+          {allFiles.length > 1 ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              {skillFiles.map((f) => (
-                <button
-                  key={f.path}
-                  type="button"
-                  data-testid="skill-tab"
-                  onClick={() => setSelectedPath(f.path)}
-                  style={{
-                    fontFamily: C.mono,
-                    fontSize: 12,
-                    padding: "5px 10px",
-                    borderRadius: 7,
-                    cursor: "pointer",
-                    background: f.path === selectedPath ? C.hover : C.card,
-                    color: f.path === selectedPath ? C.text : C.text2,
-                    border: "1px solid " + (f.path === selectedPath ? C.borderStrong : C.border),
-                  }}
-                >
-                  {f.path}
-                </button>
-              ))}
+              {allFiles.map((f) => {
+                const editable = isSkillFile(f.path);
+                return (
+                  <button
+                    key={f.path}
+                    type="button"
+                    data-testid={editable ? "skill-tab" : "file-tab"}
+                    onClick={() => setSelectedPath(f.path)}
+                    title={editable ? undefined : "read-only"}
+                    style={{
+                      fontFamily: C.mono,
+                      fontSize: 12,
+                      padding: "5px 10px",
+                      borderRadius: 7,
+                      cursor: "pointer",
+                      background: f.path === selectedPath ? C.hover : C.card,
+                      color: f.path === selectedPath ? C.text : editable ? C.text2 : C.muted,
+                      border: "1px solid " + (f.path === selectedPath ? C.borderStrong : C.border),
+                    }}
+                  >
+                    {f.path}
+                  </button>
+                );
+              })}
             </div>
           ) : null}
 
@@ -185,7 +316,7 @@ export function WiredAgentDetail() {
               marginBottom: 16,
             }}
           >
-            {selectedPath ? (
+            {selectedPath && isSkillFile(selectedPath) ? (
               <SkillEditor
                 key={selectedPath}
                 path={selectedPath}
@@ -200,6 +331,12 @@ export function WiredAgentDetail() {
                 }}
                 testId="skill-editor"
                 height={360}
+              />
+            ) : selectedPath ? (
+              <FileView
+                key={selectedPath}
+                path={selectedPath}
+                content={allFiles.find((f) => f.path === selectedPath)?.content ?? ""}
               />
             ) : null}
             {issues.length > 0 ? (

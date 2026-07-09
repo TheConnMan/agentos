@@ -325,6 +325,19 @@ export async function getConfig(): Promise<AppConfig> {
   return jsonOrThrow<AppConfig>(resp);
 }
 
+// PATCH an agent's mutable fields (currently just its Slack channel). Returns
+// the updated agent. Mirrors createAgent's JSON-body shape; non-2xx throws
+// ApiError. The live worker keeps its channel until the next deploy — this only
+// updates the stored config the next deployment reads.
+export async function updateAgent(agentId: string, patch: { slack_channel: string }): Promise<AgentOut> {
+  const resp = await fetch(url(`/agents/${agentId}`), {
+    method: "PATCH",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(patch),
+  });
+  return jsonOrThrow<AgentOut>(resp);
+}
+
 // Delete an agent (cascades its versions/deployments server-side; 204 No Content
 // on success). A 409 (active deployment) surfaces via the thrown ApiError.
 export async function deleteAgent(agentId: string): Promise<void> {

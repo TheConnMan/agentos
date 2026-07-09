@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { bundleFileTree, buildBundleZip, bundleTreeFromFiles, nextVersionLabel } from "./bundle";
 import {
   createAgent,
+  updateAgent,
   uploadBundle,
   BundleValidationError,
   ApiError,
@@ -188,6 +189,20 @@ describe("agent-detail client calls", () => {
     const err = (await getVersionFiles("a1", "v9").catch((e: unknown) => e)) as ApiError;
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(404);
+  });
+
+  it("PATCHes the agent's Slack channel and returns the updated agent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, { id: "a1", name: "deal-desk", slack_channel: "C9999ZZZZ", created_at: "now" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const agent = await updateAgent("a1", { slack_channel: "C9999ZZZZ" });
+    expect(agent.slack_channel).toBe("C9999ZZZZ");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/agents/a1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({ slack_channel: "C9999ZZZZ" });
+    expect((init.headers as Record<string, string>)["X-API-Key"]).toBeTruthy();
   });
 
   it("activates a version by POSTing a deployment", async () => {
