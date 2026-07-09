@@ -244,11 +244,20 @@ class FakeRunner:
         self.hold: object | None = None  # asyncio.Event when a turn should hang
         self.tail: list[OutboundEvent] = []
         self.event_fail_times: int = 0  # return 500 on the next N /v1/event calls
+        # Per-route captured request headers (the ACI auth Bearer check reads
+        # these): the most recent request's headers for each route, so a test can
+        # assert the worker delivered its per-sandbox token as Authorization.
+        self.event_headers: list[dict[str, str]] = []
+        self.steer_headers: list[dict[str, str]] = []
+        self.interrupt_headers: list[dict[str, str]] = []
+        self.status_headers: list[dict[str, str]] = []
 
-    async def _status(self, _request: web.Request) -> web.Response:
+    async def _status(self, request: web.Request) -> web.Response:
+        self.status_headers.append(dict(request.headers))
         return web.json_response({"status": "idle-awaiting-input", "turn_active": self.turn_active})
 
     async def _event(self, request: web.Request) -> web.StreamResponse:
+        self.event_headers.append(dict(request.headers))
         body = await request.json()
         self.opened.append(body["text"])
         if self.event_fail_times > 0:
@@ -269,6 +278,7 @@ class FakeRunner:
         return resp
 
     async def _steer(self, request: web.Request) -> web.Response:
+        self.steer_headers.append(dict(request.headers))
         body = await request.json()
         if not self.turn_active:
             return web.json_response({"error": "no active turn"}, status=409)
@@ -276,6 +286,7 @@ class FakeRunner:
         return web.json_response({"ok": True})
 
     async def _interrupt(self, request: web.Request) -> web.Response:
+        self.interrupt_headers.append(dict(request.headers))
         self.interrupts += 1
         if self.hold is not None:
             self.hold.set()  # type: ignore[attr-defined]

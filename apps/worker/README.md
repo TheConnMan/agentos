@@ -16,7 +16,10 @@ env built from the resolution: `AGENTOS_BUDGET` (the agent's
 `max_usd_per_day`/`max_output_tokens_per_run`, platform defaults when NULL),
 `AGENTOS_SESSION_ID`, `AGENTOS_AGENT_ID`, `AGENTOS_PLUGIN_DIR`, and
 `AGENTOS_BUNDLE_REF` (the MinIO key). An unmapped channel is a polite placeholder
-edit and drop, never a crash.
+edit and drop, never a crash. The claim env also carries a per-sandbox
+`AGENTOS_RUNNER_TOKEN` (minted with `secrets.token_urlsafe`) that the `RunnerClient`
+sends as an `Authorization: Bearer` header on every ACI call to that sandbox
+(issue #63).
 
 > Handoff: `AGENTOS_BUNDLE_REF` is a MinIO object key; the runner reads
 > `AGENTOS_PLUGIN_DIR` as a local mounted path and does not fetch. Fetching the

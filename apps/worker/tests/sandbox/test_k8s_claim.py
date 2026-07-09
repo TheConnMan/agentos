@@ -82,3 +82,22 @@ def test_credential_is_never_written_to_the_claim() -> None:
     assert all("super-secret-token" not in e.get("value", "") for e in entries)
     # The rest of the boot env is still written.
     assert {"name": "AGENTOS_BUDGET", "value": "{}"} in entries
+
+
+def test_runner_token_is_a_plaintext_env_entry_credential_excluded() -> None:
+    # The per-sandbox runner token intentionally rides the generic env loop as a
+    # plaintext {name, value} entry on the claim (there is no secretKeyRef path
+    # for it), while the model credential stays excluded.
+    api = _FakeApi()
+    _client(api).create_claim(
+        "claim-1",
+        pool="pool",
+        env={
+            "AGENTOS_BUDGET": "{}",
+            "AGENTOS_RUNNER_TOKEN": "tok-26",
+            "AGENTOS_CREDENTIALS": "super-secret-token",
+        },
+    )
+    entries = _env_entries(api)
+    assert {"name": "AGENTOS_RUNNER_TOKEN", "value": "tok-26"} in entries
+    assert all(e.get("name") != "AGENTOS_CREDENTIALS" for e in entries)

@@ -19,6 +19,7 @@ from aci_protocol import (
     TextDelta,
 )
 from agentos_dispatcher.queue import QueuedSlackEvent
+from agentos_worker.behaviorpacks import BehaviorPacks
 
 DONE = SessionStatus.DONE
 IDLE = SessionStatus.IDLE_AWAITING_INPUT
@@ -404,5 +405,69 @@ def test_order_lock_map_evicts_after_processing(make_harness) -> None:
             # Ref-counted eviction: no per-thread lock entry lingers once the last
             # holder releases (a regression would leak one entry per thread seen).
             assert h.kernel._order_locks == {}
+
+    asyncio.run(go())
+
+
+# --- Per-sandbox runner token delivery, end-to-end (issue #63) ----------------
+
+
+class _FakeResolved:
+    """The minimal resolved deployment the kernel reads (agent_id only; shimmer
+    off, so packs are never sampled)."""
+
+    def __init__(self, agent_id: uuid.UUID) -> None:
+        self.agent_id = agent_id
+
+
+class _TokenBinding:
+    """A binding whose boot_env injects a known runner token into the claim env,
+    so the test can assert the exact value the worker delivers as the Bearer
+    header. The claim-time minting itself is covered by the binding unit tests;
+    this proves the claim->handle->kernel->runner delivery path."""
+
+    def __init__(self, token: str, agent_id: uuid.UUID) -> None:
+        self._token = token
+        self._agent_id = agent_id
+
+    async def resolve(self, _channel: str) -> _FakeResolved:
+        return _FakeResolved(self._agent_id)
+
+    def boot_env(self, _resolved: object, _thread_key: str) -> dict[str, str]:
+        return {"AGENTOS_RUNNER_TOKEN": self._token}
+
+    def packs_for(self, _resolved: object) -> BehaviorPacks:
+        return BehaviorPacks()
+
+
+def test_kernel_delivers_claim_token_as_bearer_header(make_harness) -> None:
+    async def go() -> None:
+        binding = _TokenBinding("tok-24", uuid.uuid4())
+        async with make_harness(binding=binding) as h:
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="w")]
+            h.runner.tail = [Final(text="done", status=DONE)]
+
+            e1 = _qevent("first", thread="tTok")
+            t1 = asyncio.create_task(h.kernel.process_event(e1))
+            await _wait_until(lambda: h.runner.turn_active)
+
+            # Event path: the opening /v1/event carried the claim-minted token.
+            assert h.runner.event_headers
+            assert h.runner.event_headers[-1].get("Authorization") == "Bearer tok-24"
+
+            # Steer path: a follow-up folded into the live turn carries it too.
+            await h.kernel.process_event(_qevent("second", thread="tTok"))
+            assert h.runner.steer_headers
+            assert h.runner.steer_headers[-1].get("Authorization") == "Bearer tok-24"
+
+            # Interrupt path: the explicit hard stop carries it as well.
+            await h.kernel.interrupt_thread("tTok", "user stop")
+            assert h.runner.interrupt_headers
+            assert h.runner.interrupt_headers[-1].get("Authorization") == "Bearer tok-24"
+
+            hold.set()
+            await t1
 
     asyncio.run(go())

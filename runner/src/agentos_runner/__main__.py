@@ -96,7 +96,7 @@ def main() -> None:
         config.port,
     )
     runner = build_runner(config, fake_model=fake_model, sdk_env=override)
-    app = create_app(runner)
+    app = create_app(runner, token=config.runner_token)
 
     async def _startup(_app: web.Application) -> None:
         try:

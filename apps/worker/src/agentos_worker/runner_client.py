@@ -22,6 +22,18 @@ import aiohttp
 from aci_protocol import Event, Interrupt, OutboundEvent, parse_ndjson_line
 
 
+def _auth_headers(token: str | None) -> dict[str, str] | None:
+    """Per-call Authorization header for the per-sandbox runner token (issue #63).
+
+    The ClientSession is worker-wide and dials many base_urls, so the token is a
+    per-call header, never a session default -- a default would leak one sandbox's
+    token to every other. Returns None (no header) when the token is unset/empty.
+    """
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return None
+
+
 class RunnerError(Exception):
     """The runner returned an unexpected HTTP status or an unreadable stream."""
 
@@ -71,18 +83,24 @@ class RunnerClient:
             )
         )
 
-    async def start_turn(self, base_url: str, event: Event) -> TurnStream:
+    async def start_turn(
+        self, base_url: str, event: Event, token: str | None = None
+    ) -> TurnStream:
         """Open a turn. Returns once the runner has accepted it (turn active)."""
-        resp = await self._session.post(f"{base_url}/v1/event", json=event.model_dump())
+        resp = await self._session.post(
+            f"{base_url}/v1/event", json=event.model_dump(), headers=_auth_headers(token)
+        )
         if resp.status != 200:
             body = await resp.text()
             resp.release()
             raise RunnerError(f"/v1/event -> {resp.status}: {body}")
         return TurnStream(resp)
 
-    async def steer(self, base_url: str, event: Event) -> bool:
+    async def steer(self, base_url: str, event: Event, token: str | None = None) -> bool:
         """Inject a follow-up into the live turn. False on 409 (no active turn)."""
-        async with self._session.post(f"{base_url}/v1/steer", json=event.model_dump()) as resp:
+        async with self._session.post(
+            f"{base_url}/v1/steer", json=event.model_dump(), headers=_auth_headers(token)
+        ) as resp:
             if resp.status == 409:
                 return False
             if resp.status != 200:
@@ -90,10 +108,12 @@ class RunnerClient:
                 raise RunnerError(f"/v1/steer -> {resp.status}: {body}")
             return True
 
-    async def interrupt(self, base_url: str, reason: str) -> None:
+    async def interrupt(self, base_url: str, reason: str, token: str | None = None) -> None:
         """Hard-stop the live turn; its final is reclassified to idle."""
         frame = Interrupt(reason=reason)
-        async with self._session.post(f"{base_url}/v1/interrupt", json=frame.model_dump()) as resp:
+        async with self._session.post(
+            f"{base_url}/v1/interrupt", json=frame.model_dump(), headers=_auth_headers(token)
+        ) as resp:
             if resp.status not in (200, 409):
                 body = await resp.text()
                 raise RunnerError(f"/v1/interrupt -> {resp.status}: {body}")

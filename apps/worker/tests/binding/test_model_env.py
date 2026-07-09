@@ -147,3 +147,39 @@ def test_eval_boot_env_carries_fake_and_credentials() -> None:
     env = consumer._boot_env(item)
     assert env[FAKE_MODEL_ENV] == "1"
     assert env[CREDENTIALS_ENV] == "cred-eval"
+
+
+# --- Per-sandbox runner token minting (issue #63) -----------------------------
+# The env-var name is the cross-package contract with the runner; asserted by its
+# literal string so this test file never depends on a constant that only exists
+# after the feature lands (which would break collection of the whole module).
+RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+
+
+def test_binding_boot_env_mints_runner_token() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+
+    env = resolver.boot_env(_resolved(), "thread-1")
+    assert env.get(RUNNER_TOKEN_ENV), "boot_env must mint a non-empty runner token"
+
+
+def test_binding_boot_env_token_is_unique_per_claim() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+
+    first = resolver.boot_env(_resolved(), "thread-1")[RUNNER_TOKEN_ENV]
+    second = resolver.boot_env(_resolved(), "thread-1")[RUNNER_TOKEN_ENV]
+    assert first != second  # a fresh token is minted per claim
+
+
+def test_binding_boot_env_token_survives_credentials() -> None:
+    # Regression guard on the PR #109 apply_model_env credential pop: it strips
+    # ambient SDK creds when AGENTOS_CREDENTIALS is set, but must not eat the
+    # runner token (which is not a model credential).
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig(fake_model=True, credentials="cred-1")  # type: ignore[attr-defined]
+
+    env = resolver.boot_env(_resolved(), "thread-1")
+    assert env.get(RUNNER_TOKEN_ENV), "the runner token must survive credential selection"
+    assert env[CREDENTIALS_ENV] == "cred-1"

@@ -35,3 +35,19 @@ def test_explicit_history_ref_wins() -> None:
 def test_idempotent_tools_override_parsed() -> None:
     env = dict(_BASE, AGENTOS_IDEMPOTENT_TOOLS="Read, Custom , Grep")
     assert RunnerConfig.from_env(env).idempotent_tools == ["Read", "Custom", "Grep"]
+
+
+def test_runner_token_parsed_from_env() -> None:
+    env = dict(_BASE, AGENTOS_RUNNER_TOKEN="abc123")
+    assert RunnerConfig.from_env(env).runner_token == "abc123"
+
+
+def test_runner_token_absent_is_none() -> None:
+    assert RunnerConfig.from_env(dict(_BASE)).runner_token is None
+
+
+def test_runner_token_empty_string_is_none() -> None:
+    # An empty env value is treated as unset, so a stray empty var never turns on
+    # enforcement with an unusable token.
+    env = dict(_BASE, AGENTOS_RUNNER_TOKEN="")
+    assert RunnerConfig.from_env(env).runner_token is None

@@ -40,10 +40,13 @@ async def run_eval_suite(
     base_url: str,
     version: str,
     recorder: LangfuseEvalRecorder | None = None,
+    token: str | None = None,
 ) -> EvalRunResult:
     """Run a suite against a runner endpoint and, if configured, record it."""
     async with RunnerClient() as runner:
-        result = await EvalRunner(runner).run(suite, base_url=base_url, version=version)
+        result = await EvalRunner(runner).run(
+            suite, base_url=base_url, version=version, token=token
+        )
     if recorder is not None:
         await recorder.record(result)
     return result

@@ -88,3 +88,163 @@ def test_steer_takes_an_event_frame_and_conflicts_without_a_turn() -> None:
             assert bad.status == 400
 
     anyio.run(go)
+
+
+_TOKEN = "test-token-xyz"
+_AUTH = {"Authorization": f"Bearer {_TOKEN}"}
+_EVENT_FRAME = {"kind": "event", "type": "message", "text": "hi", "user": "U", "ts": "1"}
+
+
+def test_event_without_auth_header_is_401() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            resp = await client.post("/v1/event", json=_EVENT_FRAME)
+            assert resp.status == 401
+            assert "error" in await resp.json()
+
+    anyio.run(go)
+
+
+def test_event_with_wrong_token_is_401() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            resp = await client.post(
+                "/v1/event", json=_EVENT_FRAME, headers={"Authorization": "Bearer wrong"}
+            )
+            assert resp.status == 401
+
+    anyio.run(go)
+
+
+def test_event_with_malformed_header_is_401() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            # The raw token with no Bearer scheme is not a valid credential.
+            resp = await client.post(
+                "/v1/event", json=_EVENT_FRAME, headers={"Authorization": _TOKEN}
+            )
+            assert resp.status == 401
+
+    anyio.run(go)
+
+
+def test_event_with_correct_token_proceeds() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            resp = await client.post("/v1/event", json=_EVENT_FRAME, headers=_AUTH)
+            assert resp.status == 200
+            events = parse_ndjson(await resp.text())
+            assert events[-1].type == "final"
+            assert events[-1].status == SessionStatus.DONE
+
+    anyio.run(go)
+
+
+def test_steer_with_correct_token_and_no_turn_is_409_not_401() -> None:
+    runner, _ = _runner()
+    steer_frame = {"kind": "event", "type": "message", "text": "do X", "user": "U", "ts": "2"}
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            # Auth must not disturb the steer contract: a valid token with no live
+            # turn still returns 409, not 401.
+            resp = await client.post("/v1/steer", json=steer_frame, headers=_AUTH)
+            assert resp.status == 409
+
+    anyio.run(go)
+
+
+def test_interrupt_requires_auth_and_proceeds_with_token() -> None:
+    runner, fake = _runner()
+    interrupt_frame = {"kind": "interrupt", "reason": "stop"}
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            unauth = await client.post("/v1/interrupt", json=interrupt_frame)
+            assert unauth.status == 401
+
+            resp = await client.post("/v1/interrupt", json=interrupt_frame, headers=_AUTH)
+            assert resp.status == 200
+            assert (await resp.json())["ok"] is True
+            assert fake.interrupts >= 1
+
+    anyio.run(go)
+
+
+def test_steer_without_auth_header_is_401() -> None:
+    runner, _ = _runner()
+    steer_frame = {"kind": "event", "type": "message", "text": "do X", "user": "U", "ts": "2"}
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            resp = await client.post("/v1/steer", json=steer_frame)
+            assert resp.status == 401
+            assert "error" in await resp.json()
+
+    anyio.run(go)
+
+
+def test_empty_token_passes_through() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        # An empty token is a falsy token: create_app must not gate, so a
+        # header-less POST proceeds rather than 401-ing on an unusable token.
+        async with TestClient(TestServer(create_app(runner, token=""))) as client:
+            resp = await client.post("/v1/event", json=_EVENT_FRAME)
+            assert resp.status == 200
+
+    anyio.run(go)
+
+
+def test_healthz_never_gated() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            resp = await client.get("/healthz")
+            assert resp.status == 200
+
+    anyio.run(go)
+
+
+def test_status_never_gated() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            resp = await client.get("/status")
+            assert resp.status == 200
+
+    anyio.run(go)
+
+
+def test_no_token_configured_passes_through() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        # An app built with token=None does not gate: a header-less POST proceeds.
+        async with TestClient(TestServer(create_app(runner, token=None))) as client:
+            resp = await client.post("/v1/event", json=_EVENT_FRAME)
+            assert resp.status == 200
+
+    anyio.run(go)

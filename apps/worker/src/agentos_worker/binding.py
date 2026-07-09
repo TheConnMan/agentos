@@ -27,6 +27,7 @@ coupling the worker to a Slack token.
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from typing import Any
 
@@ -50,6 +51,9 @@ FAKE_MODEL_ENV = "AGENTOS_FAKE_MODEL"
 CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 BASE_URL_ENV = "ANTHROPIC_BASE_URL"
 MODEL_ENV = "AGENTOS_MODEL"
+# Per-claim bearer token the runner enforces on its ACI POST routes (issue #63).
+# Not a model credential, so apply_model_env never sees it; minted fresh per claim.
+RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
 
 _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
@@ -147,6 +151,7 @@ class BindingResolver:
             SESSION_ID_ENV: f"agent-{resolved.agent_id}-thread-{thread_key}",
             AGENT_ID_ENV: str(resolved.agent_id),
             PLUGIN_DIR_ENV: self._config.bundle_plugin_dir,
+            RUNNER_TOKEN_ENV: secrets.token_urlsafe(32),
         }
         if resolved.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = resolved.bundle_ref
