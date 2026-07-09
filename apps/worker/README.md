@@ -121,7 +121,7 @@ Runtime rules (each has a provoking integration test in `tests/eval/test_stream.
   and acked (a poison-pill drop). A failing eval case is a failed COUNT in the report,
   not a consumer crash.
 
-Config surface (added to `WorkerConfig.from_env`): `AGENTOS_EVAL_STREAM` /
+Config surface (read by `WorkerConfig`): `AGENTOS_EVAL_STREAM` /
 `AGENTOS_EVAL_CONSUMER_GROUP`; MinIO/S3 `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` /
 `S3_SECRET_KEY` / `S3_REGION` / `BUNDLE_BUCKET` (mirroring the API's env names); the
 platform API `AGENTOS_API_BASE_URL` / `AGENTOS_API_KEY` for `POST /evals/report`; and
@@ -179,7 +179,7 @@ Rules (detailed-architecture 2b), each with an integration test that provokes it
   `XAUTOCLAIM` reclaims entries a dead consumer took but never acked and
   reprocesses them; the markers make that safe.
 
-Config surface (`WorkerConfig.from_env`): `VALKEY_*`, `SLACK_BOT_TOKEN`,
+Config surface (`WorkerConfig`): `VALKEY_*`, `SLACK_BOT_TOKEN`,
 `AGENTOS_STREAM` / `AGENTOS_CONSUMER_GROUP` / `AGENTOS_CONSUMER_NAME`,
 `AGENTOS_MAX_ATTEMPTS`, plus `AGENTOS_NAMESPACE` / `AGENTOS_WARM_POOL` /
 `AGENTOS_RUNNER_PORT` for the substrate. Run with `python -m agentos_worker`.

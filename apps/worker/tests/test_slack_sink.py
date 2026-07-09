@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from agentos_worker.config import WorkerConfig
 from agentos_worker.slack_sink import AsyncSlackSink
 
@@ -18,10 +19,13 @@ def test_unset_base_url_uses_the_sdk_default() -> None:
     assert sink._client.base_url == "https://slack.com/api/"
 
 
-def test_config_reads_slack_api_base_url_from_env() -> None:
-    assert WorkerConfig.from_env({}).slack_api_base_url == ""
-    cfg = WorkerConfig.from_env({"SLACK_API_BASE_URL": "http://localhost:9999"})
-    assert cfg.slack_api_base_url == "http://localhost:9999"
+def test_config_reads_slack_api_base_url_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SLACK_API_BASE_URL", raising=False)
+    assert WorkerConfig().slack_api_base_url == ""
+    monkeypatch.setenv("SLACK_API_BASE_URL", "http://localhost:9999")
+    assert WorkerConfig().slack_api_base_url == "http://localhost:9999"
 
 
 def test_update_converts_markdown_to_mrkdwn() -> None:

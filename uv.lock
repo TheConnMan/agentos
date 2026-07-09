@@ -76,6 +76,7 @@ version = "0.0.0"
 source = { editable = "apps/dispatcher" }
 dependencies = [
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "redis" },
     { name = "slack-bolt" },
 ]
@@ -83,6 +84,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "redis", specifier = ">=5.2" },
     { name = "slack-bolt", specifier = ">=1.21" },
 ]
@@ -124,6 +126,7 @@ dependencies = [
     { name = "boto3" },
     { name = "httpx" },
     { name = "kubernetes" },
+    { name = "pydantic-settings" },
     { name = "redis" },
     { name = "slack-sdk" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -138,6 +141,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "kubernetes", specifier = ">=31.0" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "redis", specifier = ">=5.2" },
     { name = "slack-sdk", specifier = ">=3.43" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },

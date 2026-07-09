@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from agentos_worker.binding import (
     BASE_URL_ENV,
     CREDENTIALS_ENV,
@@ -100,10 +101,10 @@ def test_apply_model_env_omits_base_url_and_model_by_default() -> None:
     assert model_env not in env
 
 
-def test_worker_config_reads_local_model_env() -> None:
-    config = WorkerConfig.from_env(
-        {"AGENTOS_MODEL_BASE_URL": "http://x:1", "AGENTOS_MODEL": "qwen3:4b"}
-    )
+def test_worker_config_reads_local_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTOS_MODEL_BASE_URL", "http://x:1")
+    monkeypatch.setenv("AGENTOS_MODEL", "qwen3:4b")
+    config = WorkerConfig()
 
     assert config.model_base_url == "http://x:1"
     assert config.model == "qwen3:4b"

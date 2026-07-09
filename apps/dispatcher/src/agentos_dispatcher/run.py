@@ -7,9 +7,7 @@ and hands a Socket Mode connection factory to the supervisor. Run it with
 """
 
 import logging
-import os
 import signal
-from collections.abc import Mapping
 
 from .app import SocketModeConnection, build_app, build_redis, build_web_client
 from .config import DispatcherConfig
@@ -33,10 +31,10 @@ def build_supervisor(config: DispatcherConfig, *, logger: logging.Logger) -> Sup
     return Supervisor(connect, backoff=backoff, logger=logger)
 
 
-def main(env: Mapping[str, str] | None = None) -> None:
+def main() -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("agentos_dispatcher")
-    config = DispatcherConfig.from_env(env if env is not None else os.environ)
+    config = DispatcherConfig()
 
     supervisor = build_supervisor(config, logger=logger)
 

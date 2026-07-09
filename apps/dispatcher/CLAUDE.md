@@ -35,7 +35,7 @@ summary.
 
 ## Config surface
 
-`DispatcherConfig.from_env(os.environ)` parses `SLACK_APP_TOKEN`,
+`DispatcherConfig()` (a `pydantic_settings.BaseSettings`) reads `SLACK_APP_TOKEN`,
 `SLACK_BOT_TOKEN`, `VALKEY_*`, `AGENTOS_STREAM` (must match the worker's
 stream name), `AGENTOS_DEDUPE_PREFIX`/`_TTL_SECONDS`, `AGENTOS_PLACEHOLDER_TEXT`,
 and the backoff tunables. Full table in `apps/dispatcher/README.md`.
