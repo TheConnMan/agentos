@@ -6,8 +6,8 @@ and the platform API's committed `apps/api/openapi.json`) and orchestrates a
 local runner container via Docker. Three command families: `skill` drives a
 plugin against a local runner with `up`, `down`, `status`, `message`, and
 `eval`; `local` wraps the compose stack and local API with `up`, `down`,
-`status`, `message`, and `deploy`; `cluster` wraps Helm and the deployed
-release with `up`, `status`, `down`, `message`, and `deploy`. Full command reference in
+`status`, `comms`, `message`, and `deploy`; `cluster` wraps Helm and the deployed
+release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full command reference in
 `cli/README.md`.
 
 ## Load-bearing invariants
@@ -53,10 +53,11 @@ release with `up`, `status`, `down`, `message`, and `deploy`. Full command refer
   upload bundle, create deployment) authenticated via
   `--api-key`/`AGENTOS_API_KEY`. `local message`, `local deploy`,
   `cluster message`, `cluster deploy`, and every operator verb
-  (`local up`, `local status`, `local down`, `cluster up`, `cluster status`, `cluster down`) reach a Valkey, API, or cluster by design.
+  (`local up`, `local status`, `local down`, `local comms`, `cluster up`, `cluster status`, `cluster down`, `cluster comms`) reach a Valkey, API, or cluster by design.
 - **The operator verbs are a thin wrapper; the chart stays the source of
-  truth.** `cluster up`/`cluster status`/`cluster down` (`src/ops.rs`) and
-  `local <up|down|status>` (`src/local.rs`) shell out to
+  truth.** `cluster up`/`cluster status`/`cluster down` (`src/ops.rs`),
+  `cluster comms` (`src/comms.rs`), and `local <up|down|status>`
+  (`src/local.rs`) shell out to
   `helm`/`kubectl`/`docker compose` and never re-derive what a values file
   already declares. Each verb builds its command lines as a pure function
   returning `OpsCommand` vectors that the executor or the `--dry-run` printer
@@ -69,10 +70,18 @@ release with `up`, `status`, `down`, `message`, and `deploy`. Full command refer
   `CmdArg::SecretSet` variant (only a masked prefix is echoed, in dry-run or the
   printed command line) and token flags read from env with `hide_env_values`.
   Never widen a secret to `Plain` or otherwise print it. The `up` model
-  credential (from `AGENTOS_MODEL_CREDENTIALS`) flows through this path. Slack is
-  connected with a raw `helm upgrade --reuse-values` (setting the dispatcher
-  tokens and clearing `worker.slackApiBaseUrl=` to un-wire any `message` stub
-  routing), not a CLI verb; see the chart NOTES.
+  credential (from `AGENTOS_MODEL_CREDENTIALS`) flows through this path.
+  `agentos cluster comms --slack` uses the same `SecretSet` masking for
+  `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, while `--disconnect --dry-run`
+  prints only the empty clears. After the helm upgrade it also rolls the
+  worker (and, on connect, the dispatcher) via `kubectl rollout restart` +
+  `rollout status` so the Secret-backed tokens go live.
+- **`local comms` shares the same Slack flag surface, but tokens travel through
+  compose env, not argv.** `agentos local comms --slack` reads
+  `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, passes them through a masked
+  `secret_env` compose process env channel, and never prints an unmasked token
+  in live or dry run output. `--disconnect` clears the real Slack wiring,
+  stops the dispatcher, and restores the local stub for `local message`.
 - **`cluster message` self-plumbs and guards against hijacking real Slack.** It manages
   its own kubectl port-forwards (children killed on exit) and, when wiring the
   deployed worker to its local stub, refuses if a `<release>-dispatcher`

@@ -16,12 +16,12 @@ disk and targets no environment.
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
 | `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
-| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
-| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `message` `deploy` | Operate and drive a deployed cluster release. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `deploy` | Operate and drive a deployed cluster release. |
 
 The universal quartet `up`/`down`/`status`/`message` is on all three targets;
-`skill` adds `eval`, and `local`/`cluster` add `deploy`. The distinction that
-matters: `skill` is the **runner-only** loop, talking straight to a runner
+`skill` adds `eval`, while `local` and `cluster` add `comms` plus `deploy`. The distinction
+that matters: `skill` is the **runner-only** loop, talking straight to a runner
 container's ACI HTTP surface with no platform in front; `local` and `cluster`
 put the **full platform** (queue, worker, sandbox) in front of the identical
 runner and ACI, so a `message` walks the same path a real Slack mention would.
@@ -65,6 +65,7 @@ the optional Slack dispatcher.
 | `agentos local up` | Bring the compose stack up (`docker compose --profile full up -d --wait` by default, `docker compose --profile core up -d --wait` with `--minimal`) and print URLs. Add `--slack` to append `--profile slack`. |
 | `agentos local down` | Stop the compose stack (`docker compose down`), keeping volumes. |
 | `agentos local status` | Show the compose stack's service status (`docker compose ps`). |
+| `agentos local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
 | `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
 | `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
 
@@ -79,6 +80,7 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster up` | Install or upgrade the release (`helm upgrade --install`). Exposes the UI and Langfuse on node ports; `--no-expose` keeps them ClusterIP-only. Set `AGENTOS_MODEL_CREDENTIALS` for a real model, or install sealed with canned replies. |
 | `agentos cluster down` | Uninstall the release and sweep its runtime namespaces (`helm uninstall` + `kubectl delete namespace`); prompts unless `--yes`. |
 | `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
+| `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
 | `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API (`--api-url`, default `http://localhost:8000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
 
@@ -145,6 +147,21 @@ after Ns`, never a hang. Compatibility is handled automatically:
   spinner) in non-UTF-8 locales.
 
 ## `agentos cluster message`: drive the deployed cluster with zero Slack
+
+Before connecting a real workspace, `cluster message` is the zero-Slack path.
+When you are ready to wire Slack onto a deployed release, use:
+
+```bash
+SLACK_APP_TOKEN=xapp-... \
+SLACK_BOT_TOKEN=xoxb-... \
+agentos cluster comms --slack
+
+agentos cluster comms --slack --disconnect
+
+SLACK_APP_TOKEN=xapp-... \
+SLACK_BOT_TOKEN=xoxb-... \
+agentos cluster comms --slack --dry-run
+```
 
 `cluster message` targets a **deployed** Helm release and wires everything
 itself, so a developer building an agent for someone else's Slack workspace can
@@ -249,6 +266,12 @@ suffix). `local message` composes with `--channel`, `--thread`, and
 with a clear error. The compose worker runs the fake model by default (a canned
 reply, no credentials); export a credential and set `AGENTOS_FAKE_MODEL=0` in the
 compose environment for a real model.
+
+Use `agentos local comms --slack` when you want the same compose stack to talk
+to a real Slack workspace. Connect reads `SLACK_APP_TOKEN` and
+`SLACK_BOT_TOKEN`, masks them in printed commands, starts the dispatcher, and
+points the worker at real Slack. `--disconnect` stops the dispatcher and
+restores the local stub. `--dry-run` prints the compose command only.
 
 Use `--continue` to reuse the last successful `local message` context from
 `.agentos/last-turn.json` in the current working directory, so only the new text

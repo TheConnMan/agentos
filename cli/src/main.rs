@@ -1,6 +1,6 @@
 //! The `agentos` binary: `init`, `skill <up|down|status|message|eval>` for a
 //! local runner, `local <up|down|status|message|deploy>` for the compose stack,
-//! and `cluster <up|down|status|message|deploy>` for Kubernetes and the
+//! and `cluster <up|down|status|comms|message|deploy>` for Kubernetes and the
 //! platform API. Task I1; contracts are frozen in packages/aci-protocol and
 //! packages/plugin-format.
 
@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use agentos::artifacts;
 use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
+use agentos::comms::{self, CommsOpts, LocalCommsOpts};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
 use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
@@ -203,6 +204,38 @@ enum LocalAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Connect or disconnect the local compose stack from a real Slack workspace.
+    Comms {
+        /// Chat surface to configure. Required until the CLI grows more than
+        /// one comms target.
+        #[arg(long)]
+        slack: bool,
+        /// Clear Slack from the local stack instead of connecting it.
+        #[arg(long)]
+        disconnect: bool,
+        /// Slack app token. Defaults from SLACK_APP_TOKEN.
+        #[arg(
+            long,
+            env = "SLACK_APP_TOKEN",
+            hide_env_values = true,
+            default_value = ""
+        )]
+        app_token: String,
+        /// Slack bot token. Defaults from SLACK_BOT_TOKEN.
+        #[arg(
+            long,
+            env = "SLACK_BOT_TOKEN",
+            hide_env_values = true,
+            default_value = ""
+        )]
+        bot_token: String,
+        /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
+        #[arg(short = 'f', long)]
+        file: Option<String>,
+        /// Print the docker compose command(s) that would run and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Drive the local compose stack end to end with zero Slack contact.
     Message {
         /// The user message text.
@@ -343,6 +376,44 @@ enum ClusterAction {
         #[arg(long, default_value = "agentos")]
         release: String,
         /// Print the read-only commands that would run and exit.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Connect or disconnect the cluster release from a real Slack workspace.
+    Comms {
+        /// Chat surface to configure. Required until the CLI grows more than
+        /// one comms target.
+        #[arg(long)]
+        slack: bool,
+        /// Clear the Slack tokens from the release instead of setting them.
+        #[arg(long)]
+        disconnect: bool,
+        /// Slack app token. Defaults from SLACK_APP_TOKEN.
+        #[arg(
+            long,
+            env = "SLACK_APP_TOKEN",
+            hide_env_values = true,
+            default_value = ""
+        )]
+        app_token: String,
+        /// Slack bot token. Defaults from SLACK_BOT_TOKEN.
+        #[arg(
+            long,
+            env = "SLACK_BOT_TOKEN",
+            hide_env_values = true,
+            default_value = ""
+        )]
+        bot_token: String,
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override.
+        #[arg(long)]
+        chart: Option<String>,
+        /// Print the helm command that would run and exit without executing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -577,6 +648,25 @@ async fn main() -> Result<()> {
                 })
                 .await
             }
+            LocalAction::Comms {
+                slack,
+                disconnect,
+                app_token,
+                bot_token,
+                file,
+                dry_run,
+            } => {
+                comms::require_provider(slack)?;
+                let resolved_file = resolve_compose_file(file, dry_run).await?;
+                comms::local_comms(LocalCommsOpts {
+                    file: resolved_file,
+                    dry_run,
+                    app_token,
+                    bot_token,
+                    disconnect,
+                })
+                .await
+            }
             LocalAction::Message {
                 text,
                 channel,
@@ -728,6 +818,38 @@ async fn main() -> Result<()> {
                     namespace,
                     release,
                     dry_run,
+                })
+                .await
+            }
+            ClusterAction::Comms {
+                slack,
+                disconnect,
+                app_token,
+                bot_token,
+                namespace,
+                release,
+                chart,
+                dry_run,
+            } => {
+                comms::require_provider(slack)?;
+                let resolved = artifacts::resolve_chart(
+                    chart.as_deref(),
+                    artifacts::Channel::current(),
+                    artifacts::version(),
+                    artifacts::cache_root,
+                    std::path::Path::new("charts/agentos").is_dir(),
+                )?;
+                let chart = materialize_artifact(resolved, dry_run, "chart").await?;
+                comms::comms(CommsOpts {
+                    common: CommonOpts {
+                        namespace,
+                        release,
+                        dry_run,
+                    },
+                    chart,
+                    app_token,
+                    bot_token,
+                    disconnect,
                 })
                 .await
             }
@@ -912,6 +1034,66 @@ mod tests {
                 action: LocalAction::Up { slack, .. },
             } => assert!(slack),
             _ => panic!("expected local up command"),
+        }
+    }
+
+    #[test]
+    fn local_comms_parses_slack_disconnect_and_app_token() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "local",
+            "comms",
+            "--slack",
+            "--disconnect",
+            "--app-token",
+            "X",
+        ])
+        .expect("local comms flags should parse");
+        match cli.command {
+            Command::Local {
+                action:
+                    LocalAction::Comms {
+                        slack,
+                        disconnect,
+                        app_token,
+                        ..
+                    },
+            } => {
+                assert!(slack);
+                assert!(disconnect);
+                assert_eq!(app_token, "X");
+            }
+            _ => panic!("expected local comms command"),
+        }
+    }
+
+    #[test]
+    fn cluster_comms_parses_slack_disconnect_and_app_token() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "comms",
+            "--slack",
+            "--disconnect",
+            "--app-token",
+            "X",
+        ])
+        .expect("cluster comms flags should parse");
+        match cli.command {
+            Command::Cluster {
+                action:
+                    ClusterAction::Comms {
+                        slack,
+                        disconnect,
+                        app_token,
+                        ..
+                    },
+            } => {
+                assert!(slack);
+                assert!(disconnect);
+                assert_eq!(app_token, "X");
+            }
+            _ => panic!("expected cluster comms command"),
         }
     }
 }
