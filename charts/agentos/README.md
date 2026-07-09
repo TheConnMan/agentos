@@ -239,6 +239,40 @@ matches the planned resize: everything runs in 4 GB for
 chart/security verification, and a resize to >=8 vCPU / 16-20 GB gives
 comfortable headroom for integration and soak testing.
 
+## High availability and PodDisruptionBudgets
+
+Every backing store (Postgres, Valkey, ClickHouse, MinIO) ships as a
+single-replica StatefulSet -- correct for the single-node dev footprint, but it
+means a node drain evicts the store with no budget guarding it. Two levers move
+this toward production HA:
+
+- **Real HA is a BYO concern.** These in-chart stores are single-writer and do
+  not cluster. For genuine high availability, set `<store>.deploy: false` and
+  point the BYO `host`/`port`/`auth` block at a managed or replicated instance
+  (e.g. RDS/Aurora Postgres, a Valkey/Redis cluster, ClickHouse Cloud, real S3).
+- **Optional PodDisruptionBudgets.** Each store carries a
+  `<store>.podDisruptionBudget` block, OFF by default:
+
+  ```yaml
+  postgres:
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+  ```
+
+  When enabled, the chart renders a `policy/v1` PodDisruptionBudget selecting
+  that store's pods. **Caveat for single-replica stores:** a `minAvailable: 1`
+  budget on one replica allows zero voluntary disruptions, so a `kubectl drain`
+  of the node blocks until an operator intervenes. That is the point -- it stops
+  a routine drain from silently taking the datastore down -- but it requires you
+  to handle drains deliberately (scale up first, or delete the PDB for planned
+  maintenance). Enable it only once you run multiple replicas or explicitly want
+  drains gated.
+
+Production sizing (raise every `resources` block and persistence size, supply
+real secrets) is covered in **Production sizing** above; PDBs and BYO stores are
+the availability half of the same "not sized for prod out of the box" story.
+
 ## Security rails
 
 The security-boundary rails ship **on by default** (ADR-0006). The runner-surface
@@ -323,6 +357,29 @@ false-pass rather than trusted. Claim 4 reports honestly: if the gvisor
 runtimeclass is absent it is marked NOT-TESTABLE (per the security-boundary test plan, never faked), with
 enforcement asserted separately by the preflight and proven live in the security-boundary test plan
 (`uname` = `4.19.0-gvisor`).
+
+## Uninstalling and CRD lifecycle
+
+`helm uninstall <release> -n <ns>` removes everything the chart templated, but
+**not** the CRDs. The agent-sandbox CRDs (`sandboxes.agents.x-k8s.io` and the
+related types) are vendored under `charts/agentos/crds/`, which Helm installs
+before any template but never upgrades or deletes (this is Helm's documented
+`crds/` behavior, not a chart choice). A full teardown therefore needs a manual
+step:
+
+```bash
+helm uninstall <release> -n <ns>
+kubectl delete crd sandboxes.agents.x-k8s.io \
+  sandboxtemplates.extensions.agents.x-k8s.io \
+  sandboxwarmpools.extensions.agents.x-k8s.io \
+  sandboxclaims.extensions.agents.x-k8s.io
+```
+
+Only delete the CRDs if no other release on the cluster uses the agent-sandbox
+controller -- deleting a CRD deletes every custom resource of that kind
+cluster-wide. Likewise, upgrading the CRDs to a newer controller release is a
+manual `kubectl apply` of the new definitions; `helm upgrade` will not touch
+them.
 
 ## What the agent-sandbox subchart needs to know
 

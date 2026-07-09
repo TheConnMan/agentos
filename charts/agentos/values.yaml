@@ -148,6 +148,10 @@ postgres:
     password: postgres
     database: postgres
   existingSecret: ""
+  # fsGroup that owns the mounted data volume. Defaults to the postgres:16-alpine
+  # image's postgres user (999); parameterized for BYO images with a different UID.
+  podSecurityContext:
+    fsGroup: 999
   persistence:
     enabled: true
     size: 2Gi
@@ -166,6 +170,14 @@ postgres:
     allowPrivilegeEscalation: false
     seccompProfile:
       type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
 
 # ---------------------------------------------------------------------------
 # Valkey (Redis-compatible). Langfuse cache/queue AND the dispatcher's Streams
@@ -192,6 +204,14 @@ valkey:
     allowPrivilegeEscalation: false
     seccompProfile:
       type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
 
 # ---------------------------------------------------------------------------
 # ClickHouse. Langfuse's OLAP store for traces/observations/scores. The AVX
@@ -219,6 +239,10 @@ clickhouse:
     username: default
     password: clickhouse
   existingSecret: ""
+  # fsGroup that owns the mounted data volume. Defaults to the clickhouse-server
+  # image's clickhouse user (101); parameterized for BYO images with a different UID.
+  podSecurityContext:
+    fsGroup: 101
   clusterEnabled: false
   persistence:
     enabled: true
@@ -234,6 +258,14 @@ clickhouse:
     allowPrivilegeEscalation: false
     seccompProfile:
       type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
 
 # ---------------------------------------------------------------------------
 # MinIO. Langfuse object storage (events, media, exports). BYO real S3 in prod:
@@ -251,6 +283,10 @@ minio:
     rootUser: minio
     rootPassword: miniosecret
   existingSecret: ""
+  # fsGroup that owns the mounted data volume. Defaults to the minio image's
+  # user (1000); parameterized for BYO images with a different UID.
+  podSecurityContext:
+    fsGroup: 1000
   persistence:
     enabled: true
     size: 3Gi
@@ -265,6 +301,14 @@ minio:
     allowPrivilegeEscalation: false
     seccompProfile:
       type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
 
 # ---------------------------------------------------------------------------
 # Local inference endpoint for demo clusters. Opt in only: fake model stays the

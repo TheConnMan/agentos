@@ -1,0 +1,25 @@
+{{/*
+  Optional PodDisruptionBudgets for the single-replica stateful stores.
+  Off by default: a minAvailable:1 PDB on a replicas:1 store blocks voluntary
+  node drains (0 disruptions allowed), which is undesirable on a single-node
+  dev cluster. Enable per store (`<store>.podDisruptionBudget.enabled: true`)
+  once you have raised replicas or want drains to require operator
+  acknowledgement. See README "High availability and PodDisruptionBudgets".
+*/}}
+{{- range $store := (list "postgres" "valkey" "clickhouse" "minio") }}
+{{- $cfg := index $.Values $store }}
+{{- if and $cfg.deploy $cfg.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agentos.fullname" $ }}-{{ $store }}
+  labels:
+    {{- include "agentos.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $cfg.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" $ "component" $store) | nindent 6 }}
+{{- end }}
+{{- end }}
