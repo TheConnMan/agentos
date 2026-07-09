@@ -196,12 +196,11 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           helm package charts/agentos --version "$version" --app-version "$version" -d dist
-      - name: Pin and stage the release compose
+      - name: Generate and stage the release compose
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
-          sed -E "s|(ghcr.io/curie-eng/agentos-[a-z-]+):latest|\1:${version}|g" \
-            compose.release.yaml > dist/compose.release.yaml
+          python3 compose/generate_release_compose.py --version "${version}" > dist/compose.release.yaml
       - name: Upload chart artifact
         uses: actions/upload-artifact@v4
         with:
