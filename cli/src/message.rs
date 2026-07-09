@@ -269,27 +269,53 @@ pub fn select_channel(agents: &[Agent], explicit: Option<&str>) -> Result<String
     }
 }
 
+/// Parse a kubeconfig `cluster.server` URL into its host and optional raw port,
+/// stripping the scheme and any path and correctly handling bracketed IPv6
+/// authorities (`https://[::1]:6443` -> ("::1", Some("6443"))). Returns `None`
+/// when no host remains. The port is returned unparsed; callers decide how to
+/// default or validate it.
+pub(crate) fn split_server_url(server: &str) -> Option<(&str, Option<&str>)> {
+    let rest = server
+        .strip_prefix("https://")
+        .or_else(|| server.strip_prefix("http://"))
+        .unwrap_or(server);
+    let authority = rest.split('/').next().unwrap_or(rest).trim();
+    if authority.is_empty() {
+        return None;
+    }
+    let (host, port) = if let Some(after_bracket) = authority.strip_prefix('[') {
+        // Bracketed IPv6: the host is between '[' and ']'; an optional ':port'
+        // may follow the closing bracket.
+        let (host, tail) = after_bracket.split_once(']')?;
+        let port = tail.strip_prefix(':').filter(|p| !p.is_empty());
+        (host, port)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p)) if !h.is_empty() => (h, Some(p)),
+            _ => (authority, None),
+        }
+    };
+    let host = host.trim();
+    (!host.is_empty()).then_some((host, port))
+}
+
 /// Split a kubeconfig server URL into (host, port), defaulting the port from the
 /// scheme when absent (`https://10.1.2.3:6443` -> `("10.1.2.3", 6443)`). Used
 /// only to pick a UDP-connect target for local-IP detection, so the exact port
 /// barely matters (any routable port to the same host selects the same source
 /// interface).
 pub fn server_host_and_port(server: &str) -> Option<(String, u16)> {
-    let (default_port, rest) = if let Some(r) = server.strip_prefix("https://") {
-        (443u16, r)
-    } else if let Some(r) = server.strip_prefix("http://") {
-        (80u16, r)
+    let default_port = if server.starts_with("http://") {
+        80
     } else {
-        (443u16, server)
+        443
     };
-    let authority = rest.split('/').next().unwrap_or(rest).trim();
-    if authority.is_empty() {
-        return None;
-    }
-    match authority.rsplit_once(':') {
-        Some((host, port)) if !host.is_empty() => Some((host.to_string(), port.parse().ok()?)),
-        _ => Some((authority.to_string(), default_port)),
-    }
+    let (host, port) = split_server_url(server)?;
+    let port = match port {
+        Some(p) => p.parse().ok()?,
+        None => default_port,
+    };
+    Some((host.to_string(), port))
 }
 
 /// The current `SLACK_API_BASE_URL` on the worker container, from
@@ -933,6 +959,23 @@ mod tests {
             Some(("host".into(), 80))
         );
         assert_eq!(server_host_and_port(""), None);
+    }
+
+    #[test]
+    fn server_host_and_port_parses_bracketed_ipv6() {
+        assert_eq!(
+            server_host_and_port("https://[::1]:6443"),
+            Some(("::1".to_string(), 6443))
+        );
+        assert_eq!(
+            server_host_and_port("https://[2001:db8::1]:8443"),
+            Some(("2001:db8::1".to_string(), 8443))
+        );
+        // No explicit port defaults from the scheme; brackets are stripped.
+        assert_eq!(
+            server_host_and_port("https://[::1]"),
+            Some(("::1".to_string(), 443))
+        );
     }
 
     #[test]

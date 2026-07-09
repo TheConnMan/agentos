@@ -388,21 +388,10 @@ pub fn down_commands(o: &CommonOpts) -> Vec<OpsCommand> {
 }
 
 /// Parse the hostname out of a kubeconfig `cluster.server` URL
-/// (`https://host:6443` -> `host`).
+/// (`https://host:6443` -> `host`). Delegates to the shared parser in
+/// `message::split_server_url` so IPv6 and scheme/path handling stay in one place.
 pub fn host_from_server_url(server: &str) -> Option<String> {
-    let rest = server
-        .strip_prefix("https://")
-        .or_else(|| server.strip_prefix("http://"))
-        .unwrap_or(server);
-    let host = rest
-        .split('/')
-        .next()
-        .unwrap_or(rest)
-        .rsplit_once(':')
-        .map(|(h, _)| h)
-        .unwrap_or(rest);
-    let host = host.trim();
-    (!host.is_empty()).then(|| host.to_string())
+    crate::message::split_server_url(server).map(|(host, _)| host.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1250,6 +1239,22 @@ mod tests {
             Some("host")
         );
         assert_eq!(host_from_server_url(""), None);
+    }
+
+    #[test]
+    fn host_from_server_url_parses_bracketed_ipv6() {
+        assert_eq!(
+            host_from_server_url("https://[::1]:6443").as_deref(),
+            Some("::1")
+        );
+        assert_eq!(
+            host_from_server_url("https://[2001:db8::1]:8443").as_deref(),
+            Some("2001:db8::1")
+        );
+        assert_eq!(
+            host_from_server_url("https://[::1]").as_deref(),
+            Some("::1")
+        );
     }
 
     #[test]
