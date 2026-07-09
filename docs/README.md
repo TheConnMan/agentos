@@ -29,6 +29,8 @@ git history (`git log -- docs/`).
 - [`architecture-vision.md`](architecture-vision.md): the forward-looking
   "swappable jobs around an opinionated core" framing, covering where each
   adopted component's swap seam lives.
+- [`interfaces.md`](interfaces.md): the swappable-seam catalog (INTERFACE.md per
+  black line) with the swap-readiness grade table.
 - [`operations.md`](operations.md): running a cluster install, plus
   operator-facing findings from early installs.
 - [`slack-local-runbook.md`](slack-local-runbook.md): connect your own Slack
