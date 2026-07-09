@@ -86,10 +86,36 @@ async def runner_logs(
     namespace: str,
     pod: str,
     reader: PodLogReaderDep,
+    lister: PodListerDep,
     container: str | None = None,
     tail_lines: int | None = None,
     previous: bool = False,
 ) -> PodLogs:
+    settings = get_settings()
+    if namespace != settings.runner_namespace:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"logs are only available for the runner namespace "
+            f"{settings.runner_namespace!r}",
+        )
+    try:
+        runner_pods = await run_in_threadpool(
+            lister.list_runner_pods,
+            settings.runner_namespace,
+            settings.runner_pod_label_selector,
+        )
+    except NoClusterConfigured as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)
+        ) from exc
+    except PodLogError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    if pod not in runner_pods:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"{pod!r} is not a runner pod in namespace "
+            f"{settings.runner_namespace!r}",
+        )
     try:
         logs = await run_in_threadpool(
             reader.read, namespace, pod, container, tail_lines, previous
