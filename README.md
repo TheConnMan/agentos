@@ -137,7 +137,9 @@ Because these are shell exports they persist for the session, so a later plain
 `agentos local up` in the same shell keeps the worker pointed at real Slack
 (empty `SLACK_API_BASE_URL`) with the real bot token but no dispatcher feeding
 the queue; open a fresh shell (or `unset SLACK_API_BASE_URL`) to return to the
-Slack-free stub.
+Slack-free stub. For the full walkthrough (app creation from the manifest,
+channel binding, and troubleshooting) see
+[`docs/slack-local-runbook.md`](docs/slack-local-runbook.md).
 
 ## Prerequisites
 
