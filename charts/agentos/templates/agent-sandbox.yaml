@@ -4,9 +4,12 @@ the worker claims from, plus (optionally) the vendored upstream controller.
 
 - CRDs live in this chart's crds/ directory (Helm installs them before
   templates render, so the CRs below never race their own CRDs).
-- The controller bundle is the upstream v0.5.0 release manifests verbatim
+- The controller bundle is the upstream v0.5.0 release manifests
   (core manifest + extensions overlay: the Deployment runs with --extensions),
-  vendored under files/agent-sandbox/. Cluster-scoped, one per cluster.
+  vendored under files/agent-sandbox/ with two AgentOS security patches (#66:
+  the networkpolicies RBAC is de-scoped from cluster-wide to the release
+  namespace via the Role/RoleBinding below, and the Deployment carries a
+  hardened securityContext). Cluster-scoped, one per cluster.
 - The SandboxTemplate bakes the generic warm-pod env. Per-session env
   (AGENTOS_HISTORY_REF, AGENTOS_SESSION_ID) is injected per-claim by the
   substrate; envVarsInjectionPolicy Overrides makes that injection win.
@@ -15,6 +18,53 @@ the worker claims from, plus (optionally) the vendored upstream controller.
 */}}
 {{- if .Values.agentSandbox.controller.deploy }}
 {{ .Files.Get "files/agent-sandbox/controller.yaml" }}
+---
+{{/*
+Scoped replacement (#66) for the networkpolicies grant removed from the vendored
+controller's cluster-wide agent-sandbox-controller-extensions ClusterRole. The
+controller manages one NetworkPolicy per Sandbox, and this chart creates all
+Sandboxes in the release namespace (the worker's AGENTOS_NAMESPACE is
+.Release.Namespace), so a namespaced Role confines that power here: a compromised
+controller SA cannot delete the fail-closed egress policy (Rail 1) in any other
+namespace. Cross-namespace binding is intentional -- the SA lives in
+agent-sandbox-system, the NetworkPolicies it manages live in this namespace.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-sandbox-controller-networkpolicies
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-sandbox-controller-networkpolicies
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+roleRef:
+  kind: Role
+  name: agent-sandbox-controller-networkpolicies
+  apiGroup: rbac.authorization.k8s.io
 {{- end }}
 {{- if .Values.agentSandbox.deploy }}
 {{- $runner := .Values.agentSandbox.runner }}
