@@ -1,8 +1,11 @@
 {{- $gvisorClass := include "agentos.gvisor.className" . }}
-{{- if and .Values.agentSandbox.deploy (eq (.Values.security.gvisor.mode | default "auto") "require") .Values.security.gvisorPreflight.enabled }}
+{{- if include "agentos.gvisor.preflightRequired" . }}
 {{/*
-Rail 4 preflight (security.gvisor.mode=require only): gVisor RuntimeClass is
-present AND enforced.
+Rail 4 preflight: gVisor RuntimeClass is present AND enforced. Renders for
+`require` (always) AND for `auto` when a real (non-fake) model runs -- i.e.
+untrusted agent code executes, so a missing/downgraded runsc must fail the
+install closed. Fake-model `auto` (the bare-install default) does NOT render
+this Job; it degrades to no-gvisor with a NOTES warning instead.
 
 A pre-install / pre-upgrade hook (also runnable via `helm test`) whose pod runs
 UNDER the runner's RuntimeClass. This makes the check RBAC-free and tests the
@@ -16,8 +19,9 @@ real property:
   - gVisor actually enforced -> `uname` reports a gVisor sentry kernel
     (e.g. 4.19.0-gvisor), distinct from the host, and the check passes.
 
-This fail-hard behavior is the `require` posture. `auto` never renders this Job
-(it degrades to no-gvisor with a NOTES warning instead); `off` disables the rail.
+This fail-hard behavior is the `require` posture and, for real-model runs, the
+`auto` posture too. Only fake-model `auto` skips this Job (degrading to
+no-gvisor with a NOTES warning); `off` disables the rail entirely.
 */}}
 apiVersion: batch/v1
 kind: Job
@@ -54,7 +58,7 @@ spec:
             - -c
             - |
               set -eu
-              echo "== AgentOS gVisor RuntimeClass preflight (mode=require) =="
+              echo "== AgentOS gVisor RuntimeClass preflight (mode={{ .Values.security.gvisor.mode | default "auto" }}) =="
               echo "requested RuntimeClass: {{ $gvisorClass }}"
               kernel=$(uname -a)
               echo "pod kernel: ${kernel}"
@@ -64,8 +68,10 @@ spec:
               fi
               echo "RESULT: FAIL - the pod scheduled but its kernel is NOT gVisor. The RuntimeClass"
               echo "        exists but is downgraded to runc, so runner pods would have no kernel"
-              echo "        isolation. Fix the containerd runsc handler on every node, or set"
-              echo "        security.gvisor.mode=auto (degrade gracefully) or off (disable knowingly)."
+              echo "        isolation. Fix the containerd runsc handler on every node, OR run the"
+              echo "        fake model (agentSandbox.runner.fakeModel=true, dev/offline) to degrade"
+              echo "        gracefully, OR set security.gvisor.mode=off to run real code without"
+              echo "        isolation knowingly."
               exit 1
           resources:
             {{- toYaml .Values.security.gvisorPreflight.resources | nindent 12 }}

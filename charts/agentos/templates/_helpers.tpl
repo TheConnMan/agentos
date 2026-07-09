@@ -250,6 +250,28 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/* ---- gVisor enforcement gate ----
+     agentos.gvisor.preflightRequired: non-empty ("true") when the blocking
+     gVisor enforcement preflight Job must render, else empty. It renders in
+     `require` (always) and in `auto` WHEN the runner runs a real (non-fake)
+     model -- i.e. untrusted agent code executes, so a missing/downgraded runsc
+     RuntimeClass must fail the install CLOSED instead of silently landing on
+     the host kernel. `auto` with the fake model (the bare-install default)
+     still degrades gracefully with only a NOTES warning; `off` never renders.
+     Real-model detection mirrors the AGENTOS_FAKE_MODEL gate in
+     agent-sandbox.yaml (fake is in effect only when runner.fakeModel AND NOT
+     inference.deploy), so real code runs when `(not fakeModel) OR inference.deploy`.
+     Also respects security.gvisorPreflight.enabled and agentSandbox.deploy. */}}
+{{- define "agentos.gvisor.preflightRequired" -}}
+{{- $mode := .Values.security.gvisor.mode | default "auto" -}}
+{{- $realModel := or (not .Values.agentSandbox.runner.fakeModel) .Values.inference.deploy -}}
+{{- if and .Values.agentSandbox.deploy .Values.security.gvisorPreflight.enabled -}}
+{{- if or (eq $mode "require") (and (eq $mode "auto") $realModel) -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* ---- Dispatcher gating ----
      The Slack dispatcher only deploys when it has both tokens; without them it
      would crash-loop the reconnect supervisor forever, so a token-less default

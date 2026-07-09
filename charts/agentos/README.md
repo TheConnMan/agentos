@@ -57,7 +57,12 @@ Setting the two Slack tokens is what makes the dispatcher deploy. The runner
 NetworkPolicy is fail-closed (`security.networkPolicy.allowedEgress` is empty by
 default), so the `allowedEgress` flags are required to let real model calls reach
 the API -- here Anthropic's published range (`160.79.104.0/23`, TCP 443). Add
-further entries for any MCP endpoints the runner must reach.
+further entries for any MCP endpoints the runner must reach. Because this upgrade
+flips to a real model, under the default `security.gvisor.mode=auto` it now fails
+closed on a cluster without the `gvisor` RuntimeClass (runsc) -- install runsc +
+the containerd handler on every node first, or add `--set security.gvisor.mode=off`
+(or `-f charts/agentos/values-e2e-nogvisor.yaml`) to run real code without kernel
+isolation knowingly.
 
 **Cluster variants:**
 
@@ -65,9 +70,11 @@ further entries for any MCP endpoints the runner must reach.
   cluster): add `--set agentSandbox.controller.deploy=false`.
 - **No runsc and you want the no-gvisor shape to be explicit/deterministic**
   (skip the RuntimeClass lookup): `-f charts/agentos/values-e2e-nogvisor.yaml`.
-  Not required -- `auto` already handles a runsc-less cluster -- but it forces
-  isolation off without the lookup. To fail-hard instead when runsc is missing,
-  `--set security.gvisor.mode=require`.
+  `auto` handles a runsc-less cluster only for the fake-model default; a
+  real-model install (`fakeModel=false`) under `auto` now fails closed on a
+  runsc-less cluster, so on such a cluster use this overlay (or `--set
+  security.gvisor.mode=off`) to run real code without gVisor, or `--set
+  security.gvisor.mode=require` to fail-hard.
 - **Production sizing:** the default `resources`/persistence blocks are a modest
   single-node footprint (fits an 8-16 GB node). Raise them for real load.
 
@@ -237,7 +244,7 @@ chart without the security rails.
 | 1. Default-deny egress + metadata block | NetworkPolicies selecting `component: runner-sandbox`: default-deny egress, allow-DNS, an operator-declared egress allowlist, and (optional) ingress lock. Arbitrary internet AND `169.254.169.254` are denied by construction. | `security.networkPolicy.*` |
 | 2. Per-agent secret isolation | Least-privilege runner ServiceAccount (no secret get/list, token not mounted). The per-agent `resourceNames`-scoped Role is bound by the control plane per agent. | `agentSandbox.runner.serviceAccount.*` |
 | 3. Non-root / read-only rootfs | Pod + container securityContext on the runner: `runAsNonRoot`, uid 1000, `readOnlyRootFilesystem`, drop ALL caps, no privilege escalation, RuntimeDefault seccomp, plus writable emptyDir scratch (`/tmp`, `/home/runner`) and `HOME`. | `agentSandbox.runner.hardening.*` |
-| 4. gVisor kernel isolation | `runtimeClassName` on runner pods, driven by the `security.gvisor.mode` tri-state (`auto`/`require`/`off`) + a `require`-mode preflight that fails the install if the RuntimeClass is missing or downgraded + an optional RuntimeClass object. | `security.gvisor.*`, `security.gvisorPreflight.*` |
+| 4. gVisor kernel isolation | `runtimeClassName` on runner pods, driven by the `security.gvisor.mode` tri-state (`auto`/`require`/`off`) + a preflight that fails the install if the RuntimeClass is missing or downgraded, firing in `require` (always) and in `auto` for real-model runs + an optional RuntimeClass object. | `security.gvisor.*`, `security.gvisorPreflight.*` |
 
 **Fail-closed egress.** `security.networkPolicy.allowedEgress` is EMPTY by
 default: a fresh install denies all egress except DNS until the operator declares
@@ -265,7 +272,11 @@ the flag and the install stays fully sealed.
   RuntimeClass. Present -> runner pods use it. Absent -> pods run without it and
   `NOTES.txt` warns. Never blocks the install, so a bare install works on any
   cluster. (Helm's `lookup` returns empty under `helm template`/--dry-run, so a
-  templated render always shows the no-gvisor shape.)
+  templated render always shows the no-gvisor shape.) This never-blocks behavior
+  applies to the fake-model default only; enabling a real model
+  (`fakeModel=false` or `inference.deploy`) under `auto` renders the blocking
+  `preflight-gvisor` hook, so a runsc-less real-model install fails closed
+  instead of silently running on the host kernel.
 - **`require`** -- always stamp the RuntimeClass AND run the `preflight-gvisor`
   hook, which blocks the install with a clear remediation if the runtimeclass is
   missing or downgraded to runc. The fail-hard production posture.
