@@ -222,6 +222,39 @@ def test_trigger_explicit_version_id_is_used(
     assert body["bundle_ref"] == "b/2.tgz"
 
 
+def test_trigger_version_without_bundle_returns_400_and_does_not_enqueue(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    agent = _create_agent(client, auth_headers, "trigger-no-bundle")
+    # The version has a commit sha but its bundle was never built; the worker
+    # reads eval cases from the bundle, so there is nothing to evaluate.
+    seeded = _seed(agent["id"], commit_sha="deadbeef", bundle_ref=None)
+
+    resp = client.post(
+        "/evals/trigger",
+        json={"agent_id": agent["id"], "version_id": seeded["version_id"]},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "no built bundle" in resp.json()["detail"]
+    assert _count_eval_entries_for_agent(agent["id"]) == 0
+
+
+def test_trigger_active_dev_deployment_without_bundle_returns_400(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # Same guard on the active-dev-deployment resolution path (no version_id).
+    agent = _create_agent(client, auth_headers, "trigger-no-bundle-deploy")
+    _seed(agent["id"], commit_sha="deadbeef", bundle_ref=None)
+
+    resp = client.post(
+        "/evals/trigger", json={"agent_id": agent["id"]}, headers=auth_headers
+    )
+    assert resp.status_code == 400, resp.text
+    assert "no built bundle" in resp.json()["detail"]
+    assert _count_eval_entries_for_agent(agent["id"]) == 0
+
+
 def test_trigger_unknown_version_for_agent_returns_404(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:

@@ -67,6 +67,15 @@ async def trigger_eval(
             "resolved version has no commit sha; cannot run eval",
         )
 
+    if version.bundle_ref is None:
+        # The worker reads eval cases from the built bundle, so a version whose
+        # bundle was never built has nothing to evaluate. Reject up front rather
+        # than enqueuing an unrunnable job (mirrors the missing-sha guard above).
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"version {version.id} has no built bundle; nothing to evaluate",
+        )
+
     suite = body.suite or get_settings().eval_default_suite
     stream_id = await queue.enqueue(
         EvalJobRequest(
