@@ -45,7 +45,13 @@ import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..binding import BUNDLE_REF_ENV, CREDENTIALS_ENV, PLUGIN_DIR_ENV
+from ..binding import (
+    BASE_URL_ENV,
+    BUNDLE_REF_ENV,
+    CREDENTIALS_ENV,
+    FAKE_MODEL_ENV,
+    PLUGIN_DIR_ENV,
+)
 from ..bundle_store import BundleStore, extract_bundle
 from .k8s import (
     MANAGED_BY_LABEL,
@@ -180,12 +186,26 @@ class DockerSandboxClient:
         # for the legacy real-Anthropic path. Selection keys on the worker environ (the
         # by-name forward reads the value from there); an empty AGENTOS_CREDENTIALS is
         # treated as unset.
-        if self._environ.get(CREDENTIALS_ENV):
-            args += ["-e", CREDENTIALS_ENV]
-        else:
-            for var in _SDK_PASSTHROUGH_ENV:
-                if var in self._environ:
-                    args += ["-e", var]
+        # Suppress credentials the runner does not need, so a real token never sits
+        # in a container that resolves none (recoverable via /proc/1/environ by a
+        # same-uid agent):
+        #   - fake-model run (AGENTOS_FAKE_MODEL): the runner authenticates nothing,
+        #     so forward no credential at all.
+        #   - base-URL-override / local run (ANTHROPIC_BASE_URL): drop only the
+        #     ambient SDK fallback -- a local endpoint needs no real Anthropic token.
+        #     An EXPLICIT AGENTOS_CREDENTIALS is still forwarded, because the runner
+        #     routes an sk-or- OpenRouter key into ANTHROPIC_API_KEY even with a
+        #     preset base URL (runner sdk_auth.resolve_sdk_env); suppressing it would
+        #     break BYO OpenRouter.
+        fake_model = FAKE_MODEL_ENV in env
+        base_url_override = BASE_URL_ENV in env
+        if not fake_model:
+            if self._environ.get(CREDENTIALS_ENV):
+                args += ["-e", CREDENTIALS_ENV]
+            elif not base_url_override:
+                for var in _SDK_PASSTHROUGH_ENV:
+                    if var in self._environ:
+                        args += ["-e", var]
         args.append(self._image)
 
         try:
