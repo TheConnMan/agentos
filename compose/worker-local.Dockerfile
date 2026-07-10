@@ -19,10 +19,19 @@ FROM ghcr.io/curie-eng/agentos-worker:${BASE_TAG}
 # Pinned; a client this age negotiates down to the host daemon's API version.
 USER 0
 ARG DOCKER_CLI_VERSION=27.5.1
+# TARGETARCH is set automatically by buildx per target platform (amd64/arm64).
+# Docker publishes the static CLI tarball under x86_64/ and aarch64/ dirs, so map
+# the Go-style arch name to the download arch instead of hardcoding x86_64.
+ARG TARGETARCH
 RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) DOCKER_ARCH=x86_64 ;; \
+      arm64) DOCKER_ARCH=aarch64 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
     apt-get update; \
     apt-get install -y --no-install-recommends curl ca-certificates; \
-    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker.tgz; \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker.tgz; \
     tar -xzf /tmp/docker.tgz -C /tmp; \
     install -m 0755 /tmp/docker/docker /usr/local/bin/docker; \
     rm -rf /tmp/docker.tgz /tmp/docker; \
