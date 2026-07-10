@@ -44,6 +44,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -231,16 +232,23 @@ class OpenCodeModelSession:
 
     async def receive_turn(self) -> AsyncIterator[Any]:
         synth = TurnSynthesizer()
+        start = time.monotonic()
+        last_type = "none"
         while not synth.done:
             try:
                 frame = await asyncio.wait_for(self._queue.get(), timeout=_SILENCE_TIMEOUT)
             except TimeoutError:
+                elapsed = time.monotonic() - start
                 yield _result(
-                    text="opencode turn timed out awaiting model output",
+                    text=(
+                        f"opencode turn produced no output for {_SILENCE_TIMEOUT:.0f}s "
+                        f"(last frame '{last_type}', {elapsed:.0f}s into turn)"
+                    ),
                     is_error=True,
                     usage=None,
                 )
                 return
+            last_type = str(frame.get("type", "unknown"))
             for message in synth.ingest(frame):
                 yield message
 

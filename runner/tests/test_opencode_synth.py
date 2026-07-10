@@ -117,6 +117,41 @@ def session_error(message: str) -> dict[str, Any]:
     }
 
 
+def reasoning_part(part_id: str = "prt_reason") -> dict[str, Any]:
+    # The message.part.updated snapshot that announces a reasoning part; its
+    # deltas arrive on field="text" just like a text part's, so only this
+    # snapshot distinguishes the thinking channel from the answer channel.
+    return {
+        "type": "message.part.updated",
+        "properties": {
+            "sessionID": SID,
+            "part": {"id": part_id, "type": "reasoning"},
+            "time": 1,
+        },
+    }
+
+
+def reasoning_then_text_frames() -> list[dict[str, Any]]:
+    """A reasoning-forward turn: thinking streams first, then the answer.
+
+    Mirrors a live gpt-oss-style turn where reasoning deltas precede the text
+    answer and both carry field="text"; only the answer must reach the ACI.
+    """
+
+    return [
+        busy(),
+        reasoning_part("prt_r"),
+        text_delta("Let me think about the request. ", "prt_r"),
+        text_delta("I will keep it terse.", "prt_r"),
+        text_part_bookend("", "prt_t"),
+        text_delta("pong", "prt_t"),
+        text_part_bookend("pong", "prt_t"),
+        step_finish(30, 4),
+        message_updated("openai/gpt-oss-120b", 30, 4),
+        idle(),
+    ]
+
+
 # Global bus noise the reader would drop / the synth must ignore.
 NOISE = [
     {"type": "server.connected", "properties": {}},
@@ -211,6 +246,32 @@ def _offline_producer(message: Event | Interrupt) -> list[str]:
     return lines
 
 
+def _turn_ndjson(frames_factory: Any) -> list[str]:
+    """NDJSON for one turn whose session replays ``frames_factory()``."""
+
+    lines: list[str] = []
+
+    async def _run() -> None:
+        runner = SessionRunner(
+            session_factory=lambda: ScriptedOpenCodeSession(frames_factory),
+            ceiling=0,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(),
+            trace_name="opencode-offline",
+        )
+        await runner.start()
+        try:
+            async for line in runner.run_turn(
+                Event(type="message", text="x", user="U1", ts="1.0")
+            ):
+                lines.append(line)
+        finally:
+            await runner.close()
+
+    anyio.run(_run)
+    return lines
+
+
 # --- synth unit tests -----------------------------------------------------------
 
 
@@ -253,6 +314,7 @@ def test_synth_carries_model_onto_streamed_messages() -> None:
     frames = [
         busy(),
         message_updated("z-ai/glm-4.6", 5, 2),
+        text_part_bookend(""),
         text_delta("hi"),
         idle(),
     ]
@@ -284,6 +346,22 @@ def test_synth_session_error_yields_error_result() -> None:
     assert len(results) == 1
     assert results[0].is_error is True
     assert results[0].result == "provider exploded"
+
+
+def test_synth_drops_reasoning_deltas_keeps_text() -> None:
+    # A delta's field is "text" even for a reasoning part; only the text part's
+    # content (resolved by partID from the snapshots) reaches the SDK messages.
+    messages, synth = _run_synth(reasoning_then_text_frames())
+    texts = [
+        b.text
+        for m in messages
+        if isinstance(m, AssistantMessage)
+        for b in m.content
+        if isinstance(b, TextBlock)
+    ]
+    assert texts == ["pong"], texts
+    results = [m for m in messages if isinstance(m, ResultMessage)]
+    assert results and results[0].result == "pong"
 
 
 def test_synth_pre_turn_idle_does_not_terminate() -> None:
@@ -322,6 +400,20 @@ def test_scripted_opencode_turn_streams_wellformed_ndjson() -> None:
     final = events[-1]
     assert final.status == "done"
     assert final.text == "Looking into it all done"
+
+
+def test_reasoning_content_absent_from_ndjson_stream() -> None:
+    lines = _turn_ndjson(reasoning_then_text_frames)
+    events = parse_ndjson("".join(lines))
+    text_deltas = [e.text for e in events if e.type == "text_delta"]
+    assert text_deltas == ["pong"], text_deltas
+    final = events[-1]
+    assert final.type == "final"
+    assert final.text == "pong"
+    # No thinking-channel content leaks anywhere in the emitted stream.
+    blob = "".join(lines)
+    assert "think about" not in blob
+    assert "keep it terse" not in blob
 
 
 def test_scripted_opencode_backend_passes_aci_conformance() -> None:

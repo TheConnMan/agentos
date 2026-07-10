@@ -20,9 +20,13 @@ time and it returns the SDK messages to yield now, marking ``done`` at the turn
 boundary. The relevant OpenCode v1 frames (verified against ``opencode`` v1.17.17
 ``GET /doc`` and a captured live turn) are:
 
-- ``message.part.delta {field:"text", delta}`` -- one incremental text chunk
-  (the new chunk only, not a growing snapshot). Each maps to one ``TextBlock``.
-- ``message.part.updated {part}`` -- part snapshots. A ``tool`` part at
+- ``message.part.delta {partID, field:"text", delta}`` -- one incremental chunk
+  (the new chunk only, not a growing snapshot). ``field`` is ``"text"`` even for
+  a reasoning part, so the channel is resolved from the part's snapshot (below)
+  by ``partID``; only text-part chunks become ``TextBlock``s, so a reasoning
+  model's thinking never leaks into ``text_delta`` / ``final``.
+- ``message.part.updated {part}`` -- part snapshots carrying ``part.id`` and
+  ``part.type`` (``text`` | ``reasoning`` | ``tool`` | ``step-*``). A ``tool`` part at
   ``state.status == "running"`` maps to one ``ToolUseBlock``; a ``step-finish``
   part carries token totals. The ``text`` part-updated snapshots (the empty
   text-start and full text-end bookends) are intentionally ignored so text
@@ -100,6 +104,12 @@ class TurnSynthesizer:
         self._model_id: str | None = None
         self._error: str | None = None
         self._seen_activity = False
+        # partID -> part.type, learned from message.part.updated snapshots. A
+        # message.part.delta carries field="text" even when its part is a
+        # reasoning part, so the delta alone cannot tell the answer channel from
+        # the thinking channel; the part's snapshot (always emitted before the
+        # part's first delta, verified on the live wire) supplies the real type.
+        self._part_types: dict[str, str] = {}
 
     def _terminal(self) -> ResultMessage:
         if self._error is not None:
@@ -116,9 +126,17 @@ class TurnSynthesizer:
         out: list[Any] = []
 
         if ftype == "message.part.delta" and props.get("field") == "text":
+            # Any text-channel delta means the turn is live, even one we drop.
+            self._seen_activity = True
             chunk = props.get("delta", "")
-            if chunk:
-                self._seen_activity = True
+            # Emit only content whose part is known to be a text part. Reasoning
+            # deltas (and any delta for a partID not yet typed) are dropped so a
+            # reasoning model's thinking never leaks into text_delta / final --
+            # mirroring how translate.py drops non-TextBlock content. Deny by
+            # default is safe because the part's start snapshot always precedes
+            # its first delta (verified on the live wire); a missing snapshot
+            # drops the chunk rather than leaking an untyped channel.
+            if chunk and self._part_types.get(str(props.get("partID"))) == "text":
                 self._final_text += chunk
                 out.append(
                     AssistantMessage(content=[TextBlock(text=chunk)], model=self._model_id or "")
@@ -128,6 +146,9 @@ class TurnSynthesizer:
             part = props.get("part", {})
             if isinstance(part, dict):
                 ptype = part.get("type")
+                pid = part.get("id")
+                if isinstance(pid, str) and isinstance(ptype, str):
+                    self._part_types[pid] = ptype
                 if ptype in ("text", "step-start", "step-finish", "reasoning"):
                     self._seen_activity = True
                 if ptype == "tool":
