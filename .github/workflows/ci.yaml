@@ -21,7 +21,7 @@ jobs:
     name: Python (ruff + mypy + pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Install uv
@@ -91,7 +91,7 @@ jobs:
       run:
         working-directory: cli
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Toolchain
@@ -114,7 +114,7 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
       - name: Upload agentos binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: agentos-x86_64-linux-${{ github.sha }}
           path: cli/target/release/agentos
@@ -124,11 +124,11 @@ jobs:
     name: Contracts (generated TypeScript compiles)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Install Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Regenerate TypeScript from the committed schema and check for drift
@@ -148,7 +148,7 @@ jobs:
       run:
         working-directory: apps/ui
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Install pnpm
@@ -156,7 +156,7 @@ jobs:
         with:
           version: 9
       - name: Install Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
@@ -182,7 +182,7 @@ jobs:
     name: Compose (release stack validates)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Generate the release compose
@@ -247,7 +247,7 @@ jobs:
           - name: ui
             dockerfile: apps/ui/Dockerfile
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Set up Buildx
@@ -273,7 +273,7 @@ jobs:
     name: Build worker-local overlay image (no push)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Build the base worker image locally
