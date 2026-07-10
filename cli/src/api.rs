@@ -6,7 +6,7 @@
 //! X-API-Key header.
 
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub struct ApiClient {
@@ -57,6 +57,25 @@ pub struct Deployment {
     pub id: String,
     pub environment: String,
     pub status: String,
+}
+
+/// The agent kill-switch state (`KillState` in openapi.json): the response of
+/// `POST /agents/{id}/kill` and `POST /agents/{id}/resume`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KillState {
+    pub killed: bool,
+}
+
+/// The per-agent budget (`BudgetConfig` in openapi.json): the request and
+/// response body of `PUT /agents/{id}/budget`. Both fields are optional; an
+/// omitted field means "platform default" server-side, so we only serialize the
+/// ones the caller set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BudgetConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens_per_run: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_usd_per_day: Option<f64>,
 }
 
 /// The artifacts a deploy produces, for the summary printout.
@@ -293,5 +312,83 @@ impl ApiClient {
             deployment,
             channel,
         })
+    }
+
+    /// Resolve an agent identifier (its `name`, or its `id`) to the full record
+    /// by listing agents and matching -- the same name-based resolution the
+    /// deploy flow uses (`resolve_agent`), so the lifecycle verbs never grow a
+    /// second resolution path. Errors when nothing matches; never creates.
+    pub async fn find_agent(&self, identifier: &str) -> Result<Agent> {
+        self.list_agents()
+            .await?
+            .into_iter()
+            .find(|a| a.name == identifier || a.id == identifier)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no agent found matching {identifier:?} (by name or id); deploy it first with `agentos cluster deploy`"
+                )
+            })
+    }
+
+    /// Flip the agent kill switch on: `POST /agents/{id}/kill` (no request body).
+    pub async fn kill_agent(&self, agent_id: &str) -> Result<KillState> {
+        let resp = self
+            .http
+            .post(format!("{}/agents/{agent_id}/kill", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("POST /agents/{id}/kill")?;
+        Self::expect_ok(resp, "killing the agent")
+            .await?
+            .json()
+            .await
+            .context("decoding kill state")
+    }
+
+    /// Flip the agent kill switch off: `POST /agents/{id}/resume` (no request body).
+    pub async fn resume_agent(&self, agent_id: &str) -> Result<KillState> {
+        let resp = self
+            .http
+            .post(format!("{}/agents/{agent_id}/resume", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("POST /agents/{id}/resume")?;
+        Self::expect_ok(resp, "resuming the agent")
+            .await?
+            .json()
+            .await
+            .context("decoding kill state")
+    }
+
+    /// Set the agent budget: `PUT /agents/{id}/budget` with a `BudgetConfig` body.
+    pub async fn set_budget(&self, agent_id: &str, budget: &BudgetConfig) -> Result<BudgetConfig> {
+        let resp = self
+            .http
+            .put(format!("{}/agents/{agent_id}/budget", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(budget)
+            .send()
+            .await
+            .context("PUT /agents/{id}/budget")?;
+        Self::expect_ok(resp, "updating the budget")
+            .await?
+            .json()
+            .await
+            .context("decoding budget")
+    }
+
+    /// Delete the agent: `DELETE /agents/{id}` (204 No Content on success).
+    pub async fn delete_agent(&self, agent_id: &str) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!("{}/agents/{agent_id}", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("DELETE /agents/{id}")?;
+        Self::expect_ok(resp, "deleting the agent").await?;
+        Ok(())
     }
 }

@@ -11,7 +11,7 @@ use agentos_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
 
-use crate::api::{ApiClient, ChannelOutcome};
+use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
 use crate::evals::{load_cases, turn_passes};
@@ -628,6 +628,169 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
             outcome.deployment.id, outcome.deployment.environment, outcome.deployment.status
         ),
     );
+    Ok(())
+}
+
+/// Shared flags for the agent-lifecycle verbs (`cluster kill|resume|budget|delete`).
+/// Like `deploy`, these speak the committed platform-API contract through the
+/// existing `ApiClient` (no second HTTP client).
+pub struct AgentActionOpts {
+    pub api_url: String,
+    pub api_key: String,
+    /// Agent name or id to act on. Resolved to the API's `{agent_id}` via the
+    /// same name lookup `deploy` uses (`ApiClient::find_agent`).
+    pub agent: String,
+    pub dry_run: bool,
+}
+
+/// `agentos cluster kill <agent> --yes`: flip the agent kill switch on
+/// (`POST /agents/{id}/kill`). Destructive (it stops the agent's runs), so it
+/// refuses without `--yes`, mirroring `cluster down`. `--dry-run` prints the
+/// plan and makes no request.
+pub async fn kill(opts: AgentActionOpts, yes: bool) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.payload_plain(&format!(
+            "POST {}/agents/<id>/kill  (would resolve agent {:?} first)",
+            opts.api_url, opts.agent
+        ));
+        return Ok(());
+    }
+    if !yes {
+        bail!(
+            "`agentos cluster kill {}` stops the agent's runs; re-run with --yes to confirm",
+            opts.agent
+        );
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let cl = ui.checklist();
+    let step = cl.step(&format!("killing {}", agent.name));
+    let state = match client.kill_agent(&agent.id).await {
+        Ok(state) => {
+            step.done("killed");
+            state
+        }
+        Err(err) => {
+            step.fail("failed");
+            return Err(err);
+        }
+    };
+    ui.payload(&format!(
+        "agent {} killed (killed={})",
+        agent.name, state.killed
+    ));
+    ui.note("Run `agentos cluster resume <agent>` to bring it back.");
+    Ok(())
+}
+
+/// `agentos cluster resume <agent>`: flip the agent kill switch off
+/// (`POST /agents/{id}/resume`). Non-destructive, so no `--yes` gate.
+/// `--dry-run` prints the plan and makes no request.
+pub async fn resume(opts: AgentActionOpts) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.payload_plain(&format!(
+            "POST {}/agents/<id>/resume  (would resolve agent {:?} first)",
+            opts.api_url, opts.agent
+        ));
+        return Ok(());
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let cl = ui.checklist();
+    let step = cl.step(&format!("resuming {}", agent.name));
+    let state = match client.resume_agent(&agent.id).await {
+        Ok(state) => {
+            step.done("resumed");
+            state
+        }
+        Err(err) => {
+            step.fail("failed");
+            return Err(err);
+        }
+    };
+    ui.payload(&format!(
+        "agent {} resumed (killed={})",
+        agent.name, state.killed
+    ));
+    Ok(())
+}
+
+/// `agentos cluster budget <agent> --limit <n>`: set the agent budget
+/// (`PUT /agents/{id}/budget`). `--limit` sets the daily spend cap
+/// (`max_usd_per_day`, the primary `BudgetConfig` field the console surfaces as
+/// "Max $/day"); the per-run token cap is left at the platform default.
+/// `--dry-run` prints the plan and makes no request.
+pub async fn budget(opts: AgentActionOpts, limit: f64) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.payload_plain(&format!(
+            "PUT {}/agents/<id>/budget  {{\"max_usd_per_day\":{limit}}}  (would resolve agent {:?} first)",
+            opts.api_url, opts.agent
+        ));
+        return Ok(());
+    }
+    if !limit.is_finite() || limit <= 0.0 {
+        bail!("--limit must be a finite value greater than 0 (got {limit})");
+    }
+    let cfg = BudgetConfig {
+        max_output_tokens_per_run: None,
+        max_usd_per_day: Some(limit),
+    };
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let cl = ui.checklist();
+    let step = cl.step(&format!("setting budget for {}", agent.name));
+    let saved = match client.set_budget(&agent.id, &cfg).await {
+        Ok(saved) => {
+            step.done("updated");
+            saved
+        }
+        Err(err) => {
+            step.fail("failed");
+            return Err(err);
+        }
+    };
+    let usd = saved
+        .max_usd_per_day
+        .map(|v| format!("${v}/day"))
+        .unwrap_or_else(|| "platform default".to_string());
+    ui.payload(&format!("budget for {} set: max $/day {usd}", agent.name));
+    Ok(())
+}
+
+/// `agentos cluster delete <agent> --yes`: delete the agent
+/// (`DELETE /agents/{id}`). Destructive and irreversible, so it refuses without
+/// `--yes`, mirroring `cluster down`. `--dry-run` prints the plan and makes no
+/// request.
+pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.payload_plain(&format!(
+            "DELETE {}/agents/<id>  (would resolve agent {:?} first)",
+            opts.api_url, opts.agent
+        ));
+        return Ok(());
+    }
+    if !yes {
+        bail!(
+            "`agentos cluster delete {}` permanently deletes the agent; re-run with --yes to confirm",
+            opts.agent
+        );
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let cl = ui.checklist();
+    let step = cl.step(&format!("deleting {}", agent.name));
+    match client.delete_agent(&agent.id).await {
+        Ok(()) => step.done("deleted"),
+        Err(err) => {
+            step.fail("failed");
+            return Err(err);
+        }
+    }
+    ui.payload(&format!("agent {} deleted", agent.name));
     Ok(())
 }
 
