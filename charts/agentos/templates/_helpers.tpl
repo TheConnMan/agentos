@@ -125,6 +125,66 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/* ---- Auto-generated per-release chart credential (issue #195) ----
+     Resolve one chart-owned secret value, generating a strong random per release
+     for a sealed install instead of shipping the published dev default. Call with
+     a dict: root (the top context), key (the stringData key, matching an existing
+     Secret's data), value (.Values.<path>), default (the published dev default),
+     hex (true for the 64-hex encryption key, else false).
+
+     The existing Secret's data is looked up ONCE by the caller (secrets.yaml) and
+     passed in as `.existingData` (an always-present dict, empty under `helm
+     template`/--dry-run/first install), so this helper does no per-key lookup.
+
+     Four branches, in PRECEDENCE order, and WHY this order is correct:
+       1. allowDevDefaults: the deterministic dev/CI escape hatch (values-dev.yaml
+          sets it true). Return the value verbatim so the dev/e2e path renders the
+          published defaults unchanged, byte-for-byte reproducible. Taking this
+          first also means `--dev` reverts to the defaults even if a random was
+          previously generated into the release Secret. Gate on positive equality
+          against the literal "true" (`eq (toString ...) "true"`), NOT plain
+          truthiness: Go templates treat any non-empty string as truthy, so a
+          quoted `--set security.allowDevDefaults="false"` would otherwise read as
+          truthy and ship the published default -- a fail-OPEN regression.
+       2. Explicit override: if the operator/CLI supplied a value that differs from
+          the published default (`ne value default`), it WINS -- even on `helm
+          upgrade`. This is operator intent (a rotation, a recovery, a `--set`, or
+          an `existingSecret`-equivalent value), so it must beat the persisted
+          value; matches Bitnami's `providedPasswordValue`-first precedence. It
+          MUST sit ahead of the persist branch or an explicit rotation on
+          upgrade would be silently ignored.
+       3. Persist existing: no override, so if a prior install already GENERATED
+          this key, re-use it. `helm upgrade` must NEVER rotate a live store
+          credential (Postgres would reject the new password against its persisted
+          data), so we return the stored value from `.existingData` when present.
+          Generated secrets always have value==published-default (nobody set them),
+          so they never take branch 2 and always land here on upgrade -- exactly
+          the "upgrade must not rotate" guarantee. `.existingData` is always a dict
+          (the caller applies `| default dict`), empty under `helm
+          template`/--dry-run and on first install, so a missing key falls through
+          to generation.
+       4. Generate: a first sealed install (value still equals the published
+          default, no prior Secret) gets a strong random. `randAlphaNum` is
+          crypto-backed (Sprig). hex=true hashes it to 64 lowercase-hex chars (the
+          encryption key format); otherwise a 32-char alphanumeric.
+
+     Net effect: an operator who forgets to re-pass `--set` on a later upgrade
+     safely reverts value to the default, which then reuses the persisted generated
+     value via branch 3 rather than rotating it. */}}
+{{- define "agentos.managedSecret" -}}
+{{- if eq (toString .root.Values.security.allowDevDefaults) "true" -}}{{/* string-coercion safety -- a quoted "false" must not read as truthy and silently ship a published default (fail closed to generation). */}}
+{{- .value -}}
+{{- else if ne (toString .value) (toString .default) -}}
+{{- .value -}}
+{{- else if hasKey .existingData .key -}}
+{{- index .existingData .key | b64dec -}}
+{{- else if .hex -}}
+{{- randAlphaNum 32 | sha256sum -}}
+{{- else -}}
+{{- randAlphaNum 32 -}}
+{{- end -}}
+{{- end -}}
+
 {{/* ---- Shared first-party-app environment fragments ---- */}}
 
 {{/* Postgres connection env for the app services. POSTGRES_PASSWORD comes from

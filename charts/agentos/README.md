@@ -190,10 +190,27 @@ Toggles (all default `true`): `langfuse.deploy`, `postgres.deploy`,
 Flipping any to `false` removes its resources from the render; consumers
 (Langfuse env, the collector config) repoint at the BYO host automatically.
 
-Secrets: dev credentials live in `values.yaml` and are written to one
-`<release>-secrets` Secret. For production, override the values or point
-`langfuse.existingSecret` (and each store's `existingSecret`) at your own
-Secrets. `langfuse.encryptionKey` must be 64 hex chars (`openssl rand -hex 32`).
+Secrets: all credentials are written to one `<release>-secrets` Secret. A sealed
+`helm install` (the default) AUTO-GENERATES a strong random per release for the
+nine chart-owned credentials (the backing-store passwords, the Langfuse
+salt/encryptionKey/nextauthSecret, and the api/webhook keys) rather than shipping
+the published dev defaults. The generated values are persisted via a `lookup` of
+the release Secret, so `helm upgrade` re-uses them and never rotates a live store
+credential (the Bitnami lookup-persist convention). Set
+`security.allowDevDefaults: true` (values-dev.yaml, i.e. `agentos cluster up
+--dev`) to keep the deterministic published defaults for dev/CI. A per-store
+`existingSecret` and explicit `--set` overrides still win in every mode -- an
+override that differs from the published default beats the persisted value on
+install AND upgrade (matching Bitnami's provided-value-first precedence), so
+rotation/recovery works; point `langfuse.existingSecret` (and each store's
+`existingSecret`) at your own Secrets to bring your own. `langfuse.encryptionKey`
+must be 64 hex chars (`openssl rand -hex 32`).
+
+Caveat: generation relies on Helm `lookup`, which is empty under client-side
+rendering. Driving this chart via `helm template | kubectl apply` or ArgoCD's
+client-side Helm (no live API lookup) regenerates these values on every sync and
+would rotate live store credentials -- pin them via `--set`/`existingSecret` (or
+use the `helm install/upgrade` path / `agentos cluster up`) in that case.
 
 Guard against shipping those dev defaults to a shared/production cluster with
 `--set security.checkDefaultCredentials=true`: the chart then refuses to render

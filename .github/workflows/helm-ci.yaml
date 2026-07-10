@@ -82,6 +82,14 @@ jobs:
             | python3 -c "import sys, yaml; yaml.safe_dump_all(yaml.safe_load_all(sys.stdin), sys.stdout)" \
             | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "$KUBE_VERSION"
 
+      # Prove the credential Secret generates strong per-release values on the
+      # sealed path (issue #195) while the dev overlay keeps its deterministic
+      # published defaults. Runs the chart-owned assertion script.
+      - name: helm render assertions (credential generation)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/render-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail
