@@ -64,13 +64,19 @@ spec:
             - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
               value: {{ .Values.langfuse.init.projectPublicKey | quote }}
             - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
-              value: {{ .Values.langfuse.init.projectSecretKey | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langfuse.existingSecret | default (include "agentos.secretName" .) }}
+                  key: langfuseInitProjectSecretKey
             - name: LANGFUSE_INIT_USER_EMAIL
               value: {{ .Values.langfuse.init.userEmail | quote }}
             - name: LANGFUSE_INIT_USER_NAME
               value: {{ .Values.langfuse.init.userName | quote }}
             - name: LANGFUSE_INIT_USER_PASSWORD
-              value: {{ .Values.langfuse.init.userPassword | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langfuse.existingSecret | default (include "agentos.secretName" .) }}
+                  key: langfuseInitUserPassword
           ports:
             - name: http
               containerPort: 3000

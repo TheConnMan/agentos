@@ -41,7 +41,8 @@ langfuse:
   nextauthUrl: http://localhost:23000
   # Dev-only secret material. Override in prod or set `existingSecret` to a
   # Secret carrying keys: langfuseEncryptionKey, langfuseSalt,
-  # langfuseNextauthSecret. ENCRYPTION_KEY must be 64 hex chars (openssl rand -hex 32).
+  # langfuseNextauthSecret, langfuseInitProjectSecretKey, langfuseInitUserPassword.
+  # ENCRYPTION_KEY must be 64 hex chars (openssl rand -hex 32).
   encryptionKey: "0000000000000000000000000000000000000000000000000000000000000000"
   salt: dev-salt-change-me
   nextauthSecret: dev-nextauth-secret-change-me
