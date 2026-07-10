@@ -27,6 +27,7 @@ coupling the worker to a Slack token.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import uuid
 from typing import Any
@@ -38,6 +39,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .behaviorpacks import BehaviorPacks
 from .config import WorkerConfig
+
+logger = logging.getLogger(__name__)
 
 # Env vars the worker injects into a bound sandbox claim. AGENTOS_BUNDLE_REF is
 # the MinIO object key sandbox provisioning fetches into AGENTOS_PLUGIN_DIR (a
@@ -68,7 +71,6 @@ JOIN {schema}.deployments d ON d.agent_id = a.id AND d.status = 'active'
 JOIN {schema}.agent_versions v ON v.id = d.version_id AND v.agent_id = a.id
 WHERE a.slack_channel = :channel
 ORDER BY (d.environment = 'prod') DESC, d.deployed_at DESC
-LIMIT 1
 """
 
 
@@ -98,10 +100,27 @@ class BindingResolver:
     async def resolve(self, channel: str) -> ResolvedDeployment | None:
         async with self._engine.connect() as conn:
             result = await conn.execute(self._sql, {"channel": channel})
-            row = result.mappings().first()
-        if row is None:
+            rows = result.mappings().all()
+        if not rows:
             return None
-        data = dict(row)
+        # The ORDER BY still picks one deterministic winner (prod-first, then most
+        # recent), but if more than one *agent* is bound to this channel the others
+        # silently never respond. Surface that instead of dropping them invisibly
+        # (#38). One agent with both a dev and a prod deployment active is two rows
+        # but one agent, so count distinct agents, not rows.
+        distinct_agents = {r["agent_id"] for r in rows}
+        if len(distinct_agents) > 1:
+            chosen = rows[0]["agent_id"]
+            shadowed = sorted(str(a) for a in distinct_agents if a != chosen)
+            logger.warning(
+                "channel %s has %d agents bound; routing to agent %s and shadowing "
+                "%s (only one agent per channel responds; see issue #38)",
+                channel,
+                len(distinct_agents),
+                chosen,
+                ", ".join(shadowed),
+            )
+        data = dict(rows[0])
         # asyncpg returns JSONB as a str for a raw-text SELECT (no column type to
         # trigger SQLAlchemy's json deserializer); decode it to the dict the model
         # expects. A dict (or None) passes through untouched.

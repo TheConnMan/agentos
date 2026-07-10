@@ -325,7 +325,7 @@ The UI ships one build that runs in two worlds, selected by `?api=1` (query) or
 `VITE_WIRED=1` (build flag) ([`apps/ui/src/api/config.ts:20`](apps/ui/src/api/config.ts)).
 
 - **Wired (real API):** Agents/Fleet, Runs/Traces, Metrics, Logs, Cost, and create/deploy are backed by `apps/api`.
-- **Fixture (showroom):** an `acme-corp` demo dataset ([`apps/ui/src/fixtures/`](apps/ui/src/fixtures/)) plus a scripted CLI-terminal view ([`apps/ui/src/views/Terminal.tsx`](apps/ui/src/views/Terminal.tsx)) render a self-contained demo. Several wired views (Evals matrix, Versions, Usage, Settings) are still honest `ComingSoon` placeholders ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)) so wired mode never leaks fixture data. The Memory tab is a permanent coming-soon empty-state ([`apps/ui/src/views/obs/MemoryStub.tsx`](apps/ui/src/views/obs/MemoryStub.tsx)) pending v1.1 memory generation.
+- **Fixture (showroom):** an `acme-corp` demo dataset ([`apps/ui/src/fixtures/`](apps/ui/src/fixtures/)) renders a self-contained demo. Several wired views (Evals matrix, Versions, Usage, Settings) are still honest `ComingSoon` placeholders ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)) so wired mode never leaks fixture data. The Memory tab is a permanent coming-soon empty-state ([`apps/ui/src/views/obs/MemoryStub.tsx`](apps/ui/src/views/obs/MemoryStub.tsx)) pending v1.1 memory generation.
 
 Retiring the fixture/showroom surface in favor of the real API everywhere is a
 top near-term item; see [issue #4](https://github.com/curie-eng/agentos/issues/4).

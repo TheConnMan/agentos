@@ -177,6 +177,53 @@ def test_prod_deployment_wins_over_dev() -> None:
     asyncio.run(go())
 
 
+def test_multiple_agents_on_one_channel_warns_and_picks_one(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            # Two distinct agents bound to the same channel, both active.
+            a_prod = await _seed_agent(
+                engine, channel=channel, name=f"agent-a-{token}", max_usd=None, max_tokens=None
+            )
+            a_dev = await _seed_agent(
+                engine, channel=channel, name=f"agent-b-{token}", max_usd=None, max_tokens=None
+            )
+            await _seed_deployment(
+                engine, agent_id=a_prod, environment="prod", bundle_ref="bundles/a.zip"
+            )
+            await _seed_deployment(
+                engine, agent_id=a_dev, environment="dev", bundle_ref="bundles/b.zip"
+            )
+
+            with caplog.at_level("WARNING"):
+                resolved = await _resolver(engine).resolve(channel)
+
+            # Deterministic winner (prod outranks dev) and a warning naming the
+            # shadowed agent, rather than a silent drop (#38).
+            assert resolved is not None
+            assert resolved.agent_id == a_prod
+            assert any(
+                "agents bound" in r.message and str(a_dev) in r.message
+                for r in caplog.records
+            )
+
+            await _cleanup(engine, [a_prod, a_dev])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
 def test_deployment_pointing_at_another_agents_version_does_not_resolve() -> None:
     async def go() -> None:
         engine = create_async_engine(_DB_URL)
