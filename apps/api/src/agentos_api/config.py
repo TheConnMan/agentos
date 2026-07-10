@@ -7,11 +7,22 @@ environment variable for shared or production deployments.
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Dev-only default secrets. The production boot gate refuses to start when any of
+# these is still in place under ENVIRONMENT=prod.
+_DEV_DEFAULT_API_KEY = "agentos-dev-key"
+_DEV_DEFAULT_WEBHOOK_SECRET = "dev-webhook-secret"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Deploy environment the API boots as, "dev" or "prod" (the chart renders it
+    # from api.environment onto the ENVIRONMENT var). "prod" arms the production
+    # boot gate below, which refuses the dev-default secrets.
+    environment: str = "dev"
 
     # Postgres (async driver). Dedicated `agentos` schema keeps our tables clear
     # of Langfuse's own tables on the same database.
@@ -84,6 +95,26 @@ class Settings(BaseSettings):
         return (
             f"redis://:{self.valkey_password}@{self.valkey_host}:{self.valkey_port}/0"
         )
+
+    @model_validator(mode="after")
+    def _refuse_dev_defaults_in_prod(self) -> "Settings":
+        """Production boot gate (#57): with ENVIRONMENT=prod, refuse to start if a
+        shared secret is unset or still the shipped dev default, so a prod deploy
+        can never silently run on well-known credentials."""
+        if self.environment.strip().lower() != "prod":
+            return self
+        offenders = []
+        if self.api_key in ("", _DEV_DEFAULT_API_KEY):
+            offenders.append("API_KEY")
+        if self.github_webhook_secret in ("", _DEV_DEFAULT_WEBHOOK_SECRET):
+            offenders.append("GITHUB_WEBHOOK_SECRET")
+        if offenders:
+            raise ValueError(
+                "ENVIRONMENT=prod but these secrets are unset or still the dev "
+                f"default: {', '.join(offenders)}. Set real values before booting "
+                "in production."
+            )
+        return self
 
 
 @lru_cache
