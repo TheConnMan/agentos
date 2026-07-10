@@ -51,7 +51,9 @@ export function NewAgentModal() {
   const wired = useWired();
   const [name, setName] = useState("deal-desk");
   const [channel, setChannel] = useState("");
+  const [model, setModel] = useState("");
   const [skill, setSkill] = useState(SKILL);
+  const modelValue = model.trim();
   const channelValue = channel.trim();
   const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
   // A blank channel can never match a Slack mention, so wired deploy requires one.
@@ -72,7 +74,13 @@ export function NewAgentModal() {
     try {
       // Store the trimmed ID: a copied ID with surrounding spaces would silently
       // drop every mention because the worker matches the channel value exactly.
-      const agent = await createAgent({ name, slack_channel: channelValue });
+      // Only send model when set, so the agent falls back to the platform
+      // default (AGENTOS_MODEL unset) rather than pinning an empty string.
+      const agent = await createAgent({
+        name,
+        slack_channel: channelValue,
+        ...(modelValue !== "" ? { model: modelValue } : {}),
+      });
       const version = await createVersion(agent.id, { version_label: "v0.1.0", created_by: "ui" });
       const archive = await buildBundleZip({ agentName: name, versionLabel: version.version_label, skillMd: skill });
       await uploadBundle(agent.id, version.id, archive);
@@ -161,6 +169,28 @@ export function NewAgentModal() {
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 20, lineHeight: 1.5 }}>
             In Slack: open the channel, click its name, and copy the ID at the bottom of Channel details (or copy the
             channel link and take the C… segment). Invite the bot there after deploy.
+          </div>
+          <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>Model</label>
+          <input
+            data-testid="agent-model"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="platform default"
+            style={{
+              width: "100%",
+              background: C.input,
+              border: "1px solid " + C.borderStrong,
+              borderRadius: 7,
+              padding: "8px 10px",
+              color: C.text,
+              fontFamily: C.mono,
+              fontSize: 13,
+              marginBottom: 6,
+            }}
+          />
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 20, lineHeight: 1.5 }}>
+            Optional. Sets <span style={{ fontFamily: C.mono }}>AGENTOS_MODEL</span> for this agent at boot. Leave blank
+            to use the platform default model.
           </div>
           <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Template</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>

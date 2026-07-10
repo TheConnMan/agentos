@@ -39,6 +39,11 @@ class Agent(Base):
     # NULL means platform defaults apply.
     max_usd_per_day: Mapped[float | None] = mapped_column(default=None)
     max_output_tokens_per_run: Mapped[int | None] = mapped_column(default=None)
+    # Per-agent model id (#254). Forwarded as AGENTOS_MODEL at sandbox boot so a
+    # single agent can be pinned to a specific model (BYO-model, #24); NULL means
+    # the platform/worker default model applies. The value is passed straight
+    # through to the runner, which resolves it against its configured provider.
+    model: Mapped[str | None] = mapped_column(default=None)
     # Per-agent behavior packs: declarative, opt-in UX touches the worker applies
     # around a turn (a sampled "working..." line, a canned greeting reply). Stored
     # as JSON here and resolved onto the deployment by the worker's binding layer;

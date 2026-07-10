@@ -34,6 +34,7 @@ async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
         name=data.name,
         slack_channel=data.slack_channel,
         repo_full_name=data.repo_full_name,
+        model=data.model,
         behavior_packs=(
             data.behavior_packs.model_dump()
             if data.behavior_packs is not None
@@ -85,6 +86,15 @@ async def update_agent_channel(
     session: AsyncSession, agent: Agent, slack_channel: str
 ) -> Agent:
     agent.slack_channel = slack_channel
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
+async def update_agent_model(
+    session: AsyncSession, agent: Agent, model: str | None
+) -> Agent:
+    agent.model = model
     await session.commit()
     await session.refresh(agent)
     return agent

@@ -55,6 +55,8 @@ async def update_agent(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
     if data.slack_channel is not None:
         agent = await crud.update_agent_channel(session, agent, data.slack_channel)
+    if data.model is not None:
+        agent = await crud.update_agent_model(session, agent, data.model)
     return AgentOut.model_validate(agent)
 
 

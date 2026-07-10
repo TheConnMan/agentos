@@ -12,6 +12,9 @@ export interface AgentOut {
   id: string;
   name: string;
   slack_channel: string;
+  // Per-agent model id, forwarded as AGENTOS_MODEL at boot (#254). null uses the
+  // platform default model.
+  model: string | null;
   created_at: string;
 }
 
@@ -113,7 +116,12 @@ function describeError(body: unknown): string | null {
   return null;
 }
 
-export async function createAgent(input: { name: string; slack_channel: string }): Promise<AgentOut> {
+export async function createAgent(input: {
+  name: string;
+  slack_channel: string;
+  // Optional per-agent model id (#254). Omit for the platform default.
+  model?: string;
+}): Promise<AgentOut> {
   const resp = await fetch(url("/agents"), {
     method: "POST",
     headers: headers({ "Content-Type": "application/json" }),
@@ -332,7 +340,10 @@ export async function getConfig(): Promise<AppConfig> {
 // the updated agent. Mirrors createAgent's JSON-body shape; non-2xx throws
 // ApiError. The live worker keeps its channel until the next deploy — this only
 // updates the stored config the next deployment reads.
-export async function updateAgent(agentId: string, patch: { slack_channel: string }): Promise<AgentOut> {
+export async function updateAgent(
+  agentId: string,
+  patch: { slack_channel?: string; model?: string },
+): Promise<AgentOut> {
   const resp = await fetch(url(`/agents/${agentId}`), {
     method: "PATCH",
     headers: headers({ "Content-Type": "application/json" }),

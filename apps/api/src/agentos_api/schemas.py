@@ -97,13 +97,20 @@ class AgentCreate(BaseModel):
     slack_channel: str
     repo_full_name: str | None = None
     behavior_packs: BehaviorPacksConfig | None = None
+    # Per-agent model id, forwarded as AGENTOS_MODEL at boot (#254). None uses the
+    # platform default model.
+    model: str | None = None
 
 
 class AgentUpdate(BaseModel):
-    """Partial update of a mutable agent field. Only slack_channel is updatable
-    (name and repo binding are identity); an omitted field is left unchanged."""
+    """Partial update of mutable agent fields. slack_channel and model are
+    updatable (name and repo binding are identity); an omitted field is left
+    unchanged."""
 
     slack_channel: str | None = None
+    # New per-agent model id (#254). Omitted (None) leaves the current model
+    # unchanged, matching the slack_channel convention.
+    model: str | None = None
 
 
 class AgentOut(BaseModel):
@@ -114,6 +121,7 @@ class AgentOut(BaseModel):
     slack_channel: str
     repo_full_name: str | None
     behavior_packs: dict[str, Any] | None
+    model: str | None
     created_at: datetime
 
 

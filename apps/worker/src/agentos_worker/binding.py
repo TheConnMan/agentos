@@ -63,6 +63,7 @@ SELECT a.id AS agent_id,
        a.max_usd_per_day AS max_usd_per_day,
        a.max_output_tokens_per_run AS max_output_tokens_per_run,
        a.behavior_packs AS behavior_packs,
+       a.model AS model,
        v.id AS version_id,
        v.version_label AS version_label,
        v.bundle_ref AS bundle_ref
@@ -86,6 +87,9 @@ class ResolvedDeployment(BaseModel):
     # The agent's opt-in behavior packs (declarative JSON), or None for the
     # all-off platform default. Parsed into a BehaviorPacks via packs_for().
     behavior_packs: dict[str, Any] | None = None
+    # The agent's pinned model id (#254), forwarded as AGENTOS_MODEL at boot.
+    # None falls back to the worker's configured default model.
+    model: str | None = None
 
 
 class BindingResolver:
@@ -174,11 +178,15 @@ class BindingResolver:
         }
         if resolved.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = resolved.bundle_ref
-        apply_model_env(env, self._config)
+        # The agent's pinned model (#254) overrides the worker default; None
+        # falls back to config.model inside apply_model_env.
+        apply_model_env(env, self._config, model_override=resolved.model)
         return env
 
 
-def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
+def apply_model_env(
+    env: dict[str, str], config: WorkerConfig, model_override: str | None = None
+) -> None:
     """Layer the runner model + credentials passthrough onto a boot env.
 
     Shared by the runs binding and the eval consumer so both lanes boot the
@@ -186,6 +194,10 @@ def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
     needed); credentials is forwarded only when set and never logged. The local
     model demo path injects a generic Anthropic compatible base URL when
     configured; an explicit model is forwarded whenever set.
+
+    ``model_override`` is the per-agent AGENTOS_MODEL (#254): when set it wins
+    over the worker's configured default model, so a single agent can be pinned
+    to a specific model. None means "use the platform default" (config.model).
     """
     if config.fake_model:
         env[FAKE_MODEL_ENV] = "1"
@@ -193,5 +205,6 @@ def apply_model_env(env: dict[str, str], config: WorkerConfig) -> None:
         env[CREDENTIALS_ENV] = config.credentials
     if config.model_base_url:
         env[BASE_URL_ENV] = config.model_base_url
-    if config.model:
-        env[MODEL_ENV] = config.model
+    model = model_override if model_override is not None else config.model
+    if model:
+        env[MODEL_ENV] = model
