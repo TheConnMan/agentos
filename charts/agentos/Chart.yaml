@@ -14,6 +14,7 @@ kubeVersion: ">=1.25.0-0"
 maintainers:
   - name: AgentOS
 home: https://github.com/curie-eng/agentos
+icon: https://raw.githubusercontent.com/curie-eng/agentos/main/apps/ui/public/favicon.svg
 sources:
   - https://github.com/curie-eng/agentos
 keywords:

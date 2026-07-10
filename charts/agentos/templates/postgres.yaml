@@ -33,7 +33,7 @@ spec:
         {{- include "agentos.selectorLabels" (dict "root" . "component" "postgres") | nindent 8 }}
     spec:
       securityContext:
-        fsGroup: 999
+        fsGroup: {{ .Values.postgres.podSecurityContext.fsGroup }}
       {{- if not .Values.postgres.persistence.enabled }}
       volumes:
         - name: data
