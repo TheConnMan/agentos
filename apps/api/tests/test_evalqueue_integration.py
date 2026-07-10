@@ -151,7 +151,7 @@ def test_dev_push_fans_out_prod_push_does_not(
 ) -> None:
     agent = client.post(
         "/agents",
-        json={"name": "k1-fanout", "slack_channel": "#k", "repo_full_name": REPO},
+        json={"name": "k1-fanout", "slack_channel": "C000000K01", "repo_full_name": REPO},
         headers=auth_headers,
     ).json()
     clone_url, sha = _build_bare_repo(tmp_path)
@@ -186,7 +186,7 @@ def test_redelivered_dev_push_does_not_refan_out(
 ) -> None:
     agent = client.post(
         "/agents",
-        json={"name": "k1-redeliver", "slack_channel": "#k", "repo_full_name": REPO},
+        json={"name": "k1-redeliver", "slack_channel": "C000000K01", "repo_full_name": REPO},
         headers=auth_headers,
     ).json()
     clone_url, sha = _build_bare_repo(tmp_path)

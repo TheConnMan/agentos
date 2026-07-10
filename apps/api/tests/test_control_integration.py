@@ -28,7 +28,7 @@ def valkey() -> Iterator[redis.Redis]:
 def _make_agent(client: Any, headers: dict[str, str]) -> str:
     agent = client.post(
         "/agents",
-        json={"name": "kill-agent", "slack_channel": "#k"},
+        json={"name": "kill-agent", "slack_channel": "C000000K01"},
         headers=headers,
     ).json()
     return str(agent["id"])

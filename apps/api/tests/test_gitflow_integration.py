@@ -118,7 +118,7 @@ def _register_agent(client: Any, headers: dict[str, str]) -> str:
         "/agents",
         json={
             "name": "gitflow-agent",
-            "slack_channel": "#g",
+            "slack_channel": "C000000G01",
             "repo_full_name": REPO,
         },
         headers=headers,
