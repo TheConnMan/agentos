@@ -261,6 +261,9 @@ fn render_pending(reply: &StreamPendingReply) -> String {
                 consumers.join(",")
             )
         }
+        // `StreamPendingReply` is `#[non_exhaustive]` (redis 1.x); render any
+        // future variant as unknown rather than failing to compile.
+        _ => "unknown".to_string(),
     }
 }
 

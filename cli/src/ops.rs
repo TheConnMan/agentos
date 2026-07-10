@@ -427,7 +427,7 @@ const REQUIRED_SECRETS: &[(&str, usize)] = &[
 fn random_hex(n_bytes: usize) -> Result<String> {
     use std::fmt::Write;
     let mut buf = vec![0u8; n_bytes];
-    getrandom::getrandom(&mut buf)
+    getrandom::fill(&mut buf)
         .map_err(|e| anyhow::anyhow!("OS random number generator unavailable: {e}"))?;
     let mut out = String::with_capacity(n_bytes * 2);
     for b in buf {
