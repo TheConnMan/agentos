@@ -349,6 +349,11 @@ enum ClusterAction {
         /// Extra `--set KEY=VAL` passed through to helm verbatim (repeatable).
         #[arg(long = "set", value_name = "KEY=VAL")]
         set: Vec<String>,
+        /// Install with the chart's built-in dev-default secrets instead of
+        /// generating strong per-release randoms. Deterministic, for local dev
+        /// and CI only -- these defaults are published in the public repo.
+        #[arg(long)]
+        dev: bool,
         /// Print the helm command that would run and exit without executing.
         #[arg(long)]
         dry_run: bool,
@@ -831,6 +836,7 @@ async fn main() -> Result<()> {
                 local_model,
                 allow_web_egress,
                 set,
+                dev,
                 dry_run,
             } => {
                 let resolved = artifacts::resolve_chart(
@@ -862,6 +868,10 @@ async fn main() -> Result<()> {
                     fake_model,
                     credentials,
                     local_model,
+                    // Populated by ops::up (generate on fresh install / reuse on
+                    // upgrade); empty here so the pure builder starts clean.
+                    secrets: vec![],
+                    dev,
                 })
                 .await
             }
