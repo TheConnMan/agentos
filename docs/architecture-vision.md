@@ -120,12 +120,12 @@ against the new store. The tag convention (`version:`/`suite:`) is our schema
 expressed in Langfuse's tag mechanism, so it translates, but it is
 convention, not a frozen contract.
 
-**Leakage:** the eval-case format is duplicated, not frozen: the CLI reads
-`evals/cases.json` (`{name, input, expect_contains}` in `cli/src/evals.rs`)
-and the platform's bundle loader reads the same shape independently
-(`eval/stream.py`); [issue #8](https://github.com/curie-eng/agentos/issues/8)
-already calls for converging and freezing it. Until then an eval-store swap has
-two format definitions to keep honest.
+**Leakage:** the eval-case format is now converged and frozen
+([issue #8](https://github.com/curie-eng/agentos/issues/8), ADR-0019): the CLI
+reads `evals/cases.json` as a suite object `{name, cases:[{id, input, grader}]}`
+(`cli/src/evals.rs`) and the platform's bundle loader validates the same shape
+(`eval/stream.py`), both building to one committed schema
+(`apps/worker/schema/eval-cases.schema.json`) kept honest by a drift gate.
 
 ### 4. Blob storage (MinIO today)
 

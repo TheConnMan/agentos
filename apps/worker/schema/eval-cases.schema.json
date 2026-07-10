@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "EvalCase": {
+      "description": "One eval: an input prompt and the grader that judges the answer.",
+      "properties": {
+        "grader": {
+          "$ref": "#/$defs/Grader"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "grader"
+      ],
+      "title": "EvalCase",
+      "type": "object"
+    },
+    "EvalSuite": {
+      "description": "A named set of eval cases run together against one plugin version.",
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/EvalCase"
+          },
+          "minItems": 1,
+          "title": "Cases",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "cases"
+      ],
+      "title": "EvalSuite",
+      "type": "object"
+    },
+    "Grader": {
+      "description": "A single deterministic grader. MVP scope: string-shaped checks only.\n\n(An LLM-judge grader is a later addition; keeping these deterministic makes\neval results reproducible, which is the whole point of eval-as-CI.)",
+      "properties": {
+        "case_sensitive": {
+          "default": false,
+          "title": "Case Sensitive",
+          "type": "boolean"
+        },
+        "expected": {
+          "title": "Expected",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/GraderKind"
+        }
+      },
+      "required": [
+        "kind",
+        "expected"
+      ],
+      "title": "Grader",
+      "type": "object"
+    },
+    "GraderKind": {
+      "description": "How a case's expected value is compared against the agent's output.",
+      "enum": [
+        "exact",
+        "contains",
+        "regex"
+      ],
+      "title": "GraderKind",
+      "type": "string"
+    }
+  },
+  "$id": "https://curie.tech/agentos/eval-cases.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentOS Eval Case Format"
+}

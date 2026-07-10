@@ -3,7 +3,9 @@
 //! The layout matches the frozen `plugin-format` package: a manifest at
 //! `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md` with YAML
 //! frontmatter, a root `.mcp.json`, plus a CLI-local `evals/cases.json` seed
-//! for `agentos skill eval`. Names are kebab-case per the validator.
+//! (a suite object `{name, cases: [{id, input, grader}]}`, hand-mirroring the
+//! frozen eval-case schema) for `agentos skill eval`. Names are kebab-case per
+//! the validator.
 
 use std::path::{Path, PathBuf};
 
@@ -36,13 +38,20 @@ fn skill_md(name: &str) -> String {
 }
 
 fn eval_cases(name: &str) -> String {
-    serde_json::to_string_pretty(&serde_json::json!([
-        {
-            "name": format!("{name}-answers"),
-            "input": "What's the weather in San Francisco?",
-            "expect_contains": ["weather"],
-        }
-    ]))
+    serde_json::to_string_pretty(&serde_json::json!({
+        "name": name,
+        "cases": [
+            {
+                "id": format!("{name}-answers"),
+                "input": "What's the weather in San Francisco?",
+                "grader": {
+                    "kind": "contains",
+                    "expected": "weather",
+                    "case_sensitive": false,
+                },
+            }
+        ],
+    }))
     .expect("static eval cases serialize")
 }
 
@@ -161,17 +170,28 @@ mod tests {
             &std::fs::read_to_string(dir.path().join("evals/cases.json")).unwrap(),
         )
         .unwrap();
-        assert!(cases.as_array().unwrap().len() == 1);
-        assert!(cases[0]["input"].as_str().unwrap().contains("weather"));
-        assert!(cases[0]["expect_contains"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|needle| needle == "weather"));
+        assert_eq!(cases["name"], "deal-desk");
+        let case_list = cases["cases"].as_array().unwrap();
+        assert_eq!(case_list.len(), 1);
+        assert_eq!(case_list[0]["id"], "deal-desk-answers");
+        assert!(case_list[0]["input"].as_str().unwrap().contains("weather"));
+        assert_eq!(case_list[0]["grader"]["kind"], "contains");
+        assert_eq!(case_list[0]["grader"]["expected"], "weather");
 
         assert_eq!(
             read_manifest(dir.path()).unwrap(),
             ("deal-desk".to_string(), "0.1.0".to_string())
+        );
+    }
+
+    #[test]
+    fn eval_cases_byte_match_the_committed_fixture() {
+        // The frozen cross-language fixture: `eval_cases("example")` must be
+        // byte-for-byte the worker's committed example, so a scaffolded bundle
+        // is loadable by the platform eval path.
+        assert_eq!(
+            eval_cases("example"),
+            include_str!("../../apps/worker/schema/eval-cases.example.json")
         );
     }
 

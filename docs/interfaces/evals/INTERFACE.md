@@ -23,7 +23,7 @@ One grader family (the three deterministic `GraderKind` variants) and one store 
 
 ## Known leakage
 
-Two seams bleed through. First, the eval-case format is duplicated across independent readers with *divergent* schemas: the CLI at `cli/src/evals.rs:16` reads `evals/cases.json` as `{name, input, expect_contains}` (a `Vec<String>`; doc at `evals.rs:3`), while the worker's `load_suite_from_bundle` (`stream.py:143`) reads the same `evals/cases.json` path but validates it as an `EvalSuite` of `{id, input, grader{...}}` (`models.py:63`). The two are hand-maintained and not the same shape. Second, the `version:`/`suite:` trace-tag convention is an unfrozen string contract hand-aligned between the recorder (`recorder.py:82`) and the matrix reader (`evals.py:23`) — a rename on one side silently breaks the grid.
+One seam still bleeds through. The eval-case format is now converged and frozen (issue #8, ADR-0019): both the CLI scaffold/loader (`cli/src/evals.rs`) and the worker's `load_suite_from_bundle` (`stream.py:143`) build to one schema, `apps/worker/schema/eval-cases.schema.json`, generated from the Pydantic `EvalSuite`/`EvalCase`/`Grader` models (`models.py`) and guarded by the same regenerate-and-diff drift gate as the frozen packages. The CLI hand-mirrors the schema in Rust and is kept honest by a byte-level conformance test against the shared committed fixture. Still open: the `version:`/`suite:` trace-tag convention is an unfrozen string contract hand-aligned between the recorder (`recorder.py:82`) and the matrix reader (`evals.py:23`) — a rename on one side silently breaks the grid.
 
 ## Cross-links
 

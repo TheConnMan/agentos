@@ -36,6 +36,14 @@ release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full comm
   `.mcp.json`) must stay byte-compatible with what `plugin_format.validate_bundle`
   accepts -- if `packages/plugin-format` changes, this scaffold needs
   updating in the same reviewed change, not independently.
+- **The `evals/cases.json` seed and `skill eval` loader hand-mirror the frozen
+  eval-case schema.** The `agentos init` seed (`scaffold::eval_cases`) and the
+  `skill eval` loader (`evals::EvalSuite`/`load_suite`) mirror the frozen
+  eval-case schema at `apps/worker/schema/eval-cases.schema.json` and must stay
+  byte-compatible with the worker's `EvalSuite` -- the scaffold byte-equality
+  test against `apps/worker/schema/eval-cases.example.json` is the enforcement.
+  A shape change here lands in the same reviewed change as the Python models,
+  not independently.
 - **`skill up` records container state in `.agentos/runner.json`** (gitignored
   by the scaffold) so `skill message`/`skill eval`/`skill status`/`skill down` can resolve the
   running container from the bundle directory alone. Do not add a second

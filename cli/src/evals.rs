@@ -1,76 +1,156 @@
 //! `agentos skill eval`: run the bundle's eval cases through the local runner.
 //!
-//! Cases live in `evals/cases.json` (seeded by `agentos init`): an array of
-//! `{name, input, expect_contains}`. Each case round-trips an `eval_case` ACI
-//! event and the reply transcript must contain every expected substring
-//! (case-insensitive). This is the CLI-local seed of the K1 eval machinery,
-//! not a replacement for it.
+//! Cases live in `evals/cases.json` (seeded by `agentos init`): a suite OBJECT
+//! `{name, cases: [{id, input, grader}]}`, where each grader is one of
+//! `kind: exact | contains | regex` with an `expected` string and an optional
+//! `case_sensitive` flag. This shape hand-mirrors the frozen canonical eval-case
+//! format owned by the worker (`apps/worker/schema/eval-cases.schema.json`, the
+//! Pydantic `EvalSuite`); a shape change lands in the same reviewed change as the
+//! Python models. Grading semantics mirror the platform's `Grader.grade`. This is
+//! the CLI-local seed of the K1 eval machinery, not a replacement for it.
 
 use std::path::Path;
 
-use agentos_aci_protocol::OutboundEvent;
-use anyhow::{bail, Context, Result};
+use agentos_aci_protocol::{OutboundEvent, SessionStatus};
+use anyhow::{anyhow, bail, Context, Result};
+use regex::RegexBuilder;
 use serde::Deserialize;
 
+/// How a case's expected value is compared against the agent's answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GraderKind {
+    Exact,
+    Contains,
+    Regex,
+}
+
+/// A single deterministic grader mirroring the worker's `Grader`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Grader {
+    pub kind: GraderKind,
+    pub expected: String,
+    #[serde(default)]
+    pub case_sensitive: bool,
+}
+
+impl Grader {
+    /// True if `output` satisfies this grader. Mirrors the platform's
+    /// `Grader.grade`: exact compares whitespace-trimmed values, contains is a
+    /// substring test, regex is a search; all case-fold both sides unless
+    /// `case_sensitive` (regex uses the engine's case-insensitive flag).
+    pub fn grade(&self, output: &str) -> bool {
+        if self.kind == GraderKind::Regex {
+            return match RegexBuilder::new(&self.expected)
+                .case_insensitive(!self.case_sensitive)
+                .build()
+            {
+                Ok(re) => re.is_match(output),
+                Err(_) => false,
+            };
+        }
+        // Exact and Contains fold both sides unless case_sensitive, then differ
+        // only in the comparison; fold once here rather than per arm.
+        let (actual, expected) = if self.case_sensitive {
+            (output.to_string(), self.expected.clone())
+        } else {
+            (output.to_lowercase(), self.expected.to_lowercase())
+        };
+        if self.kind == GraderKind::Exact {
+            actual.trim() == expected.trim()
+        } else {
+            actual.contains(&expected)
+        }
+    }
+}
+
+/// One eval: an input prompt and the grader that judges the answer.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvalCase {
-    pub name: String,
+    pub id: String,
     pub input: String,
-    #[serde(default)]
-    pub expect_contains: Vec<String>,
+    pub grader: Grader,
 }
 
-pub fn load_cases(path: &Path) -> Result<Vec<EvalCase>> {
+/// A named set of eval cases run together against one plugin version.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalSuite {
+    pub name: String,
+    pub cases: Vec<EvalCase>,
+}
+
+/// Parse the suite object at `path`. Rejects an empty `cases` list, eagerly
+/// compiles every regex grader (so a bad pattern fails at load, not mid-run),
+/// and turns the retired top-level-array format into a targeted migration hint.
+pub fn load_suite(path: &Path) -> Result<EvalSuite> {
     let body =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let cases: Vec<EvalCase> = serde_json::from_str(&body)
-        .with_context(|| format!("{} is not a valid eval case array", path.display()))?;
-    if cases.is_empty() {
+    let value: serde_json::Value = serde_json::from_str(&body)
+        .with_context(|| format!("{} is not valid JSON", path.display()))?;
+    if value.is_array() {
+        bail!(
+            "{} is in the retired eval-case format (a top-level array of \
+             [{{name, input, expect_contains}}]). The eval-case format is now a suite \
+             object: {{\"name\": \"...\", \"cases\": [{{\"id\": \"...\", \"input\": \"...\", \
+             \"grader\": {{\"kind\": \"contains\", \"expected\": \"...\", \"case_sensitive\": false}}}}]}}. \
+             Rewrite the file to the object form.",
+            path.display()
+        );
+    }
+    let suite: EvalSuite = serde_json::from_value(value)
+        .with_context(|| format!("{} is not a valid eval suite", path.display()))?;
+    if suite.cases.is_empty() {
         bail!("{} contains no eval cases", path.display());
     }
-    Ok(cases)
+    for case in &suite.cases {
+        if case.grader.kind == GraderKind::Regex {
+            RegexBuilder::new(&case.grader.expected)
+                .build()
+                .map_err(|err| {
+                    anyhow!(
+                        "case {:?} has an invalid regex grader {:?}: {err}. The local CLI compiles \
+                         patterns with the Rust `regex` crate, a portable subset with no lookaround \
+                         or backreferences; the pattern may still be valid on the platform.",
+                        case.id,
+                        case.grader.expected
+                    )
+                })?;
+        }
+    }
+    Ok(suite)
 }
 
-/// The reply transcript of a turn: streamed text plus the final text.
-pub fn transcript(events: &[OutboundEvent]) -> String {
-    let mut out = String::new();
+/// The graded answer for a turn: the `final` frame's text when a final arrived,
+/// else the concatenation of the streamed text deltas. Mirrors the platform
+/// runner: streamed interim text is not graded once a final exists.
+pub fn graded_answer(events: &[OutboundEvent]) -> String {
+    let mut final_text: Option<&str> = None;
+    let mut deltas = String::new();
     for event in events {
         match event {
-            OutboundEvent::TextDelta { text, .. } => {
-                out.push_str(text);
-                out.push('\n');
-            }
-            OutboundEvent::Final { text, .. } => {
-                out.push_str(text);
-                out.push('\n');
-            }
+            OutboundEvent::Final { text, .. } => final_text = Some(text),
+            OutboundEvent::TextDelta { text, .. } => deltas.push_str(text),
             _ => {}
         }
     }
-    out
+    match final_text {
+        Some(text) => text.to_string(),
+        None => deltas,
+    }
 }
 
-/// A case passes when the transcript contains every expected substring.
-pub fn case_passes(case: &EvalCase, transcript: &str) -> bool {
-    let haystack = transcript.to_lowercase();
-    case.expect_contains
-        .iter()
-        .all(|needle| haystack.contains(&needle.to_lowercase()))
-}
-
-/// Full pass condition for a turn: it must end in a `final` with status
-/// `done` AND the transcript must match. A classified-failure or interrupted
-/// turn never passes, even if its error text happens to contain the expected
-/// substrings.
+/// Full pass condition for a turn: it must end in a `final` with status `done`
+/// AND the grader must match the graded answer. A classified-failure or
+/// interrupted turn never passes, even if its error text matches the grader.
 pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
     let completed = matches!(
         events.last(),
         Some(OutboundEvent::Final {
-            status: agentos_aci_protocol::SessionStatus::Done,
+            status: SessionStatus::Done,
             ..
         })
     );
-    completed && case_passes(case, &transcript(events))
+    completed && case.grader.grade(&graded_answer(events))
 }
 
 /// One rendered result line: check-or-cross, name, duration (design canon).
@@ -86,62 +166,156 @@ pub fn summary_line(passed: usize, total: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentos_aci_protocol::{SessionStatus, PROTOCOL_VERSION};
+    use agentos_aci_protocol::PROTOCOL_VERSION;
 
-    fn case(expect: &[&str]) -> EvalCase {
-        EvalCase {
-            name: "c".into(),
-            input: "hi".into(),
-            expect_contains: expect.iter().map(|s| s.to_string()).collect(),
+    fn grader(kind: GraderKind, expected: &str, case_sensitive: bool) -> Grader {
+        Grader {
+            kind,
+            expected: expected.into(),
+            case_sensitive,
         }
     }
 
-    fn events() -> Vec<OutboundEvent> {
-        vec![
-            OutboundEvent::TextDelta {
-                version: PROTOCOL_VERSION.into(),
-                text: "Looking into it".into(),
-            },
-            OutboundEvent::ToolNote {
-                version: PROTOCOL_VERSION.into(),
-                text: "Bash".into(),
-                tool: Some("Bash".into()),
-            },
-            OutboundEvent::Final {
-                version: PROTOCOL_VERSION.into(),
-                text: "all done".into(),
-                status: SessionStatus::Done,
-            },
-        ]
+    fn case(g: Grader) -> EvalCase {
+        EvalCase {
+            id: "c".into(),
+            input: "hi".into(),
+            grader: g,
+        }
+    }
+
+    fn delta(text: &str) -> OutboundEvent {
+        OutboundEvent::TextDelta {
+            version: PROTOCOL_VERSION.into(),
+            text: text.into(),
+        }
+    }
+
+    fn final_event(text: &str, status: SessionStatus) -> OutboundEvent {
+        OutboundEvent::Final {
+            version: PROTOCOL_VERSION.into(),
+            text: text.into(),
+            status,
+        }
+    }
+
+    fn write(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cases.json");
+        std::fs::write(&path, body).unwrap();
+        (dir, path)
     }
 
     #[test]
-    fn transcript_collects_text_deltas_and_final_only() {
-        assert_eq!(transcript(&events()), "Looking into it\nall done\n");
+    fn loads_the_object_suite_form() {
+        let (_dir, path) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"contains","expected":"x"}}]}"#,
+        );
+        let suite = load_suite(&path).unwrap();
+        assert_eq!(suite.name, "s");
+        assert_eq!(suite.cases.len(), 1);
+        assert_eq!(suite.cases[0].id, "a");
+        assert_eq!(suite.cases[0].grader.kind, GraderKind::Contains);
+        assert!(!suite.cases[0].grader.case_sensitive);
     }
 
     #[test]
-    fn matching_is_case_insensitive_and_requires_every_needle() {
-        let t = transcript(&events());
-        assert!(case_passes(&case(&["ALL DONE", "looking"]), &t));
-        assert!(!case_passes(&case(&["all done", "missing"]), &t));
-        assert!(case_passes(&case(&[]), &t));
+    fn rejects_the_retired_array_form_with_a_migration_hint() {
+        let (_dir, path) = write(r#"[{"name":"a","input":"b","expect_contains":["c"]}]"#);
+        let err = load_suite(&path).unwrap_err().to_string();
+        assert!(err.contains("retired eval-case format"), "{err}");
+        assert!(err.contains("expect_contains"), "{err}");
+        assert!(err.contains("\"cases\""), "{err}");
+    }
+
+    #[test]
+    fn rejects_an_empty_cases_list() {
+        let (_dir, path) = write(r#"{"name":"s","cases":[]}"#);
+        let err = load_suite(&path).unwrap_err().to_string();
+        assert!(err.contains("no eval cases"), "{err}");
+    }
+
+    #[test]
+    fn rejects_an_unknown_grader_kind() {
+        let (_dir, path) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"llm_judge","expected":"x"}}]}"#,
+        );
+        assert!(load_suite(&path).is_err());
+    }
+
+    #[test]
+    fn rejects_an_invalid_regex_grader_at_load() {
+        let (_dir, path) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"regex","expected":"(unclosed"}}]}"#,
+        );
+        let err = load_suite(&path).unwrap_err().to_string();
+        assert!(err.contains("invalid regex grader"), "{err}");
+        assert!(err.contains("may still be valid on the platform"), "{err}");
+    }
+
+    #[test]
+    fn exact_grader_trims_and_case_folds() {
+        assert!(grader(GraderKind::Exact, "  Done  ", false).grade("done"));
+        assert!(!grader(GraderKind::Exact, "done", true).grade("Done"));
+        assert!(grader(GraderKind::Exact, "done", true).grade("  done  "));
+        assert!(!grader(GraderKind::Exact, "done", false).grade("all done"));
+    }
+
+    #[test]
+    fn contains_grader_case_folds_unless_flagged() {
+        assert!(grader(GraderKind::Contains, "WEATHER", false).grade("the weather today"));
+        assert!(!grader(GraderKind::Contains, "WEATHER", true).grade("the weather today"));
+        assert!(grader(GraderKind::Contains, "weather", true).grade("the weather today"));
+    }
+
+    #[test]
+    fn regex_grader_searches_with_optional_case_flag() {
+        assert!(grader(GraderKind::Regex, "wea.her", false).grade("The WEATHER"));
+        assert!(!grader(GraderKind::Regex, "WEA.HER", true).grade("the weather"));
+        assert!(grader(GraderKind::Regex, "^done$", false).grade("DONE"));
+    }
+
+    #[test]
+    fn graded_answer_is_final_text_when_a_final_exists() {
+        let events = vec![
+            delta("Looking into it"),
+            final_event("all done", SessionStatus::Done),
+        ];
+        assert_eq!(graded_answer(&events), "all done");
+    }
+
+    #[test]
+    fn graded_answer_joins_deltas_when_no_final() {
+        let events = vec![delta("Looking "), delta("into it")];
+        assert_eq!(graded_answer(&events), "Looking into it");
     }
 
     #[test]
     fn a_classified_failure_never_passes_even_when_text_matches() {
-        let mut failed = events();
-        failed.pop();
-        failed.push(OutboundEvent::Final {
-            version: PROTOCOL_VERSION.into(),
-            text: "all done".into(),
-            status: SessionStatus::ClassifiedFailure,
-        });
-        assert!(turn_passes(&case(&["all done"]), &events()));
-        assert!(!turn_passes(&case(&["all done"]), &failed));
-        // An empty expectation list is a smoke case: completion is the assert.
-        assert!(turn_passes(&case(&[]), &events()));
-        assert!(!turn_passes(&case(&[]), &failed));
+        let done = vec![
+            delta("Looking into it"),
+            final_event("all done", SessionStatus::Done),
+        ];
+        let failed = vec![
+            delta("Looking into it"),
+            final_event("all done", SessionStatus::ClassifiedFailure),
+        ];
+        let c = case(grader(GraderKind::Contains, "all done", false));
+        assert!(turn_passes(&c, &done));
+        assert!(!turn_passes(&c, &failed));
+    }
+
+    #[test]
+    fn loads_the_committed_weather_example() {
+        // The exact bytes `agentos skill eval` reads on `examples/weather`.
+        let body = include_str!("../../examples/weather/evals/cases.json");
+        let (_dir, path) = write(body);
+        let suite = load_suite(&path).unwrap();
+        assert_eq!(suite.cases.len(), 1);
+        let case = &suite.cases[0];
+        assert_eq!(case.id, "weather-answers");
+        assert_eq!(case.grader.kind, GraderKind::Contains);
+        assert_eq!(case.grader.expected, "weather");
     }
 
     #[test]
@@ -149,22 +323,5 @@ mod tests {
         assert_eq!(case_line("approver", true, 1.24), "\u{2713} approver  1.2s");
         assert_eq!(case_line("crm", false, 0.9), "\u{2717} crm  0.9s");
         assert_eq!(summary_line(34, 36), "34/36 passed");
-    }
-
-    #[test]
-    fn loads_cases_and_rejects_an_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cases.json");
-        std::fs::write(
-            &path,
-            r#"[{"name":"a","input":"b","expect_contains":["c"]}]"#,
-        )
-        .unwrap();
-        let cases = load_cases(&path).unwrap();
-        assert_eq!(cases.len(), 1);
-        assert_eq!(cases[0].expect_contains, vec!["c"]);
-
-        std::fs::write(&path, "[]").unwrap();
-        assert!(load_cases(&path).is_err());
     }
 }

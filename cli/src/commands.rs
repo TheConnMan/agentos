@@ -14,7 +14,7 @@ use clap::ValueEnum;
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, StartSpec};
-use crate::evals::{load_cases, turn_passes};
+use crate::evals::{load_suite, turn_passes};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
 use crate::scaffold::{read_manifest, scaffold};
@@ -449,17 +449,17 @@ pub async fn send(
 pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()> {
     let state_plugin_dir = state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
     let cases_path = resolve_cases_path(cases_path, Path::new("."), state_plugin_dir.as_deref())?;
-    let cases = load_cases(&cases_path)?;
+    let suite = load_suite(&cases_path)?;
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let ui = crate::ui::ui();
 
-    let total = cases.len();
+    let total = suite.cases.len();
     let mut passed = 0usize;
-    // (name, passed, seconds) rows, rendered as one table once the run finishes.
+    // (id, passed, seconds) rows, rendered as one table once the run finishes.
     let mut results: Vec<(String, bool, f64)> = Vec::with_capacity(total);
     let bar = ui.progress_bar(total as u64, "running evals");
-    for case in &cases {
+    for case in &suite.cases {
         let started = Instant::now();
         let events = client
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
@@ -469,7 +469,7 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
         if ok {
             passed += 1;
         }
-        results.push((case.name.clone(), ok, elapsed));
+        results.push((case.id.clone(), ok, elapsed));
         bar.inc(1);
     }
     bar.finish();

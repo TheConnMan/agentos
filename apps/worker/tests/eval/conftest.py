@@ -16,6 +16,7 @@ import os
 import uuid
 import zipfile
 from collections.abc import AsyncIterator, Callable, Iterator
+from pathlib import Path
 
 import boto3
 import pytest
@@ -27,6 +28,18 @@ from agentos_worker.runner_client import RunnerClient
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from botocore.client import Config as BotoConfig
+
+# The committed cross-language eval-case fixture, shared by the model and stream
+# tests. conftest.py -> parents[2] is apps/worker.
+EVAL_CASES_EXAMPLE_PATH = (
+    Path(__file__).resolve().parents[2] / "schema" / "eval-cases.example.json"
+)
+
+
+@pytest.fixture
+def eval_cases_example_path() -> Path:
+    return EVAL_CASES_EXAMPLE_PATH
+
 
 _VH = os.environ.get("TEST_VALKEY_HOST", "localhost")
 _VP = int(os.environ.get("TEST_VALKEY_PORT", "26379"))

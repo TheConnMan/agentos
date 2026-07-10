@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from agentos_worker.eval import EvalCaseResult, EvalRunResult, Grader, GraderKind
+from pathlib import Path
+
+import pytest
+from agentos_worker.eval import (
+    EvalCaseResult,
+    EvalRunResult,
+    EvalSuite,
+    Grader,
+    GraderKind,
+)
+from pydantic import ValidationError
 
 
 def test_exact_grader_trims_and_ignores_case_by_default() -> None:
@@ -48,3 +58,50 @@ def test_run_result_rollups() -> None:
 
 def test_all_passed_is_false_for_empty_suite() -> None:
     assert EvalRunResult(version="v", suite="s", results=[]).all_passed() is False
+
+
+# --- Frozen eval-case contract (issue #8) -------------------------------------
+# These lock Section 3 of the plan: a suite must carry at least one case, a regex
+# grader compiles eagerly, the committed cross-language fixture is
+# platform-loadable, and the retired array form no longer loads. They fail
+# against current main because models.py lacks the min_length and the regex
+# validator.
+
+
+def test_empty_suite_is_invalid() -> None:
+    """A suite with zero cases can never pass, so the frozen schema rejects it."""
+    with pytest.raises(ValidationError):
+        EvalSuite(name="s", cases=[])
+
+
+def test_invalid_regex_grader_rejected_at_parse() -> None:
+    """An uncompilable regex pattern is rejected eagerly when the grader is built."""
+    with pytest.raises(ValidationError):
+        Grader(kind=GraderKind.REGEX, expected="(unclosed")
+
+
+def test_valid_regex_grader_constructs_and_grades() -> None:
+    """A valid regex grader builds and searches the output."""
+    grader = Grader(kind=GraderKind.REGEX, expected="wea.her")
+    assert grader.grade("weather") is True
+
+
+def test_committed_fixture_parses_and_grades(eval_cases_example_path: Path) -> None:
+    """The committed cross-language fixture loads as an EvalSuite and its single
+    contains grader passes on matching text and fails otherwise (proving the
+    scaffold output is platform-loadable, the latent bug in issue #8)."""
+    suite = EvalSuite.model_validate_json(
+        eval_cases_example_path.read_text(encoding="utf-8")
+    )
+    assert len(suite.cases) == 1
+    grader = suite.cases[0].grader
+    assert grader.grade("it's sunny weather today") is True
+    assert grader.grade("no match here") is False
+
+
+def test_old_array_form_is_rejected() -> None:
+    """The retired CLI array form does not load as an EvalSuite, so exactly one
+    schema is loadable anywhere."""
+    old = '[{"name": "a", "input": "b", "expect_contains": ["c"]}]'
+    with pytest.raises(ValidationError):
+        EvalSuite.model_validate_json(old)
