@@ -1,0 +1,43 @@
+# Dependabot keeps the four dependency ecosystems in this repo current. Grouped
+# into one PR per ecosystem per week to keep the update volume reviewable.
+version: 2
+updates:
+  # GitHub Actions used across all workflow files (.github/workflows/).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Rust crates. Both committed Cargo.lock files are tracked.
+  - package-ecosystem: cargo
+    directories:
+      - /cli
+      - /packages/aci-protocol/generated/rust
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # Python is managed with uv (uv.lock at the repo root); the `uv` ecosystem
+  # updates pyproject.toml and the lockfile together. This is the uv equivalent
+  # of the pip ecosystem named in the issue.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+
+  # The UI is a pnpm project; Dependabot's `npm` ecosystem handles pnpm lockfiles.
+  - package-ecosystem: npm
+    directory: /apps/ui
+    schedule:
+      interval: weekly
+    groups:
+      pnpm:
+        patterns: ["*"]

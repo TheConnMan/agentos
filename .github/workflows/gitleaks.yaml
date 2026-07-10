@@ -1,0 +1,38 @@
+name: Secret Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly full-history sweep so a secret introduced (or surfaced by a future
+    # history rewrite) is caught even without a push.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          # fetch-depth: 0 pulls the entire history so `gitleaks detect` scans
+          # every commit, not just the tip. This doubles as the one-time
+          # full-history sweep the issue asks for (confirming the earlier history
+          # rewrite left no secrets behind) and re-runs it on every push/PR/cron.
+          fetch-depth: 0
+      # Run gitleaks from its official public image rather than the marketplace
+      # action: the action requires a paid GITLEAKS_LICENSE for organization
+      # accounts, while the CLI/image is MIT-licensed and free. `:latest` keeps
+      # the ruleset current, which is the desired behavior for a secret scanner.
+      - name: Run gitleaks
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" \
+            ghcr.io/gitleaks/gitleaks:latest \
+            detect --source /repo --redact --verbose --exit-code 1

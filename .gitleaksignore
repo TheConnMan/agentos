@@ -1,0 +1,20 @@
+# Reviewed false positives from the full-history gitleaks sweep (issue #13).
+# Each entry is a commit:path:rule:line fingerprint. These are documentation
+# examples, code identifiers, and dev-default/dummy values -- NOT real secrets.
+# A genuine secret introduced later gets a different fingerprint and still fails
+# the gate. Re-verify before adding anything here.
+
+# TypeScript struct field names in the metrics table (`key:` is a field, not a
+# credential): apps/ui/src/views/obs/RealMetrics.tsx.
+eba9315b76cda2c258f3f7d2223dd5383f0e7fa4:apps/ui/src/views/obs/RealMetrics.tsx:generic-api-key:12
+b92e955c86e199c23c7ae47697e3949cb6b41a29:apps/ui/src/views/obs/RealMetrics.tsx:generic-api-key:11
+
+# Dummy placeholder Slack tokens in a Rust test (xapp-123456789 / xoxb-123456789).
+7a7d2bd42b286326c1ffd87fcf6b08d7af9e65e5:cli/src/comms.rs:generic-api-key:347
+
+# Documented dev-default Langfuse bootstrap keys (pk-lf-agentos-dev /
+# sk-lf-agentos-dev) shown in curl examples. These are fixed public dev defaults
+# baked into the headless bootstrap, not production credentials.
+be962e4a37f8644539244e2e872937f2fd8371a0:AGENTS.md:curl-auth-user:105
+7279a29e6fd7115bc002d3fed6e73d636e8912d7:AGENTS.md:curl-auth-user:105
+8d6184d608c0bf28e7323e65578bee1e5f077fb5:CLAUDE.md:curl-auth-user:75
