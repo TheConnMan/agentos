@@ -44,7 +44,7 @@ spec:
       {{- end }}
       containers:
         - name: ui
-          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"
+          image: {{ include "agentos.image" (dict "repository" .Values.ui.image.repository "tag" .Values.ui.image.tag "digest" .Values.ui.image.digest "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           env:
             # nginx reverse-proxies /api/ to this upstream (the /api prefix is

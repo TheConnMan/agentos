@@ -31,7 +31,7 @@ spec:
       {{- end }}
       containers:
         - name: dispatcher
-          image: "{{ .Values.dispatcher.image.repository }}:{{ .Values.dispatcher.image.tag }}"
+          image: {{ include "agentos.image" (dict "repository" .Values.dispatcher.image.repository "tag" .Values.dispatcher.image.tag "digest" .Values.dispatcher.image.digest "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.dispatcher.image.pullPolicy }}
           env:
             {{- include "agentos.env.valkey" . | nindent 12 }}

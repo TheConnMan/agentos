@@ -307,6 +307,27 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* ---- First-party image reference ----
+     Render a fully-qualified image ref for a first-party (GHCR) workload,
+     preferring an immutable content digest over a mutable tag. Call with a dict:
+       repository  the image repo (e.g. ghcr.io/curie-eng/agentos-api)
+       tag         optional explicit tag; empty falls back to defaultTag
+       digest      optional "sha256:..." -- when set, wins and pins by digest
+       defaultTag  the fallback tag when `tag` is empty (pass .Chart.AppVersion)
+     - digest set -> "<repository>@sha256:..."  (fully immutable + verifiable)
+     - else       -> "<repository>:<tag|defaultTag>"
+     An empty tag defaulting to the chart appVersion is what makes a given chart
+     version render a deterministic image ref (same chart version -> same ref,
+     installable and rollback-able) without every install pinning a field.  */}}
+{{- define "agentos.image" -}}
+{{- $repo := required "image.repository is required" .repository -}}
+{{- if .digest -}}
+{{- printf "%s@%s" $repo .digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repo (.tag | default .defaultTag | default "latest") -}}
+{{- end -}}
+{{- end -}}
+
 {{/* ---- Dispatcher gating ----
      The Slack dispatcher only deploys when it has both tokens; without them it
      would crash-loop the reconnect supervisor forever, so a token-less default

@@ -238,7 +238,7 @@ spec:
       {{- end }}
       containers:
         - name: runner
-          image: "{{ $runner.image }}:{{ $runner.tag }}"
+          image: {{ include "agentos.image" (dict "repository" $runner.image "tag" $runner.tag "digest" $runner.digest "defaultTag" $.Chart.AppVersion) | quote }}
           imagePullPolicy: {{ $runner.imagePullPolicy }}
           {{- if $runner.hardening.enabled }}
           securityContext:
