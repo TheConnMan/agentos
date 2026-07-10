@@ -47,6 +47,7 @@ SDK-shaped resume. Otherwise the line is clean and frozen: unknown wire versions
 
 ## Cross-links
 
+- **Guide:** [implementing-an-aci-server.md](./implementing-an-aci-server.md) — stand up a conformant second ACI server, driven from the conformance suite (#256).
 - **Epic(s):** [#25](https://github.com/curie-eng/agentos/issues/25) — write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced
 - **Epic(s):** [#47](https://github.com/curie-eng/agentos/issues/47) — telemetry as part of the ACI (OTEL carried in `SessionConfig`)
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — Job 1 (Harness / runtime), grade A-
