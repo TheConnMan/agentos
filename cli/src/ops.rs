@@ -312,6 +312,16 @@ pub struct UpOpts {
     /// opens egress to the provider; `None` installs sealed (fake model).
     pub credentials: Option<String>,
     pub local_model: Option<String>,
+    /// Required chart secrets (dotted helm key -> value) the CLI supplies so a
+    /// no-override install never ships the published dev defaults (see #196).
+    /// Populated by [`up`] from [`resolve_generated_secrets`]; empty in the pure
+    /// argv tests and whenever `--dev` keeps the chart's dev defaults. Delivered
+    /// through a private 0600 `-f` values file, never the argv.
+    pub secrets: Vec<(String, String)>,
+    /// `--dev`: keep the chart's deterministic dev-default secrets instead of
+    /// generating strong per-release randoms (the first-class dev escape hatch
+    /// that replaces hand-passing `--set` for every secret).
+    pub dev: bool,
 }
 
 pub struct DownOpts {
@@ -388,6 +398,142 @@ pub fn validate_web_egress_cidrs(cidrs: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// The chart secrets a bare `helm install` would otherwise render from the
+/// published dev defaults in `values.yaml` (see #57): every backing-store
+/// password plus the Langfuse crypto material and the first-party app keys.
+/// Each entry is `(dotted helm value key, random byte length)`. `cluster up`
+/// supplies a strong random for each on a fresh install so the release never
+/// boots on a credential that lives in this public repo. Slack tokens and the
+/// model credential are deliberately absent -- they are operator-supplied via
+/// their own paths (`cluster comms`, `AGENTOS_MODEL_CREDENTIALS`), not
+/// generated. `langfuse.encryptionKey` must be exactly 64 hex chars, so its 32
+/// bytes are load-bearing.
+const REQUIRED_SECRETS: &[(&str, usize)] = &[
+    ("postgres.auth.password", 24),
+    ("valkey.password", 24),
+    ("clickhouse.auth.password", 24),
+    ("minio.auth.rootPassword", 24),
+    ("langfuse.salt", 16),
+    ("langfuse.encryptionKey", 32),
+    ("langfuse.nextauthSecret", 24),
+    ("api.apiKey", 24),
+    ("api.githubWebhookSecret", 24),
+];
+
+/// `n_bytes` of OS CSPRNG output, lowercase-hex encoded (so `2 * n_bytes`
+/// chars). Hex keeps the value shell-, env- and URL-safe and satisfies every
+/// backing store's charset/min-length rule, and a hex `langfuse.encryptionKey`
+/// is the exact `openssl rand -hex 32` shape the chart documents.
+fn random_hex(n_bytes: usize) -> Result<String> {
+    use std::fmt::Write;
+    let mut buf = vec![0u8; n_bytes];
+    getrandom::getrandom(&mut buf)
+        .map_err(|e| anyhow::anyhow!("OS random number generator unavailable: {e}"))?;
+    let mut out = String::with_capacity(n_bytes * 2);
+    for b in buf {
+        let _ = write!(out, "{b:02x}");
+    }
+    Ok(out)
+}
+
+/// The bare value keys an operator already pinned through `--set` (so the CLI
+/// leaves those to the operator rather than generating over them). Handles both
+/// repeated `--set` flags and helm's comma-joined `a=1,b=2` form.
+fn operator_set_keys(sets: &[String]) -> std::collections::HashSet<String> {
+    let mut keys = std::collections::HashSet::new();
+    for s in sets {
+        for part in s.split(',') {
+            if let Some((k, _)) = part.split_once('=') {
+                keys.insert(k.trim().to_string());
+            }
+        }
+    }
+    keys
+}
+
+/// Read a dotted helm key (`langfuse.encryptionKey`) out of a values JSON
+/// object, returning the string leaf if present.
+fn lookup_dotted(values: &serde_json::Value, dotted: &str) -> Option<String> {
+    let mut cursor = values;
+    for part in dotted.split('.') {
+        cursor = cursor.get(part)?;
+    }
+    cursor.as_str().map(str::to_string)
+}
+
+/// Decide which [`REQUIRED_SECRETS`] values `cluster up` supplies, and how.
+///
+/// - `existing` is `Some(user-supplied values JSON)` when the release already
+///   exists (from `helm get values -o json`), `None` on a fresh install.
+/// - An operator `--set <key>=...` for a secret always wins: we supply nothing
+///   for it.
+/// - Fresh install: generate a strong random for every remaining key.
+/// - Existing release: re-supply exactly the value helm already recorded for a
+///   key (so a `helm upgrade` never rotates a live store's credential -- the
+///   chart has no `lookup`-persist yet, that is #195), and never mint a new one
+///   for a key helm has no record of (leaving a pre-existing release on
+///   whatever it already booted with rather than rotating it out from under a
+///   running data store).
+///
+/// Pure and non-interactive by construction: it never reads a TTY, so a
+/// non-interactive / CI `cluster up` cannot hang here.
+fn resolve_generated_secrets(
+    existing: Option<&serde_json::Value>,
+    operator_sets: &[String],
+) -> Result<Vec<(String, String)>> {
+    let overridden = operator_set_keys(operator_sets);
+    let mut resolved = Vec::new();
+    for (key, len) in REQUIRED_SECRETS {
+        if overridden.contains(*key) {
+            continue;
+        }
+        match existing {
+            Some(values) => {
+                if let Some(current) = lookup_dotted(values, key) {
+                    if !current.is_empty() {
+                        resolved.push(((*key).to_string(), current));
+                    }
+                }
+            }
+            None => resolved.push(((*key).to_string(), random_hex(*len)?)),
+        }
+    }
+    Ok(resolved)
+}
+
+/// `helm get values <release> -n <ns> -o json`: helm's record of the values a
+/// prior install supplied. `cluster up` reads it back so an upgrade re-supplies
+/// the same generated secrets instead of rotating them.
+fn helm_get_values_cmd(o: &CommonOpts) -> OpsCommand {
+    OpsCommand::new(
+        "helm",
+        vec![
+            plain("get"),
+            plain("values"),
+            plain(&o.release),
+            plain("-n"),
+            plain(&o.namespace),
+            plain("-o"),
+            plain("json"),
+        ],
+    )
+}
+
+/// The user-supplied values of an existing release, or `None` when the release
+/// does not exist yet (or helm cannot reach it -- treated as a fresh install;
+/// the subsequent `helm upgrade --install` surfaces any real connectivity
+/// error). `helm get values` prints `null` for a release with no user values,
+/// which parses to `Value::Null` and yields no reusable secrets.
+async fn fetch_existing_values(o: &CommonOpts) -> Result<Option<serde_json::Value>> {
+    let (ok, out, _err) = run_capture(&helm_get_values_cmd(o)).await?;
+    if !ok {
+        return Ok(None);
+    }
+    Ok(Some(
+        serde_json::from_str(out.trim()).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 /// `helm upgrade --install` for the release, exposing the UI and Langfuse on
 /// node ports unless `--no-expose`, plus any pass-through `--set` values. When a
 /// model credential is present it also switches the fake model off, forwards the
@@ -441,6 +587,15 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     for cidr in &o.allow_web_egress {
         push_egress_rule(&mut args, egress_idx, cidr, EGRESS_TCP_PORT);
         egress_idx += 1;
+    }
+    // The generated/reused required secrets travel through one private 0600 `-f`
+    // values file (materialized at run time), so no secret reaches the process
+    // table. Emitted before the passthrough `--set`s below and (like the model
+    // credential above) before them in helm's precedence, so an explicit
+    // operator `--set` still overrides -- though `resolve_generated_secrets`
+    // already skips any key the operator pinned.
+    if !o.secrets.is_empty() {
+        args.push(CmdArg::SecretValuesFile(o.secrets.clone()));
     }
     for s in &o.set {
         args.push(plain("--set"));
@@ -632,10 +787,37 @@ pub(crate) async fn run_step(
 // Verb handlers
 // ---------------------------------------------------------------------------
 
-pub async fn up(opts: UpOpts) -> Result<()> {
+pub async fn up(mut opts: UpOpts) -> Result<()> {
     let ui = crate::ui::ui();
     validate_web_egress_cidrs(&opts.allow_web_egress)
         .context("invalid --allow-web-egress value")?;
+
+    // Resolve the required chart secrets so a no-override `cluster up` never
+    // ships the published dev defaults (#196). `--dev` keeps the chart's
+    // deterministic dev defaults; otherwise a fresh install generates strong
+    // per-release randoms and an upgrade re-supplies whatever helm already
+    // recorded (so a live store's credential is never rotated). `--dry-run`
+    // stays offline (it never touches the cluster), so it previews the fresh
+    // install shape -- a live run reuses any existing release's secrets.
+    if !opts.dev {
+        if !opts.common.dry_run {
+            require_on_path("helm")?;
+        }
+        let existing = if opts.common.dry_run {
+            None
+        } else {
+            fetch_existing_values(&opts.common).await?
+        };
+        let fresh = existing.is_none();
+        opts.secrets = resolve_generated_secrets(existing.as_ref(), &opts.set)?;
+        if fresh && !opts.secrets.is_empty() && !opts.common.dry_run {
+            ui.note(&format!(
+                "generated strong per-release secrets for {} required chart credential(s); re-running `cluster up` reuses them",
+                opts.secrets.len()
+            ));
+        }
+    }
+
     let cmds = up_commands(&opts);
     if opts.credentials.is_some() {
         ui.note("real model enabled; egress opened to the model provider");
@@ -996,6 +1178,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec![],
@@ -1017,6 +1201,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: true,
             set: vec![],
             allow_web_egress: vec![],
@@ -1034,6 +1220,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: true,
             set: vec!["worker.replicas=2".into(), "dispatcher.deploy=false".into()],
             allow_web_egress: vec![],
@@ -1055,6 +1243,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec![],
@@ -1075,6 +1265,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec![],
@@ -1092,6 +1284,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec![],
@@ -1220,6 +1414,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: true,
             set: vec![],
             allow_web_egress: vec![],
@@ -1237,6 +1433,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: true,
             set: vec![],
             allow_web_egress: vec![],
@@ -1254,6 +1452,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec!["203.0.113.0/24".into()],
@@ -1285,6 +1485,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec!["0.0.0.0/0".into()],
@@ -1313,6 +1515,8 @@ mod tests {
         let cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec!["203.0.113.0/24".into(), "198.51.100.0/24".into()],
@@ -1340,6 +1544,8 @@ mod tests {
         let sealed_cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec![],
@@ -1353,6 +1559,8 @@ mod tests {
         let model_cmds = up_commands(&UpOpts {
             common: common(),
             chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
             no_expose: false,
             set: vec![],
             allow_web_egress: vec![],
@@ -1545,5 +1753,203 @@ mod tests {
             print_pod_summary(&items),
             (2, 3, vec!["dispatcher0".to_string()])
         );
+    }
+
+    // -- #196: generate / reuse the required chart secrets ------------------
+
+    #[test]
+    fn random_hex_is_the_right_length_hex_and_unpredictable() {
+        let a = random_hex(24).unwrap();
+        let b = random_hex(24).unwrap();
+        assert_eq!(a.len(), 48, "24 bytes -> 48 hex chars");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "{a}");
+        assert_ne!(a, b, "two draws must differ");
+        // The langfuse ENCRYPTION_KEY contract: exactly 64 hex chars.
+        assert_eq!(random_hex(32).unwrap().len(), 64);
+    }
+
+    #[test]
+    fn operator_set_keys_parses_repeated_and_comma_joined() {
+        let keys = operator_set_keys(&[
+            "api.apiKey=x".into(),
+            "postgres.auth.password=y,valkey.password=z".into(),
+        ]);
+        assert!(keys.contains("api.apiKey"));
+        assert!(keys.contains("postgres.auth.password"));
+        assert!(keys.contains("valkey.password"));
+        assert!(!keys.contains("api.githubWebhookSecret"));
+    }
+
+    #[test]
+    fn lookup_dotted_navigates_nested_values() {
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"postgres":{"auth":{"password":"secretpw"}}}"#).unwrap();
+        assert_eq!(
+            lookup_dotted(&v, "postgres.auth.password").as_deref(),
+            Some("secretpw")
+        );
+        assert_eq!(lookup_dotted(&v, "postgres.auth.missing"), None);
+        assert_eq!(lookup_dotted(&serde_json::Value::Null, "api.apiKey"), None);
+    }
+
+    #[test]
+    fn fresh_install_generates_every_required_secret() {
+        // No existing release -> a strong random for each required key.
+        let secrets = resolve_generated_secrets(None, &[]).unwrap();
+        assert_eq!(secrets.len(), REQUIRED_SECRETS.len());
+        for (key, _) in REQUIRED_SECRETS {
+            let (_, value) = secrets
+                .iter()
+                .find(|(k, _)| k == key)
+                .unwrap_or_else(|| panic!("missing generated secret for {key}"));
+            assert!(!value.is_empty(), "{key} generated empty");
+            assert!(
+                value.chars().all(|c| c.is_ascii_hexdigit()),
+                "{key}={value}"
+            );
+        }
+        // encryptionKey keeps its exact 64-hex-char contract.
+        let enc = secrets
+            .iter()
+            .find(|(k, _)| k == "langfuse.encryptionKey")
+            .unwrap();
+        assert_eq!(enc.1.len(), 64);
+    }
+
+    #[test]
+    fn fresh_install_secrets_are_unpredictable_per_release() {
+        let a = resolve_generated_secrets(None, &[]).unwrap();
+        let b = resolve_generated_secrets(None, &[]).unwrap();
+        assert_ne!(a, b, "each release must get its own randoms");
+    }
+
+    #[test]
+    fn operator_set_secret_is_left_to_the_operator() {
+        // A secret the operator pinned via --set is not generated over.
+        let secrets = resolve_generated_secrets(None, &["api.apiKey=my-own-key".into()]).unwrap();
+        assert!(
+            !secrets.iter().any(|(k, _)| k == "api.apiKey"),
+            "operator --set must win: {secrets:?}"
+        );
+        // Every other required secret is still generated.
+        assert_eq!(secrets.len(), REQUIRED_SECRETS.len() - 1);
+    }
+
+    #[test]
+    fn upgrade_reuses_recorded_secrets_and_never_rotates() {
+        // helm get values shows what a prior install supplied; upgrade must
+        // re-supply exactly those so a live store's credential is unchanged, and
+        // must NOT mint a new value for a key with no record (leaving the
+        // running release as-is rather than rotating it out from under a store).
+        let existing: serde_json::Value = serde_json::from_str(
+            r#"{"postgres":{"auth":{"password":"kept-pg-pw"}},"api":{"apiKey":"kept-api-key"}}"#,
+        )
+        .unwrap();
+        let secrets = resolve_generated_secrets(Some(&existing), &[]).unwrap();
+        assert_eq!(
+            secrets,
+            vec![
+                (
+                    "postgres.auth.password".to_string(),
+                    "kept-pg-pw".to_string()
+                ),
+                ("api.apiKey".to_string(), "kept-api-key".to_string()),
+            ],
+            "upgrade must reuse recorded secrets and generate none: {secrets:?}"
+        );
+    }
+
+    #[test]
+    fn upgrade_ignores_empty_recorded_secret() {
+        // An empty recorded value is not a real secret; do not re-supply it.
+        let existing: serde_json::Value =
+            serde_json::from_str(r#"{"valkey":{"password":""}}"#).unwrap();
+        let secrets = resolve_generated_secrets(Some(&existing), &[]).unwrap();
+        assert!(secrets.is_empty(), "{secrets:?}");
+    }
+
+    #[test]
+    fn resolve_is_non_interactive_and_cannot_hang() {
+        // The whole generate/reuse path is a pure function: no stdin, no TTY, so
+        // a non-interactive / CI `cluster up` resolves secrets without blocking.
+        // (Exercising it here would hang the test run if it ever read a TTY.)
+        let _ = resolve_generated_secrets(None, &[]).unwrap();
+        let _ = resolve_generated_secrets(Some(&serde_json::Value::Null), &[]).unwrap();
+    }
+
+    #[test]
+    fn up_injects_generated_secrets_via_values_file_not_argv() {
+        // Success criterion: a missing secret's generated value lands in the
+        // private -f values file, never in the executed argv / process table.
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![
+                ("api.apiKey".into(), "generated-api-key".into()),
+                (
+                    "langfuse.encryptionKey".into(),
+                    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef0".into(),
+                ),
+            ],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+        });
+        // Printed form masks the values and shows the -f secret values file.
+        let line = cmds[0].display();
+        assert!(line.contains("-f '<secret values file:"), "{line}");
+        assert!(line.contains("api.apiKey=generate***"), "{line}");
+        assert!(!line.contains("generated-api-key"), "secret leaked: {line}");
+
+        // Materialize the way the executor does: the secret must be in the file,
+        // not in argv.
+        let (materialized, guards) = cmds[0].materialize_secret_files().unwrap();
+        let argv = materialized.argv().join(" ");
+        assert!(
+            !argv.contains("generated-api-key"),
+            "leaked into argv: {argv}"
+        );
+        assert!(
+            !argv.contains("api.apiKey="),
+            "secret --set leaked into argv: {argv}"
+        );
+        let f_pos = materialized.argv().iter().position(|a| a == "-f").unwrap();
+        let path = std::path::PathBuf::from(&materialized.argv()[f_pos + 1]);
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("generated-api-key"), "{body}");
+        assert!(
+            body.contains("api") && body.contains("apiKey"),
+            "values file is not the expected nested shape: {body}"
+        );
+        drop(guards);
+    }
+
+    #[test]
+    fn up_without_generated_secrets_is_unchanged() {
+        // The pure builder with no supplied secrets (the --dev path, and every
+        // pre-#196 argv test) emits no secret values file.
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: true,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+        });
+        assert!(!cmds[0].display().contains("secret values file"));
+    }
+
+    #[test]
+    fn helm_get_values_reads_user_supplied_values_as_json() {
+        let cmd = helm_get_values_cmd(&common());
+        assert_eq!(cmd.display(), "helm get values agentos -n agentos -o json");
     }
 }
