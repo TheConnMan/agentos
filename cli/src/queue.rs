@@ -281,6 +281,25 @@ mod tests {
     }
 
     #[test]
+    fn queued_event_matches_cross_language_golden() {
+        // The same committed wire fixture the Python producer (apps/dispatcher)
+        // round-trips: this hand-mirrored struct must deserialize it and
+        // re-serialize to identical bytes, catching seam drift between the two
+        // languages until the payload is promoted into aci-protocol (#7).
+        let raw =
+            include_str!("../../packages/aci-protocol/schema/queued-slack-event.fixture.json")
+                .trim_end();
+        let event: QueuedSlackEvent = serde_json::from_str(raw).expect("golden deserializes");
+        assert_eq!(event.slack_event_id, "Ev0GOLDEN0001");
+        assert_eq!(event.received_at, "2026-07-05T00:00:00+00:00");
+        assert_eq!(
+            event.payload_json().unwrap(),
+            raw,
+            "Rust wire bytes drifted from golden"
+        );
+    }
+
+    #[test]
     fn payload_json_carries_the_exact_seam_field_names() {
         let event = QueuedSlackEvent {
             slack_event_id: "EvSIM-x".into(),

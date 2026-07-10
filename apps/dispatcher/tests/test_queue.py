@@ -1,11 +1,22 @@
 """Queue seam + dedupe against real Valkey."""
 
+from pathlib import Path
+
 import redis
 from agentos_dispatcher.config import DispatcherConfig
 from agentos_dispatcher.queue import (
     QueuedSlackEvent,
     claim_event,
     enqueue,
+)
+
+# The committed wire golden the Rust CLI mirror (cli/src/queue.rs) round-trips too.
+_GOLDEN_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "packages"
+    / "aci-protocol"
+    / "schema"
+    / "queued-slack-event.fixture.json"
 )
 
 
@@ -27,6 +38,19 @@ def test_queued_event_stream_fields_roundtrip() -> None:
     # The worker (F1) consumes a single JSON payload field.
     assert set(fields) == {"payload"}
     assert QueuedSlackEvent.from_stream_fields(fields) == event
+
+
+def test_queued_event_matches_cross_language_golden() -> None:
+    # One committed wire fixture pins the QueuedSlackEvent bytes across the Python
+    # producer here and the hand-mirrored Rust struct in cli/src/queue.rs: both
+    # must deserialize it and re-serialize to identical bytes. Guards the frozen
+    # queue seam against silent field rename/reorder drift until the payload is
+    # promoted into aci-protocol (#7). This does not move the model — the
+    # dispatcher still owns QueuedSlackEvent.
+    raw = _GOLDEN_FIXTURE.read_text().strip()
+    event = QueuedSlackEvent.model_validate_json(raw)
+    assert event.slack_event_id == "Ev0GOLDEN0001"
+    assert event.model_dump_json() == raw
 
 
 def test_enqueue_writes_one_stream_entry_the_worker_can_read(
