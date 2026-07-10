@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Supersede an in-flight run when a branch is pushed again so runs stop
+# stacking. Keyed per workflow+ref: each PR branch and main have independent
+# groups, and a new push to a branch cancels only that branch's older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -21,6 +28,11 @@ jobs:
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           python-version: "3.13"
+      # Fail fast if uv.lock has drifted from the pyproject.toml files (a
+      # dependency edit committed without re-locking). --check resolves and
+      # compares without writing, so it never mutates the checkout.
+      - name: Lockfile is up to date
+        run: uv lock --check
       - name: Sync workspace
         run: uv sync
       - name: Ruff
@@ -86,17 +98,21 @@ jobs:
         run: rustup component add rustfmt clippy
       - name: Fmt
         run: cargo fmt --check
+      # --locked on every resolving cargo command asserts the committed
+      # Cargo.lock (both cli/ and the generated ACI crate) already satisfies its
+      # Cargo.toml -- cargo errors instead of silently updating the lock, which
+      # is the lockfile-freshness gate for Rust (mirrors uv lock --check above).
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
       - name: Test
-        run: cargo test
+        run: cargo test --locked
       - name: Generated ACI protocol crate compiles
         working-directory: packages/aci-protocol/generated/rust
-        run: cargo test
+        run: cargo test --locked
       # Continuously prove the release build (the artifact a cold user downloads)
       # and publish it as a sha-addressable workflow artifact every run.
       - name: Release build
-        run: cargo build --release
+        run: cargo build --release --locked
       - name: Upload agentos binary
         uses: actions/upload-artifact@v4
         with:
@@ -206,3 +222,61 @@ jobs:
         run: |
           count=$(docker compose -f compose.release.yaml --profile full config --services | wc -l)
           [ "$count" -eq 12 ] || { echo "full profile must render 12 services, got $count" >&2; exit 1; }
+
+  # Build the first-party images on every PR/push -- build only, never push --
+  # so a Dockerfile break is caught here instead of only at release time. This
+  # mirrors release.yaml's build step (same contexts, same pinned actions, same
+  # gha layer cache) minus the registry login and push. All five app images
+  # build from public bases (python/node/nginx), so no GHCR credentials are
+  # needed; the worker-local overlay is handled separately below.
+  images:
+    name: Build ${{ matrix.name }} image (no push)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: runner
+            dockerfile: runner/Dockerfile
+          - name: api
+            dockerfile: apps/api/Dockerfile
+          - name: dispatcher
+            dockerfile: apps/dispatcher/Dockerfile
+          - name: worker
+            dockerfile: apps/worker/Dockerfile
+          - name: ui
+            dockerfile: apps/ui/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build (no push)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # The worker-local overlay is FROM the published agentos-worker image, so it
+  # cannot be built purely from the checkout. Build the base worker image
+  # locally first and tag it exactly as the overlay's FROM ref, then build the
+  # overlay against it. Plain `docker build` uses the default buildx builder
+  # (docker driver), whose FROM lookup consults the local image store -- so the
+  # overlay resolves the just-built base with no GHCR pull, no registry auth,
+  # and works on any branch (including forks). Build only, never pushed.
+  worker-local-image:
+    name: Build worker-local overlay image (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the base worker image locally
+        run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
+      - name: Build the worker-local overlay (no push)
+        run: docker build --build-arg BASE_TAG=ci-local -f compose/worker-local.Dockerfile compose
