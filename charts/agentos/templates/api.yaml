@@ -69,6 +69,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "agentos.secretName" . }}
                   key: githubWebhookSecret
+            - name: ENVIRONMENT
+              value: {{ .Values.api.environment | quote }}
             - name: ORG_NAME
               value: {{ .Values.api.orgName | quote }}
             - name: LANGFUSE_HOST

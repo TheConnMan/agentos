@@ -267,6 +267,13 @@ api:
     tag: latest
     pullPolicy: Always
   imagePullSecrets: []
+  # Deploy environment the API boots as (`dev` or `prod`), rendered as
+  # ENVIRONMENT on the api container. `prod` arms the API production boot gate,
+  # which refuses to start on the dev-default `apiKey`/`githubWebhookSecret`
+  # below -- so this backs up the render-time secret gate as defense in depth.
+  # Left at `dev` so a bare `helm install` and the dev overlays boot without
+  # real secrets; set to `prod` (with real secrets) for a production install.
+  environment: dev
   # Single shared API key the UI and CLI authenticate with. Dev default; override
   # (or point at an existingSecret) in any shared deployment.
   apiKey: agentos-dev-key
