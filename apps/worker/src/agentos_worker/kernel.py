@@ -43,7 +43,14 @@ from aci_protocol import (
 )
 from agentos_dispatcher.queue import QueuedSlackEvent
 
-from .behaviorpacks import BehaviorPacks, NavPack, sample_load, sample_tip
+from .behaviorpacks import (
+    BehaviorPacks,
+    NavPack,
+    match_greeting,
+    match_help,
+    sample_load,
+    sample_tip,
+)
 from .binding import BindingResolver
 from .config import WorkerConfig
 from .killswitch import KillSwitch
@@ -78,6 +85,10 @@ class _RouteResult:
     steered: bool
     handle: SandboxHandle | None = None
     turn: TurnStream | None = None
+    # An enabled greeting/help pack matched a provably-fresh thread (no existing
+    # route) under the route lock: the canned reply to deliver instead of
+    # claiming a sandbox or starting a model turn. None on every other path.
+    canned_reply: str | None = None
 
 
 @dataclass
@@ -229,6 +240,7 @@ class Kernel:
             boot_env: dict[str, str] | None = None
             agent_id: uuid.UUID | None = None
             nav: NavPack | None = None
+            packs: BehaviorPacks | None = None
             if self._binding is not None:
                 resolved = await self._binding.resolve(qevent.channel)
                 if resolved is None:
@@ -260,7 +272,9 @@ class Kernel:
             attempt = 0
             while True:
                 attempt += 1
-                outcome = await self._attempt(qevent, release_order, boot_env, agent_id, nav)
+                outcome = await self._attempt(
+                    qevent, release_order, boot_env, agent_id, nav, packs
+                )
 
                 if outcome.terminal_ok:
                     await self._markers.mark_done(event_id)
@@ -386,6 +400,7 @@ class Kernel:
         boot_env: dict[str, str] | None = None,
         agent_id: uuid.UUID | None = None,
         nav: NavPack | None = None,
+        packs: BehaviorPacks | None = None,
     ) -> TurnOutcome:
         thread = qevent.thread_ts
         event = self._to_event(qevent)
@@ -397,7 +412,7 @@ class Kernel:
         # streaming so a follow-up can steer.
         try:
             async with self._lock.hold(self._config.lock_key(thread)):
-                route = await self._route_and_start(thread, event, boot_env)
+                route = await self._route_and_start(thread, event, boot_env, packs)
         except (RunnerError, aiohttp.ClientError, TimeoutError, SandboxError) as exc:
             # The turn was never accepted (transient runner 5xx, runner not ready,
             # claim timeout). Convert to a retryable outcome so process_event backs
@@ -407,6 +422,18 @@ class Kernel:
             logger.warning("turn start failed for %s: %s", qevent.slack_event_id, exc)
             return TurnOutcome(terminal_ok=False, classification="runner-error")
         release_order()
+
+        if route.canned_reply is not None:
+            # An enabled greeting/help pack matched a provably-fresh thread under
+            # the route lock (ADR-0018). Deliver the canned reply onto the
+            # placeholder and return terminal-ok so process_event marks the event
+            # done. No run was registered, no sandbox claimed, no turn started.
+            await self._sink.update(
+                channel=qevent.channel,
+                ts=qevent.placeholder_ts,
+                text=route.canned_reply,
+            )
+            return TurnOutcome(terminal_ok=True)
 
         if route.steered:
             # Delivered into the thread's live turn; that turn streams the output
@@ -445,8 +472,25 @@ class Kernel:
             self._unregister_run(agent_id, thread)
 
     async def _route_and_start(
-        self, thread: str, event: Event, boot_env: dict[str, str] | None
+        self,
+        thread: str,
+        event: Event,
+        boot_env: dict[str, str] | None,
+        packs: BehaviorPacks | None = None,
     ) -> _RouteResult:
+        # Greeting/help pre-model short-circuit (ADR-0018): under the per-thread
+        # route lock, if an enabled greeting/help pack matches the message text AND
+        # the thread has no existing route, it is provably a NEW turn (it cannot be
+        # a steer -- rule 1 holds by construction, since the lookup and the routing
+        # both run under this same lock), so answer canned without claiming a
+        # sandbox or starting a model turn. Any existing route falls through to the
+        # normal claim -> steer/start_turn path below.
+        if packs is not None:
+            reply = match_greeting(packs, event.text) or match_help(packs, event.text)
+            if reply is not None:
+                existing = await asyncio.to_thread(self._substrate.lookup, thread)
+                if existing is None:
+                    return _RouteResult(steered=False, canned_reply=reply)
         # claim() adopts the thread's live sandbox and refreshes its route TTL
         # (so a busy thread past route_ttl is not reaped), or claims a warm one /
         # resumes a suspended one. On a fresh claim the boot env binds the agent's
