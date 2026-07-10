@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use redis::aio::MultiplexedConnection;
 use redis::streams::{StreamInfoGroupsReply, StreamPendingCountReply, StreamPendingReply};
 use redis::AsyncCommands;
-use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -28,26 +27,31 @@ pub const WORKER_GROUP: &str = "agentos-workers";
 const EVENT_ID_PREFIX: &str = "EvSIM-";
 const STREAM_PAYLOAD_FIELD: &str = "payload";
 
-/// The normalized job the dispatcher enqueues and the worker consumes.
-///
-/// Field names and types are the frozen queue seam
-/// (`dispatcher.queue.QueuedSlackEvent`); the wire form is a single `payload`
-/// field holding this struct as JSON.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueuedSlackEvent {
-    pub slack_event_id: String,
-    pub thread_ts: String,
-    pub channel: String,
-    pub user: String,
-    pub text: String,
-    pub placeholder_ts: String,
-    pub received_at: String,
-}
+/// The normalized job the dispatcher enqueues and the worker consumes. The shape
+/// is the frozen queue seam, sourced from the generated `agentos-aci-protocol`
+/// crate (cli/CLAUDE.md: never hand-write the ACI types); the wire form is a
+/// single `payload` field holding it as JSON.
+pub use agentos_aci_protocol::QueuedSlackEvent;
 
-impl QueuedSlackEvent {
+/// CLI-side helpers on the generated `QueuedSlackEvent`. Kept as an extension
+/// trait because inherent methods cannot be added to a type from another crate.
+pub trait QueuedSlackEventExt {
     /// Build a synthetic event: a fresh `EvSIM-` id and the current UTC time,
     /// with the given Slack timestamps.
-    pub fn synthetic(
+    fn synthetic(
+        channel: impl Into<String>,
+        user: impl Into<String>,
+        text: impl Into<String>,
+        thread_ts: impl Into<String>,
+        placeholder_ts: impl Into<String>,
+    ) -> Self;
+
+    /// The JSON blob stored under the stream's single `payload` field.
+    fn payload_json(&self) -> Result<String>;
+}
+
+impl QueuedSlackEventExt for QueuedSlackEvent {
+    fn synthetic(
         channel: impl Into<String>,
         user: impl Into<String>,
         text: impl Into<String>,
@@ -65,8 +69,7 @@ impl QueuedSlackEvent {
         }
     }
 
-    /// The JSON blob stored under the stream's single `payload` field.
-    pub fn payload_json(&self) -> Result<String> {
+    fn payload_json(&self) -> Result<String> {
         serde_json::to_string(self).context("serializing the queued event")
     }
 }
@@ -283,9 +286,9 @@ mod tests {
     #[test]
     fn queued_event_matches_cross_language_golden() {
         // The same committed wire fixture the Python producer (apps/dispatcher)
-        // round-trips: this hand-mirrored struct must deserialize it and
+        // round-trips: the generated aci-protocol type must deserialize it and
         // re-serialize to identical bytes, catching seam drift between the two
-        // languages until the payload is promoted into aci-protocol (#7).
+        // languages. The shape lives in aci-protocol (#7, ADR-0020).
         let raw =
             include_str!("../../packages/aci-protocol/schema/queued-slack-event.fixture.json")
                 .trim_end();

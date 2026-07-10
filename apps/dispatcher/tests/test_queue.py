@@ -42,11 +42,10 @@ def test_queued_event_stream_fields_roundtrip() -> None:
 
 def test_queued_event_matches_cross_language_golden() -> None:
     # One committed wire fixture pins the QueuedSlackEvent bytes across the Python
-    # producer here and the hand-mirrored Rust struct in cli/src/queue.rs: both
-    # must deserialize it and re-serialize to identical bytes. Guards the frozen
-    # queue seam against silent field rename/reorder drift until the payload is
-    # promoted into aci-protocol (#7). This does not move the model — the
-    # dispatcher still owns QueuedSlackEvent.
+    # producer here and the generated Rust type in cli/src/queue.rs: both must
+    # deserialize it and re-serialize to identical bytes. Guards the frozen queue
+    # seam against silent field rename/reorder drift. The shape now lives in
+    # aci-protocol (#7, ADR-0020); this dispatcher subclass adds only transport.
     raw = _GOLDEN_FIXTURE.read_text().strip()
     event = QueuedSlackEvent.model_validate_json(raw)
     assert event.slack_event_id == "Ev0GOLDEN0001"

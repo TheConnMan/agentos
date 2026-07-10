@@ -48,6 +48,13 @@ lanes proceed.
   same-major looseness in the 0.x line). If you are tempted to loosen this
   for a consumer's convenience, that is a version-policy change -- raise it in
   an issue/PR first, do not quietly relax a model.
+- **`QueuedSlackEvent` is the one unversioned `aci-protocol` type** (promoted
+  from the dispatcher in #7, ADR-0020). It is strict like the rest of the
+  package, but it is a Valkey stream payload, **not** an NDJSON runner frame:
+  it carries no `version` field and is not gated by `PROTOCOL_VERSION`. Do NOT
+  bump `PROTOCOL_VERSION` when changing it -- that constant versions the
+  runner<->worker frame wire, and bumping it would reject in-flight runner
+  frames. If the queue payload ever needs versioning, give it its own constant.
 - **`plugin-format` is lenient by design.** Its models use `extra="allow"`
   because real Claude Code plugin bundles carry keys this MVP does not model;
   rejecting them would reject valid bundles. Do not add strict validation

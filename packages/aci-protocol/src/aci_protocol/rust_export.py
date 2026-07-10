@@ -27,6 +27,7 @@ from .events import (
     TextDelta,
     ToolNote,
 )
+from .queue import QueuedSlackEvent
 from .session import Budget, OtelConfig, SessionConfig
 from .version import PROTOCOL_VERSION
 
@@ -269,6 +270,7 @@ def render_rust() -> str:
         _struct(Budget),
         _struct(OtelConfig),
         _struct(SessionConfig),
+        _struct(QueuedSlackEvent),
         _tagged_enum("InboundMessage", "kind", (Event, Interrupt)),
         _tagged_enum(
             "OutboundEvent",

@@ -77,6 +77,18 @@ pub struct SessionConfig {
     pub otel: OtelConfig,
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedSlackEvent {
+    pub slack_event_id: String,
+    pub thread_ts: String,
+    pub channel: String,
+    pub user: String,
+    pub text: String,
+    pub placeholder_ts: String,
+    pub received_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum InboundMessage {

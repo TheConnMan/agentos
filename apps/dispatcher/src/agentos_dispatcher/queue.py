@@ -1,10 +1,11 @@
 """The queue seam between the dispatcher and the worker (F1).
 
 ``QueuedSlackEvent`` is the normalized job the dispatcher enqueues onto the
-Valkey Stream and the worker consumes. It is defined here, inside the dispatcher,
-because the dispatcher is the producer and therefore owns the shape; F1 imports
-or mirrors this model. If it later deserves promotion into a shared package, the
-orchestrator makes that call (dispatcher does not touch ``packages/``).
+Valkey Stream and the worker consumes. The *shape* was promoted into the frozen
+tri-language contract ``aci_protocol`` (#7) and is now the single source of truth
+generated into Rust and TypeScript. The dispatcher-side subclass below adds the
+Valkey Stream transport helpers (``to_stream_fields``/``from_stream_fields``),
+which are producer/consumer plumbing, not part of the cross-language data shape.
 
 Wire encoding: a Stream entry carries the model as a single ``payload`` field
 holding ``model_dump_json()``. A one-field JSON blob keeps the seam explicit and
@@ -21,7 +22,7 @@ dedupe set to prune), and does not require scanning the Stream.
 
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import BaseModel
+from aci_protocol import QueuedSlackEvent as _QueuedSlackEvent
 
 from .config import DispatcherConfig
 
@@ -31,27 +32,11 @@ if TYPE_CHECKING:
 STREAM_PAYLOAD_FIELD = "payload"
 
 
-class QueuedSlackEvent(BaseModel):
-    """A normalized Slack event ready for the worker to route and run.
-
-    Fields:
-        slack_event_id: Slack's per-delivery event id; the idempotency key.
-        thread_ts: the canonical thread key (the root message ts of the thread).
-        channel: Slack channel id the message arrived in.
-        user: Slack user id that authored the message.
-        text: the message text.
-        placeholder_ts: ts of the placeholder reply the dispatcher already posted;
-            the worker edits this message in place with the real response.
-        received_at: ISO-8601 UTC timestamp of when the dispatcher received it.
+class QueuedSlackEvent(_QueuedSlackEvent):
+    """The promoted ``aci_protocol.QueuedSlackEvent`` shape plus the Valkey Stream
+    transport helpers. The field shape (and its cross-language generation) lives
+    in ``aci_protocol`` (#7); only the stream (de)serialization is dispatcher-side.
     """
-
-    slack_event_id: str
-    thread_ts: str
-    channel: str
-    user: str
-    text: str
-    placeholder_ts: str
-    received_at: str
 
     def to_stream_fields(self) -> dict[str, str]:
         """Render to the flat field map an ``XADD`` takes."""

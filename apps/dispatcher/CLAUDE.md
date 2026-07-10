@@ -11,11 +11,13 @@ summary.
   the worker (`apps/worker`). If you find yourself adding any
   decision about *how* a message gets answered, that decision belongs one
   layer up -- stop and move it, don't grow the dispatcher's scope.
-- **The dispatcher owns the `QueuedSlackEvent` shape.** It is defined in
-  `dispatcher.queue.QueuedSlackEvent` because the dispatcher is the producer.
-  Do not move this model into `packages/` unilaterally -- if it needs to
-  become a shared type, raise it in an issue/PR first rather than moving it
-  from a dispatcher change.
+- **The `QueuedSlackEvent` shape lives in `aci_protocol` (the frozen contract).**
+  It was promoted there in #7 (ADR-0020); `dispatcher.queue.QueuedSlackEvent`
+  is now a thin subclass that only adds the Valkey stream transport helpers
+  (`to_stream_fields`/`from_stream_fields`). Change the field shape in the
+  `aci_protocol` package (its own reviewed, regenerate-the-derivatives change),
+  never here -- a field added on the dispatcher subclass would not exist in the
+  generated Rust/TS and would break the cross-language contract.
 - **Idempotency key is the Slack event id, not the message content.** Dedupe
   is `SET <dedupe_prefix><event_id> 1 NX EX <ttl>` in Valkey -- O(1), TTL-bounded,
   no scan. Order is always claim -> post placeholder -> `XADD`, so a

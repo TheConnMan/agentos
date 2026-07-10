@@ -53,6 +53,13 @@ export type Detail = string | null;
 export type Tool1 = string | null;
 export type Type5 = "side_effect_flag";
 export type Version4 = "0.1.0";
+export type Channel = string;
+export type PlaceholderTs = string;
+export type ReceivedAt = string;
+export type SlackEventId = string;
+export type Text4 = string;
+export type ThreadTs = string;
+export type User1 = string;
 export type CredentialsRef = string | null;
 export type MemoryRef = string | null;
 export type PluginDir = string;
@@ -185,6 +192,31 @@ export interface SideEffectFlag {
   tool?: Tool1;
   type: Type5;
   version: Version4;
+}
+/**
+ * A normalized Slack event ready for the worker to route and run.
+ *
+ * Fields:
+ *     slack_event_id: Slack's per-delivery event id; the idempotency key.
+ *     thread_ts: the canonical thread key (the root message ts of the thread).
+ *     channel: Slack channel id the message arrived in.
+ *     user: Slack user id that authored the message.
+ *     text: the message text.
+ *     placeholder_ts: ts of the placeholder reply the dispatcher already posted;
+ *         the worker edits this message in place with the real response.
+ *     received_at: ISO-8601 UTC timestamp of when the dispatcher received it.
+ *
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "QueuedSlackEvent".
+ */
+export interface QueuedSlackEvent {
+  channel: Channel;
+  placeholder_ts: PlaceholderTs;
+  received_at: ReceivedAt;
+  slack_event_id: SlackEventId;
+  text: Text4;
+  thread_ts: ThreadTs;
+  user: User1;
 }
 /**
  * The typed session setup contract.

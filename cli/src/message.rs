@@ -38,7 +38,7 @@ use crate::chat::{
     await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
 };
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
-use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent};
+use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent, QueuedSlackEventExt};
 use crate::state::{save_turn, TurnContext, TurnVerb};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;

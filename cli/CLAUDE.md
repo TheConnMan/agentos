@@ -22,15 +22,15 @@ release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full comm
   client in this binary; do not add a second one for a specific endpoint.
   Keep `reqwest`'s feature set minimal (`json`, `stream`, `multipart`) --
   adding a feature should come with a reason in the PR, not just convenience.
-- **The queue seam is mirrored, not imported, across languages.** The CLI
-  never talks to the dispatcher's Valkey Stream directly -- `agentos skill message`
-  talks straight to a local runner container's ACI HTTP surface
-  (`/v1/event`, `/v1/steer`, `/v1/interrupt`), bypassing the
-  dispatcher/worker entirely by design (that is the point: zero Slack, zero
-  cluster). If a future task wires the CLI to the real dispatcher/worker
-  queue seam (the future dispatcher or worker queue surface), mirror the
-  `QueuedSlackEvent` shape rather than importing Python types into Rust --
-  keep the contract-mirroring discipline explicit at the boundary.
+- **The queue seam type comes from the generated `agentos-aci-protocol` crate.**
+  `agentos skill message` talks straight to a local runner container's ACI HTTP
+  surface (`/v1/event`, `/v1/steer`, `/v1/interrupt`), bypassing the
+  dispatcher/worker (zero Slack, zero cluster); `agentos local/cluster message`
+  enqueue a `QueuedSlackEvent` onto the real Valkey Stream. That type was promoted
+  into the frozen contract in #7 (ADR-0020), so `queue.rs` uses the **generated**
+  `agentos_aci_protocol::QueuedSlackEvent` (with CLI-only `synthetic`/`payload_json`
+  helpers on an extension trait), never a hand-mirrored struct -- same discipline
+  as the rest of the ACI types ("never hand-write the ACI types", above).
 - **`agentos init` scaffolds the plugin-format shape verbatim.** The
   generated bundle (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`,
   `.mcp.json`) must stay byte-compatible with what `plugin_format.validate_bundle`

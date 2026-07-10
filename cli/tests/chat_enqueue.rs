@@ -10,7 +10,9 @@
 use std::time::Duration;
 
 use agentos::chat::{resolve_targets, SlackStub};
-use agentos::queue::{diagnostics, entry_acked, xadd, QueuedSlackEvent, WORKER_GROUP};
+use agentos::queue::{
+    diagnostics, entry_acked, xadd, QueuedSlackEvent, QueuedSlackEventExt, WORKER_GROUP,
+};
 
 const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
 

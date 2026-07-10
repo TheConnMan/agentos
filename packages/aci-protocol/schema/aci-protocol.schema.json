@@ -256,6 +256,51 @@
       ],
       "title": "OutboundEvent"
     },
+    "QueuedSlackEvent": {
+      "additionalProperties": false,
+      "description": "A normalized Slack event ready for the worker to route and run.\n\nFields:\n    slack_event_id: Slack's per-delivery event id; the idempotency key.\n    thread_ts: the canonical thread key (the root message ts of the thread).\n    channel: Slack channel id the message arrived in.\n    user: Slack user id that authored the message.\n    text: the message text.\n    placeholder_ts: ts of the placeholder reply the dispatcher already posted;\n        the worker edits this message in place with the real response.\n    received_at: ISO-8601 UTC timestamp of when the dispatcher received it.",
+      "properties": {
+        "channel": {
+          "title": "Channel",
+          "type": "string"
+        },
+        "placeholder_ts": {
+          "title": "Placeholder Ts",
+          "type": "string"
+        },
+        "received_at": {
+          "title": "Received At",
+          "type": "string"
+        },
+        "slack_event_id": {
+          "title": "Slack Event Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "thread_ts": {
+          "title": "Thread Ts",
+          "type": "string"
+        },
+        "user": {
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel",
+        "placeholder_ts",
+        "received_at",
+        "slack_event_id",
+        "text",
+        "thread_ts",
+        "user"
+      ],
+      "title": "QueuedSlackEvent",
+      "type": "object"
+    },
     "SessionConfig": {
       "additionalProperties": false,
       "description": "The typed session setup contract.\n\n``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);\nsection 0 describes these as per-tool secrets via K8s Secret refs, so the\ncontract carries the reference, not the secret material itself.",

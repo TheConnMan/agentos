@@ -50,9 +50,10 @@ real contract.
 
 The payload carried on this stream is `QueuedSlackEvent` — Slack-shaped by name
 (`slack_event_id`, `thread_ts`, `placeholder_ts`). That vendor leakage is not the queue
-seam's own; it belongs to the [channel / ingress seam](../channel-ingress/INTERFACE.md),
-and #7 promotes the payload into `packages/aci-protocol` with channel-neutral names,
-cleaning both seams at once. The queue seam's own constraint is narrower: the contract
+seam's own; it belongs to the [channel / ingress seam](../channel-ingress/INTERFACE.md).
+#7 has promoted the payload into `packages/aci-protocol` (Stage A, ADR-0020 — the
+shape is now the generated contract type; the names stay Slack-shaped pending the
+PR-B channel-neutral rename), cleaning both seams at once. The queue seam's own constraint is narrower: the contract
 assumes redis Stream semantics (ordered entries, consumer groups, pending-entry
 reclaim), so a swap that stays redis-compatible is a URL change while a non-redis broker
 rewrites the wire and the consumer verbs.

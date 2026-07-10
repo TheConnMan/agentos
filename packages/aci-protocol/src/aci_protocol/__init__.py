@@ -32,6 +32,7 @@ from .ndjson import (
     to_inbound_json,
     to_ndjson_line,
 )
+from .queue import QueuedSlackEvent
 from .reference import reference_producer
 from .session import Budget, OtelConfig, SessionConfig
 from .version import PROTOCOL_VERSION
@@ -45,6 +46,8 @@ __all__ = [
     "SessionConfig",
     "Budget",
     "OtelConfig",
+    # queue
+    "QueuedSlackEvent",
     # inbound
     "Event",
     "Interrupt",

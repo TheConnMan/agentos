@@ -21,9 +21,11 @@ second channel demands it ("the second implementation teaches the interface").
 
 A second channel must produce the ingress payload and satisfy the egress Protocol:
 
-- **Ingress** — `QueuedSlackEvent` (`apps/dispatcher/src/agentos_dispatcher/queue.py:34`),
-  a Pydantic model with Slack-named fields: `slack_event_id` (idempotency key,
-  line 48), `thread_ts` (conversation key, line 49), `channel` (line 50), `user`,
+- **Ingress** — `QueuedSlackEvent`, promoted into the frozen contract at
+  `packages/aci-protocol/src/aci_protocol/queue.py` (#7, ADR-0020); the dispatcher
+  subclass (`apps/dispatcher/src/agentos_dispatcher/queue.py`) only adds the stream
+  transport. Still Slack-named fields (the channel-neutral rename is PR-B):
+  `slack_event_id` (idempotency key), `thread_ts` (conversation key), `channel`, `user`,
   `text`, and `placeholder_ts` (the pre-posted reply the worker edits in place,
   line 53). It serializes to a single Stream field via `to_stream_fields`
   (`queue.py:56`), keyed by `STREAM_PAYLOAD_FIELD = "payload"` (`queue.py:31`).
@@ -40,8 +42,8 @@ A second channel must produce the ingress payload and satisfy the egress Protoco
 One: Slack. Ingress is `apps/dispatcher` (Bolt / Socket Mode); egress is
 `AsyncSlackSink` (`slack_sink.py:37`) on the Slack Web API. The swap proof that the
 protocol (not just the service) is the seam: the Rust CLI mints the exact
-`QueuedSlackEvent` wire payload — `struct QueuedSlackEvent` with the same seven fields
-(`cli/src/queue.rs:35`) — and drives the whole deployed system with zero Slack contact
+`QueuedSlackEvent` wire payload — using the generated `agentos_aci_protocol::QueuedSlackEvent`
+(`cli/src/queue.rs`) — and drives the whole deployed system with zero Slack contact
 via `agentos local message` / `cluster message` (`cli/src/chat.rs`, `cli/src/message.rs`).
 
 ## Known leakage
@@ -59,7 +61,8 @@ is built (#27) — the channel-neutral rename comes with the second real channel
 ## Cross-links
 
 - **Epic(s):** #7 — promote the queue payload into `packages/aci-protocol` with
-  channel-neutral field names
+  channel-neutral field names (Stage A promotion landed, ADR-0020; the
+  channel-neutral rename is the pending PR-B)
 - **Epic(s):** #19 — per-turn reply routing (the reply base URL is worker-global today)
 - **Epic(s):** #27 — deliberately defers a pluggable multi-channel framework
 - **Epic(s):** #38 — channel-seam hardening / follow-up

@@ -26,6 +26,7 @@ from .events import (
 )
 from .events import InboundMessage as InboundMessageUnion
 from .events import OutboundEvent as OutboundEventUnion
+from .queue import QueuedSlackEvent
 from .session import Budget, OtelConfig, SessionConfig
 from .version import PROTOCOL_VERSION
 
@@ -55,6 +56,7 @@ _MODELS = (
     Final,
     ErrorEvent,
     SideEffectFlag,
+    QueuedSlackEvent,
 )
 
 SCHEMA_ID = "https://curie.tech/agentos/aci-protocol.schema.json"
