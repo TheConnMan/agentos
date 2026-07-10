@@ -146,6 +146,21 @@ def process_action(
     if not command:
         return None
 
+    # The catch-all matcher fires on *every* block action, including ones from an
+    # App Home tab or a modal, which carry no channel and no message. We can only
+    # turn a click into an in-thread reply when both are present. Bail here --
+    # before the idempotency claim -- so a channel-less click neither KeyErrors on
+    # body["channel"]["id"], nor burns the dedupe key (which would drop the Slack
+    # redelivery too), nor posts an un-threaded placeholder against a thread_ts of
+    # "" (a lock key shared across all such clicks in the kernel).
+    channel = (body.get("channel") or {}).get("id")
+    message = body.get("message") or {}
+    # Reply in the clicked message's thread (its thread_ts, or its own ts if root).
+    thread_ts = message.get("thread_ts") or message.get("ts")
+    if not channel or not thread_ts:
+        log.info("block action without channel/message, skipping")
+        return None
+
     # A click carries no Slack event_id, so synthesize a stable idempotency key
     # from the interaction; a re-delivered click cannot enqueue (or post a second
     # placeholder) twice, same as the event dedupe.
@@ -157,10 +172,6 @@ def process_action(
         log.info("duplicate block action %s, skipping", slack_event_id)
         return None
 
-    channel = body["channel"]["id"]
-    message = body.get("message") or {}
-    # Reply in the clicked message's thread (its thread_ts, or its own ts if root).
-    thread_ts = message.get("thread_ts") or message.get("ts") or ""
     user = (body.get("user") or {}).get("id", "")
 
     placeholder = web_client.chat_postMessage(
