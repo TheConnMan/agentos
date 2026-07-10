@@ -52,8 +52,12 @@ rules:
     resources: [pods/log]
     verbs: [get]
   - apiGroups: [""]
+    # The probe only create/deletes its own test secrets by name; the "can-i
+    # list secrets" isolation check runs under the agent token (a
+    # SelfSubjectAccessReview needs no list grant here). Do not add `list`:
+    # it would let this hook enumerate and read every secret in the namespace.
     resources: [secrets]
-    verbs: [create, delete, get, list]
+    verbs: [create, delete, get]
   - apiGroups: [""]
     resources: [serviceaccounts]
     verbs: [create, delete, get]

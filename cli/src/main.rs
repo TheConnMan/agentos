@@ -256,8 +256,15 @@ enum LocalAction {
         /// new message text.
         #[arg(long = "continue")]
         r#continue: bool,
-        /// Valkey password (compose default `valkeypass`).
-        #[arg(long, default_value = message::DEFAULT_VALKEY_PASSWORD)]
+        /// Valkey password (compose default `valkeypass`). Prefer the
+        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
+        /// command line, where it leaks via `ps` and shell history.
+        #[arg(
+            long,
+            env = "AGENTOS_VALKEY_PASSWORD",
+            hide_env_values = true,
+            default_value = message::DEFAULT_VALKEY_PASSWORD
+        )]
         valkey_password: String,
         /// Local mode only: platform API base URL for the channel lookup.
         #[arg(long)]
@@ -461,8 +468,15 @@ enum ClusterAction {
         /// Local port the Valkey port-forward binds.
         #[arg(long, default_value_t = message::DEFAULT_VALKEY_LOCAL_PORT)]
         valkey_local_port: u16,
-        /// Valkey password (chart default `valkeypass`).
-        #[arg(long, default_value = message::DEFAULT_VALKEY_PASSWORD)]
+        /// Valkey password (chart default `valkeypass`). Prefer the
+        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
+        /// command line, where it leaks via `ps` and shell history.
+        #[arg(
+            long,
+            env = "AGENTOS_VALKEY_PASSWORD",
+            hide_env_values = true,
+            default_value = message::DEFAULT_VALKEY_PASSWORD
+        )]
         valkey_password: String,
         /// Local port the API port-forward binds (default-channel lookup).
         #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]

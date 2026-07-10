@@ -96,6 +96,16 @@ def test_get_trace_404_when_no_observations(
     assert resp.status_code == 404
 
 
+def test_get_trace_rejects_malformed_trace_id(
+    auth_headers: dict[str, str],
+) -> None:
+    # A trace id carrying path metacharacters is refused before it can reach
+    # Langfuse's URL path (no `.`/`..`/`/` traversal into other upstream paths).
+    with _app_with([]) as client:
+        resp = client.get("/langfuse/traces/abc.def", headers=auth_headers)
+    assert resp.status_code == 400
+
+
 def test_proxy_requires_api_key() -> None:
     with _app_with([]) as client:
         resp = client.get("/langfuse/traces/abc")
