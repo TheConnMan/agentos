@@ -1,0 +1,97 @@
+name: Helm CI
+
+# charts/agentos is the highest-blast-radius surface in the repo: a hardcoded
+# value in a template applies to every install with no rollout control. This
+# job gives the chart the CI it otherwise lacks -- lint, render every shipped
+# values overlay, and schema-validate the rendered manifests.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/agentos/**"
+      - ".github/workflows/helm-ci.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "charts/agentos/**"
+      - ".github/workflows/helm-ci.yaml"
+
+permissions:
+  contents: read
+
+env:
+  CHART: charts/agentos
+  # Chart.yaml pins kubeVersion ">=1.25.0-0"; validate the rendered manifests
+  # against a concrete, currently-supported minor.
+  KUBE_VERSION: "1.29.0"
+  KUBECONFORM_VERSION: v0.6.7
+
+jobs:
+  helm:
+    name: Chart (lint + template + kubeconform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+          # The validate steps normalize rendered manifests through PyYAML (see
+          # below). It ships on ubuntu-latest, but ensure it explicitly so this
+          # job is not coupled to the runner image.
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+
+      # Lint the default values plus every e2e overlay the chart ships.
+      # values-e2e-nogvisor.yaml is a partial overlay (it only forces gVisor
+      # OFF), so it is layered on values-dev.yaml exactly as an e2e/scratch
+      # install applies it.
+      - name: helm lint
+        run: |
+          set -euo pipefail
+          helm lint "$CHART"
+          helm lint "$CHART" -f "$CHART/values-dev.yaml"
+          helm lint "$CHART" -f "$CHART/values-dev.yaml" -f "$CHART/values-e2e-nogvisor.yaml"
+
+      # Render each overlay and schema-validate the output with kubeconform.
+      #
+      # Two normalizations keep validation honest without editing the chart:
+      #  * The chart's Sandbox* custom resources (extensions.agents.x-k8s.io)
+      #    have no published kubeconform schema, so -ignore-missing-schemas skips
+      #    them while every core / apps / rbac / networking object is validated
+      #    strictly.
+      #  * Some pod templates emit an app.kubernetes.io/{name,instance} label
+      #    twice with an identical value (last-wins, harmless to Kubernetes),
+      #    which kubeconform's strict YAML parser rejects as a duplicate map key.
+      #    Piping through PyYAML first collapses duplicate keys so schema
+      #    validation can run. Removing the chart-side duplicate labels is a
+      #    separate follow-up, out of scope for this CI-only change.
+      - name: helm template + kubeconform (default values)
+        run: |
+          set -euo pipefail
+          helm template "$CHART" \
+            | python3 -c "import sys, yaml; yaml.safe_dump_all(yaml.safe_load_all(sys.stdin), sys.stdout)" \
+            | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "$KUBE_VERSION"
+
+      - name: helm template + kubeconform (values-dev overlay)
+        run: |
+          set -euo pipefail
+          helm template "$CHART" -f "$CHART/values-dev.yaml" \
+            | python3 -c "import sys, yaml; yaml.safe_dump_all(yaml.safe_load_all(sys.stdin), sys.stdout)" \
+            | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "$KUBE_VERSION"
+
+      - name: helm template + kubeconform (e2e nogvisor overlay)
+        run: |
+          set -euo pipefail
+          helm template "$CHART" -f "$CHART/values-dev.yaml" -f "$CHART/values-e2e-nogvisor.yaml" \
+            | python3 -c "import sys, yaml; yaml.safe_dump_all(yaml.safe_load_all(sys.stdin), sys.stdout)" \
+            | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "$KUBE_VERSION"
