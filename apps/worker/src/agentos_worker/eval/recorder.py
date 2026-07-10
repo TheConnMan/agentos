@@ -46,6 +46,10 @@ class LangfuseEvalRecorder:
 
     async def record(self, run: EvalRunResult) -> list[str]:
         """Ingest one trace + score per case. Returns the created trace ids."""
+        if not run.results:
+            # No cases: don't POST a hollow ingestion batch (an empty trace shell
+            # in Langfuse). Nothing to record, so return before touching the API.
+            return []
         now = _now_iso()
         batch: list[dict[str, Any]] = []
         trace_ids: list[str] = []

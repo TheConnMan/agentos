@@ -5,6 +5,7 @@ against the real Valkey stream + consumer group.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -149,15 +150,18 @@ def test_ensure_group_does_not_replay_preexisting_backlog(make_harness) -> None:
     asyncio.run(go())
 
 
-def test_read_loop_survives_transient_redis_timeout(make_harness) -> None:
+def test_read_loop_survives_transient_redis_timeout(make_harness, caplog) -> None:
     async def go() -> None:
         async with make_harness() as h:
             consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
             await consumer.ensure_group()
 
             # The first blocking read raises a transient redis TimeoutError (the
-            # real pod-to-pod RTT hazard). The loop must survive it and process
-            # the next read; an unguarded read would kill the worker.
+            # routine idle case) and the second a ConnectionError (a real fault).
+            # The loop must survive both and process the next read; an unguarded
+            # read would kill the worker. The two are logged at different levels:
+            # an idle timeout is DEBUG (not log-worthy every idle interval), a
+            # connection blip stays WARNING.
             real = h.async_redis.xreadgroup
             calls = {"n": 0}
 
@@ -165,6 +169,8 @@ def test_read_loop_survives_transient_redis_timeout(make_harness) -> None:
                 calls["n"] += 1
                 if calls["n"] == 1:
                     raise redis.exceptions.TimeoutError("simulated blocking-read timeout")
+                if calls["n"] == 2:
+                    raise redis.exceptions.ConnectionError("simulated connection blip")
                 return await real(*args, **kwargs)
 
             consumer._redis.xreadgroup = flaky  # type: ignore[method-assign,assignment]
@@ -173,13 +179,20 @@ def test_read_loop_survives_transient_redis_timeout(make_harness) -> None:
             qe = _qevent("hello", thread="tt1", event_id="t1")
             await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
 
-            task = asyncio.create_task(consumer.run())
-            await _wait_until(lambda: h.sink.last_text == "answer")
-            consumer.request_stop()
-            await task
+            with caplog.at_level(logging.DEBUG, logger="agentos_worker.consumer"):
+                task = asyncio.create_task(consumer.run())
+                await _wait_until(lambda: h.sink.last_text == "answer")
+                consumer.request_stop()
+                await task
 
-            assert calls["n"] >= 2  # it retried after the injected timeout
+            assert calls["n"] >= 3  # it retried after both injected faults
             assert h.runner.opened == ["hello"]
+
+            recs = [r for r in caplog.records if r.name == "agentos_worker.consumer"]
+            timeout_recs = [r for r in recs if "simulated blocking-read timeout" in r.getMessage()]
+            conn_recs = [r for r in recs if "simulated connection blip" in r.getMessage()]
+            assert timeout_recs and all(r.levelno == logging.DEBUG for r in timeout_recs)
+            assert conn_recs and all(r.levelno == logging.WARNING for r in conn_recs)
 
     asyncio.run(go())
 

@@ -111,7 +111,7 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
   const stats: [string, string][] = [
     ["Agents", String(scoped.length)],
     ["Runs (7d)", metric((d) => String(d.runs))],
-    ["Latency p95", metric((d) => formatLatency(d.latency_p95_seconds))],
+    ["Latency p95", metric((d) => formatLatency(d.latency_p95_ms))],
     ["Cost (7d)", metric((d) => "$" + d.cost_usd.toFixed(2))],
   ];
   const recent = traces.data ?? [];

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import uuid
@@ -215,6 +216,58 @@ async def _drain_one(consumer: EvalStreamConsumer, reports: list[dict[str, Any]]
     finally:
         consumer.request_stop()
         await task
+
+
+def test_eval_read_loop_demotes_idle_timeout_to_debug(make_eval_harness, bundles, caplog) -> None:
+    """Mirror of the runs consumer: a blocking-read TimeoutError (routine idle) is
+    logged at DEBUG, a ConnectionError (real fault) at WARNING; both back off and
+    keep the eval loop alive."""
+    store, _upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (_base_url, _fake, _client):
+            token = uuid.uuid4().hex[:8]
+            cfg = _cfg(f"test:evals:{token}", f"g-{token}")
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=30.0) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+
+                calls = {"n": 0}
+
+                async def flaky(*args: object, **kwargs: object) -> object:
+                    calls["n"] += 1
+                    if calls["n"] == 1:
+                        raise redis.exceptions.TimeoutError("idle eval read timeout")
+                    if calls["n"] == 2:
+                        raise redis.exceptions.ConnectionError("eval connection blip")
+                    consumer.request_stop()  # nothing queued; stop after both faults
+                    return []
+
+                consumer._redis.xreadgroup = flaky  # type: ignore[method-assign,assignment]
+
+                with caplog.at_level(logging.DEBUG, logger="agentos_worker.eval.stream"):
+                    await consumer.run()
+
+                assert calls["n"] >= 3  # retried past both injected faults
+                recs = [r for r in caplog.records if r.name == "agentos_worker.eval.stream"]
+                timeout_recs = [r for r in recs if "idle eval read timeout" in r.getMessage()]
+                conn_recs = [r for r in recs if "eval connection blip" in r.getMessage()]
+                assert timeout_recs and all(r.levelno == logging.DEBUG for r in timeout_recs)
+                assert conn_recs and all(r.levelno == logging.WARNING for r in conn_recs)
+
+            await client.delete(cfg.eval_stream)
+            await client.aclose()
+
+    asyncio.run(go())
 
 
 def test_seam_full_consume_eval_report_cycle(make_eval_harness, bundles) -> None:

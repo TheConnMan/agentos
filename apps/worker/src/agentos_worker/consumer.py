@@ -21,18 +21,10 @@ from typing import cast
 
 from agentos_dispatcher.queue import QueuedSlackEvent
 from redis.asyncio import Redis
-from redis.exceptions import (
-    ConnectionError as RedisConnectionError,
-)
-from redis.exceptions import (
-    ResponseError,
-)
-from redis.exceptions import (
-    TimeoutError as RedisTimeoutError,
-)
 
 from .config import WorkerConfig
 from .kernel import Kernel
+from .stream_consumer import ReadLoopSpec, StreamConsumer, StreamEntry
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +32,8 @@ logger = logging.getLogger(__name__)
 # error, so a briefly-unreachable Valkey does not spin the read loop hot.
 _READ_ERROR_BACKOFF_S = 0.5
 
-# One stream entry as redis returns it with decode_responses=True.
-StreamEntry = tuple[str, dict[str, str]]
 
-
-class Consumer:
+class Consumer(StreamConsumer):
     """Runs the read loop and the periodic reclaim/reap maintenance loop."""
 
     def __init__(
@@ -55,10 +44,9 @@ class Consumer:
         config: WorkerConfig,
         max_concurrency: int = 16,
     ) -> None:
-        self._redis = redis
+        super().__init__(redis)
         self._kernel = kernel
         self._config = config
-        self._stop = asyncio.Event()
         self._sem = asyncio.Semaphore(max_concurrency)
         self._inflight: set[asyncio.Task[None]] = set()
         # Entry ids currently being handled by THIS consumer. XAUTOCLAIM would
@@ -79,16 +67,9 @@ class Consumer:
         off the pending list, not the group's start id). An existing group is
         left untouched.
         """
-        try:
-            await self._redis.xgroup_create(
-                self._config.stream, self._config.consumer_group, id="$", mkstream=True
-            )
-        except ResponseError as exc:
-            if "BUSYGROUP" not in str(exc):
-                raise
-
-    def request_stop(self) -> None:
-        self._stop.set()
+        await self._ensure_group(
+            self._config.stream, self._config.consumer_group, start_id="$"
+        )
 
     async def run(self) -> None:
         await self.ensure_group()
@@ -99,30 +80,20 @@ class Consumer:
     # -- read loop ------------------------------------------------------------
 
     async def _read_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                resp = await self._redis.xreadgroup(
-                    self._config.consumer_group,
-                    self._config.consumer_name,
-                    {self._config.stream: ">"},
-                    count=self._config.read_count,
-                    block=self._config.read_block_ms,
-                )
-            except (RedisTimeoutError, RedisConnectionError) as exc:
-                # The blocking read timed out or the connection blipped (real
-                # pod-to-pod RTT, a Valkey failover). Both are transient: log and
-                # retry rather than letting the exception kill the read loop (and
-                # with it the whole worker). A short pause avoids a hot spin if
-                # Valkey is briefly unreachable; redis-py reconnects on the retry.
-                logger.warning("stream read failed transiently; retrying: %s", exc)
-                await self._sleep_or_stop(_READ_ERROR_BACKOFF_S)
-                continue
-            if not resp:
-                continue
-            streams = cast("list[tuple[str, list[StreamEntry]]]", resp)
-            for _stream, entries in streams:
-                for entry_id, fields in entries:
-                    await self._dispatch(entry_id, fields)
+        await self._consume(
+            ReadLoopSpec(
+                stream=self._config.stream,
+                group=self._config.consumer_group,
+                consumer=self._config.consumer_name,
+                count=self._config.read_count,
+                block_ms=self._config.read_block_ms,
+                backoff_s=_READ_ERROR_BACKOFF_S,
+                timeout_msg="stream read timed out (idle); retrying: %s",
+                connection_msg="stream read failed transiently; retrying: %s",
+                logger=logger,
+            ),
+            self._dispatch,
+        )
 
     async def _dispatch(self, entry_id: str, fields: dict[str, str]) -> None:
         if entry_id in self._inflight_ids:
@@ -157,7 +128,7 @@ class Consumer:
             self._sem.release()
 
     async def _ack(self, entry_id: str) -> None:
-        await self._redis.xack(self._config.stream, self._config.consumer_group, entry_id)
+        await self._xack(self._config.stream, self._config.consumer_group, entry_id)
 
     # -- maintenance loop -----------------------------------------------------
 
@@ -193,9 +164,3 @@ class Consumer:
             if cursor in ("0-0", "0"):
                 break
         return reclaimed
-
-    async def _sleep_or_stop(self, seconds: float) -> None:
-        try:
-            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
-        except TimeoutError:
-            pass

@@ -68,7 +68,7 @@ def test_scalar_query_maps_metric_to_view_and_measure() -> None:
 
 def test_latency_is_measured_per_run_on_the_traces_view() -> None:
     # p95 latency must be a per-run aggregate, not span-weighted (observations).
-    q = _scalar_query("latency_p95_seconds", "s", "e", None, None)
+    q = _scalar_query("latency_p95_ms", "s", "e", None, None)
     assert q["view"] == "traces"
     assert q["metrics"] == [{"measure": "latency", "aggregation": "p95"}]
 

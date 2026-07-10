@@ -10,7 +10,7 @@ const SUMMARY = {
   runs: 785,
   // Langfuse reports the latency measure in milliseconds (see lib/format.ts), so
   // 2100 here is 2.1s and must render as "2.10s".
-  latency_p95_seconds: 2100,
+  latency_p95_ms: 2100,
   tokens: 128000,
   cost_usd: 21.4,
   error_rate: 0.018,
@@ -19,7 +19,7 @@ const SUMMARY = {
 // Distinct last value per metric so a metric switch is observable in the caption.
 const LAST_VALUE: Record<string, number> = {
   runs: 122,
-  latency_p95_seconds: 3400,
+  latency_p95_ms: 3400,
   tokens: 44000,
   cost_usd: 7.25,
   error_rate: 0.06,
