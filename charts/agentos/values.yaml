@@ -707,6 +707,37 @@ agentSandbox:
     envVarsInjectionPolicy: Overrides
     # Extra env for the runner container, list of {name, value}.
     extraEnv: []
+    # --- BYO model: LiteLLM Anthropic-format sidecar (part of #24) ---
+    # Off by default. Enable ONLY for genuine multi-model routing/fallback: a
+    # LiteLLM proxy runs as a sidecar in the sandbox pod, serving the Anthropic
+    # API shape on localhost, and the runner's ANTHROPIC_BASE_URL is repointed at
+    # it (http://localhost:<port>). For a single model per agent prefer the
+    # OpenRouter / provider-native path (leave this off and set runner.model +
+    # runner.credentials, or a per-agent credential) -- a sidecar per sandbox pod
+    # is pure overhead when no routing is needed. Ignored while local
+    # inference.deploy is on (that path already binds ANTHROPIC_BASE_URL to the
+    # in-cluster Ollama endpoint).
+    liteLLM:
+      enabled: false
+      image: ghcr.io/berriai/litellm:main-stable
+      imagePullPolicy: IfNotPresent
+      # Port the proxy listens on inside the pod; the runner reaches it over
+      # localhost, so it is never exposed as a Service.
+      port: 4000
+      # Name of a pre-created Secret (or ConfigMap-shaped Secret) holding the
+      # LiteLLM config.yaml -- the model_list and router/fallback settings. It is
+      # mounted read-only at /etc/litellm/config.yaml and passed to the proxy via
+      # --config. REQUIRED when enabled; provider API keys the config references
+      # are supplied through extraEnv (secretKeyRef), never inlined here.
+      configExistingSecret: ""
+      # Key within that Secret that carries the config file body.
+      configKey: config.yaml
+      # Extra env for the sidecar, list of {name, value} (or full env entries with
+      # valueFrom.secretKeyRef for provider credentials, e.g. OPENAI_API_KEY).
+      extraEnv: []
+      resources:
+        requests: { cpu: 50m, memory: 128Mi }
+        limits: { cpu: "1", memory: 512Mi }
     # --- Bundle-fetch provisioning ---
     # AGENTOS_BUNDLE_REF is a MinIO object key the substrate injects per-claim
     # (bound sandboxes carry it; warm/unbound pods do not). Before the runner
