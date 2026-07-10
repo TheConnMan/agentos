@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, func
+from sqlalchemy import Enum, ForeignKey, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -97,3 +97,38 @@ class Deployment(Base):
     commit_sha: Mapped[str | None] = mapped_column(default=None)
     status: Mapped[str] = mapped_column(server_default="active")
     deployed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class WorkflowStateEntry(Base):
+    """Durable, agent-scoped key/value state (#23, first slice).
+
+    Cross-turn business state (a pending-approvals map, a dedupe seen-set) has
+    nowhere durable to live today: sandboxes do not survive suspend, so agents
+    keep it in-process and lose it on restart. This is a small scoped store --
+    namespace + key per agent, an arbitrary-JSON value, and a monotonic
+    ``version`` for compare-and-set. Backed by Postgres JSONB (no new datastore).
+    Exposing it to bundle code via an auto-mounted MCP server is a later slice;
+    this lands the store and its HTTP API.
+    """
+
+    __tablename__ = "workflow_state_entries"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "namespace", "key", name="uq_state_agent_ns_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(f"{SCHEMA}.agents.id", ondelete="CASCADE")
+    )
+    namespace: Mapped[str]
+    key: Mapped[str]
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # Monotonic per-entry counter for compare-and-set: a put may pass the version
+    # it last read, and the write is rejected if the stored version moved on.
+    version: Mapped[int] = mapped_column(default=1)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )

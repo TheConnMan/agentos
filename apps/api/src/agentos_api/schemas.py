@@ -351,3 +351,24 @@ class CostReport(BaseModel):
     end: str
     total_usd: float
     points: list[MetricPoint]
+
+
+class StateEntryPut(BaseModel):
+    """Write a durable state entry (#23). ``expected_version`` opts into
+    compare-and-set: the write is rejected with 409 unless it matches the stored
+    version (omit it for a blind upsert)."""
+
+    value: dict[str, Any]
+    expected_version: int | None = None
+
+
+class StateEntryOut(BaseModel):
+    """A durable state entry as returned to the caller."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    namespace: str
+    key: str
+    value: dict[str, Any]
+    version: int
+    updated_at: datetime

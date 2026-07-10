@@ -28,6 +28,7 @@ from .routers import (
     github,
     observability,
     runs,
+    state,
 )
 from .storage import BundleStore
 
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(control.router)
     app.include_router(evals.router)
     app.include_router(runs.router)
+    app.include_router(state.router)
     return app
 
 
