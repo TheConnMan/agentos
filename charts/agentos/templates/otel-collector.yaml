@@ -85,6 +85,10 @@ spec:
         - name: otel-collector
           image: {{ .Values.otelCollector.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.otelCollector.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args: ["--config=/etc/otel/collector-config.yaml"]
           env:
             - name: LANGFUSE_OTLP_AUTH_HEADER

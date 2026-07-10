@@ -48,6 +48,10 @@ spec:
         - name: migrate
           image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          {{- with .Values.api.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
           env:
             {{- include "agentos.env.postgres" . | nindent 12 }}
@@ -56,6 +60,10 @@ spec:
         - name: api
           image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          {{- with .Values.api.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             {{- include "agentos.env.postgres" . | nindent 12 }}
             {{- include "agentos.env.valkey" . | nindent 12 }}

@@ -38,6 +38,10 @@ spec:
         - name: langfuse-web
           image: "{{ .Values.langfuse.image.web }}:{{ .Values.langfuse.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.langfuse.web.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             {{- include "agentos.langfuse.env" . | nindent 12 }}
             {{- if .Values.langfuse.web.nodeOptions }}
@@ -119,6 +123,10 @@ spec:
         - name: langfuse-worker
           image: "{{ .Values.langfuse.image.worker }}:{{ .Values.langfuse.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.langfuse.worker.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             {{- include "agentos.langfuse.env" . | nindent 12 }}
             {{- if .Values.langfuse.worker.nodeOptions }}

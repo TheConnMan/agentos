@@ -104,11 +104,34 @@ langfuse:
     resources:
       requests: { cpu: 150m, memory: 384Mi }
       limits: { cpu: "1", memory: 1536Mi }
+    # Container securityContext (issue #67). Restricted-PSS baseline: the Langfuse
+    # image runs as a non-root uid and needs no Linux capabilities, so all are
+    # dropped and privilege escalation is denied. readOnlyRootFilesystem stays
+    # false -- the Next.js server writes to its rootfs (.next cache, /tmp).
+    # To opt out, override the fields (e.g. runAsNonRoot: false for a fork whose
+    # image must run as root), or set the whole block to null to drop it.
+    containerSecurityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
   worker:
     nodeOptions: "--max-old-space-size=640"
     resources:
       requests: { cpu: 150m, memory: 384Mi }
       limits: { cpu: "1", memory: 1Gi }
+    # See langfuse.web.containerSecurityContext above.
+    containerSecurityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # Postgres. Langfuse's transactional store AND the app-state DB (agents,
@@ -131,6 +154,18 @@ postgres:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
+  # Container securityContext (issue #67). The postgres image entrypoint starts
+  # as root to initialise/own PGDATA (chown, then gosu drop to the `postgres`
+  # user), so runAsNonRoot and capabilities.drop:[ALL] would break init and are
+  # deliberately NOT set here -- full restricted-PSS on this store needs a
+  # validated runAsUser + writable dirs on a real cluster (pod-level fsGroup is
+  # already set in the template). These two knobs are safe on a root entrypoint:
+  # they still deny privilege escalation and pin the RuntimeDefault seccomp
+  # profile. Override fields or set the whole block to null to opt out.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # Valkey (Redis-compatible). Langfuse cache/queue AND the dispatcher's Streams
@@ -149,6 +184,14 @@ valkey:
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
+  # Container securityContext (issue #67). Safe subset only -- the valkey-alpine
+  # entrypoint starts as root and drops to the `valkey` user (gosu), so
+  # runAsNonRoot / capabilities.drop are left unset. See
+  # postgres.containerSecurityContext for the full rationale.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # ClickHouse. Langfuse's OLAP store for traces/observations/scores. The AVX
@@ -183,6 +226,14 @@ clickhouse:
   resources:
     requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: "2", memory: 1536Mi }
+  # Container securityContext (issue #67). Safe subset only -- the ClickHouse
+  # image entrypoint starts as root to own /var/lib/clickhouse and drops to the
+  # `clickhouse` user, so runAsNonRoot / capabilities.drop are left unset. See
+  # postgres.containerSecurityContext for the full rationale.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # MinIO. Langfuse object storage (events, media, exports). BYO real S3 in prod:
@@ -206,6 +257,14 @@ minio:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
+  # Container securityContext (issue #67). Safe subset only -- the MinIO image
+  # defaults to running as root; forcing runAsNonRoot / capabilities.drop here
+  # without a validated uid + writable data dir on a real cluster risks breaking
+  # startup. See postgres.containerSecurityContext for the full rationale.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # Local inference endpoint for demo clusters. Opt in only: fake model stays the
@@ -241,6 +300,19 @@ otelCollector:
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
+  # Container securityContext (issue #67). Full restricted-PSS: the collector
+  # image runs as a non-root uid, needs no capabilities, and only reads a mounted
+  # (read-only) config while writing nothing to its rootfs -- so the root
+  # filesystem is read-only too. Override fields or set the whole block to null
+  # to opt out.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # First-party app services (A4). The control plane the runner fleet serves:
@@ -286,6 +358,20 @@ api:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 512Mi }
+  # Container securityContext (issue #67). Restricted-PSS baseline: the image runs
+  # as non-root uid 1000 (see apps/api/Dockerfile) and needs no Linux
+  # capabilities. readOnlyRootFilesystem stays false -- the app writes to its
+  # rootfs (/tmp, $HOME); enable it only with matching writable emptyDir mounts.
+  # To opt out, override the fields (e.g. runAsNonRoot: false for a fork whose
+  # image must run as root), or set the whole block to null to drop it.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
 
 dispatcher:
   deploy: true
@@ -306,6 +392,17 @@ dispatcher:
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
+  # Container securityContext (issue #67). Image runs as non-root uid 1000 (see
+  # apps/dispatcher/Dockerfile). readOnlyRootFilesystem stays false -- the
+  # dispatcher writes a heartbeat file under /tmp. See api.containerSecurityContext.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
 
 worker:
   deploy: true
@@ -344,6 +441,19 @@ worker:
   resources:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { cpu: "1", memory: 512Mi }
+  # Container securityContext (issue #67). Image runs as non-root uid 1000 (see
+  # apps/worker/Dockerfile). This pod mounts a Kubernetes API token and drives
+  # the sandbox lifecycle, so the hardening matters most here. readOnlyRootFilesystem
+  # stays false -- the worker writes a heartbeat file under /tmp. See
+  # api.containerSecurityContext.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
 
 ui:
   deploy: true
@@ -366,6 +476,20 @@ ui:
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { cpu: 250m, memory: 128Mi }
+  # Container securityContext (issue #67). The UI is served by nginx-unprivileged,
+  # which already runs as non-root uid 101 and binds :8080 (no CAP_NET_BIND_SERVICE
+  # needed), so all capabilities are dropped. readOnlyRootFilesystem stays false --
+  # nginx writes to /var/cache/nginx, /var/run and /tmp; enable it only with
+  # matching writable emptyDir mounts. Override fields or set the whole block to
+  # null to opt out.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
 # Install-time preflights. Both are Helm hooks that block a broken install, and

@@ -45,6 +45,10 @@ spec:
         - name: minio
           image: {{ .Values.minio.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.minio.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args: ["server", "/data", "--console-address", ":9001"]
           env:
             - name: MINIO_ROOT_USER
