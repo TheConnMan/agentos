@@ -156,6 +156,20 @@ spec:
         - name: bundle-fetch
           image: {{ $bf.fetchImage }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- if $runner.hardening.enabled }}
+          # Same container-level lockdown as the runner: these init containers
+          # run an authenticated S3 fetch and archive extract of operator-supplied
+          # input in the untrusted pod, so they must not run looser than it. Every
+          # write targets a mounted emptyDir (the fetched archive to `bundles`, mc's
+          # config to the dedicated `mc-config` volume via MC_CONFIG_DIR), so a
+          # read-only rootfs is safe.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          {{- end }}
           command:
             - /bin/sh
             - -c
@@ -194,6 +208,17 @@ spec:
         - name: bundle-extract
           image: {{ $bf.extractImage }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- if $runner.hardening.enabled }}
+          # Same container-level lockdown as the runner (see bundle-fetch): all
+          # writes target the mounted `bundles` volume, so a read-only rootfs is
+          # safe here too.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          {{- end }}
           command:
             - /bin/sh
             - -c
