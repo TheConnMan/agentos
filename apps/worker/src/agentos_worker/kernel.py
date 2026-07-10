@@ -333,7 +333,7 @@ class Kernel:
         handle = await asyncio.to_thread(self._substrate.lookup, thread_key)
         if handle is None:
             return False
-        await self._runner.interrupt(handle.base_url, reason)
+        await self._runner.interrupt(handle.base_url, reason, token=handle.token or None)
         return True
 
     def attach_killswitch(self, killswitch: KillSwitch) -> None:
@@ -498,9 +498,9 @@ class Kernel:
         # env is ignored. Then try to steer: a live turn takes the follow-up;
         # otherwise (fresh sandbox, or the finish-race 409) we open a new turn.
         handle = await self._claim_or_resume(thread, boot_env)
-        if await self._runner.steer(handle.base_url, event):
+        if await self._runner.steer(handle.base_url, event, token=handle.token or None):
             return _RouteResult(steered=True)
-        turn = await self._runner.start_turn(handle.base_url, event)
+        turn = await self._runner.start_turn(handle.base_url, event, token=handle.token or None)
         return _RouteResult(steered=False, handle=handle, turn=turn)
 
     async def _claim_or_resume(

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -43,6 +44,7 @@ from ..binding import (
     BUDGET_ENV,
     BUNDLE_REF_ENV,
     PLUGIN_DIR_ENV,
+    RUNNER_TOKEN_ENV,
     SESSION_ID_ENV,
     apply_model_env,
 )
@@ -289,12 +291,16 @@ class EvalStreamConsumer(StreamConsumer):
         if suite is None:
             return await self._report_failed(item, repo, "unresolvable suite/bundle")
 
-        base_url, release_key = await self._acquire_target(item)
+        base_url, release_key, token = await self._acquire_target(item)
         if base_url is None:
             return await self._report_failed(item, repo, "runner provisioning failed")
         try:
             result = await run_eval_suite(
-                suite, base_url=base_url, version=item.sha, recorder=self._recorder
+                suite,
+                base_url=base_url,
+                version=item.sha,
+                recorder=self._recorder,
+                token=token,
             )
         finally:
             if release_key is not None:
@@ -313,9 +319,13 @@ class EvalStreamConsumer(StreamConsumer):
             return None
         return load_suite_from_bundle(data, item.suite)
 
-    async def _acquire_target(self, item: EvalWorkItem) -> tuple[str | None, str | None]:
+    async def _acquire_target(
+        self, item: EvalWorkItem
+    ) -> tuple[str | None, str | None, str | None]:
         if item.target_url is not None:
-            return item.target_url, None  # dev/test shortcut: eval a given runner
+            # dev/test shortcut: eval a given runner. Not a claim of ours, so no
+            # token -- the driver omits the header (only-when-configured).
+            return item.target_url, None, None
         release_key = f"eval-{uuid.uuid4().hex}"
         try:
             handle = await asyncio.to_thread(
@@ -323,8 +333,8 @@ class EvalStreamConsumer(StreamConsumer):
             )
         except SandboxError:
             logger.exception("could not provision a runner for eval %s", item.sha)
-            return None, None
-        return handle.base_url, release_key
+            return None, None, None
+        return handle.base_url, release_key, handle.token or None
 
     def _boot_env(self, item: EvalWorkItem) -> dict[str, str]:
         budget = Budget(
@@ -335,6 +345,7 @@ class EvalStreamConsumer(StreamConsumer):
             BUDGET_ENV: budget.model_dump_json(),
             SESSION_ID_ENV: f"eval-{item.version_id}",
             PLUGIN_DIR_ENV: self._config.bundle_plugin_dir,
+            RUNNER_TOKEN_ENV: secrets.token_urlsafe(32),
         }
         if item.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = item.bundle_ref

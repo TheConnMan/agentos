@@ -37,6 +37,15 @@ side-channel injections whose output surfaces on the open `/v1/event` stream (th
 proven steering pattern). The finish race (a steer arriving as a turn ends,
 409) is owned by the worker.
 
+The three POST routes (`/v1/event`, `/v1/steer`, `/v1/interrupt`) require an
+`Authorization: Bearer <token>` header matching `AGENTOS_RUNNER_TOKEN` when that
+env var is set, returning 401 otherwise; this is per-sandbox transport auth
+(defense-in-depth on the ACI ingress alongside the NetworkPolicy), not part of
+the frozen ACI wire contract. Enforcement is only-when-configured: with the var
+unset the app is pass-through (CLI, fake-model CI, and pre-token sandboxes stay
+unauthenticated). `GET /healthz` and `GET /status` are never gated (the chart
+readinessProbe hits `/healthz`).
+
 ## Environment
 
 ACI-frozen (`aci-protocol.SessionConfig`): `AGENTOS_PLUGIN_DIR`,
@@ -45,7 +54,9 @@ ACI-frozen (`aci-protocol.SessionConfig`): `AGENTOS_PLUGIN_DIR`,
 Runner-local: `AGENTOS_MODEL`, `AGENTOS_SYSTEM_PROMPT`, `AGENTOS_MAX_TURNS`,
 `AGENTOS_HISTORY_REF` (rehydrate; falls back to `AGENTOS_MEMORY_REF`),
 `AGENTOS_IDEMPOTENT_TOOLS` (override the read-only allowlist),
-`AGENTOS_RUNNER_PORT`, `AGENTOS_FAKE_MODEL` (offline smoke; no model call).
+`AGENTOS_RUNNER_PORT`, `AGENTOS_RUNNER_TOKEN` (per-sandbox bearer token gating the
+three ACI POST routes; enforced only when set), `AGENTOS_FAKE_MODEL` (offline
+smoke; no model call).
 
 ## Build and smoke
 

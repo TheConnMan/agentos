@@ -13,9 +13,11 @@ provisioned-runner end-to-end (no ``target_url``) that tears the sandbox down.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
+import tarfile
 import time
 import uuid
 from collections.abc import Callable
@@ -37,6 +39,7 @@ from agentos_worker.eval import (
     GraderKind,
     LangfuseEvalRecorder,
 )
+from agentos_worker.eval.models import EvalRunResult
 from agentos_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
 from agentos_worker.sandbox.types import ClaimView, SandboxView
 from redis.asyncio import Redis as AsyncRedis
@@ -620,6 +623,120 @@ def test_pending_entry_from_a_dead_consumer_is_reclaimed(make_eval_harness, bund
             await client.aclose()
 
     asyncio.run(go())
+
+
+# --- Per-sandbox runner token threading (issue #63) ---------------------------
+# The env-var name is the cross-package contract with the runner; asserted by its
+# literal string so the module never depends on a constant that only exists after
+# the feature lands.
+RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+
+
+def _suite_bundle(suite: EvalSuite) -> bytes:
+    """A minimal tar.gz carrying evals/cases.json, so the real
+    load_suite_from_bundle returns a real suite (the MinIO fetch is the only
+    faked boundary)."""
+    payload = suite.model_dump_json().encode("utf-8")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        info = tarfile.TarInfo("evals/cases.json")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+    return buf.getvalue()
+
+
+class _FakeBundleStore:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def get(self, _ref: str) -> bytes:
+        return self._data
+
+
+@dataclass
+class _FakeHandle:
+    base_url: str
+    token: str
+
+
+class _TokenSubstrate:
+    """A substrate whose claim returns a handle carrying a known runner token."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+        self.released: list[str] = []
+
+    def claim(self, _key: str, *, env: dict[str, str] | None = None) -> _FakeHandle:
+        return _FakeHandle(base_url="http://sandbox.local:8080", token=self._token)
+
+    def release(self, key: str) -> None:
+        self.released.append(key)
+
+
+class _FakeReporter:
+    def __init__(self) -> None:
+        self.reports: list[Any] = []
+
+    async def report(self, report: Any) -> bool:
+        self.reports.append(report)
+        return True
+
+
+def test_eval_boot_env_mints_runner_token() -> None:
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(),
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.zip", target_url=None)
+    env = consumer._boot_env(item)
+    assert env.get(RUNNER_TOKEN_ENV), "_boot_env must mint a non-empty runner token"
+
+
+def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
+    # The token surfaced from the provisioned handle must be threaded into the
+    # eval turn driver so a token-enforcing sandbox does not 401 the eval. The
+    # only faked boundary is the run_eval_suite seam (captured, not the code
+    # under test) and the MinIO bundle fetch.
+    from agentos_worker.eval import stream as stream_module
+
+    captured: dict[str, Any] = {}
+
+    async def _capture_run(
+        suite: EvalSuite, *, base_url: str, version: str, recorder: Any = None, token: Any = None
+    ) -> EvalRunResult:
+        captured["base_url"] = base_url
+        captured["token"] = token
+        return EvalRunResult(version=version, suite=suite.name, results=[])
+
+    monkeypatch.setattr(stream_module, "run_eval_suite", _capture_run)
+
+    suite = EvalSuite(
+        name="s",
+        cases=[EvalCase(id="1", input="q", grader=Grader(kind=CONTAINS, expected="a"))],
+    )
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(),
+        bundle_store=_FakeBundleStore(_suite_bundle(suite)),  # type: ignore[arg-type]
+        substrate=_TokenSubstrate("tok-eval-xyz"),  # type: ignore[arg-type]
+        reporter=_FakeReporter(),  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=_StubRepo(),
+    )
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.tgz", target_url=None)
+
+    async def go() -> None:
+        await consumer._run_and_report(item)
+
+    asyncio.run(go())
+
+    assert captured["base_url"] == "http://sandbox.local:8080"
+    assert captured["token"] == "tok-eval-xyz"
 
 
 async def _assert_langfuse_traces(

@@ -31,11 +31,15 @@ class EvalRunner:
     def __init__(self, runner: RunnerClient) -> None:
         self._runner = runner
 
-    async def run(self, suite: EvalSuite, *, base_url: str, version: str) -> EvalRunResult:
-        results = [await self._run_case(case, base_url) for case in suite.cases]
+    async def run(
+        self, suite: EvalSuite, *, base_url: str, version: str, token: str | None = None
+    ) -> EvalRunResult:
+        results = [await self._run_case(case, base_url, token) for case in suite.cases]
         return EvalRunResult(version=version, suite=suite.name, results=results)
 
-    async def _run_case(self, case: EvalCase, base_url: str) -> EvalCaseResult:
+    async def _run_case(
+        self, case: EvalCase, base_url: str, token: str | None = None
+    ) -> EvalCaseResult:
         start = time.monotonic()
         event = Event(type="eval_case", text=case.input, user="eval", ts="0")
         parts: list[str] = []
@@ -43,7 +47,7 @@ class EvalRunner:
         final_status: SessionStatus | None = None
         error_detail: str | None = None
         try:
-            turn = await self._runner.start_turn(base_url, event)
+            turn = await self._runner.start_turn(base_url, event, token=token)
             async with turn:
                 async for frame in turn:
                     if isinstance(frame, TextDelta):

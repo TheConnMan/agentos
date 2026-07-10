@@ -39,6 +39,11 @@ class SandboxHandle:
     port: int
     session_id: str
     history_ref: str | None = None
+    # Per-claim bearer token the runner enforces on its ACI POST routes (issue
+    # #63). Defaulted so RouteRecord.from_json rehydrates legacy Valkey records
+    # (written before the token existed) with token == "" -- no header is sent
+    # for those and the pre-token runner enforces nothing, so they keep working.
+    token: str = ""
 
     @property
     def sandbox_id(self) -> str:

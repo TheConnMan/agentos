@@ -19,9 +19,11 @@ process or cache warmth. The runner accepts the ref as an SDK resume id
 
 from __future__ import annotations
 
+import secrets
 import time
 import uuid
 
+from ..binding import RUNNER_TOKEN_ENV
 from .affinity import AffinityStore
 from .k8s import (
     MANAGED_BY_LABEL,
@@ -124,7 +126,9 @@ class SandboxSubstrate:
         if record is None:
             raise NoRouteError(thread_key)
         old = record.handle
-        env = {SESSION_ENV: old.session_id}
+        # A resume creates a NEW claim; the old token died with the old claim, so
+        # mint a fresh one into the new claim env (issue #63).
+        env = {SESSION_ENV: old.session_id, RUNNER_TOKEN_ENV: secrets.token_urlsafe(32)}
         if old.history_ref is not None:
             env[HISTORY_ENV] = old.history_ref
 
@@ -207,6 +211,7 @@ class SandboxSubstrate:
             port=bound.port if bound.port is not None else config.runner_port,
             session_id=session_id or f"thread-{thread_hash}",
             history_ref=history_ref,
+            token=(env or {}).get(RUNNER_TOKEN_ENV, ""),
         )
         record = RouteRecord(handle=handle, state=state)
         for _ in range(3):

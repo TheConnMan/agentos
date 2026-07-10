@@ -21,23 +21,73 @@ the open ``/v1/event`` stream, exactly as the PT-2 steering proof showed.
 
 from __future__ import annotations
 
+import hmac
 from typing import cast
 
 from aci_protocol import Event, Interrupt, parse_inbound
 from aiohttp import web
+from aiohttp.typedefs import Handler, Middleware
 
 from .session import SessionRunner
 
 _NDJSON = "application/x-ndjson"
 
+# The three ACI POST routes that drive a turn; gated when a token is configured.
+# /healthz and /status stay open so the chart readinessProbe (no auth header)
+# keeps working.
+_GATED_PATHS = frozenset({"/v1/event", "/v1/steer", "/v1/interrupt"})
+
 # Typed app key so aiohttp resolves the runner without the string-key warning.
 RUNNER: web.AppKey[SessionRunner] = web.AppKey("runner", SessionRunner)
 
 
-def create_app(runner: SessionRunner) -> web.Application:
-    """Build the aiohttp application bound to a started SessionRunner."""
+def _auth_middleware(token: str) -> Middleware:
+    """Require ``Authorization: Bearer <token>`` on the gated ACI POST routes.
 
-    app = web.Application()
+    Runs before body parsing so an authenticated call keeps the route's existing
+    400/409 semantics unchanged. The presented token is compared with the
+    configured one via ``hmac.compare_digest`` (no timing oracle).
+    """
+
+    # The configured token is invariant for the process, so encode it once here
+    # rather than on every gated request.
+    token_bytes = token.encode("utf-8")
+
+    @web.middleware
+    async def middleware(
+        request: web.Request, handler: Handler
+    ) -> web.StreamResponse:
+        if request.method == "POST" and request.path in _GATED_PATHS:
+            header = request.headers.get("Authorization", "")
+            scheme = "Bearer "
+            if not header.startswith(scheme):
+                return web.json_response(
+                    {"error": "missing bearer token"}, status=401
+                )
+            presented = header[len(scheme) :]
+            # Compare UTF-8 bytes: hmac.compare_digest raises TypeError on a
+            # non-ASCII str, which aiohttp would surface as a 500 instead of a
+            # 401. Bytes keep a crafted non-ASCII token a clean 401.
+            if not hmac.compare_digest(presented.encode("utf-8"), token_bytes):
+                return web.json_response({"error": "invalid token"}, status=401)
+        return await handler(request)
+
+    return middleware
+
+
+def create_app(runner: SessionRunner, token: str | None = None) -> web.Application:
+    """Build the aiohttp application bound to a started SessionRunner.
+
+    When ``token`` is set, the three ACI POST routes require a matching bearer
+    token; when it is ``None`` the app is a pass-through (CLI, fake-model CI, and
+    pre-token sandboxes stay unauthenticated).
+    """
+
+    # A falsy token (None or empty string) means no enforcement: an empty token
+    # would make ``Bearer `` with an empty value compare-equal, so treat it as
+    # pass-through rather than an unusable enforce-on state.
+    middlewares = [_auth_middleware(token)] if token else []
+    app = web.Application(middlewares=middlewares)
     app[RUNNER] = runner
     app.add_routes(
         [

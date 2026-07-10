@@ -25,6 +25,7 @@ class RunnerConfig:
     history_ref: str | None
     idempotent_tools: list[str] | None
     port: int
+    runner_token: str | None
 
     @property
     def ceiling(self) -> int:
@@ -65,4 +66,5 @@ class RunnerConfig:
             history_ref=env.get("AGENTOS_HISTORY_REF"),
             idempotent_tools=idempotent,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
+            runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None,
         )

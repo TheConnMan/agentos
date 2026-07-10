@@ -232,3 +232,33 @@ def test_claim_on_suspended_route_refuses_to_fork(
         substrate.claim("T1")
     resumed = substrate.resume("T1")
     assert substrate.lookup("T1") == resumed
+
+
+# --- Per-sandbox runner token (issue #63) -------------------------------------
+# The env-var name is the cross-package contract with the runner; asserted by its
+# literal string.
+RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+
+
+def test_resume_mints_fresh_runner_token(
+    substrate: SandboxSubstrate, fake_k8s: FakeSandboxClient
+) -> None:
+    # A resume creates a new claim; the old token died with the old claim, so the
+    # new claim env must carry a freshly minted, non-empty runner token.
+    substrate.claim("T1")
+    substrate.suspend("T1", history_ref="h-1")
+    resumed = substrate.resume("T1")
+
+    env = fake_k8s.claims[resumed.claim_name].env
+    assert env.get(RUNNER_TOKEN_ENV), "resume must mint a fresh runner token into the claim env"
+
+
+def test_claim_handle_carries_env_runner_token(
+    substrate: SandboxSubstrate, fake_k8s: FakeSandboxClient
+) -> None:
+    # The token in the claim env and the token on the returned handle must be the
+    # same value, so claim-time and call-time always agree.
+    handle = substrate.claim("T1", env={RUNNER_TOKEN_ENV: "tok-19"})
+
+    assert handle.token == "tok-19"
+    assert fake_k8s.claims[handle.claim_name].env[RUNNER_TOKEN_ENV] == "tok-19"

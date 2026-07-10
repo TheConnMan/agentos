@@ -255,6 +255,42 @@ def test_prepare_bundle_is_readable_by_nonroot_runner() -> None:
     assert nested_file.stat().st_mode & 0o004 == 0o004  # nested file: o+r
 
 
+def test_runner_token_forwarded_as_docker_env() -> None:
+    # The per-sandbox runner token rides the generic claim-env loop (it is not a
+    # worker-owned or credential var), so it must be emitted as -e KEY=value.
+    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client.create_claim(
+        "t1",
+        pool="pool",
+        env={"AGENTOS_BUDGET": "{}", "AGENTOS_RUNNER_TOKEN": "tok-25"},
+    )
+    envs = _flag_values(client.calls[0], "-e")
+    assert "AGENTOS_RUNNER_TOKEN=tok-25" in envs
+
+
+def test_runner_token_forwarded_even_when_credentials_selected() -> None:
+    # Credential selection (PR #109) forwards AGENTOS_CREDENTIALS by name and
+    # suppresses ambient SDK vars, but must not disturb the token, which travels
+    # in the claim env as an ordinary value.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={"AGENTOS_CREDENTIALS": "sk-PLACEHOLDER-byo"},
+    )
+    client.create_claim(
+        "t1",
+        pool="pool",
+        env={
+            "AGENTOS_CREDENTIALS": "sk-PLACEHOLDER-byo",
+            "AGENTOS_RUNNER_TOKEN": "tok-25b",
+        },
+    )
+    envs = _flag_values(client.calls[0], "-e")
+    assert "AGENTOS_RUNNER_TOKEN=tok-25b" in envs
+    assert "AGENTOS_CREDENTIALS" in envs  # still forwarded by name
+    assert "AGENTOS_CREDENTIALS=sk-PLACEHOLDER-byo" not in envs  # never as a value
+
+
 def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
     import tempfile
 
