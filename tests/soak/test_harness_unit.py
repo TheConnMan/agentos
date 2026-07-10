@@ -1,0 +1,101 @@
+"""Offline unit tests for the pure soak helpers.
+
+These run with no cluster and no dev stack: they exercise only the pure
+functions in ``harness.py`` (``thread_hash``, ``unique_marker``, ``final_frame``,
+``collected_text``, ``detect_cross_talk``). They are deliberately not gated by
+``AGENTOS_SOAK`` so the harness logic stays covered in default CI paths when the
+suite is run by explicit path.
+"""
+
+from __future__ import annotations
+
+import hashlib
+
+from harness import (
+    collected_text,
+    detect_cross_talk,
+    final_frame,
+    thread_hash,
+    unique_marker,
+)
+
+
+def test_thread_hash_matches_sha256_prefix() -> None:
+    key = "soak-thread-42"
+    expected = hashlib.sha256(key.encode("utf-8")).hexdigest()[:10]
+    assert thread_hash(key) == expected
+    assert len(thread_hash(key)) == 10
+
+
+def test_thread_hash_distinct_keys_distinct_hashes() -> None:
+    assert thread_hash("soak-thread-1") != thread_hash("soak-thread-2")
+
+
+def test_unique_marker_is_deterministic_per_seed() -> None:
+    assert unique_marker("phase-a", 3) == unique_marker("phase-a", 3)
+
+
+def test_unique_marker_is_unique_across_seeds() -> None:
+    markers = {unique_marker("phase-a", seed) for seed in range(50)}
+    assert len(markers) == 50
+
+
+def test_unique_marker_format() -> None:
+    marker = unique_marker("phase-a", 7)
+    assert marker.startswith("soakmark-phase-a-7-")
+    assert " " not in marker
+
+
+def test_final_frame_picks_last_final() -> None:
+    frames: list[dict[str, object]] = [
+        {"type": "text_delta", "text": "thinking"},
+        {"type": "final", "text": "first final"},
+        {"type": "text_delta", "text": "more"},
+        {"type": "final", "text": "second final"},
+    ]
+    result = final_frame(frames)
+    assert result is not None
+    assert result["text"] == "second final"
+
+
+def test_final_frame_none_when_absent() -> None:
+    frames: list[dict[str, object]] = [{"type": "text_delta", "text": "no final here"}]
+    assert final_frame(frames) is None
+
+
+def test_collected_text_concatenates_text_fields() -> None:
+    frames: list[dict[str, object]] = [
+        {"type": "text_delta", "text": "hello"},
+        {"type": "tool_note", "text": "searching", "tool": "search"},
+        {"type": "final", "text": "world", "status": "done"},
+    ]
+    assert collected_text(frames) == "hello searching world"
+
+
+def test_collected_text_ignores_non_text_frames() -> None:
+    frames: list[dict[str, object]] = [
+        {"type": "final", "text": "only this", "status": "done"},
+        {"type": "side_effect_flag"},
+        {"type": "text_delta", "text": ""},
+    ]
+    assert collected_text(frames) == "only this"
+
+
+def test_detect_cross_talk_true_when_foreign_marker_present() -> None:
+    own = "soakmark-a-0-aaaa"
+    others = [own, "soakmark-b-1-bbbb"]
+    text = f"reply carrying {own} and leaked soakmark-b-1-bbbb"
+    assert detect_cross_talk(own, others, text) is True
+
+
+def test_detect_cross_talk_false_when_only_own_marker_present() -> None:
+    own = "soakmark-a-0-aaaa"
+    others = [own, "soakmark-b-1-bbbb"]
+    text = f"clean reply carrying only {own}"
+    assert detect_cross_talk(own, others, text) is False
+
+
+def test_detect_cross_talk_false_when_no_markers_present() -> None:
+    own = "soakmark-a-0-aaaa"
+    others = [own, "soakmark-b-1-bbbb"]
+    assert detect_cross_talk(own, others, "no markers at all") is False
