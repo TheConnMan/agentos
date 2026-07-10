@@ -7,7 +7,9 @@
 use std::path::PathBuf;
 
 use agentos::artifacts;
-use agentos::commands::{self, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT};
+use agentos::commands::{
+    self, AgentActionOpts, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT,
+};
 use agentos::comms::{self, CommsOpts, LocalCommsOpts};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
@@ -514,6 +516,76 @@ enum ClusterAction {
         #[arg(long)]
         label: Option<String>,
     },
+    // Agent-lifecycle verbs (kill/resume/budget/delete) speak the platform API
+    // like `deploy` does. Design decision (#149): extend the existing `cluster`
+    // target rather than introduce a new top-level `agent` noun -- these act on a
+    // deployed release's agents, so they belong beside `cluster deploy`/`message`
+    // and reuse its `--api-url`/`--api-key` surface and agent resolution.
+    /// Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`).
+    Kill {
+        /// Agent name or id to kill.
+        agent: String,
+        /// Platform API base URL.
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        /// Platform API key.
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        /// Confirm this destructive action (required; it stops the agent's runs).
+        #[arg(long)]
+        yes: bool,
+        /// Print what would be done and exit without making a request.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Resume a killed agent via the platform API (`POST /agents/{id}/resume`).
+    Resume {
+        /// Agent name or id to resume.
+        agent: String,
+        /// Platform API base URL.
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        /// Platform API key.
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        /// Print what would be done and exit without making a request.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Set an agent's budget via the platform API (`PUT /agents/{id}/budget`).
+    Budget {
+        /// Agent name or id.
+        agent: String,
+        /// Daily spend cap in USD (BudgetConfig.max_usd_per_day). Must be > 0.
+        #[arg(long)]
+        limit: f64,
+        /// Platform API base URL.
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        /// Platform API key.
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        /// Print what would be done and exit without making a request.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Delete an agent via the platform API (`DELETE /agents/{id}`).
+    Delete {
+        /// Agent name or id to delete.
+        agent: String,
+        /// Platform API base URL.
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        /// Platform API key.
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        /// Confirm this destructive action (required; it permanently deletes the agent).
+        #[arg(long)]
+        yes: bool,
+        /// Print what would be done and exit without making a request.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 async fn resolve_compose_file(file: Option<String>, dry_run: bool) -> Result<String> {
@@ -950,6 +1022,74 @@ async fn main() -> Result<()> {
                 })
                 .await
             }
+            ClusterAction::Kill {
+                agent,
+                api_url,
+                api_key,
+                yes,
+                dry_run,
+            } => {
+                commands::kill(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    yes,
+                )
+                .await
+            }
+            ClusterAction::Resume {
+                agent,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::resume(AgentActionOpts {
+                    api_url,
+                    api_key,
+                    agent,
+                    dry_run,
+                })
+                .await
+            }
+            ClusterAction::Budget {
+                agent,
+                limit,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::budget(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    limit,
+                )
+                .await
+            }
+            ClusterAction::Delete {
+                agent,
+                api_url,
+                api_key,
+                yes,
+                dry_run,
+            } => {
+                commands::delete(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    yes,
+                )
+                .await
+            }
         },
     }
 }
@@ -1064,6 +1204,95 @@ mod tests {
                 assert_eq!(app_token, "X");
             }
             _ => panic!("expected local comms command"),
+        }
+    }
+
+    #[test]
+    fn cluster_kill_parses_agent_and_yes() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "kill", "deal-desk", "--yes"])
+            .expect("cluster kill should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Kill { agent, yes, .. },
+            } => {
+                assert_eq!(agent, "deal-desk");
+                assert!(yes);
+            }
+            _ => panic!("expected cluster kill command"),
+        }
+    }
+
+    #[test]
+    fn cluster_kill_defaults_yes_and_dry_run_off() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "kill", "a"])
+            .expect("cluster kill without flags should parse");
+        match cli.command {
+            Command::Cluster {
+                action:
+                    ClusterAction::Kill {
+                        agent,
+                        yes,
+                        dry_run,
+                        ..
+                    },
+            } => {
+                assert_eq!(agent, "a");
+                assert!(!yes);
+                assert!(!dry_run);
+            }
+            _ => panic!("expected cluster kill command"),
+        }
+    }
+
+    #[test]
+    fn cluster_resume_parses_agent_and_dry_run() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "resume", "a", "--dry-run"])
+            .expect("cluster resume should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Resume { agent, dry_run, .. },
+            } => {
+                assert_eq!(agent, "a");
+                assert!(dry_run);
+            }
+            _ => panic!("expected cluster resume command"),
+        }
+    }
+
+    #[test]
+    fn cluster_budget_parses_agent_and_limit() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "budget", "a", "--limit", "12.5"])
+            .expect("cluster budget should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Budget { agent, limit, .. },
+            } => {
+                assert_eq!(agent, "a");
+                assert_eq!(limit, 12.5);
+            }
+            _ => panic!("expected cluster budget command"),
+        }
+    }
+
+    #[test]
+    fn cluster_budget_requires_limit() {
+        // `--limit` has no default, so omitting it is a parse error (not a silent
+        // zero-budget request).
+        assert!(Cli::try_parse_from(["agentos", "cluster", "budget", "a"]).is_err());
+    }
+
+    #[test]
+    fn cluster_delete_parses_agent_and_yes() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "delete", "a", "--yes"])
+            .expect("cluster delete should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Delete { agent, yes, .. },
+            } => {
+                assert_eq!(agent, "a");
+                assert!(yes);
+            }
+            _ => panic!("expected cluster delete command"),
         }
     }
 

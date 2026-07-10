@@ -17,10 +17,11 @@ disk and targets no environment.
 |---|---|---|---|---|---|
 | `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
 | `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
-| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `deploy` | Operate and drive a deployed cluster release. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `deploy` `kill` `resume` `budget` `delete` | Operate and drive a deployed cluster release, and control its agents' lifecycle. |
 
 The universal quartet `up`/`down`/`status`/`message` is on all three targets;
-`skill` adds `eval`, while `local` and `cluster` add `comms` plus `deploy`. The distinction
+`skill` adds `eval`, while `local` and `cluster` add `comms` plus `deploy`; `cluster`
+further adds the agent-lifecycle verbs `kill`/`resume`/`budget`/`delete`. The distinction
 that matters: `skill` is the **runner-only** loop, talking straight to a runner
 container's ACI HTTP surface with no platform in front; `local` and `cluster`
 put the **full platform** (queue, worker, sandbox) in front of the identical
@@ -83,6 +84,17 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
 | `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API (`--api-url`, default `http://localhost:8000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
+| `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
+| `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
+| `agentos cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
+| `agentos cluster delete <agent> --yes` | Delete an agent via the platform API (`DELETE /agents/{id}`). Destructive and irreversible: refuses without `--yes`. |
+
+The four lifecycle verbs (`kill`, `resume`, `budget`, `delete`) act on a
+deployed release's agents through the same platform API as `cluster deploy`
+(`--api-url`, default `http://localhost:8000`; auth via `--api-key` or
+`AGENTOS_API_KEY`). They resolve `<agent>` (a name or id) to its API id with the
+same lookup `deploy` uses. Each takes `--dry-run` (prints the plan, makes no
+request); the destructive `kill`/`delete` also require `--yes`.
 
 ### Artifact resolution
 
