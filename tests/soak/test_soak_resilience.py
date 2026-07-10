@@ -1,0 +1,332 @@
+"""The soak and chaos scenario against a standing agentos cluster.
+
+Gated behind ``AGENTOS_SOAK=1`` (plus a reachable cluster and the dev-stack
+Valkey). Parametrized over ``range(runs)`` so ``AGENTOS_SOAK_RUNS=3`` runs the
+whole scenario three consecutive times in one invocation, matching the
+definition-of-done "must pass three consecutive runs".
+
+Four phases share the module-scoped substrate and a set of held claims:
+
+- Phase A: concurrent threads are isolated (distinct sandboxes) and affined
+  (re-claim returns the same sandbox); with live creds, no content cross-talk.
+- Phase B: a mid-thread batch burst runs while Phase-A threads are held, and
+  leaves them undisturbed (same pod UIDs).
+- Phase C: a sandbox is killed mid-run (unclean pod delete); the thread
+  re-claims a fresh sandbox and exactly one live claim survives (no orphan or
+  duplicate side effect at the substrate level).
+- Phase D: one thread is suspended and resumed under sustained load on the
+  others; the resumed pod carries the injected history ref and the loaded
+  threads keep their pods.
+
+A cache-warmth proxy asserts pod-UID affinity across consecutive turns (the
+ADR-0003 "same pod across turns" property that enables prompt-cache reuse); see
+the README for why the direct ``cache_read_input_tokens`` signal is not
+cluster-observable today.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+from harness import (
+    SoakConfig,
+    collected_text,
+    detect_cross_talk,
+    final_frame,
+    get_json,
+    kubectl,
+    live_sandboxclaims,
+    pod_of_sandbox,
+    pod_uid,
+    port_forward,
+    post_event,
+    thread_hash,
+    unique_marker,
+)
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("AGENTOS_SOAK") != "1",
+    reason="soak/chaos suite; set AGENTOS_SOAK=1 with a standing cluster + dev stack",
+)
+
+# Evaluated at import so the parametrization reflects AGENTOS_SOAK_RUNS. When the
+# suite is skipped (AGENTOS_SOAK unset) this still yields a single skipped param.
+_RUNS = SoakConfig.from_env().runs
+
+
+def _drive_turn(
+    cfg: SoakConfig,
+    sandbox_name: str,
+    port: int,
+    text: str,
+    *,
+    user: str,
+    ts: str,
+) -> list[dict[str, object]]:
+    """Port-forward to a sandbox, assert health, post one ACI turn, return frames."""
+
+    with port_forward(cfg, sandbox_name, port) as base:
+        assert get_json(base, "/healthz") == {"ok": True}
+        return post_event(base, text, user=user, ts=ts)
+
+
+def _assert_final(frames: Sequence[dict[str, object]]) -> None:
+    final = final_frame(frames)
+    types = [f.get("type") for f in frames]
+    assert final is not None, f"turn did not end in a final frame: {types}"
+
+
+def _wait_pod_gone(cfg: SoakConfig, sandbox_name: str, timeout: float = 90.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            pod_of_sandbox(cfg, sandbox_name)
+        except subprocess.CalledProcessError:
+            return
+        time.sleep(1)
+    raise AssertionError(f"pod {sandbox_name} was never deleted within {timeout}s")
+
+
+@pytest.mark.parametrize("run", range(_RUNS))
+def test_soak_resilience(run: int, substrate: object, cfg: SoakConfig, pool_ready: None) -> None:
+    from agentos_worker.sandbox import HISTORY_ENV, SandboxHandle, SandboxSubstrate
+
+    assert isinstance(substrate, SandboxSubstrate)
+    print(f"\nEVIDENCE soak_run={run} concurrency={cfg.concurrency} batch={cfg.batch}")
+
+    a_keys = [f"soak-a-{run}-{i}" for i in range(cfg.concurrency)]
+    batch_keys = [f"soak-batch-{run}-{j}" for j in range(cfg.batch)]
+    claimed: dict[str, SandboxHandle] = {}
+    markers: dict[str, str] = {}
+    uids: dict[str, str] = {}
+
+    try:
+        # -- Phase A: concurrent threads, isolation + affinity ----------------
+        def _claim(key: str) -> tuple[str, SandboxHandle]:
+            return key, substrate.claim(key)
+
+        with ThreadPoolExecutor(max_workers=cfg.concurrency) as pool:
+            for key, handle in pool.map(_claim, a_keys):
+                claimed[key] = handle
+        for idx, key in enumerate(a_keys):
+            markers[key] = unique_marker(f"a-r{run}", idx)
+
+        sandbox_names = {h.sandbox_name for h in claimed.values()}
+        assert len(sandbox_names) == cfg.concurrency, "distinct threads shared a sandbox"
+        print(f"EVIDENCE phase_a_distinct_sandboxes={len(sandbox_names)}")
+
+        def _turn(key: str) -> tuple[str, list[dict[str, object]]]:
+            handle = claimed[key]
+            text = f"Please remember this token exactly: {markers[key]}"
+            frames = _drive_turn(cfg, handle.sandbox_name, handle.port, text, user=key, ts="1.0")
+            return key, frames
+
+        replies: dict[str, list[dict[str, object]]] = {}
+        with ThreadPoolExecutor(max_workers=cfg.concurrency) as pool:
+            for key, frames in pool.map(_turn, a_keys):
+                _assert_final(frames)
+                replies[key] = frames
+
+        # Affinity: re-claim returns the same sandbox, and record pod UIDs.
+        for key in a_keys:
+            again = substrate.claim(key)
+            assert again.sandbox_name == claimed[key].sandbox_name, "affinity broke on re-claim"
+            uids[key] = pod_uid(pod_of_sandbox(cfg, claimed[key].sandbox_name))
+        print("EVIDENCE phase_a_affinity_stable=true")
+
+        # Content-level no-cross-talk only when a real model is behind the runner.
+        if cfg.live_creds:
+            all_markers = list(markers.values())
+            for key in a_keys:
+                text = collected_text(replies[key])
+                assert markers[key] in text, f"thread {key} reply dropped its own marker"
+                assert not detect_cross_talk(markers[key], all_markers, text), (
+                    f"thread {key} reply leaked a foreign marker"
+                )
+            print("EVIDENCE phase_a_no_content_cross_talk=true")
+
+        # -- Phase B: mid-thread batch burst under sustained hold -------------
+        # "batch job" is interpreted as a burst of concurrent threads launched
+        # while the Phase-A threads are still held claimed. (An alternative
+        # reading, an eval fan-out XADD to agentos:evals, is a separate consumer
+        # group not exercised by the sandbox substrate; see the README.)
+        def _batch_turn(key: str) -> tuple[str, list[dict[str, object]]]:
+            handle = substrate.claim(key)
+            claimed[key] = handle
+            frames = _drive_turn(
+                cfg, handle.sandbox_name, handle.port, "batch turn under load", user=key, ts="1.0"
+            )
+            return key, frames
+
+        with ThreadPoolExecutor(max_workers=max(cfg.batch, 1)) as pool:
+            for _key, frames in pool.map(_batch_turn, batch_keys):
+                _assert_final(frames)
+        print(f"EVIDENCE phase_b_batch_turns_final={cfg.batch}")
+
+        # Phase-A threads are undisturbed: same pod UIDs, follow-up lands same pod.
+        for key in a_keys:
+            assert pod_uid(pod_of_sandbox(cfg, claimed[key].sandbox_name)) == uids[key], (
+                f"batch burst disturbed Phase-A thread {key}"
+            )
+        probe = a_keys[0]
+        _, frames = _turn(probe)
+        _assert_final(frames)
+        assert pod_uid(pod_of_sandbox(cfg, claimed[probe].sandbox_name)) == uids[probe]
+        print("EVIDENCE phase_b_phase_a_undisturbed=true")
+
+        # -- Phase C: sandbox killed mid-run ---------------------------------
+        # The kernel's no-auto-retry-after-side-effects escalation is unit-tested
+        # in apps/worker/tests/kernel; here we assert the substrate-level proxy
+        # for "no duplicate side effect": exactly one live claim survives a kill.
+        victim = a_keys[-1]
+        victim_hash = thread_hash(victim)
+        victim_sandbox = claimed[victim].sandbox_name
+        old_uid = uids[victim]
+        kubectl(cfg, "delete", "pod", victim_sandbox, "--wait=false")
+        _wait_pod_gone(cfg, victim_sandbox)
+        print(f"EVIDENCE phase_c_killed_pod uid={old_uid}")
+
+        fresh = substrate.claim(victim)
+        claimed[victim] = fresh
+        new_uid = pod_uid(pod_of_sandbox(cfg, fresh.sandbox_name))
+        assert new_uid != old_uid, "re-claim returned the killed pod UID"
+        frames = _drive_turn(
+            cfg, fresh.sandbox_name, fresh.port, "back after a kill", user=victim, ts="2.0"
+        )
+        _assert_final(frames)
+        uids[victim] = new_uid
+
+        # Exactly one live claim for this thread (no orphan/duplicate). Allow a
+        # brief settle for the evicted claim's deletion to finalize.
+        deadline = time.monotonic() + 30
+        live_count = 0
+        while time.monotonic() < deadline:
+            live_count = len(live_sandboxclaims(cfg, victim_hash))
+            if live_count == 1:
+                break
+            time.sleep(2)
+        assert live_count == 1, f"expected exactly one live claim, saw {live_count}"
+        print("EVIDENCE phase_c_single_live_claim=true")
+
+        # -- Phase D: resume-rehydrate under sustained load -------------------
+        loaded = [k for k in a_keys if k != victim][: max(cfg.concurrency - 1, 1)]
+        target = loaded[0]
+        others = loaded[1:]
+        target_marker = markers[target]
+
+        def _sustained(key: str) -> str:
+            handle = claimed[key]
+            frames = _drive_turn(
+                cfg, handle.sandbox_name, handle.port, "sustained follow-up", user=key, ts="3.0"
+            )
+            _assert_final(frames)
+            return key
+
+        original_claim = claimed[target].claim_name
+        with ThreadPoolExecutor(max_workers=max(len(others), 1)) as pool:
+            load = pool.map(_sustained, others) if others else iter(())
+            substrate.suspend(target, history_ref=target_marker)
+            _wait_pod_gone(cfg, claimed[target].sandbox_name)
+            resumed = substrate.resume(target)
+            claimed[target] = resumed
+            list(load)
+
+        assert resumed.claim_name != original_claim, "resume reused the suspended claim"
+        resumed_pod = pod_of_sandbox(cfg, resumed.sandbox_name)
+        containers = resumed_pod["spec"]["containers"]  # type: ignore[index]
+        assert isinstance(containers, list)
+        env = {
+            e.get("name"): e.get("value")
+            for c in containers
+            for e in c.get("env", [])
+        }
+        assert env.get(HISTORY_ENV) == target_marker, "resumed pod missing injected history ref"
+        frames = _drive_turn(
+            cfg, resumed.sandbox_name, resumed.port, "resumed and rehydrated", user=target, ts="4.0"
+        )
+        _assert_final(frames)
+        for key in others:
+            assert pod_uid(pod_of_sandbox(cfg, claimed[key].sandbox_name)) == uids[key], (
+                f"suspend/resume disturbed concurrently loaded thread {key}"
+            )
+        print(f"EVIDENCE phase_d_resume_injected_history_ref pod={resumed.sandbox_name}")
+
+        # -- Cache-warmth proxy: same pod across consecutive turns ------------
+        stable = loaded[-1] if len(loaded) > 1 else target
+        first_uid = pod_uid(pod_of_sandbox(cfg, claimed[stable].sandbox_name))
+        frames = _drive_turn(
+            cfg, claimed[stable].sandbox_name, claimed[stable].port, "warmth turn one",
+            user=stable, ts="5.0",
+        )
+        _assert_final(frames)
+        frames = _drive_turn(
+            cfg, claimed[stable].sandbox_name, claimed[stable].port, "warmth turn two",
+            user=stable, ts="6.0",
+        )
+        _assert_final(frames)
+        second_uid = pod_uid(pod_of_sandbox(cfg, claimed[stable].sandbox_name))
+        assert second_uid == first_uid, "pod rebound between consecutive turns (cache lost)"
+        print(f"EVIDENCE same_pod_across_turns uid={first_uid}")
+
+    finally:
+        for key in list(claimed):
+            try:
+                substrate.release(key)
+            except Exception:
+                pass
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "otel.py does not export cache_read_input_tokens; "
+        "see runner/src/agentos_runner/otel.py -- tracked follow-up"
+    ),
+)
+@pytest.mark.skipif(
+    not (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")),
+    reason="cache-token probe needs live creds so a real model reports usage",
+)
+def test_cache_read_tokens_probe(cfg: SoakConfig) -> None:
+    """Probe: assert a per-trace ``cache_read_input_tokens`` is observable.
+
+    This lights up green only if the runner's OTel export is later extended to
+    carry the cache-token fields (today ``_GenerationSpan.record_usage`` drops
+    them, so Langfuse never sees them). Reading is via the Langfuse public API
+    using the dev-stack keys; if Langfuse is not reachable the probe skips.
+    """
+
+    host = os.environ.get("LANGFUSE_HOST", "http://localhost:23000")
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-agentos-dev")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-agentos-dev")
+
+    import base64
+
+    token = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
+    request = urllib.request.Request(
+        f"{host}/api/public/observations?limit=50",
+        headers={"Authorization": f"Basic {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            import json
+
+            payload = json.loads(resp.read())
+    except (urllib.error.URLError, TimeoutError) as exc:
+        pytest.skip(f"Langfuse not reachable for the cache-token probe: {exc}")
+
+    observations = payload.get("data", [])
+    cache_reads = [
+        (o.get("usage") or {}).get("cache_read_input_tokens", 0) for o in observations
+    ]
+    assert any((count or 0) > 0 for count in cache_reads), (
+        "no observation reported cache_read_input_tokens > 0 "
+        "(otel.py drops the cache-token fields today)"
+    )
