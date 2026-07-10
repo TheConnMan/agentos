@@ -1,12 +1,18 @@
-"""Durable agent-scoped key/value state (#23, first slice).
+"""Durable agent-scoped key/value state (#23, #248).
 
-A small compare-and-set KV store: namespace + key per agent, an arbitrary-JSON
-value, Postgres JSONB backing. This is the API surface the approvals epic (#22)
-and other cross-turn workflow state will consume; exposing it to bundle code via
-an auto-mounted MCP server is a later slice.
+A small compare-and-set KV/document store: namespace + key per agent, an
+arbitrary-JSON value, Postgres JSONB backing. Operations: get / put-with-CAS /
+list / delete / append. Two hard non-goals keep this from becoming a database
+product: there is no query language (get-by-key + list-by-namespace only), and
+both a single value and a whole namespace are size-capped (#248). This is the
+API surface the approvals epic (#22) and other cross-turn workflow state
+consume; exposing it to bundle code via an auto-mounted MCP server is a later
+slice.
 """
 
+import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -14,13 +20,56 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud
 from ..auth import require_api_key
+from ..config import get_settings
 from ..deps import SessionDep
 from ..models import WorkflowStateEntry
-from ..schemas import StateEntryOut, StateEntryPut
+from ..schemas import StateAppendIn, StateEntryOut, StateEntryPut
 
 router = APIRouter(
     prefix="/agents", tags=["state"], dependencies=[Depends(require_api_key)]
 )
+
+
+def _json_size(value: Any) -> int:
+    """Serialized-JSON byte length, the unit both size caps are measured in."""
+    return len(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+
+
+async def _enforce_caps(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    namespace: str,
+    key: str,
+    value: Any,
+) -> None:
+    """Reject a write that breaks the per-value or per-namespace size cap (#248).
+
+    The namespace total counts the incoming value plus every *other* key already
+    in the namespace (the key being written replaces its own prior size).
+    """
+    settings = get_settings()
+    value_bytes = _json_size(value)
+    if value_bytes > settings.state_max_value_bytes:
+        raise HTTPException(
+            413,
+            f"value is {value_bytes} bytes, over the "
+            f"{settings.state_max_value_bytes}-byte per-value cap",
+        )
+
+    others = await session.scalars(
+        select(WorkflowStateEntry.value).where(
+            WorkflowStateEntry.agent_id == agent_id,
+            WorkflowStateEntry.namespace == namespace,
+            WorkflowStateEntry.key != key,
+        )
+    )
+    namespace_bytes = value_bytes + sum(_json_size(v) for v in others)
+    if namespace_bytes > settings.state_max_namespace_bytes:
+        raise HTTPException(
+            413,
+            f"namespace {namespace!r} would be {namespace_bytes} bytes, over the "
+            f"{settings.state_max_namespace_bytes}-byte per-namespace cap",
+        )
 
 
 async def _get_entry(
@@ -48,6 +97,7 @@ async def put_state(
     # signal). expected_version opts into compare-and-set.
     if await crud.get_agent(session, agent_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+    await _enforce_caps(session, agent_id, namespace, key, data.value)
     entry = await _get_entry(session, agent_id, namespace, key)
     if entry is None:
         if data.expected_version is not None:
@@ -68,6 +118,47 @@ async def put_state(
                 f"stored {entry.version}",
             )
         entry.value = data.value
+        entry.version += 1
+    await session.commit()
+    await session.refresh(entry)
+    return StateEntryOut.model_validate(entry)
+
+
+@router.post(
+    "/{agent_id}/state/{namespace}/{key}/append", response_model=StateEntryOut
+)
+async def append_state(
+    agent_id: uuid.UUID,
+    namespace: str,
+    key: str,
+    data: StateAppendIn,
+    session: SessionDep,
+) -> StateEntryOut:
+    """Append an item to a log-shaped (JSON array) entry (#248).
+
+    Creates the entry as a single-element array if absent; otherwise the stored
+    value must already be an array, else the append is a 409. Subject to the
+    same per-value and per-namespace size caps as a put.
+    """
+    if await crud.get_agent(session, agent_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+    entry = await _get_entry(session, agent_id, namespace, key)
+    if entry is None:
+        new_value = [data.item]
+        await _enforce_caps(session, agent_id, namespace, key, new_value)
+        entry = WorkflowStateEntry(
+            agent_id=agent_id, namespace=namespace, key=key, value=new_value
+        )
+        session.add(entry)
+    else:
+        if not isinstance(entry.value, list):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "cannot append: stored value is not a JSON array",
+            )
+        new_value = [*entry.value, data.item]
+        await _enforce_caps(session, agent_id, namespace, key, new_value)
+        entry.value = new_value
         entry.version += 1
     await session.commit()
     await session.refresh(entry)

@@ -1079,6 +1079,19 @@
         "title": "SettingsPackConfig",
         "type": "object"
       },
+      "StateAppendIn": {
+        "description": "Append ``item`` to a log-shaped (JSON array) state entry (#248). If the\nentry does not exist it is created as a single-element array; if it exists\nits value must already be an array, else the append is rejected.",
+        "properties": {
+          "item": {
+            "title": "Item"
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "StateAppendIn",
+        "type": "object"
+      },
       "StateEntryOut": {
         "description": "A durable state entry as returned to the caller.",
         "properties": {
@@ -1096,9 +1109,7 @@
             "type": "string"
           },
           "value": {
-            "additionalProperties": true,
-            "title": "Value",
-            "type": "object"
+            "title": "Value"
           },
           "version": {
             "title": "Version",
@@ -1116,7 +1127,7 @@
         "type": "object"
       },
       "StateEntryPut": {
-        "description": "Write a durable state entry (#23). ``expected_version`` opts into\ncompare-and-set: the write is rejected with 409 unless it matches the stored\nversion (omit it for a blind upsert).",
+        "description": "Write a durable state entry (#23). ``expected_version`` opts into\ncompare-and-set: the write is rejected with 409 unless it matches the stored\nversion (omit it for a blind upsert). ``value`` is any JSON value (object,\narray, or scalar); an array value is what ``append`` grows.",
         "properties": {
           "expected_version": {
             "anyOf": [
@@ -1130,9 +1141,7 @@
             "title": "Expected Version"
           },
           "value": {
-            "additionalProperties": true,
-            "title": "Value",
-            "type": "object"
+            "title": "Value"
           }
         },
         "required": [
@@ -2544,6 +2553,94 @@
           }
         },
         "summary": "Put State",
+        "tags": [
+          "state"
+        ]
+      }
+    },
+    "/agents/{agent_id}/state/{namespace}/{key}/append": {
+      "post": {
+        "description": "Append an item to a log-shaped (JSON array) entry (#248).\n\nCreates the entry as a single-element array if absent; otherwise the stored\nvalue must already be an array, else the append is a 409. Subject to the\nsame per-value and per-namespace size caps as a put.",
+        "operationId": "append_state_agents__agent_id__state__namespace___key__append_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StateAppendIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateEntryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Append State",
         "tags": [
           "state"
         ]

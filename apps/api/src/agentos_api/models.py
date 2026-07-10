@@ -124,7 +124,9 @@ class WorkflowStateEntry(Base):
     )
     namespace: Mapped[str]
     key: Mapped[str]
-    value: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # Any JSON value: an object (a pending-approvals map), an array (a log
+    # grown by append, #248), or a scalar. JSONB stores all of them.
+    value: Mapped[Any] = mapped_column(JSONB)
     # Monotonic per-entry counter for compare-and-set: a put may pass the version
     # it last read, and the write is rejected if the stored version moved on.
     version: Mapped[int] = mapped_column(default=1)

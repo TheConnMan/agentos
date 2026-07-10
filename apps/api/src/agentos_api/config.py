@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # available the logs endpoint degrades to 503 rather than crashing.
     kube_config_path: str | None = None
     metrics_default_window_hours: int = 168  # 7 days
+    # Durable state store size caps (#248). A hard non-goal of the store is that
+    # it never becomes a database product, so a single value and a whole
+    # namespace are both bounded. Sizes are the serialized-JSON byte length.
+    state_max_value_bytes: int = 64 * 1024  # 64 KiB per value
+    state_max_namespace_bytes: int = 1024 * 1024  # 1 MiB per (agent, namespace)
     # The namespace the runner sandboxes run in, and the label selector that
     # identifies them (the chart labels sandbox pods
     # app.kubernetes.io/component=runner-sandbox). Used by the pod-list endpoint
