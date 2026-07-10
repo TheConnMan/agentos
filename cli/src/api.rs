@@ -87,8 +87,48 @@ pub struct DeployOutcome {
     pub channel: ChannelOutcome,
 }
 
+/// Whether this endpoint would send the `X-API-Key` over cleartext HTTP to a
+/// non-loopback host (a forgotten `https://` that leaks the key on the wire).
+/// Local dev over `http://localhost` is expected and returns false.
+fn is_insecure_endpoint(base_url: &str) -> bool {
+    let lower = base_url.trim().to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return false;
+    }
+    let authority = lower
+        .strip_prefix("http://")
+        .unwrap_or(&lower)
+        .split('/')
+        .next()
+        .unwrap_or("");
+    // Strip the port, handling both `host:port` and `[::1]:port` IPv6 forms.
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    let is_loopback = host == "localhost"
+        || host.ends_with(".localhost")
+        || host.starts_with("127.")
+        || host == "::1"
+        || host == "0.0.0.0";
+    !is_loopback
+}
+
+/// Warn (to stderr) when the endpoint would leak the API key over cleartext
+/// HTTP. See [`is_insecure_endpoint`].
+fn warn_if_insecure(base_url: &str) {
+    if is_insecure_endpoint(base_url) {
+        eprintln!(
+            "warning: API endpoint '{base_url}' uses cleartext HTTP; the API key \
+             will be sent unencrypted. Use an https:// URL for non-local endpoints."
+        );
+    }
+}
+
 impl ApiClient {
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
+        warn_if_insecure(base_url);
         let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()
@@ -390,5 +430,41 @@ impl ApiClient {
             .context("DELETE /agents/{id}")?;
         Self::expect_ok(resp, "deleting the agent").await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_insecure_endpoint;
+
+    #[test]
+    fn https_is_always_secure() {
+        assert!(!is_insecure_endpoint("https://api.example.com"));
+        assert!(!is_insecure_endpoint("HTTPS://API.EXAMPLE.COM"));
+    }
+
+    #[test]
+    fn http_to_loopback_is_allowed() {
+        for url in [
+            "http://localhost:8000",
+            "http://localhost",
+            "http://127.0.0.1:8000",
+            "http://[::1]:8000",
+            "http://0.0.0.0:8000",
+            "http://api.localhost",
+        ] {
+            assert!(!is_insecure_endpoint(url), "expected {url} to be allowed");
+        }
+    }
+
+    #[test]
+    fn http_to_remote_host_is_insecure() {
+        for url in [
+            "http://api.example.com",
+            "http://api.example.com:8000/v1",
+            "http://10.0.0.5:8000",
+        ] {
+            assert!(is_insecure_endpoint(url), "expected {url} to warn");
+        }
     }
 }

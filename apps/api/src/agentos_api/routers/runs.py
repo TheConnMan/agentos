@@ -1,5 +1,7 @@
 """Langfuse read proxy powering the Runs view."""
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..auth import require_api_key
@@ -14,6 +16,11 @@ router = APIRouter(
     dependencies=[Depends(require_api_key)],
 )
 
+# Trace ids reach Langfuse's URL path (`/api/public/traces/{id}`), so restrict
+# them to the safe id charset (OTel hex, UUIDs, cuids) — no `/`, `.`, or `..`
+# that could traverse into other upstream paths.
+_TRACE_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,128}\Z")
+
 
 @router.get("/traces")
 async def list_traces(
@@ -27,6 +34,10 @@ async def list_traces(
 
 @router.get("/traces/{trace_id}", response_model=TraceTree)
 async def get_trace(trace_id: str, lf: LangfuseDep) -> TraceTree:
+    if not _TRACE_ID_RE.match(trace_id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "invalid trace id"
+        )
     observations = await lf.get_observations(trace_id)
     if not observations:
         raise HTTPException(
