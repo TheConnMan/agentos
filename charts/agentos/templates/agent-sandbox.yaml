@@ -128,6 +128,12 @@ spec:
         # runner reads it as AGENTOS_PLUGIN_DIR.
         - name: bundles
           emptyDir: {}
+        # mc writes the MinIO credential in cleartext to its config dir. Keep
+        # that dir on an init-only volume the runner never mounts, so untrusted
+        # agent code cannot read the store credential off the shared bundles
+        # volume.
+        - name: mc-config
+          emptyDir: {}
         {{- end }}
         {{- if $runner.hardening.enabled }}
         {{- range $i, $p := $runner.hardening.writablePaths }}
@@ -160,7 +166,7 @@ spec:
                 echo "no AGENTOS_BUNDLE_REF; skipping bundle fetch"
                 exit 0
               fi
-              export MC_CONFIG_DIR={{ $bf.mountPath }}/.mc
+              export MC_CONFIG_DIR=/mc-config/.mc
               mc alias set src "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"
               mc cp "src/${BUNDLE_BUCKET}/${REF}" {{ $bf.mountPath }}/.bundle-archive
               echo "fetched bundle '$REF' from ${BUNDLE_BUCKET}"
@@ -181,6 +187,8 @@ spec:
           volumeMounts:
             - name: bundles
               mountPath: {{ $bf.mountPath }}
+            - name: mc-config
+              mountPath: /mc-config
           resources:
             {{- toYaml $runner.resources | nindent 12 }}
         - name: bundle-extract
