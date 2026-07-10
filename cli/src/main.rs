@@ -107,6 +107,13 @@ enum Command {
         #[command(subcommand)]
         action: DevAction,
     },
+    /// Print the machine-readable command manifest (JSON) to stdout.
+    ///
+    /// Hidden, developer-facing: regenerates `cli/command-manifest.json`, which
+    /// a CI drift gate keeps in lockstep with the CLI grammar. Also reachable as
+    /// `dump-commands`.
+    #[command(hide = true, alias = "dump-commands")]
+    Schema,
 }
 
 #[derive(Subcommand)]
@@ -1162,6 +1169,11 @@ async fn main() -> Result<()> {
                 .await
             }
         },
+        Command::Schema => {
+            use clap::CommandFactory;
+            print!("{}", agentos::schema::manifest_json(&Cli::command()));
+            Ok(())
+        }
     }
 }
 
