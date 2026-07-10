@@ -181,6 +181,8 @@ spec:
               value: {{ .Values.security.probe.busyboxImage | quote }}
             - name: ALLOW_ALL_NP
               value: {{ include "agentos.fullname" . }}-security-probe-allow-all
+            - name: BROAD_ALLOW_NP
+              value: {{ include "agentos.fullname" . }}-security-probe-broad-allow
             # The egress-probe carries this release's runner-sandbox labels (so the
             # chart's default-deny selects it) PLUS a unique per-release probe label.
             # The temporary allow-all selects ONLY the unique label, so it never
@@ -197,7 +199,7 @@ spec:
               fail=0
               cleanup() {
                 kubectl delete pod "$EGRESS_POD" sp-gvisor-check -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
-                kubectl delete networkpolicy "$ALLOW_ALL_NP" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete networkpolicy "$ALLOW_ALL_NP" "$BROAD_ALLOW_NP" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
                 kubectl delete secret sp-agent-a-creds sp-agent-b-creds -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
                 kubectl delete serviceaccount sp-agent-a -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
                 kubectl delete role sp-agent-a -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
@@ -257,6 +259,51 @@ spec:
               else
                 echo "RESULT: FAIL - before=${before} after=${after_ext} metadata=${after_meta} dns=${dns_ok}"
                 echo "        (a non-enforcing CNI shows before=after=reachable: silent false-pass.)"
+                fail=1
+              fi
+
+              # ---- Claim 1b: metadata blocked UNDER a broad (0.0.0.0/0) allowlist ----
+              # Phase 2 proves default-deny blocks metadata. This proves the additive
+              # carve-out: a broad allow (the realistic model-API 0.0.0.0/0 case) must
+              # reach the internet yet keep the metadata endpoint blocked via `except`.
+              # Mirrors exactly what the chart renders for allowedEgress:[{cidr:0.0.0.0/0}]
+              # (issue #70: a broad allow must not silently re-open IMDS).
+              echo ""
+              echo "== Claim 1b: metadata blocked under a broad 0.0.0.0/0 allowlist =="
+              kubectl run "$EGRESS_POD" -n "$NS" --image="$NETSHOOT" --restart=Never \
+                --labels="$PROBE_LABELS" \
+                --command -- sleep 3600 >/dev/null
+              kubectl wait --for=condition=Ready "pod/$EGRESS_POD" -n "$NS" --timeout=120s >/dev/null
+              cat <<EOF | kubectl apply -f - >/dev/null
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: ${BROAD_ALLOW_NP}
+                namespace: ${NS}
+              spec:
+                podSelector:
+                  matchLabels:
+                    agentos.io/egress-probe: ${PROBE_UNIQUE_VAL}
+                policyTypes: [Egress]
+                egress:
+                  - to:
+                      - ipBlock:
+                          cidr: 0.0.0.0/0
+                          except:
+                            - 169.254.0.0/16
+              EOF
+              sleep 5
+              broad_ext=$(classify "$(probe_rc "https://${BLOCKED}/")")
+              broad_meta=$(classify "$(probe_rc "http://169.254.169.254/latest/meta-data/")")
+              echo "phase 3 (broad allow + except): ${BLOCKED} -> ${broad_ext}   metadata(169.254.169.254) -> ${broad_meta}"
+              kubectl delete networkpolicy "$BROAD_ALLOW_NP" -n "$NS" --ignore-not-found >/dev/null
+              kubectl delete pod "$EGRESS_POD" -n "$NS" --ignore-not-found >/dev/null
+              if [ "$broad_ext" = reachable ] && [ "$broad_meta" = blocked ]; then
+                echo "RESULT: PASS - a broad 0.0.0.0/0 allow reaches the internet but the metadata"
+                echo "        endpoint stays blocked (the except carve-out holds)."
+              else
+                echo "RESULT: FAIL - broad-allow ext=${broad_ext} metadata=${broad_meta}"
+                echo "        (metadata=reachable means a broad allow re-opened IMDS: #70 regression.)"
                 fail=1
               fi
 
