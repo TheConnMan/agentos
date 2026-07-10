@@ -9,6 +9,12 @@ on:
     - cron: "0 6 * * 3"
   workflow_dispatch:
 
+# Supersede an in-flight run when the same ref is pushed again so runs stop
+# stacking (scheduled/dispatch runs each key on their own ref).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -33,7 +39,7 @@ jobs:
           - language: javascript-typescript
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Initialize CodeQL

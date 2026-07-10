@@ -11,6 +11,12 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+# Supersede an in-flight run when the same ref is pushed again so runs stop
+# stacking (scheduled/dispatch runs each key on their own ref).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -19,7 +25,7 @@ jobs:
     name: gitleaks (full history)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           # fetch-depth: 0 pulls the entire history so `gitleaks detect` scans

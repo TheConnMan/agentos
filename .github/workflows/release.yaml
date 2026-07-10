@@ -44,7 +44,7 @@ jobs:
             context: .
             dockerfile: apps/ui/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Buildx
@@ -81,7 +81,7 @@ jobs:
     needs: [images]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Compute base tag
@@ -140,7 +140,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Add target
@@ -166,7 +166,7 @@ jobs:
           mkdir -p dist
           cp "$bin" "dist/agentos-${{ matrix.target }}"
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agentos-${{ matrix.target }}
           path: dist/agentos-${{ matrix.target }}
@@ -177,7 +177,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Helm
@@ -202,13 +202,13 @@ jobs:
           mkdir -p dist
           python3 compose/generate_release_compose.py --version "${version}" > dist/compose.release.yaml
       - name: Upload chart artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agentos-chart
           path: dist/agentos-*.tgz
           if-no-files-found: error
       - name: Upload release compose artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agentos-compose
           path: dist/compose.release.yaml
@@ -223,7 +223,7 @@ jobs:
       contents: write
     steps:
       - name: Download built binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: agentos-*
           path: dist
