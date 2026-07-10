@@ -195,6 +195,14 @@ Secrets: dev credentials live in `values.yaml` and are written to one
 `langfuse.existingSecret` (and each store's `existingSecret`) at your own
 Secrets. `langfuse.encryptionKey` must be 64 hex chars (`openssl rand -hex 32`).
 
+Guard against shipping those dev defaults to a shared/production cluster with
+`--set security.checkDefaultCredentials=true`: the chart then refuses to render
+while `langfuse.init.projectSecretKey` or `langfuse.init.userPassword` still
+carries its published dev default (a Langfuse admin-takeover risk on a reachable
+UI; the project key also feeds the OTel Collector auth header). Override those
+values or supply `langfuse.existingSecret` to clear the gate. It is off by
+default so the zero-secret bare install stays green.
+
 ## The two preflights
 
 Both run as Helm hooks (blocking a broken install) and are re-runnable via

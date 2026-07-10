@@ -97,6 +97,34 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/* ---- Default-credential gate (issue #198) ----
+     When security.checkDefaultCredentials is on, refuse to render if a Langfuse
+     bootstrap identity still carries the published dev default from values.yaml.
+     Unlike the nine store/control-plane secrets, these init identities seed the
+     org/project on first boot (a different lifecycle), so #57 deliberately
+     excludes them from its render-time gate; this closes that gap. The published
+     admin password is a Langfuse admin-takeover risk on a reachable UI, and the
+     project secret key also feeds the OTel Collector auth header. The operator
+     clears the gate by overriding the value or supplying langfuse.existingSecret
+     (the #169 secretKeyRef escape carries both keys).
+
+     Off by default so the flagship zero-secret bare install stays green and the
+     dev/e2e overlays render unchanged; flip it on for a shared/production
+     cluster. #57 will fold the store/control-plane secrets into this same helper
+     (hence the general name) once its design pass lands. */}}
+{{- define "agentos.checkDefaultCredentials" -}}
+{{- if .Values.security.checkDefaultCredentials -}}
+{{- if not .Values.langfuse.existingSecret -}}
+{{- if eq .Values.langfuse.init.projectSecretKey "sk-lf-agentos-dev" -}}
+{{- fail "security.checkDefaultCredentials is on but langfuse.init.projectSecretKey is still the published dev default \"sk-lf-agentos-dev\". Override it (or set langfuse.existingSecret) before installing on a shared/production cluster -- this key also feeds the OTel Collector auth header." -}}
+{{- end -}}
+{{- if eq .Values.langfuse.init.userPassword "agentos-dev-password" -}}
+{{- fail "security.checkDefaultCredentials is on but langfuse.init.userPassword is still the published dev default \"agentos-dev-password\". Override it (or set langfuse.existingSecret) before installing on a shared/production cluster -- the published admin password allows Langfuse admin takeover on a reachable UI." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* ---- Shared first-party-app environment fragments ---- */}}
 
 {{/* Postgres connection env for the app services. POSTGRES_PASSWORD comes from
