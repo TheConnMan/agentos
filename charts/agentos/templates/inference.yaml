@@ -92,6 +92,13 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.inference.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.inference.resources | nindent 12 }}
           volumeMounts:

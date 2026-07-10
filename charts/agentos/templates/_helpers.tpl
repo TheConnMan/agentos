@@ -129,6 +129,41 @@ app.kubernetes.io/component: {{ .component }}
       key: valkeyPassword
 {{- end -}}
 
+{{/* Heartbeat exec probes for the worker and dispatcher. Neither has an HTTP
+     port, so an exec probe checks AGENTOS_HEARTBEAT_FILE freshness (< 30s)
+     instead of hitting a port. Each Deployment sets its own heartbeat path via
+     that env var, so the probe body is path-agnostic and both callers share
+     identical timings -- the helper therefore takes no params. Include with
+     `nindent 10` so the probe keys land at the container's 10-space column. */}}
+{{- define "agentos.heartbeatProbes" -}}
+readinessProbe:
+  exec:
+    command:
+      - python
+      - -c
+      - |
+        import os, sys, time
+        p = os.environ["AGENTOS_HEARTBEAT_FILE"]
+        sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 30 else 1)
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+livenessProbe:
+  exec:
+    command:
+      - python
+      - -c
+      - |
+        import os, sys, time
+        p = os.environ["AGENTOS_HEARTBEAT_FILE"]
+        sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 30 else 1)
+  initialDelaySeconds: 30
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 4
+{{- end }}
+
 {{/* ---- Langfuse shared environment (mirrors compose.dev.yaml's
         x-langfuse-env anchor). Rendered into both web and worker. ---- */}}
 {{- define "agentos.langfuse.env" -}}

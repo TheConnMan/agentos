@@ -23,6 +23,8 @@ Env mapping:
     AGENTOS_BACKOFF_INITIAL_SECONDS -> backoff_initial_seconds
     AGENTOS_BACKOFF_MAX_SECONDS     -> backoff_max_seconds
     AGENTOS_BACKOFF_MULTIPLIER      -> backoff_multiplier
+    AGENTOS_HEARTBEAT_FILE             -> heartbeat_file
+    AGENTOS_HEARTBEAT_INTERVAL_SECONDS -> heartbeat_interval_s
 """
 
 from typing import Annotated
@@ -134,6 +136,16 @@ class DispatcherConfig(BaseSettings):
     )
     backoff_multiplier: float = Field(
         default=2.0, gt=1, validation_alias="AGENTOS_BACKOFF_MULTIPLIER"
+    )
+
+    # A daemon thread touches heartbeat_file every heartbeat_interval_s so an exec
+    # liveness probe can restart the pod if the process fully wedges.
+    heartbeat_file: str = Field(
+        default="/tmp/agentos-dispatcher.heartbeat",
+        validation_alias="AGENTOS_HEARTBEAT_FILE",
+    )
+    heartbeat_interval_s: float = Field(
+        default=10.0, validation_alias="AGENTOS_HEARTBEAT_INTERVAL_SECONDS"
     )
 
     def dedupe_key(self, slack_event_id: str) -> str:

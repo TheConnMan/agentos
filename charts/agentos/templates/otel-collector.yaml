@@ -27,7 +27,11 @@ data:
           Authorization: ${env:LANGFUSE_OTLP_AUTH_HEADER}
       debug:
         verbosity: normal
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
     service:
+      extensions: [health_check]
       telemetry:
         metrics:
           level: none
@@ -93,6 +97,24 @@ spec:
               containerPort: 4317
             - name: otlp-http
               containerPort: 4318
+            - name: health
+              containerPort: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.otelCollector.resources | nindent 12 }}
           volumeMounts:
