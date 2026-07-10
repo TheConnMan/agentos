@@ -29,6 +29,7 @@ import asyncio
 import logging
 import tempfile
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -176,14 +177,27 @@ class EvalStreamConsumer(StreamConsumer):
         self._inflight_ids: set[str] = set()
 
     async def ensure_group(self) -> None:
-        # Deliberately created at id 0 (unlike the runs consumer, which uses $ to
-        # avoid replaying a backlog of stale Slack mentions). An eval work item is
-        # a requested CI check on a specific PR SHA, not conversational noise:
-        # dropping items produced while the worker was down would silently skip
-        # required checks, violating the "an eval is never lost" guarantee this
-        # consumer is built around. So a fresh group SHOULD pick up the backlog.
+        # Create the group at a max-age cutoff rather than the stream head ("0").
+        # Reading from "0" replays the ENTIRE stream history the first time the
+        # group is created, so a stream that accumulated ancient entries (across
+        # deploys, weeks of PRs) storms them all into the worker at once on first
+        # boot. Starting at (now - eval_stream_max_age_hours) skips only long-dead
+        # entries while still delivering recent backlog: an eval younger than the
+        # window is never lost -- a short outage is covered -- but a week-old
+        # requeue is not replayed. Crash recovery is unaffected: the reclaim loop
+        # works off the pending list, not the group's start id. An existing group
+        # keeps its position, so this only bounds the very first creation.
+        cutoff_ms = int(
+            (
+                datetime.now(UTC)
+                - timedelta(hours=self._config.eval_stream_max_age_hours)
+            ).timestamp()
+            * 1000
+        )
         await self._ensure_group(
-            self._config.eval_stream, self._config.eval_consumer_group, start_id="0"
+            self._config.eval_stream,
+            self._config.eval_consumer_group,
+            start_id=str(cutoff_ms),
         )
 
     async def run(self) -> None:
