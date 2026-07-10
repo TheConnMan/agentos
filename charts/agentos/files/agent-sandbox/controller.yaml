@@ -1,3 +1,13 @@
+# NOTE: This is the upstream kubernetes-sigs/agent-sandbox v0.5.0 controller
+# bundle, with two AgentOS security patches (issue #66):
+#   1. The cluster-wide `networkpolicies` rule has been REMOVED from the
+#      agent-sandbox-controller-extensions ClusterRole below. That permission is
+#      re-granted, scoped to the release namespace only, by a namespaced
+#      Role/RoleBinding in templates/agent-sandbox.yaml, so a compromised
+#      controller SA cannot delete the fail-closed egress policy (Rail 1) in
+#      any other namespace.
+#   2. The Deployment carries a non-root / read-only-rootfs securityContext.
+# Re-vendoring a newer upstream release must re-apply both patches.
 kind: Namespace
 apiVersion: v1
 metadata:
@@ -95,9 +105,21 @@ spec:
         app: agent-sandbox-controller
     spec:
       serviceAccountName: agent-sandbox-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: agent-sandbox-controller
         image: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.0
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
         args:
         - --leader-elect=true
         - --extensions
@@ -112,11 +134,15 @@ spec:
         - name: config-volume
           mountPath: /etc/sandbox-config
           readOnly: true
+        - name: tmp
+          mountPath: /tmp
       volumes:
       - name: config-volume
         configMap:
           name: agent-sandbox-config
           optional: true
+      - name: tmp
+        emptyDir: {}
 ---
 kind: Service
 apiVersion: v1
@@ -278,18 +304,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - networking.k8s.io
-  resources:
-  - networkpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

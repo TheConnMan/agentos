@@ -342,7 +342,28 @@ to install only the control plane + backing stores without the runner substrate.
   `agent-sandbox-system`, RBAC, webhook Service, and the Deployment running
   with `--extensions`). It is cluster-scoped; install it from exactly one
   release per cluster, or leave it false on clusters that already run
-  agent-sandbox.
+  agent-sandbox. **Cluster permissions (blast radius):** the controller's
+  ClusterRoles grant cluster-wide `create/delete/get/list/patch/update/watch`
+  on `pods`, `services`, and `persistentvolumeclaims` (it places sandbox pods
+  and their Services), full control of the `sandboxes` / `sandboxclaims` /
+  `sandboxtemplates` / `sandboxwarmpools` custom resources, `get/patch/update`
+  on those four CRDs by name, plus `leases` (leader-election) and `events`. Its NetworkPolicy permission has been
+  **de-scoped from cluster-wide to the release namespace only** (issue #66):
+  the vendored manifest drops the `networkpolicies` rule from its
+  `agent-sandbox-controller-extensions` ClusterRole, and a namespaced
+  `Role`/`RoleBinding` (`agent-sandbox-controller-networkpolicies`, rendered by
+  `templates/agent-sandbox.yaml`) re-grants it in `.Release.Namespace` only.
+  This confines the blast radius: a compromised controller (or a leaked SA
+  token) can no longer delete the fail-closed egress NetworkPolicy that IS
+  Rail 1's containment in any *other* namespace. It is not eliminated for this
+  release's own namespace, where the controller legitimately manages those
+  policies and so still holds delete on them. The Deployment is also hardened
+  with a non-root
+  (uid 65532) / read-only-rootfs / drop-ALL-caps / RuntimeDefault-seccomp
+  securityContext. On a shared multi-tenant cluster, prefer running the
+  controller from a dedicated platform release (or `controller.deploy: false`
+  with an externally-managed controller) given the residual cluster-wide
+  pod/service/PVC reach.
 - **Runner image**: the pool runs `agentos-runner`, defaulting to
   `ghcr.io/curie-eng/agentos-runner:latest` with `imagePullPolicy: IfNotPresent`
   (per-thread cold boots must not contain a pull; the `runner-prewarm` DaemonSet
