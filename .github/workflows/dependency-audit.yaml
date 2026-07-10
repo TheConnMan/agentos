@@ -1,0 +1,56 @@
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Advisory databases change independently of the code, so re-run weekly to
+    # catch newly-published CVEs against dependencies that never changed.
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      # Both committed Cargo.lock files are audited. cargo-audit reads the
+      # Cargo.lock in the working directory and fails the job on any advisory.
+      - name: Audit cli crate
+        working-directory: cli
+        run: cargo audit
+      - name: Audit generated ACI protocol crate
+        working-directory: packages/aci-protocol/generated/rust
+        run: cargo audit
+
+  python-audit:
+    name: pip-audit (uv workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      # Export the fully-resolved third-party dependency set from the frozen
+      # lockfile. --no-emit-workspace drops the local workspace packages (they
+      # carry no advisories and pip-audit cannot resolve editable/local entries);
+      # --all-packages walks every workspace member so no member's deps are missed.
+      - name: Export locked requirements
+        run: |
+          uv export --frozen --all-packages --no-emit-workspace \
+            --format requirements-txt --output-file requirements-audit.txt
+      - name: pip-audit
+        run: uvx pip-audit --requirement requirements-audit.txt

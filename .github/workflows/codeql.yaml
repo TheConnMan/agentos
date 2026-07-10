@@ -1,0 +1,47 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for CodeQL to upload results to the Security tab.
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Python and JavaScript/TypeScript are interpreted, so no build step
+          # is needed (build-mode: none). Rust is intentionally out of scope for
+          # this issue (Python + JavaScript only).
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
