@@ -47,6 +47,10 @@ spec:
           # Pinned tag; the AVX preflight validates it against the node's CPU.
           image: "{{ .Values.clickhouse.image.repository }}:{{ .Values.clickhouse.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.clickhouse.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: CLICKHOUSE_USER
               value: {{ .Values.clickhouse.auth.username | quote }}
