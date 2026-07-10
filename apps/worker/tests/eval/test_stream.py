@@ -20,7 +20,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import redis
@@ -639,3 +639,45 @@ async def _assert_langfuse_traces(
             break
         await asyncio.sleep(1)
     assert found == expected
+
+
+def test_worker_boot_after_an_outage_skips_stale_backlog_but_runs_recent() -> None:
+    # Real scenario: the worker was down for a while (a deploy, a weekend), so
+    # eval jobs queued ~2 days ago piled up on the stream alongside one queued
+    # ~10 minutes ago. When the worker boots and creates the group fresh, the
+    # stale backlog must not storm in, but the recent job must still run. Stream
+    # ids are millisecond timestamps, so the entries are placed at realistic
+    # wall-clock ages relative to now (default window is 24h).
+    async def go() -> None:
+        stream = f"agentos:evals:maxage:{uuid.uuid4().hex}"
+        group = f"grp-{uuid.uuid4().hex}"
+        cfg = _cfg(stream, group)  # default eval_stream_max_age_hours = 24
+        client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+        consumer = EvalStreamConsumer(
+            redis=client,
+            config=cfg,
+            bundle_store=cast(Any, None),
+            substrate=cast(Any, None),
+            reporter=cast(Any, None),
+            recorder=cast(Any, None),
+            repo_lookup=cast(Any, None),
+        )
+        try:
+            now_ms = int(time.time() * 1000)
+            two_days_ago = now_ms - 48 * 3600 * 1000
+            ten_min_ago = now_ms - 10 * 60 * 1000
+            # Two stale jobs from ~2 days ago, then one queued ~10 minutes ago.
+            await client.xadd(stream, {"payload": "stale-1"}, id=f"{two_days_ago}-0")
+            await client.xadd(stream, {"payload": "stale-2"}, id=f"{two_days_ago + 1}-0")
+            recent_id = await client.xadd(stream, {"payload": "recent"}, id=f"{ten_min_ago}-0")
+
+            await consumer.ensure_group()  # created fresh at (now - 24h)
+
+            resp = await client.xreadgroup(group, "c1", {stream: ">"}, count=10)
+            delivered = [eid for _s, entries in (resp or []) for eid, _f in entries]
+            assert delivered == [recent_id], delivered
+        finally:
+            await client.delete(stream)
+            await client.aclose()
+
+    asyncio.run(go())

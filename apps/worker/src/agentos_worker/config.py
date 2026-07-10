@@ -198,6 +198,13 @@ class WorkerConfig(BaseSettings):
         default="agentos-eval-workers", validation_alias="AGENTOS_EVAL_CONSUMER_GROUP"
     )
     eval_consumer_name: str = Field(default_factory=_default_consumer_name)
+    # On first creation the eval group starts at (now - this window) rather than
+    # the stream head, so a backlog of ancient entries is not replayed en masse
+    # on boot. Recent entries (younger than the window) are still delivered, so a
+    # short outage never drops a live eval; only long-dead entries are skipped.
+    eval_stream_max_age_hours: int = Field(
+        default=24, validation_alias="AGENTOS_EVAL_STREAM_MAX_AGE_HOURS"
+    )
     # MinIO / S3 for plugin bundles (mirrors the API's env names). The consumer
     # fetches a version's bundle by bundle_ref and loads its evals/ suite.
     s3_endpoint_url: str = "http://localhost:29000"
