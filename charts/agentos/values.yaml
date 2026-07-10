@@ -881,3 +881,20 @@ security:
   # shared/production cluster. (#57 will extend this same gate to the nine
   # store/control-plane secrets once its design pass lands.)
   checkDefaultCredentials: false
+  # Auto-generate per-release chart credentials (issue #195). Default false: a
+  # no-override `helm install` GENERATES a strong random per release for the nine
+  # chart-owned credentials (postgres/valkey/clickhouse/minio passwords, the
+  # Langfuse salt/encryptionKey/nextauthSecret, and the api/webhook keys) instead
+  # of shipping the published dev defaults. Generated values are persisted via a
+  # `lookup` of the release Secret, so `helm upgrade` re-uses them and never
+  # rotates a live store credential. Set true (values-dev.yaml does) for a
+  # deterministic dev/CI render that keeps the published defaults byte-for-byte.
+  # A per-store `existingSecret` and explicit `--set` overrides still win in every
+  # mode -- an override that differs from the published default beats the persisted
+  # value on install AND upgrade, so rotation/recovery works.
+  # Caveat: generation relies on Helm `lookup`, which is empty under client-side
+  # rendering. Driving this chart via `helm template | kubectl apply` or ArgoCD's
+  # client-side Helm (no live API lookup) regenerates these values on every sync
+  # and would rotate live store credentials -- pin them via `--set`/`existingSecret`
+  # (or use the `helm install/upgrade` path / `agentos cluster up`) in that case.
+  allowDevDefaults: false

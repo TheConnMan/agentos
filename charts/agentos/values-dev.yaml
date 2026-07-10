@@ -103,3 +103,8 @@ ui:
     repository: agentos-ui
     tag: local
     pullPolicy: Never
+
+security:
+  # Deterministic dev credentials: keep the published defaults from values.yaml
+  # instead of generating per-release randoms (mirrors compose.dev.yaml).
+  allowDevDefaults: true

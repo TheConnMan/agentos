@@ -550,6 +550,13 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
         plain(&o.common.namespace),
         plain("--create-namespace"),
     ];
+    if o.dev {
+        // With #195 the sealed chart auto-generates strong per-release secrets
+        // by default. `--dev` must opt into the chart's deterministic published
+        // defaults so local/CI stacks stay reproducible and match compose.
+        args.push(plain("--set"));
+        args.push(plain("security.allowDevDefaults=true"));
+    }
     if !o.no_expose {
         args.push(plain("--set"));
         args.push(plain("ui.service.type=NodePort"));
@@ -1945,6 +1952,54 @@ mod tests {
             local_model: None,
         });
         assert!(!cmds[0].display().contains("secret values file"));
+    }
+
+    #[test]
+    fn up_dev_emits_allow_dev_defaults_flag() {
+        // Under --dev the operator opts into the deterministic published chart
+        // credentials, so `up` must pass security.allowDevDefaults=true through
+        // to helm (issue #195). Without it the sealed chart generates strong
+        // random values and the dev/e2e stack would not match compose.
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: true,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(
+            line.contains("security.allowDevDefaults=true"),
+            "expected --dev to emit security.allowDevDefaults=true: {line}"
+        );
+    }
+
+    #[test]
+    fn up_without_dev_omits_allow_dev_defaults_flag() {
+        // The default (non-dev) path must NOT opt into the published defaults;
+        // the sealed chart generates strong per-release credentials there.
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(
+            !line.contains("security.allowDevDefaults"),
+            "non-dev up must not emit security.allowDevDefaults: {line}"
+        );
     }
 
     #[test]
