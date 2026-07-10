@@ -1,3 +1,51 @@
+{{- /*
+Pack an IPv4 dotted-quad into a 32-bit integer, e.g. "169.254.169.254" ->
+2852039166. Used by agentos.metadataExcept to test CIDR containment.
+*/ -}}
+{{- define "agentos.ipv4ToInt" -}}
+{{- $o := splitList "." (trim .) -}}
+{{- add (mul (int64 (index $o 0)) 16777216) (mul (int64 (index $o 1)) 65536) (mul (int64 (index $o 2)) 256) (int64 (index $o 3)) -}}
+{{- end -}}
+{{- /*
+Given an allowedEgress CIDR string, return the metadata/link-local `except`
+entry that must be carved back out of it, or "" when the CIDR cannot reach the
+cloud metadata endpoint. NetworkPolicy allows are additive, so a broad allow
+(the realistic 0.0.0.0/0 model-API case, or a 0.0.0.0/1 + 128.0.0.0/1 split, or
+::/0) re-permits the metadata IP that rail 1 denies -- unless we except it.
+
+Kubernetes requires each `except` to be the same address family as `cidr` and a
+strict subset of it, so we (a) pick the family from the CIDR, (b) only emit when
+the CIDR actually contains the metadata address, and (c) size the IPv4 except to
+stay a STRICT subset (169.254.0.0/16 for prefix <16, the /32 host for 16..<32,
+and nothing for an exact /32 host allow, which is a deliberate operator choice).
+
+IPv4 containment is computed exactly (top `prefix` bits of 169.254.169.254 vs the
+network). IPv6 covers the realistic broad cases -- ::/0 and the AWS IMDS ULA
+prefix fd00:ec2::/nn -- and carves out fd00:ec2::254; full IPv6 range math is not
+attempted (documented assumption). Operators can always override with an explicit
+per-entry `except:` list, which wins over this auto carve-out.
+*/ -}}
+{{- define "agentos.metadataExcept" -}}
+{{- $parts := splitList "/" . -}}
+{{- $ip := index $parts 0 -}}
+{{- $prefix := index $parts 1 | int -}}
+{{- if contains ":" $ip -}}
+  {{- if or (eq $prefix 0) (and (hasPrefix "fd00:ec2:" $ip) (le $prefix 32)) -}}fd00:ec2::254/128{{- end -}}
+{{- else -}}
+  {{- $meta := include "agentos.ipv4ToInt" "169.254.169.254" | int64 -}}
+  {{- $net := include "agentos.ipv4ToInt" $ip | int64 -}}
+  {{- $block := int64 1 -}}
+  {{- range until (sub 32 $prefix | int) -}}{{- $block = mul $block 2 -}}{{- end -}}
+  {{- if eq (div $meta $block) (div $net $block) -}}
+    {{- /* Size the except to stay a STRICT subset of cidr (apiserver requires
+           exceptMaskLen > cidrMaskLen). prefix<16 -> the /16 link-local block;
+           16<=prefix<32 -> the /32 host; prefix==32 is the operator explicitly
+           allowing exactly the metadata host, so emit nothing (any except would
+           equal cidr and be rejected -- respect the deliberate allow). */ -}}
+    {{- if lt $prefix 16 -}}169.254.0.0/16{{- else if lt $prefix 32 -}}169.254.169.254/32{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if and .Values.agentSandbox.deploy .Values.security.networkPolicy.enabled }}
 {{- $np := .Values.security.networkPolicy }}
 {{/*
@@ -163,18 +211,22 @@ spec:
         - ipBlock:
             cidr: {{ .cidr }}
             {{- /* NetworkPolicy allows are additive, so a broad allow (the
-                   realistic 0.0.0.0/0 model-API case) would re-permit the cloud
-                   metadata endpoint that rail 1 blocks. Carve it back out with
-                   `except`. Kubernetes requires except to be a SUBSET of cidr,
-                   so we only auto-add it to the all-egress case; a narrower CIDR
-                   cannot contain 169.254.169.254 anyway. Operators can override
-                   with an explicit `except:` list per entry. */}}
+                   realistic 0.0.0.0/0 model-API case, a /1 split, or ::/0) would
+                   re-permit the cloud metadata endpoint that rail 1 blocks. Carve
+                   it back out with `except`. An explicit per-entry `except:` list
+                   wins; otherwise agentos.metadataExcept returns a same-family,
+                   subset-safe carve-out for ANY CIDR that contains the metadata
+                   address (not just exact /0), and "" for CIDRs that cannot reach
+                   it. See the helper for the containment/family rules. */}}
             {{- if .except }}
             except:
               {{- toYaml .except | nindent 14 }}
-            {{- else if or (eq .cidr "0.0.0.0/0") (eq .cidr "::/0") }}
+            {{- else }}
+            {{- $auto := include "agentos.metadataExcept" .cidr | trim }}
+            {{- if $auto }}
             except:
-              - 169.254.169.254/32
+              - {{ $auto }}
+            {{- end }}
             {{- end }}
       {{- with .ports }}
       ports:
