@@ -701,3 +701,15 @@ security:
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 250m, memory: 128Mi }
+  # Render-time credential gate (issue #198). When true, the chart refuses to
+  # render if a Langfuse bootstrap identity (langfuse.init.projectSecretKey /
+  # langfuse.init.userPassword) still carries the published dev default from this
+  # file -- the published admin password is a Langfuse admin-takeover risk on a
+  # reachable UI, and the project secret key also feeds the OTel Collector auth
+  # header. Clear the gate by overriding those values or supplying
+  # langfuse.existingSecret (the secretKeyRef escape, keys langfuseInitProjectSecretKey
+  # + langfuseInitUserPassword). Off by default so the flagship zero-secret bare
+  # install stays green and the dev/e2e overlays render unchanged; flip it on for a
+  # shared/production cluster. (#57 will extend this same gate to the nine
+  # store/control-plane secrets once its design pass lands.)
+  checkDefaultCredentials: false
