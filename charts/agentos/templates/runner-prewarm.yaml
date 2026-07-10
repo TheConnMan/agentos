@@ -51,8 +51,10 @@ spec:
       {{- end }}
       containers:
         - name: prewarm
-          image: "{{ $runner.image }}:{{ $runner.tag }}"
-          # Always so the roll above fetches a fresh `latest`.
+          image: {{ include "agentos.image" (dict "repository" $runner.image "tag" $runner.tag "digest" $runner.digest "defaultTag" $.Chart.AppVersion) | quote }}
+          # Always so the roll above re-pulls the pinned ref (and picks up a
+          # moved tag on the rare cluster that still overrides tag back to a
+          # mutable one); on an immutable digest/version pin it is a no-op.
           imagePullPolicy: Always
           command: ["sleep", "infinity"]
           resources:

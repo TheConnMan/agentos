@@ -76,7 +76,7 @@ spec:
       {{- end }}
       containers:
         - name: worker
-          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          image: {{ include "agentos.image" (dict "repository" .Values.worker.image.repository "tag" .Values.worker.image.tag "digest" .Values.worker.image.digest "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           env:
             {{- include "agentos.env.postgres" . | nindent 12 }}
