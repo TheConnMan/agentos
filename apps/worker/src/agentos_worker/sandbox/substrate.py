@@ -195,9 +195,10 @@ class SandboxSubstrate:
             env=env,
             labels={THREAD_HASH_LABEL: thread_hash},
         )
+        deadline = time.monotonic() + config.claim_timeout_seconds
         try:
-            sandbox_name = self._await_bound(name)
-            bound = self._await_service_fqdn(sandbox_name)
+            sandbox_name = self._await_bound(name, deadline)
+            bound = self._await_service_fqdn(sandbox_name, deadline)
         except Exception:
             self._k8s.delete_claim(name)
             raise
@@ -241,8 +242,7 @@ class SandboxSubstrate:
         self._k8s.delete_claim(record.handle.claim_name)
         self._affinity.delete_if_claim(thread_key, record.handle.claim_name)
 
-    def _await_bound(self, claim_name: str) -> str:
-        deadline = time.monotonic() + self._config.claim_timeout_seconds
+    def _await_bound(self, claim_name: str, deadline: float) -> str:
         while time.monotonic() < deadline:
             claim = self._k8s.get_claim(claim_name)
             if claim is not None and claim.ready and claim.sandbox_name:
@@ -252,8 +252,7 @@ class SandboxSubstrate:
             f"claim {claim_name} not bound within {self._config.claim_timeout_seconds}s"
         )
 
-    def _await_service_fqdn(self, sandbox_name: str) -> SandboxView:
-        deadline = time.monotonic() + self._config.claim_timeout_seconds
+    def _await_service_fqdn(self, sandbox_name: str, deadline: float) -> SandboxView:
         while time.monotonic() < deadline:
             sandbox = self._k8s.get_sandbox(sandbox_name)
             if sandbox is not None and sandbox.service_fqdn:

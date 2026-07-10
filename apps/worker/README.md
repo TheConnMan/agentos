@@ -149,6 +149,7 @@ the placeholder in place, and gets every failure mode right.
 XREADGROUP agentos:runs        Consumer (consumer group; XAUTOCLAIM reclaims a
    -> QueuedSlackEvent            dead consumer's pending entries after an idle
    -> Kernel.process_event        timeout, then reprocesses them idempotently)
+        -> SlackSink     chat.update placeholder to booting text (best effort)
         -> substrate.lookup/claim/resume   (sandbox substrate)
         -> RunnerClient  POST /v1/event | /v1/steer | /v1/interrupt   (runner)
         -> SlackSink     chat.update the placeholder as frames stream

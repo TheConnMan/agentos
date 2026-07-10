@@ -348,3 +348,25 @@ class DockerSandboxClient:
                 )
             return ""
         return proc.stdout
+
+    def ensure_image(self) -> None:
+        """Pre-pull the runner image if absent (IfNotPresent semantics).
+
+        Mirrors the K8s prewarm: run once at worker startup so the first claim
+        window never contains a cold image download. Best-effort -- a pull
+        failure (offline, registry down) warns and continues rather than
+        crashing the worker, and a truly-missing image still fails clearly
+        later at claim time.
+        """
+        try:
+            present = self._docker(["image", "inspect", self._image], check=False)
+            if present.strip():
+                return
+            self._docker(["pull", self._image])
+        except (DockerError, OSError):
+            # Log the image name only -- never the argv or stderr (house rule
+            # above: args may carry credentials).
+            logger.warning(
+                "runner image pre-pull failed for %s; first claim will pull implicitly",
+                self._image,
+            )

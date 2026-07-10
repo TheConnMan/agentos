@@ -4,17 +4,21 @@ the real cluster path is the e2e in test_e2e_k8scratch.py)."""
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from agentos_worker.sandbox import (
     HISTORY_ENV,
     SESSION_ENV,
     AffinityStore,
     ClaimTimeoutError,
+    ClaimView,
     NoRouteError,
     RouteRecord,
     RouteState,
     SandboxHandle,
     SandboxSubstrate,
+    SandboxView,
     SubstrateConfig,
     SuspendedThreadError,
 )
@@ -219,6 +223,84 @@ def test_claim_race_never_adopts_dead_winner(
     assert handle.sandbox_name in fake_k8s.sandboxes
     assert "claim-dead" in fake_k8s.deleted
     assert substrate.lookup("T1") == handle
+
+
+class _SlowBindNoFqdnClient(FakeSandboxClient):
+    """A fake whose claim binds only after a wall-clock threshold and whose
+    bound sandbox never gets a serviceFQDN.
+
+    The bind readiness is TIME-based (measured against ``time.monotonic()``),
+    not iteration-count-based, so poll jitter cannot starve phase 1 -- the claim
+    reports ready once ``bind_after_seconds`` of real time has elapsed since the
+    first create_claim, regardless of how many polls happened. serviceFQDN is
+    always empty, so phase 2 (await_service_fqdn) can only ever time out.
+    """
+
+    bind_after_seconds: float = 1.2
+    _bind_deadline: float | None = None
+
+    def create_claim(self, name: str, **kwargs: object) -> None:
+        if self._bind_deadline is None:
+            self._bind_deadline = time.monotonic() + self.bind_after_seconds
+        super().create_claim(name, **kwargs)  # type: ignore[arg-type]
+
+    def get_claim(self, name: str) -> ClaimView | None:
+        claim = self.claims.get(name)
+        if claim is None:
+            return None
+        ready = self._bind_deadline is not None and time.monotonic() >= self._bind_deadline
+        return ClaimView(
+            name=claim.name,
+            ready=ready,
+            sandbox_name=claim.sandbox_name if ready else None,
+            labels=dict(claim.labels),
+        )
+
+    def get_sandbox(self, name: str) -> SandboxView | None:
+        view = super().get_sandbox(name)
+        if view is None:
+            return None
+        return SandboxView(
+            name=view.name,
+            ready=view.ready,
+            service_fqdn="",
+            operating_mode=view.operating_mode,
+        )
+
+
+def test_claim_budget_is_end_to_end_across_bind_and_fqdn(
+    affinity: AffinityStore, config: SubstrateConfig
+) -> None:
+    # The bind + FQDN phases must share ONE end-to-end deadline equal to
+    # claim_timeout_seconds (2.0s), not a fresh 2.0s each. Bind takes ~1.2s of
+    # wall clock, then FQDN never arrives. Under a shared budget the whole claim
+    # aborts at ~2.0s; under per-phase budgets it runs ~1.2 + 2.0 = ~3.2s.
+    # We assert < 2.6 (0.6s of slack over the 2.0 target) so CI jitter cannot
+    # flip a correctly-budgeted run, while ~3.2s of per-phase behavior stays red.
+    fake_k8s = _SlowBindNoFqdnClient()
+    substrate = SandboxSubstrate(fake_k8s, affinity, config)
+
+    started = time.monotonic()
+    with pytest.raises(ClaimTimeoutError):
+        substrate.claim("T1")
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2.6
+    # The unbound claim is not leaked despite the timeout.
+    assert fake_k8s.deleted == fake_k8s.created
+
+
+def test_claim_timeout_error_names_the_budget(
+    fake_k8s: FakeSandboxClient, affinity: AffinityStore, config: SubstrateConfig
+) -> None:
+    fake_k8s.bind_ready = False
+    substrate = SandboxSubstrate(fake_k8s, affinity, config)
+
+    with pytest.raises(ClaimTimeoutError) as excinfo:
+        substrate.claim("T1")
+    # The error message names the configured budget so the signature change
+    # (one shared deadline) does not silently drop the timeout value.
+    assert str(config.claim_timeout_seconds) in str(excinfo.value)
 
 
 def test_claim_on_suspended_route_refuses_to_fork(

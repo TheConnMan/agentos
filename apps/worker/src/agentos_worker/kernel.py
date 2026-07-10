@@ -409,6 +409,25 @@ class Kernel:
         packs: BehaviorPacks | None = None,
     ) -> TurnOutcome:
         thread = qevent.thread_ts
+
+        # Surface a booting state on the placeholder so the (up to claim_timeout)
+        # cold-boot wait is not silent. Best-effort and outside the per-thread lock:
+        # a Slack failure here must never fail the turn, and this must not lengthen
+        # the critical section. Fires once per attempt (retries re-affirm it).
+        # Suppressed under no-edit streaming: that mode's contract is exactly one
+        # chat.update (the final edit), so it opts out of the pre-boot edit too.
+        if not self._config.slack_no_edit_streaming:
+            try:
+                await self._sink.update(
+                    channel=qevent.channel,
+                    ts=qevent.placeholder_ts,
+                    text=self._config.booting_text,
+                )
+            except Exception:
+                logger.warning(
+                    "booting-state update failed for %s", qevent.slack_event_id
+                )
+
         event = self._to_event(qevent)
 
         # Critical section: decide steer-vs-new-turn and, if new, open the turn so
