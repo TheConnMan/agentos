@@ -2,7 +2,7 @@
 {{- $h := .Values.agentSandbox.runner.hardening }}
 {{/*
 The PT-3 security-boundary probe suite, re-run against the chart's rendered
-defaults as a `helm test`. Four claims:
+defaults as a `helm test`. Five claims:
 
   1. default-deny egress + metadata endpoint blocked, WITH a before/after control
      that proves the CNI actually enforces (not a silent false-pass).
@@ -10,8 +10,10 @@ defaults as a `helm test`. Four claims:
   3. runner containers are non-root with a read-only rootfs.
   4. gVisor RuntimeClass enforced (reported testable / not-testable honestly;
      enforcement itself is asserted by the preflight-gvisor hook).
+  5. data-tier ingress isolation: a release-app-labeled pod reaches each deployed
+     store's port while a non-app-labeled pod is blocked (the data-tier rail).
 
-Claim 3 is a self-contained hardened Pod (the pod IS the test). Claims 1, 2, 4
+Claim 3 is a self-contained hardened Pod (the pod IS the test). Claims 1, 2, 4, 5
 run from a kubectl-driven orchestrator with a scoped ServiceAccount.
 */}}
 apiVersion: v1
@@ -141,7 +143,22 @@ spec:
         {{- toYaml .Values.security.probe.resources | nindent 8 }}
 {{- end }}
 ---
-{{/* Claims 1, 2, 4: kubectl-driven orchestrator (alpine/k8s ships kubectl). */}}
+{{/* Claims 1, 2, 4, 5: kubectl-driven orchestrator (alpine/k8s ships kubectl).
+     $dt is the space-separated host:port list of stores Claim 5 probes (one
+     representative data port each). Keep this store set + ports in sync with the
+     $stores catalog in security-datatier-networkpolicy.yaml -- each port here
+     must be in that store's allow-list or Claim 5 red-fails a correct rail.
+     Claim 5 only asserts the data-tier boundary when the rail that creates it is
+     enabled AND the store is in-chart-deployed; BYO stores are external and
+     excluded. Both a disabled rail and all-BYO stores yield an empty list =>
+     Claim 5 skips. */}}
+{{- $dt := list -}}
+{{- if .Values.security.dataTierNetworkPolicy.enabled -}}
+{{- if .Values.postgres.deploy }}{{- $dt = append $dt (printf "%s:5432" (include "agentos.postgres.host" .)) -}}{{- end }}
+{{- if .Values.minio.deploy }}{{- $dt = append $dt (printf "%s:9000" (include "agentos.minio.host" .)) -}}{{- end }}
+{{- if .Values.clickhouse.deploy }}{{- $dt = append $dt (printf "%s:8123" (include "agentos.clickhouse.host" .)) -}}{{- end }}
+{{- if .Values.valkey.deploy }}{{- $dt = append $dt (printf "%s:6379" (include "agentos.valkey.host" .)) -}}{{- end }}
+{{- end -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -191,6 +208,20 @@ spec:
               value: "app.kubernetes.io/name={{ include "agentos.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=runner-sandbox,agentos.io/egress-probe={{ .Release.Name }}"
             - name: PROBE_UNIQUE_VAL
               value: {{ .Release.Name | quote }}
+            # Claim 5: data-tier ingress isolation. Deployed-store host:port list
+            # (empty => skip). Two probe pods: the ALLOWED one carries this
+            # release's app labels (rail SHOULD permit it), the DENIED one carries
+            # only a probe label with NO app labels (rail SHOULD block it).
+            - name: DATATIER_TARGETS
+              value: {{ join " " $dt | quote }}
+            - name: DT_ALLOWED_POD
+              value: {{ include "agentos.fullname" . }}-dt-probe-allowed
+            - name: DT_DENIED_POD
+              value: {{ include "agentos.fullname" . }}-dt-probe-denied
+            - name: DT_ALLOWED_LABELS
+              value: "app.kubernetes.io/name={{ include "agentos.name" . }},app.kubernetes.io/instance={{ .Release.Name }},agentos.io/datatier-probe=allowed"
+            - name: DT_DENIED_LABELS
+              value: "agentos.io/datatier-probe=denied"
           command:
             - /bin/bash
             - -c
@@ -199,6 +230,7 @@ spec:
               fail=0
               cleanup() {
                 kubectl delete pod "$EGRESS_POD" sp-gvisor-check -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                kubectl delete pod "$DT_ALLOWED_POD" "$DT_DENIED_POD" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
                 kubectl delete networkpolicy "$ALLOW_ALL_NP" "$BROAD_ALLOW_NP" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
                 kubectl delete secret sp-agent-a-creds sp-agent-b-creds -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
                 kubectl delete serviceaccount sp-agent-a -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
@@ -208,7 +240,7 @@ spec:
               trap cleanup EXIT
 
               echo "###############################################"
-              echo "# AgentOS A2 security probe (claims 1, 2, 4)"
+              echo "# AgentOS A2 security probe (claims 1, 2, 4, 5)"
               echo "###############################################"
 
               # ================= Claim 1: egress + metadata (before/after) ==========
@@ -357,6 +389,48 @@ spec:
                     echo "  to runc?). kernel=${gkernel}"
                     fail=1
                   fi
+                fi
+              fi
+
+              # ================= Claim 5: data-tier ingress isolation ===============
+              # Prove the data-tier rail: a pod carrying THIS release's app labels
+              # can reach each deployed store's port (positive control), while a pod
+              # with no app labels is blocked (the isolation the rail enforces).
+              echo ""
+              echo "== Claim 5: data-tier ingress isolation (default-deny + scoped-allow) =="
+              if [ -z "$DATATIER_TARGETS" ]; then
+                echo "SKIP: data-tier NetworkPolicy rail disabled or no in-chart store deployed"
+              else
+                kubectl run "$DT_ALLOWED_POD" -n "$NS" --image="$NETSHOOT" --restart=Never \
+                  --labels="$DT_ALLOWED_LABELS" --command -- sleep 3600 >/dev/null
+                kubectl run "$DT_DENIED_POD" -n "$NS" --image="$NETSHOOT" --restart=Never \
+                  --labels="$DT_DENIED_LABELS" --command -- sleep 3600 >/dev/null
+                kubectl wait --for=condition=Ready "pod/$DT_ALLOWED_POD" -n "$NS" --timeout=120s >/dev/null
+                kubectl wait --for=condition=Ready "pod/$DT_DENIED_POD" -n "$NS" --timeout=120s >/dev/null
+
+                dt_reach() { # $1=pod $2=host $3=port -> prints reachable|blocked
+                  rc=$(kubectl exec -n "$NS" "$1" -- sh -c "nc -z -w5 $2 $3 >/dev/null 2>&1; echo rc=\$?" 2>/dev/null | sed -n 's/.*rc=//p')
+                  [ "$rc" = 0 ] && echo reachable || echo blocked
+                }
+
+                dt_fail=0
+                for target in $DATATIER_TARGETS; do
+                  host=${target%:*}
+                  port=${target##*:}
+                  allowed=$(dt_reach "$DT_ALLOWED_POD" "$host" "$port")
+                  denied=$(dt_reach "$DT_DENIED_POD" "$host" "$port")
+                  echo "${target} allowed->${allowed} denied->${denied}"
+                  if [ "$allowed" != reachable ] || [ "$denied" != blocked ]; then
+                    echo "RESULT: FAIL - ${target}: allowed=${allowed} (want reachable) denied=${denied} (want blocked)"
+                    echo "        (allowed=blocked => rail misconfigured; denied=reachable => isolation breach"
+                    echo "         OR a non-enforcing CNI silently no-oping the policy.)"
+                    dt_fail=1
+                    fail=1
+                  fi
+                done
+                kubectl delete pod "$DT_ALLOWED_POD" "$DT_DENIED_POD" -n "$NS" --ignore-not-found >/dev/null 2>&1 || true
+                if [ "$dt_fail" = 0 ]; then
+                  echo "RESULT: PASS - release app pods reach the data tier; non-app pods are blocked."
                 fi
               fi
 

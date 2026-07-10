@@ -601,6 +601,15 @@ security:
     # worker dials the claimed sandbox, so ingress is allowed from the release
     # namespace only. Egress policies do not affect ingress; this adds the lock.
     lockIngress: true
+  # Rail: default-deny ingress + scoped-allow around the data tier (Postgres,
+  # MinIO, ClickHouse, Valkey). The backing stores hold every credential and all
+  # trace/app data; by default any pod in a NetworkPolicy-enforcing cluster can
+  # open Postgres:5432 and exfiltrate. This restricts ingress to each deployed
+  # store's ports to THIS release's app pods only (by name+instance label).
+  # Same fail-closed, default-on posture as the runner rail. Lower priority on a
+  # single-tenant single-node dev cluster; matters for the shared/production path.
+  dataTierNetworkPolicy:
+    enabled: true
   # Rail 4: gVisor (runsc) kernel isolation for runner sandbox pods.
   gvisor:
     # Tri-state, default `auto`:

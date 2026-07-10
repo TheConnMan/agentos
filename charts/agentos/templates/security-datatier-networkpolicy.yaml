@@ -1,0 +1,80 @@
+{{- if .Values.security.dataTierNetworkPolicy.enabled }}
+{{/*
+Rail: default-deny ingress + scoped-allow around the data tier (Postgres, MinIO,
+ClickHouse, Valkey).
+
+The backing stores hold every credential and all trace/app data. Without an
+ingress restriction, any co-tenant pod in a NetworkPolicy-enforcing cluster can
+open Postgres:5432 (or MinIO:9000, ClickHouse:8123, Valkey:6379) and read or
+exfiltrate the whole store. This rail selects each DEPLOYED in-chart store's pods
+by their component selector labels and, per store, emits two policies that
+compose into: (a) a default-deny that blocks ALL ingress by construction, and
+(b) a narrow allow that re-permits ingress ONLY from pods carrying THIS release's
+`app.kubernetes.io/name` + `app.kubernetes.io/instance` labels (the release's own
+app components: api, worker, dispatcher, langfuse, ui, runner sandboxes, jobs),
+on the store's ports. NetworkPolicy allows are additive, so the pair means:
+release app pods reach the store, everything else is denied. Same-namespace only
+(no namespaceSelector) so two AgentOS releases sharing a namespace do not
+cross-reach each other's stores.
+
+BYO stores (`<store>.deploy: false`) are external hosts outside the cluster, so
+they get no policy here -- secure them at their own network boundary.
+
+A customer CNI that does not enforce NetworkPolicy turns all of this into a
+silent false-pass; the security probe's Claim 5 (data-tier ingress isolation)
+exists to catch exactly that.
+*/}}
+{{/* Data-tier store catalog. Ports are the pods' fixed container ports (NOT the
+     configurable service .port), since a NetworkPolicy matches the destination
+     container port. Keep this store set + representative ports in sync with the
+     $dt probe-target list in security-probe.yaml (Claim 5). */}}
+{{- $stores := list
+    (dict "component" "postgres"   "deploy" .Values.postgres.deploy   "ports" (list 5432))
+    (dict "component" "minio"      "deploy" .Values.minio.deploy      "ports" (list 9000 9001))
+    (dict "component" "clickhouse" "deploy" .Values.clickhouse.deploy "ports" (list 8123 9000))
+    (dict "component" "valkey"     "deploy" .Values.valkey.deploy     "ports" (list 6379))
+-}}
+{{- range $s := $stores }}
+{{- if $s.deploy }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" $ }}-{{ $s.component }}-default-deny-ingress
+  labels:
+    {{- include "agentos.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $s.component }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" $ "component" $s.component) | nindent 6 }}
+  policyTypes: [Ingress]
+  # No ingress rules == deny all ingress for the selected store pods.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentos.fullname" $ }}-{{ $s.component }}-allow-app-ingress
+  labels:
+    {{- include "agentos.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $s.component }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agentos.selectorLabels" (dict "root" $ "component" $s.component) | nindent 6 }}
+  policyTypes: [Ingress]
+  # Allow ingress ONLY from THIS release's app pods (name + instance), same
+  # namespace. No namespaceSelector: co-namespace releases stay isolated.
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "agentos.name" $ }}
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+      ports:
+        {{- range $p := $s.ports }}
+        - { protocol: TCP, port: {{ $p }} }
+        {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
