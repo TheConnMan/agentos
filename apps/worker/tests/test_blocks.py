@@ -139,3 +139,126 @@ def test_render_without_nav_has_no_hub_button() -> None:
     _text, blocks = render(_BLOCK)
     assert blocks is not None
     assert "help" not in _action_ids(blocks)
+
+
+# --- #31: status context + link buttons --------------------------------------
+
+
+def test_status_renders_as_first_context_block() -> None:
+    reply = Reply(text="body", status="Running the numbers")
+    blocks = to_blocks(reply)
+    first = blocks[0]
+    assert first["type"] == "context"
+    assert first["elements"] == [{"type": "mrkdwn", "text": "Running the numbers"}]
+
+
+def test_status_is_rendered_as_authored_not_mrkdwn_converted() -> None:
+    # Like footer, status is a context line rendered as-authored (no Markdown ->
+    # mrkdwn conversion); a Markdown link stays verbatim rather than <url|label>.
+    reply = Reply(text="body", status="**bold** [x](http://y)")
+    first = to_blocks(reply)[0]
+    assert first["type"] == "context"
+    assert first["elements"][0]["text"] == "**bold** [x](http://y)"
+
+
+def test_parse_reply_extracts_status() -> None:
+    reply = parse_reply('```agentos-reply\n{"status": "Working", "text": "b"}\n```')
+    assert reply is not None
+    assert reply.status == "Working"
+
+
+def test_parse_reply_status_is_none_without_the_key() -> None:
+    reply = parse_reply('```agentos-reply\n{"text": "b"}\n```')
+    assert reply is not None
+    assert reply.status is None
+
+
+def test_links_render_as_url_buttons() -> None:
+    reply = Reply(text="x", links=[("Docs", "https://x/y")])
+    actions = [b for b in to_blocks(reply) if b["type"] == "actions"]
+    assert len(actions) == 1
+    elements = actions[0]["elements"]
+    assert len(elements) == 1
+    el = elements[0]
+    assert el["url"] == "https://x/y"
+    assert el["text"]["text"] == "Docs"
+    assert "action_id" not in el  # a URL button is interactive without the dispatcher
+
+
+def test_links_with_invalid_url_are_dropped() -> None:
+    # Only the absolute http(s) link survives; empty / relative / non-URL are dropped
+    # so one malformed url never makes Slack reject the whole reply.
+    reply = Reply(
+        text="x",
+        links=[("Good", "https://ok.com"), ("Empty", ""), ("Rel", "/relative"), ("Bad", "None")],
+    )
+    actions = [b for b in to_blocks(reply) if b["type"] == "actions"]
+    assert len(actions) == 1
+    elements = actions[0]["elements"]
+    assert len(elements) == 1
+    assert elements[0]["url"] == "https://ok.com"
+    labels = [e["text"]["text"] for e in elements]
+    assert "Empty" not in labels
+    assert "Rel" not in labels
+    assert "Bad" not in labels
+
+
+def test_links_all_invalid_emits_no_actions_block() -> None:
+    # Every link url is invalid and there are no buttons: no actions block at all.
+    reply = Reply(text="x", links=[("Empty", ""), ("Rel", "/relative"), ("Bad", "None")])
+    assert not any(b["type"] == "actions" for b in to_blocks(reply))
+
+
+def test_parse_reply_extracts_links() -> None:
+    reply = parse_reply('```agentos-reply\n{"links": [["Docs", "https://x/y"]], "text": "b"}\n```')
+    assert reply is not None
+    assert reply.links == [("Docs", "https://x/y")]
+
+
+def test_parse_reply_drops_malformed_links() -> None:
+    reply = parse_reply(
+        '```agentos-reply\n'
+        '{"links": [["only-one"], ["a", "b", "c"], ["Docs", "https://x/y"]], "text": "b"}\n'
+        '```'
+    )
+    assert reply is not None
+    assert reply.links == [("Docs", "https://x/y")]  # 1-elem and 3-elem entries dropped
+
+
+def test_to_blocks_full_order_with_status_and_links() -> None:
+    reply = Reply(
+        text="body",
+        status="Working",
+        header="Title",
+        fields=[("A", "1")],
+        buttons=[("Go", "go")],
+        links=[("Docs", "https://x/y")],
+        footer="foot",
+    )
+    blocks = to_blocks(reply)
+    assert _types(blocks) == [
+        "context",  # status first
+        "header",
+        "section",  # fields
+        "section",  # body
+        "actions",  # buttons
+        "actions",  # links
+        "context",  # footer last
+    ]
+    actions = [b for b in blocks if b["type"] == "actions"]
+    # First actions block is buttons (action_id elements), second is links (url).
+    assert all("action_id" in e for e in actions[0]["elements"])
+    assert all("url" in e for e in actions[1]["elements"])
+    # status context is first, footer context is last.
+    assert blocks[0]["elements"][0]["text"] == "Working"
+    assert blocks[-1]["elements"][0]["text"] == "foot"
+
+
+def test_backward_compatible_without_status_or_links() -> None:
+    # Defaults (status None, links empty) add ZERO blocks: identical to today.
+    reply = Reply(header="H", text="body", footer="f")
+    blocks = to_blocks(reply)
+    assert _types(blocks) == ["header", "section", "context"]
+    # No status context leading, and no links actions block anywhere.
+    assert not any(b["type"] == "actions" for b in blocks)
+    assert blocks[0]["type"] == "header"  # header first, not a status context

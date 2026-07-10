@@ -114,7 +114,9 @@ class _StreamAccumulator:
 
 
 class _ThrottledReply:
-    """Coalesces chat.update edits while streaming; always flushes the final."""
+    """Coalesces chat.update edits while streaming; always flushes the final. In
+    no-edit mode intermediate edits are suppressed entirely, so the placeholder
+    gets exactly one update (the final)."""
 
     def __init__(
         self,
@@ -124,11 +126,13 @@ class _ThrottledReply:
         ts: str,
         min_interval_s: float,
         nav: NavPack | None = None,
+        no_edit: bool = False,
     ) -> None:
         self._sink = sink
         self._channel = channel
         self._ts = ts
         self._min_interval_s = min_interval_s
+        self._no_edit = no_edit
         self._last = 0.0
         self._last_text: str | None = None
         # The bound agent's hub-button pack, forwarded to the sink so a render of
@@ -138,6 +142,8 @@ class _ThrottledReply:
         self._nav = nav
 
     async def stream(self, text: str) -> None:
+        if self._no_edit:
+            return
         if not text or text == self._last_text:
             return
         now = time.monotonic()
@@ -521,6 +527,7 @@ class Kernel:
             ts=qevent.placeholder_ts,
             min_interval_s=self._config.slack_edit_min_interval_s,
             nav=nav,
+            no_edit=self._config.slack_no_edit_streaming,
         )
         try:
             # ``async with`` releases the aiohttp response on every exit path

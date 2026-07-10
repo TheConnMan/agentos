@@ -84,3 +84,44 @@ def test_clear_status_is_best_effort_on_error() -> None:
 
     # Must not raise -- clearing the shimmer can never fail a completed turn.
     asyncio.run(sink.clear_status(channel="C1", thread_ts="1.1"))
+
+
+# --- #31: no-edit streaming config + status/links pass-through ----------------
+
+
+def test_config_no_edit_streaming_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENTOS_SLACK_NO_EDIT_STREAMING", raising=False)
+    assert WorkerConfig().slack_no_edit_streaming is False
+
+
+def test_config_reads_no_edit_streaming_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTOS_SLACK_NO_EDIT_STREAMING", "true")
+    assert WorkerConfig().slack_no_edit_streaming is True
+
+
+def test_update_renders_status_and_link_blocks_for_a_reply() -> None:
+    sink = AsyncSlackSink("xoxb-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_chat_update(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    sink._client.chat_update = _fake_chat_update  # type: ignore[method-assign]
+
+    text = (
+        '```agentos-reply\n'
+        '{"status": "Working", "text": "body", "links": [["Docs", "https://x/y"]]}\n'
+        '```'
+    )
+    asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
+
+    blocks = captured.get("blocks")
+    assert isinstance(blocks, list)
+    assert blocks[0]["type"] == "context"  # status context leads  # type: ignore[index]
+    link_actions = [
+        b
+        for b in blocks
+        if b["type"] == "actions" and any("url" in e for e in b["elements"])
+    ]
+    assert link_actions, "expected an actions block of URL link buttons"
+    assert link_actions[0]["elements"][0]["url"] == "https://x/y"
