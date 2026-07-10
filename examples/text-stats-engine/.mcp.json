@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "text-stats-engine": {
+      "command": "python3",
+      "args": ["scripts/engine_server.py"]
+    }
+  }
+}
