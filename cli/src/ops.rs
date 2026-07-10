@@ -22,29 +22,64 @@ pub struct OpsCommand {
     pub secret_env: Vec<(String, String)>,
 }
 
-/// A single argv token. `SecretSet` is a `helm --set key=value` whose value is a
-/// credential: the real value is used for execution, but only a masked prefix is
-/// ever printed (dry-run or the echoed command line).
+/// A single argv token.
+///
+/// `SecretSet` is a `helm --set key=value` whose value is a credential: the real
+/// value is used for execution, but only a masked prefix is ever printed (dry-run
+/// or the echoed command line). Note the value still lands in the process argv --
+/// acceptable only for low-sensitivity tokens that already live in a k8s Secret.
+///
+/// `SecretValuesFile` carries one or more secret `helm` values (dotted key ->
+/// value) that must **never** reach the process table. Before execution it is
+/// materialized into a private (0600) temporary values file and replaced by a
+/// `-f <path>` pair (see [`OpsCommand::materialize_secret_files`]); the file is
+/// removed as soon as the command finishes. This keeps the secret off `ps -ef`
+/// and out of `/proc/<pid>/cmdline`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CmdArg {
     Plain(String),
     SecretSet { key: String, value: String },
+    SecretValuesFile(Vec<(String, String)>),
 }
 
 impl CmdArg {
-    /// The real token passed to the process.
-    fn value(&self) -> String {
+    /// The real argv token(s) passed to the process. Most args map to a single
+    /// token; `SecretValuesFile` is expected to have been replaced by a `-f
+    /// <path>` pair during materialization, so reaching it here (an unmaterialized
+    /// secret file about to be executed) is a bug -- we emit nothing rather than
+    /// risk leaking, and trip a debug assertion.
+    fn value_tokens(&self) -> Vec<String> {
         match self {
-            CmdArg::Plain(s) => s.clone(),
-            CmdArg::SecretSet { key, value } => format!("{key}={value}"),
+            CmdArg::Plain(s) => vec![s.clone()],
+            CmdArg::SecretSet { key, value } => vec![format!("{key}={value}")],
+            CmdArg::SecretValuesFile(_) => {
+                debug_assert!(
+                    false,
+                    "SecretValuesFile must be materialized before argv(); \
+                     call OpsCommand::materialize_secret_files first"
+                );
+                Vec::new()
+            }
         }
     }
 
-    /// The token as shown to a human: secret values are masked.
-    fn masked(&self) -> String {
+    /// The token(s) as shown to a human: secret values are masked. A
+    /// `SecretValuesFile` prints as `-f <secret values file: key=masked, ...>` so
+    /// the operator can see which values are applied without any secret leaking.
+    fn masked_tokens(&self) -> Vec<String> {
         match self {
-            CmdArg::Plain(s) => s.clone(),
-            CmdArg::SecretSet { key, value } => format!("{key}={}", mask_secret(value)),
+            CmdArg::Plain(s) => vec![s.clone()],
+            CmdArg::SecretSet { key, value } => vec![format!("{key}={}", mask_secret(value))],
+            CmdArg::SecretValuesFile(pairs) => {
+                let masked: Vec<String> = pairs
+                    .iter()
+                    .map(|(key, value)| format!("{key}={}", mask_secret(value)))
+                    .collect();
+                vec![
+                    "-f".to_string(),
+                    format!("<secret values file: {}>", masked.join(", ")),
+                ]
+            }
         }
     }
 }
@@ -69,9 +104,12 @@ impl OpsCommand {
         self
     }
 
-    /// The argv tail (real values) handed to `tokio::process::Command`.
+    /// The argv tail (real values) handed to `tokio::process::Command`. Call
+    /// [`materialize_secret_files`](Self::materialize_secret_files) first when the
+    /// command may carry a [`CmdArg::SecretValuesFile`], otherwise those secret
+    /// values are dropped rather than executed.
     pub fn argv(&self) -> Vec<String> {
-        self.args.iter().map(CmdArg::value).collect()
+        self.args.iter().flat_map(CmdArg::value_tokens).collect()
     }
 
     /// The full shell-quoted command line with secrets masked, one line as it
@@ -91,10 +129,118 @@ impl OpsCommand {
         let mut parts: Vec<String> = env.iter().map(|item| shell_quote(item)).collect();
         parts.push(shell_quote(&self.program));
         for a in &self.args {
-            parts.push(shell_quote(&a.masked()));
+            for token in a.masked_tokens() {
+                parts.push(shell_quote(&token));
+            }
         }
         parts.join(" ")
     }
+
+    /// Materialize every [`CmdArg::SecretValuesFile`] into a private (0600)
+    /// temporary values file and return an equivalent command whose secrets are
+    /// delivered via `helm -f <path>` instead of the argv, plus RAII guards that
+    /// delete those files when dropped (so they are cleaned up even if the helm
+    /// run fails). Commands without a secret values file are returned unchanged
+    /// with no guards. Hold the returned guards until the process has finished.
+    pub(crate) fn materialize_secret_files(
+        &self,
+    ) -> Result<(OpsCommand, Vec<SecretValuesFileGuard>)> {
+        let mut new_args = Vec::with_capacity(self.args.len());
+        let mut guards = Vec::new();
+        for a in &self.args {
+            match a {
+                CmdArg::SecretValuesFile(pairs) => {
+                    let guard = SecretValuesFileGuard::write(pairs)?;
+                    new_args.push(plain("-f"));
+                    new_args.push(plain(guard.path.to_string_lossy().into_owned()));
+                    guards.push(guard);
+                }
+                other => new_args.push(other.clone()),
+            }
+        }
+        Ok((
+            OpsCommand {
+                program: self.program.clone(),
+                args: new_args,
+                env: self.env.clone(),
+                secret_env: self.secret_env.clone(),
+            },
+            guards,
+        ))
+    }
+}
+
+/// A 0600 temporary helm values file holding secret values; deleted on drop so
+/// the secret never outlives the `helm` invocation, even on error.
+pub(crate) struct SecretValuesFileGuard {
+    path: std::path::PathBuf,
+}
+
+impl SecretValuesFileGuard {
+    /// Write `pairs` (dotted helm keys -> secret values) into a fresh 0600 temp
+    /// file as nested YAML (a JSON document, which helm parses as YAML), created
+    /// with restrictive permissions atomically so the secret is never briefly
+    /// world-readable.
+    fn write(pairs: &[(String, String)]) -> Result<Self> {
+        let doc = nest_dotted_keys(pairs);
+        let body = serde_json::to_vec(&doc).context("serializing secret helm values")?;
+
+        let mut path = std::env::temp_dir();
+        path.push(format!("agentos-helm-values-{}.yaml", uuid::Uuid::new_v4()));
+
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts
+            .open(&path)
+            .with_context(|| format!("creating secret helm values file {}", path.display()))?;
+        // Belt-and-suspenders on platforms where create-time mode is not honored.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("securing secret helm values file {}", path.display()))?;
+        }
+        use std::io::Write;
+        file.write_all(&body)
+            .with_context(|| format!("writing secret helm values file {}", path.display()))?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for SecretValuesFileGuard {
+    fn drop(&mut self) {
+        // Best-effort cleanup; nothing actionable if the temp file is already gone.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Expand dotted helm keys (`a.b.c=value`) into a nested JSON object suitable as
+/// a helm values file. JSON is a subset of YAML, so helm parses it directly, and
+/// serde handles all value escaping so a secret with YAML-special characters
+/// cannot break the document.
+fn nest_dotted_keys(pairs: &[(String, String)]) -> serde_json::Value {
+    let mut root = serde_json::Map::new();
+    for (dotted, value) in pairs {
+        let parts: Vec<&str> = dotted.split('.').collect();
+        let mut cursor = &mut root;
+        for part in &parts[..parts.len() - 1] {
+            cursor = cursor
+                .entry((*part).to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+                .as_object_mut()
+                .expect("dotted key prefix maps to an object");
+        }
+        cursor.insert(
+            parts[parts.len() - 1].to_string(),
+            serde_json::Value::String(value.clone()),
+        );
+    }
+    serde_json::Value::Object(root)
 }
 
 pub(crate) fn plain(s: impl Into<String>) -> CmdArg {
@@ -106,6 +252,12 @@ pub(crate) fn secret_set(key: &str, value: &str) -> CmdArg {
         key: key.to_string(),
         value: value.to_string(),
     }
+}
+
+/// A single secret helm value delivered through a private `-f` values file
+/// rather than an argv `--set`, so the value never reaches the process table.
+pub(crate) fn secret_values_file(key: &str, value: &str) -> CmdArg {
+    CmdArg::SecretValuesFile(vec![(key.to_string(), value.to_string())])
 }
 
 /// Mask a secret for display: the first 8 characters, then `***`. Long enough to
@@ -272,8 +424,17 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     if let Some(credentials) = &o.credentials {
         args.push(plain("--set"));
         args.push(plain("agentSandbox.runner.fakeModel=false"));
-        args.push(plain("--set"));
-        args.push(secret_set("agentSandbox.runner.credentials", credentials));
+        // The model credential is the one high-sensitivity value here (a live API
+        // key). Deliver it through a private 0600 `-f` values file instead of an
+        // argv `--set`, so it never lands in the process table where any local
+        // user / EDR / crash reporter could read it via `ps -ef` or
+        // `/proc/<pid>/cmdline`. `fakeModel` and the egress rules are not secret
+        // and stay as plain `--set`. helm merges `-f` values before `--set`, so a
+        // later operator `--set` still overrides, matching the prior precedence.
+        args.push(secret_values_file(
+            "agentSandbox.runner.credentials",
+            credentials,
+        ));
         push_egress_rule(&mut args, egress_idx, MODEL_EGRESS_CIDR, EGRESS_TCP_PORT);
         egress_idx += 1;
     }
@@ -412,6 +573,11 @@ pub(crate) fn require_on_path(bin: &str) -> Result<()> {
 
 /// Run one command capturing stdout; returns (success, stdout, stderr).
 pub(crate) async fn run_capture(cmd: &OpsCommand) -> Result<(bool, String, String)> {
+    // Materialize any secret values into a private 0600 `-f` file so the secret
+    // stays out of the argv/process table. `_secret_files` guards live until the
+    // end of this function, so the temp files are removed after `helm` exits
+    // (including on error paths below).
+    let (cmd, _secret_files) = cmd.materialize_secret_files()?;
     let output = Command::new(&cmd.program)
         .args(cmd.argv())
         .envs(cmd.env.iter().chain(cmd.secret_env.iter()).cloned())
@@ -938,10 +1104,15 @@ mod tests {
             line.contains("agentSandbox.runner.fakeModel=false"),
             "{line}"
         );
-        // Credential is masked in the printed form and never leaks.
+        // Credential is masked in the printed form and never leaks. It is now
+        // shown as part of a `-f` secret values file, not a `--set`.
         assert!(
             line.contains("agentSandbox.runner.credentials=sk-ant-s***"),
             "{line}"
+        );
+        assert!(
+            line.contains("-f '<secret values file:"),
+            "credential should be delivered via a -f values file: {line}"
         );
         assert!(!line.contains("secretsecret"), "secret leaked: {line}");
         // Model-provider egress entry (array-index keys print single-quoted).
@@ -957,11 +1128,62 @@ mod tests {
             line.contains("'security.networkPolicy.allowedEgress[0].ports[0].port=443'"),
             "{line}"
         );
-        // The real value still reaches the executed argv.
-        let argv = cmds[0].argv().join(" ");
+
+        // Success criterion: the live credential must NOT reach the executed argv
+        // (the process table). Instead helm gets `-f <path>` pointing at a private
+        // 0600 file that carries the secret. Materialize the command the way the
+        // executor does and inspect the real argv + file.
+        let (materialized, guards) = cmds[0]
+            .materialize_secret_files()
+            .expect("materializing the secret values file");
+        let argv = materialized.argv();
+        let argv_joined = argv.join(" ");
         assert!(
-            argv.contains("agentSandbox.runner.credentials=sk-ant-secretsecret"),
-            "{argv}"
+            !argv_joined.contains("secretsecret"),
+            "credential leaked into argv: {argv_joined}"
+        );
+        assert!(
+            !argv_joined.contains("agentSandbox.runner.credentials="),
+            "credential --set leaked into argv: {argv_joined}"
+        );
+
+        // A `-f <values-file>` pair is present; the file exists, is 0600, and
+        // contains the real credential (as nested YAML/JSON helm can read).
+        let f_pos = argv
+            .iter()
+            .position(|a| a == "-f")
+            .expect("a -f flag in the materialized argv");
+        let values_path = std::path::PathBuf::from(&argv[f_pos + 1]);
+        assert!(values_path.exists(), "values file {values_path:?} missing");
+        let body = std::fs::read_to_string(&values_path).expect("reading the values file");
+        assert!(
+            body.contains("sk-ant-secretsecret"),
+            "credential missing from values file: {body}"
+        );
+        // It nests the dotted key correctly for helm.
+        assert!(
+            body.contains("agentSandbox")
+                && body.contains("runner")
+                && body.contains("credentials"),
+            "values file is not the expected nested shape: {body}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&values_path)
+                .expect("stat values file")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "values file must be 0600, was {mode:o}");
+        }
+
+        // The guard removes the file when dropped, so the secret never outlives
+        // the helm run.
+        drop(guards);
+        assert!(
+            !values_path.exists(),
+            "values file should be deleted once the guard drops"
         );
     }
 
