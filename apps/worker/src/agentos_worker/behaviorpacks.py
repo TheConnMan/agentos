@@ -28,13 +28,16 @@ the substrate; the kernel wiring that actually calls ``sample_tip`` /
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 import zlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+logger = logging.getLogger(__name__)
 
 # Words that may trail a greeting without making it a real request: "hey there",
 # "morning team". A greeting followed only by filler is still a bare greeting;
@@ -152,10 +155,25 @@ class BehaviorPacks(BaseModel):
 
     @classmethod
     def from_config(cls, data: Mapping[str, Any] | None) -> BehaviorPacks:
-        """Parse the JSON stored on an agent row; ``None``/empty -> all-off."""
+        """Parse the JSON stored on an agent row into packs. TOTAL by contract:
+        never raises. ``None``/empty -> an all-off ``BehaviorPacks()``; and a
+        MALFORMED blob (not a mapping, or a nested field that fails validation)
+        ALSO falls back to all-off, with a warning so the bad blob stays
+        diagnosable. This mirrors the binding layer's defensive stance (a polite
+        drop, not a crash): a corrupt packs blob on an agent row must never brick
+        that agent's turns -- it just gets the platform default (packs off)."""
         if not data:
             return cls()
-        return cls.model_validate(data)
+        if not isinstance(data, Mapping):
+            logger.warning(
+                "behavior_packs is not a mapping (%r); defaulting to all-off", type(data)
+            )
+            return cls()
+        try:
+            return cls.model_validate(data)
+        except ValidationError as exc:
+            logger.warning("malformed behavior_packs; defaulting to all-off: %s", exc)
+            return cls()
 
 
 def _normalize(text: str) -> str:

@@ -246,3 +246,100 @@ def test_shimmer_off_never_sets_a_caption(make_harness) -> None:
             assert h.sink.status_sets == []
 
     asyncio.run(go())
+
+
+# -- nav pack reaches the final rendered reply --------------------------------
+# The kernel threads the bound agent's nav pack to the sink's ``update`` for the
+# final structured reply, so a bound agent whose nav pack is enabled gets the
+# no-dead-ends hub button on its rendered Block Kit. An agent with nav
+# disabled/absent gets none.
+
+# A structured reply with buttons, none of which links to the hub command.
+_REPLY_WITH_BUTTONS = (
+    "```agentos-reply\n"
+    '{"text": "here you go", "buttons": [["Details", "details"]]}\n'
+    "```"
+)
+
+
+def test_bound_agent_with_enabled_nav_gets_hub_button_on_final_reply(make_harness) -> None:
+    from agentos_worker.behaviorpacks import NavPack
+    from agentos_worker.blocks import render
+
+    async def go() -> None:
+        packs = {"nav": {"enabled": True, "hub_label": "Help", "hub_command": "help"}}
+        binding = StubBinding({"C-bound": _resolved_with_packs(packs)})
+        async with make_harness(binding=binding) as h:
+            h.runner.default_script = [Final(text=_REPLY_WITH_BUTTONS, status=DONE)]
+            await h.kernel.process_event(_qevent("hi", channel="C-bound", thread="tNav"))
+
+            # The sink's final update was threaded the agent's enabled nav pack.
+            assert h.sink.last_nav == NavPack(
+                enabled=True, hub_label="Help", hub_command="help"
+            )
+            # ...and rendering that final reply with it surfaces the hub button.
+            assert h.sink.last_text is not None
+            _text, blocks = render(h.sink.last_text, nav=h.sink.last_nav)
+            assert blocks is not None
+            ids = [
+                e["action_id"]
+                for b in blocks
+                if b["type"] == "actions"
+                for e in b["elements"]
+            ]
+            assert "help" in ids
+
+    asyncio.run(go())
+
+
+def test_malformed_packs_blob_still_completes_the_turn(make_harness) -> None:
+    # Regression: a malformed behavior_packs blob must NOT brick the channel.
+    # from_config is total, so packs_for can't raise; process_event resolves an
+    # all-off default and the turn finishes normally (no poison-loop). shimmer is
+    # off (the default config), so this exercises the every-bound-turn path where
+    # packs_for now runs.
+    async def go() -> None:
+        # A nested field of the wrong type would raise pydantic.ValidationError
+        # if from_config were not defensive.
+        binding = StubBinding(
+            {"C-bound": _resolved_with_packs({"nav": {"enabled": "banana"}})}
+        )
+        async with make_harness(binding=binding) as h:  # shimmer defaults off
+            h.runner.default_script = [Final(text="answer", status=DONE)]
+            ev = _qevent("hi", channel="C-bound", thread="tBad")
+
+            # No exception escapes (a raise here would leave the event pending and
+            # crash-loop on reclaim).
+            await h.kernel.process_event(ev)
+
+            # The turn completed: a normal final update landed and the event is done.
+            assert h.runner.opened == ["hi"]
+            assert h.sink.last_text == "answer"
+            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+
+    asyncio.run(go())
+
+
+def test_bound_agent_without_nav_gets_no_hub_button(make_harness) -> None:
+    from agentos_worker.blocks import render
+
+    async def go() -> None:
+        binding = StubBinding({"C-bound": _resolved_with_packs({})})  # nav absent
+        async with make_harness(binding=binding) as h:
+            h.runner.default_script = [Final(text=_REPLY_WITH_BUTTONS, status=DONE)]
+            await h.kernel.process_event(_qevent("hi", channel="C-bound", thread="tNoNav"))
+
+            # No enabled nav reached the sink, so no hub button reaches the render.
+            assert not (h.sink.last_nav and h.sink.last_nav.enabled)
+            assert h.sink.last_text is not None
+            _text, blocks = render(h.sink.last_text, nav=h.sink.last_nav)
+            assert blocks is not None
+            ids = [
+                e["action_id"]
+                for b in blocks
+                if b["type"] == "actions"
+                for e in b["elements"]
+            ]
+            assert "help" not in ids
+
+    asyncio.run(go())
