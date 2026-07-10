@@ -4,6 +4,7 @@ export { Chip } from "./Chip";
 export { Button, type ButtonVariant } from "./Button";
 export { Card } from "./Card";
 export { CopyButton } from "./CopyButton";
+export { CliHint } from "./CliHint";
 export { SectionTitle } from "./SectionTitle";
 export { EmptyState } from "./EmptyState";
 export { Notice } from "./Notice";
