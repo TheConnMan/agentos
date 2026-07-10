@@ -606,9 +606,14 @@ security:
     #   auto    - at install/upgrade time the chart looks up the `runtimeClassName`
     #             RuntimeClass. If present, runner pods run under it; if absent,
     #             pods run with NO runtimeClassName (isolation OFF) and NOTES.txt
-    #             prints a prominent warning. Never blocks the install. NOTE: Helm's
-    #             `lookup` returns empty under `helm template`/--dry-run, so a
-    #             templated render always shows the no-gvisor shape.
+    #             prints a prominent warning. NOTE: Helm's `lookup` returns empty
+    #             under `helm template`/--dry-run, so a templated render always
+    #             shows the no-gvisor shape. This graceful degradation applies ONLY
+    #             to the fake-model/dev default; enabling a real model
+    #             (agentSandbox.runner.fakeModel=false or local inference.deploy)
+    #             makes `auto` render the blocking enforcement preflight, so a
+    #             runsc-less real-model install fails closed instead of silently
+    #             running on the host kernel.
     #   require - always stamp the runtimeClassName AND run the enforcement
     #             preflight as a blocking hook; a missing or downgraded runtime
     #             fails the install (the fail-hard, production posture).
@@ -626,8 +631,9 @@ security:
   # Enforcement preflight for `require` mode: verify the RuntimeClass EXISTS and is
   # actually ENFORCED (a pod under it reports a distinct gVisor kernel), so a
   # missing or silently-downgraded runtime fails the install with remediation
-  # instead of shipping runner pods with no kernel isolation. Only renders when
-  # security.gvisor.mode is `require` (auto degrades gracefully; off skips it).
+  # instead of shipping runner pods with no kernel isolation. Renders when
+  # security.gvisor.mode is `require`, OR mode is `auto` with a real (non-fake)
+  # model; fake-model `auto` degrades gracefully; `off` skips it.
   gvisorPreflight:
     enabled: true
     image: busybox:1.36

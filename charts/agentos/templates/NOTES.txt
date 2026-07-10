@@ -76,10 +76,12 @@ Kernel isolation (gVisor, security.gvisor.mode={{ $gvisorMode }}):
   - ACTIVE: runner pods run under RuntimeClass "{{ $gvisorClass }}".
 {{- else }}
   - !! WARNING: no "{{ .Values.security.gvisor.runtimeClassName }}" RuntimeClass was
-       found on this cluster, so runner pods run with NO kernel isolation. Install
-       runsc + the containerd handler on every node and re-run `helm upgrade`, or
-       set security.gvisor.mode=require to fail-hard on the next install, or =off to
-       acknowledge running without it.
+       found on this cluster, so runner pods run with NO kernel isolation. This is
+       allowed only because no untrusted real-model code runs here (fake model). Under
+       the default mode=auto, enabling a real model (agentSandbox.runner.fakeModel=false,
+       or local inference) will now FAIL the install closed unless runsc + the containerd
+       handler are installed on every node -- so install runsc and re-run `helm upgrade`,
+       or set security.gvisor.mode=off to run real code without isolation knowingly.
 {{- end }}
 {{- end }}
 {{- if not (include "agentos.dispatcher.enabled" .) }}
