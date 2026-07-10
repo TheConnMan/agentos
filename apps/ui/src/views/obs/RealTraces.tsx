@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { C } from "../../tokens";
 import { Card, Chip, Dot, EmptyState, Notice } from "../../primitives";
 import { hoverBg } from "../../lib/style";
 import { useStore } from "../../state/store";
 import { useTraces, useTrace } from "../../api/hooks";
+import { promoteTraceToEvalCase } from "../../api/client";
 import type { RawTrace, ObservationNode } from "../../api/client";
 
 function str(o: RawTrace, key: string): string | null {
@@ -206,7 +208,24 @@ export function sandboxIdFromTrace(source: RawTrace | null | undefined): string 
 export function RealTraceDetail() {
   const { state, dispatch } = useStore();
   const { data, loading, error, notFound } = useTrace(state.traceOpen);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
   const traceName = data ? (str(data.trace as RawTrace, "name") ?? state.traceOpen) : state.traceOpen;
+
+  const promote = async () => {
+    if (!state.traceOpen || promoting) return;
+    setPromoting(true);
+    setPromoteError(null);
+    try {
+      const evalCase = await promoteTraceToEvalCase(state.traceOpen);
+      dispatch({ type: "addPromotedEvalCase", evalCase });
+      dispatch({ type: "toast", message: `Promoted to eval case ${evalCase.id} (anonymized)` });
+    } catch (e) {
+      setPromoteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPromoting(false);
+    }
+  };
   // Prefer the API's typed field; fall back to probing the raw trace payload.
   const typedSandboxId =
     typeof data?.sandbox_id === "string" && data.sandbox_id.trim() !== "" ? data.sandbox_id : null;
@@ -238,7 +257,35 @@ export function RealTraceDetail() {
               live
             </Chip>
             <span style={{ marginLeft: "auto", fontSize: 12.5, color: C.muted, fontFamily: C.mono }}>{state.traceOpen}</span>
+            <button
+              type="button"
+              data-testid="promote-eval-case"
+              onClick={() => void promote()}
+              disabled={promoting}
+              title="Turn this conversation into an anonymized eval case"
+              style={{
+                background: "transparent",
+                border: "1px solid " + C.border,
+                borderRadius: 20,
+                padding: "3px 12px",
+                color: C.link,
+                fontFamily: C.mono,
+                fontSize: 11.5,
+                cursor: promoting ? "default" : "pointer",
+                opacity: promoting ? 0.6 : 1,
+              }}
+            >
+              {promoting ? "Promoting…" : "Promote to eval case"}
+            </button>
           </div>
+          {promoteError ? (
+            <div
+              data-testid="promote-error"
+              style={{ fontSize: 12, color: C.destructive, fontFamily: C.mono, marginBottom: 16 }}
+            >
+              Could not promote: {promoteError}
+            </div>
+          ) : null}
           {sandboxId ? (
             <div
               data-testid="trace-sandbox"

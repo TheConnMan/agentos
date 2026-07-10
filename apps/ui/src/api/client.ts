@@ -60,6 +60,19 @@ export interface TraceTree {
 // A raw Langfuse trace row (opaque; we read a few well-known fields defensively).
 export type RawTrace = Record<string, unknown>;
 
+// An eval case in the frozen eval-case format (#8/#259): an input prompt plus a
+// deterministic grader. Returned by promoteTraceToEvalCase.
+export interface GraderOut {
+  kind: "exact" | "contains" | "regex";
+  expected: string;
+  case_sensitive: boolean;
+}
+export interface EvalCaseOut {
+  id: string;
+  input: string;
+  grader: GraderOut;
+}
+
 /** Thrown when the bundle validator rejects the archive (HTTP 422). */
 export class BundleValidationError extends Error {
   issues: BundleIssue[];
@@ -189,6 +202,16 @@ export async function getTrace(traceId: string): Promise<TraceTree> {
     headers: headers(),
   });
   return jsonOrThrow<TraceTree>(resp);
+}
+
+// Promote a trace into an anonymized, runnable eval case (#259). The API reads
+// the trace, scrubs PII, and returns a case in the frozen eval-case format.
+export async function promoteTraceToEvalCase(traceId: string): Promise<EvalCaseOut> {
+  const resp = await fetch(url(`/langfuse/traces/${encodeURIComponent(traceId)}/eval-case`), {
+    method: "POST",
+    headers: headers(),
+  });
+  return jsonOrThrow<EvalCaseOut>(resp);
 }
 
 // ---- observability (OB1): Langfuse-backed metrics + runner-pod log proxy ----

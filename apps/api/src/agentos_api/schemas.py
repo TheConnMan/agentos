@@ -117,6 +117,26 @@ class AgentOut(BaseModel):
     created_at: datetime
 
 
+class GraderOut(BaseModel):
+    """A deterministic grader, mirroring the frozen eval-case Grader shape
+    (`apps/worker/schema/eval-cases.schema.json`). Do not let this drift from the
+    worker's `Grader` model."""
+
+    kind: Literal["exact", "contains", "regex"]
+    expected: str
+    case_sensitive: bool = False
+
+
+class EvalCaseOut(BaseModel):
+    """An eval case conforming to the frozen eval-case format (#8, ADR-0019):
+    an input prompt plus the grader that judges the answer. Emitted by the
+    promote-a-trace-to-an-eval-case endpoint (#259)."""
+
+    id: str
+    input: str
+    grader: GraderOut
+
+
 class VersionCreate(BaseModel):
     version_label: str
     bundle_ref: str | None = None

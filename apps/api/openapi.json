@@ -424,6 +424,29 @@
         "title": "Environment",
         "type": "string"
       },
+      "EvalCaseOut": {
+        "description": "An eval case conforming to the frozen eval-case format (#8, ADR-0019):\nan input prompt plus the grader that judges the answer. Emitted by the\npromote-a-trace-to-an-eval-case endpoint (#259).",
+        "properties": {
+          "grader": {
+            "$ref": "#/components/schemas/GraderOut"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input": {
+            "title": "Input",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "input",
+          "grader"
+        ],
+        "title": "EvalCaseOut",
+        "type": "object"
+      },
       "EvalCell": {
         "description": "One cell of the eval matrix: a case's result on a version.",
         "properties": {
@@ -662,6 +685,35 @@
           "bundle_ref"
         ],
         "title": "EvalTriggerResult",
+        "type": "object"
+      },
+      "GraderOut": {
+        "description": "A deterministic grader, mirroring the frozen eval-case Grader shape\n(`apps/worker/schema/eval-cases.schema.json`). Do not let this drift from the\nworker's `Grader` model.",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "exact",
+              "contains",
+              "regex"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "expected"
+        ],
+        "title": "GraderOut",
         "type": "object"
       },
       "GreetingPackConfig": {
@@ -3502,6 +3554,65 @@
           }
         },
         "summary": "Get Trace",
+        "tags": [
+          "langfuse"
+        ]
+      }
+    },
+    "/langfuse/traces/{trace_id}/eval-case": {
+      "post": {
+        "description": "Promote a real trace into an anonymized, runnable eval case (#259).\n\nReads the trace + its observations, extracts the conversation input/output,\nanonymizes them (emails, Slack ids, phone numbers, credential-shaped tokens),\nand emits an EvalCase conforming to the frozen eval-case format. 404s when the\ntrace has no observations yet, matching the read path.",
+        "operationId": "promote_trace_to_eval_case_langfuse_traces__trace_id__eval_case_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trace_id",
+            "required": true,
+            "schema": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Promote Trace To Eval Case",
         "tags": [
           "langfuse"
         ]

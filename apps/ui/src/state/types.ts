@@ -61,6 +61,16 @@ export interface AppState {
   // Wired-deploy feedback surfaced in the create-agent modal.
   deployIssues: DeployIssue[] | null;
   deployError: string | null;
+  // Eval cases promoted from real traces (#259), newest first. Anonymized by the
+  // API before they land here.
+  promotedEvalCases: PromotedEvalCase[];
+}
+
+// An anonymized eval case promoted from a trace (mirrors the API EvalCaseOut).
+export interface PromotedEvalCase {
+  id: string;
+  input: string;
+  grader: { kind: "exact" | "contains" | "regex"; expected: string; case_sensitive: boolean };
 }
 
 export type Action =
@@ -90,6 +100,7 @@ export type Action =
   | { type: "installPlugin" }
   | { type: "promoteFormOpen" }
   | { type: "promoteEval" }
+  | { type: "addPromotedEvalCase"; evalCase: PromotedEvalCase }
   | { type: "runMatrix" }
   | { type: "reconfigureMatrix" }
   | { type: "revealToken"; value: boolean }
