@@ -398,6 +398,36 @@ pub fn validate_web_egress_cidrs(cidrs: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// A CIDR is a *default route* when its prefix length is `/0` (`0.0.0.0/0`,
+/// `::/0`, or any `addr/0`) -- a `/0` prefix ignores the address bits entirely
+/// and matches the whole address space. Opening runner egress to such a route
+/// removes the chart's default-deny internet rail. Assumes the value already
+/// passed `validate_web_egress_cidrs`.
+pub fn is_default_route(cidr: &str) -> bool {
+    cidr.rsplit_once('/')
+        .and_then(|(_, prefix)| prefix.trim().parse::<u8>().ok())
+        .is_some_and(|bits| bits == 0)
+}
+
+/// The distinct rail-removal warning to emit when the web-egress allowlist
+/// contains one or more default routes, or `None` when it does not. Returned as
+/// a pure value (not printed here) so the warning text stays unit-testable
+/// independently of the `up` handler's UI side effects.
+pub fn default_route_egress_warning(cidrs: &[String]) -> Option<String> {
+    let routes: Vec<&str> = cidrs
+        .iter()
+        .map(String::as_str)
+        .filter(|c| is_default_route(c))
+        .collect();
+    if routes.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "`--allow-web-egress` includes a default route ({}); this removes the egress rail -- the sandbox can reach the entire internet",
+        routes.join(", ")
+    ))
+}
+
 /// The chart secrets a bare `helm install` would otherwise render from the
 /// published dev defaults in `values.yaml` (see #57): every backing-store
 /// password plus the Langfuse crypto material and the first-party app keys.
@@ -837,6 +867,9 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
         ui.note(
             "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.",
         );
+    }
+    if let Some(warning) = default_route_egress_warning(&opts.allow_web_egress) {
+        ui.warn(&warning);
     }
     if !opts.allow_web_egress.is_empty() {
         ui.note(&format!(
@@ -1602,6 +1635,33 @@ mod tests {
 
         // An out-of-range prefix is rejected.
         assert!(validate_web_egress_cidrs(&["10.0.0.0/33".into()]).is_err());
+    }
+
+    #[test]
+    fn default_route_egress_warning_fires_on_default_routes() {
+        // The distinct rail-removal warning names the offending route and says
+        // the sandbox can reach the entire internet -- for both catch-all forms
+        // and for any `/0` prefix, which ignores the address bits.
+        for route in ["0.0.0.0/0", "::/0", "10.0.0.0/0"] {
+            let warning = default_route_egress_warning(&[route.into()])
+                .unwrap_or_else(|| panic!("expected a warning for {route}"));
+            assert!(warning.contains("removes the egress rail"), "{warning}");
+            assert!(warning.contains("entire internet"), "{warning}");
+            assert!(warning.contains(route), "{warning}");
+        }
+
+        // The offending route is called out even when mixed with scoped CIDRs.
+        let warning = default_route_egress_warning(&["203.0.113.0/24".into(), "0.0.0.0/0".into()])
+            .expect("expected a warning when a default route is present");
+        assert!(warning.contains("0.0.0.0/0"), "{warning}");
+
+        // No default route -> no warning (and it is distinct from the generic
+        // "N declared destination(s)" note, which still fires separately).
+        assert!(default_route_egress_warning(&[]).is_none());
+        assert!(default_route_egress_warning(&["203.0.113.0/24".into()]).is_none());
+        assert!(default_route_egress_warning(&["10.0.0.0/8".into()]).is_none());
+        // A `/0`-suffixed *host* octet is not a default route (prefix is 24).
+        assert!(default_route_egress_warning(&["10.0.0.10/24".into()]).is_none());
     }
 
     #[test]
