@@ -36,8 +36,8 @@ agentos-runner = { workspace = true }
 [dependency-groups]
 dev = [
     "pytest>=8.3",
-    "ruff>=0.9",
-    "mypy>=1.14",
+    "ruff>=0.15.21",
+    "mypy>=2.2.0",
     "types-PyYAML>=6.0",
     "opentelemetry-sdk>=1.29",
     "opentelemetry-exporter-otlp-proto-http>=1.29",
