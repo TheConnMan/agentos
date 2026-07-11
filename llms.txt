@@ -1,0 +1,35 @@
+# AgentOS
+
+> A harness that runs the same immutable bundle and the same evals across three targets (skill, local, cluster), so an agent that worked locally does not silently break once deployed. Its CLI's primary user is a coding agent driven by a developer, not a human at a prompt.
+
+The point of the three targets (`skill` in-process, `local` via docker compose, `cluster` on Kubernetes) is running the SAME bundle and the SAME `evals/cases.json` across all of them. A tier-to-tier eval divergence is the harness catching a real environment bug, not the skill's logic being wrong. Writing a `skill.md` is something an agent can already do; guaranteeing it behaves the same deployed as it did locally is the harness's job.
+
+## Start here
+
+- [QUICKSTART.md](QUICKSTART.md): first agent reply in about a minute, the fastest path in.
+- [README.md](README.md): what AgentOS is, how to run it, and the target-by-target CLI walkthroughs.
+- [docs/vision.md](docs/vision.md): the north star, who it is for, and the parity thesis new features are held against.
+
+## The parity ladder (skill -> local -> cluster)
+
+- [README.md#which-target-do-i-want](README.md#which-target-do-i-want): the target table, which of skill/local/cluster answers your question.
+- [cli/README.md](cli/README.md): the full `agentos` command reference across all three targets.
+- [docs/operations.md](docs/operations.md): the cluster runbook (credential model, Slack connect, zero-Slack message flow).
+
+## Architecture
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): the component map, message-flow and deploy-flow sequence diagrams, and the built vs deferred split.
+- [docs/adr/](docs/adr/): the load-bearing architecture decisions, each with the live-cluster evidence behind it.
+- [AGENTS.md](AGENTS.md): the operative rules for working in this repo (verify commands, dev stack, frozen-contract escalation).
+
+## Examples
+
+- [examples/weather/](examples/weather/): the first-party example bundle, a runnable web-search skill that `agentos init` scaffolds.
+- [examples/text-stats-engine/README.md](examples/text-stats-engine/README.md): a bundle that ships its own tools as an in-bundle stdio MCP server, a shape a hosted harness cannot do.
+
+## Optional
+
+- [SECURITY.md](SECURITY.md): the security posture and reporting process.
+- [docs/behavior-packs.md](docs/behavior-packs.md): reusable behavior packs for bundles.
+- [docs/onboarding.md](docs/onboarding.md): the end-to-end onboarding walkthrough.
+- [docs/slack-local-runbook.md](docs/slack-local-runbook.md): exercising real Slack routing against the local compose stack.
