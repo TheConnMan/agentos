@@ -97,6 +97,11 @@ export function WiredAgentDetail() {
   const [channel, setChannel] = useState("");
   const [savingChannel, setSavingChannel] = useState(false);
   const [channelError, setChannelError] = useState<string | null>(null);
+
+  // Editable per-agent model (#254). Seeded from the agent; blank = platform default.
+  const [model, setModel] = useState("");
+  const [savingModel, setSavingModel] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
   const channelValue = channel.trim();
   const channelBlank = channelValue === "";
   const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
@@ -105,6 +110,11 @@ export function WiredAgentDetail() {
     setChannel(agent?.slack_channel ?? "");
     setChannelError(null);
   }, [agent?.id, agent?.slack_channel]);
+
+  useEffect(() => {
+    setModel(agent?.model ?? "");
+    setModelError(null);
+  }, [agent?.id, agent?.model]);
 
   // The whole bundle tree (item 4): every file is browsable; only SKILL.md files
   // are editable, the rest are read-only views.
@@ -148,6 +158,27 @@ export function WiredAgentDetail() {
       setChannelError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
     } finally {
       setSavingChannel(false);
+    }
+  };
+
+  const saveModel = async () => {
+    if (!agent || savingModel) return;
+    setSavingModel(true);
+    setModelError(null);
+    try {
+      // Trimmed value; empty string clears the pin so the platform default
+      // applies (apply_model_env treats an empty AGENTOS_MODEL as unset).
+      const next = model.trim();
+      await updateAgent(agent.id, { model: next });
+      refetch();
+      dispatch({
+        type: "toast",
+        message: next === "" ? "Model cleared (platform default)" : `Model set to ${next}`,
+      });
+    } catch (e) {
+      setModelError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingModel(false);
     }
   };
 
@@ -282,6 +313,45 @@ export function WiredAgentDetail() {
           ) : (
             <div style={{ fontSize: 10.5, color: C.muted, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
               Saved to the stored config; the live worker keeps its channel until the next deploy.
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: C.muted, fontFamily: C.mono }}>model</span>
+            <input
+              data-testid="model-input"
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                setModelError(null);
+              }}
+              placeholder="platform default"
+              style={{
+                background: C.input,
+                border: "1px solid " + C.borderStrong,
+                borderRadius: 7,
+                padding: "5px 9px",
+                color: C.text,
+                fontFamily: C.mono,
+                fontSize: 12.5,
+                width: 150,
+              }}
+            />
+            <Button
+              label={savingModel ? "Saving…" : "Save"}
+              variant="secondary"
+              size="sm"
+              testId="model-save"
+              disabled={savingModel}
+              onClick={() => void saveModel()}
+            />
+          </div>
+          {modelError ? (
+            <div data-testid="model-error" style={{ fontSize: 11, color: C.destructive, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
+              Could not update model: {modelError}
+            </div>
+          ) : (
+            <div style={{ fontSize: 10.5, color: C.muted, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
+              Sets AGENTOS_MODEL at boot; blank uses the platform default.
             </div>
           )}
         </div>

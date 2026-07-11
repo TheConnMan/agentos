@@ -13,6 +13,17 @@
               }
             ]
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -64,6 +75,17 @@
             "title": "Id",
             "type": "string"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -90,14 +112,26 @@
           "slack_channel",
           "repo_full_name",
           "behavior_packs",
+          "model",
           "created_at"
         ],
         "title": "AgentOut",
         "type": "object"
       },
       "AgentUpdate": {
-        "description": "Partial update of a mutable agent field. Only slack_channel is updatable\n(name and repo binding are identity); an omitted field is left unchanged.",
+        "description": "Partial update of mutable agent fields. slack_channel and model are\nupdatable (name and repo binding are identity); an omitted field is left\nunchanged.",
         "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "slack_channel": {
             "anyOf": [
               {

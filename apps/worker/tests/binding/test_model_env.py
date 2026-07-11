@@ -23,7 +23,7 @@ from agentos_worker.config import WorkerConfig
 from agentos_worker.eval.stream import EvalStreamConsumer, EvalWorkItem
 
 
-def _resolved() -> ResolvedDeployment:
+def _resolved(model: str | None = None) -> ResolvedDeployment:
     return ResolvedDeployment(
         agent_id=uuid.uuid4(),
         version_id=uuid.uuid4(),
@@ -31,6 +31,7 @@ def _resolved() -> ResolvedDeployment:
         bundle_ref="bundles/x.zip",
         max_usd_per_day=None,
         max_output_tokens_per_run=None,
+        model=model,
     )
 
 
@@ -147,6 +148,44 @@ def test_eval_boot_env_carries_fake_and_credentials() -> None:
     env = consumer._boot_env(item)
     assert env[FAKE_MODEL_ENV] == "1"
     assert env[CREDENTIALS_ENV] == "cred-eval"
+
+
+# --- Per-agent model selection (#254) -----------------------------------------
+
+
+def test_apply_model_env_model_override_wins_over_config() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(
+        env, WorkerConfig(model="platform-default"), model_override="agent-glm-5"
+    )
+    assert env[MODEL_ENV] == "agent-glm-5"
+
+
+def test_apply_model_env_model_override_none_falls_back_to_config() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(
+        env, WorkerConfig(model="platform-default"), model_override=None
+    )
+    assert env[MODEL_ENV] == "platform-default"
+
+
+def test_apply_model_env_model_override_without_config_model() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig(), model_override="agent-kimi")
+    assert env[MODEL_ENV] == "agent-kimi"
+
+
+def test_binding_boot_env_forwards_per_agent_model() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig(model="platform-default")  # type: ignore[attr-defined]
+
+    # A pinned per-agent model overrides the worker default.
+    env = resolver.boot_env(_resolved(model="agent-deepseek-v4"), "thread-1")
+    assert env[MODEL_ENV] == "agent-deepseek-v4"
+
+    # No per-agent model -> the platform default still applies.
+    env = resolver.boot_env(_resolved(model=None), "thread-1")
+    assert env[MODEL_ENV] == "platform-default"
 
 
 # --- Per-sandbox runner token minting (issue #63) -----------------------------

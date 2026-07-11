@@ -52,6 +52,7 @@ const AGENT: AgentOut = {
   id: "a1",
   name: "deal-desk",
   slack_channel: "C0123ABCD",
+  model: null,
   created_at: "2026-07-01T00:00:00Z",
 };
 
@@ -184,6 +185,41 @@ describe("WiredAgentDetail — channel edit (item 5)", () => {
     // …but the value still saves.
     await user.click(screen.getByTestId("channel-save"));
     await waitFor(() => expect(updateAgent).toHaveBeenCalledWith("a1", { slack_channel: "revenue-ops" }));
+  });
+});
+
+describe("WiredAgentDetail — model edit (#254)", () => {
+  it("saves an edited per-agent model via updateAgent and refetches", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(await screen.findByTestId("agent-detail-name")).toHaveTextContent("deal-desk");
+    await waitFor(() => expect(getAgents).toHaveBeenCalledTimes(1));
+
+    // Model field seeds empty (AGENT.model is null) and accepts a model id.
+    const input = await screen.findByTestId("model-input");
+    expect(input).toHaveValue("");
+    await user.type(input, "glm-5.2");
+    await user.click(screen.getByTestId("model-save"));
+
+    await waitFor(() => expect(updateAgent).toHaveBeenCalledTimes(1));
+    expect(updateAgent).toHaveBeenCalledWith("a1", { model: "glm-5.2" });
+    // Save refetches the wired agent list (getAgents runs a 2nd time).
+    await waitFor(() => expect(getAgents).toHaveBeenCalledTimes(2));
+  });
+
+  it("clears the model to the platform default (empty string) on save", async () => {
+    const user = userEvent.setup();
+    // This agent already has a pinned model, so the field seeds with it.
+    vi.mocked(getAgents).mockResolvedValue([{ ...AGENT, model: "kimi-k2" }]);
+    renderDetail();
+
+    const input = await screen.findByTestId("model-input");
+    await waitFor(() => expect(input).toHaveValue("kimi-k2"));
+    await user.clear(input);
+    await user.click(screen.getByTestId("model-save"));
+
+    await waitFor(() => expect(updateAgent).toHaveBeenCalledWith("a1", { model: "" }));
   });
 });
 
