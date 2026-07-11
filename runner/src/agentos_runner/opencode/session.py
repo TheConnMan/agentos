@@ -19,7 +19,7 @@ Wire protocol (OpenCode v1, verified against ``opencode`` v1.17.17 ``GET /doc``)
 - ``interrupt`` -> ``POST /session/{id}/abort``.
 - ``close``     tears down the SSE reader, the HTTP session, and the subprocess.
 
-Two spike semantic gaps (documented, not solved here):
+Two remaining spike semantic gaps are documented here:
 
 * **Steer is completion-deferred.** OpenCode admits a message posted mid-turn at
   the next turn boundary rather than interleaving it into the live generation, so
@@ -28,6 +28,10 @@ Two spike semantic gaps (documented, not solved here):
 * **No resume equivalent.** OpenCode has no ``resume`` handle matching the SDK's,
   so ``AGENTOS_HISTORY_REF`` rehydration is unsupported and every session
   cold-starts. History replay is out of scope for this spike.
+
+Fidelity note: Claude ``max_turns`` aborts a run when the bound is reached.
+OpenCode ``steps`` uses the same bound but forces a final text only response.
+The termination shape therefore differs even though the iteration limit matches.
 
 Concurrency note: this uses ``asyncio`` primitives directly (queue, task, event)
 and therefore assumes the runner's ``anyio`` host is on its default asyncio
@@ -39,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import socket
@@ -50,7 +55,16 @@ from typing import Any
 
 import aiohttp
 
+from ..sdk_auth import (
+    API_KEY_ENV,
+    AUTH_TOKEN_ENV,
+    CREDENTIALS_ENV,
+    OAUTH_TOKEN_ENV,
+)
+from .auth import OPENROUTER_API_KEY_ENV
 from .synth import TurnSynthesizer, _result
+
+_logger = logging.getLogger(__name__)
 
 # OpenCode's lowercase read-only built-ins, declared here as this harness's
 # read-only set for the deny-by-default side-effect classifier (side_effects.py).
@@ -80,6 +94,29 @@ _SILENCE_TIMEOUT = float(os.environ.get("OPENCODE_SPIKE_SILENCE_TIMEOUT", "120")
 _READY_ATTEMPTS = 160
 _READY_INTERVAL = 0.25
 
+# The single OpenCode agent name both config carrier and prompt body must name.
+# ``build_config_content`` nests the system prompt and step cap under
+# ``agent.<name>``, but the prompt API's default agent is NOT this one -- so
+# ``build_prompt_body`` must name the same agent or the turn runs a different
+# agent that never sees that config (neither system prompt nor turn cap applies).
+# Verified live against opencode v1.17.17 (GET /agent plus a live turn whose reply
+# lacked the config-injected proof token, 2026-07-11). Keep the two uses coupled
+# through this constant.
+_OPENCODE_AGENT = "build"
+
+_LEGACY_OPENROUTER_ENV = "OPENROUTER_" + "TOKEN"
+_SANITIZED_ENV_NAMES = frozenset(
+    {
+        OPENROUTER_API_KEY_ENV,
+        _LEGACY_OPENROUTER_ENV,
+        API_KEY_ENV,
+        AUTH_TOKEN_ENV,
+        OAUTH_TOKEN_ENV,
+        CREDENTIALS_ENV,
+        "OPENCODE_CONFIG_CONTENT",
+    }
+)
+
 
 def _free_port() -> int:
     sock = socket.socket()
@@ -101,23 +138,68 @@ def _find_opencode() -> str:
     raise RuntimeError("opencode binary not found on PATH or ~/.opencode/bin")
 
 
-def _subprocess_env() -> dict[str, str]:
-    """Build the subprocess env, forwarding exactly the OpenRouter credential.
+def build_subprocess_env(
+    base_env: dict[str, str],
+    credential_env: dict[str, str] | None,
+    config_content: str | None,
+) -> dict[str, str]:
+    """Return the sanitized environment for ``opencode serve``."""
 
-    OpenCode expects ``OPENROUTER_API_KEY``; this project stores it as
-    ``OPENROUTER_TOKEN``. The key value is never logged or echoed.
-    """
+    env = {
+        key: value
+        for key, value in base_env.items()
+        if key not in _SANITIZED_ENV_NAMES
+    }
+    if credential_env:
+        env.update(credential_env)
 
-    env = dict(os.environ)
-    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_TOKEN")
-    if key:
-        env["OPENROUTER_API_KEY"] = key
-    # Ensure the bun-shipped opencode runtime is resolvable.
+    # Ensure the bun shipped opencode runtime is resolvable.
     extra = os.pathsep.join(
-        p for p in (os.path.expanduser("~/.opencode/bin"), os.path.expanduser("~/.bun/bin")) if p
+        p
+        for p in (
+            os.path.expanduser("~/.opencode/bin"),
+            os.path.expanduser("~/.bun/bin"),
+        )
+        if p
     )
     env["PATH"] = extra + os.pathsep + env.get("PATH", "")
+    if config_content:
+        env["OPENCODE_CONFIG_CONTENT"] = config_content
     return env
+
+
+def build_prompt_body(provider: str, model: str, text: str) -> dict[str, Any]:
+    """Return the ``POST /session/{id}/prompt_async`` body for one turn.
+
+    The ``"agent"`` field is load-bearing and must name the same agent the config
+    carrier targets (see ``_OPENCODE_AGENT``).
+    """
+
+    return {
+        "agent": _OPENCODE_AGENT,
+        "model": {"providerID": provider, "modelID": model},
+        "parts": [{"type": "text", "text": text}],
+    }
+
+
+def build_config_content(
+    system_prompt: str | None, max_turns: int | None
+) -> str | None:
+    """Return inline OpenCode config for the supplied session settings."""
+
+    build: dict[str, str | int] = {}
+    if system_prompt:
+        build["prompt"] = system_prompt
+    if max_turns is not None:
+        if max_turns > 0:
+            build["steps"] = max_turns
+        else:
+            _logger.warning(
+                "OpenCode steps must be positive; omitting max_turns=%s", max_turns
+            )
+    if not build:
+        return None
+    return json.dumps({"agent": {_OPENCODE_AGENT: build}})
 
 
 class OpenCodeModelSession:
@@ -129,10 +211,16 @@ class OpenCodeModelSession:
         model: str | None = None,
         provider: str | None = None,
         cwd: str | None = None,
+        credential_env: dict[str, str] | None = None,
+        system_prompt: str | None = None,
+        max_turns: int | None = None,
     ) -> None:
         self._model = model or DEFAULT_MODEL
         self._provider = provider or DEFAULT_PROVIDER
         self._cwd = cwd
+        self._credential_env = credential_env
+        self._system_prompt = system_prompt
+        self._max_turns = max_turns
         self._bin = _find_opencode()
 
         self._proc: subprocess.Popen[bytes] | None = None
@@ -158,11 +246,23 @@ class OpenCodeModelSession:
             prefix="opencode-serve-", suffix=".log", delete=False
         )
         self._proc = subprocess.Popen(
-            [self._bin, "serve", "--port", str(port), "--hostname", "127.0.0.1",
-             "--log-level", "ERROR"],
+            [
+                self._bin,
+                "serve",
+                "--port",
+                str(port),
+                "--hostname",
+                "127.0.0.1",
+                "--log-level",
+                "ERROR",
+            ],
             stdout=self._log,
             stderr=self._log,
-            env=_subprocess_env(),
+            env=build_subprocess_env(
+                dict(os.environ),
+                self._credential_env,
+                build_config_content(self._system_prompt, self._max_turns),
+            ),
             cwd=workdir,
         )
         self._http = aiohttp.ClientSession()
@@ -232,10 +332,7 @@ class OpenCodeModelSession:
     async def query(self, text: str) -> None:
         if self._http is None or self._base is None or self._sid is None:
             raise RuntimeError("session not connected")
-        body = {
-            "model": {"providerID": self._provider, "modelID": self._model},
-            "parts": [{"type": "text", "text": text}],
-        }
+        body = build_prompt_body(self._provider, self._model, text)
         async with self._http.post(
             f"{self._base}/session/{self._sid}/prompt_async", json=body
         ) as resp:

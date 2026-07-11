@@ -15,6 +15,11 @@ from dataclasses import dataclass
 
 from aci_protocol import SessionConfig
 
+# Shared default turn cap read by both the runner env parse (RunnerConfig.from_env)
+# and the OpenCode conformance harness, so both paths cap identically when
+# AGENTOS_MAX_TURNS is unset.
+DEFAULT_MAX_TURNS = 20
+
 
 @dataclass(frozen=True)
 class RunnerConfig:
@@ -62,7 +67,7 @@ class RunnerConfig:
             session=session,
             model=env.get("AGENTOS_MODEL"),
             system_prompt=env.get("AGENTOS_SYSTEM_PROMPT"),
-            max_turns=int(env.get("AGENTOS_MAX_TURNS", "20")),
+            max_turns=int(env.get("AGENTOS_MAX_TURNS", str(DEFAULT_MAX_TURNS))),
             history_ref=env.get("AGENTOS_HISTORY_REF"),
             idempotent_tools=idempotent,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),

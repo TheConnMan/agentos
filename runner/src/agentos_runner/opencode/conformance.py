@@ -8,7 +8,10 @@ job, eval_case, interrupt); the three events each cost one real model turn, and
 the bare interrupt yields an idle final without a model call. Each producer call
 builds an isolated runner (fresh subprocess) to completion via ``anyio.run``.
 
-Run:  PYTHONPATH=src python -m agentos_runner.opencode.conformance   (from runner/)
+Run from ``runner/`` with the model credential selected explicitly:
+
+``AGENTOS_CREDENTIALS="$OPENROUTER_API_KEY" PYTHONPATH=src python -m
+agentos_runner.opencode.conformance``
 """
 
 from __future__ import annotations
@@ -19,11 +22,13 @@ import os
 import tempfile
 
 import anyio
-from aci_protocol import Event, Interrupt, run_conformance
+from aci_protocol import Budget, Event, Interrupt, run_conformance
 
+from ..config import DEFAULT_MAX_TURNS
 from ..otel import RunTracer
 from ..session import SessionRunner
 from ..side_effects import SideEffectClassifier
+from .auth import resolve_opencode_env
 from .installer import OpenCodeBundleInstaller
 from .session import OPENCODE_READONLY_TOOLS, OpenCodeModelSession
 
@@ -95,6 +100,18 @@ def _bundle_demo_failures(lines: list[str]) -> list[str]:
 
 
 def _build_runner(plugin_dir: str | None) -> SessionRunner:
+    credential_env = resolve_opencode_env(os.environ)
+    system_prompt = os.environ.get("AGENTOS_SYSTEM_PROMPT")
+    # DEFAULT_MAX_TURNS mirrors RunnerConfig.from_env so the OpenCode path caps
+    # turns identically to the Claude path when AGENTOS_MAX_TURNS is unset.
+    max_turns = int(os.environ.get("AGENTOS_MAX_TURNS", str(DEFAULT_MAX_TURNS)))
+    budget_raw = os.environ.get("AGENTOS_BUDGET")
+    ceiling = (
+        Budget.model_validate_json(budget_raw).max_output_tokens_per_run
+        if budget_raw
+        else 0
+    )
+
     # Compile the bundle (if any) and bind the materialized workdir as the
     # session's cwd -- this is where OpenCode discovers the compiled config.
     # A bundle-less call yields cwd=None (the session mkdtemps its own workdir).
@@ -103,8 +120,13 @@ def _build_runner(plugin_dir: str | None) -> SessionRunner:
     ).install(plugin_dir)
     cwd = compiled.workdir if compiled else None
     return SessionRunner(
-        session_factory=lambda: OpenCodeModelSession(cwd=cwd),
-        ceiling=0,  # unbounded: conformance validates protocol shape, not budgets
+        session_factory=lambda: OpenCodeModelSession(
+            cwd=cwd,
+            credential_env=credential_env,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+        ),
+        ceiling=ceiling,
         tracer=RunTracer(None),
         classifier=SideEffectClassifier(OPENCODE_READONLY_TOOLS),
         trace_name="opencode-conformance",

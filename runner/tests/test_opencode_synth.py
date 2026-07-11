@@ -18,8 +18,9 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import anyio
-from aci_protocol import Event, Interrupt, parse_ndjson, run_conformance
+from aci_protocol import Event, Interrupt, SessionStatus, parse_ndjson, run_conformance
 from agentos_runner import CLAUDE_READONLY_TOOLS
+from agentos_runner.budget import BUDGET_CLASSIFICATION
 from agentos_runner.events import AssistantText, ToolCall, TurnResult
 from agentos_runner.opencode.synth import TurnSynthesizer
 from agentos_runner.otel import RunTracer
@@ -84,12 +85,18 @@ def tool_running(call_id: str, tool: str, inp: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def step_finish(input_tokens: int, output_tokens: int) -> dict[str, Any]:
+def step_finish(
+    input_tokens: int, output_tokens: int, part_id: str = "prt_step"
+) -> dict[str, Any]:
+    # Each step-finish part carries a distinct id on the live wire and reports
+    # that step's tokens only (reset on the next step); vary ``part_id`` to model
+    # a multi-step turn whose true output total is the sum of the steps.
     return {
         "type": "message.part.updated",
         "properties": {
             "sessionID": SID,
             "part": {
+                "id": part_id,
                 "type": "step-finish",
                 "tokens": {"input": input_tokens, "output": output_tokens, "reasoning": 0},
             },
@@ -280,7 +287,9 @@ def test_synth_maps_text_tool_and_terminal_result() -> None:
     messages, synth = _run_synth(default_turn_frames())
     assert synth.done
 
-    texts = [m.text for m in messages if isinstance(m, AssistantText)]
+    # Filter on m.text so zero-text usage carriers (the mid-turn budget signal)
+    # are not mistaken for answer text.
+    texts = [m.text for m in messages if isinstance(m, AssistantText) and m.text]
     assert texts == ["Looking into it", " all done"], texts
 
     tools = [m for m in messages if isinstance(m, ToolCall)]
@@ -336,7 +345,8 @@ def test_synth_drops_reasoning_deltas_keeps_text() -> None:
     # A delta's field is "text" even for a reasoning part; only the text part's
     # content (resolved by partID from the snapshots) reaches the TurnEvents.
     messages, synth = _run_synth(reasoning_then_text_frames())
-    texts = [m.text for m in messages if isinstance(m, AssistantText)]
+    # Filter on m.text so zero-text usage carriers are excluded from answer text.
+    texts = [m.text for m in messages if isinstance(m, AssistantText) and m.text]
     assert texts == ["pong"], texts
     results = [m for m in messages if isinstance(m, TurnResult)]
     assert results and results[0].text == "pong"
@@ -400,3 +410,203 @@ def test_scripted_opencode_backend_passes_aci_conformance() -> None:
         [(c.name, c.detail) for c in report.checks if not c.passed]
     )
     assert any(c.name == "producer_stream" and c.passed for c in report.checks)
+
+
+# --- mid-turn usage carriers + budget enforcement (issue #311 AC2) --------------
+
+
+def usage_increment_frames() -> list[dict[str, Any]]:
+    """Three per-step token reports that each RESET (real per-step wire shape).
+
+    Each step reports only its own output (20, 11, 28), and message.updated
+    echoes the same per-step number under the constant message id. The turn's
+    true output total is the SUM (59), so the mid-turn deltas are [20, 11, 28].
+    """
+
+    return [
+        busy(),
+        step_finish(50, 20, "prt_s1"),  # step 1: total 0 -> 20, delta 20
+        message_updated("z-ai/glm-4.6", 50, 20),  # redundant per-step echo, no carrier
+        step_finish(60, 11, "prt_s2"),  # step 2: total 20 -> 31, delta 11
+        message_updated("z-ai/glm-4.6", 60, 11),  # redundant per-step echo, no carrier
+        step_finish(70, 28, "prt_s3"),  # step 3: total 31 -> 59, delta 28
+        idle(),
+    ]
+
+
+def _usage_carriers(messages: list[Any]) -> list[AssistantText]:
+    return [m for m in messages if isinstance(m, AssistantText) and m.usage is not None]
+
+
+def test_synth_emits_monotonic_positive_usage_deltas() -> None:
+    # The mid-turn budget signal: each step's per-step output is summed into a
+    # running turn total, and each rise in that total is emitted as a zero-text
+    # AssistantText carrying only the positive delta, so the runner can fold and
+    # halt before the terminal. The redundant message.updated echo of the same
+    # per-step number emits nothing (it is not a per-step key; summing it would
+    # double-count).
+    messages, _ = _run_synth(usage_increment_frames())
+    carriers = _usage_carriers(messages)
+    assert [c.usage["output_tokens"] for c in carriers] == [20, 11, 28]
+    # Carriers are text-free so translate emits no ACI event for them.
+    assert all(c.text == "" for c in carriers)
+    # The terminal result carries the last-seen input with the SUMMED per-step
+    # output (59), which the deltas also sum to -- so the mid-turn signal and the
+    # authoritative terminal total agree (no double count in the runner's fold).
+    results = [m for m in messages if isinstance(m, TurnResult)]
+    assert results[-1].usage == {"input_tokens": 70, "output_tokens": 59}
+    assert sum(c.usage["output_tokens"] for c in carriers) == 59
+
+
+def within_step_streaming_frames() -> list[dict[str, Any]]:
+    """One step whose block streams upward (5 -> 20) under a single part id."""
+
+    return [
+        busy(),
+        step_finish(10, 5, "prt_s1"),  # step 1 rises: total 0 -> 5, delta 5
+        step_finish(10, 20, "prt_s1"),  # SAME id 5 -> 20: total 5 -> 20, delta 15
+        idle(),
+    ]
+
+
+def test_synth_within_step_streaming_takes_max_not_sum() -> None:
+    # A step's block can climb within one part id as it streams. That id
+    # contributes its MAX (20), not the sum of its intermediate reports (25), so
+    # the running total tracks 20 and the deltas [5, 15] sum to 20.
+    messages, _ = _run_synth(within_step_streaming_frames())
+    carriers = _usage_carriers(messages)
+    assert [c.usage["output_tokens"] for c in carriers] == [5, 15]
+    assert sum(c.usage["output_tokens"] for c in carriers) == 20
+    results = [m for m in messages if isinstance(m, TurnResult)]
+    assert results[-1].usage == {"input_tokens": 10, "output_tokens": 20}
+
+
+def budget_runaway_frames() -> list[dict[str, Any]]:
+    """A runaway turn: output far above the ceiling reported mid-turn, then more text.
+
+    The post-report ``text_delta`` is the tripwire: if the halt fires at the
+    ``step-finish`` (via a mid-turn usage carrier), the text after it never
+    reaches the stream and the session is interrupted; if the halt only lands at
+    the terminal ``idle`` (base behavior), the text leaks through first and no
+    interrupt is issued.
+    """
+
+    return [
+        busy(),
+        text_part_bookend(""),
+        text_delta("before "),
+        step_finish(10, 500),
+        text_delta("LEAKED-AFTER-HALT"),
+        idle(),
+    ]
+
+
+def test_opencode_budget_halts_midturn_on_reported_usage() -> None:
+    created: list[ScriptedOpenCodeSession] = []
+
+    def factory() -> ScriptedOpenCodeSession:
+        session = ScriptedOpenCodeSession(budget_runaway_frames)
+        created.append(session)
+        return session
+
+    lines: list[str] = []
+
+    async def _run() -> None:
+        runner = SessionRunner(
+            session_factory=factory,
+            ceiling=10,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
+            trace_name="opencode-offline",
+        )
+        await runner.start()
+        try:
+            async for line in runner.run_turn(
+                Event(type="message", text="x", user="U1", ts="1.0")
+            ):
+                lines.append(line)
+        finally:
+            await runner.close()
+
+    anyio.run(_run)
+
+    blob = "".join(lines)
+    events = parse_ndjson(blob)
+    final = events[-1]
+    assert final.type == "final"
+    assert final.status == SessionStatus.CLASSIFIED_FAILURE
+    assert any(
+        e.type == "error" and e.classification == BUDGET_CLASSIFICATION for e in events
+    )
+    # Halt landed at the step-finish, before the post-report text: the runaway
+    # turn is actually cut off (interrupt called), not just relabelled at the end.
+    assert "LEAKED-AFTER-HALT" not in blob
+    assert created and created[0].interrupts >= 1
+
+
+def multistep_undercount_frames() -> list[dict[str, Any]]:
+    """Two steps EACH under the ceiling whose SUM exceeds it (the Codex case).
+
+    Each step reports 300 output tokens (below a ceiling of 500), but the turn's
+    true total is 600. The single-max fold this module used to do would top out
+    at 300 and never trip the ceiling; summing per-step maxima trips it at the
+    second step-finish. The post-report text is the tripwire: it must not reach
+    the stream if the halt fires mid-turn.
+    """
+
+    return [
+        busy(),
+        text_part_bookend(""),
+        text_delta("step one "),
+        step_finish(10, 300, "prt_s1"),  # per-step 300 < 500, running total 300
+        text_delta("step two "),
+        step_finish(10, 300, "prt_s2"),  # running total 600 > 500 -> halt here
+        text_delta("LEAKED-AFTER-HALT"),
+        idle(),
+    ]
+
+
+def test_opencode_budget_halts_on_summed_multistep_usage() -> None:
+    # The multi-step undercount regression: no single step crosses the ceiling,
+    # but their SUM does. Proves the runner halts on the summed per-step total,
+    # not on the max of any one step's report.
+    created: list[ScriptedOpenCodeSession] = []
+
+    def factory() -> ScriptedOpenCodeSession:
+        session = ScriptedOpenCodeSession(multistep_undercount_frames)
+        created.append(session)
+        return session
+
+    lines: list[str] = []
+
+    async def _run() -> None:
+        runner = SessionRunner(
+            session_factory=factory,
+            ceiling=500,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
+            trace_name="opencode-offline",
+        )
+        await runner.start()
+        try:
+            async for line in runner.run_turn(
+                Event(type="message", text="x", user="U1", ts="1.0")
+            ):
+                lines.append(line)
+        finally:
+            await runner.close()
+
+    anyio.run(_run)
+
+    blob = "".join(lines)
+    events = parse_ndjson(blob)
+    final = events[-1]
+    assert final.type == "final"
+    assert final.status == SessionStatus.CLASSIFIED_FAILURE
+    assert any(
+        e.type == "error" and e.classification == BUDGET_CLASSIFICATION for e in events
+    )
+    # Halt fired at the second step-finish (summed total 600 > 500), before the
+    # post-report text -- the runaway multi-step turn is actually cut off.
+    assert "LEAKED-AFTER-HALT" not in blob
+    assert created and created[0].interrupts >= 1

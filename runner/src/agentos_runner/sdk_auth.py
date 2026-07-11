@@ -35,6 +35,10 @@ BASE_URL_ENV = "ANTHROPIC_BASE_URL"
 AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 _SDK_CREDENTIAL_ENV = (OAUTH_TOKEN_ENV, API_KEY_ENV)
+_SK_PREFIX = "sk" + "-"
+_OAUTH_PREFIX = _SK_PREFIX + "ant-oat"
+_ANTHROPIC_PREFIX = _SK_PREFIX + "ant-"
+_OPENROUTER_PREFIX = _SK_PREFIX + "or-"
 
 # Non-empty no-op placeholder API key used in base-URL override mode. It is
 # deliberately not sk-... shaped so it can never be mistaken for a real
@@ -46,6 +50,19 @@ NO_OP_API_KEY = "not-needed"
 
 class UnsupportedCredentialError(RuntimeError):
     """``AGENTOS_CREDENTIALS`` is a recognizably non-Anthropic credential."""
+
+
+def classify_credential(credential: str) -> str:
+    """Classify a model credential without binding it to a harness."""
+    if credential.startswith(_OAUTH_PREFIX):
+        return "oauth-token"
+    if credential.startswith(_ANTHROPIC_PREFIX):
+        return "anthropic-api-key"
+    if credential.startswith(_OPENROUTER_PREFIX):
+        return "openrouter"
+    if credential.startswith(_SK_PREFIX):
+        return "unsupported-sk"
+    return "opaque"
 
 
 def resolve_base_url_override(env: MutableMapping[str, str]) -> dict[str, str] | None:
@@ -91,13 +108,14 @@ def resolve_model_credential(env: MutableMapping[str, str]) -> None:
     credential = env.get(CREDENTIALS_ENV)
     if not credential:
         return
-    if credential.startswith("sk-ant-oat"):
+    credential_class = classify_credential(credential)
+    if credential_class == "oauth-token":
         # Claude Code OAuth tokens share the sk-ant- prefix with API keys, so
         # this more specific check must come first.
         env[OAUTH_TOKEN_ENV] = credential
-    elif credential.startswith("sk-ant-"):
+    elif credential_class == "anthropic-api-key":
         env[API_KEY_ENV] = credential
-    elif credential.startswith("sk-or-"):
+    elif credential_class == "openrouter":
         # OpenRouter: reuse the shared base-URL-override seam to target OpenRouter's
         # native Anthropic Messages endpoint (the SDK appends /v1/messages). The real
         # key goes in ANTHROPIC_API_KEY (sent as the x-api-key header, which is what
@@ -110,7 +128,7 @@ def resolve_model_credential(env: MutableMapping[str, str]) -> None:
         assert override is not None  # base URL was just set
         env.update(override)
         env[API_KEY_ENV] = credential  # real key -> x-api-key (what OpenRouter reads)
-    elif credential.startswith("sk-"):
+    elif credential_class == "unsupported-sk":
         # OpenAI-style ("sk-...") and similar. Fail loudly rather than
         # forwarding a key the Anthropic SDK cannot use.
         raise UnsupportedCredentialError(
@@ -134,7 +152,7 @@ def resolve_sdk_env(env: MutableMapping[str, str]) -> dict[str, str] | None:
     override mode), or ``None`` when resolution mutated ``env`` in place.
     """
     credential = env.get(CREDENTIALS_ENV, "")
-    if not credential.startswith("sk-or-"):
+    if classify_credential(credential) != "openrouter":
         override = resolve_base_url_override(env)
         if override is not None:
             return override

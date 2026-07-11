@@ -364,6 +364,19 @@ def test_build_runner_binds_compiled_workdir_as_session_cwd() -> None:
     assert bundleless._factory()._cwd is None
 
 
+def test_build_runner_defaults_max_turns_to_20_like_claude_path(monkeypatch) -> None:
+    # Parity: with AGENTOS_MAX_TURNS unset the OpenCode conformance runner must
+    # bind the same default turn cap (20) that RunnerConfig.from_env applies to
+    # the Claude path, not an unbounded None.
+    monkeypatch.delenv("AGENTOS_MAX_TURNS", raising=False)
+    session = cast(OpenCodeModelSession, _build_runner(None)._factory())
+    assert session._max_turns == 20
+
+    monkeypatch.setenv("AGENTOS_MAX_TURNS", "5")
+    capped = cast(OpenCodeModelSession, _build_runner(None)._factory())
+    assert capped._max_turns == 5
+
+
 def test_build_runner_reuses_one_conformance_workdir_root() -> None:
     first_session = cast(OpenCodeModelSession, _build_runner(str(_LIVE_BUNDLE))._factory())
     second_session = cast(OpenCodeModelSession, _build_runner(str(_LIVE_BUNDLE))._factory())
