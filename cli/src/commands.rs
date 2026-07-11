@@ -530,6 +530,157 @@ pub fn resolve_cases_path(
     )
 }
 
+/// Container name for the offline `agentos e2e` round-trip. Distinct from the
+/// `skill up` default so an e2e run never collides with a hand-started dev
+/// runner.
+pub const E2E_CONTAINER: &str = "agentos-e2e-runner";
+
+/// Eval cases for the offline `e2e` round-trip, matched to the runner's fake
+/// model (`fake.py`): the scripted turn's FINAL text is "all done", so every
+/// grader here must be satisfied by that string. Byte-mirrors the suite
+/// `cli/scripts/e2e.sh` writes, so the two stay behaviorally identical.
+const E2E_CASES: &str = r#"{
+  "name": "e2e",
+  "cases": [
+    {
+      "id": "finishes-the-turn",
+      "input": "wrap it up",
+      "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false }
+    },
+    {
+      "id": "reports-done",
+      "input": "what is the status?",
+      "grader": { "kind": "contains", "expected": "done", "case_sensitive": false }
+    }
+  ]
+}
+"#;
+
+/// Options for `agentos e2e`, mirroring its clap flags.
+pub struct E2eOpts {
+    /// Runner image ref, already resolved (release-pinned or local dev tag) the
+    /// same way `skill up` resolves it. The command assumes this image exists:
+    /// build it for dev with `docker build -f runner/Dockerfile -t agentos-runner .`;
+    /// a release binary pulls its pinned ref from GHCR on first run.
+    pub image: String,
+    pub port: u16,
+    /// Skip teardown (leave the container and temp bundle in place) for
+    /// debugging a failed round-trip.
+    pub keep: bool,
+}
+
+/// `agentos e2e`: the scripted offline round-trip (`cli/scripts/e2e.sh`) as a
+/// first-class command. Scaffolds a throwaway bundle in a temp dir, boots a
+/// runner with the fake model, sends a message, runs the eval cases, and tears
+/// the container and temp dir down on exit (even on failure) unless `--keep`.
+///
+/// It reuses the same handlers the individual subcommands call
+/// (`scaffold`/`start`/`send`/`eval`/`stop`) rather than shelling out to the
+/// `agentos` binary, and never builds an image: the runner image must already be
+/// present (see `E2eOpts::image`).
+pub async fn e2e(opts: E2eOpts) -> Result<()> {
+    let ui = crate::ui::ui();
+    let name = "deal-desk";
+
+    let workdir = make_e2e_workdir()?;
+    let bundle = workdir.join(name);
+    let original_cwd = std::env::current_dir()?;
+
+    // The round-trip runs from inside the bundle dir so the reused handlers
+    // resolve `.agentos/runner.json` and the eval cases exactly as they do for
+    // a hand-run `skill *` session. Restored before teardown removes the dir.
+    let result = e2e_round_trip(&opts, &bundle, name).await;
+
+    // Teardown always runs (the point of an e2e is not to leak a container),
+    // unless --keep asks to leave it for inspection.
+    if opts.keep {
+        ui.note(&format!(
+            "--keep set: left container '{E2E_CONTAINER}' and bundle {} in place; \
+             tear down with 'docker rm -f {E2E_CONTAINER}' and 'rm -rf {}'",
+            bundle.display(),
+            workdir.display(),
+        ));
+    } else {
+        ui.note("=== agentos skill down (teardown) ===");
+        // stop() reads state from the cwd's .agentos/runner.json.
+        let _ = std::env::set_current_dir(&bundle);
+        if let Err(err) = stop().await {
+            ui.warn(&format!("teardown: could not stop runner cleanly: {err}"));
+            // Best-effort direct removal so a failed stop still frees the name.
+            let _ = docker::remove_container(E2E_CONTAINER).await;
+        }
+        let _ = std::env::set_current_dir(&original_cwd);
+        if let Err(err) = std::fs::remove_dir_all(&workdir) {
+            ui.warn(&format!(
+                "teardown: could not remove temp dir {}: {err}",
+                workdir.display()
+            ));
+        }
+    }
+
+    if result.is_ok() {
+        ui.success("e2e round-trip passed");
+    }
+    result
+}
+
+/// The five-step round-trip, factored out so `e2e` can always run teardown
+/// around it. Chdirs into the scaffolded bundle; the caller restores the cwd.
+async fn e2e_round_trip(opts: &E2eOpts, bundle: &Path, name: &str) -> Result<()> {
+    let ui = crate::ui::ui();
+
+    ui.note("=== agentos init (scaffold bundle in temp dir) ===");
+    scaffold(bundle, name)?;
+    // Swap the scaffold's weather eval seed for the fake-model round-trip cases.
+    std::fs::write(bundle.join("evals/e2e-cases.json"), E2E_CASES)
+        .with_context(|| format!("writing e2e eval cases under {}", bundle.display()))?;
+    std::env::set_current_dir(bundle)
+        .with_context(|| format!("entering bundle dir {}", bundle.display()))?;
+
+    ui.note("=== agentos skill up (fake model, offline) ===");
+    start(StartOpts {
+        plugin_dir: PathBuf::from("."),
+        image: opts.image.clone(),
+        port: opts.port,
+        name: E2E_CONTAINER.to_string(),
+        fake_model: true,
+        network: None,
+        otel_endpoint: None,
+        budget: DEFAULT_BUDGET.to_string(),
+        model: None,
+        local_model: None,
+    })
+    .await?;
+
+    ui.note("=== agentos skill status ===");
+    status(None).await?;
+
+    ui.note("=== agentos skill message (synthetic event, streamed NDJSON reply) ===");
+    send(
+        "@agentos can we approve the Meridian deal at 18% discount?",
+        "U-local",
+        EventType::Message,
+        None,
+    )
+    .await?;
+
+    ui.note("=== agentos skill eval ===");
+    eval(Some(PathBuf::from("evals/e2e-cases.json")), None).await?;
+
+    Ok(())
+}
+
+/// A fresh, uniquely-named temp dir for one e2e run. Avoids the `tempfile` crate
+/// (dev-only here) so the binary keeps its dependency set; cleanup is the
+/// caller's `remove_dir_all`.
+fn make_e2e_workdir() -> Result<PathBuf> {
+    let dir =
+        std::env::temp_dir().join(format!("agentos-e2e-{}-{}", std::process::id(), unix_now()));
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating temp workdir {}", dir.display()))?;
+    Ok(dir)
+}
+
 pub struct DeployOpts {
     pub plugin_dir: PathBuf,
     pub api_url: String,

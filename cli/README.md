@@ -11,7 +11,9 @@ Slack involved.
 Every environment command takes a **target noun** in the middle: `skill`,
 `local`, or `cluster`. Pick the lightest one that answers your question.
 `agentos init` is the exception, a top-level verb that scaffolds a bundle on
-disk and targets no environment.
+disk and targets no environment. `agentos e2e` is a second top-level verb: it
+runs the whole offline `skill` round-trip (scaffold -> up -> message -> eval ->
+down) as one command.
 
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
@@ -32,6 +34,7 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 | Command | What it does |
 |---|---|
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed. |
+| `agentos e2e` | Run the offline end-to-end round-trip in one command: scaffold a throwaway bundle in a temp dir, `skill up --fake-model`, send a message, run the eval cases, then tear the container and temp dir down (even on failure; `--keep` leaves them for debugging). The native equivalent of `cli/scripts/e2e.sh` — it reuses the same handlers rather than shelling out. Assumes the runner image exists (`--image`, default the same one `skill up` uses); it never runs `docker build`. `--port` overrides the host port. |
 
 ## `skill` target: runner-only, fully offline
 
@@ -300,8 +303,22 @@ original turn used a non-default value.
 cd cli && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-The scripted E2E (real runner container, fake model, offline) plus an optional
-deploy leg against a locally-run apps/api:
+The offline end-to-end round-trip (real runner container, fake model) is a
+first-class command:
+
+```bash
+agentos e2e
+```
+
+It scaffolds a throwaway bundle, runs `skill up --fake-model` -> `skill message`
+-> `skill eval` -> `skill down`, and cleans up on exit. Requires an
+`agentos-runner` image to be present (`docker build -f runner/Dockerfile -t
+agentos-runner .` from the repo root for dev; a release binary pulls its pinned
+GHCR ref on first run). It never runs `docker build`.
+
+The scripted E2E (`cli/scripts/e2e.sh`) does the same round-trip and adds an
+optional deploy leg against a locally-run apps/api; it can later become a thin
+`agentos e2e` wrapper:
 
 ```bash
 bash cli/scripts/e2e.sh
@@ -310,6 +327,3 @@ AGENTOS_E2E_NETWORK=agentos_default \
 AGENTOS_E2E_OTEL=http://otel-collector:4318 \
 AGENTOS_E2E_API_URL=http://localhost:8000 bash cli/scripts/e2e.sh
 ```
-
-Requires an `agentos-runner` image (`docker build -f runner/Dockerfile -t
-agentos-runner .` from the repo root).

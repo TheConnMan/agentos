@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use agentos::artifacts;
 use agentos::commands::{
-    self, AgentActionOpts, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT,
+    self, AgentActionOpts, DeployEnv, DeployOpts, E2eOpts, SendType, StartOpts, DEFAULT_PORT,
 };
 use agentos::comms::{self, CommsOpts, LocalCommsOpts};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
@@ -78,6 +78,27 @@ enum Command {
     Cluster {
         #[command(subcommand)]
         action: ClusterAction,
+    },
+    /// Run the offline end-to-end round-trip natively (scripts -> `agentos <command>`).
+    ///
+    /// Scaffolds a throwaway bundle in a temp dir, boots a local runner with the
+    /// fake model, sends a message, runs the eval cases, and tears the container
+    /// and temp dir down on exit. The one-command equivalent of the scripted
+    /// `skill up --fake-model` -> `skill message` -> `skill eval` -> `skill down`
+    /// (`cli/scripts/e2e.sh`). Fully offline: it assumes the runner image already
+    /// exists (build it for dev with `docker build -f runner/Dockerfile -t
+    /// agentos-runner .`; a release binary pulls its pinned ref from GHCR on
+    /// first run) and never runs `docker build`.
+    E2e {
+        /// Runner image. Default: version-pinned `ghcr.io/curie-eng/agentos-runner:<version>` on release builds; local `agentos-runner` on dev builds. Pass to override.
+        #[arg(long)]
+        image: Option<String>,
+        /// Host port for the local runner.
+        #[arg(long, default_value_t = DEFAULT_PORT)]
+        port: u16,
+        /// Skip teardown; leave the container and temp bundle in place for debugging.
+        #[arg(long)]
+        keep: bool,
     },
 }
 
@@ -1115,6 +1136,14 @@ async fn main() -> Result<()> {
                 .await
             }
         },
+        Command::E2e { image, port, keep } => {
+            let image = artifacts::resolve_image(
+                image.as_deref(),
+                artifacts::Channel::current(),
+                artifacts::version(),
+            );
+            commands::e2e(E2eOpts { image, port, keep }).await
+        }
     }
 }
 
@@ -1317,6 +1346,41 @@ mod tests {
                 assert!(yes);
             }
             _ => panic!("expected cluster delete command"),
+        }
+    }
+
+    #[test]
+    fn e2e_parses_image_port_and_keep() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "e2e",
+            "--image",
+            "local-runner",
+            "--port",
+            "9000",
+            "--keep",
+        ])
+        .expect("e2e flags should parse");
+        match cli.command {
+            Command::E2e { image, port, keep } => {
+                assert_eq!(image.as_deref(), Some("local-runner"));
+                assert_eq!(port, 9000);
+                assert!(keep);
+            }
+            _ => panic!("expected e2e command"),
+        }
+    }
+
+    #[test]
+    fn e2e_defaults_image_none_port_and_keep_off() {
+        let cli = Cli::try_parse_from(["agentos", "e2e"]).expect("bare e2e should parse");
+        match cli.command {
+            Command::E2e { image, port, keep } => {
+                assert_eq!(image, None);
+                assert_eq!(port, DEFAULT_PORT);
+                assert!(!keep);
+            }
+            _ => panic!("expected e2e command"),
         }
     }
 

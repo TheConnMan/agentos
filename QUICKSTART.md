@@ -33,6 +33,12 @@ That is the full loop. `agentos skill up` starts the runner container,
 `agentos skill down` stops it. Edit `skills/weather-bot/SKILL.md` in the bundle
 and re-run steps 2 and 3 to see your change answer.
 
+Want the whole offline round-trip in one command? `agentos e2e` scaffolds a
+throwaway bundle, runs `skill up --fake-model` -> `skill message` ->
+`skill eval` -> `skill down`, and cleans up after itself — the scripted
+equivalent as a first-class command. It only needs the runner image present
+(the same one `skill up` uses); it never builds an image.
+
 ## Level up: a real model
 
 The fake model returns scripted replies. To get a genuine answer, bring your own
