@@ -127,6 +127,7 @@ class _ThrottledReply:
         min_interval_s: float,
         nav: NavPack | None = None,
         no_edit: bool = False,
+        endpoint: str | None = None,
     ) -> None:
         self._sink = sink
         self._channel = channel
@@ -140,6 +141,9 @@ class _ThrottledReply:
         # practice the final flush, which is the update that carries one). None
         # when unbound/disabled.
         self._nav = nav
+        # This turn's reply endpoint (issue #19): routes the edit back to the
+        # ingress that enqueued the turn. None uses the sink's worker default.
+        self._endpoint = endpoint
 
     async def stream(self, text: str) -> None:
         if self._no_edit:
@@ -151,14 +155,24 @@ class _ThrottledReply:
             return
         self._last = now
         self._last_text = text
-        await self._sink.update(channel=self._channel, ts=self._ts, text=text, nav=self._nav)
+        await self._sink.update(
+            channel=self._channel,
+            ts=self._ts,
+            text=text,
+            nav=self._nav,
+            endpoint=self._endpoint,
+        )
 
     async def finalize(self, text: str) -> None:
         if text == self._last_text:
             return
         self._last_text = text
         await self._sink.update(
-            channel=self._channel, ts=self._ts, text=text or "(no response)", nav=self._nav
+            channel=self._channel,
+            ts=self._ts,
+            text=text or "(no response)",
+            nav=self._nav,
+            endpoint=self._endpoint,
         )
 
 
@@ -314,7 +328,9 @@ class Kernel:
             # is safe outside the concurrency-critical section above.
             if self._config.shimmer:
                 await self._sink.clear_status(
-                    channel=qevent.reply_handle.channel, thread_ts=qevent.conversation_id
+                    channel=qevent.reply_handle.channel,
+                    thread_ts=qevent.conversation_id,
+                    endpoint=qevent.reply_handle.endpoint,
                 )
 
     def _acquire_order_entry(self, thread: str) -> _LockEntry:
@@ -375,7 +391,10 @@ class Kernel:
         """Edit the placeholder with a reason and mark the event done (a polite
         drop for an unmapped channel or a paused agent, never a crash)."""
         await self._sink.update(
-            channel=qevent.reply_handle.channel, ts=qevent.reply_handle.placeholder, text=message
+            channel=qevent.reply_handle.channel,
+            ts=qevent.reply_handle.placeholder,
+            text=message,
+            endpoint=qevent.reply_handle.endpoint,
         )
         await self._markers.mark_done(qevent.event_id)
 
@@ -394,7 +413,10 @@ class Kernel:
         else:
             return
         await self._sink.set_status(
-            channel=qevent.reply_handle.channel, thread_ts=qevent.conversation_id, status=caption
+            channel=qevent.reply_handle.channel,
+            thread_ts=qevent.conversation_id,
+            status=caption,
+            endpoint=qevent.reply_handle.endpoint,
         )
 
     # -- internals ------------------------------------------------------------
@@ -422,6 +444,7 @@ class Kernel:
                     channel=qevent.reply_handle.channel,
                     ts=qevent.reply_handle.placeholder,
                     text=self._config.booting_text,
+                    endpoint=qevent.reply_handle.endpoint,
                 )
             except Exception:
                 logger.warning(
@@ -457,6 +480,7 @@ class Kernel:
                 channel=qevent.reply_handle.channel,
                 ts=qevent.reply_handle.placeholder,
                 text=route.canned_reply,
+                endpoint=qevent.reply_handle.endpoint,
             )
             return TurnOutcome(terminal_ok=True)
 
@@ -475,6 +499,7 @@ class Kernel:
                 channel=qevent.reply_handle.channel,
                 ts=qevent.reply_handle.placeholder,
                 text="Folded into the in-progress reply above.",
+                endpoint=qevent.reply_handle.endpoint,
             )
             return TurnOutcome(terminal_ok=True, steered=True)
 
@@ -547,6 +572,7 @@ class Kernel:
             min_interval_s=self._config.slack_edit_min_interval_s,
             nav=nav,
             no_edit=self._config.slack_no_edit_streaming,
+            endpoint=qevent.reply_handle.endpoint,
         )
         try:
             # ``async with`` releases the aiohttp response on every exit path
@@ -615,6 +641,7 @@ class Kernel:
             channel=qevent.reply_handle.channel,
             ts=qevent.reply_handle.placeholder,
             text=message,
+            endpoint=qevent.reply_handle.endpoint,
         )
 
     def _backoff(self, attempt: int) -> float:

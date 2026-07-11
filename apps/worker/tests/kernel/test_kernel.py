@@ -33,13 +33,14 @@ def _qevent(
     thread: str = "th-1",
     event_id: str | None = None,
     placeholder: str = "p-1",
+    endpoint: str | None = None,
 ) -> QueuedTurn:
     return QueuedTurn(
         event_id=event_id or uuid.uuid4().hex,
         conversation_id=thread,
         author="U1",
         text=text,
-        reply_handle=ReplyHandle(channel="C1", placeholder=placeholder),
+        reply_handle=ReplyHandle(channel="C1", placeholder=placeholder, endpoint=endpoint),
         received_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -543,6 +544,40 @@ def test_booting_state_edits_placeholder_before_answer(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_reply_endpoint_is_threaded_to_the_sink(make_harness) -> None:
+    # Issue #19: a turn carrying a per-turn reply endpoint must route every sink
+    # edit for that turn through that endpoint (not the worker default), so a
+    # no-Slack CLI stub and a real workspace can coexist on one worker.
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [
+                TextDelta(text="working "),
+                Final(text="done", status=DONE),
+            ]
+            await h.kernel.process_event(
+                _qevent("hi", thread="tEP", endpoint="http://stub:8155/api/")
+            )
+
+            assert h.sink.last_text == "done"
+            # Every recorded update for this turn carried the per-turn endpoint.
+            assert h.sink.update_endpoints, "no sink update recorded"
+            assert set(h.sink.update_endpoints) == {"http://stub:8155/api/"}
+
+    asyncio.run(go())
+
+
+def test_reply_endpoint_defaults_to_none_for_the_worker_default(make_harness) -> None:
+    # A turn with no per-turn endpoint threads None, so the sink uses its worker
+    # default (the pre-#19 behavior is preserved for real-Slack ingress).
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="ok", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tEPNONE"))
+            assert set(h.sink.update_endpoints) == {None}
+
+    asyncio.run(go())
+
+
 def test_booting_update_failure_never_fails_the_turn(make_harness) -> None:
     # The booting edit is best-effort: if the Slack update for the booting caption
     # raises, the turn still runs to its normal terminal answer. Inject a failure
@@ -557,12 +592,19 @@ def test_booting_update_failure_never_fails_the_turn(make_harness) -> None:
             fired = {"n": 0}
 
             async def flaky_update(
-                *, channel: str, ts: str, text: str, nav: NavPack | None = None
+                *,
+                channel: str,
+                ts: str,
+                text: str,
+                nav: NavPack | None = None,
+                endpoint: str | None = None,
             ) -> None:
                 if text == booting and fired["n"] == 0:
                     fired["n"] += 1
                     raise RuntimeError("injected Slack failure on booting update")
-                await original_update(channel=channel, ts=ts, text=text, nav=nav)
+                await original_update(
+                    channel=channel, ts=ts, text=text, nav=nav, endpoint=endpoint
+                )
 
             h.sink.update = flaky_update  # type: ignore[method-assign]
 

@@ -297,11 +297,23 @@
     },
     "ReplyHandle": {
       "additionalProperties": false,
-      "description": "Channel-neutral coordinates for where a turn's reply is delivered.\n\nThe reply model is edit-in-place: the ingress adapter pre-posts a placeholder\nmessage and the worker edits it as the answer streams. For the Slack adapter\ntoday, ``channel`` is the Slack channel id (also the key the deployment\nbinding matches an agent on) and ``placeholder`` is the ts of the pre-posted\nplaceholder message. Issue #19 extends this with a per-turn reply endpoint so\ntwo ingress paths can coexist on one worker.",
+      "description": "Channel-neutral coordinates for where a turn's reply is delivered.\n\nThe reply model is edit-in-place: the ingress adapter pre-posts a placeholder\nmessage and the worker edits it as the answer streams. For the Slack adapter\ntoday, ``channel`` is the Slack channel id (also the key the deployment\nbinding matches an agent on) and ``placeholder`` is the ts of the pre-posted\nplaceholder message.\n\n``endpoint`` is the per-turn reply target: the base URL of the channel API the\nworker delivers this turn's reply through. It routes the reply back to the\ningress that enqueued the turn instead of a worker-global setting, so two\ningress paths (a real Slack workspace and a no-Slack CLI stub) can coexist on\none worker (issue #19). ``None`` means \"use the worker's configured default\"\n(its ``slack_api_base_url``, i.e. real Slack), so a producer that does not set\nit keeps the pre-#19 behavior.",
       "properties": {
         "channel": {
           "title": "Channel",
           "type": "string"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
         },
         "placeholder": {
           "title": "Placeholder",

@@ -1160,31 +1160,7 @@
             },
             {
               "global": false,
-              "help": "Skip pointing the worker at the stub. Wiring is on by default (helm upgrade + rollout wait); with --no-wire the command refuses to run unless the worker is already wired, printing the exact command to run",
-              "id": "no_wire",
-              "long": "no-wire",
-              "positional": false,
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false
-            },
-            {
-              "global": false,
-              "help": "Wire even when the release is connected to a real Slack workspace (a dispatcher deployment exists). Without this the wiring is refused, since the stub would hijack that workspace's replies cluster-wide",
-              "id": "force_wire",
-              "long": "force-wire",
-              "positional": false,
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false
-            },
-            {
-              "global": false,
-              "help": "Print the kubectl/helm commands, stub URL, and enqueue description that a real run would produce, and exit without executing anything",
+              "help": "Print the kubectl commands, stub URL, and enqueue description that a real run would produce, and exit without executing anything",
               "id": "dry_run",
               "long": "dry-run",
               "positional": false,

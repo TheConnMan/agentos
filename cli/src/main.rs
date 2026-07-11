@@ -542,18 +542,8 @@ enum ClusterAction {
         /// Default: 300 seconds.
         #[arg(long)]
         timeout_secs: Option<u64>,
-        /// Skip pointing the worker at the stub. Wiring is on by default (helm
-        /// upgrade + rollout wait); with --no-wire the command refuses to run
-        /// unless the worker is already wired, printing the exact command to run.
-        #[arg(long = "no-wire")]
-        no_wire: bool,
-        /// Wire even when the release is connected to a real Slack workspace
-        /// (a dispatcher deployment exists). Without this the wiring is refused,
-        /// since the stub would hijack that workspace's replies cluster-wide.
-        #[arg(long)]
-        force_wire: bool,
-        /// Print the kubectl/helm commands, stub URL, and enqueue description that
-        /// a real run would produce, and exit without executing anything.
+        /// Print the kubectl commands, stub URL, and enqueue description that a
+        /// real run would produce, and exit without executing anything.
         #[arg(long)]
         dry_run: bool,
     },
@@ -867,8 +857,6 @@ async fn main() -> Result<()> {
                     user,
                     stream,
                     timeout_secs: resolved.timeout_secs,
-                    wire: true,
-                    force_wire: false,
                     dry_run,
                     local: true,
                     api_url: resolved.api_url,
@@ -1020,8 +1008,6 @@ async fn main() -> Result<()> {
                 user,
                 stream,
                 timeout_secs,
-                no_wire,
-                force_wire,
                 dry_run,
             } => {
                 let state = if r#continue {
@@ -1074,8 +1060,6 @@ async fn main() -> Result<()> {
                     user,
                     stream,
                     timeout_secs: resolved.timeout_secs,
-                    wire: !no_wire,
-                    force_wire,
                     dry_run,
                     local: false,
                     api_url: None,

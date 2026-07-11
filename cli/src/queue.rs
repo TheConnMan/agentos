@@ -32,13 +32,16 @@ const STREAM_PAYLOAD_FIELD: &str = "payload";
 /// Build a synthetic turn: a fresh `EvSIM-` id and the current UTC time, with the
 /// given conversation/reply coordinates. Maps the Slack-facing drivers' inputs
 /// onto the channel-neutral `QueuedTurn` (channel + placeholder live in the
-/// `reply_handle`).
+/// `reply_handle`). ``endpoint`` is this turn's reply target (issue #19): the base
+/// URL the worker delivers the reply through, so the CLI stub receives it without
+/// re-pointing the worker's global setting. ``None`` uses the worker default.
 pub fn synthetic_turn(
     channel: impl Into<String>,
     author: impl Into<String>,
     text: impl Into<String>,
     conversation_id: impl Into<String>,
     placeholder: impl Into<String>,
+    endpoint: Option<String>,
 ) -> QueuedTurn {
     QueuedTurn {
         event_id: new_event_id(),
@@ -48,6 +51,7 @@ pub fn synthetic_turn(
         reply_handle: ReplyHandle {
             channel: channel.into(),
             placeholder: placeholder.into(),
+            endpoint,
         },
         received_at: now_rfc3339(),
     }
@@ -293,6 +297,7 @@ mod tests {
             "hello",
             "1720000000.000100",
             "1720000000.000200",
+            None,
         );
         let json = payload_json(&turn).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -315,6 +320,32 @@ mod tests {
         assert_eq!(object["reply_handle"]["channel"], "C-SIM-x");
         assert_eq!(object["reply_handle"]["placeholder"], "1720000000.000200");
         assert_eq!(object["conversation_id"], "1720000000.000100");
+        // No per-turn endpoint set: it rides the wire as null (worker default).
+        assert!(object["reply_handle"]["endpoint"].is_null());
+    }
+
+    #[test]
+    fn synthetic_turn_stamps_the_per_turn_reply_endpoint() {
+        // Issue #19: a CLI-minted turn carries its own reply endpoint so the worker
+        // posts back to this stub without re-pointing its global setting.
+        let turn = synthetic_turn(
+            "C-SIM-x",
+            "U-agentos-chat",
+            "hi",
+            "1.1",
+            "1.2",
+            Some("http://10.1.2.3:8155/api/".to_string()),
+        );
+        assert_eq!(
+            turn.reply_handle.endpoint.as_deref(),
+            Some("http://10.1.2.3:8155/api/")
+        );
+        let json = payload_json(&turn).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["reply_handle"]["endpoint"],
+            "http://10.1.2.3:8155/api/"
+        );
     }
 
     #[test]
