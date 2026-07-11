@@ -90,6 +90,49 @@ curl -sN -X POST http://localhost:18080/v1/event -H 'Content-Type: application/j
   -d '{"kind":"event","type":"message","text":"hi","user":"U","ts":"1.0"}'
 ```
 
+### OpenCode image variant
+
+Build the separate OpenCode runner image from the repository root:
+
+```bash
+docker build -f runner/Dockerfile.opencode -t agentos-runner-opencode .
+```
+
+Run the offline fake smoke under the same filesystem and user rails as the
+chart. This path does not require an OpenCode binary call or model credential:
+
+```bash
+docker run -d --name opencode-runner-smoke \
+  --read-only --tmpfs /tmp --tmpfs /home/runner:uid=1000,gid=1000 \
+  --user 1000:1000 --cap-drop ALL \
+  -e AGENTOS_FAKE_MODEL=1 -e AGENTOS_PLUGIN_DIR=/unused \
+  -e AGENTOS_SESSION_ID=smoke -e AGENTOS_SANDBOX_ID=sbx \
+  -e 'AGENTOS_BUDGET={"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}' \
+  -p 18080:8080 agentos-runner-opencode
+curl -s http://localhost:18080/healthz
+curl -sN -X POST http://localhost:18080/v1/event \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"event","type":"message","text":"hi","user":"U","ts":"1.0"}'
+docker rm -f opencode-runner-smoke
+```
+
+Run live conformance inside the container with an OpenRouter credential:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp --tmpfs /home/runner:uid=1000,gid=1000 \
+  --user 1000:1000 --cap-drop ALL \
+  -e AGENTOS_CREDENTIALS="$OPENROUTER_API_KEY" \
+  agentos-runner-opencode python -m agentos_runner.opencode.conformance
+```
+
+This image intentionally has no Node runtime. Node based stdio MCP servers in
+plugin bundles cannot run in this variant; Python based servers can. Under this
+image, `AGENTOS_MODEL` is passed verbatim as the OpenRouter modelID. Operators
+must override the chart default `claude-sonnet-5`, or turns fail at the provider.
+An `AGENTOS_HISTORY_REF` causes startup to fail because OpenCode has no resume
+support. A positive daily USD cap logs a startup warning because OpenCode cannot
+enforce that cap natively; the per run output token ceiling remains enforced.
+
 ## Verify (from repo root)
 
 ```bash

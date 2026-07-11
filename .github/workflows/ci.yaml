@@ -238,6 +238,8 @@ jobs:
         include:
           - name: runner
             dockerfile: runner/Dockerfile
+          - name: runner-opencode
+            dockerfile: runner/Dockerfile.opencode
           - name: api
             dockerfile: apps/api/Dockerfile
           - name: dispatcher

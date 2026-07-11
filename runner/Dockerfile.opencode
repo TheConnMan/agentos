@@ -1,0 +1,73 @@
+# AgentOS OpenCode runner image.
+#
+# Build from the repository root:
+#
+#   docker build -f runner/Dockerfile.opencode -t agentos-runner-opencode .
+#
+# OpenCode is a Bun compiled single binary that requires glibc. Keep this image
+# on Bookworm or another glibc base. Do not switch it to Alpine or musl.
+FROM python:3.13-slim-bookworm
+
+ARG TARGETARCH
+ARG OPENCODE_SHA256_X64=3957e8b9b80867633daf82cba43f17980c8daf71d4d265a40313fb21d5d58fac
+ARG OPENCODE_SHA256_ARM64=5a03cf2abc71cef8c57cd03add3ff55a0c1d6e0d4af4b825efdc503cfce23ab3
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends --only-upgrade curl ca-certificates \
+    && case "$TARGETARCH" in \
+        amd64) OCARCH=x64; OCSHA256="$OPENCODE_SHA256_X64" ;; \
+        arm64) OCARCH=arm64; OCSHA256="$OPENCODE_SHA256_ARM64" ;; \
+        *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && archive=/tmp/opencode.tar.gz \
+    && curl -fsSL \
+        "https://github.com/sst/opencode/releases/download/v1.17.17/opencode-linux-${OCARCH}.tar.gz" \
+        -o "$archive" \
+    && echo "${OCSHA256}  ${archive}" | sha256sum -c - \
+    && tar -xzf "$archive" -C /usr/local/bin opencode \
+    && chmod 755 /usr/local/bin/opencode \
+    && rm -f "$archive" \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the frozen workspace packages and the runner from the repository root.
+COPY packages/aci-protocol ./packages/aci-protocol
+COPY packages/plugin-format ./packages/plugin-format
+COPY runner ./runner
+
+# Use one venv. Install local packages by path first, then the runner without
+# dependencies, then the exact third party versions tested in the root uv.lock.
+# claude-agent-sdk is import only in this image: plugin.py imports
+# SdkPluginConfig at module load and opencode/installer.py imports plugin.py.
+# This entrypoint never spawns the Claude CLI.
+RUN python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /app/.venv/bin/pip install --no-cache-dir ./packages/aci-protocol ./packages/plugin-format \
+    && /app/.venv/bin/pip install --no-cache-dir --no-deps ./runner \
+    && /app/.venv/bin/pip install --no-cache-dir \
+        "claude-agent-sdk==0.2.115" \
+        "aiohttp==3.14.1" \
+        "opentelemetry-sdk==1.43.0" \
+        "opentelemetry-exporter-otlp-proto-http==1.43.0" \
+        "anyio==4.14.1" \
+        "pyyaml==6.0.3"
+
+# uid and gid 1000 match the chart security context. Runtime state stays under
+# the writable /home/runner mount, while temporary session files use /tmp.
+RUN groupadd --gid 1000 runner \
+    && useradd --uid 1000 --gid 1000 --home-dir /home/runner --create-home --shell /usr/sbin/nologin runner \
+    && chown -R 1000:1000 /home/runner
+
+ENV HOME=/home/runner
+ENV XDG_DATA_HOME=/home/runner/.local/share
+ENV XDG_STATE_HOME=/home/runner/.local/state
+ENV XDG_CACHE_HOME=/home/runner/.cache
+ENV XDG_CONFIG_HOME=/home/runner/.config
+ENV PATH="/app/.venv/bin:$PATH"
+ENV AGENTOS_RUNNER_PORT=8080
+EXPOSE 8080
+
+USER 1000:1000
+CMD ["python", "-m", "agentos_runner.opencode"]

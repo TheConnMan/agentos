@@ -49,11 +49,15 @@ Docker via `agentos skill up`. Full behavior spec in `runner/README.md`.
   `runAsNonRoot`, a read-only rootfs, and writable-emptyDir scratch only at
   `/tmp` and `/home/runner`. Do not add a code path that writes anywhere
   else in the container filesystem.
+- **Harness selection is image-level** (ADR-0009). The OpenCode variant uses
+  `runner/Dockerfile.opencode`; the Claude image remains the default. Do not add
+  runtime harness selection to either entrypoint.
 
 ## Verify
 
 ```bash
 docker build -f runner/Dockerfile -t agentos-runner .   # from repo root; compiles against the frozen workspace packages
+docker build -f runner/Dockerfile.opencode -t agentos-runner-opencode .
 uv run pytest runner/tests -q                            # unit + integration + conformance
 uv run ruff check runner/ && uv run mypy
 ```
