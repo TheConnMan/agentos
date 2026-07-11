@@ -327,6 +327,39 @@ does not replay `--stream`, `--listen-port`, `--valkey-local-port`,
 `--api-local-port`, or `--user`, so pass any of those again explicitly if the
 original turn used a non-default value.
 
+## Agent-facing output contract
+
+The CLI's primary consumer is a coding agent (ADR-0021), so its output and
+control flow are machine-first.
+
+**`--json`** (global) switches the read/report commands `agentos skill status`
+and `agentos skill eval` to a single machine-readable JSON object on **stdout**;
+all human and log text (progress, notes, warnings) goes to **stderr**, so a
+plain `... --json | jq` yields clean data. On failure under `--json`, the error
+is emitted to stdout as `{"error": "<message>", "fix": "<hint>"|null}` instead of
+a prose message, so an agent can recover without parsing prose. `NO_COLOR`,
+`CLICOLOR`, and `--color=never` are honored on every command.
+
+**Semantic exit codes** let an agent branch on *why* a command failed without
+parsing output:
+
+| Code | Class     | Meaning                                                                 |
+|------|-----------|-------------------------------------------------------------------------|
+| 0    | success   | The command did what was asked.                                         |
+| 1    | failure   | A genuine runtime failure (well-formed request, operation did not succeed). Do not retry blindly. |
+| 2    | usage     | A deterministic input error (missing `--yes`, a malformed flag/value, no bundle). Retrying the same argv fails identically -- fix the input. |
+| 3    | transient | A retryable condition (the endpoint was unreachable or timed out). The same argv may succeed once the dependency is up. |
+
+**Non-interactive by default.** Every mutating command has a non-interactive
+path (`--yes` on `cluster down`/`kill`/`delete` and `local down --wipe`); none
+block on stdin. A confirmation prompt that would otherwise read stdin refuses
+with a usage error (exit 2) when the session is not a terminal, rather than
+hanging.
+
+(`agentos local status` and `agentos cluster status` proxy raw
+`docker compose`/`helm`/`kubectl` output and do not yet support `--json`; use
+`agentos skill status` for a machine-readable runner status today.)
+
 ## Verify
 
 ```bash

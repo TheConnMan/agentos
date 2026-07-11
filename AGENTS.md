@@ -147,6 +147,12 @@ just that unit tests pass.
   behavior (values, state transitions, emitted events, trace contents). Avoid
   hollow "does it render / does an element exist" checks and any AI-vision or
   screenshot-polling assertions -- they mask weak architecture and rot fast.
+- **New/changed CLI commands follow the agent-facing contract (ADR-0021):**
+  structured `--json` output for read/report commands (JSON to stdout, human/log
+  to stderr), semantic exit codes (0 success / 1 failure / 2 usage / 3 transient),
+  non-interactive (a `--yes`/`--force` path, never blocking on stdin), and errors
+  as `{"error","fix"}` recovery instructions. Exit-code scheme: see
+  `cli/README.md`.
 
 ## Playwright: two modes
 

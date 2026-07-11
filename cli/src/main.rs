@@ -52,6 +52,13 @@ struct Cli {
         help = "Colorize output"
     )]
     color: ColorFlag,
+    /// Machine-readable JSON to stdout; human/log text to stderr.
+    #[arg(
+        long,
+        global = true,
+        help = "Machine-readable JSON to stdout; human/log text to stderr"
+    )]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -683,16 +690,34 @@ async fn materialize_artifact(
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(hint) = agentos::retired_hint(&args) {
         eprintln!("{hint}");
-        std::process::exit(2);
+        std::process::exit(agentos::exit::ExitClass::Usage.code());
     }
 
     let cli = Cli::parse();
-    ui::init(Ui::from_process(cli.color, cli.debug, cli.quiet));
-    match cli.command {
+    ui::init(Ui::from_process(cli.color, cli.debug, cli.quiet, cli.json));
+    // main never returns Err (which would give anyhow's default exit 1 and skip
+    // classification). Run the command, then map any error to a semantic exit
+    // code: the JSON payload goes to stdout under --json, else the human error
+    // to stderr (matching anyhow's default), and the class picks the exit code.
+    if let Err(err) = run(cli.command).await {
+        let (class, _fix) = agentos::exit::classify(&err);
+        if ui::ui().json() {
+            ui::ui().emit_json(&agentos::exit::error_json(&err));
+        } else {
+            eprintln!("Error: {err:#}");
+        }
+        std::process::exit(class.code());
+    }
+}
+
+/// Dispatch one parsed command. Returns the command's `Result`; `main`
+/// classifies any error into a semantic exit code (see `agentos::exit`).
+async fn run(command: Command) -> Result<()> {
+    match command {
         Command::Init { name, dir } => commands::init(&name, dir),
         Command::Build { tag } => commands::build(&tag).await,
         Command::Install => commands::install().await,

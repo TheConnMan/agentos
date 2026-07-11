@@ -488,7 +488,9 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             ui.note("stream diagnostics:");
             let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
             ui.note(&diag);
-            std::process::exit(1);
+            // A timeout is retryable (the worker may still be working, or a
+            // transient stall), so it maps to the transient exit code, not failure.
+            std::process::exit(crate::exit::ExitClass::Transient.code());
         }
     }
 }
@@ -627,7 +629,9 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             ui.note("stream diagnostics:");
             let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
             ui.note(&diag);
-            std::process::exit(1);
+            // A timeout is retryable (the worker may still be working, or a
+            // transient stall), so it maps to the transient exit code, not failure.
+            std::process::exit(crate::exit::ExitClass::Transient.code());
         }
     }
 }

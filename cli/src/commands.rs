@@ -277,22 +277,30 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     let (plugin_name, manifest_version) = read_manifest(&plugin_dir)?;
 
     if opts.local_model.is_some() && opts.fake_model {
-        bail!("--local-model cannot be combined with --fake-model");
+        return Err(crate::exit::usage(
+            "--local-model cannot be combined with --fake-model",
+        ));
     }
     if opts.local_model.is_some() && opts.model.is_some() {
-        bail!("--local-model cannot be combined with --model");
+        return Err(crate::exit::usage(
+            "--local-model cannot be combined with --model",
+        ));
     }
 
     if state::load(&plugin_dir)?.is_some() {
-        bail!(
+        return Err(crate::exit::usage(format!(
             "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos skill down' there first",
             plugin_dir.display()
-        );
+        )));
     }
 
     // Parse (not just forward) the budget so a typo fails here, not in-container.
-    let _: Budget = serde_json::from_str(&opts.budget)
-        .with_context(|| format!("--budget is not a valid ACI budget: {}", opts.budget))?;
+    let _: Budget = serde_json::from_str(&opts.budget).map_err(|e| {
+        crate::exit::usage(format!(
+            "--budget is not a valid ACI budget: {}: {e}",
+            opts.budget
+        ))
+    })?;
 
     let session_id = format!("local-{}", unix_now());
     let mut network = opts.network.clone();
@@ -515,11 +523,44 @@ pub async fn stop() -> Result<()> {
     Ok(())
 }
 
+/// The `agentos skill status --json` payload: the runner base URL plus the
+/// serialized session status. Generic over the status shape so it serves both
+/// the frozen `SessionStatus` (contract test) and the runner's raw `/status`
+/// body (the live call site), which are both left unconstrained by
+/// `cli/schema/status.schema.json`. Pure so it stays contract-testable.
+pub fn status_json<T: serde::Serialize>(url: &str, status: &T) -> serde_json::Value {
+    serde_json::json!({ "url": url, "session": status })
+}
+
+/// The `agentos skill eval --json` payload: the pass/fail roll-up plus one row
+/// per case. Pure so it stays unit/contract-testable against
+/// `cli/schema/eval.schema.json`.
+pub fn eval_json(
+    results: &[(String, bool, f64)],
+    passed: usize,
+    total: usize,
+) -> serde_json::Value {
+    let cases: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(id, ok, seconds)| serde_json::json!({ "id": id, "passed": ok, "seconds": seconds }))
+        .collect();
+    serde_json::json!({
+        "total": total,
+        "passed": passed,
+        "failed": total - passed,
+        "cases": cases,
+    })
+}
+
 pub async fn status(url: Option<String>) -> Result<()> {
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let status = client.status().await?;
     let ui = crate::ui::ui();
+    if ui.json() {
+        ui.emit_json(&status_json(&url, &status));
+        return Ok(());
+    }
     ui.note(&format!("runner {url}"));
     ui.payload_plain(&serde_json::to_string_pretty(&status)?);
     Ok(())
@@ -645,6 +686,16 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
     }
     bar.finish();
 
+    // Under --json the whole roll-up is one machine payload on stdout; the human
+    // table + verdict lines are suppressed so they cannot corrupt it.
+    if ui.json() {
+        ui.emit_json(&eval_json(&results, passed, total));
+        if passed < total {
+            std::process::exit(crate::exit::ExitClass::Failure.code());
+        }
+        return Ok(());
+    }
+
     // The result table is payload -> stdout; the roll-up verdict is a
     // diagnostic -> stderr.
     let rows: Vec<Vec<String>> = results
@@ -668,7 +719,7 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
         ));
     }
     if passed < total {
-        std::process::exit(1);
+        std::process::exit(crate::exit::ExitClass::Failure.code());
     }
     Ok(())
 }
@@ -695,10 +746,12 @@ pub fn resolve_cases_path(
             return Ok(in_bundle);
         }
     }
-    bail!(
+    Err(crate::exit::CliError::usage(format!(
         "no eval cases found: looked for {} and the running bundle's evals/cases.json; pass --cases",
         local.display()
-    )
+    ))
+    .with_fix("pass --cases")
+    .into())
 }
 
 pub struct DeployOpts {
@@ -716,18 +769,6 @@ pub struct DeployOpts {
     /// `agentos local up` for local). Naming the fix turns a raw
     /// "Connection refused" into something the operator can act on.
     pub connect_hint: String,
-}
-
-/// True when the error chain contains a reqwest connect/timeout failure --
-/// i.e. the platform API was unreachable rather than returning an error
-/// status. Lets deploy() swap the raw "Connection refused (os error 111)"
-/// for an actionable remediation.
-fn is_api_unreachable(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .is_some_and(|e| e.is_connect() || e.is_timeout())
-    })
 }
 
 pub async fn deploy(opts: DeployOpts) -> Result<()> {
@@ -773,7 +814,7 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         }
         Err(err) => {
             step.fail("failed");
-            if is_api_unreachable(&err) {
+            if crate::exit::is_transient_reqwest(&err) {
                 return Err(err.context(opts.connect_hint));
             }
             return Err(err);
@@ -848,10 +889,12 @@ pub async fn kill(opts: AgentActionOpts, yes: bool) -> Result<()> {
         return Ok(());
     }
     if !yes {
-        bail!(
+        return Err(crate::exit::CliError::usage(format!(
             "`agentos cluster kill {}` stops the agent's runs; re-run with --yes to confirm",
             opts.agent
-        );
+        ))
+        .with_fix("re-run with --yes")
+        .into());
     }
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
@@ -923,7 +966,9 @@ pub async fn budget(opts: AgentActionOpts, limit: f64) -> Result<()> {
         return Ok(());
     }
     if !limit.is_finite() || limit <= 0.0 {
-        bail!("--limit must be a finite value greater than 0 (got {limit})");
+        return Err(crate::exit::usage(format!(
+            "--limit must be a finite value greater than 0 (got {limit})"
+        )));
     }
     let cfg = BudgetConfig {
         max_output_tokens_per_run: None,
@@ -965,10 +1010,12 @@ pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<()> {
         return Ok(());
     }
     if !yes {
-        bail!(
+        return Err(crate::exit::CliError::usage(format!(
             "`agentos cluster delete {}` permanently deletes the agent; re-run with --yes to confirm",
             opts.agent
-        );
+        ))
+        .with_fix("re-run with --yes")
+        .into());
     }
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
@@ -993,12 +1040,12 @@ pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<()> {
 /// front instead.
 fn validate_slack_channel(channel: &str) -> Result<()> {
     if channel.trim_start().starts_with('#') {
-        bail!(
+        return Err(crate::exit::usage(format!(
             "slack channel {channel:?} is a name, not an ID: real Slack events carry the \
              channel ID (e.g. C0123ABCD) and the worker routes on it, so a #name binding \
              never receives messages. Pass the channel ID instead -- find it in the \
              channel's About tab, or the channel URL (.../archives/C0123ABCD)."
-        );
+        )));
     }
     Ok(())
 }

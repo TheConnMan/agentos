@@ -41,6 +41,18 @@
         "never"
       ],
       "required": false
+    },
+    {
+      "global": true,
+      "help": "Machine-readable JSON to stdout; human/log text to stderr",
+      "id": "json",
+      "long": "json",
+      "positional": false,
+      "possible_values": [
+        "true",
+        "false"
+      ],
+      "required": false
     }
   ],
   "hidden": false,
