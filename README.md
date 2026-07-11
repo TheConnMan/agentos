@@ -154,6 +154,33 @@ channel binding, and troubleshooting) see
 
 ## Quickstart
 
+### See it work (60-second smoke test)
+
+One command builds the runner image and round-trips a real turn through a runner
+container — no Slack, no cluster, no credential:
+
+```bash
+./scripts/smoke.sh
+```
+
+Green output means the ACI loop works end to end (init → runner → message →
+streamed reply → evals). To drive the **full** dispatcher → queue → worker →
+reply path locally, use the local loop (the *One-command middle mode* block
+below):
+
+```bash
+agentos local up                                     # stores + API + worker (fake model)
+agentos local deploy --plugin-dir ./my-agent --api-url http://localhost:28000
+agentos local message "what changed in the last deploy?"   # worker answers; reply streamed back
+```
+
+For a real model reply, export a credential first (`CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY`, `AGENTOS_CREDENTIALS`, or an `sk-or-…` OpenRouter key), as in
+the CLI walkthrough below. The rest of this section is the detailed,
+component-by-component setup.
+
+---
+
 Operators should start from a binary downloaded from
 [GitHub Releases](https://github.com/curie-eng/agentos/releases):
 
