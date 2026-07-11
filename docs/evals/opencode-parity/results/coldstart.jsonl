@@ -1,0 +1,9 @@
+{"arm":"A","rep":1,"model":"claude-sonnet-5","provider":"anthropic","coldstart_ms":2470.183897000}
+{"arm":"A","rep":2,"model":"claude-sonnet-5","provider":"anthropic","coldstart_ms":2731.078303000}
+{"arm":"A","rep":3,"model":"claude-sonnet-5","provider":"anthropic","coldstart_ms":1581.869823000}
+{"arm":"B","rep":1,"model":"z-ai/glm-4.6","provider":"openrouter","coldstart_ms":5524.191564000}
+{"arm":"B","rep":2,"model":"z-ai/glm-4.6","provider":"openrouter","coldstart_ms":4937.123467000}
+{"arm":"B","rep":3,"model":"z-ai/glm-4.6","provider":"openrouter","coldstart_ms":4639.326341000}
+{"arm":"C","rep":1,"model":"anthropic/claude-sonnet-5","provider":"openrouter","coldstart_ms":4886.844265000}
+{"arm":"C","rep":2,"model":"anthropic/claude-sonnet-5","provider":"openrouter","coldstart_ms":4482.668607000}
+{"arm":"C","rep":3,"model":"anthropic/claude-sonnet-5","provider":"openrouter","coldstart_ms":4465.033692000}

@@ -1,0 +1,50 @@
+{
+  "name": "opencode-parity",
+  "cases": [
+    {
+      "id": "plain-answer",
+      "input": "What is 12 * 12? Reply with just the number.",
+      "grader": {
+        "kind": "contains",
+        "expected": "144",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "format-following",
+      "input": "Echo this ISO date back to me verbatim and reply with nothing else: 2026-07-11",
+      "grader": {
+        "kind": "regex",
+        "expected": "^\\s*2026-07-11\\s*$",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "skill-token",
+      "input": "Follow the roundtrip-greeter skill to greet me, and include its verbatim round-trip token in your reply.",
+      "grader": {
+        "kind": "contains",
+        "expected": "AGENTOS-ROUNDTRIP",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "mcp-nonce",
+      "input": "Call the agentos_probe MCP tool and reply with the exact nonce string it returns.",
+      "grader": {
+        "kind": "contains",
+        "expected": "NONCE-7f3a9c",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "multi-step",
+      "input": "Do this in two steps. Step 1: compute 6 times 7. Step 2: take that result and state the final answer on its own line as ANSWER=<that number>. Reply with the ANSWER= line.",
+      "grader": {
+        "kind": "contains",
+        "expected": "ANSWER=42",
+        "case_sensitive": false
+      }
+    }
+  ]
+}

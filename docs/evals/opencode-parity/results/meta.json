@@ -1,0 +1,36 @@
+{
+  "issue": "curie-eng/agentos#313",
+  "date": "2026-07-11",
+  "branch": "task/313-opencode-parity-evals",
+  "commit": "93c06b271f0a8f6b6223f77c75f2135005dadd40",
+  "reps_per_arm": 3,
+  "cases": 5,
+  "substrate": "direct docker run per (arm x rep), rails-emulated identically for both images (--read-only, --tmpfs /tmp, --tmpfs /home/runner:uid=1000,gid=1000, --user 1000:1000, --cap-drop ALL); source-built images (never ghcr :latest)",
+  "bundle": {
+    "source": "runner/tests/fixtures/opencode_live_bundle",
+    "mount": "/tmp/parity-bundle -> /bundle:ro (chmod -R a+rX throwaway copy)",
+    "plugin_dir_env": "AGENTOS_PLUGIN_DIR=/bundle"
+  },
+  "images": {
+    "claude": {"ref": "agentos-runner:313", "id": "sha256:71e0db3e89f59598fcecafdc7de71a4c3e523eb05348cced99698b9d07cbdafc", "dockerfile": "runner/Dockerfile"},
+    "opencode": {"ref": "agentos-runner-opencode:313", "id": "sha256:e40cb6bb47034bc80473b9bb7471267fbaf725fc3287509a9a151f968af744bf", "dockerfile": "runner/Dockerfile.opencode"}
+  },
+  "arms": {
+    "A": {"role": "baseline", "image": "claude", "provider": "anthropic", "model": "claude-sonnet-5", "credential": "CLAUDE_CODE_OAUTH_TOKEN (subscription quota; no marginal USD)"},
+    "B": {"role": "shipped-default", "image": "opencode", "provider": "openrouter", "model": "z-ai/glm-4.6", "credential": "OpenRouter sk-or-"},
+    "C": {"role": "same-model OpenCode arm (harness+provider control)", "image": "opencode", "provider": "openrouter", "model": "anthropic/claude-sonnet-5", "credential": "OpenRouter sk-or-", "note": "exact claude-sonnet-5 available on OpenRouter -> no model substitution. CONFOUND: Arm A reaches Anthropic directly (OAuth) while Arm C reaches it via OpenRouter, so A<->C changes the provider/routing path alongside the harness -- it is NOT a clean harness-only isolation. Tool-availability deltas (bundle MCP) remain harness-attributable because provider routing does not add/remove bundle tools."}
+  },
+  "prices": {
+    "source": "https://openrouter.ai/api/v1/models",
+    "captured": "2026-07-11",
+    "unit": "USD per token",
+    "note": "list-price-equivalent USD = in_tokens*input + out_tokens*output. Arm A runs on an OAuth subscription (no marginal USD); its USD column is the OpenRouter-listed anthropic/claude-sonnet-5 rate used as the Anthropic-list proxy for comparability only.",
+    "claude-sonnet-5": {"input": 0.000002, "output": 0.00001},
+    "z-ai/glm-4.6": {"input": 0.00000043, "output": 0.00000174},
+    "anthropic/claude-sonnet-5": {"input": 0.000002, "output": 0.00001}
+  },
+  "normalization": {
+    "usd": "list-price-equivalent from captured tokens (not billed spend)",
+    "retries": "0-by-construction (the eval path has no retry loop; retry policy lives in the kernel, out of this loop)"
+  }
+}
