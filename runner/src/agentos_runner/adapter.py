@@ -33,6 +33,22 @@ from claude_agent_sdk import (
 
 from .events import AssistantText, RateLimit, ToolCall, TurnEvent, TurnResult
 
+# Built-in Claude Code tools that only read state, declared here as this harness's
+# read-only set for the deny-by-default side-effect classifier (side_effects.py).
+# Names match the claude-agent-sdk's tool identifiers.
+CLAUDE_READONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "Read",
+        "Glob",
+        "Grep",
+        "LS",
+        "NotebookRead",
+        "WebFetch",
+        "WebSearch",
+        "TodoRead",
+    }
+)
+
 
 class ModelSession(Protocol):
     """One long-lived model session the runner drives turn by turn."""

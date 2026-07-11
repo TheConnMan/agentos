@@ -52,6 +52,19 @@ import aiohttp
 
 from .synth import TurnSynthesizer, _result
 
+# OpenCode's lowercase read-only built-ins, declared here as this harness's
+# read-only set for the deny-by-default side-effect classifier (side_effects.py).
+# The tool surface was enumerated live against opencode 1.17.17 (GET
+# /experimental/tool): bash, read, glob, grep, edit, write, task, webfetch,
+# todowrite, skill, plus the question/invalid pseudo-tools. Of those, only read,
+# grep, glob, webfetch, and skill are pure reads (skill loads a skill's
+# instructions into the conversation, an idempotent read). bash/edit/write/task/
+# todowrite are deliberately NOT listed, and question is excluded as interactive
+# rather than a pure read. Deny-by-default covers anything uncertain or unknown.
+OPENCODE_READONLY_TOOLS: frozenset[str] = frozenset(
+    {"read", "grep", "glob", "webfetch", "skill"}
+)
+
 # Default cheap real model routed through OpenRouter. GLM-4.6 reliably returns a
 # concrete short text answer (unlike GLM-5.2, which can return reasoning + empty
 # text on trivial prompts, issue #107). Override via env for a different model.

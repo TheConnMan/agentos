@@ -4,7 +4,12 @@ import logging
 
 import anyio
 from aci_protocol import Event, Interrupt, SessionStatus, parse_ndjson
-from agentos_runner import RunTracer, SideEffectClassifier, build_options
+from agentos_runner import (
+    CLAUDE_READONLY_TOOLS,
+    RunTracer,
+    SideEffectClassifier,
+    build_options,
+)
 from agentos_runner.events import AssistantText, TurnResult
 from agentos_runner.fake import FakeModelSession, default_turn
 from agentos_runner.session import SessionRunner
@@ -18,7 +23,7 @@ def _runner(
         session_factory=lambda: fake,
         ceiling=ceiling,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="t",
     )
     return runner, fake
@@ -105,7 +110,7 @@ def test_interrupt_reclassifies_error_result_to_idle() -> None:
     fake = FakeModelSession(lambda: script, truncate_on_interrupt=False)
     runner = SessionRunner(
         session_factory=lambda: fake, ceiling=0, tracer=RunTracer(None),
-        classifier=SideEffectClassifier(), trace_name="t",
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS), trace_name="t",
     )
 
     lines: list[str] = []
@@ -139,7 +144,7 @@ def test_sdk_exception_still_terminates_in_final() -> None:
 
     runner = SessionRunner(
         session_factory=RaisingSession, ceiling=0, tracer=RunTracer(None),
-        classifier=SideEffectClassifier(), trace_name="t",
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS), trace_name="t",
     )
     events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
     assert [e.type for e in events] == ["error", "final"]
@@ -167,7 +172,7 @@ def test_sdk_exception_logs_turn_failure(caplog) -> None:
         session_factory=RaisingSession,
         ceiling=0,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="t",
     )
     with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
@@ -237,7 +242,7 @@ def test_auth_fast_fail_survives_a_wedged_interrupt(caplog) -> None:
         session_factory=lambda: fake,
         ceiling=0,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="t",
     )
 

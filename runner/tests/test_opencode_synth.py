@@ -19,6 +19,7 @@ from typing import Any
 
 import anyio
 from aci_protocol import Event, Interrupt, parse_ndjson, run_conformance
+from agentos_runner import CLAUDE_READONLY_TOOLS
 from agentos_runner.events import AssistantText, ToolCall, TurnResult
 from agentos_runner.opencode.synth import TurnSynthesizer
 from agentos_runner.otel import RunTracer
@@ -225,7 +226,7 @@ def _build_runner() -> SessionRunner:
         session_factory=ScriptedOpenCodeSession,
         ceiling=0,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="opencode-offline",
     )
 
@@ -256,7 +257,7 @@ def _turn_ndjson(frames_factory: Any) -> list[str]:
             session_factory=lambda: ScriptedOpenCodeSession(frames_factory),
             ceiling=0,
             tracer=RunTracer(None),
-            classifier=SideEffectClassifier(),
+            classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
             trace_name="opencode-offline",
         )
         await runner.start()

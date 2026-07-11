@@ -2,7 +2,12 @@
 
 import anyio
 from aci_protocol import Event, OtelConfig
-from agentos_runner import RunTracer, SideEffectClassifier, build_tracer_provider
+from agentos_runner import (
+    CLAUDE_READONLY_TOOLS,
+    RunTracer,
+    SideEffectClassifier,
+    build_tracer_provider,
+)
 from agentos_runner.fake import FakeModelSession
 from agentos_runner.session import SessionRunner
 from opentelemetry.sdk.trace import TracerProvider
@@ -19,7 +24,7 @@ def test_run_emits_agent_generation_and_tool_spans() -> None:
         session_factory=FakeModelSession,  # default_turn: text + Bash tool + result usage
         ceiling=0,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="agentos-run:test",
         model="fake-model",
     )
@@ -54,7 +59,7 @@ def test_generation_model_backfilled_from_sdk_when_unconfigured() -> None:
         session_factory=FakeModelSession,
         ceiling=0,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="agentos-run:test",
         model=None,
     )
@@ -85,7 +90,7 @@ def test_run_stamps_langfuse_session_and_user_ids() -> None:
         session_factory=FakeModelSession,
         ceiling=0,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="agentos-run:test",
         session_id="agent-abc-thread-123",
         model="fake-model",
@@ -114,7 +119,7 @@ def test_run_omits_langfuse_user_id_when_event_user_empty() -> None:
         session_factory=FakeModelSession,
         ceiling=0,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="agentos-run:test",
         session_id="agent-abc-thread-123",
         model="fake-model",

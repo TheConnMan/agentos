@@ -14,7 +14,12 @@ import sys
 
 from aiohttp import web
 
-from .adapter import ClaudeAgentSession, ModelSession, build_options
+from .adapter import (
+    CLAUDE_READONLY_TOOLS,
+    ClaudeAgentSession,
+    ModelSession,
+    build_options,
+)
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
@@ -66,7 +71,14 @@ def build_runner(
         session_factory=factory,
         ceiling=config.ceiling,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(config.idempotent_tools),
+        classifier=SideEffectClassifier(
+            # ``is not None`` (not ``or``): an env of ``","`` parses to ``[]``,
+            # which denies every tool, and that operator-set edge must be honored
+            # rather than falling back to the harness declaration.
+            config.idempotent_tools
+            if config.idempotent_tools is not None
+            else CLAUDE_READONLY_TOOLS
+        ),
         trace_name=f"agentos-run:{config.session.session_id}",
         session_id=config.session.session_id,
         model=config.model,

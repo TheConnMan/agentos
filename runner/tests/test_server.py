@@ -2,7 +2,12 @@
 
 import anyio
 from aci_protocol import SessionStatus, parse_ndjson
-from agentos_runner import RunTracer, SideEffectClassifier, create_app
+from agentos_runner import (
+    CLAUDE_READONLY_TOOLS,
+    RunTracer,
+    SideEffectClassifier,
+    create_app,
+)
 from agentos_runner.fake import FakeModelSession
 from agentos_runner.session import SessionRunner
 from aiohttp.test_utils import TestClient, TestServer
@@ -14,7 +19,7 @@ def _runner() -> tuple[SessionRunner, FakeModelSession]:
         session_factory=lambda: fake,
         ceiling=0,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="t",
     )
     return runner, fake

@@ -14,6 +14,7 @@ from collections.abc import Iterable
 import anyio
 from aci_protocol import Event, Interrupt
 
+from .adapter import CLAUDE_READONLY_TOOLS
 from .fake import FakeModelSession
 from .otel import RunTracer
 from .session import SessionRunner
@@ -25,7 +26,7 @@ def _build_runner() -> SessionRunner:
         session_factory=FakeModelSession,
         ceiling=0,  # unbounded: conformance validates protocol shape, not budgets
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="conformance",
     )
 

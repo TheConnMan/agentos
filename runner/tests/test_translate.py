@@ -1,13 +1,16 @@
 """TurnEvent to ACI-outbound-event translation."""
 
 from aci_protocol import SessionStatus
-from agentos_runner import SideEffectClassifier
+from agentos_runner import CLAUDE_READONLY_TOOLS, SideEffectClassifier
 from agentos_runner.events import AssistantText, RateLimit, ToolCall, TurnResult
+from agentos_runner.opencode import OPENCODE_READONLY_TOOLS
 from agentos_runner.translate import TurnState, translate_event
 
 
 def _translate(event: object, state: TurnState | None = None) -> list:
-    return translate_event(event, state or TurnState(), SideEffectClassifier(), None)
+    return translate_event(
+        event, state or TurnState(), SideEffectClassifier(CLAUDE_READONLY_TOOLS), None
+    )
 
 
 def test_text_block_becomes_text_delta() -> None:
@@ -33,6 +36,28 @@ def test_tool_use_emits_note_and_side_effect_once() -> None:
 def test_read_only_tool_notes_without_flag() -> None:
     events = _translate(ToolCall(name="Read", id="1"))
     assert [e.type for e in events] == ["tool_note"]
+
+
+def test_opencode_read_only_tool_notes_without_flag() -> None:
+    # Regression (issue #308): an OpenCode ``read`` classified against the OpenCode
+    # declaration is a plain tool note with NO side-effect flag.
+    events = translate_event(
+        ToolCall(name="read", id="t1", model=None),
+        TurnState(),
+        SideEffectClassifier(OPENCODE_READONLY_TOOLS),
+        None,
+    )
+    assert [e.type for e in events] == ["tool_note"]
+
+
+def test_opencode_unknown_tool_emits_side_effect_flag() -> None:
+    events = translate_event(
+        ToolCall(name="SomeBrandNewTool", id="t1", model=None),
+        TurnState(),
+        SideEffectClassifier(OPENCODE_READONLY_TOOLS),
+        None,
+    )
+    assert "side_effect_flag" in [e.type for e in events]
 
 
 def test_result_success_is_final_done() -> None:

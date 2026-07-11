@@ -14,7 +14,12 @@ import os
 import anyio
 import pytest
 from aci_protocol import Event, SessionStatus, parse_ndjson
-from agentos_runner import RunTracer, SideEffectClassifier, build_options
+from agentos_runner import (
+    CLAUDE_READONLY_TOOLS,
+    RunTracer,
+    SideEffectClassifier,
+    build_options,
+)
 from agentos_runner.adapter import ClaudeAgentSession
 from agentos_runner.session import SessionRunner
 
@@ -36,7 +41,7 @@ def test_live_runner_answers_trivial_message() -> None:
         session_factory=lambda: ClaudeAgentSession(options),
         ceiling=0,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="live-smoke",
     )
 

@@ -37,6 +37,14 @@ def test_idempotent_tools_override_parsed() -> None:
     assert RunnerConfig.from_env(env).idempotent_tools == ["Read", "Custom", "Grep"]
 
 
+def test_idempotent_tools_empty_override_is_empty_list_not_none() -> None:
+    # ``AGENTOS_IDEMPOTENT_TOOLS=","`` parses to ``[]`` (an empty allowlist), not
+    # None. ``__main__.py`` distinguishes the two with ``is not None`` so an empty
+    # operator override reaches the classifier and denies every tool.
+    env = dict(_BASE, AGENTOS_IDEMPOTENT_TOOLS=",")
+    assert RunnerConfig.from_env(env).idempotent_tools == []
+
+
 def test_runner_token_parsed_from_env() -> None:
     env = dict(_BASE, AGENTOS_RUNNER_TOKEN="abc123")
     assert RunnerConfig.from_env(env).runner_token == "abc123"

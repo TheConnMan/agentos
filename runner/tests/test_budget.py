@@ -2,7 +2,12 @@
 
 import anyio
 from aci_protocol import Event, SessionStatus, parse_ndjson
-from agentos_runner import BudgetTracker, RunTracer, SideEffectClassifier
+from agentos_runner import (
+    CLAUDE_READONLY_TOOLS,
+    BudgetTracker,
+    RunTracer,
+    SideEffectClassifier,
+)
 from agentos_runner.budget import BUDGET_CLASSIFICATION
 from agentos_runner.events import AssistantText, ToolCall, TurnResult
 from agentos_runner.fake import FakeModelSession
@@ -70,7 +75,7 @@ def _runner(script, ceiling: int) -> tuple[SessionRunner, FakeModelSession]:
         session_factory=lambda: fake,
         ceiling=ceiling,
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(CLAUDE_READONLY_TOOLS),
         trace_name="t",
     )
     return runner, fake

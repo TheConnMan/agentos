@@ -24,11 +24,13 @@ Docker via `agentos skill up`. Full behavior spec in `runner/README.md`.
   end-to-end budget wiring through the API and UI Cost view is separate,
   not-yet-built work; do not assume this runner-local enforcement is the
   whole budget story.
-- **`side_effect_flag` uses a deny-by-default, read-only allowlist**
-  (`side_effects.py`). A new tool defaults to "not idempotent" until
-  explicitly allowlisted -- never flip the default to allow-by-default, since
-  the worker's no-retry-after-side-effects rule depends on this flag being
-  conservative.
+- **`side_effect_flag` uses a deny-by-default, read-only allowlist**, now
+  declared per harness adapter (`CLAUDE_READONLY_TOOLS` in `adapter.py`,
+  `OPENCODE_READONLY_TOOLS` in `opencode/session.py`) while the classifier in
+  `side_effects.py` stays deny-by-default and harness-agnostic. A new tool
+  defaults to "not idempotent" until explicitly allowlisted -- never flip the
+  default to allow-by-default, since the worker's no-retry-after-side-effects
+  rule depends on this flag being conservative.
 - **Rehydration on start is stateless-first** (ADR-0003): the runner
   rehydrates from `AGENTOS_HISTORY_REF` (falling back to `AGENTOS_MEMORY_REF`)
   on boot rather than assuming any surviving in-process state. Never write a

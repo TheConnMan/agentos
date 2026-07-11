@@ -9,7 +9,13 @@ flags non-idempotent tool calls, loads a validated plugin bundle, exports gen_ai
 OTel spans to the collector, and rehydrates from a history ref on start.
 """
 
-from .adapter import ClaudeAgentSession, ModelSession, build_options, map_sdk_message
+from .adapter import (
+    CLAUDE_READONLY_TOOLS,
+    ClaudeAgentSession,
+    ModelSession,
+    build_options,
+    map_sdk_message,
+)
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
 from .config import RunnerConfig
 from .conformance import conformance_producer
@@ -19,7 +25,7 @@ from .otel import RunTracer, build_tracer_provider
 from .plugin import PluginBundleError, load_plugins
 from .server import create_app
 from .session import SessionRunner
-from .side_effects import DEFAULT_IDEMPOTENT_TOOLS, SideEffectClassifier
+from .side_effects import SideEffectClassifier
 
 __version__ = "0.0.0"
 
@@ -45,5 +51,5 @@ __all__ = [
     "create_app",
     "SessionRunner",
     "SideEffectClassifier",
-    "DEFAULT_IDEMPOTENT_TOOLS",
+    "CLAUDE_READONLY_TOOLS",
 ]

@@ -19,7 +19,7 @@ from aci_protocol import Event, Interrupt, run_conformance
 from ..otel import RunTracer
 from ..session import SessionRunner
 from ..side_effects import SideEffectClassifier
-from .session import OpenCodeModelSession
+from .session import OPENCODE_READONLY_TOOLS, OpenCodeModelSession
 
 
 def _build_runner() -> SessionRunner:
@@ -27,7 +27,7 @@ def _build_runner() -> SessionRunner:
         session_factory=OpenCodeModelSession,
         ceiling=0,  # unbounded: conformance validates protocol shape, not budgets
         tracer=RunTracer(None),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(OPENCODE_READONLY_TOOLS),
         trace_name="opencode-conformance",
     )
 
