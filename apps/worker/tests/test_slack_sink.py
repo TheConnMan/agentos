@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from agentos_worker.config import WorkerConfig
 from agentos_worker.slack_sink import AsyncSlackSink
+from slack_sdk.errors import SlackApiError
 
 
 def test_base_url_override_passes_through() -> None:
@@ -161,3 +163,76 @@ def test_update_renders_status_and_link_blocks_for_a_reply() -> None:
     ]
     assert link_actions, "expected an actions block of URL link buttons"
     assert link_actions[0]["elements"][0]["url"] == "https://x/y"
+
+
+# --- #228: text-only fallback when a blocks update is rejected ----------------
+# If Slack rejects the with-blocks chat_update (SlackApiError, e.g. invalid_blocks),
+# the reply must still be delivered: retry text-only so the turn completes exactly
+# once and never re-enqueues.
+
+
+def test_update_falls_back_to_text_only_on_slack_api_error() -> None:
+    sink = AsyncSlackSink("xoxb-test")
+    calls: list[dict[str, object]] = []
+
+    async def _fake_chat_update(**kwargs: object) -> None:
+        calls.append(kwargs)
+        if "blocks" in kwargs:  # the first (with-blocks) call is rejected
+            raise SlackApiError(
+                "invalid_blocks", {"ok": False, "error": "invalid_blocks"}
+            )
+
+    sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
+
+    text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
+    # Must not raise: the rejected blocks update falls back to a text-only update.
+    asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
+
+    assert len(calls) == 2
+    second = calls[1]
+    assert "blocks" not in second  # the retry is text-only
+    assert second["text"] == "body"  # same accessibility fallback text
+
+
+def test_update_fallback_text_stays_within_slack_text_cap() -> None:
+    # Loop-closure: model Slack's real failure mode where chat.update rejects
+    # ANY call carrying blocks OR text longer than 40000 chars. A reply with a
+    # ~60000-char body must still complete: the with-blocks call is rejected,
+    # and the text-only retry must send bounded (<=40000) text so it succeeds
+    # instead of re-raising and re-opening the unbounded paid-retry loop.
+    sink = AsyncSlackSink("xoxb-test")
+    calls: list[dict[str, object]] = []
+
+    async def _fake_chat_update(**kwargs: object) -> None:
+        text = kwargs.get("text")
+        if "blocks" in kwargs or (isinstance(text, str) and len(text) > 40000):
+            raise SlackApiError("too_long", {"ok": False, "error": "msg_too_long"})
+        calls.append(kwargs)  # only a within-cap text-only call is recorded
+
+    sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
+
+    text = "```agentos-reply\n" + json.dumps({"header": "H", "text": "x" * 60000}) + "\n```"
+    # Must not raise: the fallback text is bounded so the retry succeeds.
+    asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
+
+    assert calls, "expected a successful text-only update"
+    final = calls[-1]
+    assert "blocks" not in final
+    assert isinstance(final["text"], str)
+    assert len(final["text"]) <= 40000
+
+
+def test_update_does_not_retry_when_blocks_update_succeeds() -> None:
+    sink = AsyncSlackSink("xoxb-test")
+    calls: list[dict[str, object]] = []
+
+    async def _fake_chat_update(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
+
+    text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
+    asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
+
+    assert len(calls) == 1  # a spurious retry would make this 2
+    assert isinstance(calls[0].get("blocks"), list)

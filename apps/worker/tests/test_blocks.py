@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from agentos_worker.behaviorpacks import NavPack
 from agentos_worker.blocks import Reply, chunk, parse_reply, render, to_blocks
 
@@ -262,3 +264,56 @@ def test_backward_compatible_without_status_or_links() -> None:
     # No status context leading, and no links actions block anywhere.
     assert not any(b["type"] == "actions" for b in blocks)
     assert blocks[0]["type"] == "header"  # header first, not a status context
+
+
+# --- #228: clamp Block Kit output to Slack's hard limits ----------------------
+# Slack rejects the whole message (and the turn's reply is lost) if any block
+# exceeds its documented cap. to_blocks must clamp so the reply is always
+# deliverable, whatever the model authored. Tests assert the length/count
+# invariant only, leaving the exact truncation style to the implementer.
+
+
+def test_header_text_clamped_to_150() -> None:
+    reply = Reply(text="body", header="H" * 200)
+    header = next(b for b in to_blocks(reply) if b["type"] == "header")
+    assert len(header["text"]["text"]) <= 150
+
+
+def test_button_label_clamped_to_75() -> None:
+    reply = Reply(text="body", buttons=[("x" * 200, "y" * 400)])
+    actions = next(b for b in to_blocks(reply) if b["type"] == "actions")
+    element = actions["elements"][0]
+    assert len(element["text"]["text"]) <= 75
+
+
+def test_action_id_clamped_to_255() -> None:
+    reply = Reply(text="body", buttons=[("x" * 200, "y" * 400)])
+    actions = next(b for b in to_blocks(reply) if b["type"] == "actions")
+    element = actions["elements"][0]
+    assert len(element["action_id"]) <= 255
+
+
+def test_section_fields_capped_at_10() -> None:
+    reply = Reply(text="body", fields=[(f"k{i}", f"v{i}") for i in range(15)])
+    section = next(
+        b for b in to_blocks(reply) if b["type"] == "section" and "fields" in b
+    )
+    assert len(section["fields"]) == 10
+
+
+def test_total_blocks_capped_at_50() -> None:
+    # ~150000 non-newline chars chunk into ~52 sections (target ~2900); with a
+    # header on top that is well over Slack's 50-block ceiling.
+    reply = Reply(text="x" * 150_000, header="Title")
+    assert len(to_blocks(reply)) <= 50
+
+
+def test_render_bounds_fallback_text_for_oversized_body() -> None:
+    # A complete structured reply whose BODY is far over Slack's chat.update
+    # text cap (~40000). render must still return blocks (it is a complete
+    # reply) AND bound the accessibility/fallback text, or the text-only retry
+    # in AsyncSlackSink.update re-raises and re-opens the unbounded paid loop.
+    text = "```agentos-reply\n" + json.dumps({"header": "H", "text": "x" * 60000}) + "\n```"
+    rendered_text, blocks = render(text)
+    assert blocks is not None
+    assert len(rendered_text) <= 40000
