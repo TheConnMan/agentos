@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from .behaviorpacks import NavPack
@@ -108,9 +109,18 @@ class AsyncSlackSink:
         client = self._client_for(endpoint)
         rendered_text, blocks = render(text, nav)
         if blocks is not None:
-            await client.chat_update(
-                channel=channel, ts=ts, text=rendered_text, blocks=blocks
-            )
+            # Slack rejects the whole message if a block exceeds a limit we did not
+            # clamp; fall back to a text-only update so the turn still completes and
+            # the stream entry is acked instead of re-enqueuing the paid model turn.
+            try:
+                await client.chat_update(
+                    channel=channel, ts=ts, text=rendered_text, blocks=blocks
+                )
+            except SlackApiError:
+                logger.warning(
+                    "chat_update with blocks rejected for %s; retrying text-only", ts
+                )
+                await client.chat_update(channel=channel, ts=ts, text=rendered_text)
         else:
             await client.chat_update(channel=channel, ts=ts, text=rendered_text)
 

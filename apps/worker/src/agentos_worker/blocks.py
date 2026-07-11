@@ -36,6 +36,25 @@ from .mrkdwn import to_mrkdwn
 # Slack hard-caps a section's text at 3000 chars; stay under it with margin.
 _CHUNK_TARGET = 2900
 
+# Slack hard-caps on Block Kit output; exceed any and chat.update is rejected and
+# the whole reply is lost, so ``to_blocks`` clamps every one of these.
+_HEADER_MAX = 150  # header plain_text -> 150 chars
+_BUTTON_LABEL_MAX = 75  # button plain_text label -> 75 chars
+_ACTION_ID_MAX = 255  # action_id -> 255 chars
+_SECTION_FIELDS_MAX = 10  # a section's ``fields`` -> 10 entries
+_BLOCKS_MAX = 50  # blocks per message -> 50
+
+# Slack caps chat.update's ``text`` field at 40000 chars; stay under it with margin.
+_SLACK_TEXT_MAX = 39000
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate display text so the result length is ``<= limit``, marking the cut
+    with an ellipsis. For header text and button labels (human-read, not opaque)."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
 _FENCE = re.compile(r"```agentos-reply\s*\n(.*?)\n```", re.DOTALL)
 _FENCE_OPEN = "```agentos-reply"
 
@@ -86,11 +105,16 @@ def chunk(text: str, limit: int = _CHUNK_TARGET) -> list[str]:
 def _button_shell(label: str) -> dict[str, Any]:
     """The shared button element; callers add either ``action_id`` (interactive,
     dispatcher-handled) or ``url`` (a navigational link button)."""
+    # Slack hard-caps a button label at 75 chars; clamp here so both interactive
+    # and URL link buttons stay under it.
+    label = _truncate(label, _BUTTON_LABEL_MAX)
     return {"type": "button", "text": {"type": "plain_text", "text": label, "emoji": True}}
 
 
 def _button(label: str, action_id: str) -> dict[str, Any]:
-    return {**_button_shell(label), "action_id": action_id}
+    # Slack hard-caps action_id at 255 chars; it is an opaque id, not display text,
+    # so truncate hard with no marker.
+    return {**_button_shell(label), "action_id": action_id[:_ACTION_ID_MAX]}
 
 
 def _context_block(text: str) -> dict[str, Any]:
@@ -132,12 +156,18 @@ def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
     if reply.status:
         blocks.append(_context_block(reply.status))
     if reply.header:
-        blocks.append({"type": "header", "text": {"type": "plain_text", "text": reply.header}})
+        # Slack hard-caps a header's plain_text at 150 chars.
+        header_text = _truncate(reply.header, _HEADER_MAX)
+        blocks.append({"type": "header", "text": {"type": "plain_text", "text": header_text}})
     if reply.fields:
+        # Slack hard-caps a section at 10 fields; keep the first 10, order preserved.
         blocks.append(
             {
                 "type": "section",
-                "fields": [{"type": "mrkdwn", "text": f"*{k}*\n{v}"} for k, v in reply.fields],
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*{k}*\n{v}"}
+                    for k, v in reply.fields[:_SECTION_FIELDS_MAX]
+                ],
             }
         )
     for piece in chunk(to_mrkdwn(reply.text)):
@@ -162,7 +192,9 @@ def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
         )
     if reply.footer:
         blocks.append(_context_block(reply.footer))
-    return blocks
+    # Slack hard-caps a message at 50 blocks; drop the tail overflow last so the
+    # ordering/priority of the earlier blocks is preserved.
+    return blocks[:_BLOCKS_MAX]
 
 
 def _pairs(raw: Any) -> list[tuple[str, str]]:
@@ -215,7 +247,10 @@ def render(text: str, nav: NavPack | None = None) -> tuple[str, list[dict[str, A
     """
     reply = parse_reply(text)
     if reply is not None:
-        return (to_mrkdwn(reply.text) or "(reply)", to_blocks(reply, nav))
+        return (
+            _truncate(to_mrkdwn(reply.text) or "(reply)", _SLACK_TEXT_MAX),
+            to_blocks(reply, nav),
+        )
     open_at = text.find(_FENCE_OPEN)
     if open_at != -1:
         prefix = text[:open_at].strip()
