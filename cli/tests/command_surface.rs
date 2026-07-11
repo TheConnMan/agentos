@@ -136,6 +136,50 @@ fn process_help_top_level_lists_new_surface_and_hides_retired_verbs() {
     }
 }
 
+/// The checked-in manifest must equal what `agentos schema` emits from the live
+/// clap grammar. This is the generated-artifact + CI drift gate (mirroring the
+/// schema-export discipline for `packages/aci-protocol` / `packages/plugin-format`):
+/// any grammar change (new command, flag, default, env var, help text) must be
+/// accompanied by a regenerated `cli/command-manifest.json` in the same PR.
+#[test]
+fn command_manifest_matches_committed_artifact() {
+    let output = Command::new(bin())
+        .arg("schema")
+        .output()
+        .expect("run agentos schema");
+    assert!(
+        output.status.success(),
+        "agentos schema failed\n{}",
+        output_text(&output)
+    );
+    let generated = String::from_utf8(output.stdout).expect("manifest is utf-8");
+
+    let manifest_path = concat!(env!("CARGO_MANIFEST_DIR"), "/command-manifest.json");
+    let committed =
+        std::fs::read_to_string(manifest_path).expect("cli/command-manifest.json is committed");
+
+    assert_eq!(
+        generated, committed,
+        "cli/command-manifest.json is stale; regenerate with \
+         `cargo run -- schema > cli/command-manifest.json`"
+    );
+}
+
+/// `dump-commands` is the documented alias for the hidden `schema` verb.
+#[test]
+fn dump_commands_alias_emits_same_manifest() {
+    let schema = Command::new(bin())
+        .arg("schema")
+        .output()
+        .expect("run agentos schema");
+    let alias = Command::new(bin())
+        .arg("dump-commands")
+        .output()
+        .expect("run agentos dump-commands");
+    assert!(schema.status.success() && alias.status.success());
+    assert_eq!(schema.stdout, alias.stdout);
+}
+
 fn to_argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|part| (*part).to_string()).collect()
 }

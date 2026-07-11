@@ -21,6 +21,7 @@ pub mod render;
 pub mod retired;
 pub mod runner;
 pub mod scaffold;
+pub mod schema;
 pub mod state;
 pub mod ui;
 
