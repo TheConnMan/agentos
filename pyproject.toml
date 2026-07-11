@@ -53,6 +53,7 @@ testpaths = [
     "apps/worker/tests",
     "runner/tests",
     "compose/tests",
+    "examples/tests",
 ]
 
 [tool.ruff]

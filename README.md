@@ -219,6 +219,10 @@ export CLAUDE_CODE_OAUTH_TOKEN=...
 
 A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos skill up` runs it from a clean clone. `agentos init` scaffolds this same weather template, so every fresh bundle starts as a runnable web-search skill to learn from and edit.
 
+For the "engine as an in-bundle stdio MCP server" shape — a bundle that ships
+its own tools as a stdio subprocess the harness spawns, which a hosted harness
+cannot do — see the template at [`examples/text-stats-engine/`](examples/text-stats-engine/README.md).
+
 For a fully offline round-trip (no credential, scripted replies), add
 `--fake-model` to `agentos skill up` — an explicit test-only mode that never reaches
 the Anthropic API.
