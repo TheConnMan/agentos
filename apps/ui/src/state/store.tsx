@@ -44,6 +44,7 @@ export function initialState(level: FixtureLevel): AppState {
     showSuccess: false,
     deployIssues: null,
     deployError: null,
+    promotedEvalCases: [],
   };
 }
 
@@ -82,6 +83,15 @@ export function reducer(s: AppState, a: Action): AppState {
       return { ...s, modal: null, pluginUploaded: false, deployIssues: null, deployError: null };
     case "toast":
       return { ...s, toast: a.message };
+    case "addPromotedEvalCase":
+      // Newest first; dedupe by id so re-promoting the same trace replaces it.
+      return {
+        ...s,
+        promotedEvalCases: [
+          a.evalCase,
+          ...s.promotedEvalCases.filter((c) => c.id !== a.evalCase.id),
+        ],
+      };
     case "setEnv":
       return { ...s, env: a.env };
     case "setObsTab":
