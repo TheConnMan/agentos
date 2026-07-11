@@ -204,6 +204,13 @@ separate gap: the reply base URL is worker-global (`worker.slackApiBaseUrl`),
 so two ingress paths cannot coexist on one deployment until replies are
 routed per turn ([issue #19](https://github.com/curie-eng/agentos/issues/19)).
 
+ADR-0020 fixes the target shape for this seam: a rendering-free port (required
+core plus queryable capabilities plus semantic interaction intents) rendered
+per-adapter, so Slack stays rich without forcing email/Teams/GitHub down to the
+lowest common denominator. The channel-neutral rename above is its first
+increment; the interaction-primitive half is driven now by the approval interface
+(ADR-0010), not by waiting for a second channel.
+
 ## Component diagram
 
 ```mermaid
@@ -284,7 +291,10 @@ ways that matter. Concretely, we do not yet abstract:
   for a user who needs it; until then the protocol is the port.
 - A multi-channel adapter framework. The channel-neutral rename above is
   cheap and worth doing; a pluggable channel registry is not, until a second
-  real channel exists.
+  real channel exists. Nuance (ADR-0020): the approval interface (ADR-0010) is a
+  real forcing function that exists today, so the port's *interaction-primitive*
+  half (semantic `Confirm`/`Choice` rendered per-adapter) is worth defining now;
+  the full pluggable registry still waits for a second real channel.
 - A generic eval-store interface. The recorder is one file; the second store
   defines what the interface must be.
 - Cross-database portability. Managed Postgres is the swap that will actually
