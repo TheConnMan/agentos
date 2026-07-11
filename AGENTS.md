@@ -9,7 +9,9 @@ message is answered by a versioned plugin running in an isolated Kubernetes
 sandbox, traced through Langfuse and steerable mid-turn; a git push deploys that
 plugin under a bot identity via the API's git-flow engine. Relay is the project
 codename; `agentos` is the product-surface name (bot handle, CLI binary). Read
-`ARCHITECTURE.md` before touching a cross-component seam.
+`ARCHITECTURE.md` before touching a cross-component seam. If you are a coding
+agent orienting in this repo, [`llms.txt`](llms.txt) is the curated machine map
+of these docs, organized around the parity ladder.
 
 ## Directory map
 

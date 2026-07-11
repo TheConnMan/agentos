@@ -16,7 +16,17 @@ hold new features against.
 "agentos" is the product-surface name — the CLI binary, the bot handle, the
 console. Both names refer to the same system.
 
-## What it does
+## What does AgentOS do?
+
+Your agent worked on your laptop and then broke once it was deployed. AgentOS is
+a harness that runs the **same immutable bundle** and the **same
+`evals/cases.json`** identically across three targets (`skill` in-process,
+`local` via docker compose, `cluster` on Kubernetes), so a tier-to-tier
+divergence surfaces as the harness catching a real environment bug before
+production, not a silent regression after it. A coding agent can already write a
+`skill.md`; what it cannot guarantee alone is that the skill behaves the same
+deployed as it did locally. That guarantee is the harness's job: the local loop
+is the production loop.
 
 A Slack `@mention` (or DM) is answered by a versioned plugin running in an
 isolated Kubernetes sandbox, with the run traced end to end and steerable
@@ -66,7 +76,9 @@ journeys filed as `epic`-labeled issues.
 Every CLI command that touches an environment takes a **target noun** in the
 middle: `skill`, `local`, or `cluster`. Pick the lightest one that answers your
 question. (`agentos init` is the exception: it scaffolds a bundle on disk and
-targets no environment.)
+targets no environment.) The point of the three targets is that the identical
+bundle and the identical `evals/cases.json` run across all of them, so promoting
+`skill` to `local` to `cluster` is a parity ladder, not three separate setups.
 
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
@@ -104,8 +116,8 @@ export `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) and set
 **`cluster` (deployed Helm release).** `agentos cluster up` installs the platform
 on Kubernetes and `agentos cluster message "..."` drives the deployed release end
 to end with no Slack. See
-[Operating a cluster install](#operating-a-cluster-install) and
-[`docs/operations.md`](docs/operations.md).
+[How do I run my agent on a Kubernetes cluster?](#how-do-i-run-my-agent-on-a-kubernetes-cluster)
+and [`docs/operations.md`](docs/operations.md).
 
 **Real Slack (production).** With a workspace connected, `@mention` the bot in a
 channel or DM it: the dispatcher acks, posts a placeholder, and the worker routes
@@ -150,7 +162,7 @@ channel binding, and troubleshooting) see
 - **Rust toolchain** (stable, edition 2021, with `rustfmt` and `clippy`): for
   the CLI. Skip if you use a prebuilt CLI binary from Releases.
 - **kubectl + helm**: only for the cluster-install path (see
-  [Operating a cluster install](#operating-a-cluster-install)).
+  [How do I run my agent on a Kubernetes cluster?](#how-do-i-run-my-agent-on-a-kubernetes-cluster)).
 
 ## Quickstart
 
@@ -338,7 +350,7 @@ Each package documents its own deeper verify commands and gotchas in its own
 README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
 enough to see the pieces move; it is not a substitute for those.
 
-## Dev workflow
+## How do I develop and verify a change?
 
 - **Python packages** are one `uv` workspace (root `pyproject.toml`); ruff,
   mypy, and pytest run across all members from the repo root (see step 3
@@ -352,7 +364,7 @@ enough to see the pieces move; it is not a substitute for those.
   gate every cross-language lane; changing either requires regenerating the
   committed schema/TS/Rust artifacts and is enforced by a CI compat test.
 
-## Operating a cluster install
+## How do I run my agent on a Kubernetes cluster?
 
 The same `agentos` binary installs and runs the platform on a Kubernetes
 cluster, wrapping the umbrella Helm chart the way `linkerd` or `cilium` wrap
@@ -376,7 +388,7 @@ Use `--chart <path>` when developing the chart locally. The short version:
 Full runbook (the credential model, the Slack-connect command, and the
 zero-Slack `message` flow) is in [`docs/operations.md`](docs/operations.md).
 
-## Where to go next
+## Where do I go next?
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the component diagram, the
   message-flow and deploy-flow sequence diagrams, and the built/in-progress
