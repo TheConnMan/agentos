@@ -126,12 +126,9 @@ enum Command {
     /// Ordered by what the agent needs first (roughly 100 lines), carrying only
     /// non-discoverable knowledge: the parity ladder, when/which decision logic,
     /// the landmines, and verify-first. Human-readable Markdown by default;
-    /// `--json` emits a structured variant (data on stdout, human text on stderr).
-    Guide {
-        /// Emit the primer as structured JSON (stdout=data, human text=stderr).
-        #[arg(long)]
-        json: bool,
-    },
+    /// The global `--json` emits a structured variant (data on stdout, human
+    /// text on stderr).
+    Guide,
 }
 
 #[derive(Subcommand)]
@@ -1202,7 +1199,7 @@ async fn run(command: Command) -> Result<()> {
             print!("{}", agentos::schema::manifest_json(&Cli::command()));
             Ok(())
         }
-        Command::Guide { json } => agentos::guide::run(json),
+        Command::Guide => agentos::guide::run(),
     }
 }
 
