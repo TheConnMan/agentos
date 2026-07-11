@@ -51,7 +51,11 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   (#36) needs, whose skill answers via a live web search: `agentos cluster up
   --allow-web-egress 0.0.0.0/0` opens the open internet (still minus the
   `169.254.169.254` metadata endpoint the chart carves out of `0.0.0.0/0`), or
-  narrow the CIDR to a specific web-search provider for a tighter posture. The
+  narrow the CIDR to a specific web-search provider for a tighter posture. When a
+  declared value is a default route (`0.0.0.0/0`, `::/0`, or any `/0` prefix),
+  `up` prints a distinct rail-removal warning -- opening egress to the whole
+  internet removes the default-deny rail for a prompt-injectable sandbox, so
+  prefer a narrow CIDR unless you genuinely need the open internet. The
   raw helm equivalent is
   `--set 'security.networkPolicy.allowedEgress[1].cidr=0.0.0.0/0'` plus
   `...[1].ports[0].protocol=TCP` and `...[1].ports[0].port=443` (index `[1]`
