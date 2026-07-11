@@ -356,10 +356,19 @@ class CostReport(BaseModel):
 class StateEntryPut(BaseModel):
     """Write a durable state entry (#23). ``expected_version`` opts into
     compare-and-set: the write is rejected with 409 unless it matches the stored
-    version (omit it for a blind upsert)."""
+    version (omit it for a blind upsert). ``value`` is any JSON value (object,
+    array, or scalar); an array value is what ``append`` grows."""
 
-    value: dict[str, Any]
+    value: Any
     expected_version: int | None = None
+
+
+class StateAppendIn(BaseModel):
+    """Append ``item`` to a log-shaped (JSON array) state entry (#248). If the
+    entry does not exist it is created as a single-element array; if it exists
+    its value must already be an array, else the append is rejected."""
+
+    item: Any
 
 
 class StateEntryOut(BaseModel):
@@ -369,6 +378,6 @@ class StateEntryOut(BaseModel):
 
     namespace: str
     key: str
-    value: dict[str, Any]
+    value: Any
     version: int
     updated_at: datetime
