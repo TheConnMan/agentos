@@ -312,9 +312,25 @@ agentos e2e
 
 It scaffolds a throwaway bundle, runs `skill up --fake-model` -> `skill message`
 -> `skill eval` -> `skill down`, and cleans up on exit. Requires an
-`agentos-runner` image to be present (`docker build -f runner/Dockerfile -t
-agentos-runner .` from the repo root for dev; a release binary pulls its pinned
-GHCR ref on first run). It never runs `docker build`.
+`agentos-runner` image to be present: build it with **`agentos build`** (the
+one-command `docker build -f runner/Dockerfile -t agentos-runner .` from the repo
+root) for dev; a release binary pulls its pinned GHCR ref on first run. `e2e`
+itself never builds -- so `agentos build && agentos e2e` is the full from-scratch
+smoke test.
+
+## `agentos build`
+
+Build the runner image locally from `runner/Dockerfile`:
+
+```bash
+agentos build            # docker build -f runner/Dockerfile -t agentos-runner .
+agentos build --tag my-runner:dev
+```
+
+Run it from an agentos source checkout (it walks up to the repo root to find
+`runner/Dockerfile`). It prints a clear error if Docker is not installed or if
+there is no checkout -- a release binary pulls the pinned runner image from GHCR
+automatically and never needs to build.
 
 The scripted E2E (`cli/scripts/e2e.sh`) does the same round-trip and adds an
 optional deploy leg against a locally-run apps/api; it can later become a thin

@@ -569,6 +569,63 @@ pub struct E2eOpts {
     pub keep: bool,
 }
 
+/// `agentos build`: build the runner image locally from the repo's Dockerfile.
+/// The one-command equivalent of `docker build -f runner/Dockerfile -t <tag> .`
+/// run from the repo root, so `agentos build && agentos e2e` is the full
+/// from-scratch smoke test. Errors clearly when Docker is missing or when run
+/// outside a source checkout (a release binary pulls the image from GHCR).
+pub async fn build(tag: &str) -> Result<()> {
+    let ui = crate::ui::ui();
+    if !on_path("docker") {
+        bail!(
+            "Docker is not installed or not on PATH. Install Docker \
+             (https://docs.docker.com/get-docker/) and retry."
+        );
+    }
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos build` \
+         from an agentos repo checkout -- a release binary pulls the runner image from GHCR \
+         automatically and never needs to build.",
+    )?;
+    ui.note(&format!(
+        "=== docker build -f runner/Dockerfile -t {tag} . (in {}) ===",
+        root.display()
+    ));
+    // Inherit stdio so the build log streams to the terminal like a hand-run build.
+    let status = tokio::process::Command::new("docker")
+        .args(["build", "-f", "runner/Dockerfile", "-t", tag, "."])
+        .current_dir(&root)
+        .status()
+        .await
+        .context("failed to invoke docker")?;
+    if !status.success() {
+        bail!("docker build failed ({status})");
+    }
+    ui.success(&format!("built runner image '{tag}'"));
+    Ok(())
+}
+
+/// Whether `bin` resolves on PATH.
+fn on_path(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+        .unwrap_or(false)
+}
+
+/// Walk up from the current directory to the repo root: the nearest ancestor
+/// that contains `runner/Dockerfile`.
+fn find_repo_root() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join("runner/Dockerfile").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 /// `agentos e2e`: the scripted offline round-trip (`cli/scripts/e2e.sh`) as a
 /// first-class command. Scaffolds a throwaway bundle in a temp dir, boots a
 /// runner with the fake model, sends a message, runs the eval cases, and tears

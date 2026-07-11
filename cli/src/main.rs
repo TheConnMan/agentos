@@ -79,6 +79,17 @@ enum Command {
         #[command(subcommand)]
         action: ClusterAction,
     },
+    /// Build the runner image locally from `runner/Dockerfile` (source checkout only).
+    ///
+    /// Runs `docker build -f runner/Dockerfile -t <tag> .` from the repo root, so
+    /// `agentos build && agentos e2e` is the full from-scratch smoke test. A release
+    /// binary pulls the pinned runner image from GHCR automatically and never needs
+    /// this; it errors clearly if Docker is missing or there is no repo checkout.
+    Build {
+        /// Image tag to build.
+        #[arg(long, default_value = "agentos-runner")]
+        tag: String,
+    },
     /// Run the offline end-to-end round-trip natively (scripts -> `agentos <command>`).
     ///
     /// Scaffolds a throwaway bundle in a temp dir, boots a local runner with the
@@ -1136,6 +1147,7 @@ async fn main() -> Result<()> {
                 .await
             }
         },
+        Command::Build { tag } => commands::build(&tag).await,
         Command::E2e { image, port, keep } => {
             let image = artifacts::resolve_image(
                 image.as_deref(),
@@ -1155,6 +1167,21 @@ mod tests {
     #[test]
     fn clap_surface_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn build_defaults_tag_and_accepts_override() {
+        let cli = Cli::try_parse_from(["agentos", "build"]).expect("build should parse");
+        match cli.command {
+            Command::Build { tag } => assert_eq!(tag, "agentos-runner"),
+            _ => panic!("expected build command"),
+        }
+        let cli = Cli::try_parse_from(["agentos", "build", "--tag", "my-runner:dev"])
+            .expect("build --tag should parse");
+        match cli.command {
+            Command::Build { tag } => assert_eq!(tag, "my-runner:dev"),
+            _ => panic!("expected build command"),
+        }
     }
 
     #[test]
