@@ -11,12 +11,48 @@ from agentos_worker.slack_sink import AsyncSlackSink
 
 def test_base_url_override_passes_through() -> None:
     sink = AsyncSlackSink("xoxb-test", base_url="http://localhost:9999")
-    assert sink._client.base_url == "http://localhost:9999/"
+    assert sink._client_for(None).base_url == "http://localhost:9999/"
 
 
 def test_unset_base_url_uses_the_sdk_default() -> None:
     sink = AsyncSlackSink("xoxb-test")
-    assert sink._client.base_url == "https://slack.com/api/"
+    assert sink._client_for(None).base_url == "https://slack.com/api/"
+
+
+def test_per_turn_endpoint_routes_to_a_distinct_cached_client() -> None:
+    # Issue #19: a turn carrying its own endpoint must post through a client bound
+    # to that endpoint, not the worker default; the client is cached per base URL
+    # (built once, reused) since the SDK binds the endpoint at construction.
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    default = sink._client_for(None)
+    per_turn = sink._client_for("http://stub:2/api/")
+
+    assert per_turn.base_url == "http://stub:2/api/"
+    assert per_turn is not default  # a distinct endpoint gets a distinct client
+    assert sink._client_for("http://stub:2/api/") is per_turn  # cached, not rebuilt
+    assert sink._client_for(None) is default  # the default is stable too
+    # An explicit-empty endpoint collapses onto the worker default, not a third client.
+    assert sink._client_for("") is default
+
+
+def test_update_routes_to_the_per_turn_endpoint() -> None:
+    # The endpoint passed to update() selects which client posts the edit.
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    seen: list[str] = []
+
+    def _record(label: str):
+        async def _fake_chat_update(*, channel: str, ts: str, text: str) -> None:
+            seen.append(label)
+
+        return _fake_chat_update
+
+    sink._client_for(None).chat_update = _record("default")  # type: ignore[method-assign]
+    sink._client_for("http://stub:2/api/").chat_update = _record("stub")  # type: ignore[method-assign]
+
+    asyncio.run(sink.update(channel="C1", ts="1.1", text="a"))  # no endpoint -> default
+    asyncio.run(sink.update(channel="C1", ts="1.2", text="b", endpoint="http://stub:2/api/"))
+
+    assert seen == ["default", "stub"]
 
 
 def test_config_reads_slack_api_base_url_from_env(
@@ -35,7 +71,7 @@ def test_update_converts_markdown_to_mrkdwn() -> None:
     async def _fake_chat_update(*, channel: str, ts: str, text: str) -> None:
         captured.update(channel=channel, ts=ts, text=text)
 
-    sink._client.chat_update = _fake_chat_update  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
     asyncio.run(sink.update(channel="C1", ts="1.1", text="**hi** [x](http://y)"))
 
@@ -50,7 +86,7 @@ def test_update_renders_blocks_for_a_reply_convention() -> None:
     async def _fake_chat_update(**kwargs: object) -> None:
         captured.update(kwargs)
 
-    sink._client.chat_update = _fake_chat_update  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
     text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
     asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
@@ -67,7 +103,7 @@ def test_clear_status_sets_empty_assistant_status() -> None:
     async def _fake_set_status(*, channel_id: str, thread_ts: str, status: str) -> None:
         captured.update(channel_id=channel_id, thread_ts=thread_ts, status=status)
 
-    sink._client.assistant_threads_setStatus = _fake_set_status  # type: ignore[method-assign]
+    sink._client_for(None).assistant_threads_setStatus = _fake_set_status  # type: ignore[method-assign]
 
     asyncio.run(sink.clear_status(channel="C1", thread_ts="1.1"))
 
@@ -80,7 +116,7 @@ def test_clear_status_is_best_effort_on_error() -> None:
     async def _boom(**_kwargs: object) -> None:
         raise RuntimeError("workspace has no assistant feature")
 
-    sink._client.assistant_threads_setStatus = _boom  # type: ignore[method-assign]
+    sink._client_for(None).assistant_threads_setStatus = _boom  # type: ignore[method-assign]
 
     # Must not raise -- clearing the shimmer can never fail a completed turn.
     asyncio.run(sink.clear_status(channel="C1", thread_ts="1.1"))
@@ -106,7 +142,7 @@ def test_update_renders_status_and_link_blocks_for_a_reply() -> None:
     async def _fake_chat_update(**kwargs: object) -> None:
         captured.update(kwargs)
 
-    sink._client.chat_update = _fake_chat_update  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
     text = (
         '```agentos-reply\n'

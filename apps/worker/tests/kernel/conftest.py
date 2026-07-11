@@ -102,19 +102,33 @@ class FakeSink(SlackSink):
         self.updates: list[tuple[str, str, str]] = []
         # The nav pack (if any) threaded to each update, parallel to ``updates``.
         self.update_navs: list[NavPack | None] = []
+        # The per-turn reply endpoint threaded to each update (issue #19),
+        # parallel to ``updates``.
+        self.update_endpoints: list[str | None] = []
         self.status_sets: list[tuple[str, str, str]] = []
         self.status_clears: list[tuple[str, str]] = []
 
     async def update(
-        self, *, channel: str, ts: str, text: str, nav: NavPack | None = None
+        self,
+        *,
+        channel: str,
+        ts: str,
+        text: str,
+        nav: NavPack | None = None,
+        endpoint: str | None = None,
     ) -> None:
         self.updates.append((channel, ts, text))
         self.update_navs.append(nav)
+        self.update_endpoints.append(endpoint)
 
-    async def set_status(self, *, channel: str, thread_ts: str, status: str) -> None:
+    async def set_status(
+        self, *, channel: str, thread_ts: str, status: str, endpoint: str | None = None
+    ) -> None:
         self.status_sets.append((channel, thread_ts, status))
 
-    async def clear_status(self, *, channel: str, thread_ts: str) -> None:
+    async def clear_status(
+        self, *, channel: str, thread_ts: str, endpoint: str | None = None
+    ) -> None:
         self.status_clears.append((channel, thread_ts))
 
     @property

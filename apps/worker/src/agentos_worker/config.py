@@ -105,9 +105,11 @@ class WorkerConfig(BaseSettings):
 
     # Slack
     slack_bot_token: str = ""
-    # Optional Slack Web API base URL override. Unset = the real Slack API; set it
-    # to point chat.update at a local Slack stub (the CLI's `agentos local message`
-    # no-Slack middle-mode e2e).
+    # The worker's DEFAULT Slack Web API base URL: the endpoint used to finalize a
+    # turn whose reply handle carries no per-turn endpoint (issue #19). Unset = the
+    # real Slack API. A turn that carries its own reply endpoint (e.g. a CLI stub)
+    # overrides this per turn, so a real workspace and a no-Slack CLI stub can
+    # coexist on one worker instead of contending for this single setting.
     slack_api_base_url: str = ""
 
     # Postgres (read-only): resolve channel -> agent -> deployment -> version.

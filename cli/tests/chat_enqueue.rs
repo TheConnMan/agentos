@@ -61,6 +61,7 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
         "hello world",
         "111.100",
         "111.200",
+        None,
     );
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
     assert!(!stream_id.is_empty(), "XADD returned an id");
@@ -145,6 +146,7 @@ async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
         "hi",
         &thread_ts,
         &placeholder_ts,
+        None,
     );
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
@@ -200,6 +202,7 @@ async fn absent_channel_and_thread_fall_back_to_synthetic() {
         "hi",
         &thread_ts,
         &placeholder_ts,
+        None,
     );
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
@@ -241,7 +244,7 @@ async fn diagnostics_reports_stream_length_and_consumer_group_state() {
     };
     let stream = unique_stream();
 
-    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2");
+    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2", None);
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
     // The worker's group name; create it at 0 so it sees the existing entry.
@@ -285,7 +288,7 @@ async fn entry_acked_tracks_the_worker_consuming_and_acking() {
         return;
     };
     let stream = unique_stream();
-    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2");
+    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2", None);
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
     // No group yet: not acked.

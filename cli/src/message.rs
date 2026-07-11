@@ -15,17 +15,12 @@
 //! 2. The stub binds `0.0.0.0` and advertises a routable host (either
 //!    `--listen-host` or the local IP the kernel would use to reach the cluster)
 //!    so the in-cluster worker can post its placeholder edits back to it.
-//! 3. `--wire` (the default) points the deployed worker at the stub via
-//!    `helm upgrade --reuse-values --set worker.slackApiBaseUrl=<url>` and waits
-//!    for the rollout; `--no-wire` instead prints the exact command and refuses
-//!    to enqueue when the worker is not already wired.
-//! 4. A safety guard refuses to wire a Slack-connected release (one with a
-//!    dispatcher deployment) unless `--force-wire` -- otherwise the stub would
-//!    hijack the real Slack replies cluster-wide.
-//!
-//! In the demo flow `message` runs BEFORE a real Slack workspace is connected, so
-//! the guard never fires there; and the helm upgrade that connects Slack clears
-//! `worker.slackApiBaseUrl` back to empty, un-wiring the stub in the same step.
+//! 3. Each enqueued turn carries its reply endpoint (this stub's URL) on the
+//!    queue payload's reply handle (issue #19), so the worker finalizes THIS
+//!    turn against the stub without re-pointing its worker-global Slack setting.
+//!    A real Slack workspace (whose turns carry no endpoint and so use the
+//!    worker default) and this driver can therefore run against one worker at
+//!    once, instead of contending for a single `worker.slackApiBaseUrl`.
 
 use std::env;
 use std::process::Stdio;
@@ -93,11 +88,6 @@ pub struct MessageOpts {
     pub user: String,
     pub stream: String,
     pub timeout_secs: u64,
-    /// Apply the `helm upgrade` that points the worker at the stub (default).
-    /// When false, refuse to run unless the worker is already wired.
-    pub wire: bool,
-    /// Override the Slack-connected-release safety guard.
-    pub force_wire: bool,
     pub dry_run: bool,
     /// Local mode: drive the compose stack (`agentos local up`) instead of a
     /// Kubernetes release. No kubectl/helm/port-forwards/wiring; enqueue straight
@@ -157,56 +147,6 @@ pub fn port_forward_command(
             plain("port-forward"),
             plain(format!("svc/{release}-{suffix}")),
             plain(format!("{local_port}:{remote_port}")),
-        ],
-    )
-}
-
-/// `helm upgrade --reuse-values --set worker.slackApiBaseUrl=<url>`: point the
-/// deployed worker's Slack sink at the stub. `--reuse-values` keeps every other
-/// value the release already carries.
-pub fn wire_upgrade_command(namespace: &str, release: &str, chart: &str, url: &str) -> OpsCommand {
-    OpsCommand::new(
-        "helm",
-        vec![
-            plain("upgrade"),
-            plain(release),
-            plain(chart),
-            plain("-n"),
-            plain(namespace),
-            plain("--reuse-values"),
-            plain("--set"),
-            plain(format!("worker.slackApiBaseUrl={url}")),
-        ],
-    )
-}
-
-/// `kubectl -n <ns> rollout status deployment/<release>-worker`: wait for the
-/// re-pointed worker pods to become ready before enqueuing.
-pub fn worker_rollout_status_command(namespace: &str, release: &str) -> OpsCommand {
-    OpsCommand::new(
-        "kubectl",
-        vec![
-            plain("-n"),
-            plain(namespace),
-            plain("rollout"),
-            plain("status"),
-            plain(format!("deployment/{release}-worker")),
-        ],
-    )
-}
-
-/// `kubectl -n <ns> get deployment <release>-<component> -o json`.
-fn deploy_get_command(namespace: &str, release: &str, component: &str) -> OpsCommand {
-    OpsCommand::new(
-        "kubectl",
-        vec![
-            plain("-n"),
-            plain(namespace),
-            plain("get"),
-            plain("deployment"),
-            plain(format!("{release}-{component}")),
-            plain("-o"),
-            plain("json"),
         ],
     )
 }
@@ -318,30 +258,10 @@ pub fn server_host_and_port(server: &str) -> Option<(String, u16)> {
     Some((host.to_string(), port))
 }
 
-/// The current `SLACK_API_BASE_URL` on the worker container, from
-/// `kubectl get deployment ... -o json`. `None` when the env var is unset (the
-/// worker is on real Slack) or the JSON has no worker container.
-pub fn worker_slack_api_base_url(deploy_json: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(deploy_json).ok()?;
-    let containers = v.pointer("/spec/template/spec/containers")?.as_array()?;
-    for c in containers {
-        let Some(env) = c.get("env").and_then(|e| e.as_array()) else {
-            continue;
-        };
-        for e in env {
-            if e.get("name").and_then(|n| n.as_str()) == Some("SLACK_API_BASE_URL") {
-                return e
-                    .get("value")
-                    .and_then(|val| val.as_str())
-                    .map(str::to_string);
-            }
-        }
-    }
-    None
-}
-
 /// The ordered command lines (plus the stub URL and enqueue description) that a
 /// real run would execute, for `--dry-run`. Pure so the rendering is testable.
+/// The reply routes back to the stub via the per-turn endpoint on the queue
+/// payload (issue #19), so there is no worker-global `helm upgrade` to render.
 pub fn dry_run_lines(opts: &MessageOpts, advertise_host: &str) -> Vec<String> {
     let mut cmds: Vec<OpsCommand> = vec![port_forward_command(
         &opts.namespace,
@@ -359,25 +279,7 @@ pub fn dry_run_lines(opts: &MessageOpts, advertise_host: &str) -> Vec<String> {
             API_REMOTE_PORT,
         ));
     }
-    cmds.push(deploy_get_command(&opts.namespace, &opts.release, "worker"));
     let url = advertised_url(advertise_host, opts.listen_port);
-    if opts.wire {
-        cmds.push(deploy_get_command(
-            &opts.namespace,
-            &opts.release,
-            "dispatcher",
-        ));
-        cmds.push(wire_upgrade_command(
-            &opts.namespace,
-            &opts.release,
-            &opts.chart,
-            &url,
-        ));
-        cmds.push(worker_rollout_status_command(
-            &opts.namespace,
-            &opts.release,
-        ));
-    }
     let mut lines: Vec<String> = cmds.iter().map(OpsCommand::display).collect();
     lines.push(format!("stub advertised at {url}"));
     let channel = opts
@@ -385,7 +287,8 @@ pub fn dry_run_lines(opts: &MessageOpts, advertise_host: &str) -> Vec<String> {
         .clone()
         .unwrap_or_else(|| "<the sole deployed agent's slack_channel>".to_string());
     lines.push(format!(
-        "enqueue a synthetic QueuedTurn for channel {channel} on stream {}",
+        "enqueue a synthetic QueuedTurn (reply endpoint {url}) for channel {channel} \
+         on stream {}",
         opts.stream
     ));
     lines
@@ -473,118 +376,13 @@ async fn wait_for_tcp(port: u16, timeout: Duration) -> Result<()> {
     }
 }
 
-/// The worker's current `SLACK_API_BASE_URL`, or an error if the deployment is
-/// unreadable (the release is not installed).
-async fn current_worker_base_url(opts: &MessageOpts) -> Result<Option<String>> {
-    let cmd = deploy_get_command(&opts.namespace, &opts.release, "worker");
-    let (ok, out, err) = run_capture(&cmd).await?;
-    if !ok {
-        bail!(
-            "could not read the worker deployment '{}-worker' in namespace {} ({}). \
-             Is the release installed? Run `agentos cluster up` first.",
-            opts.release,
-            opts.namespace,
-            err.trim().lines().next().unwrap_or("kubectl get failed")
-        );
-    }
-    Ok(worker_slack_api_base_url(&out))
-}
-
-/// Whether the release carries a dispatcher deployment. It renders only when
-/// both Slack tokens are configured (`agentos.dispatcher.enabled`), so its
-/// presence is the "this release is connected to a real Slack workspace" signal.
-async fn dispatcher_exists(opts: &MessageOpts) -> Result<bool> {
-    let cmd = deploy_get_command(&opts.namespace, &opts.release, "dispatcher");
-    let (ok, _out, _err) = run_capture(&cmd).await?;
-    Ok(ok)
-}
-
-/// Run one external command under a checklist `step`, capturing its stdio.
-/// Echoes the masked command line and replays the captured output as dim
-/// plumbing (both no-ops unless `--debug`, so default runs stay quiet and the
-/// helm/kubectl chatter is hidden). On success the step freezes done with
-/// `ok_detail`; on a nonzero exit it freezes failed, surfaces the captured
-/// stderr via `ui.failure`, and bails. Mirrors `ops::run_step`, which is scoped
-/// to that module.
-async fn run_wire_step(
-    cl: &crate::ui::Checklist,
-    label: &str,
-    ok_detail: &str,
-    cmd: &OpsCommand,
-) -> Result<()> {
-    let ui = crate::ui::ui();
-    ui.plumbing(&format!("+ {}", cmd.display()));
-    let step = cl.step(label);
-    let (ok, out, err) = run_capture(cmd).await?;
-    if ok {
-        step.done(ok_detail);
-    } else {
-        step.fail("failed");
-    }
-    for line in out.lines().chain(err.lines()) {
-        ui.plumbing(line);
-    }
-    if !ok {
-        let reason = err
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .unwrap_or("command failed");
-        ui.failure(&format!("`{}` failed: {reason}", cmd.program));
-        bail!("`{}` exited nonzero", cmd.program);
-    }
-    Ok(())
-}
-
-/// Point the deployed worker at the stub via `helm upgrade` + rollout wait,
-/// unless it is already wired. Refuses a Slack-connected release without
-/// `--force-wire`.
-async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
-    let ui = crate::ui::ui();
-    if current_worker_base_url(opts).await?.as_deref() == Some(url) {
-        ui.note(&format!(
-            "worker already wired to {url}; skipping helm upgrade"
-        ));
-        return Ok(());
-    }
-    if !opts.force_wire && dispatcher_exists(opts).await? {
-        bail!(
-            "release '{}' has a dispatcher deployment, so it is connected to a real Slack \
-             workspace. Wiring the worker to this local stub would hijack that workspace's \
-             replies cluster-wide. Re-run with --force-wire to override, or --no-wire to skip \
-             wiring (and wire the worker yourself).",
-            opts.release
-        );
-    }
-    require_on_path("helm")?;
-    let cl = ui.checklist();
-    run_wire_step(
-        &cl,
-        "wiring worker to stub",
-        "wired",
-        &wire_upgrade_command(&opts.namespace, &opts.release, &opts.chart, url),
-    )
-    .await?;
-    run_wire_step(
-        &cl,
-        "waiting for worker rollout",
-        "rolled out",
-        &worker_rollout_status_command(&opts.namespace, &opts.release),
-    )
-    .await?;
-    Ok(())
-}
-
 /// The `agentos local message` handler: drive the compose stack directly.
 ///
-/// The cluster path's self-plumbing (kubectl port-forwards, the wiring helm
-/// upgrade, the dispatcher guard) is all cluster-specific, so local mode keeps
-/// only the shared engine: bind the same Slack stub, enqueue the same
-/// `QueuedTurn`, wait on the same XACK signal. The compose worker is
-/// already running and already pointed at this stub (its `SLACK_API_BASE_URL` is
-/// fixed to `http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/`), so there is
-/// nothing to wire.
+/// The cluster path's self-plumbing (kubectl port-forwards) is cluster-specific,
+/// so local mode keeps only the shared engine: bind the Slack stub, enqueue the
+/// `QueuedTurn` carrying this stub as its reply endpoint (issue #19), and wait on
+/// the XACK signal. The compose worker reaches the stub on the fixed loopback
+/// port `http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/`.
 async fn message_local(opts: MessageOpts) -> Result<()> {
     let ui = crate::ui::ui();
     let valkey_url = local_valkey_url(&opts.valkey_password);
@@ -636,6 +434,9 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     };
     ui.note(&format!("routing to channel {channel}"));
 
+    // This turn carries its own reply endpoint (issue #19), so the compose worker
+    // finalizes it against this stub without relying on a worker-global setting.
+    let reply_endpoint = stub.base_api_url().to_string();
     let (channel, thread_ts, placeholder_ts) =
         resolve_targets(Some(&channel), opts.thread.as_deref());
     let event = synthetic_turn(
@@ -644,6 +445,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
         &opts.text,
         &thread_ts,
         &placeholder_ts,
+        Some(reply_endpoint),
     );
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
     ui.note(&format!(
@@ -764,23 +566,11 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     };
     ui.note(&format!("routing to channel {channel}"));
 
-    // Wire the worker to the stub (default) or verify it is already wired.
-    if opts.wire {
-        wire_worker(&opts, &url).await?;
-    } else {
-        let current = current_worker_base_url(&opts).await?;
-        if current.as_deref() != Some(url.as_str()) {
-            bail!(
-                "the deployed worker is not wired to this stub (SLACK_API_BASE_URL={}). \
-                 Re-run without --no-wire, or apply it yourself:\n  {}\n  {}",
-                current.as_deref().unwrap_or("<unset>"),
-                wire_upgrade_command(&opts.namespace, &opts.release, &opts.chart, &url).display(),
-                worker_rollout_status_command(&opts.namespace, &opts.release).display(),
-            );
-        }
-    }
-
     // Enqueue the exact event the dispatcher would produce and wait for the ack.
+    // The turn carries its reply endpoint (this stub's advertised URL) on the
+    // payload (issue #19), so the in-cluster worker posts THIS turn's reply back
+    // to the stub without a worker-global `helm upgrade`; a real workspace on the
+    // same worker keeps replying to real Slack.
     let valkey_url = format!(
         "redis://:{}@localhost:{}",
         opts.valkey_password, opts.valkey_local_port
@@ -794,6 +584,7 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
         &opts.text,
         &thread_ts,
         &placeholder_ts,
+        Some(url),
     );
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
     ui.note(&format!(
@@ -853,7 +644,7 @@ mod tests {
         }
     }
 
-    fn opts(channel: Option<&str>, wire: bool) -> MessageOpts {
+    fn opts(channel: Option<&str>) -> MessageOpts {
         MessageOpts {
             text: "hi".into(),
             channel: channel.map(str::to_string),
@@ -870,8 +661,6 @@ mod tests {
             user: DEFAULT_USER.into(),
             stream: DEFAULT_STREAM.into(),
             timeout_secs: DEFAULT_TIMEOUT_SECS,
-            wire,
-            force_wire: false,
             dry_run: false,
             local: false,
             api_url: None,
@@ -884,30 +673,6 @@ mod tests {
         assert_eq!(
             cmd.display(),
             "kubectl -n agentos port-forward svc/agentos-valkey 56381:6379"
-        );
-    }
-
-    #[test]
-    fn wire_upgrade_command_sets_the_stub_url_with_reuse_values() {
-        let cmd = wire_upgrade_command(
-            "agentos",
-            "agentos",
-            "charts/agentos",
-            "http://10.1.2.3:8155/api/",
-        );
-        assert_eq!(
-            cmd.display(),
-            "helm upgrade agentos charts/agentos -n agentos --reuse-values \
-             --set worker.slackApiBaseUrl=http://10.1.2.3:8155/api/"
-        );
-    }
-
-    #[test]
-    fn worker_rollout_status_targets_the_worker_deployment() {
-        let cmd = worker_rollout_status_command("agentos", "agentos");
-        assert_eq!(
-            cmd.display(),
-            "kubectl -n agentos rollout status deployment/agentos-worker"
         );
     }
 
@@ -1008,33 +773,9 @@ mod tests {
     }
 
     #[test]
-    fn worker_slack_api_base_url_reads_the_env_value() {
-        let json = r#"{"spec":{"template":{"spec":{"containers":[
-            {"name":"worker","env":[
-                {"name":"AGENTOS_NAMESPACE","value":"agentos"},
-                {"name":"SLACK_API_BASE_URL","value":"http://10.1.2.3:8155/api/"}
-            ]}
-        ]}}}}"#;
-        assert_eq!(
-            worker_slack_api_base_url(json).as_deref(),
-            Some("http://10.1.2.3:8155/api/")
-        );
-    }
-
-    #[test]
-    fn worker_slack_api_base_url_is_none_when_unset() {
-        let json = r#"{"spec":{"template":{"spec":{"containers":[
-            {"name":"worker","env":[{"name":"AGENTOS_NAMESPACE","value":"agentos"}]}
-        ]}}}}"#;
-        assert_eq!(worker_slack_api_base_url(json), None);
-        // No worker container / malformed -> None, not a panic.
-        assert_eq!(worker_slack_api_base_url("{}"), None);
-    }
-
-    #[test]
-    fn dry_run_lists_forwards_wire_and_the_enqueue_with_default_wire() {
-        let lines = dry_run_lines(&opts(Some("C123"), true), "10.1.2.3");
-        // Explicit channel -> no API port-forward.
+    fn dry_run_lists_the_valkey_forward_and_the_enqueue_with_the_reply_endpoint() {
+        let lines = dry_run_lines(&opts(Some("C123")), "10.1.2.3");
+        // Explicit channel -> only the Valkey forward, no API forward.
         assert!(
             lines
                 .iter()
@@ -1045,23 +786,19 @@ mod tests {
             !lines.iter().any(|l| l.contains("svc/agentos-api")),
             "explicit channel needs no api forward: {lines:?}"
         );
+        // Issue #19: the reply routes per turn, so there is no worker-global
+        // helm upgrade / rollout / dispatcher guard in the plan.
         assert!(
-            lines
-                .iter()
-                .any(|l| l.contains("get deployment agentos-dispatcher")),
-            "wire path checks the dispatcher guard: {lines:?}"
+            !lines.iter().any(|l| l.contains("helm upgrade")),
+            "no worker-global wiring: {lines:?}"
         );
         assert!(
-            lines.iter().any(|l| l
-                == "helm upgrade agentos charts/agentos -n agentos --reuse-values \
-                    --set worker.slackApiBaseUrl=http://10.1.2.3:8155/api/"),
-            "{lines:?}"
+            !lines.iter().any(|l| l.contains("rollout status")),
+            "no rollout wait: {lines:?}"
         );
         assert!(
-            lines
-                .iter()
-                .any(|l| l == "kubectl -n agentos rollout status deployment/agentos-worker"),
-            "{lines:?}"
+            !lines.iter().any(|l| l.contains("dispatcher")),
+            "no dispatcher guard: {lines:?}"
         );
         assert!(
             lines
@@ -1069,30 +806,23 @@ mod tests {
                 .any(|l| l == "stub advertised at http://10.1.2.3:8155/api/"),
             "{lines:?}"
         );
+        // The enqueue line names the channel and the per-turn reply endpoint.
         assert!(
-            lines
-                .iter()
-                .any(|l| l.contains("enqueue") && l.contains("C123")),
+            lines.iter().any(|l| l.contains("enqueue")
+                && l.contains("C123")
+                && l.contains("reply endpoint http://10.1.2.3:8155/api/")),
             "{lines:?}"
         );
     }
 
     #[test]
-    fn dry_run_adds_api_forward_and_drops_wiring_when_no_channel_no_wire() {
-        let lines = dry_run_lines(&opts(None, false), "host");
+    fn dry_run_adds_api_forward_when_no_channel() {
+        let lines = dry_run_lines(&opts(None), "host");
         assert!(
             lines
                 .iter()
                 .any(|l| l == "kubectl -n agentos port-forward svc/agentos-api 8123:8000"),
             "no --channel -> api forward: {lines:?}"
-        );
-        assert!(
-            !lines.iter().any(|l| l.contains("helm upgrade")),
-            "--no-wire -> no upgrade: {lines:?}"
-        );
-        assert!(
-            !lines.iter().any(|l| l.contains("dispatcher")),
-            "--no-wire -> no dispatcher guard: {lines:?}"
         );
         assert!(
             lines.iter().any(|l| l.contains("slack_channel")),

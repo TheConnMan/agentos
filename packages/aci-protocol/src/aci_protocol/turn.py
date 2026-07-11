@@ -37,14 +37,22 @@ class ReplyHandle(BaseModel):
     message and the worker edits it as the answer streams. For the Slack adapter
     today, ``channel`` is the Slack channel id (also the key the deployment
     binding matches an agent on) and ``placeholder`` is the ts of the pre-posted
-    placeholder message. Issue #19 extends this with a per-turn reply endpoint so
-    two ingress paths can coexist on one worker.
+    placeholder message.
+
+    ``endpoint`` is the per-turn reply target: the base URL of the channel API the
+    worker delivers this turn's reply through. It routes the reply back to the
+    ingress that enqueued the turn instead of a worker-global setting, so two
+    ingress paths (a real Slack workspace and a no-Slack CLI stub) can coexist on
+    one worker (issue #19). ``None`` means "use the worker's configured default"
+    (its ``slack_api_base_url``, i.e. real Slack), so a producer that does not set
+    it keeps the pre-#19 behavior.
     """
 
     model_config = _STRICT
 
     channel: str
     placeholder: str
+    endpoint: str | None = None
 
 
 class QueuedTurn(BaseModel):

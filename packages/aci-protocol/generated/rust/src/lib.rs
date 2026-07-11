@@ -82,6 +82,8 @@ pub struct SessionConfig {
 pub struct ReplyHandle {
     pub channel: String,
     pub placeholder: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
