@@ -104,14 +104,31 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
     cmd
 }
 
-/// `docker compose -f <file> down` (keep volumes), or `... down -v` with
-/// `--wipe` (destroy volumes).
+/// Every compose profile `up` can activate. `down` passes all of them
+/// unconditionally so it always tears down what any `up` could start -- most
+/// importantly the `slack` dispatcher (`restart: unless-stopped`), which a bare
+/// `down` leaves running after a forgot-to-disconnect where it keeps holding the
+/// Socket Mode connection and posting placeholders into real Slack with no
+/// backend (issue #233). These are deliberately independent of the `LocalOpts`
+/// flags: a plain `local down` carries none of `--slack`/`--minimal`/
+/// `--local-model`, so gating teardown on them would orphan exactly the
+/// profile-only services this exists to reap.
+const ALL_PROFILES: &[&str] = &["core", "full", "local-model", "slack"];
+
+/// `docker compose --profile <all> -f <file> down` (keep volumes), or
+/// `... down -v` with `--wipe` (destroy volumes). The profiles cover every
+/// service `up` can start so `down` never orphans a profile-only container.
 pub fn down_command(o: &LocalDownOpts) -> OpsCommand {
-    if o.wipe {
-        compose(&o.common.file, &["down", "-v"])
-    } else {
-        compose(&o.common.file, &["down"])
+    let mut args = vec![plain("compose")];
+    for p in ALL_PROFILES {
+        args.push(plain("--profile"));
+        args.push(plain(*p));
     }
+    args.extend([plain("-f"), plain(&o.common.file), plain("down")]);
+    if o.wipe {
+        args.push(plain("-v"));
+    }
+    OpsCommand::new("docker", args)
 }
 
 /// `docker compose -f <file> ps`.
@@ -260,6 +277,30 @@ mod tests {
         }
     }
 
+    /// Every `--profile` token `up` can emit across all flag combinations,
+    /// derived from `up_command` itself so a newly added up profile that `down`
+    /// forgets fails `down_passes_every_up_profile` instead of silently
+    /// orphaning that service. `--minimal` swaps `full`->`core`, so both modes
+    /// are sampled with `--slack` and `--local-model` on.
+    fn up_activatable_profiles() -> std::collections::BTreeSet<String> {
+        let mut profiles = std::collections::BTreeSet::new();
+        for minimal in [false, true] {
+            let mut o = opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b");
+            o.minimal = minimal;
+            o.slack = true;
+            let display = up_command(&o).display();
+            let mut tokens = display.split_whitespace().peekable();
+            while let Some(tok) = tokens.next() {
+                if tok == "--profile" {
+                    if let Some(p) = tokens.next() {
+                        profiles.insert(p.to_string());
+                    }
+                }
+            }
+        }
+        profiles
+    }
+
     fn read_compose(name: &str) -> String {
         std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), name))
             .unwrap_or_else(|e| panic!("read {name}: {e}"))
@@ -376,7 +417,10 @@ mod tests {
             wipe: false,
             yes: false,
         });
-        assert_eq!(cmd.display(), "docker compose -f compose.dev.yaml down");
+        assert_eq!(
+            cmd.display(),
+            "docker compose --profile core --profile full --profile local-model --profile slack -f compose.dev.yaml down"
+        );
     }
 
     #[test]
@@ -386,7 +430,39 @@ mod tests {
             wipe: true,
             yes: false,
         });
-        assert_eq!(cmd.display(), "docker compose -f compose.dev.yaml down -v");
+        assert_eq!(
+            cmd.display(),
+            "docker compose --profile core --profile full --profile local-model --profile slack -f compose.dev.yaml down -v"
+        );
+    }
+
+    /// `down` must tear down every profile `up` can start, regardless of which
+    /// flags this particular invocation carries. Concretely: a plain `local
+    /// down` (no `--slack`) must still pass `--profile slack` so a
+    /// forgot-to-disconnect dispatcher (`restart: unless-stopped`) is reaped
+    /// instead of orphaned holding a live Socket Mode connection (issue #233).
+    #[test]
+    fn down_passes_every_up_profile() {
+        // A default `local down` -- no --slack, no --minimal, no --local-model.
+        let display = down_command(&LocalDownOpts {
+            common: opts(DEFAULT_COMPOSE_FILE),
+            wipe: false,
+            yes: false,
+        })
+        .display();
+        for profile in ["core", "full", "local-model", "slack"] {
+            assert!(
+                display.contains(&format!("--profile {profile}")),
+                "down must pass --profile {profile}; got: {display}"
+            );
+        }
+        // Every profile `up` can activate must be covered by `down`.
+        for profile in up_activatable_profiles() {
+            assert!(
+                display.contains(&format!("--profile {profile}")),
+                "down omits --profile {profile} that up can start; got: {display}"
+            );
+        }
     }
 
     #[test]
@@ -405,7 +481,7 @@ mod tests {
         });
         assert_eq!(
             down.display(),
-            "docker compose -f compose.other.yaml down -v"
+            "docker compose --profile core --profile full --profile local-model --profile slack -f compose.other.yaml down -v"
         );
     }
 
