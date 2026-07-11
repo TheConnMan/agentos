@@ -1526,6 +1526,11 @@
           "about": "Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`)",
           "hidden": false,
           "name": "e2e"
+        },
+        {
+          "about": "Run the primer before-after harness smoke (`bash cli/scripts/harness-eval.sh`)",
+          "hidden": false,
+          "name": "harness-eval"
         }
       ]
     },

@@ -10,6 +10,7 @@ dependencies = [
     "agentos-dispatcher",
     "agentos-worker",
     "agentos-runner",
+    "harness-eval",
 ]
 
 [tool.uv]
@@ -23,6 +24,7 @@ members = [
     "apps/dispatcher",
     "apps/worker",
     "runner",
+    "harness-eval",
 ]
 
 [tool.uv.sources]
@@ -32,6 +34,7 @@ agentos-api = { workspace = true }
 agentos-dispatcher = { workspace = true }
 agentos-worker = { workspace = true }
 agentos-runner = { workspace = true }
+harness-eval = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -54,6 +57,7 @@ testpaths = [
     "runner/tests",
     "compose/tests",
     "examples/tests",
+    "harness-eval/tests",
 ]
 
 [tool.ruff]
@@ -76,6 +80,7 @@ mypy_path = [
     "apps/dispatcher/src",
     "apps/worker/src",
     "runner/src",
+    "harness-eval/src",
 ]
 files = [
     "packages/aci-protocol/src",
@@ -84,6 +89,7 @@ files = [
     "apps/dispatcher/src",
     "apps/worker/src",
     "runner/src",
+    "harness-eval/src",
 ]
 
 # The official kubernetes client ships no type stubs; keep its boundary typed

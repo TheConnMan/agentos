@@ -65,6 +65,7 @@ they error clearly -- a release binary has no dev scripts.
 | `agentos dev contracts` | `bash scripts/check-contracts.sh` -- check the frozen contracts. |
 | `agentos dev chart-check` | `bash charts/agentos/ci/render-assertions.sh` -- render-assert the Helm chart. |
 | `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
+| `agentos dev harness-eval` | `bash cli/scripts/harness-eval.sh` -- the primer before-after harness smoke (deterministic fake driver, no token spend). |
 
 ## `skill` target: runner-only, fully offline
 

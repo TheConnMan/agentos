@@ -135,6 +135,8 @@ enum DevAction {
     ChartCheck,
     /// Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`).
     E2e,
+    /// Run the primer before-after harness smoke (`bash cli/scripts/harness-eval.sh`).
+    HarnessEval,
 }
 
 #[derive(Subcommand)]
@@ -702,6 +704,7 @@ async fn main() -> Result<()> {
                 commands::dev_script("charts/agentos/ci/render-assertions.sh").await
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
+            DevAction::HarnessEval => commands::dev_script("cli/scripts/harness-eval.sh").await,
         },
         Command::Skill { action } => match action {
             SkillAction::Up {
@@ -1235,6 +1238,14 @@ mod tests {
             cli.command,
             Command::Dev {
                 action: DevAction::E2e
+            }
+        ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "harness-eval"])
+            .expect("dev harness-eval should parse");
+        assert!(matches!(
+            cli.command,
+            Command::Dev {
+                action: DevAction::HarnessEval
             }
         ));
     }
