@@ -23,7 +23,7 @@ from .adapter import (
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
-from .plugin import load_plugins
+from .plugin import ClaudeBundleInstaller
 from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
@@ -49,7 +49,7 @@ def build_runner(
     def factory() -> ModelSession:
         if fake_model:
             return FakeModelSession()
-        plugins = load_plugins(config.session.plugin_dir)
+        plugins = ClaudeBundleInstaller().install(config.session.plugin_dir)
         options = build_options(
             plugins=plugins,
             model=config.model,

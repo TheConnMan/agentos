@@ -22,7 +22,7 @@ from .conformance import conformance_producer
 from .events import AssistantText, RateLimit, ToolCall, TurnEvent, TurnResult
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
-from .plugin import PluginBundleError, load_plugins
+from .plugin import BundleInstaller, ClaudeBundleInstaller, PluginBundleError, load_plugins
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
@@ -47,6 +47,8 @@ __all__ = [
     "RunTracer",
     "build_tracer_provider",
     "PluginBundleError",
+    "BundleInstaller",
+    "ClaudeBundleInstaller",
     "load_plugins",
     "create_app",
     "SessionRunner",

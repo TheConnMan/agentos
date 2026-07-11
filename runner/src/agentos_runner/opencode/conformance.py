@@ -19,10 +19,14 @@ from aci_protocol import Event, Interrupt, run_conformance
 from ..otel import RunTracer
 from ..session import SessionRunner
 from ..side_effects import SideEffectClassifier
+from .installer import OpenCodeBundleInstaller
 from .session import OPENCODE_READONLY_TOOLS, OpenCodeModelSession
 
 
 def _build_runner() -> SessionRunner:
+    # The conformance session is deliberately bundle-less: the stub installer
+    # makes that an explicit decision at the port rather than an accident (#310).
+    OpenCodeBundleInstaller().install(None)
     return SessionRunner(
         session_factory=OpenCodeModelSession,
         ceiling=0,  # unbounded: conformance validates protocol shape, not budgets
