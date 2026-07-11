@@ -108,7 +108,7 @@ def test_non_archive_is_rejected(tmp_path: Path) -> None:
 def _create_version(client: Any, headers: dict[str, str]) -> tuple[str, str]:
     agent = client.post(
         "/agents",
-        json={"name": "bundle-agent", "slack_channel": "#b"},
+        json={"name": "bundle-agent", "slack_channel": "C000000B01"},
         headers=headers,
     ).json()
     version = client.post(

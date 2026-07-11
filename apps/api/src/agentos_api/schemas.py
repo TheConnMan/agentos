@@ -1,12 +1,40 @@
 """Pydantic v2 request/response models for the API surface."""
 
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .models import Environment
+
+# Slack channel IDs start with C (public/private channel), D (DM), or G (legacy
+# private group) followed by uppercase-alphanumeric chars. Allowlist-shaped on
+# purpose: unlike the CLI's blocklist (which only rejects a leading '#'), this
+# also rejects bare names ("general"), pasted URLs, and lowercase IDs -- none of
+# which the worker can route on.
+_SLACK_CHANNEL_ID = re.compile(r"^[CDG][A-Z0-9]{7,}$")
+
+
+def _validate_slack_channel_id(value: str | None) -> str | None:
+    """Enforce a Slack channel-ID shape on a binding. Slack events carry the
+    channel ID (e.g. C0123ABCD) and the worker routes on it, so a #name or
+    bare-name binding never receives messages. This is the authoritative gate
+    for every caller (UI, API, CLI); the CLI keeps a fast local check purely
+    for UX. Reused by AgentCreate and AgentUpdate so create and PATCH validate
+    identically; None (an omitted PATCH field) passes through as a no-op."""
+    if value is None:
+        return value
+    if not _SLACK_CHANNEL_ID.match(value):
+        raise ValueError(
+            f"slack channel {value!r} is not a Slack channel ID: real Slack "
+            "events carry the channel ID (e.g. C0123ABCD) and the worker "
+            "routes on it, so a #name or bare-name binding never receives "
+            "messages. Pass the channel ID instead -- find it in the channel's "
+            "About tab, or the channel URL (.../archives/C0123ABCD)."
+        )
+    return value
 
 
 class AppConfig(BaseModel):
@@ -101,6 +129,10 @@ class AgentCreate(BaseModel):
     # platform default model.
     model: str | None = None
 
+    _check_slack_channel = field_validator("slack_channel")(
+        _validate_slack_channel_id
+    )
+
 
 class AgentUpdate(BaseModel):
     """Partial update of mutable agent fields. slack_channel and model are
@@ -111,6 +143,10 @@ class AgentUpdate(BaseModel):
     # New per-agent model id (#254). Omitted (None) leaves the current model
     # unchanged, matching the slack_channel convention.
     model: str | None = None
+
+    _check_slack_channel = field_validator("slack_channel")(
+        _validate_slack_channel_id
+    )
 
 
 class AgentOut(BaseModel):

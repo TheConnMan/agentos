@@ -30,7 +30,7 @@ def test_full_round_trip(
     # create agent
     resp = client.post(
         "/agents",
-        json={"name": "triage-bot", "slack_channel": "#triage"},
+        json={"name": "triage-bot", "slack_channel": "C0TRIAGE01"},
         headers=auth_headers,
     )
     assert resp.status_code == 201, resp.text
@@ -72,7 +72,7 @@ def test_full_round_trip(
 
     got_agent = client.get(f"/agents/{agent_id}", headers=auth_headers)
     assert got_agent.status_code == 200
-    assert got_agent.json()["slack_channel"] == "#triage"
+    assert got_agent.json()["slack_channel"] == "C0TRIAGE01"
 
     listed_versions = client.get(
         f"/agents/{agent_id}/versions", headers=auth_headers
@@ -119,22 +119,22 @@ def test_patch_agent_moves_slack_channel(
     # of the existing agent (the audit MAJOR: the channel was silently ignored).
     agent = client.post(
         "/agents",
-        json={"name": "mover", "slack_channel": "#old"},
+        json={"name": "mover", "slack_channel": "C000000OLD"},
         headers=auth_headers,
     ).json()
     agent_id = agent["id"]
 
     resp = client.patch(
         f"/agents/{agent_id}",
-        json={"slack_channel": "#new"},
+        json={"slack_channel": "C000000NEW"},
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["slack_channel"] == "#new"
+    assert resp.json()["slack_channel"] == "C000000NEW"
 
     # The change is persisted, not just echoed back.
     got = client.get(f"/agents/{agent_id}", headers=auth_headers).json()
-    assert got["slack_channel"] == "#new"
+    assert got["slack_channel"] == "C000000NEW"
 
 
 def test_patch_agent_omitted_field_is_noop(
@@ -142,14 +142,56 @@ def test_patch_agent_omitted_field_is_noop(
 ) -> None:
     agent = client.post(
         "/agents",
-        json={"name": "stable", "slack_channel": "#keep"},
+        json={"name": "stable", "slack_channel": "C0000KEEP1"},
         headers=auth_headers,
     ).json()
     resp = client.patch(
         f"/agents/{agent['id']}", json={}, headers=auth_headers
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["slack_channel"] == "#keep"
+    assert resp.json()["slack_channel"] == "C0000KEEP1"
+
+
+def test_create_agent_rejects_non_id_channel(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # The API is the authoritative gate (the CLI check is UX-only): a #name
+    # binding never routes, so create must reject it with a 422, not persist a
+    # dead binding a non-CLI caller (the UI) could create.
+    resp = client.post(
+        "/agents",
+        json={"name": "bad-create", "slack_channel": "#general"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "slack channel" in resp.text.lower()
+    # Nothing was persisted despite the rejected create.
+    assert [a["id"] for a in client.get("/agents", headers=auth_headers).json()] == []
+
+
+def test_patch_agent_rejects_non_id_channel(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A redeploy that PATCHes a #name channel onto an existing agent must be
+    # rejected too, and must not clobber the agent's current (valid) channel.
+    agent = client.post(
+        "/agents",
+        json={"name": "patch-bad", "slack_channel": "C000GOOD01"},
+        headers=auth_headers,
+    ).json()
+    agent_id = agent["id"]
+
+    resp = client.patch(
+        f"/agents/{agent_id}",
+        json={"slack_channel": "general"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "slack channel" in resp.text.lower()
+
+    # The rejected PATCH left the original channel intact.
+    got = client.get(f"/agents/{agent_id}", headers=auth_headers).json()
+    assert got["slack_channel"] == "C000GOOD01"
 
 
 def test_patch_missing_agent_returns_404(
@@ -158,7 +200,7 @@ def test_patch_missing_agent_returns_404(
     missing = "00000000-0000-0000-0000-000000000000"
     resp = client.patch(
         f"/agents/{missing}",
-        json={"slack_channel": "#x"},
+        json={"slack_channel": "C000000X01"},
         headers=auth_headers,
     )
     assert resp.status_code == 404
@@ -171,7 +213,7 @@ def test_delete_agent_removes_it_and_cascades_versions(
     # version rows go with it (FK cascade) rather than lingering as orphans.
     agent = client.post(
         "/agents",
-        json={"name": "disposable", "slack_channel": "#gone"},
+        json={"name": "disposable", "slack_channel": "C0000GONE1"},
         headers=auth_headers,
     ).json()
     agent_id = agent["id"]
@@ -210,7 +252,7 @@ def test_delete_agent_with_active_deployment_returns_409(
     # traffic; the endpoint refuses with 409 and leaves everything intact.
     agent = client.post(
         "/agents",
-        json={"name": "live-one", "slack_channel": "#live"},
+        json={"name": "live-one", "slack_channel": "C0000LIVE1"},
         headers=auth_headers,
     ).json()
     agent_id = agent["id"]
