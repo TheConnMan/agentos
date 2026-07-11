@@ -32,6 +32,38 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 | Command | What it does |
 |---|---|
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed. |
+| `agentos build` | Build the runner image locally: `docker build -f runner/Dockerfile -t agentos-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
+
+## `agentos install`
+
+Contributor bootstrap for a fresh source checkout: install dependencies and
+build, but **start nothing**. Run it once after cloning; then `agentos local up`
+brings the stack up. From the repo root (found by walking up to
+`runner/Dockerfile`) it runs, in order and each idempotent, streaming output:
+
+1. Copy `.env.example` to `.env` if `.env` is missing (otherwise left untouched).
+2. `uv sync` at the repo root (needs `uv`).
+3. `pnpm install` in `apps/ui` (needs `pnpm`).
+4. `cargo build` in `cli` (needs `cargo`).
+5. Build the runner image via `agentos build` (needs `docker`).
+
+Each required tool is checked first; a missing one prints a pointer (e.g. `uv is
+not installed - https://docs.astral.sh/uv/`) and stops. Run outside a source
+checkout it errors clearly -- a release binary has nothing to install.
+
+## `agentos dev`
+
+Thin wrappers over the repo's dev scripts, so contributors get one unified
+`agentos <command>` surface while the scripts stay the implementation. Each finds
+the repo root, confirms the script exists, shells `bash <script>` from the root,
+streams its output, and propagates its exit code. Run outside a source checkout
+they error clearly -- a release binary has no dev scripts.
+
+| Command | What it does |
+|---|---|
+| `agentos dev contracts` | `bash scripts/check-contracts.sh` -- check the frozen contracts. |
+| `agentos dev chart-check` | `bash charts/agentos/ci/render-assertions.sh` -- render-assert the Helm chart. |
+| `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
 
 ## `skill` target: runner-only, fully offline
 

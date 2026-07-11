@@ -87,6 +87,165 @@ pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// `agentos build`: build the runner image locally from the repo's Dockerfile.
+/// The one-command equivalent of `docker build -f runner/Dockerfile -t <tag> .`
+/// run from the repo root. Errors clearly when Docker is missing or when run
+/// outside a source checkout (a release binary pulls the image from GHCR).
+pub async fn build(tag: &str) -> Result<()> {
+    let ui = crate::ui::ui();
+    if !on_path("docker") {
+        bail!(
+            "Docker is not installed or not on PATH. Install Docker \
+             (https://docs.docker.com/get-docker/) and retry."
+        );
+    }
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos build` \
+         from an agentos repo checkout -- a release binary pulls the runner image from GHCR \
+         automatically and never needs to build.",
+    )?;
+    ui.note(&format!(
+        "=== docker build -f runner/Dockerfile -t {tag} . (in {}) ===",
+        root.display()
+    ));
+    // Inherit stdio so the build log streams to the terminal like a hand-run build.
+    let status = tokio::process::Command::new("docker")
+        .args(["build", "-f", "runner/Dockerfile", "-t", tag, "."])
+        .current_dir(&root)
+        .status()
+        .await
+        .context("failed to invoke docker")?;
+    if !status.success() {
+        bail!("docker build failed ({status})");
+    }
+    ui.success(&format!("built runner image '{tag}'"));
+    Ok(())
+}
+
+/// `agentos install`: from-a-checkout dev bootstrap -- install deps and build
+/// the runner image, but start nothing. Each step is idempotent and streams its
+/// output; a missing tool prints a friendly pointer and stops. A release binary
+/// has no source tree to install, so this errors clearly outside a checkout.
+pub async fn install() -> Result<()> {
+    let ui = crate::ui::ui();
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos install` \
+         from an agentos source checkout -- a release binary has nothing to install.",
+    )?;
+
+    // 1. Seed .env from .env.example (idempotent: skip if .env already exists).
+    let env_path = root.join(".env");
+    let env_example = root.join(".env.example");
+    if env_path.exists() {
+        ui.note("=== .env already exists; leaving it untouched ===");
+    } else if env_example.exists() {
+        ui.note("=== cp .env.example .env ===");
+        std::fs::copy(&env_example, &env_path).context("failed to copy .env.example to .env")?;
+    } else {
+        ui.note("=== no .env.example to seed .env from; skipping ===");
+    }
+
+    // 2. uv sync (repo root).
+    require_tool("uv", "uv is not installed - https://docs.astral.sh/uv/")?;
+    run_step(&root, "uv", &["sync"], "uv sync").await?;
+
+    // 3. pnpm install in apps/ui.
+    require_tool(
+        "pnpm",
+        "pnpm is not installed - https://pnpm.io/installation",
+    )?;
+    run_step(
+        &root.join("apps/ui"),
+        "pnpm",
+        &["install"],
+        "pnpm install (apps/ui)",
+    )
+    .await?;
+
+    // 4. cargo build in cli.
+    require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
+    run_step(&root.join("cli"), "cargo", &["build"], "cargo build (cli)").await?;
+
+    // 5. Build the runner image via the existing `build` handler.
+    build("agentos-runner").await?;
+
+    ui.success("Setup complete. Start the stack with: agentos local up");
+    Ok(())
+}
+
+/// `agentos dev <script>`: run a repo dev script by relative path. Thin wrapper
+/// -- finds the repo root, confirms the script exists, shells `bash <script>`
+/// from the root, streams its output, and propagates its exit code. A release
+/// binary has no scripts, so this errors clearly outside a checkout.
+pub async fn dev_script(rel_path: &str) -> Result<()> {
+    let ui = crate::ui::ui();
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos dev` \
+         from an agentos source checkout -- a release binary has no dev scripts.",
+    )?;
+    let script = root.join(rel_path);
+    if !script.is_file() {
+        bail!("script not found: {}", script.display());
+    }
+    ui.note(&format!("=== bash {rel_path} (in {}) ===", root.display()));
+    let status = tokio::process::Command::new("bash")
+        .arg(rel_path)
+        .current_dir(&root)
+        .status()
+        .await
+        .context("failed to invoke bash")?;
+    if !status.success() {
+        bail!("{rel_path} failed ({status})");
+    }
+    Ok(())
+}
+
+/// Bail with a friendly pointer when a required tool is not on PATH.
+fn require_tool(bin: &str, hint: &str) -> Result<()> {
+    if on_path(bin) {
+        Ok(())
+    } else {
+        bail!("{hint}")
+    }
+}
+
+/// Run one install step in `dir`, streaming its output and failing on nonzero.
+async fn run_step(dir: &Path, bin: &str, args: &[&str], label: &str) -> Result<()> {
+    let ui = crate::ui::ui();
+    ui.note(&format!("=== {label} (in {}) ===", dir.display()));
+    let status = tokio::process::Command::new(bin)
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .await
+        .with_context(|| format!("failed to invoke {bin}"))?;
+    if !status.success() {
+        bail!("{label} failed ({status})");
+    }
+    Ok(())
+}
+
+/// Whether `bin` resolves on PATH.
+fn on_path(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+        .unwrap_or(false)
+}
+
+/// Walk up from the current directory to the repo root: the nearest ancestor
+/// that contains `runner/Dockerfile`.
+fn find_repo_root() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join("runner/Dockerfile").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 pub async fn start(opts: StartOpts) -> Result<()> {
     let plugin_dir = opts
         .plugin_dir

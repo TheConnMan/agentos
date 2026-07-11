@@ -79,6 +79,44 @@ enum Command {
         #[command(subcommand)]
         action: ClusterAction,
     },
+    /// Build the runner image locally from `runner/Dockerfile` (source checkout only).
+    ///
+    /// Runs `docker build -f runner/Dockerfile -t <tag> .` from the repo root. A
+    /// release binary pulls the pinned runner image from GHCR automatically and
+    /// never needs this; it errors clearly if Docker is missing or there is no
+    /// repo checkout.
+    Build {
+        /// Image tag to build.
+        #[arg(long, default_value = "agentos-runner")]
+        tag: String,
+    },
+    /// Bootstrap a dev checkout: install deps and build, start nothing (source checkout only).
+    ///
+    /// From the repo root, runs (each idempotent, streaming output): copy
+    /// `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in
+    /// `apps/ui`, `cargo build` in `cli`, then builds the runner image. A
+    /// release binary has no source tree to install and errors clearly; a
+    /// missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
+    Install,
+    /// Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.
+    ///
+    /// Thin wrappers over the repo's dev scripts so contributors get a unified
+    /// `agentos <command>` surface; the scripts stay the implementation. A
+    /// release binary has no scripts and errors clearly.
+    Dev {
+        #[command(subcommand)]
+        action: DevAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DevAction {
+    /// Check the frozen contracts (`bash scripts/check-contracts.sh`).
+    Contracts,
+    /// Render-assert the Helm chart (`bash charts/agentos/ci/render-assertions.sh`).
+    ChartCheck,
+    /// Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`).
+    E2e,
 }
 
 #[derive(Subcommand)]
@@ -648,6 +686,15 @@ async fn main() -> Result<()> {
     ui::init(Ui::from_process(cli.color, cli.debug, cli.quiet));
     match cli.command {
         Command::Init { name, dir } => commands::init(&name, dir),
+        Command::Build { tag } => commands::build(&tag).await,
+        Command::Install => commands::install().await,
+        Command::Dev { action } => match action {
+            DevAction::Contracts => commands::dev_script("scripts/check-contracts.sh").await,
+            DevAction::ChartCheck => {
+                commands::dev_script("charts/agentos/ci/render-assertions.sh").await
+            }
+            DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
+        },
         Command::Skill { action } => match action {
             SkillAction::Up {
                 plugin_dir,
@@ -1126,6 +1173,54 @@ mod tests {
     #[test]
     fn clap_surface_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn build_defaults_tag_and_accepts_override() {
+        let cli = Cli::try_parse_from(["agentos", "build"]).expect("build should parse");
+        match cli.command {
+            Command::Build { tag } => assert_eq!(tag, "agentos-runner"),
+            _ => panic!("expected build command"),
+        }
+        let cli = Cli::try_parse_from(["agentos", "build", "--tag", "my-runner:dev"])
+            .expect("build --tag should parse");
+        match cli.command {
+            Command::Build { tag } => assert_eq!(tag, "my-runner:dev"),
+            _ => panic!("expected build command"),
+        }
+    }
+
+    #[test]
+    fn install_parses() {
+        let cli = Cli::try_parse_from(["agentos", "install"]).expect("install should parse");
+        assert!(matches!(cli.command, Command::Install));
+    }
+
+    #[test]
+    fn dev_subcommands_parse() {
+        let cli = Cli::try_parse_from(["agentos", "dev", "contracts"])
+            .expect("dev contracts should parse");
+        assert!(matches!(
+            cli.command,
+            Command::Dev {
+                action: DevAction::Contracts
+            }
+        ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "chart-check"])
+            .expect("dev chart-check should parse");
+        assert!(matches!(
+            cli.command,
+            Command::Dev {
+                action: DevAction::ChartCheck
+            }
+        ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "e2e"]).expect("dev e2e should parse");
+        assert!(matches!(
+            cli.command,
+            Command::Dev {
+                action: DevAction::E2e
+            }
+        ));
     }
 
     #[test]
