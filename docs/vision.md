@@ -43,6 +43,17 @@ need evals, traces, and promotion gates. AgentOS gives them those before they
 learn the hard way, and it does so as a tool they can build on, own, and run on
 their own infrastructure rather than a black box they rent.
 
+Increasingly the developer builds agents by pointing a coding agent (Claude Code,
+Codex, Cursor) at the work rather than hand-writing every file. So the *interface*
+to AgentOS is drifting to the developer's coding agent: they point it at AgentOS
+and it authors the skills, wires the connectors, writes the evals, and ships the
+bundle. The human stays in the loop through the agent, rarely typing `agentos`
+directly. This does not change who adopts AgentOS or who owns the stack; it
+changes who operates it. AgentOS is a harness a coding agent can drive to build
+agents properly, because the one thing a coding agent cannot guarantee on its own
+is that a skill working locally will behave identically deployed and on a cluster.
+That guarantee is what the harness supplies.
+
 ## What makes it AgentOS
 
 Five commitments that should hold across every feature we build:
@@ -63,6 +74,10 @@ Five commitments that should hold across every feature we build:
 - **Open, self-hostable, model-agnostic.** Runs on your infrastructure, with any
   model, with nothing locked away. The same eval suite across models is how a
   developer learns which model each job actually needs.
+- **Agent-operable by default.** The CLI's primary user is a coding agent, not a
+  human at a prompt. Commands are structured, non-interactive, idempotent, and
+  self-describing, and the harness tells the agent exactly how to use it, so a
+  coding agent can drive the whole loop and a human rarely needs to.
 
 ## What it could become
 
