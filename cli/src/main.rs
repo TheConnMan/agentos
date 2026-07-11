@@ -114,6 +114,17 @@ enum Command {
     /// `dump-commands`.
     #[command(hide = true, alias = "dump-commands")]
     Schema,
+    /// Print a self-contained primer for a coding agent driving the harness (ADR-0021).
+    ///
+    /// Ordered by what the agent needs first (roughly 100 lines), carrying only
+    /// non-discoverable knowledge: the parity ladder, when/which decision logic,
+    /// the landmines, and verify-first. Human-readable Markdown by default;
+    /// `--json` emits a structured variant (data on stdout, human text on stderr).
+    Guide {
+        /// Emit the primer as structured JSON (stdout=data, human text=stderr).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1166,6 +1177,7 @@ async fn main() -> Result<()> {
             print!("{}", agentos::schema::manifest_json(&Cli::command()));
             Ok(())
         }
+        Command::Guide { json } => agentos::guide::run(json),
     }
 }
 

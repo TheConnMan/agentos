@@ -12,6 +12,7 @@ pub mod commands;
 pub mod comms;
 pub mod docker;
 pub mod evals;
+pub mod guide;
 pub mod local;
 pub mod message;
 pub mod ndjson;
