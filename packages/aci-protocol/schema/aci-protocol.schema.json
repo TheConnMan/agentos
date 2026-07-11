@@ -256,6 +256,65 @@
       ],
       "title": "OutboundEvent"
     },
+    "QueuedTurn": {
+      "additionalProperties": false,
+      "description": "A normalized inbound turn ready for the worker to route and run.\n\nThe channel-neutral promotion of the dispatcher's former ``QueuedSlackEvent``.\nThe Valkey Stream carries this model as a single ``payload`` JSON field; the\nstream-encoding helpers live with the producer (the dispatcher), not on this\nfrozen model, so the contract stays transport-agnostic.",
+      "properties": {
+        "author": {
+          "title": "Author",
+          "type": "string"
+        },
+        "conversation_id": {
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "received_at": {
+          "title": "Received At",
+          "type": "string"
+        },
+        "reply_handle": {
+          "$ref": "#/$defs/ReplyHandle"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "conversation_id",
+        "event_id",
+        "received_at",
+        "reply_handle",
+        "text"
+      ],
+      "title": "QueuedTurn",
+      "type": "object"
+    },
+    "ReplyHandle": {
+      "additionalProperties": false,
+      "description": "Channel-neutral coordinates for where a turn's reply is delivered.\n\nThe reply model is edit-in-place: the ingress adapter pre-posts a placeholder\nmessage and the worker edits it as the answer streams. For the Slack adapter\ntoday, ``channel`` is the Slack channel id (also the key the deployment\nbinding matches an agent on) and ``placeholder`` is the ts of the pre-posted\nplaceholder message. Issue #19 extends this with a per-turn reply endpoint so\ntwo ingress paths can coexist on one worker.",
+      "properties": {
+        "channel": {
+          "title": "Channel",
+          "type": "string"
+        },
+        "placeholder": {
+          "title": "Placeholder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel",
+        "placeholder"
+      ],
+      "title": "ReplyHandle",
+      "type": "object"
+    },
     "SessionConfig": {
       "additionalProperties": false,
       "description": "The typed session setup contract.\n\n``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);\nsection 0 describes these as per-tool secrets via K8s Secret refs, so the\ncontract carries the reference, not the secret material itself.",

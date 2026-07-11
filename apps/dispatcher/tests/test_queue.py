@@ -3,53 +3,53 @@
 from pathlib import Path
 
 import redis
+from aci_protocol import QueuedTurn, ReplyHandle
 from agentos_dispatcher.config import DispatcherConfig
 from agentos_dispatcher.queue import (
-    QueuedSlackEvent,
     claim_event,
     enqueue,
+    from_stream_fields,
+    to_stream_fields,
 )
 
-# The committed wire golden the Rust CLI mirror (cli/src/queue.rs) round-trips too.
+# The committed wire golden the Rust CLI consumer (cli/src/queue.rs) round-trips too.
 _GOLDEN_FIXTURE = (
     Path(__file__).resolve().parents[3]
     / "packages"
     / "aci-protocol"
     / "schema"
-    / "queued-slack-event.fixture.json"
+    / "queued-turn.fixture.json"
 )
 
 
-def _event(event_id: str = "Ev1") -> QueuedSlackEvent:
-    return QueuedSlackEvent(
-        slack_event_id=event_id,
-        thread_ts="123.45",
-        channel="C1",
-        user="U1",
+def _event(event_id: str = "Ev1") -> QueuedTurn:
+    return QueuedTurn(
+        event_id=event_id,
+        conversation_id="123.45",
+        author="U1",
         text="hello",
-        placeholder_ts="999.00",
+        reply_handle=ReplyHandle(channel="C1", placeholder="999.00"),
         received_at="2026-07-05T00:00:00+00:00",
     )
 
 
-def test_queued_event_stream_fields_roundtrip() -> None:
+def test_queued_turn_stream_fields_roundtrip() -> None:
     event = _event()
-    fields = event.to_stream_fields()
+    fields = to_stream_fields(event)
     # The worker (F1) consumes a single JSON payload field.
     assert set(fields) == {"payload"}
-    assert QueuedSlackEvent.from_stream_fields(fields) == event
+    assert from_stream_fields(fields) == event
 
 
-def test_queued_event_matches_cross_language_golden() -> None:
-    # One committed wire fixture pins the QueuedSlackEvent bytes across the Python
-    # producer here and the hand-mirrored Rust struct in cli/src/queue.rs: both
-    # must deserialize it and re-serialize to identical bytes. Guards the frozen
-    # queue seam against silent field rename/reorder drift until the payload is
-    # promoted into aci-protocol (#7). This does not move the model — the
-    # dispatcher still owns QueuedSlackEvent.
+def test_queued_turn_matches_cross_language_golden() -> None:
+    # One committed wire fixture pins the QueuedTurn bytes across the Python
+    # producer here and the Rust consumer in cli/src/queue.rs: both must
+    # deserialize it and re-serialize to identical bytes. Guards the frozen queue
+    # payload against silent field rename/reorder drift. The model itself now
+    # lives in packages/aci-protocol (#7); this test pins its wire bytes.
     raw = _GOLDEN_FIXTURE.read_text().strip()
-    event = QueuedSlackEvent.model_validate_json(raw)
-    assert event.slack_event_id == "Ev0GOLDEN0001"
+    event = QueuedTurn.model_validate_json(raw)
+    assert event.event_id == "Ev0GOLDEN0001"
     assert event.model_dump_json() == raw
 
 
@@ -64,7 +64,7 @@ def test_enqueue_writes_one_stream_entry_the_worker_can_read(
     entry_id, fields = entries[0]
     assert entry_id == stream_id
     # Round-trips through the wire back into the model the worker reconstructs.
-    assert QueuedSlackEvent.from_stream_fields(fields) == event
+    assert from_stream_fields(fields) == event
 
 
 def test_claim_event_is_first_writer_wins(

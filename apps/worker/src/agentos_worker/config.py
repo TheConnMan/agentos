@@ -271,11 +271,11 @@ class WorkerConfig(BaseSettings):
         """
         return self.read_block_ms / 1000 + 5.0
 
-    def done_key(self, slack_event_id: str) -> str:
-        return f"{self.key_prefix}:done:{slack_event_id}"
+    def done_key(self, event_id: str) -> str:
+        return f"{self.key_prefix}:done:{event_id}"
 
-    def side_effect_key(self, slack_event_id: str) -> str:
-        return f"{self.key_prefix}:sidefx:{slack_event_id}"
+    def side_effect_key(self, event_id: str) -> str:
+        return f"{self.key_prefix}:sidefx:{event_id}"
 
     def lock_key(self, thread_key: str) -> str:
         return f"{self.key_prefix}:lock:{thread_key}"

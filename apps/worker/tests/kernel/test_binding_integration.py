@@ -10,8 +10,7 @@ import time
 import uuid
 from collections.abc import Callable
 
-from aci_protocol import Final, SessionStatus, TextDelta
-from agentos_dispatcher.queue import QueuedSlackEvent
+from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_worker.behaviorpacks import BehaviorPacks
 from agentos_worker.binding import (
     AGENT_ID_ENV,
@@ -62,14 +61,13 @@ def _resolved(agent_id: uuid.UUID, *, bundle: str | None = "bundles/x.zip") -> R
 
 def _qevent(
     text: str, *, channel: str, thread: str = "th-1", placeholder: str = "p-1"
-) -> QueuedSlackEvent:
-    return QueuedSlackEvent(
-        slack_event_id=uuid.uuid4().hex,
-        thread_ts=thread,
-        channel=channel,
-        user="U1",
+) -> QueuedTurn:
+    return QueuedTurn(
+        event_id=uuid.uuid4().hex,
+        conversation_id=thread,
+        author="U1",
         text=text,
-        placeholder_ts=placeholder,
+        reply_handle=ReplyHandle(channel=channel, placeholder=placeholder),
         received_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -92,7 +90,7 @@ def test_unmapped_channel_is_a_polite_drop(make_harness) -> None:
 
             assert h.runner.opened == []  # no turn ever opened
             assert h.sink.last_text is not None and "no agent" in h.sink.last_text.lower()
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 
@@ -317,7 +315,7 @@ def test_malformed_packs_blob_still_completes_the_turn(make_harness) -> None:
             # The turn completed: a normal final update landed and the event is done.
             assert h.runner.opened == ["hi"]
             assert h.sink.last_text == "answer"
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 
@@ -393,7 +391,7 @@ def test_fresh_thread_greeting_short_circuits_no_sandbox_no_model(make_harness) 
             assert h.sink.last_text == _GREET
             assert any(ts == "p-1" and text == _GREET for _c, ts, text in h.sink.updates)
             # ...the event is done...
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
             # ...and NO model turn was started and NO sandbox was claimed.
             assert h.runner.opened == []
             assert h.fake_k8s.claim_envs == []
@@ -453,7 +451,7 @@ def test_fresh_thread_help_short_circuits_no_sandbox_no_model(make_harness) -> N
             await h.kernel.process_event(ev)
 
             assert h.sink.last_text == _HELP
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
             assert h.runner.opened == []
             assert h.fake_k8s.claim_envs == []
 
@@ -480,7 +478,7 @@ def test_fresh_thread_non_matching_message_runs_a_normal_turn(make_harness) -> N
             assert h.sink.last_text == "Your pipeline is $2.1M."
             assert len(h.fake_k8s.claim_envs) == 1
             assert h.sink.last_text != _GREET
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 
@@ -500,6 +498,6 @@ def test_disabled_greeting_pack_never_short_circuits(make_harness) -> None:
             assert h.runner.opened == ["hi"]
             assert h.sink.last_text == "MODEL"
             assert len(h.fake_k8s.claim_envs) == 1
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())

@@ -14,11 +14,12 @@ from collections.abc import Callable
 from aci_protocol import (
     ErrorEvent,
     Final,
+    QueuedTurn,
+    ReplyHandle,
     SessionStatus,
     SideEffectFlag,
     TextDelta,
 )
-from agentos_dispatcher.queue import QueuedSlackEvent
 from agentos_worker.behaviorpacks import BehaviorPacks, NavPack
 
 DONE = SessionStatus.DONE
@@ -32,14 +33,13 @@ def _qevent(
     thread: str = "th-1",
     event_id: str | None = None,
     placeholder: str = "p-1",
-) -> QueuedSlackEvent:
-    return QueuedSlackEvent(
-        slack_event_id=event_id or uuid.uuid4().hex,
-        thread_ts=thread,
-        channel="C1",
-        user="U1",
+) -> QueuedTurn:
+    return QueuedTurn(
+        event_id=event_id or uuid.uuid4().hex,
+        conversation_id=thread,
+        author="U1",
         text=text,
-        placeholder_ts=placeholder,
+        reply_handle=ReplyHandle(channel="C1", placeholder=placeholder),
         received_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -66,7 +66,7 @@ def test_new_turn_streams_to_slack_and_acks(make_harness) -> None:
 
             assert h.runner.opened == ["hi"]
             assert h.sink.last_text == "Hello world"
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 
@@ -169,8 +169,8 @@ def test_side_effect_failure_escalates_without_retry(make_harness) -> None:
 
             assert h.runner.opened == ["do it"]  # exactly one attempt, no retry
             assert h.sink.last_text is not None and "human" in h.sink.last_text.lower()
-            assert await h.async_redis.exists(h.config.side_effect_key(ev.slack_event_id))
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.side_effect_key(ev.event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 
@@ -311,13 +311,13 @@ def test_prior_side_effect_marker_escalates_without_running(make_harness) -> Non
             # A prior attempt executed a side effect then the worker crashed: the
             # marker is set but the event never reached done. It must escalate,
             # never re-run the non-idempotent action.
-            await h.async_redis.set(h.config.side_effect_key(ev.slack_event_id), "1")
+            await h.async_redis.set(h.config.side_effect_key(ev.event_id), "1")
 
             await h.kernel.process_event(ev)
 
             assert h.runner.opened == []  # no turn was ever opened
             assert h.sink.last_text is not None and "human" in h.sink.last_text.lower()
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 
@@ -530,7 +530,7 @@ def test_booting_state_edits_placeholder_before_answer(make_harness) -> None:
             on_ph = [
                 (i, u)
                 for i, u in enumerate(h.sink.updates)
-                if u[0] == ev.channel and u[1] == ev.placeholder_ts
+                if u[0] == ev.reply_handle.channel and u[1] == ev.reply_handle.placeholder
             ]
             booting_idxs = [i for i, u in on_ph if u[2] == booting]
             answer_idxs = [i for i, u in on_ph if u[2] != booting]
@@ -571,6 +571,6 @@ def test_booting_update_failure_never_fails_the_turn(make_harness) -> None:
 
             assert fired["n"] > 0, "the booting update was never attempted"
             assert h.sink.last_text == "all good"
-            assert await h.async_redis.exists(h.config.done_key(ev.slack_event_id))
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())

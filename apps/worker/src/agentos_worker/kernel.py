@@ -36,12 +36,12 @@ from aci_protocol import (
     Event,
     Final,
     OutboundEvent,
+    QueuedTurn,
     SessionStatus,
     SideEffectFlag,
     TextDelta,
     ToolNote,
 )
-from agentos_dispatcher.queue import QueuedSlackEvent
 
 from .behaviorpacks import (
     BehaviorPacks,
@@ -199,14 +199,14 @@ class Kernel:
         # because it is released before the stream is consumed.
         self._order_locks: dict[str, _LockEntry] = {}
 
-    async def process_event(self, qevent: QueuedSlackEvent) -> None:
+    async def process_event(self, qevent: QueuedTurn) -> None:
         """Handle one queued Slack event to a terminal state (success or escalate).
 
         Returns normally once the event is terminally handled; the consumer then
         acks it. Raising leaves the entry pending for crash-recovery reclaim.
         """
-        event_id = qevent.slack_event_id
-        thread = qevent.thread_ts
+        event_id = qevent.event_id
+        thread = qevent.conversation_id
 
         # Acquire the per-thread order lock BEFORE any await, so concurrent
         # same-thread events queue in task-arrival order (asyncio.Lock is FIFO and
@@ -248,7 +248,7 @@ class Kernel:
             nav: NavPack | None = None
             packs: BehaviorPacks | None = None
             if self._binding is not None:
-                resolved = await self._binding.resolve(qevent.channel)
+                resolved = await self._binding.resolve(qevent.reply_handle.channel)
                 if resolved is None:
                     await self._drop_with_message(
                         qevent, "No agent is configured for this channel yet."
@@ -314,7 +314,7 @@ class Kernel:
             # is safe outside the concurrency-critical section above.
             if self._config.shimmer:
                 await self._sink.clear_status(
-                    channel=qevent.channel, thread_ts=qevent.thread_ts
+                    channel=qevent.reply_handle.channel, thread_ts=qevent.conversation_id
                 )
 
     def _acquire_order_entry(self, thread: str) -> _LockEntry:
@@ -371,20 +371,20 @@ class Kernel:
             if not threads:
                 del self._active_by_agent[agent_id]
 
-    async def _drop_with_message(self, qevent: QueuedSlackEvent, message: str) -> None:
+    async def _drop_with_message(self, qevent: QueuedTurn, message: str) -> None:
         """Edit the placeholder with a reason and mark the event done (a polite
         drop for an unmapped channel or a paused agent, never a crash)."""
         await self._sink.update(
-            channel=qevent.channel, ts=qevent.placeholder_ts, text=message
+            channel=qevent.reply_handle.channel, ts=qevent.reply_handle.placeholder, text=message
         )
-        await self._markers.mark_done(qevent.slack_event_id)
+        await self._markers.mark_done(qevent.event_id)
 
-    async def _set_shimmer(self, qevent: QueuedSlackEvent, packs: BehaviorPacks) -> None:
+    async def _set_shimmer(self, qevent: QueuedTurn, packs: BehaviorPacks) -> None:
         """Set the shimmer caption to this agent's sampled load line (+ tip),
         seeded by the thread ts. No-op when the agent enables neither pack, so the
         dispatcher's generic status stays. Best-effort (the sink swallows errors)."""
-        load = sample_load(packs, qevent.thread_ts)
-        tip = sample_tip(packs, qevent.thread_ts)
+        load = sample_load(packs, qevent.conversation_id)
+        tip = sample_tip(packs, qevent.conversation_id)
         if load and tip:
             caption = f"{load}\n\nTip: {tip}"
         elif load:
@@ -394,21 +394,21 @@ class Kernel:
         else:
             return
         await self._sink.set_status(
-            channel=qevent.channel, thread_ts=qevent.thread_ts, status=caption
+            channel=qevent.reply_handle.channel, thread_ts=qevent.conversation_id, status=caption
         )
 
     # -- internals ------------------------------------------------------------
 
     async def _attempt(
         self,
-        qevent: QueuedSlackEvent,
+        qevent: QueuedTurn,
         release_order: Callable[[], None],
         boot_env: dict[str, str] | None = None,
         agent_id: uuid.UUID | None = None,
         nav: NavPack | None = None,
         packs: BehaviorPacks | None = None,
     ) -> TurnOutcome:
-        thread = qevent.thread_ts
+        thread = qevent.conversation_id
 
         # Surface a booting state on the placeholder so the (up to claim_timeout)
         # cold-boot wait is not silent. Best-effort and outside the per-thread lock:
@@ -419,13 +419,13 @@ class Kernel:
         if not self._config.slack_no_edit_streaming:
             try:
                 await self._sink.update(
-                    channel=qevent.channel,
-                    ts=qevent.placeholder_ts,
+                    channel=qevent.reply_handle.channel,
+                    ts=qevent.reply_handle.placeholder,
                     text=self._config.booting_text,
                 )
             except Exception:
                 logger.warning(
-                    "booting-state update failed for %s", qevent.slack_event_id
+                    "booting-state update failed for %s", qevent.event_id
                 )
 
         event = self._to_event(qevent)
@@ -444,7 +444,7 @@ class Kernel:
             # off and retries within max_attempts, instead of letting the entry
             # escape to the consumer and sit pending for the whole reclaim window.
             release_order()
-            logger.warning("turn start failed for %s: %s", qevent.slack_event_id, exc)
+            logger.warning("turn start failed for %s: %s", qevent.event_id, exc)
             return TurnOutcome(terminal_ok=False, classification="runner-error")
         release_order()
 
@@ -454,8 +454,8 @@ class Kernel:
             # placeholder and return terminal-ok so process_event marks the event
             # done. No run was registered, no sandbox claimed, no turn started.
             await self._sink.update(
-                channel=qevent.channel,
-                ts=qevent.placeholder_ts,
+                channel=qevent.reply_handle.channel,
+                ts=qevent.reply_handle.placeholder,
                 text=route.canned_reply,
             )
             return TurnOutcome(terminal_ok=True)
@@ -472,8 +472,8 @@ class Kernel:
             # the accepted MVP semantic; durable per-steer replay is a deliberate
             # follow-up, flagged to the orchestrator rather than silently assumed.
             await self._sink.update(
-                channel=qevent.channel,
-                ts=qevent.placeholder_ts,
+                channel=qevent.reply_handle.channel,
+                ts=qevent.reply_handle.placeholder,
                 text="Folded into the in-progress reply above.",
             )
             return TurnOutcome(terminal_ok=True, steered=True)
@@ -537,13 +537,13 @@ class Kernel:
             return await asyncio.to_thread(self._substrate.resume, thread)
 
     async def _consume(
-        self, qevent: QueuedSlackEvent, turn: TurnStream, nav: NavPack | None = None
+        self, qevent: QueuedTurn, turn: TurnStream, nav: NavPack | None = None
     ) -> TurnOutcome:
         acc = _StreamAccumulator()
         reply = _ThrottledReply(
             self._sink,
-            channel=qevent.channel,
-            ts=qevent.placeholder_ts,
+            channel=qevent.reply_handle.channel,
+            ts=qevent.reply_handle.placeholder,
             min_interval_s=self._config.slack_edit_min_interval_s,
             nav=nav,
             no_edit=self._config.slack_no_edit_streaming,
@@ -554,10 +554,10 @@ class Kernel:
             # the connection is never leaked.
             async with turn:
                 async for frame in turn:
-                    await self._apply_frame(frame, acc, reply, qevent.slack_event_id)
+                    await self._apply_frame(frame, acc, reply, qevent.event_id)
         except (aiohttp.ClientError, TimeoutError) as exc:
             # Stream dropped mid-run (sandbox killed, network fault). No final.
-            logger.warning("turn stream dropped for %s: %s", qevent.slack_event_id, exc)
+            logger.warning("turn stream dropped for %s: %s", qevent.event_id, exc)
             return TurnOutcome(
                 terminal_ok=False,
                 saw_side_effect=acc.saw_side_effect,
@@ -609,14 +609,23 @@ class Kernel:
             status=acc.status,
         )
 
-    async def _escalate(self, qevent: QueuedSlackEvent, message: str) -> None:
-        logger.warning("escalating event %s: %s", qevent.slack_event_id, message)
-        await self._sink.update(channel=qevent.channel, ts=qevent.placeholder_ts, text=message)
+    async def _escalate(self, qevent: QueuedTurn, message: str) -> None:
+        logger.warning("escalating event %s: %s", qevent.event_id, message)
+        await self._sink.update(
+            channel=qevent.reply_handle.channel,
+            ts=qevent.reply_handle.placeholder,
+            text=message,
+        )
 
     def _backoff(self, attempt: int) -> float:
         raw: float = self._config.retry_backoff_base_s * (2 ** (attempt - 1))
         return min(self._config.retry_backoff_max_s, raw)
 
     @staticmethod
-    def _to_event(qevent: QueuedSlackEvent) -> Event:
-        return Event(type="message", text=qevent.text, user=qevent.user, ts=qevent.thread_ts)
+    def _to_event(qevent: QueuedTurn) -> Event:
+        return Event(
+            type="message",
+            text=qevent.text,
+            user=qevent.author,
+            ts=qevent.conversation_id,
+        )

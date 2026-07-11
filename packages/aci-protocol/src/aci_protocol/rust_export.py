@@ -28,6 +28,7 @@ from .events import (
     ToolNote,
 )
 from .session import Budget, OtelConfig, SessionConfig
+from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION
 
 _NONE = type(None)
@@ -269,6 +270,8 @@ def render_rust() -> str:
         _struct(Budget),
         _struct(OtelConfig),
         _struct(SessionConfig),
+        _struct(ReplyHandle),
+        _struct(QueuedTurn),
         _tagged_enum("InboundMessage", "kind", (Event, Interrupt)),
         _tagged_enum(
             "OutboundEvent",

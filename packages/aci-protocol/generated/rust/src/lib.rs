@@ -77,6 +77,24 @@ pub struct SessionConfig {
     pub otel: OtelConfig,
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyHandle {
+    pub channel: String,
+    pub placeholder: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedTurn {
+    pub event_id: String,
+    pub conversation_id: String,
+    pub author: String,
+    pub text: String,
+    pub reply_handle: ReplyHandle,
+    pub received_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum InboundMessage {

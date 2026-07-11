@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import redis
 from agentos_dispatcher.app import build_app
 from agentos_dispatcher.config import DispatcherConfig
-from agentos_dispatcher.queue import QueuedSlackEvent
+from agentos_dispatcher.queue import from_stream_fields
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_bolt.authorization import AuthorizeResult
@@ -142,13 +142,13 @@ def test_envelope_acked_placeholder_posted_and_enqueued(
     # 3) Exactly one job was enqueued, carrying the placeholder ts for the worker.
     assert redis_client.xlen(config.stream) == 1
     _, fields = redis_client.xrange(config.stream)[0]
-    queued = QueuedSlackEvent.from_stream_fields(fields)
-    assert queued.slack_event_id == "Ev-100"
-    assert queued.channel == "C123"
-    assert queued.user == "U123"
+    queued = from_stream_fields(fields)
+    assert queued.event_id == "Ev-100"
+    assert queued.reply_handle.channel == "C123"
+    assert queued.author == "U123"
     assert queued.text == "hi there"
-    assert queued.thread_ts == "1700.0001"
-    assert queued.placeholder_ts == BOT_TS
+    assert queued.conversation_id == "1700.0001"
+    assert queued.reply_handle.placeholder == BOT_TS
 
 
 def test_shimmer_sets_assistant_status_after_placeholder(
@@ -252,12 +252,12 @@ def test_button_click_enqueues_a_turn(
     )
     assert redis_client.xlen(config.stream) == 1
     _, fields = redis_client.xrange(config.stream)[0]
-    queued = QueuedSlackEvent.from_stream_fields(fields)
+    queued = from_stream_fields(fields)
     assert queued.text == "reports"
-    assert queued.channel == "C123"
-    assert queued.thread_ts == "1700.0001"
-    assert queued.placeholder_ts == BOT_TS
-    assert queued.slack_event_id == "action-trig-env-1"
+    assert queued.reply_handle.channel == "C123"
+    assert queued.conversation_id == "1700.0001"
+    assert queued.reply_handle.placeholder == BOT_TS
+    assert queued.event_id == "action-trig-env-1"
 
 
 def test_button_click_prefers_value_over_action_id(
@@ -271,7 +271,7 @@ def test_button_click_prefers_value_over_action_id(
     _drain(app)
 
     _, fields = redis_client.xrange(config.stream)[0]
-    assert QueuedSlackEvent.from_stream_fields(fields).text == "show top 5"
+    assert from_stream_fields(fields).text == "show top 5"
 
 
 def test_duplicate_click_enqueues_exactly_once(

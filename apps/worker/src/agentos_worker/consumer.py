@@ -19,7 +19,7 @@ import asyncio
 import logging
 from typing import cast
 
-from agentos_dispatcher.queue import QueuedSlackEvent
+from agentos_dispatcher.queue import from_stream_fields
 from redis.asyncio import Redis
 
 from .config import WorkerConfig
@@ -111,7 +111,7 @@ class Consumer(StreamConsumer):
     async def _handle(self, entry_id: str, fields: dict[str, str]) -> None:
         try:
             try:
-                qevent = QueuedSlackEvent.from_stream_fields(fields)
+                qevent = from_stream_fields(fields)
             except Exception:
                 logger.exception("unparseable stream entry %s; acking as poison", entry_id)
                 await self._ack(entry_id)

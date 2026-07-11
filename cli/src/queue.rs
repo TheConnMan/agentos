@@ -1,18 +1,19 @@
 //! Shared machinery for the Slack-facing drivers (`chat` and `message`).
 //!
-//! Both mint the exact `QueuedSlackEvent` the dispatcher would produce, `XADD`
-//! it onto the real Valkey stream, and (on timeout) print the same stream
-//! diagnostics. The queue seam is frozen: one `payload` field holding the JSON
-//! of a `QueuedSlackEvent` whose fields mirror
-//! `apps/dispatcher/src/agentos_dispatcher/queue.py` exactly.
+//! Both mint the exact `QueuedTurn` the dispatcher would produce, `XADD` it onto
+//! the real Valkey stream, and (on timeout) print the same stream diagnostics.
+//! The queue seam is the frozen `QueuedTurn` contract promoted into
+//! `packages/aci-protocol` (issue #7): the CLI uses the generated
+//! `agentos_aci_protocol` types directly rather than hand-mirroring them. The
+//! wire form is one `payload` field holding this model's JSON.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use agentos_aci_protocol::{QueuedTurn, ReplyHandle};
 use anyhow::{Context, Result};
 use redis::aio::MultiplexedConnection;
 use redis::streams::{StreamInfoGroupsReply, StreamPendingCountReply, StreamPendingReply};
 use redis::AsyncCommands;
-use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -28,47 +29,33 @@ pub const WORKER_GROUP: &str = "agentos-workers";
 const EVENT_ID_PREFIX: &str = "EvSIM-";
 const STREAM_PAYLOAD_FIELD: &str = "payload";
 
-/// The normalized job the dispatcher enqueues and the worker consumes.
-///
-/// Field names and types are the frozen queue seam
-/// (`dispatcher.queue.QueuedSlackEvent`); the wire form is a single `payload`
-/// field holding this struct as JSON.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueuedSlackEvent {
-    pub slack_event_id: String,
-    pub thread_ts: String,
-    pub channel: String,
-    pub user: String,
-    pub text: String,
-    pub placeholder_ts: String,
-    pub received_at: String,
+/// Build a synthetic turn: a fresh `EvSIM-` id and the current UTC time, with the
+/// given conversation/reply coordinates. Maps the Slack-facing drivers' inputs
+/// onto the channel-neutral `QueuedTurn` (channel + placeholder live in the
+/// `reply_handle`).
+pub fn synthetic_turn(
+    channel: impl Into<String>,
+    author: impl Into<String>,
+    text: impl Into<String>,
+    conversation_id: impl Into<String>,
+    placeholder: impl Into<String>,
+) -> QueuedTurn {
+    QueuedTurn {
+        event_id: new_event_id(),
+        conversation_id: conversation_id.into(),
+        author: author.into(),
+        text: text.into(),
+        reply_handle: ReplyHandle {
+            channel: channel.into(),
+            placeholder: placeholder.into(),
+        },
+        received_at: now_rfc3339(),
+    }
 }
 
-impl QueuedSlackEvent {
-    /// Build a synthetic event: a fresh `EvSIM-` id and the current UTC time,
-    /// with the given Slack timestamps.
-    pub fn synthetic(
-        channel: impl Into<String>,
-        user: impl Into<String>,
-        text: impl Into<String>,
-        thread_ts: impl Into<String>,
-        placeholder_ts: impl Into<String>,
-    ) -> Self {
-        Self {
-            slack_event_id: new_event_id(),
-            thread_ts: thread_ts.into(),
-            channel: channel.into(),
-            user: user.into(),
-            text: text.into(),
-            placeholder_ts: placeholder_ts.into(),
-            received_at: now_rfc3339(),
-        }
-    }
-
-    /// The JSON blob stored under the stream's single `payload` field.
-    pub fn payload_json(&self) -> Result<String> {
-        serde_json::to_string(self).context("serializing the queued event")
-    }
+/// The JSON blob stored under the stream's single `payload` field.
+pub fn payload_json(turn: &QueuedTurn) -> Result<String> {
+    serde_json::to_string(turn).context("serializing the queued turn")
 }
 
 /// A synthetic Slack event id with the `EvSIM-` prefix and a random suffix.
@@ -113,9 +100,9 @@ pub async fn connect(url: &str) -> Result<MultiplexedConnection> {
 pub async fn xadd(
     conn: &mut MultiplexedConnection,
     stream: &str,
-    event: &QueuedSlackEvent,
+    turn: &QueuedTurn,
 ) -> Result<String> {
-    let payload = event.payload_json()?;
+    let payload = payload_json(turn)?;
     let stream_id: String = redis::cmd("XADD")
         .arg(stream)
         .arg("*")
@@ -281,19 +268,18 @@ mod tests {
     }
 
     #[test]
-    fn queued_event_matches_cross_language_golden() {
+    fn queued_turn_matches_cross_language_golden() {
         // The same committed wire fixture the Python producer (apps/dispatcher)
-        // round-trips: this hand-mirrored struct must deserialize it and
-        // re-serialize to identical bytes, catching seam drift between the two
-        // languages until the payload is promoted into aci-protocol (#7).
+        // round-trips: the generated QueuedTurn must deserialize it and
+        // re-serialize to identical bytes. This pins the frozen QueuedTurn seam
+        // across the Python producer and this Rust consumer (issue #7).
         let raw =
-            include_str!("../../packages/aci-protocol/schema/queued-slack-event.fixture.json")
-                .trim_end();
-        let event: QueuedSlackEvent = serde_json::from_str(raw).expect("golden deserializes");
-        assert_eq!(event.slack_event_id, "Ev0GOLDEN0001");
-        assert_eq!(event.received_at, "2026-07-05T00:00:00+00:00");
+            include_str!("../../packages/aci-protocol/schema/queued-turn.fixture.json").trim_end();
+        let turn: QueuedTurn = serde_json::from_str(raw).expect("golden deserializes");
+        assert_eq!(turn.event_id, "Ev0GOLDEN0001");
+        assert_eq!(turn.received_at, "2026-07-05T00:00:00+00:00");
         assert_eq!(
-            event.payload_json().unwrap(),
+            payload_json(&turn).unwrap(),
             raw,
             "Rust wire bytes drifted from golden"
         );
@@ -301,16 +287,14 @@ mod tests {
 
     #[test]
     fn payload_json_carries_the_exact_seam_field_names() {
-        let event = QueuedSlackEvent {
-            slack_event_id: "EvSIM-x".into(),
-            thread_ts: "1720000000.000100".into(),
-            channel: "C-SIM-x".into(),
-            user: "U-agentos-chat".into(),
-            text: "hello".into(),
-            placeholder_ts: "1720000000.000200".into(),
-            received_at: "2026-07-05T00:00:00Z".into(),
-        };
-        let json = event.payload_json().unwrap();
+        let turn = synthetic_turn(
+            "C-SIM-x",
+            "U-agentos-chat",
+            "hello",
+            "1720000000.000100",
+            "1720000000.000200",
+        );
+        let json = payload_json(&turn).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         let object = value.as_object().unwrap();
 
@@ -319,17 +303,18 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "channel",
-                "placeholder_ts",
+                "author",
+                "conversation_id",
+                "event_id",
                 "received_at",
-                "slack_event_id",
+                "reply_handle",
                 "text",
-                "thread_ts",
-                "user",
             ]
         );
-        assert_eq!(object["slack_event_id"], "EvSIM-x");
-        assert_eq!(object["placeholder_ts"], "1720000000.000200");
+        // channel and placeholder are nested in the channel-neutral reply_handle.
+        assert_eq!(object["reply_handle"]["channel"], "C-SIM-x");
+        assert_eq!(object["reply_handle"]["placeholder"], "1720000000.000200");
+        assert_eq!(object["conversation_id"], "1720000000.000100");
     }
 
     #[test]

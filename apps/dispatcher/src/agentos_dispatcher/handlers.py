@@ -22,11 +22,12 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from aci_protocol import QueuedTurn, ReplyHandle
 from slack_bolt import App
 from slack_sdk.web import WebClient
 
 from .config import DispatcherConfig
-from .queue import QueuedSlackEvent, claim_event, enqueue
+from .queue import claim_event, enqueue
 
 if TYPE_CHECKING:
     from redis import Redis
@@ -99,13 +100,12 @@ def process_event(
         except Exception as exc:  # noqa: BLE001 -- shimmer is best-effort, never fatal
             log.debug("assistant setStatus skipped for %s: %s", slack_event_id, exc)
 
-    queued = QueuedSlackEvent(
-        slack_event_id=slack_event_id,
-        thread_ts=thread_ts,
-        channel=channel,
-        user=event.get("user", ""),
+    queued = QueuedTurn(
+        event_id=slack_event_id,
+        conversation_id=thread_ts,
+        author=event.get("user", ""),
         text=event.get("text", ""),
-        placeholder_ts=placeholder_ts,
+        reply_handle=ReplyHandle(channel=channel, placeholder=placeholder_ts),
         received_at=clock(),
     )
     stream_id = enqueue(redis_client, config, queued)
@@ -131,7 +131,7 @@ def process_action(
     logger: logging.Logger | None = None,
 ) -> str | None:
     """Normalize a Block Kit button click into a turn: dedupe, post an in-thread
-    placeholder, and enqueue a ``QueuedSlackEvent`` whose text is the button's
+    placeholder, and enqueue a ``QueuedTurn`` whose text is the button's
     command. The worker answers it exactly as if the user had typed that command.
 
     Same four steps as ``process_event`` (ack is Bolt's, before this runs); no
@@ -168,13 +168,12 @@ def process_action(
         thread_ts=thread_ts,
         text=config.placeholder_text,
     )
-    queued = QueuedSlackEvent(
-        slack_event_id=slack_event_id,
-        thread_ts=thread_ts,
-        channel=channel,
-        user=user,
+    queued = QueuedTurn(
+        event_id=slack_event_id,
+        conversation_id=thread_ts,
+        author=user,
         text=command,
-        placeholder_ts=placeholder["ts"],
+        reply_handle=ReplyHandle(channel=channel, placeholder=placeholder["ts"]),
         received_at=clock(),
     )
     stream_id = enqueue(redis_client, config, queued)

@@ -2,7 +2,7 @@
 //! Slack at all. Used by the `local message` and `cluster message` verbs.
 //!
 //! The CLI *is* the Slack service. It stands up a minimal Slack Web API stub on
-//! a local port, XADDs the exact `QueuedSlackEvent` the dispatcher would produce
+//! a local port, XADDs the exact `QueuedTurn` the dispatcher would produce
 //! onto the real Valkey stream (synthetic, internally-consistent ids since the
 //! CLI itself is the endpoint that receives them back), then waits for the
 //! worker to consume and finalize the turn. The caller prints the placeholder's

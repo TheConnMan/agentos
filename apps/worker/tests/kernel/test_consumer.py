@@ -11,21 +11,20 @@ import uuid
 from collections.abc import Callable
 
 import redis.exceptions
-from aci_protocol import Final, SessionStatus, TextDelta
-from agentos_dispatcher.queue import QueuedSlackEvent
+from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
+from agentos_dispatcher.queue import to_stream_fields
 from agentos_worker.consumer import Consumer
 
 DONE = SessionStatus.DONE
 
 
-def _qevent(text: str, *, thread: str = "th-1", event_id: str | None = None) -> QueuedSlackEvent:
-    return QueuedSlackEvent(
-        slack_event_id=event_id or uuid.uuid4().hex,
-        thread_ts=thread,
-        channel="C1",
-        user="U1",
+def _qevent(text: str, *, thread: str = "th-1", event_id: str | None = None) -> QueuedTurn:
+    return QueuedTurn(
+        event_id=event_id or uuid.uuid4().hex,
+        conversation_id=thread,
+        author="U1",
         text=text,
-        placeholder_ts="p-1",
+        reply_handle=ReplyHandle(channel="C1", placeholder="p-1"),
         received_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -47,7 +46,7 @@ def test_consumes_stream_entry_end_to_end_and_acks(make_harness) -> None:
             await consumer.ensure_group()
 
             qe = _qevent("hello", thread="tc1", event_id="c1")
-            await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
+            await h.async_redis.xadd(h.config.stream, to_stream_fields(qe))
 
             task = asyncio.create_task(consumer.run())
             await _wait_until(lambda: h.sink.last_text == "answer")
@@ -74,7 +73,7 @@ def test_reclaim_skips_this_consumers_own_inflight_entry(make_harness) -> None:
             await consumer.ensure_group()
 
             qe = _qevent("hello", thread="ti1", event_id="i1")
-            await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
+            await h.async_redis.xadd(h.config.stream, to_stream_fields(qe))
             task = asyncio.create_task(consumer.run())
             await _wait_until(lambda: h.runner.turn_active)
 
@@ -106,11 +105,11 @@ def test_dispatch_applies_backpressure_at_capacity(make_harness) -> None:
             )
             await consumer.ensure_group()
 
-            first = _qevent("a", thread="ta", event_id="a").to_stream_fields()
+            first = to_stream_fields(_qevent("a", thread="ta", event_id="a"))
             await consumer._dispatch("1-0", first)
             await _wait_until(lambda: h.runner.turn_active)  # slot taken, turn hanging
 
-            second_fields = _qevent("b", thread="tb", event_id="b").to_stream_fields()
+            second_fields = to_stream_fields(_qevent("b", thread="tb", event_id="b"))
             second = asyncio.create_task(consumer._dispatch("2-0", second_fields))
             await asyncio.sleep(0.1)
             assert not second.done()  # blocked: capacity is full
@@ -129,14 +128,14 @@ def test_ensure_group_does_not_replay_preexisting_backlog(make_harness) -> None:
             # persistent Valkey carrying a backlog from a prior deploy). Creating
             # the group at "$" must skip it; creating at "0" would storm it.
             stale = _qevent("stale", thread="tb1", event_id="b1")
-            await h.async_redis.xadd(h.config.stream, stale.to_stream_fields())
+            await h.async_redis.xadd(h.config.stream, to_stream_fields(stale))
 
             consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
             await consumer.ensure_group()
 
             # An entry produced AFTER the group exists must still be delivered.
             fresh = _qevent("fresh", thread="tb2", event_id="b2")
-            await h.async_redis.xadd(h.config.stream, fresh.to_stream_fields())
+            await h.async_redis.xadd(h.config.stream, to_stream_fields(fresh))
             h.runner.default_script = [Final(text="answer", status=DONE)]
 
             task = asyncio.create_task(consumer.run())
@@ -177,7 +176,7 @@ def test_read_loop_survives_transient_redis_timeout(make_harness, caplog) -> Non
 
             h.runner.default_script = [Final(text="answer", status=DONE)]
             qe = _qevent("hello", thread="tt1", event_id="t1")
-            await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
+            await h.async_redis.xadd(h.config.stream, to_stream_fields(qe))
 
             with caplog.at_level(logging.DEBUG, logger="agentos_worker.consumer"):
                 task = asyncio.create_task(consumer.run())
@@ -205,7 +204,7 @@ def test_reclaims_and_reprocesses_a_dead_consumers_pending_entry(make_harness) -
             await consumer.ensure_group()
 
             qe = _qevent("orphan", thread="tr1", event_id="r1")
-            await h.async_redis.xadd(h.config.stream, qe.to_stream_fields())
+            await h.async_redis.xadd(h.config.stream, to_stream_fields(qe))
 
             # A different (now "dead") consumer takes delivery but never acks,
             # leaving the entry pending — the crash mid-run case.
