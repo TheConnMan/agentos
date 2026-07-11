@@ -13,7 +13,7 @@ def _create_agent(
 ) -> dict[str, Any]:
     resp = client.post(
         "/agents",
-        json={"name": "model-bot", "slack_channel": "C-MODEL", **body},
+        json={"name": "model-bot", "slack_channel": "CMODEL001", **body},
         headers=auth_headers,
     )
     assert resp.status_code == 201, resp.text
@@ -62,10 +62,10 @@ def test_patch_without_model_leaves_it_unchanged(
     # A PATCH touching only slack_channel must not clear the model.
     resp = client.patch(
         f"/agents/{agent['id']}",
-        json={"slack_channel": "C-MOVED"},
+        json={"slack_channel": "CMOVED001"},
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["slack_channel"] == "C-MOVED"
+    assert body["slack_channel"] == "CMOVED001"
     assert body["model"] == "deepseek-v4"
