@@ -711,6 +711,23 @@ pub struct DeployOpts {
     pub slack_channel: Option<String>,
     pub env: DeployEnv,
     pub label: Option<String>,
+    /// Actionable remediation line printed when the platform API connection
+    /// fails (e.g. the kubectl port-forward command for cluster, or
+    /// `agentos local up` for local). Naming the fix turns a raw
+    /// "Connection refused" into something the operator can act on.
+    pub connect_hint: String,
+}
+
+/// True when the error chain contains a reqwest connect/timeout failure --
+/// i.e. the platform API was unreachable rather than returning an error
+/// status. Lets deploy() swap the raw "Connection refused (os error 111)"
+/// for an actionable remediation.
+fn is_api_unreachable(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|e| e.is_connect() || e.is_timeout())
+    })
 }
 
 pub async fn deploy(opts: DeployOpts) -> Result<()> {
@@ -756,6 +773,9 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         }
         Err(err) => {
             step.fail("failed");
+            if is_api_unreachable(&err) {
+                return Err(err.context(opts.connect_hint));
+            }
             return Err(err);
         }
     };
@@ -1114,6 +1134,29 @@ mod tests {
                 "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
                 "ANTHROPIC_API_KEY".to_string()
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn deploy_names_the_remediation_when_api_is_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::scaffold::scaffold(dir.path(), "test-agent").unwrap();
+        let hint = "kubectl -n agentos port-forward svc/agentos-api 8000:8000";
+        let opts = super::DeployOpts {
+            plugin_dir: dir.path().to_path_buf(),
+            // port 1 is reserved/closed -> deterministic connection refused
+            api_url: "http://127.0.0.1:1".to_string(),
+            api_key: "k".to_string(),
+            slack_channel: None,
+            env: super::DeployEnv::Dev,
+            label: Some("v0".to_string()),
+            connect_hint: hint.to_string(),
+        };
+        let err = super::deploy(opts).await.unwrap_err();
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains(hint),
+            "hint missing from error: {rendered}"
         );
     }
 }

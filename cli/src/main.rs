@@ -871,6 +871,9 @@ async fn main() -> Result<()> {
                 env,
                 label,
             } => {
+                let connect_hint = format!(
+                    "the platform API at {api_url} is unreachable. Start the local stack first with `agentos local up`, then re-run (or pass --api-url if your API is elsewhere)."
+                );
                 commands::deploy(DeployOpts {
                     plugin_dir,
                     api_url,
@@ -878,6 +881,7 @@ async fn main() -> Result<()> {
                     slack_channel,
                     env,
                     label,
+                    connect_hint,
                 })
                 .await
             }
@@ -1074,6 +1078,9 @@ async fn main() -> Result<()> {
                 env,
                 label,
             } => {
+                let connect_hint = format!(
+                    "the platform API at {api_url} is unreachable. `cluster deploy` does not port-forward for you; open one first, e.g.:\n    kubectl -n agentos port-forward svc/agentos-api 8000:8000\nthen re-run (or pass --api-url if your API is elsewhere)."
+                );
                 commands::deploy(DeployOpts {
                     plugin_dir,
                     api_url,
@@ -1081,6 +1088,7 @@ async fn main() -> Result<()> {
                     slack_channel,
                     env,
                     label,
+                    connect_hint,
                 })
                 .await
             }
