@@ -290,6 +290,54 @@ def test_duplicate_click_enqueues_exactly_once(
     assert redis_client.xlen(config.stream) == 1
 
 
+def _home_tab_action_request(
+    envelope_id: str,
+    *,
+    action_id: str = "reports",
+    trigger_id: str | None = None,
+) -> SocketModeRequest:
+    """A block action from an App Home tab: container is a view, and the payload
+    carries no ``channel`` and no ``message`` (the shape that KeyErrored)."""
+    return SocketModeRequest(
+        type="interactive",
+        envelope_id=envelope_id,
+        payload={
+            "type": "block_actions",
+            "trigger_id": trigger_id or f"trig-{envelope_id}",
+            "team": {"id": "T1"},
+            "user": {"id": "U123"},
+            "api_app_id": "A1",
+            "token": "verif",
+            "container": {"type": "view", "view_id": "V1"},
+            "view": {"id": "V1", "type": "home"},
+            "actions": [{"type": "button", "action_id": action_id, "action_ts": "1.5"}],
+        },
+    )
+
+
+def test_channel_less_action_is_skipped_without_burning_idempotency_key(
+    redis_client: redis.Redis, config: DispatcherConfig
+) -> None:
+    app, web_client = _build(config, redis_client)
+    handler = SocketModeHandler(app, app_token="xapp-test")
+    sock = FakeSocketClient()
+
+    # A Home-tab click (no channel, no message) must not KeyError, must not post a
+    # placeholder, and must not enqueue -- there is no thread to answer in.
+    handler.handle(sock, _home_tab_action_request("env-1", trigger_id="trig-home"))
+    _drain(app)
+
+    assert sock.acked_envelope_ids == ["env-1"]  # Bolt still acked the envelope
+    assert web_client.chat_postMessage.call_count == 0
+    assert redis_client.xlen(config.stream) == 0
+
+    # The idempotency key was NOT claimed: no dedupe key was written, so a Slack
+    # redelivery of this interaction is not silently dropped. (A burned key here
+    # would linger for the TTL and drop the redelivery.)
+    dedupe_key = f"{config.dedupe_prefix}action-trig-home"
+    assert redis_client.exists(dedupe_key) == 0
+
+
 def test_bot_authored_message_is_ignored(
     redis_client: redis.Redis, config: DispatcherConfig
 ) -> None:
