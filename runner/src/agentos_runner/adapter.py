@@ -15,10 +15,23 @@ this boundary and nothing above it is. ``aci-protocol`` is never mocked.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncIterator
-from typing import Any, Protocol
+from typing import Protocol
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, SdkPluginConfig, TaskBudget
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    RateLimitEvent,
+    ResultMessage,
+    SdkPluginConfig,
+    TaskBudget,
+    TextBlock,
+    ToolUseBlock,
+)
+
+from .events import AssistantText, RateLimit, ToolCall, TurnEvent, TurnResult
 
 
 class ModelSession(Protocol):
@@ -32,8 +45,8 @@ class ModelSession(Protocol):
         """Push a user message into the session (initial turn or mid-run steer)."""
         ...
 
-    def receive_turn(self) -> AsyncIterator[Any]:
-        """Yield SDK messages for the current turn, ending at its terminal result."""
+    def receive_turn(self) -> AsyncIterator[TurnEvent]:
+        """Yield TurnEvents for the current turn, ending at its terminal result."""
         ...
 
     async def interrupt(self) -> None:
@@ -43,6 +56,75 @@ class ModelSession(Protocol):
     async def close(self) -> None:
         """Tear down the session."""
         ...
+
+
+def map_sdk_message(message: object) -> list[TurnEvent]:
+    """Map one claude-agent-sdk message to the runner TurnEvents it produces.
+
+    This is the ONE place claude-agent-sdk dataclasses survive in the runner: the
+    SDK boundary maps into the runner-owned ``TurnEvent`` union so everything above
+    it (translate, session) never imports the SDK.
+    """
+
+    if isinstance(message, AssistantMessage):
+        return _map_assistant(message)
+    if isinstance(message, ResultMessage):
+        return [
+            TurnResult(
+                text=message.result or "",
+                is_error=message.is_error,
+                subtype=message.subtype or "",
+                usage=message.usage,
+            )
+        ]
+    if isinstance(message, RateLimitEvent):
+        return [RateLimit(rejected=message.rate_limit_info.status == "rejected")]
+    # UserMessage, SystemMessage, and StreamEvent carry no outbound-visible
+    # content in the v0.1 contract; they are intentionally dropped.
+    return []
+
+
+def _map_assistant(message: AssistantMessage) -> list[TurnEvent]:
+    model = message.model or None
+    events: list[TurnEvent] = []
+
+    # A provider auth rejection arrives as an AssistantMessage.error with (often)
+    # empty content. Prepend it as a leading AssistantText carrier so the error
+    # precedes any text and survives content-less messages (the fast-fail case).
+    if message.error:
+        events.append(AssistantText(text="", model=model, error=message.error))
+
+    for block in message.content:
+        if isinstance(block, TextBlock):
+            if block.text:
+                events.append(AssistantText(text=block.text, model=model))
+        elif isinstance(block, ToolUseBlock):
+            events.append(ToolCall(name=block.name, id=block.id, model=model))
+        # ThinkingBlock and any other block type are dropped: this is where a
+        # reasoning model's thinking is discarded so it never reaches the ACI.
+
+    # Home ``usage`` onto exactly one event so the budget increments once per
+    # source message (session._drive_turn folds usage per event). Home it onto the
+    # LAST mapped event, not the first: session._drive_turn folds usage per event
+    # in order and halts the turn the instant the ceiling trips, so if a source
+    # message's usage exceeds the budget the halt must fire only AFTER every event
+    # that message produced. Homing to the first event would halt right after the
+    # leading text and drop a later side-effecting ToolCall -- and with it the
+    # required ``side_effect_flag`` -- letting a run whose mutating tool already
+    # ran be auto-retried. Homing to the last event preserves the pre-refactor
+    # guarantee that the whole message was translated as one unit before any
+    # same-message budget halt. If the message has no content/error events, a
+    # single carrier event delivers the usage.
+    if message.usage:
+        if events:
+            last = events[-1]
+            # Content events are only ever AssistantText/ToolCall (both carry a
+            # ``usage`` field); the narrowing keeps ``dataclasses.replace`` typed.
+            if isinstance(last, (AssistantText, ToolCall)):
+                events[-1] = dataclasses.replace(last, usage=message.usage)
+        else:
+            events.append(AssistantText(text="", model=model, usage=message.usage))
+    return events
 
 
 def build_options(
@@ -97,8 +179,10 @@ class ClaudeAgentSession:
     async def query(self, text: str) -> None:
         await self._client.query(text)
 
-    def receive_turn(self) -> AsyncIterator[Any]:
-        return self._client.receive_response()
+    async def receive_turn(self) -> AsyncIterator[TurnEvent]:
+        async for message in self._client.receive_response():
+            for event in map_sdk_message(message):
+                yield event
 
     async def interrupt(self) -> None:
         await self._client.interrupt()

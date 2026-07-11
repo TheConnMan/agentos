@@ -9,10 +9,11 @@ flags non-idempotent tool calls, loads a validated plugin bundle, exports gen_ai
 OTel spans to the collector, and rehydrates from a history ref on start.
 """
 
-from .adapter import ClaudeAgentSession, ModelSession, build_options
+from .adapter import ClaudeAgentSession, ModelSession, build_options, map_sdk_message
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
 from .config import RunnerConfig
 from .conformance import conformance_producer
+from .events import AssistantText, RateLimit, ToolCall, TurnEvent, TurnResult
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
 from .plugin import PluginBundleError, load_plugins
@@ -25,7 +26,13 @@ __version__ = "0.0.0"
 __all__ = [
     "ModelSession",
     "ClaudeAgentSession",
+    "map_sdk_message",
     "build_options",
+    "AssistantText",
+    "ToolCall",
+    "RateLimit",
+    "TurnResult",
+    "TurnEvent",
     "BudgetTracker",
     "BUDGET_CLASSIFICATION",
     "RunnerConfig",

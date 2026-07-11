@@ -34,26 +34,26 @@ from aci_protocol import (
     ToolNote,
     to_ndjson_line,
 )
-from claude_agent_sdk import AssistantMessage, ResultMessage
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
+from .events import AssistantText, TurnResult
 from .otel import RunTracer, _GenerationSpan
 from .side_effects import SideEffectClassifier
-from .translate import TurnState, translate_message
+from .translate import TurnState, translate_event
 
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], ModelSession]
 
 # The SDK surfaces a provider auth rejection (HTTP 401/403 -- e.g. a placeholder,
-# revoked, or wrong model key) as an ``AssistantMessage.error`` of this code
-# (see ``claude_agent_sdk.types.AssistantMessageError``). Unlike a 5xx or a rate
-# limit, a rejected credential is terminal and NON-retryable: retrying it only
-# burns wall time (the SDK/CLI otherwise backs off and re-attempts until a ~2min
-# timeout, surfacing as a generic hang). The runner fails the turn fast on this
-# signal instead of streaming a non-terminal error and continuing to drive the
-# session.
+# revoked, or wrong model key) as an ``AssistantMessage.error``, which the adapter
+# maps to an ``AssistantText.error`` of this code (see
+# ``claude_agent_sdk.types.AssistantMessageError``). Unlike a 5xx or a rate limit,
+# a rejected credential is terminal and NON-retryable: retrying it only burns wall
+# time (the SDK/CLI otherwise backs off and re-attempts until a ~2min timeout,
+# surfacing as a generic hang). The runner fails the turn fast on this signal
+# instead of streaming a non-terminal error and continuing to drive the session.
 _AUTH_REJECTION_SDK_CODE = "authentication_failed"
 
 # Classification carried on the fast-fail error event so consumers (F1's retry
@@ -62,13 +62,10 @@ _AUTH_REJECTION_SDK_CODE = "authentication_failed"
 AUTH_REJECTED_CLASSIFICATION = "model-credential-rejected"
 
 
-def _is_auth_rejection(message: object) -> bool:
-    """True when an SDK message reports a provider credential rejection (401/403)."""
+def _is_auth_rejection(event: object) -> bool:
+    """True when a TurnEvent reports a provider credential rejection (401/403)."""
 
-    return (
-        isinstance(message, AssistantMessage)
-        and getattr(message, "error", None) == _AUTH_REJECTION_SDK_CODE
-    )
+    return isinstance(event, AssistantText) and event.error == _AUTH_REJECTION_SDK_CODE
 
 
 class SessionRunner:
@@ -238,8 +235,8 @@ class SessionRunner:
 
         assert self._session is not None
         await self._session.query(event.text)
-        async for message in self._session.receive_turn():
-            if _is_auth_rejection(message):
+        async for turn_event in self._session.receive_turn():
+            if _is_auth_rejection(turn_event):
                 # A rejected model credential is terminal: stop the live session
                 # so the SDK/CLI does not keep retrying with backoff to the wall,
                 # then surface a distinct, immediate classified failure. Suppress
@@ -252,16 +249,16 @@ class SessionRunner:
                 for line in self._auth_halt_lines():
                     yield line
                 return
-            usage = getattr(message, "usage", None)
+            usage = getattr(turn_event, "usage", None)
             # The terminal result carries the authoritative turn total; streaming
-            # assistant messages carry per-message output. Fold them differently
-            # so the same tokens are not counted twice (see BudgetTracker).
-            if isinstance(message, ResultMessage):
+            # assistant events carry per-event output. Fold them differently so
+            # the same tokens are not counted twice (see BudgetTracker).
+            if isinstance(turn_event, TurnResult):
                 tracker.set_total(usage)
             else:
                 tracker.add_increment(usage)
             budget_hit = tracker.exceeded
-            events = translate_message(message, state, self._classifier, gen)
+            events = translate_event(turn_event, state, self._classifier, gen)
 
             for outbound in events:
                 if isinstance(outbound, ToolNote):

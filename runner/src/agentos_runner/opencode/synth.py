@@ -1,22 +1,21 @@
-"""Synthesize claude-agent-sdk messages from a live OpenCode `/event` stream.
+"""Synthesize runner TurnEvents from a live OpenCode `/event` stream.
 
 This is the load-bearing shim for the OpenCode second harness (issue #25). The
 runner core (``translate.py``, ``session.py``, ``otel.py``, the HTTP server, and
-``packages/aci-protocol``) pattern-matches on claude-agent-sdk dataclasses
-(``AssistantMessage`` / ``ResultMessage`` / ``TextBlock`` / ``ToolUseBlock``).
-Rather than teach that core a second message vocabulary, this module re-emits
-OpenCode's wire frames as those same dataclasses, so the whole runner runs
-byte-for-byte unmodified against an OpenCode backend.
+``packages/aci-protocol``) pattern-matches on the runner-owned ``TurnEvent`` union
+(``AssistantText`` / ``ToolCall`` / ``TurnResult``). This module re-emits
+OpenCode's wire frames as those TurnEvents, so the whole runner runs unmodified
+against an OpenCode backend.
 
 The mapping direction is:
 
-    OpenCode /event frame  ->  claude-agent-sdk message  ->  (unchanged)
+    OpenCode /event frame  ->  runner TurnEvent  ->  (unchanged)
     translate.py  ->  ACI outbound event  ->  NDJSON
 
 Unlike the offline spike (which collected a whole scripted turn then synthesized
 it in one shot), a live turn arrives incrementally over Server-Sent Events, so
 ``TurnSynthesizer`` is a *stateful, incremental* mapper: feed it one frame at a
-time and it returns the SDK messages to yield now, marking ``done`` at the turn
+time and it returns the TurnEvents to yield now, marking ``done`` at the turn
 boundary. The relevant OpenCode v1 frames (verified against ``opencode`` v1.17.17
 ``GET /doc`` and a captured live turn) are:
 
@@ -34,7 +33,7 @@ boundary. The relevant OpenCode v1 frames (verified against ``opencode`` v1.17.1
 - ``message.updated {info}`` -- assistant message info carrying ``modelID`` and
   rolled-up ``tokens``.
 - ``session.status {status:{type}}`` -- a ``busy`` -> ``idle`` transition marks
-  turn completion (the terminal ``ResultMessage``). ``session.idle`` is the
+  turn completion (the terminal ``TurnResult``). ``session.idle`` is the
   deprecated equivalent and is handled the same way.
 - ``session.error {error}`` -- a hard failure, mapped to an error result.
 """
@@ -43,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from ..events import AssistantText, ToolCall, TurnResult
 
 
 def _tokens(tok: Any) -> dict[str, int] | None:
@@ -72,15 +71,11 @@ def _error_message(err: Any) -> str:
 
 def _result(
     *, text: str, is_error: bool, usage: dict[str, int] | None
-) -> ResultMessage:
-    return ResultMessage(
-        subtype="error" if is_error else "success",
-        duration_ms=1,
-        duration_api_ms=1,
+) -> TurnResult:
+    return TurnResult(
+        text=text,
         is_error=is_error,
-        num_turns=1,
-        session_id="opencode-session",
-        result=text,
+        subtype="error" if is_error else "success",
         usage=usage,
     )
 
@@ -111,7 +106,7 @@ class TurnSynthesizer:
         # part's first delta, verified on the live wire) supplies the real type.
         self._part_types: dict[str, str] = {}
 
-    def _terminal(self) -> ResultMessage:
+    def _terminal(self) -> TurnResult:
         if self._error is not None:
             return _result(text=self._error, is_error=True, usage=self._usage)
         return _result(text=self._final_text, is_error=False, usage=self._usage)
@@ -138,9 +133,7 @@ class TurnSynthesizer:
             # drops the chunk rather than leaking an untyped channel.
             if chunk and self._part_types.get(str(props.get("partID"))) == "text":
                 self._final_text += chunk
-                out.append(
-                    AssistantMessage(content=[TextBlock(text=chunk)], model=self._model_id or "")
-                )
+                out.append(AssistantText(text=chunk, model=self._model_id or ""))
 
         elif ftype == "message.part.updated":
             part = props.get("part", {})
@@ -157,14 +150,9 @@ class TurnSynthesizer:
                     if status == "running":
                         self._seen_activity = True
                         out.append(
-                            AssistantMessage(
-                                content=[
-                                    ToolUseBlock(
-                                        id=str(part.get("callID") or part.get("id") or "call"),
-                                        name=str(part.get("tool") or "unknown"),
-                                        input=state.get("input") or {},
-                                    )
-                                ],
+                            ToolCall(
+                                name=str(part.get("tool") or "unknown"),
+                                id=str(part.get("callID") or part.get("id") or "call"),
                                 model=self._model_id or "",
                             )
                         )

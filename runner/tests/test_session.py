@@ -5,9 +5,9 @@ import logging
 import anyio
 from aci_protocol import Event, Interrupt, SessionStatus, parse_ndjson
 from agentos_runner import RunTracer, SideEffectClassifier, build_options
+from agentos_runner.events import AssistantText, TurnResult
 from agentos_runner.fake import FakeModelSession, default_turn
 from agentos_runner.session import SessionRunner
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 
 def _runner(
@@ -99,11 +99,8 @@ def test_interrupt_reclassifies_error_result_to_idle() -> None:
     # result after the interrupt. An intentional stop must read as idle, not a
     # classified failure.
     script = [
-        AssistantMessage(content=[TextBlock(text="working")], model="m"),
-        ResultMessage(
-            subtype="error_during_execution", duration_ms=1, duration_api_ms=1,
-            is_error=True, num_turns=1, session_id="s", result="aborted",
-        ),
+        AssistantText(text="working", model="m"),
+        TurnResult(text="aborted", is_error=True, subtype="error_during_execution"),
     ]
     fake = FakeModelSession(lambda: script, truncate_on_interrupt=False)
     runner = SessionRunner(
@@ -197,12 +194,9 @@ def test_auth_rejection_fails_fast_not_retried(caplog) -> None:
     # did not keep driving the session).
     sentinel = "SHOULD-NOT-APPEAR-AFTER-AUTH-FAIL"
     script = [
-        AssistantMessage(content=[], model="m", error="authentication_failed"),
-        AssistantMessage(content=[TextBlock(text=sentinel)], model="m"),
-        ResultMessage(
-            subtype="success", duration_ms=1, duration_api_ms=1,
-            is_error=False, num_turns=1, session_id="s", result=sentinel,
-        ),
+        AssistantText(text="", model="m", error="authentication_failed"),
+        AssistantText(text=sentinel, model="m"),
+        TurnResult(text=sentinel),
     ]
     runner, fake = _runner(lambda: script)
 
@@ -237,7 +231,7 @@ def test_auth_fast_fail_survives_a_wedged_interrupt(caplog) -> None:
             self.interrupts += 1
             raise RuntimeError("transport wedged")
 
-    script = [AssistantMessage(content=[], model="m", error="authentication_failed")]
+    script = [AssistantText(text="", model="m", error="authentication_failed")]
     fake = WedgedInterruptSession(lambda: script)
     runner = SessionRunner(
         session_factory=lambda: fake,
@@ -265,11 +259,8 @@ def test_transient_model_error_is_not_fast_failed() -> None:
     # credential rejection: it must flow through translation unchanged and reach
     # the model's own terminal result, so genuine retry/backoff is preserved.
     script = [
-        AssistantMessage(content=[], model="m", error="rate_limit"),
-        ResultMessage(
-            subtype="success", duration_ms=1, duration_api_ms=1,
-            is_error=False, num_turns=1, session_id="s", result="recovered",
-        ),
+        AssistantText(text="", model="m", error="rate_limit"),
+        TurnResult(text="recovered"),
     ]
     runner, fake = _runner(lambda: script)
     events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
@@ -283,21 +274,8 @@ def test_transient_model_error_is_not_fast_failed() -> None:
 
 def test_budget_halt_logged(caplog) -> None:
     script = [
-        AssistantMessage(
-            content=[TextBlock(text="thinking hard")],
-            model="fake",
-            usage={"output_tokens": 500},
-        ),
-        ResultMessage(
-            subtype="success",
-            duration_ms=1,
-            duration_api_ms=1,
-            is_error=False,
-            num_turns=1,
-            session_id="s",
-            result="done",
-            usage={"output_tokens": 500},
-        ),
+        AssistantText(text="thinking hard", model="fake", usage={"output_tokens": 500}),
+        TurnResult(text="done", usage={"output_tokens": 500}),
     ]
     runner, _ = _runner(lambda: script, ceiling=10)
 
@@ -319,11 +297,8 @@ def test_error_result_body_not_logged(caplog) -> None:
     # branch.
     sentinel = "SENTINEL-RESULT-BODY-7c2e"
     script = [
-        AssistantMessage(content=[TextBlock(text="working")], model="m"),
-        ResultMessage(
-            subtype="error_during_execution", duration_ms=1, duration_api_ms=1,
-            is_error=True, num_turns=1, session_id="s", result=sentinel,
-        ),
+        AssistantText(text="working", model="m"),
+        TurnResult(text=sentinel, is_error=True, subtype="error_during_execution"),
     ]
     runner, _ = _runner(lambda: script)
 

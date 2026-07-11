@@ -1,9 +1,9 @@
 """Offline regression for the OpenCode harness shim (issue #25).
 
-These tests exercise the OpenCode-frame -> SDK-message synthesis and drive it
+These tests exercise the OpenCode-frame -> TurnEvent synthesis and drive it
 through the *real* runner core (translate + session + conformance) with zero
 network: scripted ``/event`` frames stand in for a live SSE stream, the same way
-``fake.py`` scripts SDK messages. They pin the mapping (text deltas, tool calls,
+``fake.py`` scripts TurnEvents. They pin the mapping (text deltas, tool calls,
 usage, terminal result, the ignored text-part bookends, the busy->idle gate) and
 prove a scripted OpenCode turn passes the frozen ACI conformance suite.
 
@@ -19,11 +19,11 @@ from typing import Any
 
 import anyio
 from aci_protocol import Event, Interrupt, parse_ndjson, run_conformance
+from agentos_runner.events import AssistantText, ToolCall, TurnResult
 from agentos_runner.opencode.synth import TurnSynthesizer
 from agentos_runner.otel import RunTracer
 from agentos_runner.session import SessionRunner
 from agentos_runner.side_effects import SideEffectClassifier
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 SID = "ses_test"
 MSG = "msg_1"
@@ -279,32 +279,21 @@ def test_synth_maps_text_tool_and_terminal_result() -> None:
     messages, synth = _run_synth(default_turn_frames())
     assert synth.done
 
-    texts = [
-        b.text
-        for m in messages
-        if isinstance(m, AssistantMessage)
-        for b in m.content
-        if isinstance(b, TextBlock)
-    ]
+    texts = [m.text for m in messages if isinstance(m, AssistantText)]
     assert texts == ["Looking into it", " all done"], texts
 
-    tools = [
-        b
-        for m in messages
-        if isinstance(m, AssistantMessage)
-        for b in m.content
-        if isinstance(b, ToolUseBlock)
-    ]
+    tools = [m for m in messages if isinstance(m, ToolCall)]
     assert len(tools) == 1
+    # ToolCall in the union carries the tool name and id (what the runner uses to
+    # note and side-effect-flag the call); the raw tool input is not part of it.
     assert tools[0].name == "Bash"
     assert tools[0].id == "call_1"
-    assert tools[0].input == {"command": "echo hi"}
 
-    results = [m for m in messages if isinstance(m, ResultMessage)]
+    results = [m for m in messages if isinstance(m, TurnResult)]
     assert len(results) == 1
     result = results[0]
     assert result.is_error is False
-    assert result.result == "Looking into it all done"
+    assert result.text == "Looking into it all done"
     assert result.usage == {"input_tokens": 20, "output_tokens": 8}
 
 
@@ -319,7 +308,7 @@ def test_synth_carries_model_onto_streamed_messages() -> None:
         idle(),
     ]
     messages, _ = _run_synth(frames)
-    text_msgs = [m for m in messages if isinstance(m, AssistantMessage) and m.content]
+    text_msgs = [m for m in messages if isinstance(m, AssistantText) and m.text]
     assert text_msgs and text_msgs[0].model == "z-ai/glm-4.6"
 
 
@@ -328,13 +317,7 @@ def test_synth_ignores_bookends_and_bus_noise() -> None:
     frames = [busy(), *NOISE, text_part_bookend(""), text_delta("one"), *NOISE,
               text_delta(" two"), text_part_bookend("one two"), idle()]
     messages, _ = _run_synth(frames)
-    texts = [
-        b.text
-        for m in messages
-        if isinstance(m, AssistantMessage)
-        for b in m.content
-        if isinstance(b, TextBlock)
-    ]
+    texts = [m.text for m in messages if isinstance(m, AssistantText)]
     assert texts == ["one", " two"], texts
 
 
@@ -342,26 +325,20 @@ def test_synth_session_error_yields_error_result() -> None:
     frames = [busy(), text_delta("partial"), session_error("provider exploded")]
     messages, synth = _run_synth(frames)
     assert synth.done
-    results = [m for m in messages if isinstance(m, ResultMessage)]
+    results = [m for m in messages if isinstance(m, TurnResult)]
     assert len(results) == 1
     assert results[0].is_error is True
-    assert results[0].result == "provider exploded"
+    assert results[0].text == "provider exploded"
 
 
 def test_synth_drops_reasoning_deltas_keeps_text() -> None:
     # A delta's field is "text" even for a reasoning part; only the text part's
-    # content (resolved by partID from the snapshots) reaches the SDK messages.
+    # content (resolved by partID from the snapshots) reaches the TurnEvents.
     messages, synth = _run_synth(reasoning_then_text_frames())
-    texts = [
-        b.text
-        for m in messages
-        if isinstance(m, AssistantMessage)
-        for b in m.content
-        if isinstance(b, TextBlock)
-    ]
+    texts = [m.text for m in messages if isinstance(m, AssistantText)]
     assert texts == ["pong"], texts
-    results = [m for m in messages if isinstance(m, ResultMessage)]
-    assert results and results[0].result == "pong"
+    results = [m for m in messages if isinstance(m, TurnResult)]
+    assert results and results[0].text == "pong"
 
 
 def test_synth_pre_turn_idle_does_not_terminate() -> None:
@@ -374,7 +351,7 @@ def test_synth_pre_turn_idle_does_not_terminate() -> None:
     synth.ingest(text_delta("go"))
     out = synth.ingest(idle())
     assert synth.done is True
-    assert any(isinstance(m, ResultMessage) for m in out)
+    assert any(isinstance(m, TurnResult) for m in out)
 
 
 def test_synth_interrupted_iteration_still_has_no_partial_duplicate() -> None:
@@ -383,7 +360,7 @@ def test_synth_interrupted_iteration_still_has_no_partial_duplicate() -> None:
     frames = default_turn_frames()[:-1]  # drop the terminal idle
     messages, synth = _run_synth(frames)
     assert synth.done is False
-    assert not any(isinstance(m, ResultMessage) for m in messages)
+    assert not any(isinstance(m, TurnResult) for m in messages)
 
 
 # --- offline end-to-end through the real runner core ----------------------------
