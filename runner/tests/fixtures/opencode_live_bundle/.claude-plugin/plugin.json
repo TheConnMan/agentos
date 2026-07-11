@@ -1,0 +1,8 @@
+{
+  "name": "opencode-live-bundle",
+  "version": "0.1.0",
+  "description": "A live round-trip bundle: one skill, one command, one stdio MCP probe server. Used by the OpenCode compiler unit tests and the live proof.",
+  "author": { "name": "CurieTech" },
+  "keywords": ["fixture", "opencode", "roundtrip"],
+  "mcpServers": ".mcp.json"
+}

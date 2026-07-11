@@ -58,6 +58,20 @@ Runner-local: `AGENTOS_MODEL`, `AGENTOS_SYSTEM_PROMPT`, `AGENTOS_MAX_TURNS`,
 three ACI POST routes; enforced only when set), `AGENTOS_FAKE_MODEL` (offline
 smoke; no model call).
 
+## OpenCode harness bundle fidelity
+
+The optional OpenCode second harness (issue #25) does not consume a Claude plugin
+bundle directly; `opencode/installer.py` compiles the validated bundle into an
+OpenCode session workdir (`opencode.json` MCP config, `.claude/skills/`,
+`.opencode/commands/`, `.opencode/agents/`). That compilation is copy-verbatim
+where OpenCode's leniency permits and a field remap only where the formats
+differ, so a few Claude-only elements are lost in translation (skill
+`allowed-tools`, command/agent `model` aliases, agent `tools` lists, `scripts/`,
+manifest hooks, non-`${CLAUDE_PLUGIN_ROOT}` `${VAR}` references, the http/sse
+transport distinction). The **canonical per-element fidelity record** lives in the
+`opencode/installer.py` module docstring; each loss also surfaces at runtime as a
+`logger.warning` on `agentos_runner.opencode.installer`.
+
 ## Build and smoke
 
 The image compiles against the frozen workspace packages, so build from the repo

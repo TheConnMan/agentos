@@ -31,6 +31,22 @@ class PluginBundleError(RuntimeError):
     """Raised when the mounted plugin bundle fails validation."""
 
 
+def ensure_valid_bundle(root: Path) -> None:
+    """Validate the bundle at ``root`` or raise with the aggregated issues.
+
+    The shared fail-loud gate every harness installer runs before ingesting a
+    bundle: a broken bundle is a hard startup error, not a silent skip. Both the
+    Claude passthrough (``load_plugins``) and the OpenCode compiler
+    (``opencode/installer.py``) call this so the rejection message stays
+    identical across harnesses.
+    """
+
+    result = validate_bundle(root)
+    if not result.valid:
+        detail = "; ".join(f"[{i.code}] {i.location}: {i.message}" for i in result.errors)
+        raise PluginBundleError(f"invalid plugin bundle at {root}: {detail}")
+
+
 @runtime_checkable
 class BundleInstaller(Protocol[T_co]):
     """Ingest a validated plugin bundle into a harness-native session config.
@@ -59,10 +75,7 @@ def load_plugins(plugin_dir: str | None) -> list[SdkPluginConfig]:
         return []
 
     root = Path(plugin_dir)
-    result = validate_bundle(root)
-    if not result.valid:
-        detail = "; ".join(f"[{i.code}] {i.location}: {i.message}" for i in result.errors)
-        raise PluginBundleError(f"invalid plugin bundle at {root}: {detail}")
+    ensure_valid_bundle(root)
 
     return [SdkPluginConfig(type="local", path=str(root))]
 

@@ -10,13 +10,14 @@ live adapter, ``synth.py`` for the OpenCode-frame -> SDK-message shim, and
 from __future__ import annotations
 
 from .conformance import opencode_conformance_producer
-from .installer import OpenCodeBundleInstaller
+from .installer import CompiledOpenCodeBundle, OpenCodeBundleInstaller
 from .session import OPENCODE_READONLY_TOOLS, OpenCodeModelSession
 from .synth import TurnSynthesizer
 
 __all__ = [
     "OpenCodeModelSession",
     "OPENCODE_READONLY_TOOLS",
+    "CompiledOpenCodeBundle",
     "OpenCodeBundleInstaller",
     "TurnSynthesizer",
     "opencode_conformance_producer",

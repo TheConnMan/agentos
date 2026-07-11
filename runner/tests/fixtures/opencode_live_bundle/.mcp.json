@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "probe": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/mcp_probe_server.py"],
+      "env": { "PROBE_MODE": "1" }
+    }
+  }
+}
