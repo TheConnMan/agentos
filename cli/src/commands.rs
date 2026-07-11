@@ -17,7 +17,7 @@ use crate::docker::{self, StartSpec};
 use crate::evals::{load_suite, turn_passes};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
-use crate::scaffold::{read_manifest, scaffold};
+use crate::scaffold::{read_manifest, scaffold, scaffold_from_spec};
 use crate::state::{self, RunnerState};
 
 pub const DEFAULT_PORT: u16 = 7245; // the design canon's local bot port
@@ -72,19 +72,67 @@ pub struct StartOpts {
     pub local_model: Option<String>,
 }
 
-pub fn init(name: &str, dir: Option<PathBuf>) -> Result<()> {
-    let dir = dir.unwrap_or_else(|| PathBuf::from(name));
-    let created = scaffold(&dir, name)?;
+pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBuf>) -> Result<()> {
     let ui = crate::ui::ui();
-    ui.success(&format!(
-        "initialized plugin bundle '{name}' in {}",
-        dir.display()
-    ));
+
+    // Spec-file path (ADR-0021 decision 5): fully non-interactive. The bundle
+    // name comes from the spec, never a prompt.
+    if let Some(spec_path) = from_spec {
+        let body = std::fs::read_to_string(&spec_path)
+            .with_context(|| format!("reading spec file {}", spec_path.display()))?;
+        let spec = crate::spec::parse(&body)?;
+        // A positional name is allowed only if it matches the spec's name; a
+        // mismatch is an authoring error, not a silent override.
+        if let Some(positional) = &name {
+            if positional != &spec.name {
+                bail!(
+                    "positional name {:?} does not match the spec name {:?}; \
+                     the bundle name comes from the spec -- omit the name or make them match",
+                    positional,
+                    spec.name
+                );
+            }
+        }
+        let dir = dir.unwrap_or_else(|| PathBuf::from(&spec.name));
+        let created = scaffold_from_spec(&dir, &spec)?;
+        report_scaffold(
+            ui,
+            format!(
+                "initialized plugin bundle '{}' in {} (from spec {})",
+                spec.name,
+                dir.display(),
+                spec_path.display()
+            ),
+            created,
+            &dir,
+        );
+        return Ok(());
+    }
+
+    let name = match name {
+        Some(name) => name,
+        None => bail!("provide a plugin NAME or --from-spec <path>"),
+    };
+    let dir = dir.unwrap_or_else(|| PathBuf::from(&name));
+    let created = scaffold(&dir, &name)?;
+    report_scaffold(
+        ui,
+        format!("initialized plugin bundle '{name}' in {}", dir.display()),
+        created,
+        &dir,
+    );
+    Ok(())
+}
+
+/// Report a freshly scaffolded bundle: the success line, one `created` note per
+/// written path, and the `Next:` hint. Shared by both `init` branches so the
+/// only per-branch difference is the success message text.
+fn report_scaffold(ui: &crate::ui::Ui, success_msg: String, created: Vec<PathBuf>, dir: &Path) {
+    ui.success(&success_msg);
     for path in created {
         ui.note(&format!("created {}", path.display()));
     }
     ui.note(&format!("Next: cd {} && agentos skill up", dir.display()));
-    Ok(())
 }
 
 /// `agentos build`: build the runner image locally from the repo's Dockerfile.

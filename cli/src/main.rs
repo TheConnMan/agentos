@@ -65,11 +65,14 @@ struct Cli {
 enum Command {
     /// Scaffold a new plugin bundle (Claude Code plugin shape).
     Init {
-        /// Kebab-case plugin name (e.g. deal-desk).
-        name: String,
+        /// Kebab-case plugin name (e.g. deal-desk). Omit when using --from-spec.
+        name: Option<String>,
         /// Target directory; defaults to ./<name>.
         #[arg(long)]
         dir: Option<PathBuf>,
+        /// Scaffold non-interactively from an agent-authored spec file (JSON). The bundle name comes from the spec.
+        #[arg(long, value_name = "PATH")]
+        from_spec: Option<PathBuf>,
     },
     /// Work with a local runner session for a plugin bundle.
     Skill {
@@ -715,7 +718,11 @@ async fn main() {
 /// classifies any error into a semantic exit code (see `agentos::exit`).
 async fn run(command: Command) -> Result<()> {
     match command {
-        Command::Init { name, dir } => commands::init(&name, dir),
+        Command::Init {
+            name,
+            dir,
+            from_spec,
+        } => commands::init(name, dir, from_spec),
         Command::Build { tag } => commands::build(&tag).await,
         Command::Install => commands::install().await,
         Command::Dev { action } => match action {
