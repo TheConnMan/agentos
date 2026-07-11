@@ -1,7 +1,7 @@
 # INTERFACE: Model provider / credentials
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 1 (Anthropic) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+> **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 2 prefix-routed (Anthropic, OpenRouter) + base-URL-selected provider-native endpoints (Zhipu, Moonshot, DeepSeek, Ollama) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -25,9 +25,10 @@ three things:
   → `ANTHROPIC_API_KEY`; `sk-or-...` (OpenRouter) → base-URL override; a bare `sk-...`
   raises `UnsupportedCredentialError` (`sdk_auth.py:47`, `:116`). An SDK credential
   already in the env wins (`sdk_auth.py:89`).
-- **Base URL**, `ANTHROPIC_BASE_URL` (`sdk_auth.py:34`). `resolve_base_url_override`
-  (`sdk_auth.py:51`) builds the override env when set, and `resolve_sdk_env`
-  (`sdk_auth.py:124`) is the entry point that decides override-vs-plain.
+- **Base URL**, `ANTHROPIC_BASE_URL`, or its `AGENTOS_`-namespaced alias
+  `AGENTOS_MODEL_BASE_URL` (the raw var wins when both are set).
+  `resolve_base_url_override` builds the override env when either is set, and
+  `resolve_sdk_env` is the entry point that decides override-vs-plain.
 - **Model id**, `AGENTOS_MODEL`, read by `RunnerConfig.from_env`
   (`runner/src/agentos_runner/config.py:62`).
 
@@ -37,11 +38,32 @@ third-party endpoint.
 
 ## Implementations today
 
-One: Anthropic (direct API key or Claude Code OAuth token). OpenRouter is the
-intended reference second provider and is already wired as a prefix branch
-(`sdk_auth.py:100`): it reuses the shared base-URL-override seam, points at
-`OPENROUTER_BASE_URL = "https://openrouter.ai/api"` (`sdk_auth.py:36`), and puts the
-real key in `ANTHROPIC_API_KEY` (the `x-api-key` header OpenRouter reads).
+**Anthropic** (direct API key or Claude Code OAuth token) — the plain path, no
+base URL. **OpenRouter** — the one prefix-routed alternative: an `sk-or-`
+credential auto-selects `OPENROUTER_BASE_URL = "https://openrouter.ai/api"` and
+puts the real key in `ANTHROPIC_API_KEY` (the `x-api-key` header OpenRouter
+reads).
+
+**Provider-native `/anthropic` endpoints** — Zhipu (GLM), Moonshot (Kimi),
+DeepSeek, and local Ollama are selected by **base URL**, not key prefix. Moonshot
+and DeepSeek use OpenAI-style `sk-` keys and Zhipu uses a non-`sk-` key, so no key
+prefix distinguishes them; the config author instead points the base URL at the
+provider's `/anthropic` endpoint and supplies the provider key in
+`AGENTOS_CREDENTIALS`. In base-URL-override mode a supplied provider credential is
+forwarded into `ANTHROPIC_API_KEY` (`x-api-key`), overriding the `NO_OP_API_KEY`
+placeholder; a Claude Code OAuth token (`sk-ant-oat`) is never forwarded and stays
+blanked (hermetic). Canonical base URLs are in `PROVIDER_BASE_URLS`:
+
+| Provider | `AGENTOS_MODEL_BASE_URL` | Key shape | Candidate models |
+| --- | --- | --- | --- |
+| Zhipu (GLM) | `https://api.z.ai/api/anthropic` | `id.secret` (non-`sk-`) | GLM 5.x |
+| Moonshot (Kimi) | `https://api.moonshot.ai/anthropic` | `sk-...` | Kimi K2.x |
+| DeepSeek | `https://api.deepseek.com/anthropic` | `sk-...` | DeepSeek V4 |
+
+Each keeps the Anthropic wire format (the SDK appends `/v1/messages`), so the
+provider's automatic prefix caching applies — a single-model agent needs no
+gateway. A minimal config: `AGENTOS_MODEL_BASE_URL=https://api.deepseek.com/anthropic`,
+`AGENTOS_CREDENTIALS=<deepseek key>`, `AGENTOS_MODEL=deepseek-...`.
 
 ## Known leakage
 

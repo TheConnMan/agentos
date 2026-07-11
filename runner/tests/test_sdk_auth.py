@@ -11,9 +11,14 @@ from agentos_runner.sdk_auth import (
     AUTH_TOKEN_ENV,
     BASE_URL_ENV,
     CREDENTIALS_ENV,
+    DEEPSEEK_BASE_URL,
+    MODEL_BASE_URL_ENV,
+    MOONSHOT_BASE_URL,
     NO_OP_API_KEY,
     OAUTH_TOKEN_ENV,
     OPENROUTER_BASE_URL,
+    PROVIDER_BASE_URLS,
+    ZHIPU_BASE_URL,
     UnsupportedCredentialError,
     resolve_model_credential,
     resolve_sdk_env,
@@ -163,3 +168,90 @@ def test_resolve_sdk_env_openrouter_with_preset_base_url_sets_api_key() -> None:
     assert resolve_sdk_env(env) is None
     assert env[API_KEY_ENV] == "sk-or-PLACEHOLDER"
     assert env[AUTH_TOKEN_ENV] == ""
+
+
+# --- Provider-native Anthropic-compatible endpoints (#252): Zhipu / Moonshot /
+# DeepSeek. Selected by base URL; the provider key is forwarded as x-api-key.
+
+
+def test_provider_base_urls_stay_on_anthropic_format() -> None:
+    # The canonical endpoints keep the Anthropic wire format (SDK appends
+    # /v1/messages) so provider automatic prefix caching survives.
+    assert PROVIDER_BASE_URLS["zhipu"] == ZHIPU_BASE_URL == "https://api.z.ai/api/anthropic"
+    assert PROVIDER_BASE_URLS["moonshot"] == MOONSHOT_BASE_URL
+    assert PROVIDER_BASE_URLS["deepseek"] == DEEPSEEK_BASE_URL
+    assert PROVIDER_BASE_URLS["openrouter"] == OPENROUTER_BASE_URL
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [ZHIPU_BASE_URL, MOONSHOT_BASE_URL, DEEPSEEK_BASE_URL],
+)
+def test_provider_native_key_forwarded_as_x_api_key(base_url: str) -> None:
+    # Moonshot / DeepSeek use OpenAI-style sk- keys; Zhipu uses a non-sk key.
+    # With the provider base URL set, the key must be forwarded to
+    # ANTHROPIC_API_KEY (x-api-key), overriding the NO_OP placeholder -- not
+    # rejected and not dropped.
+    env = {BASE_URL_ENV: base_url, CREDENTIALS_ENV: "sk-PROVIDER-PLACEHOLDER"}
+    override = resolve_sdk_env(env)
+
+    assert override is not None
+    assert override[BASE_URL_ENV] == base_url
+    assert override[API_KEY_ENV] == "sk-PROVIDER-PLACEHOLDER"
+    # Inherited OAuth / Bearer tokens stay blanked so they cannot leak to the
+    # third-party endpoint.
+    assert override[OAUTH_TOKEN_ENV] == ""
+    assert override[AUTH_TOKEN_ENV] == ""
+
+
+def test_zhipu_non_sk_key_forwarded() -> None:
+    # Zhipu keys are id.secret shaped (no sk- prefix); still forwarded.
+    env = {BASE_URL_ENV: ZHIPU_BASE_URL, CREDENTIALS_ENV: "zhipu-id.PLACEHOLDER"}
+    override = resolve_sdk_env(env)
+    assert override is not None
+    assert override[API_KEY_ENV] == "zhipu-id.PLACEHOLDER"
+
+
+def test_model_base_url_alias_selects_override() -> None:
+    # AGENTOS_MODEL_BASE_URL (AGENTOS_-namespaced alias) drives the same seam.
+    env = {MODEL_BASE_URL_ENV: DEEPSEEK_BASE_URL, CREDENTIALS_ENV: "sk-DEEPSEEK-PLACEHOLDER"}
+    override = resolve_sdk_env(env)
+    assert override is not None
+    assert override[BASE_URL_ENV] == DEEPSEEK_BASE_URL
+    assert override[API_KEY_ENV] == "sk-DEEPSEEK-PLACEHOLDER"
+
+
+def test_raw_base_url_wins_over_alias() -> None:
+    env = {
+        BASE_URL_ENV: MOONSHOT_BASE_URL,
+        MODEL_BASE_URL_ENV: DEEPSEEK_BASE_URL,
+        CREDENTIALS_ENV: "sk-PLACEHOLDER",
+    }
+    override = resolve_sdk_env(env)
+    assert override is not None
+    assert override[BASE_URL_ENV] == MOONSHOT_BASE_URL
+
+
+def test_oauth_token_not_forwarded_to_provider_endpoint() -> None:
+    # A Claude Code OAuth token must never be forwarded to a third-party
+    # endpoint; the placeholder stays and the token is blanked (hermetic).
+    env = {BASE_URL_ENV: ZHIPU_BASE_URL, CREDENTIALS_ENV: "sk-ant-oatPLACEHOLDER"}
+    override = resolve_sdk_env(env)
+    assert override is not None
+    assert override[API_KEY_ENV] == NO_OP_API_KEY
+    assert override[OAUTH_TOKEN_ENV] == ""
+
+
+def test_ollama_without_credential_keeps_placeholder() -> None:
+    # No credential (local Ollama): the NO_OP placeholder is retained.
+    env = {BASE_URL_ENV: "http://ollama:11434"}
+    override = resolve_sdk_env(env)
+    assert override is not None
+    assert override[API_KEY_ENV] == NO_OP_API_KEY
+
+
+def test_bare_sk_still_rejected_without_base_url() -> None:
+    # The direct-Anthropic path (no base URL) still rejects a bare sk- key: there
+    # is no provider endpoint to forward it to.
+    with pytest.raises(UnsupportedCredentialError):
+        resolve_sdk_env({CREDENTIALS_ENV: "sk-PLACEHOLDER"})
