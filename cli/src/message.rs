@@ -5,7 +5,7 @@
 //! workspace can exercise the entire deployed machinery (Valkey queue -> worker
 //! -> claimed sandbox -> the real skill -> the reply) without any Slack access,
 //! tokens, or workspace. It is the retained chat helper engine, backed by a
-//! local Slack Web API stub plus the frozen `QueuedSlackEvent` enqueue and the
+//! local Slack Web API stub plus the frozen `QueuedTurn` enqueue and the
 //! ack-based completion signal, with Kubernetes-aware auto-plumbing bolted on
 //! top:
 //!
@@ -38,7 +38,7 @@ use crate::chat::{
     await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
 };
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
-use crate::queue::{self, connect, diagnostics, xadd, QueuedSlackEvent};
+use crate::queue::{self, connect, diagnostics, synthetic_turn, xadd};
 use crate::state::{save_turn, TurnContext, TurnVerb};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
@@ -385,7 +385,7 @@ pub fn dry_run_lines(opts: &MessageOpts, advertise_host: &str) -> Vec<String> {
         .clone()
         .unwrap_or_else(|| "<the sole deployed agent's slack_channel>".to_string());
     lines.push(format!(
-        "enqueue a synthetic QueuedSlackEvent for channel {channel} on stream {}",
+        "enqueue a synthetic QueuedTurn for channel {channel} on stream {}",
         opts.stream
     ));
     lines
@@ -581,7 +581,7 @@ async fn wire_worker(opts: &MessageOpts, url: &str) -> Result<()> {
 /// The cluster path's self-plumbing (kubectl port-forwards, the wiring helm
 /// upgrade, the dispatcher guard) is all cluster-specific, so local mode keeps
 /// only the shared engine: bind the same Slack stub, enqueue the same
-/// `QueuedSlackEvent`, wait on the same XACK signal. The compose worker is
+/// `QueuedTurn`, wait on the same XACK signal. The compose worker is
 /// already running and already pointed at this stub (its `SLACK_API_BASE_URL` is
 /// fixed to `http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/`), so there is
 /// nothing to wire.
@@ -603,7 +603,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             )),
         }
         ui.payload_plain(&format!(
-            "enqueue a synthetic QueuedSlackEvent on stream {}",
+            "enqueue a synthetic QueuedTurn on stream {}",
             opts.stream
         ));
         return Ok(());
@@ -638,7 +638,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 
     let (channel, thread_ts, placeholder_ts) =
         resolve_targets(Some(&channel), opts.thread.as_deref());
-    let event = QueuedSlackEvent::synthetic(
+    let event = synthetic_turn(
         &channel,
         &opts.user,
         &opts.text,
@@ -648,7 +648,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
     ui.note(&format!(
         "enqueued {} on {} as {stream_id}",
-        event.slack_event_id, opts.stream
+        event.event_id, opts.stream
     ));
     ui.note(&format!(
         "waiting up to {}s for the worker to finalize the turn...",
@@ -788,7 +788,7 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     let mut conn = connect(&valkey_url).await?;
     let (channel, thread_ts, placeholder_ts) =
         resolve_targets(Some(&channel), opts.thread.as_deref());
-    let event = QueuedSlackEvent::synthetic(
+    let event = synthetic_turn(
         &channel,
         &opts.user,
         &opts.text,
@@ -798,7 +798,7 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
     ui.note(&format!(
         "enqueued {} on {} as {stream_id}",
-        event.slack_event_id, opts.stream
+        event.event_id, opts.stream
     ));
     ui.note(&format!(
         "waiting up to {}s for the worker to finalize the turn...",

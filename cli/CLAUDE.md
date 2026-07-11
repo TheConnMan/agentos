@@ -22,15 +22,16 @@ release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full comm
   client in this binary; do not add a second one for a specific endpoint.
   Keep `reqwest`'s feature set minimal (`json`, `stream`, `multipart`) --
   adding a feature should come with a reason in the PR, not just convenience.
-- **The queue seam is mirrored, not imported, across languages.** The CLI
-  never talks to the dispatcher's Valkey Stream directly -- `agentos skill message`
-  talks straight to a local runner container's ACI HTTP surface
-  (`/v1/event`, `/v1/steer`, `/v1/interrupt`), bypassing the
+- **The queue payload is the frozen `QueuedTurn` contract, not a hand-mirror.**
+  `agentos skill message` talks straight to a local runner container's ACI HTTP
+  surface (`/v1/event`, `/v1/steer`, `/v1/interrupt`), bypassing the
   dispatcher/worker entirely by design (that is the point: zero Slack, zero
-  cluster). If a future task wires the CLI to the real dispatcher/worker
-  queue seam (the future dispatcher or worker queue surface), mirror the
-  `QueuedSlackEvent` shape rather than importing Python types into Rust --
-  keep the contract-mirroring discipline explicit at the boundary.
+  cluster). The `local message` / `cluster message` drivers do enqueue onto the
+  real Valkey Stream, and the payload they mint is `agentos_aci_protocol::QueuedTurn`
+  (promoted into `packages/aci-protocol` by issue #7) consumed from the generated
+  crate -- never redefine it locally in `cli/src`. `cli/src/queue.rs` owns only the
+  Valkey Stream transport of that type (the single-`payload` encoding, the
+  `EvSIM-` synthetic ids, the XADD and the ack-based completion signal).
 - **`agentos init` scaffolds the plugin-format shape verbatim.** The
   generated bundle (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`,
   `.mcp.json`) must stay byte-compatible with what `plugin_format.validate_bundle`

@@ -27,6 +27,7 @@ from .events import (
 from .events import InboundMessage as InboundMessageUnion
 from .events import OutboundEvent as OutboundEventUnion
 from .session import Budget, OtelConfig, SessionConfig
+from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION
 
 
@@ -55,6 +56,8 @@ _MODELS = (
     Final,
     ErrorEvent,
     SideEffectFlag,
+    ReplyHandle,
+    QueuedTurn,
 )
 
 SCHEMA_ID = "https://curie.tech/agentos/aci-protocol.schema.json"

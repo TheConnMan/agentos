@@ -10,7 +10,8 @@
 use std::time::Duration;
 
 use agentos::chat::{resolve_targets, SlackStub};
-use agentos::queue::{diagnostics, entry_acked, xadd, QueuedSlackEvent, WORKER_GROUP};
+use agentos::queue::{diagnostics, entry_acked, synthetic_turn, xadd, WORKER_GROUP};
+use agentos_aci_protocol::QueuedTurn;
 
 const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
 
@@ -54,7 +55,7 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
     };
     let stream = unique_stream();
 
-    let event = QueuedSlackEvent::synthetic(
+    let event = synthetic_turn(
         "C-SIM-x",
         "U-agentos-chat",
         "hello world",
@@ -90,7 +91,7 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
 
     // The payload JSON round-trips into the same event with the exact
     // dispatcher-side field names.
-    let decoded: QueuedSlackEvent = serde_json::from_str(&fields[0].1).unwrap();
+    let decoded: QueuedTurn = serde_json::from_str(&fields[0].1).unwrap();
     assert_eq!(decoded, event);
 
     let value: serde_json::Value = serde_json::from_str(&fields[0].1).unwrap();
@@ -104,17 +105,16 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
     assert_eq!(
         keys,
         vec![
-            "channel",
-            "placeholder_ts",
+            "author",
+            "conversation_id",
+            "event_id",
             "received_at",
-            "slack_event_id",
+            "reply_handle",
             "text",
-            "thread_ts",
-            "user",
         ]
     );
     assert!(
-        decoded.slack_event_id.starts_with("EvSIM-"),
+        decoded.event_id.starts_with("EvSIM-"),
         "synthetic id keeps its collision-proof prefix on the wire"
     );
 }
@@ -139,7 +139,7 @@ async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
         "explicit thread becomes thread_ts"
     );
 
-    let event = QueuedSlackEvent::synthetic(
+    let event = synthetic_turn(
         &channel,
         "U-agentos-chat",
         "hi",
@@ -163,13 +163,13 @@ async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
 
     assert!(!stream_id.is_empty(), "XADD returned an id");
     assert_eq!(entries.len(), 1, "exactly one entry enqueued");
-    let decoded: QueuedSlackEvent = serde_json::from_str(&entries[0].1[0].1).unwrap();
+    let decoded: QueuedTurn = serde_json::from_str(&entries[0].1[0].1).unwrap();
     assert_eq!(
-        decoded.channel, "CSIM12345",
+        decoded.reply_handle.channel, "CSIM12345",
         "the XADD'd payload keeps the exact channel the worker binds on"
     );
     assert_eq!(
-        decoded.thread_ts, "1720000000.000100",
+        decoded.conversation_id, "1720000000.000100",
         "the XADD'd payload keeps the exact thread_ts"
     );
 }
@@ -194,7 +194,7 @@ async fn absent_channel_and_thread_fall_back_to_synthetic() {
     assert!(secs.parse::<u64>().is_ok(), "secs numeric: {thread_ts}");
     assert_eq!(micros.len(), 6, "micros width: {thread_ts}");
 
-    let event = QueuedSlackEvent::synthetic(
+    let event = synthetic_turn(
         &channel,
         "U-agentos-chat",
         "hi",
@@ -218,14 +218,14 @@ async fn absent_channel_and_thread_fall_back_to_synthetic() {
 
     assert!(!stream_id.is_empty(), "XADD returned an id");
     assert_eq!(entries.len(), 1, "exactly one entry enqueued");
-    let decoded: QueuedSlackEvent = serde_json::from_str(&entries[0].1[0].1).unwrap();
+    let decoded: QueuedTurn = serde_json::from_str(&entries[0].1[0].1).unwrap();
     assert!(
-        decoded.channel.starts_with("C-SIM-"),
+        decoded.reply_handle.channel.starts_with("C-SIM-"),
         "synthetic channel on the wire: {}",
-        decoded.channel
+        decoded.reply_handle.channel
     );
     assert_eq!(
-        decoded.thread_ts, thread_ts,
+        decoded.conversation_id, thread_ts,
         "synthetic thread_ts round-trips onto the stream"
     );
 }
@@ -241,7 +241,7 @@ async fn diagnostics_reports_stream_length_and_consumer_group_state() {
     };
     let stream = unique_stream();
 
-    let event = QueuedSlackEvent::synthetic("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2");
+    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2");
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
     // The worker's group name; create it at 0 so it sees the existing entry.
@@ -285,7 +285,7 @@ async fn entry_acked_tracks_the_worker_consuming_and_acking() {
         return;
     };
     let stream = unique_stream();
-    let event = QueuedSlackEvent::synthetic("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2");
+    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2");
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
     // No group yet: not acked.

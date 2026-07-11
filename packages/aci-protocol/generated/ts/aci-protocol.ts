@@ -53,6 +53,13 @@ export type Detail = string | null;
 export type Tool1 = string | null;
 export type Type5 = "side_effect_flag";
 export type Version4 = "0.1.0";
+export type Author = string;
+export type ConversationId = string;
+export type EventId = string;
+export type ReceivedAt = string;
+export type Channel = string;
+export type Placeholder = string;
+export type Text4 = string;
 export type CredentialsRef = string | null;
 export type MemoryRef = string | null;
 export type PluginDir = string;
@@ -185,6 +192,42 @@ export interface SideEffectFlag {
   tool?: Tool1;
   type: Type5;
   version: Version4;
+}
+/**
+ * A normalized inbound turn ready for the worker to route and run.
+ *
+ * The channel-neutral promotion of the dispatcher's former ``QueuedSlackEvent``.
+ * The Valkey Stream carries this model as a single ``payload`` JSON field; the
+ * stream-encoding helpers live with the producer (the dispatcher), not on this
+ * frozen model, so the contract stays transport-agnostic.
+ *
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "QueuedTurn".
+ */
+export interface QueuedTurn {
+  author: Author;
+  conversation_id: ConversationId;
+  event_id: EventId;
+  received_at: ReceivedAt;
+  reply_handle: ReplyHandle;
+  text: Text4;
+}
+/**
+ * Channel-neutral coordinates for where a turn's reply is delivered.
+ *
+ * The reply model is edit-in-place: the ingress adapter pre-posts a placeholder
+ * message and the worker edits it as the answer streams. For the Slack adapter
+ * today, ``channel`` is the Slack channel id (also the key the deployment
+ * binding matches an agent on) and ``placeholder`` is the ts of the pre-posted
+ * placeholder message. Issue #19 extends this with a per-turn reply endpoint so
+ * two ingress paths can coexist on one worker.
+ *
+ * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * via the `definition` "ReplyHandle".
+ */
+export interface ReplyHandle {
+  channel: Channel;
+  placeholder: Placeholder;
 }
 /**
  * The typed session setup contract.

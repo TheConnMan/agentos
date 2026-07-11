@@ -1,9 +1,10 @@
 """AgentOS dispatcher (Slack Bolt, Socket Mode).
 
 Acks Slack events fast, posts an in-thread placeholder, and enqueues a normalized
-job onto a Valkey Stream keyed by the Slack event id (idempotent), under
-reconnect supervision. ``QueuedSlackEvent`` is the queue seam the worker (F1)
-consumes.
+job onto a Valkey Stream keyed by the delivery's event id (idempotent), under
+reconnect supervision. The queue payload is ``aci_protocol.QueuedTurn`` (issue
+#7); this package owns its Valkey Stream transport (the ``payload`` encoding and
+dedupe) plus the Slack ingress.
 """
 
 from .app import (
@@ -16,9 +17,10 @@ from .config import DispatcherConfig
 from .handlers import is_actionable, process_event, register_handlers
 from .queue import (
     STREAM_PAYLOAD_FIELD,
-    QueuedSlackEvent,
     claim_event,
     enqueue,
+    from_stream_fields,
+    to_stream_fields,
 )
 from .supervisor import BackoffPolicy, Connection, Supervisor
 
@@ -29,7 +31,6 @@ __all__ = [
     "BackoffPolicy",
     "Connection",
     "DispatcherConfig",
-    "QueuedSlackEvent",
     "SocketModeConnection",
     "Supervisor",
     "__version__",
@@ -38,7 +39,9 @@ __all__ = [
     "build_web_client",
     "claim_event",
     "enqueue",
+    "from_stream_fields",
     "is_actionable",
     "process_event",
     "register_handlers",
+    "to_stream_fields",
 ]

@@ -34,6 +34,7 @@ from .ndjson import (
 )
 from .reference import reference_producer
 from .session import Budget, OtelConfig, SessionConfig
+from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION
 
 __version__ = "0.0.0"
@@ -45,6 +46,9 @@ __all__ = [
     "SessionConfig",
     "Budget",
     "OtelConfig",
+    # queue turn payload (the ingress job the worker consumes)
+    "QueuedTurn",
+    "ReplyHandle",
     # inbound
     "Event",
     "Interrupt",

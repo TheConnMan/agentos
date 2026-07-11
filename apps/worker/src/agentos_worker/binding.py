@@ -15,10 +15,11 @@ Per-channel dev/prod bot-identity routing (the dispatcher carrying which bot was
 addressed) is a J1/dispatcher refinement noted for later.
 
 Contract (cross-lane, load-bearing): agents.slack_channel MUST store the Slack
-channel ID (e.g. ``C0123ABCD``), because the dispatcher enqueues
-``QueuedSlackEvent.channel`` as the Slack event's channel id, and this resolver
-matches on equality. If the create-agent API/UI stores a channel NAME (``#triage``)
-instead, every real mention resolves to None and is dropped. Storing the id at
+channel ID (e.g. ``C0123ABCD``), because the dispatcher enqueues the Slack
+channel id as ``QueuedTurn.reply_handle.channel``, the kernel passes that value
+into ``resolve()``, and this resolver matches on equality. If the create-agent
+API/UI stores a channel NAME (``#triage``) instead, every real mention resolves
+to None and is dropped. Storing the id at
 agent creation (or translating name->id there) is the API/UI's responsibility;
 this resolver deliberately does not call the Slack API to translate, to avoid
 coupling the worker to a Slack token.
