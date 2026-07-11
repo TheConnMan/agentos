@@ -807,7 +807,7 @@ def test_committed_fixture_loads_from_bundle_with_name_override(
 ) -> None:
     """A tar bundle carrying the committed cross-language fixture bytes at
     evals/cases.json loads through load_suite_from_bundle: the payload suite-name
-    override wins over the file's name, and the case grades weather text True.
+    override wins over the file's name, and the smoke grader grades any text True.
     Proves the scaffold output is platform-loadable (the latent bug in issue #8).
     """
     fixture_bytes = eval_cases_example_path.read_bytes()
@@ -824,4 +824,4 @@ def test_committed_fixture_loads_from_bundle_with_name_override(
     assert suite is not None
     assert suite.name == "override-suite-name"  # payload override at stream.py:160
     assert len(suite.cases) == 1
-    assert suite.cases[0].grader.grade("it's sunny weather today") is True
+    assert suite.cases[0].grader.grade("literally anything") is True

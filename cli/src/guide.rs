@@ -268,6 +268,13 @@ fn render_markdown(p: &Primer) -> String {
     s
 }
 
+/// The primer rendered to Markdown. One seam for callers that need the same
+/// authored body the `agentos guide` default prints -- the scaffold's harness
+/// skill renders from this so the two can never diverge (D2 anti-drift).
+pub fn primer_markdown() -> String {
+    render_markdown(&primer())
+}
+
 /// `agentos guide`: print the primer. Markdown to stdout by default; `--json`
 /// prints the structured variant to stdout (any human text would go to stderr).
 pub fn run(json: bool) -> Result<()> {

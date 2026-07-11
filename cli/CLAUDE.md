@@ -36,7 +36,11 @@ release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full comm
   generated bundle (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`,
   `.mcp.json`) must stay byte-compatible with what `plugin_format.validate_bundle`
   accepts -- if `packages/plugin-format` changes, this scaffold needs
-  updating in the same reviewed change, not independently.
+  updating in the same reviewed change, not independently. `init` also drops a
+  root `AGENTS.md` and a `.claude/skills/using-agentos/SKILL.md` harness primer
+  (body rendered from `guide::primer_markdown()`) alongside the bundle; both
+  live outside the `plugin_format`-validated `skills/` tree, so they do not
+  affect validation.
 - **The `evals/cases.json` seed and `skill eval` loader hand-mirror the frozen
   eval-case schema.** The `agentos init` seed (`scaffold::eval_cases`) and the
   `skill eval` loader (`evals::EvalSuite`/`load_suite`) mirror the frozen

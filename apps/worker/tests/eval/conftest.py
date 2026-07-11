@@ -66,6 +66,9 @@ class FakeEvalRunner:
         # Inputs whose turn ends with a classified-failure final (budget/model
         # error) while still carrying text in responses[input].
         self.classified_failure_inputs: set[str] = set()
+        # Inputs whose turn ends idle-awaiting-input (an incomplete turn) while
+        # still carrying text in responses[input].
+        self.idle_inputs: set[str] = set()
         self.default_output = ""
         self.seen: list[dict[str, str]] = []
 
@@ -79,11 +82,12 @@ class FakeEvalRunner:
         if text in self.fail_inputs:
             return web.json_response({"error": "boom"}, status=500)
         output = self.responses.get(text, self.default_output)
-        status = (
-            SessionStatus.CLASSIFIED_FAILURE
-            if text in self.classified_failure_inputs
-            else SessionStatus.DONE
-        )
+        if text in self.classified_failure_inputs:
+            status = SessionStatus.CLASSIFIED_FAILURE
+        elif text in self.idle_inputs:
+            status = SessionStatus.IDLE_AWAITING_INPUT
+        else:
+            status = SessionStatus.DONE
         resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})
         await resp.prepare(request)
         frame = Final(text=output, status=status)

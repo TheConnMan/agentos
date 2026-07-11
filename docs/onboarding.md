@@ -67,9 +67,12 @@ agentos skill message "hello"
 agentos skill down
 ```
 
-`agentos init` scaffolds a runnable weather example plugin bundle: a Claude Code
-plugin with `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`,
-and an `evals/cases.json` seed. `--fake-model` gives scripted replies with no
+`agentos init` scaffolds a generic starter bundle: a Claude Code plugin
+(`.claude-plugin/plugin.json`, a starter `skills/<name>/SKILL.md`, `.mcp.json`,
+and an `evals/cases.json` smoke seed) plus a root `AGENTS.md` and
+`.claude/skills/using-agentos/SKILL.md`, the harness primer. The scaffolded eval
+is a smoke test that passes out of the box; replace it with real graders as you
+build. `--fake-model` gives scripted replies with no
 Anthropic key, so this proves the loop offline. Drop `--fake-model` and export a
 credential, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or
 `AGENTOS_CREDENTIALS`, for a real model.

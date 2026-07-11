@@ -1,11 +1,16 @@
 //! `agentos init`: scaffold a Claude Code plugin bundle.
 //!
-//! The layout matches the frozen `plugin-format` package: a manifest at
-//! `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md` with YAML
-//! frontmatter, a root `.mcp.json`, plus a CLI-local `evals/cases.json` seed
-//! (a suite object `{name, cases: [{id, input, grader}]}`, hand-mirroring the
-//! frozen eval-case schema) for `agentos skill eval`. Names are kebab-case per
-//! the validator.
+//! Seven files. The deployed bundle shape matches the frozen `plugin-format`
+//! package: a manifest at `.claude-plugin/plugin.json`, a genericized starter
+//! `skills/<name>/SKILL.md` with YAML frontmatter, a root `.mcp.json`, plus a
+//! CLI-local `evals/cases.json` seed (a suite object
+//! `{name, cases: [{id, input, grader}]}`, hand-mirroring the frozen eval-case
+//! schema) for `agentos skill eval` -- a single smoke case that passes on any
+//! completed turn. Two more files teach the developer's coding agent how to
+//! drive the harness: a root `AGENTS.md` (the cross-agent auto-scanned standard)
+//! and an installable primer skill at `.claude/skills/using-agentos/SKILL.md`
+//! whose body is rendered from `guide::primer_markdown()` so it can never drift
+//! from `agentos guide`. Names are kebab-case per the validator.
 
 use std::path::{Path, PathBuf};
 
@@ -31,28 +36,57 @@ fn manifest(name: &str) -> String {
     .expect("static manifest serializes")
 }
 
+/// The genericized starter skill for `<name>`: a believable, editable
+/// placeholder scoped to the bundle name (no weather demo). Keeps the
+/// correct-by-example `allowed-tools` key and the when/how/rules section shape
+/// a real skill uses.
 fn skill_md(name: &str) -> String {
     format!(
-        "---\nname: {name}\ndescription: Look up a location's weather forecast using a live web search. Invoke whenever the user asks about the weather, whether to expect rain, temperature, or what to wear or plan for outdoor activities.\nallowed-tools:\n  - WebSearch\n  - WebFetch\n---\n\n# Weather\n\n## When to run\nThe user asks about the weather, a forecast, temperature, rain or snow chances, or whether a day suits an outdoor plan.\n\n## How to answer\n1. Determine the location and day. If the user named them, use them. If not, ask one short question instead of guessing.\n2. Run a web search for the forecast, e.g. `<city> weather forecast <day>`. Prefer a national weather service or a major forecast provider.\n3. Report, in two or three sentences: expected high and low, sky conditions, and precipitation chance. Include the location and day so there is no ambiguity.\n4. Name the source of the forecast at the end.\n\n## Hard rules\n\n- Never invent a forecast. If the search returns nothing usable, say so and name what you tried.\n- Temperatures in Fahrenheit first, Celsius in parentheses.\n- Keep the reply short enough to read in Slack without expanding.\n"
+        "---\nname: {name}\ndescription: Starter skill for the {name} agent. Replace this description with when the agent should invoke this skill -- it is the routing signal.\nallowed-tools:\n  - WebSearch\n  - WebFetch\n---\n\n# {name}\n\nThis is the starter skill scaffolded by `agentos init`. Replace each section\nbelow with your agent's real behavior; keep the section shape.\n\n## When to run\nDescribe the requests this skill should handle.\n\n## How to answer\n1. Numbered, concrete steps the agent follows.\n2. Prefer verifiable sources and tools over recall.\n\n## Hard rules\n- Never invent an answer. If you cannot find one, say so and name what you tried.\n- Keep replies short enough to read in Slack without expanding.\n"
     )
 }
 
+/// The `evals/cases.json` seed: a single smoke case named for `<name>`. The
+/// `contains ""` grader passes on any completed (`Done`) turn, so the scaffold
+/// is green out of the box under both `--fake-model` and a real credential --
+/// a status gate the author replaces with real graders first.
 fn eval_cases(name: &str) -> String {
     serde_json::to_string_pretty(&serde_json::json!({
         "name": name,
         "cases": [
             {
-                "id": format!("{name}-answers"),
-                "input": "What's the weather in San Francisco?",
+                "id": format!("{name}-smoke"),
+                "input": format!("In one short sentence, introduce yourself as the {name} agent."),
                 "grader": {
                     "kind": "contains",
-                    "expected": "weather",
+                    "expected": "",
                     "case_sensitive": false,
                 },
             }
         ],
     }))
     .expect("static eval cases serialize")
+}
+
+/// The root `AGENTS.md`: the cross-agent auto-scanned standard carrying the
+/// non-discoverable operating rules (the authoring loop, eval-as-promotion-gate,
+/// verify-first, the top landmines) and a pointer to `agentos guide` for the
+/// full primer.
+fn agents_md(name: &str) -> String {
+    format!(
+        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` -- must be green before any deploy. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list. The most\n  common: skill frontmatter uses `allowed-tools`, not `tools` (the wrong key\n  parses but silently grants no tools).\n- The scaffolded eval is a smoke test (passes on any completed turn).\n  Replace it with real graders as the first authoring step.\n"
+    )
+}
+
+/// The installable harness primer skill at `.claude/skills/using-agentos/`,
+/// auto-discovered by Claude Code as a PROJECT skill. Frontmatter (guidance-only,
+/// so no `allowed-tools`) followed by the guide body VERBATIM from
+/// `crate::guide::primer_markdown()` -- one source of truth, drift-gated.
+fn using_agentos_skill() -> String {
+    format!(
+        "---\nname: using-agentos\ndescription: How to drive the AgentOS harness -- the parity ladder, tier decision logic, landmines, and recovery steps. Invoke when running agentos commands, authoring or evaluating a bundle, or debugging a divergence between skill, local, and cluster tiers.\n---\n\n{}",
+        crate::guide::primer_markdown()
+    )
 }
 
 const MCP_JSON: &str = "{\n  \"mcpServers\": {}\n}\n";
@@ -70,6 +104,11 @@ pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
         (dir.join(".mcp.json"), MCP_JSON.to_string()),
         (dir.join("evals/cases.json"), eval_cases(name)),
         (dir.join(".gitignore"), GITIGNORE.to_string()),
+        (dir.join("AGENTS.md"), agents_md(name)),
+        (
+            dir.join(".claude/skills/using-agentos/SKILL.md"),
+            using_agentos_skill(),
+        ),
     ];
 
     // Refuse if ANY target (or a stray manifest) already exists: init must
@@ -143,7 +182,7 @@ mod tests {
     fn scaffolds_the_frozen_bundle_shape() {
         let dir = tempfile::tempdir().unwrap();
         let created = scaffold(dir.path(), "deal-desk").unwrap();
-        assert_eq!(created.len(), 5);
+        assert_eq!(created.len(), 7);
 
         let manifest: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.path().join(".claude-plugin/plugin.json")).unwrap(),
@@ -151,21 +190,29 @@ mod tests {
         .unwrap();
         assert_eq!(manifest["name"], "deal-desk");
 
+        // Genericized starter skill for <name>: no weather anywhere.
         let skill = std::fs::read_to_string(dir.path().join("skills/deal-desk/SKILL.md")).unwrap();
         assert!(skill.starts_with("---\nname: deal-desk\n"));
-        assert!(skill.contains("description: Look up a location's weather forecast"));
+        let description_line = skill
+            .lines()
+            .find(|l| l.starts_with("description:"))
+            .expect("skill has a description line");
+        assert!(
+            description_line.contains("deal-desk"),
+            "description mentions the name: {description_line}"
+        );
         assert!(skill.contains("allowed-tools:"));
-        assert!(skill.contains("- WebSearch"));
-        assert!(skill.contains("- WebFetch"));
-        assert!(skill.contains("# Weather"));
-        assert!(skill.contains("## How to answer"));
-        assert!(skill.contains("Never invent a forecast"));
+        assert!(
+            !skill.contains("weather") && !skill.contains("Weather"),
+            "starter skill must be genericized, not weather"
+        );
 
         let mcp: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap())
                 .unwrap();
         assert!(mcp["mcpServers"].is_object());
 
+        // Single smoke case named for <name>: contains "" (status-gated pass).
         let cases: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.path().join("evals/cases.json")).unwrap(),
         )
@@ -173,15 +220,60 @@ mod tests {
         assert_eq!(cases["name"], "deal-desk");
         let case_list = cases["cases"].as_array().unwrap();
         assert_eq!(case_list.len(), 1);
-        assert_eq!(case_list[0]["id"], "deal-desk-answers");
-        assert!(case_list[0]["input"].as_str().unwrap().contains("weather"));
+        assert_eq!(case_list[0]["id"], "deal-desk-smoke");
         assert_eq!(case_list[0]["grader"]["kind"], "contains");
-        assert_eq!(case_list[0]["grader"]["expected"], "weather");
+        assert_eq!(case_list[0]["grader"]["expected"], "");
+        assert_eq!(case_list[0]["grader"]["case_sensitive"], false);
+
+        // AGENTS.md teaches the developer's coding agent the harness.
+        let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents.contains("agentos guide"));
+        assert!(agents.contains("agentos skill eval"));
+        assert!(agents.contains("allowed-tools"));
+
+        // The installable harness primer skill, discovered by Claude Code.
+        let harness_skill =
+            std::fs::read_to_string(dir.path().join(".claude/skills/using-agentos/SKILL.md"))
+                .unwrap();
+        assert!(harness_skill.starts_with("---\nname: using-agentos\n"));
+        let harness_description = harness_skill
+            .lines()
+            .find(|l| l.starts_with("description:"))
+            .expect("harness skill has a description line");
+        assert!(
+            !harness_description
+                .trim_start_matches("description:")
+                .trim()
+                .is_empty(),
+            "harness skill description is non-empty"
+        );
+        assert!(harness_skill.contains("# AgentOS harness primer"));
+        assert!(harness_skill.contains("agentos schema"));
 
         assert_eq!(
             read_manifest(dir.path()).unwrap(),
             ("deal-desk".to_string(), "0.1.0".to_string())
         );
+    }
+
+    #[test]
+    fn harness_skill_body_equals_the_guide() {
+        // Anti-drift (D2): the scaffolded harness skill body is rendered from
+        // `guide::primer_markdown()`, never re-authored, so the guide and the
+        // scaffolded skill can never diverge. The body after the frontmatter's
+        // closing `---\n` (plus its blank line) must equal the guide verbatim.
+        let dir = tempfile::tempdir().unwrap();
+        scaffold(dir.path(), "deal-desk").unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join(".claude/skills/using-agentos/SKILL.md"))
+                .unwrap();
+        let body = content
+            .splitn(3, "---\n")
+            .nth(2)
+            .expect("frontmatter-delimited body")
+            .strip_prefix('\n')
+            .expect("blank line after the closing frontmatter fence");
+        assert_eq!(body, crate::guide::primer_markdown());
     }
 
     #[test]
@@ -212,6 +304,22 @@ mod tests {
         assert!(err.to_string().contains(".mcp.json"), "{err}");
         assert_eq!(
             std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap(),
+            existing,
+            "existing file must be untouched"
+        );
+        assert!(!dir.path().join(".claude-plugin/plugin.json").exists());
+    }
+
+    #[test]
+    fn refuses_to_overwrite_an_existing_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = "# My own agent notes\nDo not clobber me.\n";
+        std::fs::write(dir.path().join("AGENTS.md"), existing).unwrap();
+
+        let err = scaffold(dir.path(), "deal-desk").unwrap_err();
+        assert!(err.to_string().contains("AGENTS.md"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
             existing,
             "existing file must be untouched"
         );

@@ -229,7 +229,7 @@ export CLAUDE_CODE_OAUTH_TOKEN=...
 ../target/release/agentos skill eval
 ```
 
-A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos skill up` runs it from a clean clone. `agentos init` scaffolds this same weather template, so every fresh bundle starts as a runnable web-search skill to learn from and edit.
+A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos skill up` runs it from a clean clone. `agentos init` scaffolds a generic starter skill named for your agent (plus a root `AGENTS.md` and an installable `.claude/skills/using-agentos/SKILL.md` harness primer) that you edit to build your own agent; see `examples/weather/` for a runnable example to learn from.
 
 For the "engine as an in-bundle stdio MCP server" shape — a bundle that ships
 its own tools as a stdio subprocess the harness spawns, which a hosted harness
