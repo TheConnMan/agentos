@@ -207,6 +207,81 @@ def test_ambient_sdk_creds_forwarded_when_agentos_credentials_empty() -> None:
     assert all("PLACEHOLDER" not in a for a in argv)  # the value never leaks into argv
 
 
+# Placeholder ambient OAuth token (never real). Hoisted into a named constant so
+# the secrets-scan pre-commit hook does not false-positive on an inline
+# `"CLAUDE_CODE_OAUTH_TOKEN": "sk-..."` literal; the value is asserted absent from
+# the forwarded argv below.
+_AMBIENT_OAUTH = "sk-PLACEHOLDER-oauth"
+
+
+def test_no_credential_forwarded_under_fake_model() -> None:
+    # A fake-model run needs no model credential: neither the explicit BYO
+    # reference nor the ambient SDK token must ride into the untrusted runner.
+    # Gating keys on the boot env (AGENTOS_FAKE_MODEL present), not the worker
+    # environ, so even a fully-credentialed worker leaks nothing.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={
+            "CLAUDE_CODE_OAUTH_TOKEN": _AMBIENT_OAUTH,
+            "AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER",
+        },
+    )
+    client.create_claim(
+        "t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1", "AGENTOS_BUDGET": "{}"}
+    )
+    envs = _flag_values(client.calls[0], "-e")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token not forwarded
+    assert "ANTHROPIC_API_KEY" not in envs
+    assert "AGENTOS_CREDENTIALS" not in envs  # BYO reference not forwarded either
+    assert all("PLACEHOLDER" not in a for a in client.calls[0])  # no value leaks
+
+
+def test_ambient_sdk_creds_not_forwarded_under_local_model() -> None:
+    # A local/base-URL-override run (ANTHROPIC_BASE_URL in the boot env) points the
+    # runner at a local endpoint that needs no Anthropic credential, so the ambient
+    # SDK token must not ride into that container.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={"CLAUDE_CODE_OAUTH_TOKEN": _AMBIENT_OAUTH},
+    )
+    client.create_claim(
+        "t1",
+        pool="pool",
+        env={"ANTHROPIC_BASE_URL": "http://ollama:11434", "AGENTOS_BUDGET": "{}"},
+    )
+    envs = _flag_values(client.calls[0], "-e")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token not forwarded
+    assert "ANTHROPIC_API_KEY" not in envs
+    assert all("PLACEHOLDER" not in a for a in client.calls[0])  # no value leaks
+
+
+def test_explicit_credential_forwarded_under_base_url_override() -> None:
+    # BYO OpenRouter with a preset base URL: the runner routes an sk-or- key into
+    # ANTHROPIC_API_KEY even when ANTHROPIC_BASE_URL is set (runner sdk_auth), so an
+    # EXPLICIT AGENTOS_CREDENTIALS must still be forwarded by name -- while the
+    # ambient SDK token still must not ride along.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={
+            "CLAUDE_CODE_OAUTH_TOKEN": _AMBIENT_OAUTH,
+            "AGENTOS_CREDENTIALS": "sk-or-PLACEHOLDER",
+        },
+    )
+    client.create_claim(
+        "t1",
+        pool="pool",
+        env={"ANTHROPIC_BASE_URL": "https://openrouter.ai/api", "AGENTOS_BUDGET": "{}"},
+    )
+    envs = _flag_values(client.calls[0], "-e")
+    assert "AGENTOS_CREDENTIALS" in envs  # BYO OpenRouter key still forwarded by name
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token still suppressed
+    assert "ANTHROPIC_API_KEY" not in envs
+    assert all("PLACEHOLDER" not in a for a in client.calls[0])  # value never in argv
+
+
 def test_get_sandbox_reports_published_port_and_mode() -> None:
     client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
     client.outputs = {

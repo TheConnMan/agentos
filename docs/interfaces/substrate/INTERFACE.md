@@ -31,7 +31,7 @@ Two, both under `apps/worker/src/agentos_worker/sandbox/`:
 
 ## Known leakage
 
-The `SandboxView.port` field (`types.py:134`) exists only because the Docker path publishes each runner on its own loopback host port, while the Kubernetes path uses one fleet-wide `runner_port`; `None` means "fall back to `SubstrateConfig.runner_port`". Credential handling also differs across the line: the k8s client strips `AGENTOS_CREDENTIALS` from per-claim env so it is never persisted in plaintext on the claim (`k8s.py:47`, `k8s.py:139`), relying on the chart Secret's `secretKeyRef`; the Docker client has no Secret and forwards it directly. These are runtime-shaped asymmetries the `Protocol` does not fully hide.
+The `SandboxView.port` field (`types.py:134`) exists only because the Docker path publishes each runner on its own loopback host port, while the Kubernetes path uses one fleet-wide `runner_port`; `None` means "fall back to `SubstrateConfig.runner_port`". Credential handling also differs across the line: the k8s client strips `AGENTOS_CREDENTIALS` from per-claim env so it is never persisted in plaintext on the claim (`k8s.py:47`, `k8s.py:139`), relying on the chart Secret's `secretKeyRef`; the Docker client has no Secret and forwards exactly one model credential by name -- an explicit AGENTOS_CREDENTIALS alone (never an ambient CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY that would shadow it), and none at all for a fake-model or local base-URL-override run that resolves none. These are runtime-shaped asymmetries the `Protocol` does not fully hide.
 
 ## Cross-links
 

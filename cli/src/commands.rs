@@ -246,6 +246,27 @@ fn find_repo_root() -> Option<PathBuf> {
     }
 }
 
+/// Pick the model-credential env vars to forward into the runner container, BY
+/// NAME (docker reads their values from the caller's env; no secret is put in
+/// argv). Mirrors the worker docker substrate's positive single-credential
+/// selection (apps/worker/src/agentos_worker/sandbox/docker.py):
+/// - fake/local model (`suppress_credential`): forward NONE -- those runners
+///   resolve no Anthropic credential, and a real token must not sit in an
+///   untrusted, egress-rail-less container readable via /proc/1/environ.
+/// - an explicit non-empty AGENTOS_CREDENTIALS (`byo_credential`): the operator's
+///   chosen BYO credential, forwarded ALONE so an ambient SDK token can neither
+///   shadow it nor ride into the sandbox.
+/// - otherwise: the ambient SDK creds for the legacy real-Anthropic path.
+fn select_passthrough_env(suppress_credential: bool, byo_credential: Option<&str>) -> Vec<String> {
+    if suppress_credential {
+        return Vec::new();
+    }
+    match byo_credential {
+        Some(cred) if !cred.is_empty() => vec!["AGENTOS_CREDENTIALS".into()],
+        _ => vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
+    }
+}
+
 pub async fn start(opts: StartOpts) -> Result<()> {
     let plugin_dir = opts
         .plugin_dir
@@ -321,21 +342,12 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         model = Some(local_model.clone());
     }
 
-    let mut passthrough_env: Vec<String> =
-        vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()];
-    // Forward the opaque model credential the runner resolves in sdk_auth (OAuth
-    // token, Anthropic API key, or an OpenRouter sk-or- key routed to the
-    // OpenRouter Anthropic endpoint). Without this, `skill up` cannot drive a
-    // real OpenRouter/BYO model even though the runner supports it -- the key
-    // never reaches the container in the env slot resolve_model_credential reads.
-    //
-    // Skip it under --local-model: the runner prioritizes an sk-or- credential
-    // and would rewrite the local Ollama base URL to OpenRouter, silently
-    // sending a local-model run to the remote provider. Local model needs no
-    // credential, so an sk-or- key sitting in the caller's env must not leak in.
-    if opts.local_model.is_none() {
-        passthrough_env.push("AGENTOS_CREDENTIALS".into());
-    }
+    // Forward exactly one model credential (or none under fake/local) -- never
+    // the ambient SDK token alongside a chosen BYO credential. See
+    // select_passthrough_env.
+    let suppress_credential = opts.local_model.is_some() || opts.fake_model;
+    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok();
+    let passthrough_env = select_passthrough_env(suppress_credential, byo_credential.as_deref());
 
     let spec = StartSpec {
         image: opts.image.clone(),
@@ -1005,7 +1017,7 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_cases_path, validate_slack_channel};
+    use super::{resolve_cases_path, select_passthrough_env, validate_slack_channel};
     use std::path::PathBuf;
 
     #[test]
@@ -1058,5 +1070,50 @@ mod tests {
     #[test]
     fn rejects_leading_whitespace_hash() {
         assert!(validate_slack_channel("  #testing").is_err());
+    }
+
+    #[test]
+    fn suppress_credential_forwards_nothing_even_with_byo() {
+        // A fake OR local model run needs no credential: forward none, even when
+        // an explicit BYO reference is present, so a real token never leaks into
+        // the untrusted runner.
+        assert_eq!(
+            select_passthrough_env(true, Some("sk-or-x")),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn explicit_byo_credential_forwarded_alone() {
+        // A non-empty BYO credential is forwarded alone -- the ambient SDK vars
+        // must not shadow the operator's chosen credential.
+        assert_eq!(
+            select_passthrough_env(false, Some("sk-or-x")),
+            vec!["AGENTOS_CREDENTIALS".to_string()]
+        );
+    }
+
+    #[test]
+    fn empty_byo_credential_falls_back_to_sdk_vars() {
+        // An empty AGENTOS_CREDENTIALS (a blank line in .env) is treated as unset,
+        // so the ambient SDK vars carry the legacy real-Anthropic credential.
+        assert_eq!(
+            select_passthrough_env(false, Some("")),
+            vec![
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "ANTHROPIC_API_KEY".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn no_byo_credential_falls_back_to_sdk_vars() {
+        assert_eq!(
+            select_passthrough_env(false, None),
+            vec![
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "ANTHROPIC_API_KEY".to_string()
+            ]
+        );
     }
 }
