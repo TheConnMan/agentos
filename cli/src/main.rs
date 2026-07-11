@@ -79,6 +79,17 @@ enum Command {
         #[command(subcommand)]
         action: ClusterAction,
     },
+    /// Build the runner image locally from `runner/Dockerfile` (source checkout only).
+    ///
+    /// Runs `docker build -f runner/Dockerfile -t <tag> .` from the repo root. A
+    /// release binary pulls the pinned runner image from GHCR automatically and
+    /// never needs this; it errors clearly if Docker is missing or there is no
+    /// repo checkout.
+    Build {
+        /// Image tag to build.
+        #[arg(long, default_value = "agentos-runner")]
+        tag: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -648,6 +659,7 @@ async fn main() -> Result<()> {
     ui::init(Ui::from_process(cli.color, cli.debug, cli.quiet));
     match cli.command {
         Command::Init { name, dir } => commands::init(&name, dir),
+        Command::Build { tag } => commands::build(&tag).await,
         Command::Skill { action } => match action {
             SkillAction::Up {
                 plugin_dir,
@@ -1126,6 +1138,21 @@ mod tests {
     #[test]
     fn clap_surface_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn build_defaults_tag_and_accepts_override() {
+        let cli = Cli::try_parse_from(["agentos", "build"]).expect("build should parse");
+        match cli.command {
+            Command::Build { tag } => assert_eq!(tag, "agentos-runner"),
+            _ => panic!("expected build command"),
+        }
+        let cli = Cli::try_parse_from(["agentos", "build", "--tag", "my-runner:dev"])
+            .expect("build --tag should parse");
+        match cli.command {
+            Command::Build { tag } => assert_eq!(tag, "my-runner:dev"),
+            _ => panic!("expected build command"),
+        }
     }
 
     #[test]
