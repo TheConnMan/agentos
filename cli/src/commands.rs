@@ -1136,6 +1136,11 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn default_channel_passes_local_validation() {
+        assert!(validate_slack_channel(crate::api::DEFAULT_SLACK_CHANNEL).is_ok());
+    }
+
+    #[test]
     fn explicit_cases_path_wins() {
         let path = resolve_cases_path(
             Some(PathBuf::from("/x/cases.json")),

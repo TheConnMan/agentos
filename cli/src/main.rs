@@ -365,7 +365,7 @@ enum LocalAction {
         #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
-        /// #local-dev; on redeploy it is only moved when you pass this flag, so
+        /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
         /// omitting it leaves the deployed agent's channel untouched.
         #[arg(long)]
         slack_channel: Option<String>,
@@ -577,7 +577,7 @@ enum ClusterAction {
         #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
-        /// #local-dev; on redeploy it is only moved when you pass this flag, so
+        /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
         /// omitting it leaves the deployed agent's channel untouched.
         #[arg(long)]
         slack_channel: Option<String>,

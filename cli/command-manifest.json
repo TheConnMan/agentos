@@ -676,7 +676,7 @@
             },
             {
               "global": false,
-              "help": "Slack channel to bind the agent to. On first create it defaults to #local-dev; on redeploy it is only moved when you pass this flag, so omitting it leaves the deployed agent's channel untouched",
+              "help": "Slack channel to bind the agent to. On first create it defaults to C0LOCALDEV; on redeploy it is only moved when you pass this flag, so omitting it leaves the deployed agent's channel untouched",
               "id": "slack_channel",
               "long": "slack-channel",
               "positional": false,
@@ -1234,7 +1234,7 @@
             },
             {
               "global": false,
-              "help": "Slack channel to bind the agent to. On first create it defaults to #local-dev; on redeploy it is only moved when you pass this flag, so omitting it leaves the deployed agent's channel untouched",
+              "help": "Slack channel to bind the agent to. On first create it defaults to C0LOCALDEV; on redeploy it is only moved when you pass this flag, so omitting it leaves the deployed agent's channel untouched",
               "id": "slack_channel",
               "long": "slack-channel",
               "positional": false,
