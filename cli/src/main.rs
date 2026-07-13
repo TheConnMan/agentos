@@ -588,9 +588,9 @@ enum ClusterAction {
         /// Plugin bundle directory.
         #[arg(long, default_value = ".")]
         plugin_dir: PathBuf,
-        /// Platform API base URL.
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
+        /// Platform API base URL. Omit to auto port-forward to the in-cluster API; pass a URL (or set AGENTOS_API_URL) to dial it directly.
+        #[arg(long, env = "AGENTOS_API_URL")]
+        api_url: Option<String>,
         /// Platform API key.
         #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
         api_key: String,
@@ -605,6 +605,12 @@ enum ClusterAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
+        /// Kubernetes namespace of the release. Default: agentos.
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Helm release name. Default: agentos.
+        #[arg(long)]
+        release: Option<String>,
     },
     // Agent-lifecycle verbs (kill/resume/budget/delete) speak the platform API
     // like `deploy` does. Design decision (#149): extend the existing `cluster`
@@ -1150,10 +1156,40 @@ async fn run(command: Command) -> Result<()> {
                 slack_channel,
                 env,
                 label,
+                namespace,
+                release,
             } => {
-                let connect_hint = format!(
-                    "the platform API at {api_url} is unreachable. `cluster deploy` does not port-forward for you; open one first, e.g.:\n    kubectl -n agentos port-forward svc/agentos-api 8000:8000\nthen re-run (or pass --api-url if your API is elsewhere)."
-                );
+                let namespace = namespace.unwrap_or_else(|| "agentos".to_string());
+                let release = release.unwrap_or_else(|| "agentos".to_string());
+                // No --api-url (and no AGENTOS_API_URL) means "the in-cluster API":
+                // self-plumb a port-forward the way `cluster message` does, so a
+                // first deploy against a healthy cluster needs no manual kubectl.
+                // The child is bound into `_api_pf` and stays alive across the
+                // deploy await (killed on drop once deploy returns). An explicit
+                // --api-url / AGENTOS_API_URL (any value) is dialed as given.
+                let (api_url, connect_hint, _api_pf) = match api_url {
+                    None => {
+                        ops::require_on_path("kubectl")?;
+                        let pf = message::start_api_port_forward(
+                            &namespace,
+                            &release,
+                            message::DEFAULT_API_LOCAL_PORT,
+                        )
+                        .await?;
+                        let forwarded =
+                            format!("http://localhost:{}", message::DEFAULT_API_LOCAL_PORT);
+                        let hint = format!(
+                            "the platform API did not respond through the automatic port-forward to svc/{release}-api in namespace {namespace}. Check the release is healthy with `agentos cluster status`."
+                        );
+                        (forwarded, hint, Some(pf))
+                    }
+                    Some(url) => {
+                        let hint = format!(
+                            "the platform API at {url} is unreachable. Pass a reachable --api-url, or omit it to use the automatic in-cluster port-forward."
+                        );
+                        (url, hint, None)
+                    }
+                };
                 commands::deploy(DeployOpts {
                     plugin_dir,
                     api_url,
@@ -1310,6 +1346,65 @@ mod tests {
                 action: LocalAction::Message { api_key, .. },
             } => assert_eq!(api_key, "K"),
             _ => panic!("expected local message command"),
+        }
+    }
+
+    #[test]
+    fn cluster_deploy_parses_namespace_and_release() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "deploy",
+            "--namespace",
+            "ns1",
+            "--release",
+            "rel1",
+        ])
+        .expect("cluster deploy --namespace --release should parse");
+        match cli.command {
+            Command::Cluster {
+                action:
+                    ClusterAction::Deploy {
+                        namespace, release, ..
+                    },
+            } => {
+                assert_eq!(namespace, Some("ns1".to_string()));
+                assert_eq!(release, Some("rel1".to_string()));
+            }
+            _ => panic!("expected cluster deploy command"),
+        }
+    }
+
+    #[test]
+    fn cluster_deploy_api_url_is_optional() {
+        // The env fallback (env = "AGENTOS_API_URL") would populate api_url from
+        // the ambient process environment; clear it so the omitted-flag case
+        // genuinely observes None.
+        std::env::remove_var("AGENTOS_API_URL");
+        // Omitting --api-url must yield None so the handler self-plumbs the
+        // port-forward; a default_value here would silently disable that path.
+        let cli = Cli::try_parse_from(["agentos", "cluster", "deploy"])
+            .expect("cluster deploy with no --api-url should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Deploy { api_url, .. },
+            } => assert_eq!(api_url, None),
+            _ => panic!("expected cluster deploy command"),
+        }
+        // An explicit --api-url is carried through as Some and dialed as given.
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "deploy",
+            "--api-url",
+            "http://localhost:8000",
+        ])
+        .expect("cluster deploy --api-url should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Deploy { api_url, .. },
+            } => assert_eq!(api_url, Some("http://localhost:8000".to_string())),
+            _ => panic!("expected cluster deploy command"),
         }
     }
 

@@ -752,7 +752,7 @@ pub fn host_from_server_url(server: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Fail with a clear one-line error if `bin` is not on `PATH`.
-pub(crate) fn require_on_path(bin: &str) -> Result<()> {
+pub fn require_on_path(bin: &str) -> Result<()> {
     let found = std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
         .unwrap_or(false);

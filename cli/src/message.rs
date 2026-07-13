@@ -151,6 +151,14 @@ pub fn port_forward_command(
     )
 }
 
+/// The API port-forward `cluster deploy` self-plumbs to reach the in-cluster
+/// platform API: `kubectl -n <ns> port-forward svc/<release>-api <local>:8000`.
+/// A thin pure wrapper over [`port_forward_command`] so the "deploy forwards to
+/// svc/<release>-api remote 8000" contract lives in one testable place.
+pub fn api_port_forward_command(namespace: &str, release: &str, local_port: u16) -> OpsCommand {
+    port_forward_command(namespace, release, "api", local_port, API_REMOTE_PORT)
+}
+
 /// `kubectl config view --minify -o jsonpath={...server}`: the kubeconfig's
 /// current-context API server URL, used to pick the local egress IP.
 fn server_url_command() -> OpsCommand {
@@ -355,8 +363,23 @@ async fn start_port_forward(
     local_port: u16,
     label: &str,
 ) -> Result<tokio::process::Child> {
+    // Refuse up front if something already owns local_port: a spawned
+    // `kubectl port-forward` would fail to bind and `wait_for_tcp` would then
+    // connect to that unrelated listener, silently sending traffic to the wrong
+    // endpoint. Checking before we spawn makes the common case (a stale or
+    // concurrent port-forward) deterministic; the post-spawn `try_wait` below
+    // still covers the residual bind race.
+    if tokio::net::TcpStream::connect(("127.0.0.1", local_port))
+        .await
+        .is_ok()
+    {
+        bail!(
+            "localhost:{local_port} is already in use (another agentos message/deploy \
+             or a stale port-forward); free it before retrying the {label} port-forward"
+        );
+    }
     crate::ui::ui().plumbing(&format!("+ {}", cmd.display()));
-    let child = tokio::process::Command::new(&cmd.program)
+    let mut child = tokio::process::Command::new(&cmd.program)
         .args(cmd.argv())
         .kill_on_drop(true)
         .stdout(Stdio::null())
@@ -366,7 +389,33 @@ async fn start_port_forward(
     wait_for_tcp(local_port, Duration::from_secs(15))
         .await
         .with_context(|| format!("the {label} port-forward never opened localhost:{local_port}"))?;
+    // wait_for_tcp only proves *something* accepts local_port; if kubectl lost a
+    // bind race to an unrelated listener it has already exited and we would be
+    // talking to that squatter. Fail loud instead of silently using the wrong
+    // endpoint.
+    if let Ok(Some(status)) = child.try_wait() {
+        bail!(
+            "the {label} port-forward exited early ({status}); is localhost:{local_port} \
+             already in use by another agentos message/deploy or a stale port-forward?"
+        );
+    }
     Ok(child)
+}
+
+/// Spawn the `cluster deploy` API port-forward and block until it accepts TCP.
+/// The returned child is killed on drop, so the caller must keep it alive for as
+/// long as it dials `http://localhost:<local_port>`.
+pub async fn start_api_port_forward(
+    namespace: &str,
+    release: &str,
+    local_port: u16,
+) -> Result<tokio::process::Child> {
+    start_port_forward(
+        &api_port_forward_command(namespace, release, local_port),
+        local_port,
+        "api",
+    )
+    .await
 }
 
 /// Poll-connect to `localhost:port` until it accepts or the timeout elapses.
@@ -706,6 +755,15 @@ mod tests {
         assert_eq!(
             cmd.display(),
             "kubectl -n agentos port-forward svc/agentos-valkey 56381:6379"
+        );
+    }
+
+    #[test]
+    fn api_port_forward_command_targets_api_svc_and_remote_8000() {
+        let cmd = api_port_forward_command("agentos", "agentos", 8123);
+        assert_eq!(
+            cmd.display(),
+            "kubectl -n agentos port-forward svc/agentos-api 8123:8000"
         );
     }
 

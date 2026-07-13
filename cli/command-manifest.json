@@ -1247,12 +1247,9 @@
               "required": false
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
-              "help": "Platform API base URL",
+              "help": "Platform API base URL. Omit to auto port-forward to the in-cluster API; pass a URL (or set AGENTOS_API_URL) to dial it directly",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
@@ -1298,6 +1295,22 @@
               "help": "Version label; defaults to <manifest version>-<unix time>",
               "id": "label",
               "long": "label",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             }

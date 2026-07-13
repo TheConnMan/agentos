@@ -134,28 +134,31 @@ the stack.
 ## Deploy a bundle to the cluster
 
 Before `agentos cluster message` can drive an agent, a bundle must be deployed to
-the in-cluster platform API with `agentos cluster deploy`. The `agentos-api`
-service is ClusterIP, but the UI is exposed on a NodePort (`:30080`) and its
-nginx reverse-proxies `/api/` to the in-cluster API, so a `/api`-suffixed node
-URL reaches the API with no port-forward. Take the UI URL from `agentos cluster
-status` and give `cluster deploy` its `/api` path:
+the in-cluster platform API with `agentos cluster deploy`. Omit `--api-url`
+entirely (do not leave it at a default value; simply omit it) and `cluster
+deploy` self-plumbs a kubectl port-forward to the in-cluster `agentos-api`
+service the same way `cluster message` does, and releases it when the deploy
+returns. So a first deploy against a healthy cluster needs no manual port-forward:
+
+```bash
+agentos cluster deploy --plugin-dir <bundle-dir> --api-key agentos-dev-key
+```
+
+The port-forward targets the `agentos`/`agentos` namespace and release by
+default; pass `--namespace`/`--release` to point it at a non-default release,
+mirroring `cluster message`.
+
+Passing an explicit `--api-url` (or setting `AGENTOS_API_URL`) dials that
+endpoint as given, with no self-managed port-forward, for when you already have a
+route to the API. The UI
+is exposed on a NodePort (`:30080`) whose nginx reverse-proxies `/api/` to the
+in-cluster API, so a `/api`-suffixed node URL from `agentos cluster status`
+reaches the API directly. Take the UI URL and give `cluster deploy` its `/api`
+path:
 
 ```bash
 agentos cluster deploy --plugin-dir <bundle-dir> \
   --api-url http://<node>:30080/api --api-key agentos-dev-key
-```
-
-If you installed with `--no-expose` (no NodePort) or otherwise can't reach the
-node port, fall back to a manual port-forward of the ClusterIP service. `cluster
-deploy` does not self-manage one, so its default `--api-url
-http://localhost:8000` is unreachable until you forward the API yourself. Run the
-port-forward first, deploy, then release it:
-
-```bash
-kubectl port-forward svc/agentos-api 8000:8000 -n agentos &
-agentos cluster deploy --plugin-dir <bundle-dir> \
-  --api-url http://localhost:8000 --api-key agentos-dev-key
-kill %1   # cluster message plumbs its own forwards, so this one is no longer needed
 ```
 
 Without a deploy, `agentos cluster message` fails with `no agents are deployed on

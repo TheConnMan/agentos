@@ -159,7 +159,7 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
-| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API (`--api-url`, default `http://localhost:8000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
+| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. Omitting `--api-url` self-plumbs a kubectl port-forward to the in-cluster API (released when the deploy returns); `--namespace`/`--release` target the release (default `agentos`). An explicit `--api-url` (or `AGENTOS_API_URL`) is dialed directly with no self-managed forward. Auth via `--api-key` or `AGENTOS_API_KEY`. |
 | `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
 | `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
 | `agentos cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
