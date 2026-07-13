@@ -159,16 +159,17 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
-| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API (`--api-url`, default `http://localhost:8000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
+| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. Reaches the API through the deployed release's UI `/api` NodePort proxy when `--api-url` is omitted (no port-forward); pass `--api-url` / `AGENTOS_API_URL` to target it directly. Auth via `--api-key` or `AGENTOS_API_KEY`. |
 | `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
 | `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
 | `agentos cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
 | `agentos cluster delete <agent> --yes` | Delete an agent via the platform API (`DELETE /agents/{id}`). Destructive and irreversible: refuses without `--yes`. |
 
 The four lifecycle verbs (`kill`, `resume`, `budget`, `delete`) act on a
-deployed release's agents through the same platform API as `cluster deploy`
-(`--api-url`, default `http://localhost:8000`; auth via `--api-key` or
-`AGENTOS_API_KEY`). They resolve `<agent>` (a name or id) to its API id with the
+deployed release's agents through the same platform API, defaulting `--api-url`
+to `http://localhost:8000` (auth via `--api-key` or `AGENTOS_API_KEY`). Unlike
+`cluster deploy`, they do not auto-discover the UI proxy -- pass `--api-url` or
+port-forward the API yourself. They resolve `<agent>` (a name or id) to its API id with the
 same lookup `deploy` uses. Each takes `--dry-run` (prints the plan, makes no
 request); the destructive `kill`/`delete` also require `--yes`.
 

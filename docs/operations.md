@@ -135,21 +135,25 @@ the stack.
 
 Before `agentos cluster message` can drive an agent, a bundle must be deployed to
 the in-cluster platform API with `agentos cluster deploy`. The `agentos-api`
-service is ClusterIP, but the UI is exposed on a NodePort (`:30080`) and its
-nginx reverse-proxies `/api/` to the in-cluster API, so a `/api`-suffixed node
-URL reaches the API with no port-forward. Take the UI URL from `agentos cluster
-status` and give `cluster deploy` its `/api` path:
+service is ClusterIP, but the UI is exposed on a NodePort and its nginx
+reverse-proxies `/api/` to the in-cluster API. With no `--api-url`, `cluster
+deploy` auto-discovers that UI `/api` NodePort proxy (reading the `<release>-ui`
+service and resolving a routable node host) and dials it -- no port-forward and no
+manual URL:
 
 ```bash
-agentos cluster deploy --plugin-dir <bundle-dir> \
-  --api-url http://<node>:30080/api --api-key agentos-dev-key
+agentos cluster deploy --plugin-dir <bundle-dir> --api-key agentos-dev-key
 ```
 
-If you installed with `--no-expose` (no NodePort) or otherwise can't reach the
-node port, fall back to a manual port-forward of the ClusterIP service. `cluster
-deploy` does not self-manage one, so its default `--api-url
-http://localhost:8000` is unreachable until you forward the API yourself. Run the
-port-forward first, deploy, then release it:
+An explicit `--api-url` (e.g. `http://<node>:30080/api`) or `AGENTOS_API_URL` is
+honored exactly as given, overriding discovery.
+
+Discovery fails with a usage error telling you to pass `--api-url` when the UI is
+not NodePort-exposed (installed with `--no-expose`) or a routable node host can't
+be determined -- for example a managed/multi-node cluster whose kubeconfig points
+at a control-plane endpoint that does not expose NodePorts. `cluster deploy` does
+not self-plumb a port-forward, so in that case pass `--api-url` explicitly (a node
+URL, or a ClusterIP you forward yourself). If you must forward the ClusterIP:
 
 ```bash
 kubectl port-forward svc/agentos-api 8000:8000 -n agentos &
