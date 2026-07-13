@@ -53,3 +53,50 @@ def test_error_messages_carry_location_and_are_actionable() -> None:
     issue = next(i for i in result.errors if i.code == "skill.frontmatter_invalid")
     assert issue.location.endswith("SKILL.md")
     assert "description" in issue.message
+
+
+def _bundle(tmp_path: Path, manifest: str) -> Path:
+    """Write a minimal valid bundle carrying the given manifest JSON."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(manifest, encoding="utf-8")
+    return tmp_path
+
+
+def test_inline_valid_pretooluse_hook_passes(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "hooks": {"PreToolUse": [{"matcher": "Bash", '
+        '"hooks": [{"type": "command", "command": "./guard.sh"}]}]}}',
+    )
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
+
+
+def test_command_hook_without_command_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "hooks": {"PreToolUse": [{"matcher": "Bash", '
+        '"hooks": [{"type": "command"}]}]}}',
+    )
+    assert "hooks.command_missing" in _codes(bundle)
+
+
+def test_malformed_hooks_shape_is_rejected(tmp_path: Path) -> None:
+    # A matcher entry must be an object with a hooks list, not a bare string.
+    bundle = _bundle(tmp_path, '{"name": "demo", "hooks": {"PreToolUse": ["nope"]}}')
+    assert "hooks.invalid" in _codes(bundle)
+
+
+def test_declared_hooks_file_missing_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "hooks": "hooks/hooks.json"}')
+    assert "hooks.declared_missing" in _codes(bundle)
+
+
+def test_declared_hooks_file_is_validated(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "hooks": "hooks/hooks.json"}')
+    hooks_dir = bundle / "hooks"
+    hooks_dir.mkdir()
+    (hooks_dir / "hooks.json").write_text(
+        '{"PreToolUse": [{"hooks": [{"type": "command"}]}]}', encoding="utf-8"
+    )
+    assert "hooks.command_missing" in _codes(bundle)

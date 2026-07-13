@@ -16,9 +16,15 @@ this boundary and nothing above it is. ``aci-protocol`` is never mocked.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, SdkPluginConfig, TaskBudget
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    HookMatcher,
+    SdkPluginConfig,
+    TaskBudget,
+)
 
 
 class ModelSession(Protocol):
@@ -55,6 +61,7 @@ def build_options(
     resume: str | None,
     task_budget_hint: int | None = None,
     env: dict[str, str] | None = None,
+    hooks: dict[str, list[HookMatcher]] | None = None,
 ) -> ClaudeAgentOptions:
     """Assemble ClaudeAgentOptions for the session.
 
@@ -81,6 +88,10 @@ def build_options(
         task_budget=task_budget,
         permission_mode="bypassPermissions",
         env=env or {},
+        # In-bundle PreToolUse guardrails from the manifest hooks field (#272).
+        # Empty/None means no bundle hooks; the SDK default applies. The event
+        # keys are the SDK's HookEvent literals (we emit only "PreToolUse").
+        hooks=cast("Any", hooks),
     )
 
 

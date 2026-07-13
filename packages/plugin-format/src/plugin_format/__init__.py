@@ -9,6 +9,8 @@ escalates to the orchestrator.
 from .archive import UnsupportedArchive, bundle_root, safe_extract
 from .models import (
     Author,
+    HookDefinition,
+    HookMatcherConfig,
     McpConfig,
     McpServer,
     PluginManifest,
@@ -25,6 +27,8 @@ __all__ = [
     "SkillFrontmatter",
     "McpServer",
     "McpConfig",
+    "HookDefinition",
+    "HookMatcherConfig",
     "validate_bundle",
     "ValidationResult",
     "ValidationIssue",

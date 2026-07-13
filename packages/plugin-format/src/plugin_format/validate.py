@@ -11,9 +11,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from .models import McpConfig, PluginManifest, SkillFrontmatter
+from .models import HookMatcherConfig, McpConfig, PluginManifest, SkillFrontmatter
+
+# The hooks field is a mapping of event name -> list of matcher entries. Reused
+# to validate both the inline object and a declared hooks file.
+_HOOKS_ADAPTER = TypeAdapter(dict[str, list[HookMatcherConfig]])
 
 # Claude Code plugin names are kebab-case: lowercase alphanumerics and hyphens.
 _NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -66,6 +70,7 @@ def validate_bundle(path: str | Path) -> ValidationResult:
     if manifest is not None:
         _validate_skills(root, c)
         _validate_mcp(root, manifest, c)
+        _validate_hooks(root, manifest, c)
         _validate_scripts(root, c)
 
     return c.result()
@@ -186,6 +191,61 @@ def _validate_mcp_object(obj: object, location: str, c: _Collector) -> None:
                 f"mcp server {name!r} must define either 'command' (stdio) or 'url' (remote)",
                 location,
             )
+
+
+def _validate_hooks(root: Path, manifest: PluginManifest, c: _Collector) -> None:
+    """Validate the manifest ``hooks`` declaration (deploy-time gate, #272).
+
+    ``hooks`` may be an inline object or a path to a hooks JSON file; either form
+    must parse as ``{event: [ {matcher?, hooks: [{type, command}]} ]}``. A
+    ``command`` hook must carry a non-empty ``command`` so a malformed guardrail
+    is rejected before it ships (the runner enforces PreToolUse at run time).
+    """
+
+    declared = manifest.hooks
+    if declared is None:
+        return
+
+    if isinstance(declared, str):
+        hooks_path = root / declared
+        if not hooks_path.is_file():
+            c.error(
+                "hooks.declared_missing",
+                f"manifest hooks path {declared!r} was not found",
+                "plugin.json",
+            )
+            return
+        location = str(Path(declared))
+        try:
+            data: object = json.loads(hooks_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            c.error("hooks.invalid_json", f"{location} is not valid JSON: {exc}", location)
+            return
+    elif isinstance(declared, dict):
+        location = "plugin.json (hooks)"
+        data = declared
+    else:
+        c.error("hooks.invalid", "hooks must be an object or a path string", "plugin.json")
+        return
+
+    try:
+        parsed = _HOOKS_ADAPTER.validate_python(data)
+    except ValidationError as exc:
+        for issue in _explain(exc):
+            c.error("hooks.invalid", issue, location)
+        return
+
+    # Each command-type hook must actually declare a command.
+    for event, matchers in parsed.items():
+        for m_i, matcher in enumerate(matchers):
+            for h_i, hook in enumerate(matcher.hooks):
+                if hook.type == "command" and not (hook.command and hook.command.strip()):
+                    c.error(
+                        "hooks.command_missing",
+                        f"{event}[{m_i}].hooks[{h_i}]: a 'command' hook must define a "
+                        "non-empty command",
+                        location,
+                    )
 
 
 def _validate_scripts(root: Path, c: _Collector) -> None:

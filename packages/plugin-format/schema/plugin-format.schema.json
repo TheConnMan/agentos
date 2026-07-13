@@ -39,6 +39,60 @@
       "title": "Author",
       "type": "object"
     },
+    "HookDefinition": {
+      "additionalProperties": true,
+      "description": "One hook action inside a matcher's ``hooks`` list.\n\nThe Claude Code plugin ``hooks`` shape: a single action of a given ``type``.\nToday only ``type: \"command\"`` exists (run a shell command); ``command`` is\nrequired for it. Kept lenient so a future hook type still validates, but the\ndeploy-time validator (``validate.py``) enforces that a ``command`` hook\nactually carries a command so a malformed guardrail is caught before ship.",
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "HookDefinition",
+      "type": "object"
+    },
+    "HookMatcherConfig": {
+      "additionalProperties": true,
+      "description": "One matcher entry under a hook event (e.g. ``PreToolUse``).\n\n``matcher`` is a tool-name pattern (``\"Bash\"``, ``\"Write|Edit\"``; absent or\nempty means \"all tools\"); ``hooks`` is the list of actions to run when a tool\ncall matches. Mirrors the Claude Code hooks structure verbatim.",
+      "properties": {
+        "hooks": {
+          "items": {
+            "$ref": "#/$defs/HookDefinition"
+          },
+          "title": "Hooks",
+          "type": "array"
+        },
+        "matcher": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matcher"
+        }
+      },
+      "title": "HookMatcherConfig",
+      "type": "object"
+    },
     "McpConfig": {
       "additionalProperties": true,
       "description": "The `.mcp.json` document.",

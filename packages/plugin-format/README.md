@@ -32,6 +32,18 @@ Pydantic models mirroring the Claude Code shapes:
 - `McpServer` / `McpConfig` (`.mcp.json`): `mcpServers` maps a name to a server
   that is either stdio (`command`, `args?`, `env?`) or remote (`type`, `url`,
   `headers?`).
+- `HookMatcherConfig` / `HookDefinition` (the manifest `hooks` field): `hooks`
+  may be an inline object or a path to a hooks JSON file, shaped
+  `{event: [{matcher?, hooks: [{type, command}]}]}` (the Claude Code hooks
+  structure). `matcher` is a tool-name pattern (`"Bash"`, `"Write|Edit"`; absent
+  = all tools); each action carries a `type` (today only `"command"`, which
+  requires a non-empty `command`). **Deploy-time validation** rejects a missing
+  hooks file, invalid JSON, a malformed shape, or a `command` hook with no
+  command. **Runner consumption** (`runner`): the manifest's `PreToolUse`
+  command hooks are translated into SDK `HookMatcher` callbacks and run before a
+  matching tool call — exit 0 allows, exit 2 denies (stderr = reason), any other
+  non-zero is a non-blocking hook error. Only `PreToolUse` is consumed today;
+  other events validate but are not yet wired.
 - `scripts/` is a directory convention (no manifest schema of its own).
 
 `validate_bundle(path) -> ValidationResult` is the entry point the bundle pipeline calls. It
@@ -48,7 +60,8 @@ if not result.valid:
 Error codes include `bundle.missing`, `manifest.missing`,
 `manifest.invalid_json`, `manifest.invalid`, `manifest.name_invalid`,
 `skill.frontmatter_missing`, `skill.frontmatter_invalid`, `mcp.invalid_json`,
-`mcp.server_incomplete`, `scripts.not_a_directory`.
+`mcp.server_incomplete`, `hooks.declared_missing`, `hooks.invalid_json`,
+`hooks.invalid`, `hooks.command_missing`, `scripts.not_a_directory`.
 
 ## Frozen-interface rule
 
