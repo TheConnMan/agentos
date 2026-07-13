@@ -1,5 +1,5 @@
 import { C } from "../../tokens";
-import { Card, SectionTitle, Button, Dot, Notice } from "../../primitives";
+import { Card, SectionTitle, Button, CliHint, Dot, Notice, cliCommand } from "../../primitives";
 import { hoverBg } from "../../lib/style";
 import { formatLatency } from "../../lib/format";
 import { useStore } from "../../state/store";
@@ -119,7 +119,11 @@ function LiveOverview({ agents }: { agents: AgentOut[] }) {
   return (
     <div>
       {justDeployed ? <DeployedPanel name={justDeployed.name} channel={justDeployed.channel} /> : null}
-      <SectionTitle title="Overview" sub={`${scoped.length} ${scoped.length === 1 ? "agent" : "agents"} · ${state.env} · live data`} />
+      <SectionTitle
+        title="Overview"
+        sub={`${scoped.length} ${scoped.length === 1 ? "agent" : "agents"} · ${state.env} · live data`}
+        right={<CliHint command={cliCommand(state.env === "prod" ? "cluster.status" : "local.status")} />}
+      />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 22 }}>
         {stats.map((x) => stat(x[0], x[1]))}
       </div>
