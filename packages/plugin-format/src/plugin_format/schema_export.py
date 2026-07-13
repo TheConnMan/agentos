@@ -11,6 +11,8 @@ from typing import Any
 from pydantic.json_schema import models_json_schema
 
 from .models import (
+    ApprovalGate,
+    ApprovalPolicy,
     Author,
     HookDefinition,
     HookMatcherConfig,
@@ -18,6 +20,7 @@ from .models import (
     McpServer,
     PluginManifest,
     SkillFrontmatter,
+    TriggerDeclaration,
 )
 
 _MODELS = (
@@ -28,6 +31,9 @@ _MODELS = (
     McpConfig,
     HookMatcherConfig,
     HookDefinition,
+    TriggerDeclaration,
+    ApprovalPolicy,
+    ApprovalGate,
 )
 
 SCHEMA_ID = "https://curie.tech/agentos/plugin-format.schema.json"

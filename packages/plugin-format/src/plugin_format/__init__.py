@@ -8,6 +8,8 @@ escalates to the orchestrator.
 
 from .archive import UnsupportedArchive, bundle_root, safe_extract
 from .models import (
+    ApprovalGate,
+    ApprovalPolicy,
     Author,
     HookDefinition,
     HookMatcherConfig,
@@ -15,6 +17,7 @@ from .models import (
     McpServer,
     PluginManifest,
     SkillFrontmatter,
+    TriggerDeclaration,
 )
 from .validate import ValidationIssue, ValidationResult, validate_bundle
 
@@ -29,6 +32,9 @@ __all__ = [
     "McpConfig",
     "HookDefinition",
     "HookMatcherConfig",
+    "TriggerDeclaration",
+    "ApprovalPolicy",
+    "ApprovalGate",
     "validate_bundle",
     "ValidationResult",
     "ValidationIssue",

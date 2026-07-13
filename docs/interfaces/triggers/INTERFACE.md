@@ -33,6 +33,14 @@ another hardcoded handler. The two that exist:
 The two share no abstraction: one is a Slack Bolt event listener, the other a FastAPI
 route with GitHub HMAC auth. They converge only downstream (both end up enqueuing work).
 
+**Declaration vs. consumption (#273/#270).** The bundle manifest now carries deploy-time-validated
+`triggers` declarations (`cron` with a `schedule`, `webhook` with a `path`; `TriggerDeclaration` in
+`packages/plugin-format`, `triggers.*` validation codes), so an agent's non-chat wake-ups ship in one
+reviewable artifact and a malformed declaration is rejected at deploy. This is the *declaration*
+surface only — the *runtime* that acts on a declared trigger (a cron scheduler, a per-agent webhook
+ingress) is still the open Epic #29 question above and is not built. Declaring a trigger validates its
+shape; it does not yet wire a live wake-up.
+
 ## Implementations today
 
 Two, both hardcoded, in two different processes:

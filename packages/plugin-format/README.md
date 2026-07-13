@@ -44,6 +44,20 @@ Pydantic models mirroring the Claude Code shapes:
   matching tool call — exit 0 allows, exit 2 denies (stderr = reason), any other
   non-zero is a non-blocking hook error. Only `PreToolUse` is consumed today;
   other events validate but are not yet wired.
+- `TriggerDeclaration` (the manifest `triggers` field, an AgentOS extension for
+  triggers beyond chat, #273/#270): a list of `{type, ...}`. `type` is `cron`
+  (requires a non-empty `schedule` cron expression) or `webhook` (requires a
+  non-empty `path`). Declaring triggers in the bundle keeps an agent's full
+  wake-up behavior in one reviewable artifact. **Deploy-time validation** rejects
+  an unknown type, a cron trigger without a schedule, or a webhook trigger
+  without a path. Runtime consumption (kernel cron scheduling / webhook ingress)
+  is a separate not-yet-built seam (see `docs/interfaces/triggers/INTERFACE.md`),
+  so this is validation only today.
+- `ApprovalPolicy` / `ApprovalGate` (the manifest `approvalPolicy` field, #273):
+  `{gates: [{gate, route}]}` — each gate names a pause point and the approval
+  route that decides it; both are required. **Deploy-time validation** rejects a
+  malformed policy or a gate missing `gate`/`route`. Runtime approval routing is
+  a separate not-yet-built seam, so this is validation only today.
 - `scripts/` is a directory convention (no manifest schema of its own).
 
 `validate_bundle(path) -> ValidationResult` is the entry point the bundle pipeline calls. It
@@ -61,7 +75,10 @@ Error codes include `bundle.missing`, `manifest.missing`,
 `manifest.invalid_json`, `manifest.invalid`, `manifest.name_invalid`,
 `skill.frontmatter_missing`, `skill.frontmatter_invalid`, `mcp.invalid_json`,
 `mcp.server_incomplete`, `hooks.declared_missing`, `hooks.invalid_json`,
-`hooks.invalid`, `hooks.command_missing`, `scripts.not_a_directory`.
+`hooks.invalid`, `hooks.command_missing`, `triggers.invalid`,
+`triggers.unknown_type`, `triggers.cron_missing_schedule`,
+`triggers.webhook_missing_path`, `approval_policy.invalid`,
+`approval_policy.incomplete`, `scripts.not_a_directory`.
 
 ## Frozen-interface rule
 

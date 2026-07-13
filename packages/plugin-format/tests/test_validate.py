@@ -9,6 +9,13 @@ def _codes(path: Path) -> set[str]:
     return {issue.code for issue in validate_bundle(path).errors}
 
 
+def _bundle(tmp_path: Path, manifest: str) -> Path:
+    """Write a minimal bundle carrying the given manifest JSON."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(manifest, encoding="utf-8")
+    return tmp_path
+
+
 def test_valid_bundle_passes() -> None:
     result = validate_bundle(FIXTURES / "valid_bundle")
     assert result.valid, result.errors
@@ -100,3 +107,75 @@ def test_declared_hooks_file_is_validated(tmp_path: Path) -> None:
         '{"PreToolUse": [{"hooks": [{"type": "command"}]}]}', encoding="utf-8"
     )
     assert "hooks.command_missing" in _codes(bundle)
+
+
+def test_valid_cron_and_webhook_triggers_pass(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "triggers": ['
+        '{"type": "cron", "schedule": "0 9 * * 1-5"}, '
+        '{"type": "webhook", "path": "/hooks/deploy"}]}',
+    )
+    assert validate_bundle(bundle).valid
+
+
+def test_cron_trigger_without_schedule_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "triggers": [{"type": "cron"}]}')
+    assert "triggers.cron_missing_schedule" in _codes(bundle)
+
+
+def test_webhook_trigger_without_path_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "triggers": [{"type": "webhook"}]}')
+    assert "triggers.webhook_missing_path" in _codes(bundle)
+
+
+def test_unknown_trigger_type_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "triggers": [{"type": "kafka"}]}')
+    assert "triggers.unknown_type" in _codes(bundle)
+
+
+def test_malformed_triggers_shape_is_rejected(tmp_path: Path) -> None:
+    # A non-list triggers value is rejected (the manifest type gate catches it).
+    bundle = _bundle(tmp_path, '{"name": "demo", "triggers": "nope"}')
+    assert not validate_bundle(bundle).valid
+
+
+def test_trigger_entry_not_object_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "triggers": ["nope"]}')
+    assert "triggers.invalid" in _codes(bundle)
+
+
+def test_valid_approval_policy_passes(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "approvalPolicy": {"gates": ['
+        '{"gate": "PreToolUse", "route": "manager-approval"}]}}',
+    )
+    assert validate_bundle(bundle).valid
+
+
+def test_approval_gate_missing_route_is_rejected(tmp_path: Path) -> None:
+    # A gate missing its 'route' field entirely -> policy fails to validate.
+    bundle = _bundle(
+        tmp_path, '{"name": "demo", "approvalPolicy": {"gates": [{"gate": "PreToolUse"}]}}'
+    )
+    assert "approval_policy.invalid" in _codes(bundle)
+
+
+def test_approval_gate_empty_fields_are_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "approvalPolicy": {"gates": [{"gate": " ", "route": "r"}]}}',
+    )
+    assert "approval_policy.incomplete" in _codes(bundle)
+
+
+def test_malformed_approval_policy_shape_is_rejected(tmp_path: Path) -> None:
+    # A non-object approvalPolicy is rejected (the manifest type gate catches it).
+    bundle = _bundle(tmp_path, '{"name": "demo", "approvalPolicy": "nope"}')
+    assert not validate_bundle(bundle).valid
+
+
+def test_approval_policy_gates_wrong_type_is_rejected(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo", "approvalPolicy": {"gates": "nope"}}')
+    assert "approval_policy.invalid" in _codes(bundle)
