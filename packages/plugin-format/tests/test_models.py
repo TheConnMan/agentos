@@ -35,3 +35,15 @@ def test_mcp_server_accepts_stdio_and_remote_shapes() -> None:
     remote = McpServer.model_validate({"type": "http", "url": "https://example.com"})
     assert stdio.command == "python"
     assert remote.url == "https://example.com"
+
+
+def test_manifest_system_prompt_field() -> None:
+    """The AgentOS ``systemPrompt`` authoring extension round-trips (#271)."""
+    manifest = PluginManifest.model_validate(
+        {"name": "demo", "systemPrompt": "Be terse; cite the CRM record, not the message."}
+    )
+    assert manifest.systemPrompt == "Be terse; cite the CRM record, not the message."
+    # Absent -> None (backward compatible; bundles without it still validate).
+    assert PluginManifest.model_validate({"name": "demo"}).systemPrompt is None
+    # Serializes back under the verbatim camelCase key.
+    assert manifest.model_dump(exclude_none=True)["systemPrompt"].startswith("Be terse")

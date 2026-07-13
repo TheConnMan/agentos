@@ -18,7 +18,7 @@ from .adapter import ClaudeAgentSession, ModelSession, build_options
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
-from .plugin import load_plugins
+from .plugin import load_bundle_system_prompt, load_plugins
 from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
@@ -41,6 +41,13 @@ def build_runner(
     (OTel export included). It never reaches the Anthropic API.
     """
 
+    # The effective system prompt: the ``AGENTOS_SYSTEM_PROMPT`` env value wins
+    # for backward compatibility; otherwise fall back to the ``systemPrompt``
+    # shipped in the bundle manifest (versioned with the agent, epic #30).
+    system_prompt = config.system_prompt
+    if system_prompt is None:
+        system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
+
     def factory() -> ModelSession:
         if fake_model:
             return FakeModelSession()
@@ -48,7 +55,7 @@ def build_runner(
         options = build_options(
             plugins=plugins,
             model=config.model,
-            system_prompt=config.system_prompt,
+            system_prompt=system_prompt,
             max_turns=config.max_turns,
             max_budget_usd=config.max_usd_per_day,
             resume=config.history_ref,

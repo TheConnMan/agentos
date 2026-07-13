@@ -297,6 +297,18 @@
           "default": null,
           "title": "Repository"
         },
+        "systemPrompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Systemprompt"
+        },
         "version": {
           "anyOf": [
             {
