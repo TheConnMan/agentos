@@ -148,6 +148,13 @@ pub fn primer() -> Primer {
                          performs; add an MCP server to give it a new tool.",
             },
             Decision {
+                question: "authoring a bundle: interview, not prompts",
+                answer: "init never prompts interactively. To author a new bundle, interview the \
+                         human, write an agent-spec.json (name, description, skills, connectors, \
+                         evals), then run `agentos init --from-spec agent-spec.json` -- the CLI \
+                         scaffolds the bundle deterministically from that spec.",
+            },
+            Decision {
                 question: "how an eval gates promotion",
                 answer: "evals/cases.json is the contract. `agentos skill eval` must be green before \
                          you deploy; merging to main promotes to prod (git flow is the deploy model). \

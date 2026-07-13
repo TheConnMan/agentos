@@ -39,8 +39,33 @@ cleanup() {
 trap cleanup EXIT
 
 echo
-echo "=== agentos init ==="
-"$BIN" init deal-desk --dir "$WORKDIR/deal-desk"
+echo "=== agentos init --from-spec (non-interactive, agent-authored spec) ==="
+# AC #2: a coding agent writes a spec, the CLI scaffolds a runnable bundle from
+# it with zero prompts, and the spec-scaffolded evals/cases.json greens on the
+# eval path. The single grader is `contains "all done"` so it passes under the
+# offline fake model (fake.py's final frame text is "all done").
+cat > "$WORKDIR/agent-spec.json" <<'EOF'
+{
+  "name": "deal-desk",
+  "description": "Prices and reviews deal desk requests.",
+  "skills": [
+    {
+      "name": "deal-desk",
+      "description": "Invoke when a rep submits a pricing exception request.",
+      "allowed_tools": ["WebSearch", "WebFetch"],
+      "instructions": "Price the exception against the guardrails, then summarize the decision.\n"
+    }
+  ],
+  "evals": [
+    {
+      "id": "finishes-the-turn",
+      "input": "wrap it up",
+      "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false }
+    }
+  ]
+}
+EOF
+"$BIN" init --from-spec "$WORKDIR/agent-spec.json" --dir "$WORKDIR/deal-desk"
 
 cd "$WORKDIR/deal-desk"
 
@@ -87,7 +112,13 @@ echo "=== agentos skill message (synthetic event, streamed NDJSON reply) ==="
 "$BIN" skill message "@agentos can we approve the Meridian deal at 18% discount?"
 
 echo
-echo "=== agentos skill eval ==="
+echo "=== agentos skill eval (spec-scaffolded evals/cases.json) ==="
+# No --cases: exercise the evals/cases.json the --from-spec scaffold wrote,
+# proving spec -> bundle -> skill eval passes end to end offline (AC #2).
+"$BIN" skill eval
+
+echo
+echo "=== agentos skill eval (explicit cases file) ==="
 "$BIN" skill eval --cases evals/e2e-cases.json
 
 if [[ -n "${AGENTOS_E2E_API_URL:-}" ]]; then

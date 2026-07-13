@@ -63,16 +63,24 @@
       "args": [
         {
           "global": false,
-          "help": "Kebab-case plugin name (e.g. deal-desk)",
+          "help": "Kebab-case plugin name (e.g. deal-desk). Omit when using --from-spec",
           "id": "name",
           "positional": true,
-          "required": true
+          "required": false
         },
         {
           "global": false,
           "help": "Target directory; defaults to ./<name>",
           "id": "dir",
           "long": "dir",
+          "positional": false,
+          "required": false
+        },
+        {
+          "global": false,
+          "help": "Scaffold non-interactively from an agent-authored spec file (JSON). The bundle name comes from the spec",
+          "id": "from_spec",
+          "long": "from-spec",
           "positional": false,
           "required": false
         }

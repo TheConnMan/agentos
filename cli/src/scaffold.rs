@@ -15,6 +15,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use serde_json::Value;
+
+use crate::evals::EvalSuite;
+use crate::spec::{AgentSpec, SkillSpec};
 
 /// Kebab-case check mirroring plugin_format's `^[a-z0-9]+(-[a-z0-9]+)*$`.
 pub fn valid_name(name: &str) -> bool {
@@ -111,8 +115,15 @@ pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
         ),
     ];
 
-    // Refuse if ANY target (or a stray manifest) already exists: init must
-    // never truncate a file the user already has (e.g. a real .mcp.json).
+    write_bundle(dir, files)
+}
+
+/// Write a bundle's files with the shared collision-refusal discipline: refuse
+/// if ANY target (or a stray root `plugin.json`) already exists, leaving every
+/// existing file untouched and creating nothing on collision. Both the weather
+/// scaffold and the spec scaffold funnel through here so the "never truncate a
+/// file the user already has" guarantee is identical for both paths.
+fn write_bundle(dir: &Path, files: Vec<(PathBuf, String)>) -> Result<Vec<PathBuf>> {
     let mut collisions: Vec<PathBuf> = files
         .iter()
         .map(|(path, _)| path.clone())
@@ -138,6 +149,89 @@ pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
         created.push(path);
     }
     Ok(created)
+}
+
+/// Render one skill's `SKILL.md`: YAML frontmatter (name, description, and
+/// `allowed-tools` only when non-empty) then the instructions body.
+///
+/// The frontmatter is rendered without a YAML crate. `name` is kebab-case
+/// (validated in `spec.rs`), so a bare scalar is always safe. `description` and
+/// each `allowed-tools` value are ARBITRARY agent-authored text, so they are
+/// emitted as JSON-encoded strings: a serde_json string is a valid YAML
+/// double-quoted scalar (YAML double-quoted supports the same `\n \t \" \\
+/// \uXXXX` escapes serde_json emits), so the round-trip is exact. A bare scalar
+/// here would corrupt or invalidate the frontmatter `plugin_format.validate_bundle`
+/// parses with `yaml.safe_load` -- a colon-space breaks parsing, a leading ` #`
+/// silently truncates as a comment, leading `"[{&*@` etc. error the scanner.
+fn render_skill_md(skill: &SkillSpec) -> String {
+    let mut s = String::new();
+    s.push_str("---\n");
+    s.push_str(&format!("name: {}\n", skill.name));
+    s.push_str(&format!(
+        "description: {}\n",
+        serde_json::to_string(&skill.description).expect("string serializes")
+    ));
+    // Omit the key entirely when empty: the wrong shape (an empty list) reads as
+    // "no tools" but is noise; a real Claude Code bundle just leaves it out.
+    if !skill.allowed_tools.is_empty() {
+        s.push_str("allowed-tools:\n");
+        for tool in &skill.allowed_tools {
+            s.push_str(&format!(
+                "  - {}\n",
+                serde_json::to_string(tool).expect("string serializes")
+            ));
+        }
+    }
+    s.push_str("---\n\n");
+    // Normalize to a single trailing newline regardless of how the author ended
+    // the body, so the file always ends with exactly one.
+    s.push_str(skill.instructions.trim_end_matches('\n'));
+    s.push('\n');
+    s
+}
+
+/// Scaffold a bundle deterministically from an agent-authored spec. The spec is
+/// already validated by `spec::parse`; this only lays down files, funneling
+/// through `write_bundle` for the identical collision refusal as `scaffold`.
+pub fn scaffold_from_spec(dir: &Path, spec: &AgentSpec) -> Result<Vec<PathBuf>> {
+    let manifest = serde_json::to_string_pretty(&serde_json::json!({
+        "name": spec.name,
+        "description": spec.description,
+        "version": "0.1.0",
+    }))
+    .expect("spec manifest serializes");
+
+    // `.mcp.json` carries the connectors verbatim under `mcpServers`; an empty
+    // map yields `{"mcpServers": {}}`, matching the weather scaffold's seed.
+    let mut mcp_root = serde_json::Map::new();
+    mcp_root.insert(
+        "mcpServers".to_string(),
+        Value::Object(spec.connectors.clone()),
+    );
+    let mcp = serde_json::to_string_pretty(&Value::Object(mcp_root)).expect("mcp serializes");
+    let mcp = format!("{mcp}\n");
+
+    // Assemble the suite and emit it, reusing the frozen `EvalSuite` Serialize so
+    // the written `evals/cases.json` loads unchanged through `load_suite`.
+    let suite = EvalSuite {
+        name: spec.name.clone(),
+        cases: spec.evals.clone(),
+    };
+    let cases = serde_json::to_string_pretty(&suite).expect("suite serializes");
+
+    let mut files: Vec<(PathBuf, String)> =
+        vec![(dir.join(".claude-plugin/plugin.json"), manifest)];
+    for skill in &spec.skills {
+        files.push((
+            dir.join(format!("skills/{}/SKILL.md", skill.name)),
+            render_skill_md(skill),
+        ));
+    }
+    files.push((dir.join(".mcp.json"), mcp));
+    files.push((dir.join("evals/cases.json"), cases));
+    files.push((dir.join(".gitignore"), GITIGNORE.to_string()));
+
+    write_bundle(dir, files)
 }
 
 /// Read the plugin name and version from a bundle's manifest.

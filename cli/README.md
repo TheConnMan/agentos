@@ -32,8 +32,50 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 | Command | What it does |
 |---|---|
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-agentos/SKILL.md` harness primer. |
+| `agentos init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
 | `agentos guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
 | `agentos build` | Build the runner image locally: `docker build -f runner/Dockerfile -t agentos-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
+
+### `init --from-spec` spec shape
+
+The spec is a JSON object an agent writes after interviewing the human. `name`
+is the kebab-case bundle name; every `skills[].name` is kebab-case and unique;
+`connectors` (optional) is the raw `.mcp.json` `mcpServers` map (each server must
+define `command` or `url` as a string); `evals` reuses the frozen eval-case shape
+so the scaffolded `evals/cases.json` loads unchanged through `agentos skill eval`.
+An unknown TOP-LEVEL field is a hard error, so an authoring typo fails loud, but
+unknown keys INSIDE an eval case are ignored exactly as the platform's worker
+`EvalSuite` ignores them (pydantic `extra="ignore"`), which is intentional parity
+with the platform grader, not an oversight.
+
+```json
+{
+  "name": "deal-desk",
+  "description": "Prices and reviews deal desk requests.",
+  "skills": [
+    {
+      "name": "deal-desk",
+      "description": "Invoke when a rep submits a pricing exception request.",
+      "allowed_tools": ["WebSearch", "WebFetch"],
+      "instructions": "Price the exception against the guardrails, then summarize the decision.\n"
+    }
+  ],
+  "connectors": {
+    "crm": { "command": "crm-mcp", "args": ["--stdio"] }
+  },
+  "evals": [
+    {
+      "id": "prices-a-deal",
+      "input": "Quote 20% off for Acme",
+      "grader": { "kind": "contains", "expected": "approved", "case_sensitive": false }
+    }
+  ]
+}
+```
+
+```bash
+agentos init --from-spec agent-spec.json   # bundle name (deal-desk) comes from the spec
+```
 
 ## `agentos install`
 

@@ -14,10 +14,14 @@ use std::path::Path;
 use agentos_aci_protocol::{OutboundEvent, SessionStatus};
 use anyhow::{anyhow, bail, Context, Result};
 use regex::RegexBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// How a case's expected value is compared against the agent's answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+// `Serialize` is derived alongside `Deserialize` so the spec scaffold path
+// (`spec.rs`) can re-emit an assembled suite into `evals/cases.json`; the
+// `rename_all = "lowercase"` round-trips both ways so the written kind is the
+// same lowercase token `load_suite` reads back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GraderKind {
     Exact,
@@ -26,7 +30,7 @@ pub enum GraderKind {
 }
 
 /// A single deterministic grader mirroring the worker's `Grader`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Grader {
     pub kind: GraderKind,
     pub expected: String,
@@ -65,7 +69,7 @@ impl Grader {
 }
 
 /// One eval: an input prompt and the grader that judges the answer.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EvalCase {
     pub id: String,
     pub input: String,
@@ -73,10 +77,37 @@ pub struct EvalCase {
 }
 
 /// A named set of eval cases run together against one plugin version.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EvalSuite {
     pub name: String,
     pub cases: Vec<EvalCase>,
+}
+
+/// Validate an assembled suite: reject an empty case list and eagerly compile
+/// every regex grader so a bad pattern fails now, not mid-run. Factored out of
+/// `load_suite` so the spec scaffold path (`spec.rs`) enforces the identical
+/// eval-case discipline against a suite it built in memory rather than read from
+/// disk -- one rule, two entry points, no drift.
+pub fn validate_suite(name: &str, cases: &[EvalCase]) -> Result<()> {
+    if cases.is_empty() {
+        bail!("suite {:?} contains no eval cases", name);
+    }
+    for case in cases {
+        if case.grader.kind == GraderKind::Regex {
+            RegexBuilder::new(&case.grader.expected)
+                .build()
+                .map_err(|err| {
+                    anyhow!(
+                        "case {:?} has an invalid regex grader {:?}: {err}. The local CLI compiles \
+                         patterns with the Rust `regex` crate, a portable subset with no lookaround \
+                         or backreferences; the pattern may still be valid on the platform.",
+                        case.id,
+                        case.grader.expected
+                    )
+                })?;
+        }
+    }
+    Ok(())
 }
 
 /// Parse the suite object at `path`. Rejects an empty `cases` list, eagerly
@@ -99,24 +130,7 @@ pub fn load_suite(path: &Path) -> Result<EvalSuite> {
     }
     let suite: EvalSuite = serde_json::from_value(value)
         .with_context(|| format!("{} is not a valid eval suite", path.display()))?;
-    if suite.cases.is_empty() {
-        bail!("{} contains no eval cases", path.display());
-    }
-    for case in &suite.cases {
-        if case.grader.kind == GraderKind::Regex {
-            RegexBuilder::new(&case.grader.expected)
-                .build()
-                .map_err(|err| {
-                    anyhow!(
-                        "case {:?} has an invalid regex grader {:?}: {err}. The local CLI compiles \
-                         patterns with the Rust `regex` crate, a portable subset with no lookaround \
-                         or backreferences; the pattern may still be valid on the platform.",
-                        case.id,
-                        case.grader.expected
-                    )
-                })?;
-        }
-    }
+    validate_suite(&suite.name, &suite.cases)?;
     Ok(suite)
 }
 
