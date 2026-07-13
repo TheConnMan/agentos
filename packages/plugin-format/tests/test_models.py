@@ -47,3 +47,19 @@ def test_manifest_system_prompt_field() -> None:
     assert PluginManifest.model_validate({"name": "demo"}).systemPrompt is None
     # Serializes back under the verbatim camelCase key.
     assert manifest.model_dump(exclude_none=True)["systemPrompt"].startswith("Be terse")
+
+
+def test_manifest_trigger_and_approval_policy_fields() -> None:
+    """The AgentOS trigger + approval-policy authoring extensions parse (#273)."""
+    manifest = PluginManifest.model_validate(
+        {
+            "name": "demo",
+            "triggers": [{"type": "cron", "schedule": "0 9 * * 1-5"}],
+            "approvalPolicy": {"gates": [{"gate": "PreToolUse", "route": "manager"}]},
+        }
+    )
+    assert manifest.triggers == [{"type": "cron", "schedule": "0 9 * * 1-5"}]
+    assert manifest.approvalPolicy == {"gates": [{"gate": "PreToolUse", "route": "manager"}]}
+    # Absent -> None (backward compatible).
+    bare = PluginManifest.model_validate({"name": "demo"})
+    assert bare.triggers is None and bare.approvalPolicy is None

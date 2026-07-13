@@ -13,11 +13,20 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from .models import HookMatcherConfig, McpConfig, PluginManifest, SkillFrontmatter
+from .models import (
+    _TRIGGER_TYPES,
+    ApprovalPolicy,
+    HookMatcherConfig,
+    McpConfig,
+    PluginManifest,
+    SkillFrontmatter,
+    TriggerDeclaration,
+)
 
 # The hooks field is a mapping of event name -> list of matcher entries. Reused
 # to validate both the inline object and a declared hooks file.
 _HOOKS_ADAPTER = TypeAdapter(dict[str, list[HookMatcherConfig]])
+_TRIGGERS_ADAPTER = TypeAdapter(list[TriggerDeclaration])
 
 # Claude Code plugin names are kebab-case: lowercase alphanumerics and hyphens.
 _NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -71,6 +80,8 @@ def validate_bundle(path: str | Path) -> ValidationResult:
         _validate_skills(root, c)
         _validate_mcp(root, manifest, c)
         _validate_hooks(root, manifest, c)
+        _validate_triggers(manifest, c)
+        _validate_approval_policy(manifest, c)
         _validate_scripts(root, c)
 
     return c.result()
@@ -246,6 +257,88 @@ def _validate_hooks(root: Path, manifest: PluginManifest, c: _Collector) -> None
                         "non-empty command",
                         location,
                     )
+
+
+def _validate_triggers(manifest: PluginManifest, c: _Collector) -> None:
+    """Validate the manifest ``triggers`` declarations (deploy-time gate, #273).
+
+    ``triggers`` is a list of ``{type, ...}``. ``type`` must be a known kind
+    (``cron``/``webhook``); a ``cron`` trigger requires a non-empty ``schedule``
+    and a ``webhook`` trigger a non-empty ``path``. Malformed declarations are
+    rejected at deploy so an agent's non-chat wake-ups fail loudly before ship.
+    """
+
+    declared = manifest.triggers
+    if declared is None:
+        return
+    if not isinstance(declared, list):
+        c.error("triggers.invalid", "triggers must be a list of declarations", "plugin.json")
+        return
+
+    try:
+        parsed = _TRIGGERS_ADAPTER.validate_python(declared)
+    except ValidationError as exc:
+        for issue in _explain(exc):
+            c.error("triggers.invalid", issue, "plugin.json (triggers)")
+        return
+
+    for i, trigger in enumerate(parsed):
+        loc = f"plugin.json (triggers[{i}])"
+        if trigger.type not in _TRIGGER_TYPES:
+            c.error(
+                "triggers.unknown_type",
+                f"trigger type {trigger.type!r} is not one of {list(_TRIGGER_TYPES)}",
+                loc,
+            )
+            continue
+        if trigger.type == "cron" and not (trigger.schedule and trigger.schedule.strip()):
+            c.error(
+                "triggers.cron_missing_schedule",
+                "a 'cron' trigger must define a non-empty 'schedule'",
+                loc,
+            )
+        if trigger.type == "webhook" and not (trigger.path and trigger.path.strip()):
+            c.error(
+                "triggers.webhook_missing_path",
+                "a 'webhook' trigger must define a non-empty 'path'",
+                loc,
+            )
+
+
+def _validate_approval_policy(manifest: PluginManifest, c: _Collector) -> None:
+    """Validate the manifest ``approvalPolicy`` declaration (deploy-time, #273).
+
+    Shape ``{gates: [{gate, route}]}``: each gate names a pause point and the
+    route that decides. A malformed policy or a gate missing its ``gate``/``route``
+    is rejected at deploy.
+    """
+
+    declared = manifest.approvalPolicy
+    if declared is None:
+        return
+    if not isinstance(declared, dict):
+        c.error(
+            "approval_policy.invalid",
+            "approvalPolicy must be an object with a 'gates' list",
+            "plugin.json",
+        )
+        return
+
+    try:
+        policy = ApprovalPolicy.model_validate(declared)
+    except ValidationError as exc:
+        for issue in _explain(exc):
+            c.error("approval_policy.invalid", issue, "plugin.json (approvalPolicy)")
+        return
+
+    for i, gate in enumerate(policy.gates):
+        loc = f"plugin.json (approvalPolicy.gates[{i}])"
+        if not (gate.gate and gate.gate.strip()) or not (gate.route and gate.route.strip()):
+            c.error(
+                "approval_policy.incomplete",
+                "an approval gate must define a non-empty 'gate' and 'route'",
+                loc,
+            )
 
 
 def _validate_scripts(root: Path, c: _Collector) -> None:

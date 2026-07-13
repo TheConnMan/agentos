@@ -45,6 +45,14 @@ allows, exit 2 denies). Only `PreToolUse` is wired today; other hook events vali
 consumed. Epic #30 continues to define the remaining authoring extensions (approval-policy and
 trigger declarations) alongside this.
 
+The bundle also carries two AgentOS authoring extensions that are **deploy-time validated** (shape
+enforced, malformed declarations rejected) but whose **runtime consumption is a separate not-yet-built
+seam**: `triggers` (a list of `cron`/`webhook` declarations for waking the agent beyond chat, #273/#270
+— see the [triggers seam](../triggers/INTERFACE.md)) and `approvalPolicy` (`{gates: [{gate, route}]}`
+approval declarations, #273). Their validators live alongside the others in `validate.py`
+(`triggers.*` / `approval_policy.*` error codes); a future kernel/ingress consumer reads these same
+declarations.
+
 ## Cross-links
 
 - **Guide:** [workflow-agent-conversion.md](./workflow-agent-conversion.md) — converting an existing workflow agent (deterministic pipeline + LLM at the edges) onto a bundle end to end (#275).

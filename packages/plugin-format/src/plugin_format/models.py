@@ -59,6 +59,56 @@ class PluginManifest(BaseModel):
     # via the ``AGENTOS_SYSTEM_PROMPT`` env var. Inline prompt text; applied at
     # runner boot, with the env var taking precedence for backward compatibility.
     systemPrompt: str | None = None
+    # AgentOS authoring extensions (epic #30 / #29), validated at deploy time by
+    # ``validate.py``. Kept loosely typed on the manifest (the models stay
+    # lenient); the dedicated ``TriggerDeclaration`` / ``ApprovalPolicy`` models
+    # below carry the shape the validator enforces.
+    triggers: list[Any] | None = None
+    approvalPolicy: dict[str, Any] | None = None
+
+
+# Trigger types the manifest may declare beyond inbound chat (epic #29). The
+# validator enforces the per-type required field.
+_TRIGGER_TYPES = ("cron", "webhook")
+
+
+class TriggerDeclaration(BaseModel):
+    """One trigger that can wake the agent, declared in the bundle (#273/#270).
+
+    ``type`` is ``"cron"`` (requires a ``schedule`` cron expression) or
+    ``"webhook"`` (requires a ``path`` the webhook ingress routes to). Declaring
+    triggers in the bundle keeps an agent's full behavior in one reviewable
+    artifact; the kernel/ingress consumes them (not built here — deploy-time
+    validation only, so a malformed declaration is rejected before ship).
+    """
+
+    model_config = _LENIENT
+
+    type: str
+    schedule: str | None = None
+    path: str | None = None
+
+
+class ApprovalGate(BaseModel):
+    """One approval gate declaration: a gate point plus the route it sends to.
+
+    ``gate`` names the point at which the agent pauses for approval (e.g. a tool
+    class or lifecycle point); ``route`` names the approval route that decides.
+    Both are required — an incomplete gate is rejected at deploy.
+    """
+
+    model_config = _LENIENT
+
+    gate: str
+    route: str
+
+
+class ApprovalPolicy(BaseModel):
+    """The manifest ``approvalPolicy`` object: a list of gate declarations."""
+
+    model_config = _LENIENT
+
+    gates: list[ApprovalGate] = Field(default_factory=list)
 
 
 class SkillFrontmatter(BaseModel):

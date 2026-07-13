@@ -1,5 +1,40 @@
 {
   "$defs": {
+    "ApprovalGate": {
+      "additionalProperties": true,
+      "description": "One approval gate declaration: a gate point plus the route it sends to.\n\n``gate`` names the point at which the agent pauses for approval (e.g. a tool\nclass or lifecycle point); ``route`` names the approval route that decides.\nBoth are required \u2014 an incomplete gate is rejected at deploy.",
+      "properties": {
+        "gate": {
+          "title": "Gate",
+          "type": "string"
+        },
+        "route": {
+          "title": "Route",
+          "type": "string"
+        }
+      },
+      "required": [
+        "gate",
+        "route"
+      ],
+      "title": "ApprovalGate",
+      "type": "object"
+    },
+    "ApprovalPolicy": {
+      "additionalProperties": true,
+      "description": "The manifest ``approvalPolicy`` object: a list of gate declarations.",
+      "properties": {
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/ApprovalGate"
+          },
+          "title": "Gates",
+          "type": "array"
+        }
+      },
+      "title": "ApprovalPolicy",
+      "type": "object"
+    },
     "Author": {
       "additionalProperties": true,
       "description": "The plugin manifest author object (or it may be a plain string).",
@@ -219,6 +254,19 @@
           "default": null,
           "title": "Agents"
         },
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvalpolicy"
+        },
         "author": {
           "anyOf": [
             {
@@ -363,6 +411,19 @@
           "default": null,
           "title": "Systemprompt"
         },
+        "triggers": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Triggers"
+        },
         "version": {
           "anyOf": [
             {
@@ -415,6 +476,45 @@
         "description"
       ],
       "title": "SkillFrontmatter",
+      "type": "object"
+    },
+    "TriggerDeclaration": {
+      "additionalProperties": true,
+      "description": "One trigger that can wake the agent, declared in the bundle (#273/#270).\n\n``type`` is ``\"cron\"`` (requires a ``schedule`` cron expression) or\n``\"webhook\"`` (requires a ``path`` the webhook ingress routes to). Declaring\ntriggers in the bundle keeps an agent's full behavior in one reviewable\nartifact; the kernel/ingress consumes them (not built here \u2014 deploy-time\nvalidation only, so a malformed declaration is rejected before ship).",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schedule"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TriggerDeclaration",
       "type": "object"
     }
   },
