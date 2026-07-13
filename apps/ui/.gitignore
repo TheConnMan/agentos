@@ -3,6 +3,3 @@ dist/
 playwright-report/
 test-results/
 *.tsbuildinfo
-
-# generated CLI manifest module (see scripts/gen-command-manifest.mjs)
-src/generated/

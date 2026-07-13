@@ -12,12 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "gen:manifest": "node scripts/gen-command-manifest.mjs",
-    "pretypecheck": "pnpm gen:manifest",
-    "prebuild": "pnpm gen:manifest",
-    "pretest": "pnpm gen:manifest",
-    "predev": "pnpm gen:manifest",
-    "prelint": "pnpm gen:manifest"
+    "gen:manifest": "node scripts/gen-command-manifest.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",

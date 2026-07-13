@@ -163,6 +163,14 @@ jobs:
           cache-dependency-path: apps/ui/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Command manifest is current
+        # The committed src/generated/commandManifest.ts must match what
+        # cli/command-manifest.json regenerates (the UI Docker build has no
+        # cli/, so the manifest is committed, not built there). Fail on drift.
+        run: |
+          pnpm gen:manifest
+          git diff --exit-code src/generated/commandManifest.ts \
+            || (echo "commandManifest.ts is stale; run 'pnpm gen:manifest' in apps/ui and commit." && exit 1)
       - name: Lint
         run: pnpm lint
       - name: Unit tests (vitest)

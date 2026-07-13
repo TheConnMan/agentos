@@ -5,9 +5,11 @@
 // makes a renamed/removed command or flag break `pnpm typecheck` (issue #278).
 //
 // A plain `import x from "x.json"` widens every string to `string`, erasing the
-// literals -- hence this `as const` re-emit. Run before typecheck/build/test via
-// the `pre*` lifecycle hooks in package.json; the output is a build artifact
-// (gitignored), regenerated from the single source of truth in `cli/`.
+// literals -- hence this `as const` re-emit. The output
+// (src/generated/commandManifest.ts) is a COMMITTED generated file, so the UI
+// Docker build (which has no `cli/` in its context) and `pnpm build` use it
+// directly. Run `pnpm gen:manifest` after changing the CLI surface and commit
+// the result; CI drift-checks it against cli/command-manifest.json.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
