@@ -294,6 +294,19 @@ pub fn dry_run_lines(opts: &MessageOpts, advertise_host: &str) -> Vec<String> {
     lines
 }
 
+/// The machine-readable reply object for `local`/`cluster message --json`
+/// (issue #353): the model's reply text (null when the worker finished without
+/// editing the placeholder), the thread the turn ran under, and whether a reply
+/// was captured. Pure so it stays contract-testable against
+/// `cli/schema/message.schema.json`.
+pub fn message_reply_json(thread: &str, reply: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "reply": reply,
+        "thread": thread,
+        "finalized": reply.is_some(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Effectful helpers
 // ---------------------------------------------------------------------------
@@ -472,14 +485,22 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            ui.answer(&reply);
-            ui.print_tokens("\n");
+            if ui.json() {
+                ui.emit_json(&message_reply_json(&thread_ts, Some(&reply)));
+            } else {
+                ui.answer(&reply);
+                ui.print_tokens("\n");
+            }
             persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
-            ui.warn("the worker finished the turn but never edited the placeholder");
+            if ui.json() {
+                ui.emit_json(&message_reply_json(&thread_ts, None));
+            } else {
+                ui.warn("the worker finished the turn but never edited the placeholder");
+            }
             persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
@@ -613,14 +634,22 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            ui.answer(&reply);
-            ui.print_tokens("\n");
+            if ui.json() {
+                ui.emit_json(&message_reply_json(&thread_ts, Some(&reply)));
+            } else {
+                ui.answer(&reply);
+                ui.print_tokens("\n");
+            }
             persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
-            ui.warn("the worker finished the turn but never edited the placeholder");
+            if ui.json() {
+                ui.emit_json(&message_reply_json(&thread_ts, None));
+            } else {
+                ui.warn("the worker finished the turn but never edited the placeholder");
+            }
             persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }

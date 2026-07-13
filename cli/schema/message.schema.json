@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agentos local|cluster message --json",
+  "description": "The agent-facing payload of `agentos local message --json` and `agentos cluster message --json`: the model's final reply text (null when the worker finished the turn without editing the placeholder), the thread the turn ran under, and whether a reply was captured. All keys are CLI-owned and locked.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "thread", "finalized"],
+  "properties": {
+    "reply": { "type": ["string", "null"] },
+    "thread": { "type": "string" },
+    "finalized": { "type": "boolean" }
+  }
+}

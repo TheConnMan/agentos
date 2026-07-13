@@ -6,6 +6,7 @@
 
 use agentos::commands::{eval_json, status_json};
 use agentos::exit;
+use agentos::message::message_reply_json;
 use agentos_aci_protocol::SessionStatus;
 
 fn load_schema(name: &str) -> serde_json::Value {
@@ -55,6 +56,53 @@ fn error_json_validates_against_error_schema() {
     assert!(
         v.is_valid(&value),
         "error_json output must validate against error.schema.json: {value}"
+    );
+}
+
+#[test]
+fn message_reply_json_validates_against_message_schema() {
+    let schema = load_schema("message.schema.json");
+    let v = validator(&schema);
+    // Replied case: a non-null reply and finalized true.
+    let replied = message_reply_json("1700000000.000100", Some("the answer is 42"));
+    assert!(
+        v.is_valid(&replied),
+        "message_reply_json (replied) must validate against message.schema.json: {replied}"
+    );
+    // Pin the values, not just the types: the reply text must pass through, the
+    // thread must echo the input, and finalized must track reply.is_some().
+    assert_eq!(replied["reply"], serde_json::json!("the answer is 42"));
+    assert_eq!(replied["thread"], serde_json::json!("1700000000.000100"));
+    assert_eq!(replied["finalized"], serde_json::json!(true));
+    // No-edit completion: reply null, finalized false, must also validate.
+    let no_edit = message_reply_json("1700000000.000100", None);
+    assert!(
+        v.is_valid(&no_edit),
+        "message_reply_json (no edit) must validate against message.schema.json: {no_edit}"
+    );
+    // Pin the no-edit values: null reply, thread passthrough, finalized false.
+    assert!(
+        no_edit["reply"].is_null(),
+        "no-edit reply must be JSON null: {no_edit}"
+    );
+    assert_eq!(no_edit["thread"], serde_json::json!("1700000000.000100"));
+    assert_eq!(no_edit["finalized"], serde_json::json!(false));
+}
+
+#[test]
+fn message_schema_gate_has_teeth() {
+    // negative control: proves the schema gate discriminates
+    let schema = load_schema("message.schema.json");
+    let mut value = message_reply_json("1700000000.000100", Some("hi"));
+    // Strip a required key; a schema with real teeth must now reject.
+    value
+        .as_object_mut()
+        .expect("message_reply_json returns a JSON object")
+        .remove("reply");
+    let v = validator(&schema);
+    assert!(
+        !v.is_valid(&value),
+        "message schema must reject an object missing the required `reply` key"
     );
 }
 

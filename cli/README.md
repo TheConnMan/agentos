@@ -376,8 +376,11 @@ control flow are machine-first.
 
 **`--json`** (global) switches the read/report commands `agentos skill status`
 and `agentos skill eval` to a single machine-readable JSON object on **stdout**;
-all human and log text (progress, notes, warnings) goes to **stderr**, so a
-plain `... --json | jq` yields clean data. On failure under `--json`, the error
+it also switches `agentos local message` and `agentos cluster message` to emit
+`{"reply": ..., "thread": ..., "finalized": ...}` (the model's reply, which is
+null on a no-edit completion, plus the thread the turn ran under). All human and
+log text (progress, notes, warnings) goes to **stderr**, so a plain
+`... --json | jq` yields clean data. On failure under `--json`, the error
 is emitted to stdout as `{"error": "<message>", "fix": "<hint>"|null}` instead of
 a prose message, so an agent can recover without parsing prose. `NO_COLOR`,
 `CLICOLOR`, and `--color=never` are honored on every command.
