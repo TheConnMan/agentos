@@ -351,8 +351,8 @@ suffix). `local message` composes with `--channel`, `--thread`, and
 `--timeout-secs` and rejects the cluster only flags (`--namespace`,
 `--release`, `--force-wire`, ...)
 with a clear error. The compose worker runs the fake model by default (a canned
-reply, no credentials); export a credential and set `AGENTOS_FAKE_MODEL=0` in the
-compose environment for a real model.
+reply, no credentials); export a credential in your shell and `local up` goes
+live automatically for a real model.
 
 Use `agentos local comms --slack` when you want the same compose stack to talk
 to a real Slack workspace. Connect reads `SLACK_APP_TOKEN` and

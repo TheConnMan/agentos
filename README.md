@@ -109,9 +109,11 @@ the smaller `core` profile (API, worker, Postgres, Valkey, MinIO). Then
 `agentos local deploy` pushes a bundle to the compose API, and
 `agentos local message "..."` drives a message through the real
 queue -> worker -> sandboxed runner -> reply path with no Slack and no
-Kubernetes. The compose worker runs the fake model by default; for a real model,
-export `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) and set
-`AGENTOS_FAKE_MODEL=0` in the compose environment. See the local runbook below.
+Kubernetes. The compose worker runs the fake model by default, but exporting
+`CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) in your shell is enough for a
+real model -- `agentos local up` flips to live automatically when a credential is
+present, matching `skill up`, so there is no manual `AGENTOS_FAKE_MODEL=0` step.
+See the local runbook below.
 
 **`cluster` (deployed Helm release).** `agentos cluster up` installs the platform
 on Kubernetes and `agentos cluster message "..."` drives the deployed release end
@@ -256,7 +258,7 @@ agentos local message "what changed in the last deploy?"
 
 `local up` runs the worker as the `agentos-worker` compose service (fake model by
 default), so there is nothing to hand-run. For a real model, export a credential
-and set `AGENTOS_FAKE_MODEL=0` in the compose environment. The manual runbook
+in your shell and `local up` goes live automatically. The manual runbook
 below is the equivalent with a host-process worker, useful when iterating on the
 worker itself from source. The console UI is served at
 `http://localhost:28080/?api=1` when you use the default `full` profile.
