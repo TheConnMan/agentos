@@ -78,6 +78,18 @@ class EvalRunner:
                 latency_ms=_elapsed_ms(start),
                 error=error_detail or "runner reported a classified failure",
             )
+        # Grade only a completed turn. A turn that ends idle-awaiting-input, or
+        # never produced a Final at all, is not a passing answer even if its text
+        # matches the grader -- this mirrors the CLI's ``turn_passes`` Done-gate
+        # so the platform promotion gate keeps skill/local/cluster parity.
+        if final_status is not SessionStatus.DONE:
+            return EvalCaseResult(
+                case_id=case.id,
+                passed=False,
+                output=output,
+                latency_ms=_elapsed_ms(start),
+                error=f"turn did not complete (status={final_status})",
+            )
         return EvalCaseResult(
             case_id=case.id,
             passed=case.grader.grade(output),

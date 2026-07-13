@@ -3,11 +3,11 @@
     {
       "grader": {
         "case_sensitive": false,
-        "expected": "weather",
+        "expected": "",
         "kind": "contains"
       },
-      "id": "example-answers",
-      "input": "What's the weather in San Francisco?"
+      "id": "example-smoke",
+      "input": "In one short sentence, introduce yourself as the example agent."
     }
   ],
   "name": "example"

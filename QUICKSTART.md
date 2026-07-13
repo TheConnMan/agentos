@@ -14,9 +14,10 @@ the runner container on your host Docker daemon, talking straight to the agent.
 ## Your first agent reply
 
 ```bash
-# 1. Scaffold a bundle. This creates a runnable weather skill you can edit later.
-agentos init weather-bot
-cd weather-bot
+# 1. Scaffold a bundle. This creates a starter skill named for your agent, plus
+#    an AGENTS.md and a using-agentos harness-primer skill, that you edit next.
+agentos init my-agent
+cd my-agent
 
 # 2. Boot the runner with the built-in fake model (offline, instant, no key).
 agentos skill up --fake-model
@@ -30,7 +31,7 @@ agentos skill down
 
 That is the full loop. `agentos skill up` starts the runner container,
 `agentos skill message` sends a synthetic event and streams the reply, and
-`agentos skill down` stops it. Edit `skills/weather-bot/SKILL.md` in the bundle
+`agentos skill down` stops it. Edit `skills/my-agent/SKILL.md` in the bundle
 and re-run steps 2 and 3 to see your change answer.
 
 ## Level up: a real model
