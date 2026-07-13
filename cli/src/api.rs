@@ -16,8 +16,10 @@ pub struct ApiClient {
 }
 
 /// The channel used when an agent is first created if `--slack-channel` is
-/// omitted; on an existing agent an omitted channel is left untouched.
-pub const DEFAULT_SLACK_CHANNEL: &str = "#local-dev";
+/// omitted; on an existing agent an omitted channel is left untouched. Must
+/// satisfy the platform API's channel-ID validation (`^[CDG][A-Z0-9]{7,}$`),
+/// so this is a valid Slack channel-ID shape, not a `#name`.
+pub const DEFAULT_SLACK_CHANNEL: &str = "C0LOCALDEV";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agent {
