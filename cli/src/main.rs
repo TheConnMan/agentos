@@ -1009,6 +1009,12 @@ async fn run(command: Command) -> Result<()> {
                     fake_model,
                     credentials,
                     local_model,
+                    // Default `agentSandbox.runner.model` from the shell
+                    // `AGENTOS_MODEL` (None when unset/empty) for cross-tier
+                    // parity with `local up` (#361).
+                    model: std::env::var("AGENTOS_MODEL")
+                        .ok()
+                        .filter(|s| !s.is_empty()),
                     // Populated by ops::up (generate on fresh install / reuse on
                     // upgrade); empty here so the pure builder starts clean.
                     secrets: vec![],

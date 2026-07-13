@@ -312,6 +312,10 @@ pub struct UpOpts {
     /// opens egress to the provider; `None` installs sealed (fake model).
     pub credentials: Option<String>,
     pub local_model: Option<String>,
+    /// The shell `AGENTOS_MODEL` resolved by the caller (`None` when unset or
+    /// empty), used to default `agentSandbox.runner.model` for cross-tier parity
+    /// with `local up` (#361).
+    pub model: Option<String>,
     /// Required chart secrets (dotted helm key -> value) the CLI supplies so a
     /// no-override install never ships the published dev defaults (see #196).
     /// Populated by [`up`] from [`resolve_generated_secrets`]; empty in the pure
@@ -367,6 +371,41 @@ pub fn resolve_up_credentials(fake_model: bool, env_value: Option<String>) -> Op
         return None;
     }
     env_value.filter(|v| !v.is_empty())
+}
+
+/// The helm value key that pins the sandbox runner model in the chart.
+const RUNNER_MODEL_KEY: &str = "agentSandbox.runner.model";
+
+/// The value of the last explicit `--set agentSandbox.runner.model=VAL` in
+/// `set`, if the operator passed one (last wins, matching helm precedence).
+/// Helm accepts comma-joined `--set a=1,b=2`, so each element is split on `,`
+/// (mirroring `operator_set_keys`) before the prefix match — a runner model
+/// pinned alongside other keys is detected, and a trailing key after the model
+/// assignment is not swallowed into the value.
+fn explicit_runner_model(set: &[String]) -> Option<&str> {
+    let prefix = format!("{RUNNER_MODEL_KEY}=");
+    // `strip_prefix` returns a slice of `part` (borrowing `set`), not of
+    // `prefix`, so the returned borrow outlives the temporary `prefix`.
+    set.iter()
+        .flat_map(|s| s.split(','))
+        .filter_map(|part| part.strip_prefix(&prefix))
+        .next_back()
+}
+
+/// Fail loud when the shell `AGENTOS_MODEL` and an explicit
+/// `--set agentSandbox.runner.model=` disagree, so the runner model is never
+/// silently ambiguous (#361).
+pub fn check_runner_model_conflict(model: Option<&str>, set: &[String]) -> Result<()> {
+    if let (Some(y), Some(x)) = (model, explicit_runner_model(set)) {
+        if x != y {
+            bail!(
+                "conflicting sandbox runner model: AGENTOS_MODEL=`{y}` but \
+                 `--set {RUNNER_MODEL_KEY}={x}` was also passed. Remove one so the \
+                 runner model is unambiguous."
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Validate every operator-supplied `--allow-web-egress` value is a real CIDR
@@ -634,6 +673,17 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     if !o.secrets.is_empty() {
         args.push(CmdArg::SecretValuesFile(o.secrets.clone()));
     }
+    // Default the sandbox runner model from the shell `AGENTOS_MODEL` for
+    // cross-tier parity with `local up` (#361). Injected before the passthrough
+    // `--set`s so an explicit operator `--set agentSandbox.runner.model=` keeps
+    // helm precedence; suppressed when the operator already pinned it (a
+    // conflicting value fails loud earlier in `up`).
+    if let Some(model) = &o.model {
+        if explicit_runner_model(&o.set).is_none() {
+            args.push(plain("--set"));
+            args.push(plain(format!("{RUNNER_MODEL_KEY}={model}")));
+        }
+    }
     for s in &o.set {
         args.push(plain("--set"));
         args.push(plain(s));
@@ -828,6 +878,9 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
     let ui = crate::ui::ui();
     validate_web_egress_cidrs(&opts.allow_web_egress)
         .context("invalid --allow-web-egress value")?;
+    // Fail loud (even under --dry-run) if AGENTOS_MODEL and an explicit
+    // `--set agentSandbox.runner.model=` disagree (#361).
+    check_runner_model_conflict(opts.model.as_deref(), &opts.set)?;
 
     // Resolve the required chart secrets so a no-override `cluster up` never
     // ships the published dev defaults (#196). `--dev` keeps the chart's
@@ -1311,6 +1364,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         assert_eq!(cmds.len(), 1);
         let line = cmds[0].display();
@@ -1334,6 +1388,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("NodePort"), "{line}");
@@ -1353,6 +1408,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -1376,6 +1432,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("agentSandbox.runner.fakeModel"), "{line}");
@@ -1398,6 +1455,7 @@ mod tests {
             fake_model: true,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("agentSandbox.runner"), "{line}");
@@ -1417,6 +1475,7 @@ mod tests {
             fake_model: false,
             credentials: Some("sk-ant-secretsecret".into()),
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -1547,6 +1606,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: Some("qwen3:4b".into()),
+            model: None,
         });
         let line = cmds[0].display();
         assert!(line.contains("--set inference.deploy=true"), "{line}");
@@ -1566,10 +1626,154 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("inference.deploy"), "{line}");
         assert!(!line.contains("inference.model"), "{line}");
+    }
+
+    #[test]
+    fn up_defaults_runner_model_from_env() {
+        // AGENTOS_MODEL set, no explicit --set: inject the runner model (#361).
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+            model: Some("z-ai/glm-5.2".into()),
+        });
+        let line = cmds[0].display();
+        assert!(
+            line.contains("agentSandbox.runner.model=z-ai/glm-5.2"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn up_without_env_model_omits_runner_model_set() {
+        // No AGENTOS_MODEL: inject nothing, the chart default stands (#361).
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+            model: None,
+        });
+        let line = cmds[0].display();
+        assert!(!line.contains("agentSandbox.runner.model="), "{line}");
+    }
+
+    #[test]
+    fn up_explicit_set_model_suppresses_env_injection() {
+        // AGENTOS_MODEL set AND an explicit matching --set: the operator's set
+        // already carries it, so no duplicate injection (#361).
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec!["agentSandbox.runner.model=z-ai/glm-5.2".into()],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+            model: Some("z-ai/glm-5.2".into()),
+        });
+        let line = cmds[0].display();
+        assert_eq!(
+            line.matches("agentSandbox.runner.model=z-ai/glm-5.2")
+                .count(),
+            1,
+            "runner model should appear exactly once (no duplicate injection): {line}"
+        );
+    }
+
+    #[test]
+    fn up_commands_comma_joined_explicit_suppresses_injection() {
+        // The runner model pinned alongside another key in a comma-joined
+        // `--set` must be detected so `up` does not inject a redundant
+        // `--set agentSandbox.runner.model=<model>` on top of it (#361).
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec!["worker.replicas=2,agentSandbox.runner.model=glm".into()],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: None,
+            local_model: None,
+            model: Some("glm".into()),
+        });
+        let line = cmds[0].display();
+        assert_eq!(
+            line.matches("agentSandbox.runner.model=glm").count(),
+            1,
+            "runner model should appear exactly once (no duplicate injection): {line}"
+        );
+    }
+
+    #[test]
+    fn check_runner_model_conflict_mismatch_is_err() {
+        let set = vec!["agentSandbox.runner.model=sonnet".into()];
+        let err = check_runner_model_conflict(Some("glm"), &set).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("glm"), "{msg}");
+        assert!(msg.contains("sonnet"), "{msg}");
+    }
+
+    #[test]
+    fn check_runner_model_conflict_matching_is_ok() {
+        let set = vec!["agentSandbox.runner.model=glm".into()];
+        assert!(check_runner_model_conflict(Some("glm"), &set).is_ok());
+    }
+
+    #[test]
+    fn check_runner_model_conflict_no_env_is_ok() {
+        // No AGENTOS_MODEL: an explicit operator set stands, no conflict.
+        let set = vec!["agentSandbox.runner.model=sonnet".into()];
+        assert!(check_runner_model_conflict(None, &set).is_ok());
+    }
+
+    #[test]
+    fn check_runner_model_conflict_no_explicit_set_is_ok() {
+        // AGENTOS_MODEL set, no explicit set: nothing to conflict with.
+        assert!(check_runner_model_conflict(Some("glm"), &[]).is_ok());
+    }
+
+    #[test]
+    fn check_runner_model_conflict_comma_joined_detects_mismatch() {
+        // Helm accepts `--set a=1,b=2`; the runner model pinned alongside another
+        // key must still be detected so the conflict fails loud (#361).
+        let set = vec!["worker.replicas=2,agentSandbox.runner.model=glm".into()];
+        let err = check_runner_model_conflict(Some("sonnet"), &set).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sonnet"), "{msg}");
+        assert!(msg.contains("glm"), "{msg}");
+    }
+
+    #[test]
+    fn check_runner_model_conflict_comma_joined_model_first_matches() {
+        // The model assignment leading a comma-joined element must not swallow
+        // the trailing key into its value (which would falsely report a
+        // conflict); a matching model is a legitimate, non-conflicting install.
+        let set = vec!["agentSandbox.runner.model=glm,worker.replicas=2".into()];
+        assert!(check_runner_model_conflict(Some("glm"), &set).is_ok());
     }
 
     #[test]
@@ -1585,6 +1789,7 @@ mod tests {
             fake_model: false,
             credentials: Some("sk-ant-secretsecret".into()),
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -1618,6 +1823,7 @@ mod tests {
             fake_model: true,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(!line.contains("160.79.104.0/23"), "{line}");
@@ -1648,6 +1854,7 @@ mod tests {
             fake_model: false,
             credentials: Some("sk-ant-secretsecret".into()),
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -1677,6 +1884,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let sealed_line = sealed_cmds[0].display();
         assert!(!sealed_line.contains("allowedEgress"), "{sealed_line}");
@@ -1692,6 +1900,7 @@ mod tests {
             fake_model: false,
             credentials: Some("sk-ant-secretsecret".into()),
             local_model: None,
+            model: None,
         });
         let model_line = model_cmds[0].display();
         assert!(!model_line.contains("allowedEgress[1]"), "{model_line}");
@@ -2050,6 +2259,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         // Printed form masks the values and shows the -f secret values file.
         let line = cmds[0].display();
@@ -2095,6 +2305,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         assert!(!cmds[0].display().contains("secret values file"));
     }
@@ -2116,6 +2327,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(
@@ -2139,6 +2351,7 @@ mod tests {
             fake_model: false,
             credentials: None,
             local_model: None,
+            model: None,
         });
         let line = cmds[0].display();
         assert!(
