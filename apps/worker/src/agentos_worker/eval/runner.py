@@ -19,17 +19,28 @@ from __future__ import annotations
 import time
 
 import aiohttp
-from aci_protocol import ErrorEvent, Event, Final, SessionStatus, TextDelta
+from aci_protocol import ErrorEvent, Event, Final, SessionStatus, TextDelta, ToolNote
 
 from ..runner_client import RunnerClient, RunnerError
 from .models import EvalCase, EvalCaseResult, EvalRunResult, EvalSuite
+from .scorer import GraderScorer, Scorer
 
 
 class EvalRunner:
-    """Executes eval suites against a runner endpoint and grades the answers."""
+    """Executes eval suites against a runner endpoint and scores the answers.
 
-    def __init__(self, runner: RunnerClient) -> None:
+    Scoring goes through the swappable :class:`~.scorer.Scorer` seam. The default
+    is :class:`~.scorer.GraderScorer`, which applies the case's frozen grader to
+    the answer text (behavior-preserving); pass a different scorer (e.g. a
+    :class:`~.scorer.TrajectoryScorer` over the tool-call sequence) to score the
+    same turns differently. The runner still owns the completion gate (a
+    classified-failure or non-``done`` turn fails regardless of the scorer), so a
+    scorer only ever judges a turn that actually completed.
+    """
+
+    def __init__(self, runner: RunnerClient, *, scorer: Scorer | None = None) -> None:
         self._runner = runner
+        self._scorer: Scorer = scorer if scorer is not None else GraderScorer()
 
     async def run(
         self, suite: EvalSuite, *, base_url: str, version: str, token: str | None = None
@@ -43,6 +54,7 @@ class EvalRunner:
         start = time.monotonic()
         event = Event(type="eval_case", text=case.input, user="eval", ts="0")
         parts: list[str] = []
+        trajectory: list[str] = []
         final_text: str | None = None
         final_status: SessionStatus | None = None
         error_detail: str | None = None
@@ -52,6 +64,10 @@ class EvalRunner:
                 async for frame in turn:
                     if isinstance(frame, TextDelta):
                         parts.append(frame.text)
+                    elif isinstance(frame, ToolNote):
+                        # The tool-call trajectory the scorer seam can match on.
+                        if frame.tool is not None:
+                            trajectory.append(frame.tool)
                     elif isinstance(frame, Final):
                         final_text = frame.text
                         final_status = frame.status
@@ -90,9 +106,13 @@ class EvalRunner:
                 latency_ms=_elapsed_ms(start),
                 error=f"turn did not complete (status={final_status})",
             )
+        # The turn completed cleanly, so a negative verdict is the scorer saying
+        # "no", not a runner/turn error -- keep `error` reserved for the latter
+        # (exceptions, classified failures, incomplete turns handled above).
+        verdict = self._scorer.score(case, output, trajectory)
         return EvalCaseResult(
             case_id=case.id,
-            passed=case.grader.grade(output),
+            passed=verdict.passed,
             output=output,
             latency_ms=_elapsed_ms(start),
         )
