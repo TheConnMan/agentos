@@ -85,8 +85,12 @@ class SubstrateConfig:
     # How long a live route stays bound with no touch. After expiry the claim
     # is an orphan and reap_orphans() deletes it.
     route_ttl_seconds: int = 3600
-    # Suspended routes wait longer: the thread may come back tomorrow.
-    suspended_route_ttl_seconds: int = 86400
+    # Suspended routes wait longer: the thread may come back tomorrow. Approvals
+    # (ADR-0010) are the first production suspend trigger and can pause for days
+    # awaiting a human, so this is a week -- long enough that the Valkey route
+    # (which carries the rehydrate ref) outlives a realistic approval wait. The
+    # durable Approval row is still the source of truth if it does expire.
+    suspended_route_ttl_seconds: int = 604800
     # How long claim() waits for a claim to bind a ready sandbox before raising
     # ClaimTimeoutError. This is a genuinely END-TO-END budget: a single shared
     # deadline in SandboxSubstrate._claim_fresh spans BOTH the bind phase and the

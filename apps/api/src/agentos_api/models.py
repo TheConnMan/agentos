@@ -22,6 +22,15 @@ class Environment(enum.StrEnum):
     dev = "dev"
 
 
+class ApprovalStatus(enum.StrEnum):
+    """Lifecycle of an approval. ``pending`` is the only non-terminal value; a
+    resolve compare-and-sets it to ``approved`` or ``rejected`` exactly once."""
+
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -135,6 +144,71 @@ class WorkflowStateEntry(Base):
     # Monotonic per-entry counter for compare-and-set: a put may pass the version
     # it last read, and the write is rejected if the stored version moved on.
     version: Mapped[int] = mapped_column(default=1)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Approval(Base):
+    """A durable human-in-the-loop approval request (#22, ADR-0010).
+
+    Created ``pending`` by the worker when a session pauses on an approval gate
+    (ACI ``SessionStatus.awaiting-approval``) and resolved once, server-side, by
+    the resolve endpoint. The record is the source of truth that outlives the
+    suspend/resume of the paused session and every component restart: it holds
+    both what is needed to resume (``conversation_id``, ``session_id``, and the
+    reply handle) and the gate details shown to the approver (``tool``,
+    ``prompt``). Resolve is a compare-and-set on ``status`` (``pending`` ->
+    ``approved``/``rejected``), so the loser of a click race is told it was
+    already resolved, and a resolver may never be the requester (self-approval is
+    blocked). ``status`` is a plain string (not a DB enum) to keep the migration
+    minimal; ``ApprovalStatus`` carries the values in code.
+    """
+
+    __tablename__ = "approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id",
+            "conversation_id",
+            "tool_use_id",
+            name="uq_approval_agent_conv_tooluse",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(f"{SCHEMA}.agents.id", ondelete="CASCADE"), index=True
+    )
+    # Routing to resume the paused session: the thread key the run belongs to and
+    # the SDK session id the replacement runner rehydrates from (ACI Final.session_id).
+    conversation_id: Mapped[str]
+    session_id: Mapped[str | None] = mapped_column(default=None)
+    # The reply handle the resumed turn's output is delivered through, stored so a
+    # resume days later (past the Valkey route TTL) can still reconstruct it.
+    channel: Mapped[str]
+    reply_placeholder: Mapped[str]
+    reply_endpoint: Mapped[str | None] = mapped_column(default=None)
+    # The gated tool call, surfaced to the approver on the card.
+    tool: Mapped[str]
+    tool_use_id: Mapped[str]
+    input_digest: Mapped[str]
+    prompt: Mapped[str]
+    status: Mapped[str] = mapped_column(
+        default=ApprovalStatus.pending.value,
+        server_default=ApprovalStatus.pending.value,
+        index=True,
+    )
+    # Who triggered the request (the turn's author); a resolver equal to this is
+    # blocked as self-approval.
+    requested_by: Mapped[str]
+    resolved_by: Mapped[str | None] = mapped_column(default=None)
+    resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+    # Set when the resumed turn has been enqueued, so the reconcile sweep never
+    # resumes the same approval twice.
+    resumed_at: Mapped[datetime | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()

@@ -1,12 +1,12 @@
 """Database access helpers for agents, versions, and deployments."""
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent, AgentVersion, Deployment, Environment
+from .models import Agent, AgentVersion, Approval, ApprovalStatus, Deployment, Environment
 from .schemas import AgentCreate, DeploymentCreate, VersionCreate
 
 
@@ -258,3 +258,64 @@ async def get_deployment(
     session: AsyncSession, deployment_id: uuid.UUID
 ) -> Deployment | None:
     return await session.get(Deployment, deployment_id)
+
+
+# -- approvals (#22) ----------------------------------------------------------
+
+# The outcome of a resolve attempt, mapped to an HTTP status by the router.
+ResolveOutcome = Literal["not_found", "self_approval", "already_resolved", "resolved"]
+
+
+async def get_approval(
+    session: AsyncSession, approval_id: uuid.UUID
+) -> Approval | None:
+    return await session.get(Approval, approval_id)
+
+
+async def list_approvals(
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    status: str | None = None,
+) -> list[Approval]:
+    stmt = select(Approval).where(Approval.agent_id == agent_id)
+    if status is not None:
+        stmt = stmt.where(Approval.status == status)
+    stmt = stmt.order_by(Approval.created_at)
+    result = await session.scalars(stmt)
+    return list(result)
+
+
+async def resolve_approval(
+    session: AsyncSession,
+    approval_id: uuid.UUID,
+    decision: str,
+    actor: str,
+) -> tuple[ResolveOutcome, Approval | None]:
+    """Resolve a pending approval exactly once, server-side.
+
+    The resolve-once guarantee is a compare-and-set: the UPDATE only matches a row
+    still ``pending``, so a second concurrent resolver flips nothing (rowcount 0)
+    and is told it was already resolved. Self-approval (``actor`` equals the
+    requester) is refused before the CAS. Returns the outcome tag and the record.
+    """
+    approval = await session.get(Approval, approval_id)
+    if approval is None:
+        return ("not_found", None)
+    if approval.requested_by == actor:
+        return ("self_approval", approval)
+    result = await session.execute(
+        update(Approval)
+        .where(
+            Approval.id == approval_id,
+            Approval.status == ApprovalStatus.pending.value,
+        )
+        .values(status=decision, resolved_by=actor, resolved_at=func.now())
+        .returning(Approval.id)
+        .execution_options(synchronize_session=False)
+    )
+    won = result.first() is not None
+    await session.commit()
+    await session.refresh(approval)
+    if not won:
+        return ("already_resolved", approval)
+    return ("resolved", approval)

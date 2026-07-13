@@ -11,6 +11,7 @@ import httpx
 import redis.asyncio as redis
 from fastapi import FastAPI
 
+from .approvals import ApprovalNotifier
 from .config import get_settings
 from .db import create_engine, create_sessionmaker
 from .evalqueue import EvalQueue
@@ -20,6 +21,7 @@ from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
 from .routers import (
     agents,
+    approvals,
     bundles,
     config,
     control,
@@ -53,6 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     valkey: redis.Redis = redis.from_url(settings.valkey_dsn())
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
+    app.state.approval_notifier = ApprovalNotifier(valkey)
     app.state.eval_queue = EvalQueue(valkey)
     app.state.github_reporter = GitHubStatusReporter(
         http_client,
@@ -77,6 +80,7 @@ def create_app() -> FastAPI:
 
     app.include_router(config.router)
     app.include_router(agents.router)
+    app.include_router(approvals.router)
     app.include_router(deployments.router)
     app.include_router(bundles.router)
     app.include_router(github.router)

@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 
 import aiohttp
 from aci_protocol import (
+    ApprovalRequest,
     ErrorEvent,
     Event,
     Final,
@@ -43,6 +44,7 @@ from aci_protocol import (
     ToolNote,
 )
 
+from .approvals import ApprovalStore
 from .behaviorpacks import (
     BehaviorPacks,
     NavPack,
@@ -78,6 +80,15 @@ class TurnOutcome:
     text: str = ""
     status: SessionStatus | None = None
     steered: bool = False
+    # The turn paused on an approval gate (SessionStatus.awaiting-approval). This
+    # is neither success nor a retryable failure: the kernel persists a durable
+    # approval record and suspends the session, to be resumed on resolution.
+    awaiting_approval: bool = False
+    # The SDK session id (ACI Final.session_id), threaded through so suspend can
+    # record the exact rehydrate ref; and the gated tool call, so the durable
+    # record is built without reconstructing it from a prior tool_note.
+    session_id: str | None = None
+    approval_request: ApprovalRequest | None = None
 
 
 @dataclass
@@ -108,6 +119,8 @@ class _StreamAccumulator:
     classification: str | None = None
     status: SessionStatus | None = None
     final_text: str | None = None
+    session_id: str | None = None
+    approval_request: ApprovalRequest | None = None
 
     def rendered(self) -> str:
         return self.final_text if self.final_text is not None else "".join(self.text_parts)
@@ -190,6 +203,7 @@ class Kernel:
         config: WorkerConfig,
         binding: BindingResolver | None = None,
         killswitch: KillSwitch | None = None,
+        approvals: ApprovalStore | None = None,
     ) -> None:
         self._substrate = substrate
         self._runner = runner
@@ -202,6 +216,10 @@ class Kernel:
         # it resolves channel -> agent -> bundle/budget and gates killed agents.
         self._binding = binding
         self._killswitch = killswitch
+        # The durable approval store (#22). Optional: without it (and without
+        # binding), an awaiting-approval final cannot be persisted and is
+        # escalated rather than silently dropped.
+        self._approvals = approvals
         # Which threads are running which agent, so a kill interrupts the agent's
         # live turns. Populated while a turn owner streams.
         self._active_by_agent: dict[uuid.UUID, set[str]] = {}
@@ -295,6 +313,16 @@ class Kernel:
                 outcome = await self._attempt(
                     qevent, release_order, boot_env, agent_id, nav, packs
                 )
+
+                # The turn paused on an approval gate: persist the durable record
+                # and suspend the session (first, before the success/side-effect/
+                # retry branches, since awaiting-approval is none of those). The
+                # Slack event is then marked done -- the resume arrives later as a
+                # fresh synthetic turn, not a replay of this event.
+                if outcome.awaiting_approval:
+                    await self._suspend_for_approval(qevent, agent_id, outcome)
+                    await self._markers.mark_done(event_id)
+                    return
 
                 if outcome.terminal_ok:
                     await self._markers.mark_done(event_id)
@@ -615,8 +643,23 @@ class Kernel:
         elif isinstance(frame, Final):
             acc.status = frame.status
             acc.final_text = frame.text
+            acc.session_id = frame.session_id
+            acc.approval_request = frame.approval_request
 
     async def _finish(self, acc: _StreamAccumulator, reply: _ThrottledReply) -> TurnOutcome:
+        if acc.status is SessionStatus.AWAITING_APPROVAL:
+            # A pause, not a terminal state: do not finalize the placeholder as an
+            # answer. process_event persists the record, suspends, and (in the
+            # Slack path, #246) posts the approval card.
+            return TurnOutcome(
+                terminal_ok=False,
+                awaiting_approval=True,
+                status=acc.status,
+                session_id=acc.session_id,
+                approval_request=acc.approval_request,
+                saw_side_effect=acc.saw_side_effect,
+                text=acc.rendered(),
+            )
         if acc.status in (SessionStatus.DONE, SessionStatus.IDLE_AWAITING_INPUT):
             text = acc.rendered()
             await reply.finalize(text)
@@ -643,6 +686,75 @@ class Kernel:
             text=message,
             endpoint=qevent.reply_handle.endpoint,
         )
+
+    async def _suspend_for_approval(
+        self, qevent: QueuedTurn, agent_id: uuid.UUID | None, outcome: TurnOutcome
+    ) -> None:
+        """Persist a durable pending approval and suspend the session (#22).
+
+        Ordering is persist-before-suspend (the ack is process_event's mark_done
+        + return): the durable row is the source of truth, so a crash after
+        persisting but before suspending still resolves correctly -- the resume
+        path finds the live/idle sandbox (or cold-claims a fresh one) and
+        rehydrates from the recorded session id. If approvals are not configured,
+        or the runner emitted awaiting-approval without the request detail,
+        escalate rather than silently drop.
+        """
+        thread = qevent.conversation_id
+        ar = outcome.approval_request
+        if self._approvals is None or agent_id is None or ar is None:
+            await self._escalate(
+                qevent,
+                "The agent asked for approval, but approvals are not configured "
+                "for this run. Flagging for a human.",
+            )
+            return
+
+        await self._approvals.create_pending(
+            agent_id=agent_id,
+            conversation_id=thread,
+            session_id=outcome.session_id,
+            channel=qevent.reply_handle.channel,
+            reply_placeholder=qevent.reply_handle.placeholder,
+            reply_endpoint=qevent.reply_handle.endpoint,
+            tool=ar.tool,
+            tool_use_id=ar.tool_use_id,
+            input_digest=ar.input_digest,
+            prompt=ar.prompt,
+            requested_by=qevent.author,
+        )
+
+        # Suspend under the per-thread route lock so a concurrent follow-up cannot
+        # adopt the idle sandbox between the record and the suspend: a follow-up
+        # after this finds the route SUSPENDED and resumes instead. A suspend
+        # failure is non-fatal -- the durable record already exists, so the resume
+        # path still runs (cold-claiming a fresh sandbox if the route is gone).
+        #
+        # SACRED-MODULE REVIEW: the one edge to scrutinize in the mandated
+        # spec-vs-impl + side-effects-detective pass is the finish-race interaction
+        # (a follow-up opening a fresh turn on the idle sandbox at the same instant
+        # the awaiting-approval final lands).
+        try:
+            async with self._lock.hold(self._config.lock_key(thread)):
+                await asyncio.to_thread(
+                    self._substrate.suspend, thread, history_ref=outcome.session_id
+                )
+        except SandboxError as exc:
+            logger.warning("suspend-for-approval failed for %s: %s", qevent.event_id, exc)
+
+        # Surface the pause on the placeholder (best-effort); the Slack approval
+        # card + buttons are the #246 slice.
+        try:
+            await self._sink.update(
+                channel=qevent.reply_handle.channel,
+                ts=qevent.reply_handle.placeholder,
+                text=self._config.awaiting_approval_text,
+                endpoint=qevent.reply_handle.endpoint,
+            )
+        except Exception:
+            logger.warning(
+                "awaiting-approval placeholder update failed for %s", qevent.event_id
+            )
 
     def _backoff(self, attempt: int) -> float:
         raw: float = self._config.retry_backoff_base_s * (2 ** (attempt - 1))

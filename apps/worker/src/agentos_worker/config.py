@@ -158,6 +158,21 @@ class WorkerConfig(BaseSettings):
         validation_alias="AGENTOS_BOOTING_TEXT",
     )
 
+    # Shown on the placeholder when a turn pauses on an approval gate (#22), so the
+    # thread does not sit on "working" while the session is suspended. The Slack
+    # approval card + buttons are the #246 slice; this is the plain-text fallback.
+    awaiting_approval_text: str = Field(
+        default="Paused, waiting for approval.",
+        validation_alias="AGENTOS_AWAITING_APPROVAL_TEXT",
+    )
+
+    # How often the approval resumer sweeps Postgres for resolved-but-not-resumed
+    # approvals (#22), the fallback for a resolve whose pubsub wake-up reached no
+    # worker. The pubsub path is the fast path; this only bounds the worst case.
+    approval_reconcile_interval_s: float = Field(
+        default=30.0, validation_alias="AGENTOS_APPROVAL_RECONCILE_INTERVAL_S"
+    )
+
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
     stream: str = Field(default="agentos:runs", validation_alias="AGENTOS_STREAM")
     consumer_group: str = Field(

@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .approvals import ApprovalNotifier
 from .evalqueue import EvalQueue
 from .github_checks import GitHubStatusReporter
 from .k8s import PodLister, PodLogReader
@@ -45,6 +46,11 @@ def get_kill_switch(request: Request) -> KillSwitch:
     return kill_switch
 
 
+def get_approval_notifier(request: Request) -> ApprovalNotifier:
+    notifier: ApprovalNotifier = request.app.state.approval_notifier
+    return notifier
+
+
 def get_eval_queue(request: Request) -> EvalQueue:
     eval_queue: EvalQueue = request.app.state.eval_queue
     return eval_queue
@@ -61,5 +67,6 @@ StoreDep = Annotated[BundleStore, Depends(get_store)]
 PodLogReaderDep = Annotated[PodLogReader, Depends(get_pod_log_reader)]
 PodListerDep = Annotated[PodLister, Depends(get_pod_lister)]
 KillSwitchDep = Annotated[KillSwitch, Depends(get_kill_switch)]
+ApprovalNotifierDep = Annotated[ApprovalNotifier, Depends(get_approval_notifier)]
 EvalQueueDep = Annotated[EvalQueue, Depends(get_eval_queue)]
 GitHubReporterDep = Annotated[GitHubStatusReporter, Depends(get_github_reporter)]

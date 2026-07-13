@@ -21,6 +21,8 @@ import redis
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from .approval_resumer import ApprovalResumer
+from .approvals import ApprovalStore
 from .binding import BindingResolver
 from .bundle_store import BundleStore
 from .config import WorkerConfig
@@ -52,6 +54,7 @@ class Runtime:
 
     consumer: Consumer
     killswitch: KillSwitch
+    approval_resumer: ApprovalResumer
     eval_consumer: EvalStreamConsumer
     runner: RunnerClient
     async_redis: AsyncRedis
@@ -162,6 +165,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     )
     engine = create_async_engine(config.database_url, pool_pre_ping=True)
     binding = BindingResolver(engine, config)
+    approval_store = ApprovalStore(engine, config)
     kernel = Kernel(
         substrate=substrate,
         runner=runner,
@@ -177,10 +181,14 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         markers=Markers(async_redis, config),
         config=config,
         binding=binding,
+        approvals=approval_store,
     )
     killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
     kernel.attach_killswitch(killswitch)
     consumer = Consumer(redis=async_redis, kernel=kernel, config=config)
+    approval_resumer = ApprovalResumer(
+        redis=async_redis, store=approval_store, config=config
+    )
 
     # The eval lane (F3): a second consumer group on agentos:evals, on its own
     # Valkey connection so its blocking read never stalls the runs consumer. It
@@ -218,6 +226,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     return Runtime(
         consumer=consumer,
         killswitch=killswitch,
+        approval_resumer=approval_resumer,
         eval_consumer=eval_consumer,
         runner=runner,
         async_redis=async_redis,
@@ -239,6 +248,7 @@ async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
     def _stop() -> None:
         rt.consumer.request_stop()
         rt.killswitch.request_stop()
+        rt.approval_resumer.request_stop()
         rt.eval_consumer.request_stop()
         hb_stop.set()
 
@@ -250,6 +260,7 @@ async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
         await asyncio.gather(
             rt.consumer.run(),
             rt.killswitch.run(),
+            rt.approval_resumer.run(),
             rt.eval_consumer.run(),
             run_heartbeat(config.heartbeat_file, config.heartbeat_interval_s, hb_stop),
         )

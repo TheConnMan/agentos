@@ -445,3 +445,33 @@ class StateEntryOut(BaseModel):
     value: Any
     version: int
     updated_at: datetime
+
+
+class ApprovalOut(BaseModel):
+    """A durable approval record as returned to the caller (#22)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    agent_id: uuid.UUID
+    conversation_id: str
+    channel: str
+    tool: str
+    tool_use_id: str
+    input_digest: str
+    prompt: str
+    status: Literal["pending", "approved", "rejected"]
+    requested_by: str
+    resolved_by: str | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+
+class ApprovalResolveIn(BaseModel):
+    """Resolve a pending approval. ``actor`` is the identity resolving it (the
+    Slack user who clicked); it is recorded as ``resolved_by`` and must differ
+    from the requester (self-approval is blocked). The channel-membership
+    authorizer check runs on top of this in the Slack resolve path (#246)."""
+
+    decision: Literal["approved", "rejected"]
+    actor: str
