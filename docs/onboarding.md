@@ -11,10 +11,18 @@ Install the local path tools:
 - `uv`, the Python workspace manager, and Python `3.13`. The workspace requires
   `>=3.13`.
 - Docker with Compose v2, for the dev stack and the local runner container.
-- An `agentos` CLI binary. Download a prebuilt binary from
-  [GitHub Releases](https://github.com/curie-eng/agentos/releases), asset
-  `agentos-x86_64-unknown-linux-gnu` or `agentos-aarch64-apple-darwin`, or build
-  from source with the Rust stable toolchain, edition `2021`:
+- An `agentos` CLI binary. Download the prebuilt binary from the latest
+  release (no Rust toolchain needed):
+
+```bash
+# Linux (x86_64); for macOS Apple silicon swap in agentos-aarch64-apple-darwin
+curl -L -o agentos \
+  https://github.com/curie-eng/agentos/releases/latest/download/agentos-x86_64-unknown-linux-gnu
+chmod +x agentos && sudo mv agentos /usr/local/bin/
+```
+
+Contributors working on the CLI can instead build from source with the Rust
+stable toolchain (edition `2021`):
 
 ```bash
 cd cli && cargo build --release

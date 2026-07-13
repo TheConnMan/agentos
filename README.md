@@ -159,22 +159,24 @@ channel binding, and troubleshooting) see
 - **Python 3.13** (the workspace requires `>=3.13`).
 - **Docker + Compose v2**: for the dev stack and the local runner container.
 - **Node.js 22 + [pnpm](https://pnpm.io/)**: for the UI.
-- **Rust toolchain** (stable, edition 2021, with `rustfmt` and `clippy`): for
-  the CLI. Skip if you use a prebuilt CLI binary from Releases.
+- **Rust toolchain** (stable, edition 2021, with `rustfmt` and `clippy`): only
+  for building the CLI from source. Skip it entirely if you download the
+  prebuilt CLI binary from Releases (the default install path below).
 - **kubectl + helm**: only for the cluster-install path (see
   [How do I run my agent on a Kubernetes cluster?](#how-do-i-run-my-agent-on-a-kubernetes-cluster)).
 
 ## Quickstart
 
-Operators should start from a binary downloaded from
-[GitHub Releases](https://github.com/curie-eng/agentos/releases):
+The fastest way in — for operators and coding agents alike — is the prebuilt
+release binary. It needs no Rust toolchain and no repo checkout:
 
 ```bash
+# Linux (x86_64); for macOS Apple silicon swap in agentos-aarch64-apple-darwin
 curl -L -o agentos \
-  https://github.com/curie-eng/agentos/releases/download/v<version>/agentos-x86_64-unknown-linux-gnu
-chmod +x agentos
-./agentos cluster up
-./agentos local up
+  https://github.com/curie-eng/agentos/releases/latest/download/agentos-x86_64-unknown-linux-gnu
+chmod +x agentos && sudo mv agentos /usr/local/bin/
+agentos cluster up
+agentos local up
 ```
 
 A release binary needs no repo checkout for `agentos cluster up` or `agentos local up`.
@@ -215,19 +217,23 @@ cd apps/ui && pnpm install && pnpm dev
 # open http://localhost:5173/?api=1&state=1  (wired to apps/api on :8000)
 ```
 
-**CLI walkthrough** (no Slack, no cluster — needs the runner image built once:
-`docker build -f runner/Dockerfile -t agentos-runner .` from the repo root):
+**CLI walkthrough** (no Slack, no cluster). With the prebuilt `agentos` on
+your PATH (from the Quickstart above), the binary pulls the pinned runner
+image from GHCR on first run — nothing to build:
 
 ```bash
-cd cli && cargo build --release
-./target/release/agentos init my-agent && cd my-agent
+agentos init my-agent && cd my-agent
 # Real model is the default. Export a credential first (forwarded into the runner
 # container): CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or AGENTOS_CREDENTIALS.
 export CLAUDE_CODE_OAUTH_TOKEN=...
-../target/release/agentos skill up
-../target/release/agentos skill message "hello"
-../target/release/agentos skill eval
+agentos skill up
+agentos skill message "hello"
+agentos skill eval
 ```
+
+From a source checkout instead (contributor path): `cd cli && cargo build
+--release`, build the runner image once with `agentos build`, then run
+`./target/release/agentos` in place of `agentos`.
 
 A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos skill up` runs it from a clean clone. `agentos init` scaffolds a generic starter skill named for your agent (plus a root `AGENTS.md` and an installable `.claude/skills/using-agentos/SKILL.md` harness primer) that you edit to build your own agent; see `examples/weather/` for a runnable example to learn from.
 
