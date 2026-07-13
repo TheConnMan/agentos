@@ -153,5 +153,7 @@ export function cliCommand<A extends ActionId>(
 // Shell-quote a value only when it carries whitespace, so simple ids/flags stay
 // readable while a multi-word message is preserved as one token.
 function quote(value: string): string {
-  return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+  return /\s/.test(value)
+    ? `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+    : value;
 }
