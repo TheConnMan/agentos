@@ -302,15 +302,6 @@ jobs:
           persist-credentials: false
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-      - name: Pin chart image tags to the release version
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          before="$(grep -cE '^[[:space:]]*tag: latest$' charts/agentos/values.yaml)"
-          if [ "$before" -ne 5 ]; then
-            echo "expected 5 'tag: latest' entries in values.yaml, found $before" >&2
-            exit 1
-          fi
-          sed -i -E "s/^([[:space:]]*tag:) latest$/\1 \"${version}\"/" charts/agentos/values.yaml
       - name: Package chart
         run: |
           version="${GITHUB_REF_NAME#v}"
