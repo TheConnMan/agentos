@@ -15,7 +15,7 @@ from .config import RunnerConfig
 from .conformance import conformance_producer
 from .fake import FakeModelSession
 from .otel import RunTracer, build_tracer_provider
-from .plugin import PluginBundleError, load_plugins
+from .plugin import PluginBundleError, load_bundle_system_prompt, load_plugins
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import DEFAULT_IDEMPOTENT_TOOLS, SideEffectClassifier
@@ -35,6 +35,7 @@ __all__ = [
     "build_tracer_provider",
     "PluginBundleError",
     "load_plugins",
+    "load_bundle_system_prompt",
     "create_app",
     "SessionRunner",
     "SideEffectClassifier",

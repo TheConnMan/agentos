@@ -54,6 +54,11 @@ class PluginManifest(BaseModel):
     agents: str | list[str] | None = None
     hooks: str | dict[str, Any] | None = None
     mcpServers: str | dict[str, Any] | None = None
+    # AgentOS authoring extension (epic #30): the agent's system prompt, shipped
+    # in the bundle and versioned with it rather than only supplied out-of-band
+    # via the ``AGENTOS_SYSTEM_PROMPT`` env var. Inline prompt text; applied at
+    # runner boot, with the env var taking precedence for backward compatibility.
+    systemPrompt: str | None = None
 
 
 class SkillFrontmatter(BaseModel):
