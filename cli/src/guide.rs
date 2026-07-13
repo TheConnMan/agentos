@@ -125,6 +125,11 @@ pub fn primer() -> Primer {
                 purpose: "Drive the real product loop end to end -- the path a Slack mention would take.",
             },
             Rung {
+                tier: "local",
+                command: "agentos local eval",
+                purpose: "Re-run the SAME evals/cases.json through the local tier -- the per-tier parity gate. A pass here that failed at skill (or vice versa) is the harness catching an environment bug.",
+            },
+            Rung {
                 tier: "cluster",
                 command: "agentos cluster up",
                 purpose: "Install the release on Kubernetes via Helm.",
@@ -138,6 +143,11 @@ pub fn primer() -> Primer {
                 tier: "cluster",
                 command: "agentos cluster message \"hello\"",
                 purpose: "Drive the same loop on the cluster.",
+            },
+            Rung {
+                tier: "cluster",
+                command: "agentos cluster eval",
+                purpose: "Re-assert the SAME evals/cases.json on the cluster with the same grader -- the per-tier parity gate at the tier that matters most before prod.",
             },
         ],
         decision_logic: vec![
@@ -164,8 +174,11 @@ pub fn primer() -> Primer {
             Decision {
                 question: "how an eval gates promotion",
                 answer: "evals/cases.json is the contract. `agentos skill eval` must be green before \
-                         you deploy; merging to main promotes to prod (git flow is the deploy model). \
-                         Never promote a bundle whose evals are red.",
+                         you deploy; `agentos local eval` and `agentos cluster eval` re-run the SAME \
+                         cases with the SAME grader at each tier (the per-tier parity gate), so a \
+                         suite that is green at skill can be re-asserted verbatim once deployed. \
+                         Merging to main promotes to prod (git flow is the deploy model). Never \
+                         promote a bundle whose evals are red.",
             },
         ],
         landmines: vec![

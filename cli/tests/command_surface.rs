@@ -40,11 +40,13 @@ fn process_help_routes_positive_forms() {
         &["local", "down"],
         &["local", "status"],
         &["local", "message"],
+        &["local", "eval"],
         &["local", "deploy"],
         &["cluster", "up"],
         &["cluster", "down"],
         &["cluster", "status"],
         &["cluster", "message"],
+        &["cluster", "eval"],
         &["cluster", "deploy"],
         &["init"],
     ];

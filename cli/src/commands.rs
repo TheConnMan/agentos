@@ -854,7 +854,6 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
     let ui = crate::ui::ui();
 
     let total = suite.cases.len();
-    let mut passed = 0usize;
     // (id, passed, seconds) rows, rendered as one table once the run finishes.
     let mut results: Vec<(String, bool, f64)> = Vec::with_capacity(total);
     let bar = ui.progress_bar(total as u64, "running evals");
@@ -864,27 +863,33 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
-        let ok = turn_passes(case, &events);
-        if ok {
-            passed += 1;
-        }
-        results.push((case.id.clone(), ok, elapsed));
+        results.push((case.id.clone(), turn_passes(case, &events), elapsed));
         bar.inc(1);
     }
     bar.finish();
 
-    // Under --json the whole roll-up is one machine payload on stdout; the human
-    // table + verdict lines are suppressed so they cannot corrupt it.
+    report_eval(&results)
+}
+
+/// Render a finished eval run identically for every tier (`skill`, `local`,
+/// `cluster`): under `--json` the whole roll-up is one machine payload on
+/// stdout; otherwise the per-case table is payload -> stdout and the roll-up
+/// verdict is a diagnostic -> stderr. A failing run exits `Failure`. Shared so
+/// `local eval`/`cluster eval` print the same summary `skill eval` does (the
+/// per-tier parity gate), not a hand-mirrored one.
+pub fn report_eval(results: &[(String, bool, f64)]) -> Result<()> {
+    let ui = crate::ui::ui();
+    let total = results.len();
+    let passed = results.iter().filter(|(_, ok, _)| *ok).count();
+
     if ui.json() {
-        ui.emit_json(&eval_json(&results, passed, total));
+        ui.emit_json(&eval_json(results, passed, total));
         if passed < total {
             std::process::exit(crate::exit::ExitClass::Failure.code());
         }
         return Ok(());
     }
 
-    // The result table is payload -> stdout; the roll-up verdict is a
-    // diagnostic -> stderr.
     let rows: Vec<Vec<String>> = results
         .iter()
         .map(|(name, ok, seconds)| {
