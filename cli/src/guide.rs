@@ -190,6 +190,10 @@ pub fn primer() -> Primer {
                 detail: "A connect that rotates a secret must also roll the pod; `agentos cluster comms` does this for you.",
             },
             Landmine {
+                title: "A real-model `cluster up` fails closed without a gVisor runtime",
+                detail: "On a cluster with no `runsc` RuntimeClass, the default `security.gvisor.mode=auto` renders a blocking enforcement preflight for a real (non-fake) model, so `agentos cluster up` fails closed instead of running runner pods on the host kernel. Install anyway with `agentos cluster up --set security.gvisor.mode=off` (no kernel isolation, knowingly), use `--fake-model` (the sealed path skips the preflight), or install runsc on the nodes. This is the security posture, not a bug.",
+            },
+            Landmine {
                 title: "An empty-string API key is not \"unset\"",
                 detail: "It trips the CLI auth gate. Omit the flag or env entirely to fall back, rather than passing an empty value.",
             },
@@ -202,6 +206,10 @@ pub fn primer() -> Primer {
             Recovery {
                 symptom: "authentication_failed from a live model",
                 fix: "A real credential is empty or being overridden. Unset the empty one; set AGENTOS_MODEL_CREDENTIALS for `agentos cluster up`.",
+            },
+            Recovery {
+                symptom: "`agentos cluster up` hangs ~2 min then dies with `job agentos-preflight-gvisor failed: DeadlineExceeded`",
+                fix: "A real-model install on a cluster with no `runsc` RuntimeClass fails closed under `security.gvisor.mode=auto`. Opt out with `agentos cluster up --set security.gvisor.mode=off`, or use `--fake-model`, or install runsc on the nodes.",
             },
             Recovery {
                 symptom: "\"(no response)\" or an empty reply",

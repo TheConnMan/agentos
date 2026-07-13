@@ -183,6 +183,29 @@ fn guide_json_emits_pure_structured_data_on_stdout() {
 }
 
 #[test]
+fn guide_documents_gvisor_fail_closed_opt_out() {
+    // AC (#363): a real-model `cluster up` on a no-runsc cluster fails closed under
+    // the default gVisor mode; the opt-out and its preflight symptom must both be
+    // discoverable in the primer -- in the Markdown default and the --json variant.
+    let md = out_str(&run(&["guide"]));
+    let json = out_str(&run(&["guide", "--json"]));
+    for (label, text) in [("markdown", &md), ("json", &json)] {
+        assert!(
+            text.contains("security.gvisor.mode=off"),
+            "{label} primer missing the gVisor opt-out `security.gvisor.mode=off`\n{text}"
+        );
+        assert!(
+            text.contains("agentos-preflight-gvisor"),
+            "{label} primer missing the preflight symptom `agentos-preflight-gvisor`\n{text}"
+        );
+        assert!(
+            text.contains("running runner pods on the host kernel"),
+            "{label} primer missing the Landmine detail `running runner pods on the host kernel`\n{text}"
+        );
+    }
+}
+
+#[test]
 fn guide_is_registered_in_the_manifest() {
     let surface = Surface::load();
     assert!(
