@@ -19,6 +19,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "compose" / "generate_release_compose.py"
@@ -191,6 +192,86 @@ def test_cli_default_version_is_latest():
     tags = AGENTOS_IMAGE_RE.findall(out)
     assert tags
     assert all(tag == "latest" for tag in tags)
+
+
+def assert_init_containers_adopted(compose_text, label):
+    """Assert every one-shot init container is adopted via
+    `service_completed_successfully` in every profile combo `agentos local up`
+    can activate.
+
+    `docker compose up --wait` treats a one-shot init container's clean exit(0)
+    as a failure unless some service in the up-set depends on it with
+    `condition: service_completed_successfully`. `agentos local up` activates a
+    base profile (core or full), optionally + `local-model`, optionally +
+    `slack` -> 8 combos. Every one-shot init started in a combo must be adopted
+    by a long-running service that is itself started in that same combo.
+    """
+    doc = yaml.safe_load(compose_text)
+    services = doc["services"]
+
+    combos = []
+    for base in ({"core"}, {"full"}):
+        for with_model in (False, True):
+            for with_slack in (False, True):
+                combo = set(base)
+                if with_model:
+                    combo.add("local-model")
+                if with_slack:
+                    combo.add("slack")
+                combos.append(frozenset(combo))
+
+    def is_started(spec, combo):
+        profiles = spec.get("profiles")
+        if not profiles:
+            return True
+        return bool(set(profiles) & combo)
+
+    def is_oneshot(spec):
+        return spec.get("restart") == "no"
+
+    def adopts(spec, init):
+        """True if this (long-running) service depends on `init` with
+        condition service_completed_successfully."""
+        depends = spec.get("depends_on")
+        if not isinstance(depends, dict):
+            # list form carries no condition, or depends_on absent -> no adoption
+            return False
+        entry = depends.get(init)
+        return (
+            isinstance(entry, dict) and entry.get("condition") == "service_completed_successfully"
+        )
+
+    violations = []
+    for combo in combos:
+        started = {name: spec for name, spec in services.items() if is_started(spec, combo)}
+        for init, init_spec in started.items():
+            if not is_oneshot(init_spec):
+                continue
+            adopted = any(
+                other != init and not is_oneshot(other_spec) and adopts(other_spec, init)
+                for other, other_spec in started.items()
+            )
+            if not adopted:
+                violations.append((sorted(combo), init))
+
+    assert not violations, (
+        f"{label}: one-shot init container(s) unadopted by any "
+        f"service_completed_successfully dependency in an activatable profile "
+        f"combo: "
+        + "; ".join(
+            f"init '{init}' unadopted in profiles {profiles}" for profiles, init in violations
+        )
+    )
+
+
+def test_dev_compose_init_containers_adopted():
+    assert_init_containers_adopted(DEV_TEXT, "compose.dev.yaml")
+
+
+def test_release_compose_init_containers_adopted():
+    generate = load_generate()
+    release_text = generate(DEV_TEXT, OTEL_TEXT, version="1.2.3")
+    assert_init_containers_adopted(release_text, "compose.release.yaml")
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
