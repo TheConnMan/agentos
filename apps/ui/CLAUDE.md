@@ -34,6 +34,17 @@ structure and wiring detail in `apps/ui/README.md`.
 - **The demo-controls bar from the design is deliberately not shipped.**
   `?dev=1` gives an equivalent state switcher for development; keep it
   hidden without that param so the product view stays clean.
+- **Console/CLI parity: hints resolve from the manifest, never hardcoded**
+  (epic #145). CLI hints on wired surfaces come from `cliCommand()`
+  (`src/primitives/cliCommand.ts`), which is typed against the committed
+  command manifest (`src/generated/commandManifest.ts`) — never hand-write an
+  `agentos …` string in a component. Every wired action is enumerated in the
+  parity registry (`src/primitives/parity.ts`) and must map to EITHER a real
+  `command` (an `ActionId`) OR an explicit `noCliEquivalent` marker that renders
+  the honest amber `CliHint` linking to the tracking issue. Adding a wired
+  action means adding its parity entry; `CliHint.parity.test.tsx` fails on a
+  silent gap. When the CLI surface changes, run `pnpm gen:manifest` and commit
+  the regenerated manifest (CI drift-checks it).
 
 ## Playwright ports (do not confuse these)
 

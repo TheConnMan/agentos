@@ -12,17 +12,71 @@ import { useStore } from "../state/store";
 // touch, a tap copies directly (there is no hover step to gate on). The
 // morph is driven by hover/focus state and a transient "copied" flag, all
 // CSS transitions so it degrades gracefully.
+//
+// Honest no-equivalent state (epic #145): a wired action with no CLI verb yet
+// passes `noCliEquivalent={<tracking issue url>}` instead of a `command`. That
+// renders an amber `◇` glyph whose tooltip says there is no CLI equivalent and
+// whose click opens the tracking issue in a new tab — it never copies a
+// misleading command. The parity test (CliHint.parity.test.tsx) enforces that
+// every wired action resolves to a `command` or an explicit `noCliEquivalent`.
 
 const COPIED_RESET_MS = 1200;
 
-export function CliHint({ command, label }: { command: string; label?: string }) {
+export function CliHint({
+  command,
+  label,
+  noCliEquivalent,
+}: {
+  command?: string;
+  label?: string;
+  noCliEquivalent?: string;
+}) {
   const { dispatch } = useStore();
   const [active, setActive] = useState(false); // hover or keyboard focus
   const [copied, setCopied] = useState(false);
 
+  // Amber "no CLI equivalent yet" affordance: link out to the tracking issue
+  // rather than copy. Kept a real <button> for keyboard parity with the copy
+  // mode; the click opens the issue in a new tab.
+  if (noCliEquivalent !== undefined) {
+    return (
+      <button
+        type="button"
+        onClick={() => window.open(noCliEquivalent, "_blank", "noopener,noreferrer")}
+        onMouseEnter={() => setActive(true)}
+        onMouseLeave={() => setActive(false)}
+        onFocus={() => setActive(true)}
+        onBlur={() => setActive(false)}
+        title="No CLI equivalent yet — open the tracking issue"
+        aria-label="No CLI equivalent yet; open the tracking issue"
+        data-no-cli="true"
+        style={{
+          background: "transparent",
+          border: "none",
+          color: C.warn,
+          cursor: "pointer",
+          fontFamily: C.mono,
+          fontSize: 12,
+          padding: "2px 4px",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          opacity: active ? 1 : 0.85,
+        }}
+      >
+        <span aria-hidden="true" style={{ color: C.warn, width: "1.4em", textAlign: "center" }}>
+          ◇
+        </span>
+        {label ? <span>{label}</span> : null}
+      </button>
+    );
+  }
+
+  const cmd = command ?? "";
+
   function copy() {
     if (navigator.clipboard) {
-      void navigator.clipboard.writeText(command).catch(() => {});
+      void navigator.clipboard.writeText(cmd).catch(() => {});
     }
     dispatch({ type: "toast", message: "Copied" });
     setCopied(true);
@@ -41,8 +95,8 @@ export function CliHint({ command, label }: { command: string; label?: string })
       onMouseLeave={() => setActive(false)}
       onFocus={() => setActive(true)}
       onBlur={() => setActive(false)}
-      title={`$ ${command}`}
-      aria-label={`Copy command: ${command}`}
+      title={`$ ${cmd}`}
+      aria-label={`Copy command: ${cmd}`}
       data-copied={copied ? "true" : "false"}
       style={{
         background: "transparent",

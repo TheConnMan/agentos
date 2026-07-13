@@ -12,6 +12,14 @@ release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full comm
 
 ## Load-bearing invariants
 
+- **The command manifest is a committed artifact; regenerate it in the same
+  change as any command-surface edit (console/CLI parity, epic #145).** Any
+  change to a clap `Command`/subcommand or an `*Action` enum — a renamed verb,
+  a new subcommand, a changed flag — must regenerate `cli/command-manifest.json`
+  and the committed `apps/ui/src/generated/commandManifest.ts` (`pnpm
+  gen:manifest` in `apps/ui`) in the same commit. CI drift-checks the committed
+  TS manifest, and the console's `cliCommand()` hints are typed against it, so a
+  stale manifest breaks the UI build. Never edit the manifest by hand.
 - **Never hand-write the ACI types.** `Cargo.toml` depends on
   `agentos-aci-protocol` at `../packages/aci-protocol/generated/rust` --
   that crate is generated from the frozen Pydantic models. If a type you
