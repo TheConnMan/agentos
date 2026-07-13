@@ -295,6 +295,11 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      # Adopt the one-shot bucket bootstrap in the core profile too. This also
+      # makes `up --wait` treat minio-init's clean exit as expected success
+      # rather than a failure when langfuse (the full-profile adopter) is absent.
+      minio-init:
+        condition: service_completed_successfully
       agentos-migrate:
         condition: service_completed_successfully
     environment:
