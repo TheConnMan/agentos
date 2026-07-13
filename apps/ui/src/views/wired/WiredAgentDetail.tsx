@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { C } from "../../tokens";
-import { Button, Card, Chip, Dot, Notice } from "../../primitives";
+import { Button, Card, Chip, CliHint, Dot, Notice, cliCommand } from "../../primitives";
 import { SkillEditor } from "../../components/SkillEditor";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
@@ -513,7 +513,8 @@ export function WiredAgentDetail() {
                 {dirty ? "unsaved edits" : "no changes"}
               </span>
             )}
-            <div style={{ marginLeft: "auto" }}>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+              <CliHint command={cliCommand(state.env === "prod" ? "cluster.deploy" : "local.deploy")} />
               {deploying ? (
                 <Button label="Deploying…" variant="primary" disabled />
               ) : (

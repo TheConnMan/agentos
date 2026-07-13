@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { C } from "../../tokens";
-import { Button } from "../../primitives";
+import { Button, CliHint, cliCommand } from "../../primitives";
 import { SkillEditor } from "../SkillEditor";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
@@ -267,6 +267,7 @@ export function NewAgentModal() {
         <span style={{ fontSize: 12, color: C.muted, fontFamily: C.mono }}>
           deploys to <span style={{ color: C.text2 }}>{channel.trim() || "your channel"}</span>
         </span>
+        <CliHint command={cliCommand("init", { name: name.trim() || "agent" })} label="scaffold via CLI" />
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <Button label="Cancel" variant="ghost" onClick={() => dispatch({ type: "closeModal" })} />
           {state.deploying ? (

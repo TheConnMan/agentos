@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { C } from "../../tokens";
-import { Button, Card, SectionTitle, Chip, Dot, Modal, Notice } from "../../primitives";
+import { Button, Card, SectionTitle, Chip, CliHint, Dot, Modal, Notice, cliCommand } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useAgents, useAgentVersions } from "../../api/hooks";
 import { ComingSoon } from "./WiredStubs";
@@ -104,6 +104,12 @@ function VersionsTable({ agentId }: { agentId: string }) {
   const grid = "1.1fr 0.9fr 1fr 1.3fr 1fr 0.8fr";
   return (
     <Card>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 500, color: C.text }}>Versions</span>
+        <div style={{ marginLeft: "auto" }}>
+          <CliHint command={cliCommand(state.env === "prod" ? "cluster.status" : "local.status")} />
+        </div>
+      </div>
       <div
         style={{
           display: "grid",

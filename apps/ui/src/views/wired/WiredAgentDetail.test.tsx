@@ -276,3 +276,18 @@ describe("WiredAgentDetail — promote-to-prod (item 6)", () => {
     expect(vi.mocked(createDeployment)).not.toHaveBeenCalled();
   });
 });
+
+describe("WiredAgentDetail — CLI hint (#279)", () => {
+  it("renders the deploy CLI hint sourced from the manifest next to Deploy", async () => {
+    renderDetail();
+
+    // Deploy only renders once versions + bundle files resolve.
+    expect(await screen.findByRole("button", { name: "Deploy new version" })).toBeInTheDocument();
+
+    // The hint copies the exact `agentos cluster deploy` (env clamps to prod at
+    // level 3), resolved from the command manifest via cliCommand().
+    expect(
+      screen.getByRole("button", { name: "Copy command: agentos cluster deploy" }),
+    ).toBeInTheDocument();
+  });
+});

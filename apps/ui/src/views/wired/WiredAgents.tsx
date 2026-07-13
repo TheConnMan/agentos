@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { C } from "../../tokens";
-import { Card, SectionTitle, Button, Dot, EmptyState, Notice } from "../../primitives";
+import { Card, SectionTitle, Button, CliHint, Dot, EmptyState, Notice, cliCommand } from "../../primitives";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 import { useAllDeployments } from "../../api/hooks";
@@ -60,7 +60,8 @@ export function WiredAgents() {
         <div>
           <SectionTitle title="Agents" />
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <CliHint command={cliCommand("init")} />
           <Button label="New agent" variant="primary" icon="+" onClick={() => dispatch({ type: "openModal", modal: "new-agent" })} />
         </div>
       </div>
