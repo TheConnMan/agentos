@@ -36,11 +36,14 @@ design so future Claude Code keys still validate.
 
 ## Known leakage
 
-By intent, the entire format is Claude-Code-shaped — that is the wedge, not a leak. The one live
-gap is the `hooks` field: it is modeled and preserved (`models.py:55`) but currently dead (no
-runner consumption). Epic #30 defines the meaning, validation contract, and runner consumption of
-`hooks` alongside new approval/trigger declarations, so the field's presence in the frozen shape is
-a placeholder the second consumer must not repurpose.
+By intent, the entire format is Claude-Code-shaped — that is the wedge, not a leak. The `hooks`
+field is no longer dead: as of #272 it is validated at deploy time (`HookMatcherConfig` /
+`HookDefinition` in `models.py`, enforced by `_validate_hooks` in `validate.py`) and its
+`PreToolUse` command hooks are consumed by the runner (`runner/src/agentos_runner/hooks.py`),
+which translates them into SDK `HookMatcher` guardrails that run before a matching tool call (exit 0
+allows, exit 2 denies). Only `PreToolUse` is wired today; other hook events validate but are not yet
+consumed. Epic #30 continues to define the remaining authoring extensions (approval-policy and
+trigger declarations) alongside this.
 
 ## Cross-links
 

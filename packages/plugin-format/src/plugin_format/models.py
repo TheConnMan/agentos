@@ -76,6 +76,36 @@ class SkillFrontmatter(BaseModel):
     allowed_tools: list[str] | None = Field(default=None, alias="allowed-tools")
 
 
+class HookDefinition(BaseModel):
+    """One hook action inside a matcher's ``hooks`` list.
+
+    The Claude Code plugin ``hooks`` shape: a single action of a given ``type``.
+    Today only ``type: "command"`` exists (run a shell command); ``command`` is
+    required for it. Kept lenient so a future hook type still validates, but the
+    deploy-time validator (``validate.py``) enforces that a ``command`` hook
+    actually carries a command so a malformed guardrail is caught before ship.
+    """
+
+    model_config = _LENIENT
+
+    type: str
+    command: str | None = None
+
+
+class HookMatcherConfig(BaseModel):
+    """One matcher entry under a hook event (e.g. ``PreToolUse``).
+
+    ``matcher`` is a tool-name pattern (``"Bash"``, ``"Write|Edit"``; absent or
+    empty means "all tools"); ``hooks`` is the list of actions to run when a tool
+    call matches. Mirrors the Claude Code hooks structure verbatim.
+    """
+
+    model_config = _LENIENT
+
+    matcher: str | None = None
+    hooks: list[HookDefinition] = Field(default_factory=list)
+
+
 class McpServer(BaseModel):
     """One entry in `.mcp.json` mcpServers.
 

@@ -17,6 +17,7 @@ from aiohttp import web
 from .adapter import ClaudeAgentSession, ModelSession, build_options
 from .config import RunnerConfig
 from .fake import FakeModelSession
+from .hooks import load_bundle_hooks
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_bundle_system_prompt, load_plugins
 from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
@@ -47,6 +48,9 @@ def build_runner(
     system_prompt = config.system_prompt
     if system_prompt is None:
         system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
+    # In-bundle PreToolUse guardrails declared in the manifest hooks field (#272),
+    # translated into SDK HookMatcher callbacks. None when the bundle declares none.
+    bundle_hooks = load_bundle_hooks(config.session.plugin_dir)
 
     def factory() -> ModelSession:
         if fake_model:
@@ -61,6 +65,7 @@ def build_runner(
             resume=config.history_ref,
             task_budget_hint=config.session.budget.task_budget_hint,
             env=sdk_env or {},
+            hooks=bundle_hooks,
         )
         return ClaudeAgentSession(options)
 

@@ -14,6 +14,7 @@ from .budget import BUDGET_CLASSIFICATION, BudgetTracker
 from .config import RunnerConfig
 from .conformance import conformance_producer
 from .fake import FakeModelSession
+from .hooks import load_bundle_hooks
 from .otel import RunTracer, build_tracer_provider
 from .plugin import PluginBundleError, load_bundle_system_prompt, load_plugins
 from .server import create_app
@@ -36,6 +37,7 @@ __all__ = [
     "PluginBundleError",
     "load_plugins",
     "load_bundle_system_prompt",
+    "load_bundle_hooks",
     "create_app",
     "SessionRunner",
     "SideEffectClassifier",

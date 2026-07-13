@@ -10,9 +10,25 @@ from typing import Any
 
 from pydantic.json_schema import models_json_schema
 
-from .models import Author, McpConfig, McpServer, PluginManifest, SkillFrontmatter
+from .models import (
+    Author,
+    HookDefinition,
+    HookMatcherConfig,
+    McpConfig,
+    McpServer,
+    PluginManifest,
+    SkillFrontmatter,
+)
 
-_MODELS = (PluginManifest, Author, SkillFrontmatter, McpServer, McpConfig)
+_MODELS = (
+    PluginManifest,
+    Author,
+    SkillFrontmatter,
+    McpServer,
+    McpConfig,
+    HookMatcherConfig,
+    HookDefinition,
+)
 
 SCHEMA_ID = "https://curie.tech/agentos/plugin-format.schema.json"
 

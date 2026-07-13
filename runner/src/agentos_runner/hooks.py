@@ -1,0 +1,184 @@
+"""Consume the bundle manifest ``hooks`` field as SDK PreToolUse guardrails.
+
+The plugin-format ``hooks`` declaration (validated at deploy by
+``plugin_format.validate_bundle``) gives builders deterministic, in-bundle
+guardrails that complement platform-level gates. This module reads that
+declaration from the mounted bundle and translates its **PreToolUse** entries
+into ``claude_agent_sdk`` ``HookMatcher`` callbacks, so a declared command runs
+before a matching tool call and can block it.
+
+Only ``PreToolUse`` is consumed here (the deterministic before-the-tool gate the
+issue scopes); other events are validated by plugin-format but not yet wired.
+Each ``type: "command"`` hook runs the command through ``/bin/sh -c`` with the
+hook input JSON on stdin, following the Claude Code convention: exit 0 allows the
+tool call, exit 2 denies it (stderr is the reason), any other non-zero is a
+non-blocking hook error that lets the call proceed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Any
+
+from claude_agent_sdk import HookMatcher
+from plugin_format import HookMatcherConfig, PluginManifest
+from pydantic import TypeAdapter, ValidationError
+
+_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
+_HOOKS_ADAPTER = TypeAdapter(dict[str, list[HookMatcherConfig]])
+
+# Deny convention (Claude Code): a command hook that exits with this code blocks
+# the tool call; its stderr becomes the reason surfaced to the model.
+_DENY_EXIT_CODE = 2
+_HOOK_TIMEOUT_S = 60.0
+
+
+def _load_manifest_hooks(plugin_dir: str | None) -> dict[str, list[HookMatcherConfig]] | None:
+    """Read + parse the manifest ``hooks`` declaration from the bundle.
+
+    Returns the parsed hooks mapping, or ``None`` when there is no plugin dir, no
+    manifest, or no ``hooks`` field. Best-effort: a bundle that fails to parse
+    here is caught by ``load_plugins``/``validate_bundle`` at startup, the
+    authoritative gate, so this stays quiet.
+    """
+
+    if not plugin_dir:
+        return None
+    root = Path(plugin_dir)
+    manifest_path = next(
+        (root / loc for loc in _MANIFEST_LOCATIONS if (root / loc).is_file()), None
+    )
+    if manifest_path is None:
+        return None
+    try:
+        manifest = PluginManifest.model_validate(
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+        )
+    except (json.JSONDecodeError, ValueError, OSError):
+        return None
+
+    declared = manifest.hooks
+    if declared is None:
+        return None
+    if isinstance(declared, str):
+        hooks_path = root / declared
+        if not hooks_path.is_file():
+            return None
+        try:
+            data: object = json.loads(hooks_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+    else:
+        data = declared
+
+    try:
+        return _HOOKS_ADAPTER.validate_python(data)
+    except ValidationError:
+        return None
+
+
+async def _run_command_hook(command: str, hook_input: Any) -> dict[str, Any]:
+    """Run one command hook and map its exit to a PreToolUse decision.
+
+    exit 0 -> allow (empty output, proceed); exit ``_DENY_EXIT_CODE`` -> deny with
+    the command's stderr as the reason; any other exit -> non-blocking error.
+    """
+
+    try:
+        payload = json.dumps(hook_input, default=str)
+    except (TypeError, ValueError):
+        payload = "{}"
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/bin/sh",
+            "-c",
+            command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(
+            proc.communicate(input=payload.encode("utf-8")), timeout=_HOOK_TIMEOUT_S
+        )
+    except (TimeoutError, OSError) as exc:
+        # A hook that cannot run is a non-blocking error: surface context but do
+        # not silently deny the tool (deploy-time validation already rejected
+        # malformed declarations).
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": f"bundle hook failed to run: {exc}",
+            }
+        }
+
+    if proc.returncode == _DENY_EXIT_CODE:
+        reason = err.decode("utf-8", "replace").strip() or "blocked by bundle PreToolUse hook"
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }
+    if proc.returncode not in (0, _DENY_EXIT_CODE):
+        context = err.decode("utf-8", "replace").strip() or out.decode("utf-8", "replace").strip()
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": f"bundle hook exited {proc.returncode}: {context}",
+            }
+        }
+    return {}
+
+
+def _make_callback(commands: list[str]) -> Any:
+    """Build one SDK hook callback that runs each command hook in order.
+
+    The first command to deny wins (short-circuits); otherwise the tool proceeds.
+    """
+
+    async def _callback(hook_input: Any, _tool_use_id: str | None, _ctx: Any) -> dict[str, Any]:
+        for command in commands:
+            result = await _run_command_hook(command, hook_input)
+            decision = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            if decision == "deny":
+                return result
+        return {}
+
+    return _callback
+
+
+def load_bundle_hooks(plugin_dir: str | None) -> dict[str, list[HookMatcher]] | None:
+    """Translate the bundle's PreToolUse hooks into SDK ``HookMatcher`` config.
+
+    Returns a ``{"PreToolUse": [HookMatcher, ...]}`` mapping for
+    ``ClaudeAgentOptions.hooks``, or ``None`` when the bundle declares no usable
+    PreToolUse command hooks. Non-command hook actions are skipped (only
+    ``type: "command"`` is executable here); other events are ignored for now.
+    """
+
+    parsed = _load_manifest_hooks(plugin_dir)
+    if not parsed:
+        return None
+
+    pre_tool_use = parsed.get("PreToolUse")
+    if not pre_tool_use:
+        return None
+
+    matchers: list[HookMatcher] = []
+    for entry in pre_tool_use:
+        commands = [
+            h.command
+            for h in entry.hooks
+            if h.type == "command" and h.command and h.command.strip()
+        ]
+        if not commands:
+            continue
+        matchers.append(HookMatcher(matcher=entry.matcher, hooks=[_make_callback(commands)]))
+
+    if not matchers:
+        return None
+    return {"PreToolUse": matchers}
