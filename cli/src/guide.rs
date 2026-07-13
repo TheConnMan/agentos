@@ -89,6 +89,13 @@ pub fn primer() -> Primer {
             },
             Rung {
                 tier: "skill",
+                command: "agentos skill check",
+                purpose: "Prove the bundle's MCP tools actually load -- offline, no credential. \
+                          A green --fake-model does NOT cover this (the fake model never calls \
+                          MCP tools).",
+            },
+            Rung {
+                tier: "skill",
                 command: "agentos skill eval",
                 purpose: "Run evals/cases.json in-process. This is the promotion gate; it must be green.",
             },
@@ -168,7 +175,7 @@ pub fn primer() -> Primer {
             },
             Landmine {
                 title: "MCP servers must be inline objects in .mcp.json",
-                detail: "A string-pointer declaration silently fails to load; use the bare inline object form.",
+                detail: "A string-pointer declaration silently fails to load; use the bare inline object form. Run `agentos skill check` to catch this offline before deploy.",
             },
             Landmine {
                 title: "In-cluster sandboxes need dnsPolicy ClusterFirst",
@@ -195,6 +202,10 @@ pub fn primer() -> Primer {
             Recovery {
                 symptom: "\"(no response)\" or an empty reply",
                 fix: "You are on the fake model (--fake-model, or a sealed install). Provide a credential to go live.",
+            },
+            Recovery {
+                symptom: "the agent answers but never calls your MCP tools",
+                fix: "Run `agentos skill check` -- a RED verdict names the server that failed to load and how to fix the declaration.",
             },
             Recovery {
                 symptom: "a command \"does not exist\"",

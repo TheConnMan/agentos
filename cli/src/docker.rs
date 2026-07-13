@@ -33,6 +33,41 @@ pub struct StartSpec {
     pub passthrough_env: Vec<String>,
 }
 
+/// Everything `docker run` needs for a one shot offline MCP load check.
+#[derive(Debug, Clone)]
+pub struct CheckSpec {
+    pub image: String,
+    pub plugin_dir: String,
+    pub timeout_s: u64,
+}
+
+impl CheckSpec {
+    /// The one shot check container argv (after the `docker` executable).
+    pub fn run_args(&self) -> Vec<String> {
+        vec![
+            "run".into(),
+            "--rm".into(),
+            // Offline contract: the check must never reach the network. A bundle
+            // with a remote (`url:`) MCP server, or a stdio server that phones
+            // home at startup, must fail (red) rather than pass by connecting
+            // out. `--network none` is empirically verified NOT to break the
+            // legitimate in-bundle stdio-server case.
+            "--network".into(),
+            "none".into(),
+            "-v".into(),
+            format!("{}:/plugin:ro", self.plugin_dir),
+            "-e".into(),
+            "AGENTOS_PLUGIN_DIR=/plugin".into(),
+            "-e".into(),
+            format!("AGENTOS_CHECK_TIMEOUT_S={}", self.timeout_s),
+            self.image.clone(),
+            "python".into(),
+            "-m".into(),
+            "agentos_runner.check".into(),
+        ]
+    }
+}
+
 impl StartSpec {
     /// The `docker run` argument vector (after the `docker` executable).
     pub fn run_args(&self) -> Vec<String> {
@@ -87,20 +122,34 @@ impl StartSpec {
 
 /// Run a docker subcommand, returning trimmed stdout; stderr on failure.
 pub async fn docker(args: &[String]) -> Result<String> {
+    let (status, stdout, stderr) = docker_capture(args).await?;
+    if !status.success() {
+        bail!(
+            "docker {} failed ({}): {}",
+            args.first().map(String::as_str).unwrap_or(""),
+            status,
+            stderr
+        );
+    }
+    Ok(stdout)
+}
+
+/// Run a docker subcommand and capture its status plus both output streams.
+///
+/// A check container's nonzero verdict is data, so unlike [`docker`] this does
+/// not turn an unsuccessful child exit into an error. Failure to invoke Docker
+/// remains an error.
+pub async fn docker_capture(args: &[String]) -> Result<(std::process::ExitStatus, String, String)> {
     let output = Command::new("docker")
         .args(args)
         .output()
         .await
         .context("failed to invoke docker; is Docker installed and on PATH?")?;
-    if !output.status.success() {
-        bail!(
-            "docker {} failed ({}): {}",
-            args.first().map(String::as_str).unwrap_or(""),
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok((
+        output.status,
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ))
 }
 
 /// Create a docker network. Returns `Ok(true)` when this call created it and

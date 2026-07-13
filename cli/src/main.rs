@@ -186,6 +186,18 @@ enum SkillAction {
         )]
         local_model: Option<String>,
     },
+    /// Check that the bundle's MCP servers load in an offline runner container.
+    Check {
+        /// Plugin bundle directory.
+        #[arg(long, default_value = ".")]
+        plugin_dir: PathBuf,
+        /// Runner image. Defaults to the same image resolution as `skill up`.
+        #[arg(long)]
+        image: Option<String>,
+        /// Check deadline in seconds, forwarded to the runner container.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
     /// Stop and remove the local runner container.
     Down,
     /// Show the local runner's session status.
@@ -763,6 +775,18 @@ async fn run(command: Command) -> Result<()> {
                     local_model,
                 })
                 .await
+            }
+            SkillAction::Check {
+                plugin_dir,
+                image,
+                timeout,
+            } => {
+                let image = artifacts::resolve_image(
+                    image.as_deref(),
+                    artifacts::Channel::current(),
+                    artifacts::version(),
+                );
+                commands::check(plugin_dir, image, timeout).await
             }
             SkillAction::Down => commands::stop().await,
             SkillAction::Status { url } => commands::status(url).await,

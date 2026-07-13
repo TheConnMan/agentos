@@ -76,6 +76,34 @@ curl -sN -X POST http://localhost:18080/v1/event -H 'Content-Type: application/j
   -d '{"kind":"event","type":"message","text":"hi","user":"U","ts":"1.0"}'
 ```
 
+## MCP load check (offline, credential-free)
+
+`python -m agentos_runner.check` is a separate, one-shot entrypoint (issue #337)
+that answers "do this bundle's MCP tools actually load?" without a model turn. It
+validates the bundle via the frozen `load_plugins`, then builds a real
+`ClaudeSDKClient` and `connect()`s (no query), polls `get_mcp_status()` until the
+bundle's own servers settle, and compares the **declared** servers against the
+plugin-owned **registered** ones. It reads `AGENTOS_PLUGIN_DIR` (and optional
+`AGENTOS_CHECK_TIMEOUT_S`, default 30); it forwards and reads **no** credential.
+
+```bash
+AGENTOS_PLUGIN_DIR=/plugin python -m agentos_runner.check
+```
+
+It prints exactly one JSON object to **stdout** (all logging goes to **stderr**)
+and exits with the verdict code:
+
+- `0` green: every declared MCP server registered connected with at least one tool
+- `1` red: a declared server failed to load (never registered, connected with zero
+  tools, `failed`/`needs-auth`/`pending` at the deadline, or the init timed out)
+- `2` invalid_bundle: the bundle fails `plugin_format` validation or the plugin dir
+  is missing
+
+The JSON shape (frozen contract) is `{check, version, plugin_dir, declared,
+registered, matches, verdict, reasons, hints}`; `reasons` is non-empty iff the
+verdict is not green, and the #336 string-pointer fingerprint surfaces in `hints`.
+The `agentos skill check` CLI verb wraps this as a one-shot container.
+
 ## Verify (from repo root)
 
 ```bash

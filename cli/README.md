@@ -15,7 +15,7 @@ disk and targets no environment.
 
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
-| `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
+| `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `check` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
 | `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
 | `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `deploy` `kill` `resume` `budget` `delete` | Operate and drive a deployed cluster release, and control its agents' lifecycle. |
 
@@ -116,6 +116,7 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 | Command | What it does |
 |---|---|
 | `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). |
+| `agentos skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
 | `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
 | `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |
 | `agentos skill status` | Show the local runner's session status. |

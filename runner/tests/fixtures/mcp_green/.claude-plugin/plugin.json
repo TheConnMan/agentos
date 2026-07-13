@@ -1,0 +1,11 @@
+{
+  "name": "mcp-green",
+  "version": "0.1.0",
+  "description": "Valid bundle: one inline stdio MCP server that registers a single tool.",
+  "mcpServers": {
+    "green-probe": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/probe_server.py"]
+    }
+  }
+}
