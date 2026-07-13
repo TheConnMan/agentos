@@ -402,8 +402,10 @@ enum ClusterAction {
     /// By default it puts the UI and Langfuse on node ports for tailnet/LAN
     /// access; pass --no-expose to keep them ClusterIP-only. Set
     /// AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) to install with the real
-    /// model and egress opened to the provider; without it the install is sealed
-    /// (fake model, canned replies) and re-running with the env var set goes live.
+    /// model; without it the install is sealed (fake model, canned replies). A
+    /// real model is still unreachable behind the fail-closed sandbox until you
+    /// open its egress with --allow-egress-host <provider> (or --allow-web-egress
+    /// <CIDR> for a raw range).
     Up {
         /// Kubernetes namespace.
         #[arg(long, default_value = "agentos")]
@@ -429,8 +431,13 @@ enum ClusterAction {
             conflicts_with = "fake_model"
         )]
         local_model: Option<String>,
+        /// Open runner egress to a named model provider's API host(s), resolved to
+        /// narrow host routes at install time (repeatable). One of: anthropic,
+        /// openrouter. For a raw CIDR, use --allow-web-egress.
+        #[arg(long = "allow-egress-host", value_name = "PROVIDER")]
+        allow_egress_host: Vec<String>,
         /// Open runner egress to a declared destination for skill web access,
-        /// repeatable CIDR, TCP 443. Additive to the model egress; omit to stay
+        /// repeatable CIDR, TCP 443. Additive to the provider egress; omit to stay
         /// fully sealed.
         #[arg(long = "allow-web-egress", value_name = "CIDR")]
         allow_web_egress: Vec<String>,
@@ -975,6 +982,7 @@ async fn run(command: Command) -> Result<()> {
                 no_expose,
                 fake_model,
                 local_model,
+                allow_egress_host,
                 allow_web_egress,
                 set,
                 dev,
@@ -1005,6 +1013,11 @@ async fn run(command: Command) -> Result<()> {
                     chart,
                     no_expose,
                     set,
+                    allow_egress_host,
+                    // Populated by ops::up (resolve named providers to host
+                    // routes on a live run); empty here so the pure builder and
+                    // --dry-run start clean.
+                    resolved_egress_cidrs: vec![],
                     allow_web_egress,
                     fake_model,
                     credentials,
