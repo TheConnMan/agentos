@@ -11,7 +11,7 @@ template paves.
 
 ```
 text-stats-engine/
-  .claude-plugin/plugin.json   manifest; points mcpServers at .mcp.json
+  .claude-plugin/plugin.json   bundle manifest; the local .mcp.json is auto-loaded
   .mcp.json                    declares the stdio server (command + args)
   scripts/engine_server.py     the engine: a stdlib-only stdio MCP server
   skills/text-stats/SKILL.md   a skill that drives the engine's tools
@@ -25,11 +25,11 @@ for a tiny deterministic text-statistics engine (`word_count`, `char_count`,
 `reading_time_minutes`).
 
 The `.mcp.json` declaration is what makes it "in-bundle": the `command` +
-`args` point at a script *inside the bundle*, resolved relative to the bundle
-root, so the harness spawns it as a child process. This validates against
-`plugin_format.validate_bundle` unchanged — the format already accepts stdio MCP
-servers (the `McpServer` model), which is exactly the surface this template
-exploits.
+`args` point at a script *inside the bundle*, `${CLAUDE_PLUGIN_ROOT}`-qualified
+so the harness spawns it as a child process regardless of cwd. This validates
+against `plugin_format.validate_bundle` unchanged — the format already accepts
+stdio MCP servers (the `McpServer` model), which is exactly the surface this
+template exploits.
 
 ## Run it end-to-end
 

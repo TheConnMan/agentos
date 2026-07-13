@@ -3,6 +3,5 @@
   "version": "0.1.0",
   "description": "Template bundle: an engine packaged as an in-bundle stdio MCP server.",
   "author": { "name": "CurieTech" },
-  "keywords": ["template", "mcp", "stdio", "engine"],
-  "mcpServers": ".mcp.json"
+  "keywords": ["template", "mcp", "stdio", "engine"]
 }
