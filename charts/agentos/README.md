@@ -442,17 +442,23 @@ to install only the control plane + backing stores without the runner substrate.
   on `pods`, `services`, and `persistentvolumeclaims` (it places sandbox pods
   and their Services), full control of the `sandboxes` / `sandboxclaims` /
   `sandboxtemplates` / `sandboxwarmpools` custom resources, `get/patch/update`
-  on those four CRDs by name, plus `leases` (leader-election) and `events`. Its NetworkPolicy permission has been
-  **de-scoped from cluster-wide to the release namespace only** (issue #66):
-  the vendored manifest drops the `networkpolicies` rule from its
-  `agent-sandbox-controller-extensions` ClusterRole, and a namespaced
-  `Role`/`RoleBinding` (`agent-sandbox-controller-networkpolicies`, rendered by
-  `templates/agent-sandbox.yaml`) re-grants it in `.Release.Namespace` only.
-  This confines the blast radius: a compromised controller (or a leaked SA
-  token) can no longer delete the fail-closed egress NetworkPolicy that IS
-  Rail 1's containment in any *other* namespace. It is not eliminated for this
-  release's own namespace, where the controller legitimately manages those
-  policies and so still holds delete on them. The Deployment is also hardened
+  on those four CRDs by name, plus `leases` (leader-election) and `events`. Its NetworkPolicy permission is
+  **split by verb along the read/mutate line** (issue #350, ADR-0023): the
+  vendored manifest drops the `networkpolicies` rule from its
+  `agent-sandbox-controller-extensions` ClusterRole, and `templates/agent-sandbox.yaml`
+  replaces it with (1) a cluster-scoped **read-only** ClusterRole/ClusterRoleBinding
+  (`agent-sandbox-controller-networkpolicies-read`) granting only
+  `get/list/watch` cluster-wide, and (2) a namespaced
+  `Role`/`RoleBinding` (`agent-sandbox-controller-networkpolicies`) granting the
+  mutating verbs `create/delete/patch/update` (plus `get`) in `.Release.Namespace`
+  only. The cluster-wide read is required because the upstream controller's
+  NetworkPolicy informer LISTs/WATCHes at cluster scope; without it the controller
+  crash-loops before any `SandboxClaim` binds (#350). #66's guarantee still holds
+  in its load-bearing form -- **no cluster-wide mutate**: a compromised controller
+  (or a leaked SA token) can no longer delete the fail-closed egress NetworkPolicy
+  that IS Rail 1's containment in any *other* namespace, because delete/patch are
+  confined to this release's own namespace, where the controller legitimately
+  manages those policies. The Deployment is also hardened
   with a non-root
   (uid 65532) / read-only-rootfs / drop-ALL-caps / RuntimeDefault-seccomp
   securityContext. On a shared multi-tenant cluster, prefer running the

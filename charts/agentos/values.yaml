@@ -604,6 +604,23 @@ preflights:
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 250m, memory: 128Mi }
+  # (c) Controller-ready install-time gate. The vendored agent-sandbox controller
+  # runs a CLUSTER-scope NetworkPolicy informer; if its RBAC cannot satisfy that
+  # cluster LIST the manager crash-loops and no SandboxClaim ever binds (issue
+  # #350). This post-install/upgrade hook Job fails the Helm operation unless the
+  # controller reaches "Starting workers" (all informer caches synced), so an RBAC
+  # regression fails at install, not at first turn. Gated also on
+  # agentSandbox.controller.deploy.
+  controllerReady:
+    enabled: true
+    image: alpine/k8s:1.31.2
+    # Max seconds to wait for the controller to become Available and log
+    # "Starting workers". Sized for a fresh install; an upgrade over a
+    # crash-looping controller may need a manual pod delete + `helm test`.
+    timeoutSeconds: 180
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
 
 # ---------------------------------------------------------------------------
 # Agent Sandbox substrate. The runner SandboxTemplate + SandboxWarmPool

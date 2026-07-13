@@ -20,15 +20,54 @@ the worker claims from, plus (optionally) the vendored upstream controller.
 {{ .Files.Get "files/agent-sandbox/controller.yaml" }}
 ---
 {{/*
-Scoped replacement (#66) for the networkpolicies grant removed from the vendored
-controller's cluster-wide agent-sandbox-controller-extensions ClusterRole. The
-controller manages one NetworkPolicy per Sandbox, and this chart creates all
-Sandboxes in the release namespace (the worker's AGENTOS_NAMESPACE is
-.Release.Namespace), so a namespaced Role confines that power here: a compromised
-controller SA cannot delete the fail-closed egress policy (Rail 1) in any other
-namespace. Cross-namespace binding is intentional -- the SA lives in
-agent-sandbox-system, the NetworkPolicies it manages live in this namespace.
+NetworkPolicy RBAC for the vendored controller, split by verb along the
+read/mutate line (issue #350, ADR-0023). The upstream v0.5.0 controller runs a
+CLUSTER-scope NetworkPolicy informer (upstream `Owns(&networkingv1.NetworkPolicy{})`
+with no cache namespace scoping and no `--namespace` flag), so it needs
+cluster-wide get/list/watch to sync -- a namespaced Role alone can never satisfy a
+cluster-scope LIST, so the informer cache never syncs, the manager aborts, and the
+controller crash-loops (no SandboxClaim ever binds -- issue #350). The read-only
+ClusterRole below is that minimum, and grants nothing more.
+
+#66's guarantee is preserved in its load-bearing form -- NO cluster-wide mutate:
+create/delete/patch/update stay confined to the namespaced Role in
+.Release.Namespace (this chart creates every Sandbox there, the worker's
+AGENTOS_NAMESPACE is .Release.Namespace), so a compromised controller SA still
+cannot delete the fail-closed egress policy (Rail 1) in any other namespace.
+Cross-namespace binding is intentional -- the SA lives in agent-sandbox-system,
+the NetworkPolicies it manages live in this namespace.
 */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-sandbox-controller-networkpolicies-read
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-sandbox-controller-networkpolicies-read
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+roleRef:
+  kind: ClusterRole
+  name: agent-sandbox-controller-networkpolicies-read
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -45,10 +84,8 @@ rules:
   - create
   - delete
   - get
-  - list
   - patch
   - update
-  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

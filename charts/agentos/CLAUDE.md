@@ -24,13 +24,17 @@ component and rail detail in `charts/agentos/README.md`.
   empty by default; an unset allowlist must never mean allow-all. If you add
   a new egress destination the runner needs, it goes into this allowlist
   explicitly -- never widen the default-deny baseline itself.
-- **Both preflights are mandatory Helm hooks, not advisory scripts.** The
-  CPU-AVX/ClickHouse-pin check (`preflights.avxCheck`) and the
-  NetworkPolicy-enforcement probe (`preflights.networkPolicyProbe`) block a
-  broken install. Do not make either skippable by default, and do not add a
-  new cluster-dependent assumption (a CNI feature, a kernel feature) without
-  a matching preflight -- an assumption that silently fails on a customer
-  cluster is exactly the failure mode these exist to prevent.
+- **The preflights are mandatory Helm hooks, not advisory scripts.** The
+  CPU-AVX/ClickHouse-pin check (`preflights.avxCheck`), the
+  NetworkPolicy-enforcement probe (`preflights.networkPolicyProbe`), and the
+  controller-ready gate (`preflights.controllerReady`, which fails the install
+  if the vendored agent-sandbox controller cannot sync its cluster-scope
+  NetworkPolicy informer -- issue #350) block a broken install. Do not make
+  any of them skippable by default, and do not add a new cluster-dependent
+  assumption (a CNI feature, a kernel feature, an RBAC grant the controller
+  needs to start) without a matching preflight -- an assumption that silently
+  fails on a customer cluster is exactly the failure mode these exist to
+  prevent.
 - **gVisor needs `runsc` on the node; the chart cannot install it.** On a
   cluster without it, use the ready-made overlay
   `-f charts/agentos/values-e2e-nogvisor.yaml` (sets `runtimeClassName=""` and
