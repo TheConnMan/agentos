@@ -5,6 +5,7 @@ export { Button, type ButtonVariant } from "./Button";
 export { Card } from "./Card";
 export { CopyButton } from "./CopyButton";
 export { CliHint } from "./CliHint";
+export { WIRED_ACTIONS, PARITY_TRACKING_ISSUE, type WiredAction, type CliMapping } from "./parity";
 export { cliCommand, type ActionId, type CliContext } from "./cliCommand";
 export { SectionTitle } from "./SectionTitle";
 export { EmptyState } from "./EmptyState";

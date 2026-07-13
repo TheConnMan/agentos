@@ -159,6 +159,10 @@ just that unit tests pass.
   non-interactive (a `--yes`/`--force` path, never blocking on stdin), and errors
   as `{"error","fix"}` recovery instructions. Exit-code scheme: see
   `cli/README.md`.
+- **Console/CLI parity is a two-sided invariant (epic #145):** any CLI
+  command-surface change regenerates the committed manifest (`cli/CLAUDE.md`),
+  and every wired console action maps to a real command or an explicit
+  `noCliEquivalent` (`apps/ui/CLAUDE.md`). Keep both sides in the same change.
 
 ## Playwright: two modes
 
