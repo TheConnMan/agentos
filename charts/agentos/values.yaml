@@ -108,10 +108,17 @@ langfuse:
     # image runs as a non-root uid and needs no Linux capabilities, so all are
     # dropped and privilege escalation is denied. readOnlyRootFilesystem stays
     # false -- the Next.js server writes to its rootfs (.next cache, /tmp).
+    # The numeric runAsUser is required, not optional (issue #351): runAsNonRoot:
+    # true alone is unverifiable because both Langfuse images declare a NAMED user
+    # (nextjs for web, expressjs for worker), and the kubelet refuses to create a
+    # container whose non-root uid it cannot confirm, failing with
+    # CreateContainerConfigError. Both named users resolve to uid 1001, so the
+    # numeric uid is pinned here.
     # To opt out, override the fields (e.g. runAsNonRoot: false for a fork whose
     # image must run as root), or set the whole block to null to drop it.
     containerSecurityContext:
       runAsNonRoot: true
+      runAsUser: 1001
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: false
       capabilities:
@@ -123,9 +130,11 @@ langfuse:
     resources:
       requests: { cpu: 150m, memory: 384Mi }
       limits: { cpu: "1", memory: 1Gi }
-    # See langfuse.web.containerSecurityContext above.
+    # See langfuse.web.containerSecurityContext above. The worker image's named
+    # user is expressjs (also uid 1001), so it shares the same numeric runAsUser.
     containerSecurityContext:
       runAsNonRoot: true
+      runAsUser: 1001
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: false
       capabilities:

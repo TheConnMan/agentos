@@ -98,6 +98,14 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/litellm-sidecar-assertions.sh
 
+      # Prove the Langfuse web+worker containers carry a numeric runAsUser
+      # alongside runAsNonRoot (issue #351) so the kubelet can verify non-root
+      # and the pods actually start on an enforcing cluster.
+      - name: helm render assertions (langfuse runAsUser)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/langfuse-runasuser-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail
