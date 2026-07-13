@@ -17,6 +17,15 @@ from .models import (
 from .recorder import SCORE_NAME, IngestionError, LangfuseEvalRecorder
 from .run import load_suite, run_eval_suite
 from .runner import EvalRunner
+from .scorer import (
+    GraderScorer,
+    Scorer,
+    ScoreResult,
+    TrajectoryMode,
+    TrajectoryScorer,
+    TrajectorySpec,
+    match_trajectory,
+)
 from .stream import (
     EvalReport,
     EvalReporter,
@@ -36,11 +45,18 @@ __all__ = [
     "EvalStreamConsumer",
     "EvalSuite",
     "EvalWorkItem",
-    "load_suite_from_bundle",
     "Grader",
     "GraderKind",
+    "GraderScorer",
     "IngestionError",
     "LangfuseEvalRecorder",
+    "Scorer",
+    "ScoreResult",
+    "TrajectoryMode",
+    "TrajectoryScorer",
+    "TrajectorySpec",
     "load_suite",
+    "load_suite_from_bundle",
+    "match_trajectory",
     "run_eval_suite",
 ]

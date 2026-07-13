@@ -20,7 +20,7 @@ from pathlib import Path
 
 import boto3
 import pytest
-from aci_protocol import Final, SessionStatus
+from aci_protocol import Final, SessionStatus, ToolNote
 from agentos_worker.bundle_store import BundleStore
 from agentos_worker.config import WorkerConfig
 from agentos_worker.eval import EvalSuite
@@ -69,6 +69,10 @@ class FakeEvalRunner:
         # Inputs whose turn ends idle-awaiting-input (an incomplete turn) while
         # still carrying text in responses[input].
         self.idle_inputs: set[str] = set()
+        # Per-input tool-call trajectory: the ordered tool names emitted as
+        # tool_note frames before the final, so scorer-seam tests can drive the
+        # tool-call sequence a turn produced.
+        self.tool_calls: dict[str, list[str]] = {}
         self.default_output = ""
         self.seen: list[dict[str, str]] = []
 
@@ -90,6 +94,9 @@ class FakeEvalRunner:
             status = SessionStatus.DONE
         resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})
         await resp.prepare(request)
+        for tool in self.tool_calls.get(text, []):
+            note = ToolNote(text=f"calling {tool}", tool=tool)
+            await resp.write((note.model_dump_json() + "\n").encode("utf-8"))
         frame = Final(text=output, status=status)
         await resp.write((frame.model_dump_json() + "\n").encode("utf-8"))
         await resp.write_eof()
