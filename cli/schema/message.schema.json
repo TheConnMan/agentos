@@ -1,13 +1,45 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "agentos local|cluster message --json",
-  "description": "The agent-facing payload of `agentos local message --json` and `agentos cluster message --json`: the model's final reply text (null when the worker finished the turn without editing the placeholder), the thread the turn ran under, and whether a reply was captured. All keys are CLI-owned and locked.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["reply", "thread", "finalized"],
-  "properties": {
-    "reply": { "type": ["string", "null"] },
-    "thread": { "type": "string" },
-    "finalized": { "type": "boolean" }
-  }
+  "description": "The agent-facing payload of `agentos local message --json` and `agentos cluster message --json`. Exactly one of three terminal-state shapes is emitted per invocation: a reply object (the model's final reply text, the thread the turn ran under, and whether a reply was captured), a timeout object (no reply captured before the deadline), or a dry-run descriptor (what a real run would enqueue). All keys are CLI-owned and locked.",
+  "oneOf": [
+    {
+      "title": "reply",
+      "description": "A finished turn: `reply` is the model's final reply text (null when the worker finished the turn without editing the placeholder), `thread` is the thread the turn ran under, `finalized` is whether a reply was captured.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reply", "thread", "finalized"],
+      "properties": {
+        "reply": { "type": ["string", "null"] },
+        "thread": { "type": "string" },
+        "finalized": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "timeout",
+      "description": "The turn did not finalize before the deadline: `reply` is null, `finalized` is false, and `timed_out` marks the terminal state (exit code 3, Transient).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reply", "finalized", "timed_out"],
+      "properties": {
+        "reply": { "type": "null" },
+        "finalized": { "const": false },
+        "timed_out": { "const": true }
+      }
+    },
+    {
+      "title": "dry-run",
+      "description": "A `--dry-run` preview: `target` is `local` or `cluster`, `stream` is the Valkey stream, `channel` is the resolved channel (null when it would be taken from the sole deployed agent), `reply_endpoint` is the stub URL a real run would advertise.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dry_run", "target", "stream", "channel", "reply_endpoint"],
+      "properties": {
+        "dry_run": { "const": true },
+        "target": { "enum": ["local", "cluster"] },
+        "stream": { "type": "string" },
+        "channel": { "type": ["string", "null"] },
+        "reply_endpoint": { "type": "string" }
+      }
+    }
+  ]
 }

@@ -307,6 +307,40 @@ pub fn message_reply_json(thread: &str, reply: Option<&str>) -> serde_json::Valu
     })
 }
 
+/// The machine-readable object for a `local`/`cluster message --json` **timeout**
+/// (issue #354): no reply was captured before the deadline, so `reply` is null,
+/// `finalized` is false, and `timed_out` marks the terminal state distinctly from
+/// a no-edit completion. Emitted just before the transient exit so a `--json`
+/// caller gets a structured line, not empty stdout. Pure so it stays
+/// contract-testable against `cli/schema/message.schema.json`.
+pub fn message_timeout_json() -> serde_json::Value {
+    serde_json::json!({
+        "reply": serde_json::Value::Null,
+        "finalized": false,
+        "timed_out": true,
+    })
+}
+
+/// The machine-readable descriptor for `local`/`cluster message --json --dry-run`
+/// (issue #354): what a real run would enqueue, without touching the network.
+/// `target` is `"local"` or `"cluster"`, `channel` is null when it would be
+/// resolved from the sole deployed agent. Pure so it stays contract-testable
+/// against `cli/schema/message.schema.json`.
+pub fn message_dry_run_json(
+    target: &str,
+    stream: &str,
+    channel: Option<&str>,
+    reply_endpoint: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "dry_run": true,
+        "target": target,
+        "stream": stream,
+        "channel": channel,
+        "reply_endpoint": reply_endpoint,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Effectful helpers
 // ---------------------------------------------------------------------------
@@ -402,11 +436,19 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     let api_base = local_api_base(opts.api_url.as_deref());
 
     if opts.dry_run {
+        let reply_endpoint = format!("http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/");
+        if ui.json() {
+            ui.emit_json(&message_dry_run_json(
+                "local",
+                &opts.stream,
+                opts.channel.as_deref(),
+                &reply_endpoint,
+            ));
+            return Ok(());
+        }
         ui.payload_plain("local mode (compose stack; no kubectl/helm)");
         ui.payload_plain(&format!("enqueue onto redis {valkey_url}"));
-        ui.payload_plain(&format!(
-            "stub advertised at http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/"
-        ));
+        ui.payload_plain(&format!("stub advertised at {reply_endpoint}"));
         match opts.channel.as_deref() {
             Some(channel) => ui.payload_plain(&format!("channel {channel}")),
             None => ui.payload_plain(&format!(
@@ -506,9 +548,13 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
-            ui.note("stream diagnostics:");
-            let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-            ui.note(&diag);
+            if ui.json() {
+                ui.emit_json(&message_timeout_json());
+            } else {
+                ui.note("stream diagnostics:");
+                let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
+                ui.note(&diag);
+            }
             // A timeout is retryable (the worker may still be working, or a
             // transient stall), so it maps to the transient exit code, not failure.
             std::process::exit(crate::exit::ExitClass::Transient.code());
@@ -527,6 +573,15 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             .listen_host
             .clone()
             .unwrap_or_else(|| "<auto-detected-local-ip>".to_string());
+        if ui.json() {
+            ui.emit_json(&message_dry_run_json(
+                "cluster",
+                &opts.stream,
+                opts.channel.as_deref(),
+                &advertised_url(&host, opts.listen_port),
+            ));
+            return Ok(());
+        }
         for line in dry_run_lines(&opts, &host) {
             ui.payload_plain(&line);
         }
@@ -655,9 +710,13 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
-            ui.note("stream diagnostics:");
-            let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-            ui.note(&diag);
+            if ui.json() {
+                ui.emit_json(&message_timeout_json());
+            } else {
+                ui.note("stream diagnostics:");
+                let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
+                ui.note(&diag);
+            }
             // A timeout is retryable (the worker may still be working, or a
             // transient stall), so it maps to the transient exit code, not failure.
             std::process::exit(crate::exit::ExitClass::Transient.code());
@@ -861,5 +920,39 @@ mod tests {
             lines.iter().any(|l| l.contains("slack_channel")),
             "channel placeholder when omitted: {lines:?}"
         );
+    }
+
+    #[test]
+    fn message_timeout_json_marks_the_terminal_state() {
+        let v = message_timeout_json();
+        assert!(v["reply"].is_null(), "{v}");
+        assert_eq!(v["finalized"], serde_json::json!(false));
+        assert_eq!(v["timed_out"], serde_json::json!(true));
+        // The reply builder's key set is a different shape (no timed_out), so a
+        // consumer can discriminate the two terminal states.
+        assert!(v.get("thread").is_none(), "timeout carries no thread: {v}");
+    }
+
+    #[test]
+    fn message_dry_run_json_carries_the_planned_action() {
+        // Explicit channel passes through verbatim.
+        let v = message_dry_run_json(
+            "local",
+            "agentos:turns",
+            Some("C123"),
+            "http://localhost:8155/api/",
+        );
+        assert_eq!(v["dry_run"], serde_json::json!(true));
+        assert_eq!(v["target"], serde_json::json!("local"));
+        assert_eq!(v["stream"], serde_json::json!("agentos:turns"));
+        assert_eq!(v["channel"], serde_json::json!("C123"));
+        assert_eq!(
+            v["reply_endpoint"],
+            serde_json::json!("http://localhost:8155/api/")
+        );
+        // Omitted channel is JSON null, not a placeholder string.
+        let v = message_dry_run_json("cluster", "s", None, "http://10.1.2.3:8155/api/");
+        assert!(v["channel"].is_null(), "{v}");
+        assert_eq!(v["target"], serde_json::json!("cluster"));
     }
 }
