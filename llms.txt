@@ -12,6 +12,8 @@ The point of the three targets (`skill` in-process, `local` via docker compose, 
 
 ## The parity ladder (skill -> local -> cluster)
 
+- [README.md#why-did-my-agent-work-locally-but-break-once-deployed](README.md#why-did-my-agent-work-locally-but-break-once-deployed): the parity thesis, why the same bundle on a heavier substrate is the fix.
+- [README.md#how-do-i-test-an-agent-the-same-way-locally-and-on-kubernetes](README.md#how-do-i-test-an-agent-the-same-way-locally-and-on-kubernetes): running the same `evals/cases.json` at every tier so a divergence is signal.
 - [README.md#which-target-do-i-want](README.md#which-target-do-i-want): the target table, which of skill/local/cluster answers your question.
 - [cli/README.md](cli/README.md): the full `agentos` command reference across all three targets.
 - [docs/operations.md](docs/operations.md): the cluster runbook (credential model, Slack connect, zero-Slack message flow).

@@ -46,3 +46,6 @@ build/
 # OS / editor
 .DS_Store
 *.swp
+
+# generated CLI manifest module (apps/ui codegen)
+apps/ui/src/generated/
