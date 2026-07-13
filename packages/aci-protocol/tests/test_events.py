@@ -1,6 +1,7 @@
 import pytest
 from aci_protocol import (
     PROTOCOL_VERSION,
+    ApprovalRequest,
     ErrorEvent,
     Event,
     Final,
@@ -75,3 +76,40 @@ def test_models_reject_unknown_fields() -> None:
 def test_session_status_wire_values() -> None:
     assert SessionStatus.IDLE_AWAITING_INPUT.value == "idle-awaiting-input"
     assert SessionStatus.CLASSIFIED_FAILURE.value == "classified-failure"
+    assert SessionStatus.AWAITING_APPROVAL.value == "awaiting-approval"
+
+
+def test_final_defaults_optional_approval_fields_to_none() -> None:
+    final = Final(text="ok")
+    assert final.session_id is None
+    assert final.approval_request is None
+
+
+def test_awaiting_approval_final_round_trips_through_the_union() -> None:
+    # A paused final carries the gated tool call so the platform builds the
+    # durable record without reconstructing it from a prior tool_note.
+    final = Final(
+        text="paused",
+        status=SessionStatus.AWAITING_APPROVAL,
+        session_id="sess-1",
+        approval_request=ApprovalRequest(
+            tool="apply_discount",
+            tool_use_id="toolu_01",
+            input_digest="sha256:beef",
+            prompt="Approve 30% discount?",
+        ),
+    )
+    decoded = _OUTBOUND.validate_python(final.model_dump(mode="json"))
+    assert isinstance(decoded, Final)
+    assert decoded.status is SessionStatus.AWAITING_APPROVAL
+    assert decoded.session_id == "sess-1"
+    assert decoded.approval_request is not None
+    assert decoded.approval_request.tool == "apply_discount"
+    assert decoded.approval_request.tool_use_id == "toolu_01"
+
+
+def test_approval_request_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        ApprovalRequest(
+            tool="t", tool_use_id="u", input_digest="d", prompt="p", extra=1  # type: ignore[call-arg]
+        )

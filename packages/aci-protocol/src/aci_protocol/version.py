@@ -13,6 +13,6 @@ generated TypeScript, not just by the NDJSON decoder. Keep the two in lockstep;
 
 from typing import Final, Literal
 
-PROTOCOL_VERSION: Final = "0.1.0"
+PROTOCOL_VERSION: Final = "0.2.0"
 
-ProtocolVersionLiteral = Literal["0.1.0"]
+ProtocolVersionLiteral = Literal["0.2.0"]

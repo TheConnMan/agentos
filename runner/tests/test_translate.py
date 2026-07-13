@@ -57,6 +57,19 @@ def test_result_success_is_final_done() -> None:
     assert [e.type for e in events] == ["final"]
     assert events[0].status == SessionStatus.DONE
     assert events[0].text == "answer"
+    # The SDK session id is surfaced on the final so the worker can rehydrate the
+    # exact session on resume (ADR-0003) rather than guessing a history ref.
+    assert events[0].session_id == "s"
+
+
+def test_result_error_final_carries_session_id() -> None:
+    msg = ResultMessage(
+        subtype="error_during_execution", duration_ms=1, duration_api_ms=1, is_error=True,
+        num_turns=1, session_id="s", result="boom",
+    )
+    events = _translate(msg)
+    assert events[-1].type == "final"
+    assert events[-1].session_id == "s"
 
 
 def test_reasoning_model_empty_result_falls_back_to_assistant_text() -> None:

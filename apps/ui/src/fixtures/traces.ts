@@ -50,14 +50,14 @@ export function traceSpans(t: TraceSummary): TraceSpan[] {
       detail: "deal-desk · skill.md",
       offset: "+12ms",
       kind: "skill",
-      event: { type: "tool_note", version: "0.1.0", text: "matched skill deal-desk", tool: "router" },
+      event: { type: "tool_note", version: "0.2.0", text: "matched skill deal-desk", tool: "router" },
     },
     {
       label: "Tool call",
       detail: `salesforce.get_deal(id: ${dealId})`,
       offset: "+840ms",
       kind: "tool",
-      event: { type: "tool_note", version: "0.1.0", text: `salesforce.get_deal(id: ${dealId})`, tool: "salesforce.get_deal" },
+      event: { type: "tool_note", version: "0.2.0", text: `salesforce.get_deal(id: ${dealId})`, tool: "salesforce.get_deal" },
     },
     bad
       ? {
@@ -66,14 +66,14 @@ export function traceSpans(t: TraceSummary): TraceSpan[] {
           offset: "+1.8s",
           kind: "response",
           bad: true,
-          event: { type: "error", version: "0.1.0", message: "approver 'Dana' not found in policy.yaml", classification: "hallucinated-value" },
+          event: { type: "error", version: "0.2.0", message: "approver 'Dana' not found in policy.yaml", classification: "hallucinated-value" },
         }
       : {
           label: "Response",
           detail: "Verdict returned · routed to J. Whitfield",
           offset: "+2.1s",
           kind: "response",
-          event: { type: "final", version: "0.1.0", text: "Verdict returned · routed to J. Whitfield", status: "done" },
+          event: { type: "final", version: "0.2.0", text: "Verdict returned · routed to J. Whitfield", status: "done" },
         },
   ];
 }

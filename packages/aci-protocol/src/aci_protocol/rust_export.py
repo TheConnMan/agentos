@@ -18,6 +18,7 @@ from typing import Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel
 
 from .events import (
+    ApprovalRequest,
     ErrorEvent,
     Event,
     Final,
@@ -217,6 +218,8 @@ mod tests {
             version: PROTOCOL_VERSION.to_string(),
             text: "hi".to_string(),
             status: SessionStatus::Done,
+            session_id: None,
+            approval_request: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -244,7 +247,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields() {
-        let raw = r#"{"type":"final","version":"0.1.0","text":"x","status":"done","extra":1}"#;
+        let raw = r#"{"type":"final","version":"0.2.0","text":"x","status":"done","extra":1}"#;
         assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
     }
 }
@@ -272,6 +275,7 @@ def render_rust() -> str:
         _struct(SessionConfig),
         _struct(ReplyHandle),
         _struct(QueuedTurn),
+        _struct(ApprovalRequest),
         _tagged_enum("InboundMessage", "kind", (Event, Interrupt)),
         _tagged_enum(
             "OutboundEvent",

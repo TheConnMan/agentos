@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable
 from pydantic import BaseModel
 
 from .events import (
+    ApprovalRequest,
     ErrorEvent,
     Event,
     Final,
@@ -45,7 +46,18 @@ Producer = Callable[[Event | Interrupt], Iterable[str]]
 _OUTBOUND_SAMPLES: tuple[OutboundEventModel, ...] = (
     TextDelta(text="partial output"),
     ToolNote(text="calling a tool", tool="search"),
-    Final(text="final answer", status=SessionStatus.DONE),
+    Final(text="final answer", status=SessionStatus.DONE, session_id="sess-abc"),
+    Final(
+        text="paused for approval",
+        status=SessionStatus.AWAITING_APPROVAL,
+        session_id="sess-abc",
+        approval_request=ApprovalRequest(
+            tool="apply_discount",
+            tool_use_id="toolu_01",
+            input_digest="sha256:deadbeef",
+            prompt="Apply a 30% discount to deal ACME-123?",
+        ),
+    ),
     ErrorEvent(message="something failed", classification="model-error"),
     SideEffectFlag(tool="send_email", detail="one email sent"),
 )

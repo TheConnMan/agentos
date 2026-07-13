@@ -30,11 +30,19 @@ class SessionStatus(StrEnum):
 
     Wire tokens follow the section 0 spelling; ``classified failure`` in prose
     becomes the token ``classified-failure`` on the wire.
+
+    ``awaiting-approval`` is a non-terminal pause: the session has stopped on a
+    human-in-the-loop approval gate (ADR-0010) and the platform suspends it
+    (ADR-0003) until the approval is resolved, then resumes. It is additive to
+    the three original values, so an old consumer that does not know the token
+    simply cannot decode a paused frame -- a paused session never reaches a
+    consumer that predates the gate.
     """
 
     DONE = "done"
     IDLE_AWAITING_INPUT = "idle-awaiting-input"
     CLASSIFIED_FAILURE = "classified-failure"
+    AWAITING_APPROVAL = "awaiting-approval"
 
 
 # --- Inbound channel messages -------------------------------------------------
@@ -88,12 +96,38 @@ class ToolNote(_OutboundBase):
     tool: str | None = None
 
 
+class ApprovalRequest(BaseModel):
+    """The tool call that tripped an approval gate, carried on a paused final.
+
+    Emitted by the runner on a ``Final`` whose status is ``awaiting-approval`` so
+    the platform can build the durable approval record (and the human-facing
+    card) without reconstructing the tool from a preceding ``tool_note``.
+    ``tool_use_id`` is the SDK's per-call id and the correlation key that ties
+    the runner's permission callback, the durable record, and the resume
+    decision together. ``input_digest`` is a stable digest of the tool input for
+    display and tamper-evidence; ``prompt`` is the human-readable ask.
+    """
+
+    model_config = _STRICT
+
+    tool: str
+    tool_use_id: str
+    input_digest: str
+    prompt: str
+
+
 class Final(_OutboundBase):
-    """The terminal response event, carrying the session status."""
+    """The terminal (or awaiting-approval) response event, carrying the status."""
 
     type: Literal["final"] = "final"
     text: str
     status: SessionStatus = SessionStatus.DONE
+    # The harness session id for this turn. Optional and additive: it lets the
+    # worker rehydrate the exact session on resume (ADR-0003) instead of guessing
+    # a history ref. Absent (None) on producers that do not surface one.
+    session_id: str | None = None
+    # Present only when ``status`` is ``awaiting-approval``: the gated tool call.
+    approval_request: ApprovalRequest | None = None
 
 
 class ErrorEvent(_OutboundBase):

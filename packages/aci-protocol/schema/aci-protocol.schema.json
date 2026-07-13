@@ -1,5 +1,35 @@
 {
   "$defs": {
+    "ApprovalRequest": {
+      "additionalProperties": false,
+      "description": "The tool call that tripped an approval gate, carried on a paused final.\n\nEmitted by the runner on a ``Final`` whose status is ``awaiting-approval`` so\nthe platform can build the durable approval record (and the human-facing\ncard) without reconstructing the tool from a preceding ``tool_note``.\n``tool_use_id`` is the SDK's per-call id and the correlation key that ties\nthe runner's permission callback, the durable record, and the resume\ndecision together. ``input_digest`` is a stable digest of the tool input for\ndisplay and tamper-evidence; ``prompt`` is the human-readable ask.",
+      "properties": {
+        "input_digest": {
+          "title": "Input Digest",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input_digest",
+        "prompt",
+        "tool",
+        "tool_use_id"
+      ],
+      "title": "ApprovalRequest",
+      "type": "object"
+    },
     "Budget": {
       "additionalProperties": false,
       "description": "Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.\n\n``task_budget_hint`` is the optional hint passed through to the model so it\nself paces (section 6b); it is not a hard ceiling.",
@@ -58,7 +88,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "const": "0.2.0",
           "title": "Version",
           "type": "string"
         }
@@ -114,8 +144,31 @@
     },
     "Final": {
       "additionalProperties": false,
-      "description": "The terminal response event, carrying the session status.",
+      "description": "The terminal (or awaiting-approval) response event, carrying the status.",
       "properties": {
+        "approval_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
         "status": {
           "$ref": "#/$defs/SessionStatus",
           "default": "done"
@@ -130,7 +183,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "const": "0.2.0",
           "title": "Version",
           "type": "string"
         }
@@ -384,11 +437,12 @@
       "type": "object"
     },
     "SessionStatus": {
-      "description": "Terminal or awaiting status of a session, from the output contract.\n\nWire tokens follow the section 0 spelling; ``classified failure`` in prose\nbecomes the token ``classified-failure`` on the wire.",
+      "description": "Terminal or awaiting status of a session, from the output contract.\n\nWire tokens follow the section 0 spelling; ``classified failure`` in prose\nbecomes the token ``classified-failure`` on the wire.\n\n``awaiting-approval`` is a non-terminal pause: the session has stopped on a\nhuman-in-the-loop approval gate (ADR-0010) and the platform suspends it\n(ADR-0003) until the approval is resolved, then resumes. It is additive to\nthe three original values, so an old consumer that does not know the token\nsimply cannot decode a paused frame -- a paused session never reaches a\nconsumer that predates the gate.",
       "enum": [
         "done",
         "idle-awaiting-input",
-        "classified-failure"
+        "classified-failure",
+        "awaiting-approval"
       ],
       "title": "SessionStatus",
       "type": "string"
@@ -427,7 +481,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "const": "0.2.0",
           "title": "Version",
           "type": "string"
         }
@@ -453,7 +507,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "const": "0.2.0",
           "title": "Version",
           "type": "string"
         }
@@ -492,7 +546,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "const": "0.2.0",
           "title": "Version",
           "type": "string"
         }
@@ -508,6 +562,6 @@
   },
   "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.1.0",
-  "title": "ACI Protocol v0.1.0"
+  "protocolVersion": "0.2.0",
+  "title": "ACI Protocol v0.2.0"
 }

@@ -23,7 +23,7 @@ def test_library_checks_run_without_a_producer() -> None:
 
 def test_a_broken_producer_fails_the_stream_check() -> None:
     def broken(_message: Event | Interrupt) -> Iterable[str]:
-        return ['{"type": "text_delta", "version": "0.1.0", "text": "no final"}\n']
+        return ['{"type": "text_delta", "version": "0.2.0", "text": "no final"}\n']
 
     report = run_conformance(broken)
     assert not report.passed

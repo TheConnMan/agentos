@@ -129,7 +129,13 @@ def _translate_result(
             events.append(
                 ErrorEvent(message=text, classification=subtype or "server-error")
             )
-        events.append(Final(text=text, status=SessionStatus.CLASSIFIED_FAILURE))
+        events.append(
+            Final(
+                text=text,
+                status=SessionStatus.CLASSIFIED_FAILURE,
+                session_id=message.session_id,
+            )
+        )
         return events
 
     # The SDK's ``result`` is authoritative when present. When it is empty on an
@@ -137,4 +143,10 @@ def _translate_result(
     # so a reasoning model whose result-extraction returned empty (issue #107)
     # still delivers its answer. Provider-agnostic: it only fires when result is
     # empty, so non-reasoning models and the fake-model path are unaffected.
-    return [Final(text=message.result or state.assistant_text, status=SessionStatus.DONE)]
+    return [
+        Final(
+            text=message.result or state.assistant_text,
+            status=SessionStatus.DONE,
+            session_id=message.session_id,
+        )
+    ]

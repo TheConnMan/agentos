@@ -11,6 +11,7 @@ PROTOCOL_VERSION and regenerate the committed schema and types.
 from .conformance import ConformanceReport, Producer, run_conformance
 from .events import (
     OUTBOUND_EVENT_TYPES,
+    ApprovalRequest,
     ErrorEvent,
     Event,
     Final,
@@ -57,6 +58,7 @@ __all__ = [
     "TextDelta",
     "ToolNote",
     "Final",
+    "ApprovalRequest",
     "ErrorEvent",
     "SideEffectFlag",
     "OutboundEvent",

@@ -5,30 +5,42 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+export type InputDigest = string;
+export type Prompt = string;
+export type Tool = string;
+export type ToolUseId = string;
 export type MaxOutputTokensPerRun = number;
 export type MaxUsdPerDay = number;
 export type TaskBudgetHint = number | null;
 export type Classification = string | null;
 export type Message = string;
 export type Type = "error";
-export type Version = "0.1.0";
+export type Version = "0.2.0";
 export type Kind = "event";
 export type Text = string;
 export type Ts = string;
 export type Type1 = "message" | "job" | "eval_case";
 export type User = string;
+export type SessionId = string | null;
 /**
  * Terminal or awaiting status of a session, from the output contract.
  *
  * Wire tokens follow the section 0 spelling; ``classified failure`` in prose
  * becomes the token ``classified-failure`` on the wire.
+ *
+ * ``awaiting-approval`` is a non-terminal pause: the session has stopped on a
+ * human-in-the-loop approval gate (ADR-0010) and the platform suspends it
+ * (ADR-0003) until the approval is resolved, then resumes. It is additive to
+ * the three original values, so an old consumer that does not know the token
+ * simply cannot decode a paused frame -- a paused session never reaches a
+ * consumer that predates the gate.
  */
-export type SessionStatus = "done" | "idle-awaiting-input" | "classified-failure";
+export type SessionStatus = "done" | "idle-awaiting-input" | "classified-failure" | "awaiting-approval";
 export type Text1 = string;
 export type Type2 = "final";
-export type Version1 = "0.1.0";
+export type Version1 = "0.2.0";
 /**
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "InboundMessage".
  */
 export type InboundMessage = Event | Interrupt;
@@ -38,21 +50,21 @@ export type Endpoint = string | null;
 export type Headers = string | null;
 export type Protocol = string | null;
 /**
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "OutboundEvent".
  */
 export type OutboundEvent = TextDelta | ToolNote | Final | ErrorEvent | SideEffectFlag;
 export type Text2 = string;
 export type Type3 = "text_delta";
-export type Version2 = "0.1.0";
+export type Version2 = "0.2.0";
 export type Text3 = string;
-export type Tool = string | null;
-export type Type4 = "tool_note";
-export type Version3 = "0.1.0";
-export type Detail = string | null;
 export type Tool1 = string | null;
+export type Type4 = "tool_note";
+export type Version3 = "0.2.0";
+export type Detail = string | null;
+export type Tool2 = string | null;
 export type Type5 = "side_effect_flag";
-export type Version4 = "0.1.0";
+export type Version4 = "0.2.0";
 export type Author = string;
 export type ConversationId = string;
 export type EventId = string;
@@ -65,20 +77,47 @@ export type CredentialsRef = string | null;
 export type MemoryRef = string | null;
 export type PluginDir = string;
 export type SandboxId = string;
-export type SessionId = string;
+export type SessionId1 = string;
 /**
  * Terminal or awaiting status of a session, from the output contract.
  *
  * Wire tokens follow the section 0 spelling; ``classified failure`` in prose
  * becomes the token ``classified-failure`` on the wire.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * ``awaiting-approval`` is a non-terminal pause: the session has stopped on a
+ * human-in-the-loop approval gate (ADR-0010) and the platform suspends it
+ * (ADR-0003) until the approval is resolved, then resumes. It is additive to
+ * the three original values, so an old consumer that does not know the token
+ * simply cannot decode a paused frame -- a paused session never reaches a
+ * consumer that predates the gate.
+ *
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "SessionStatus".
  */
-export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure";
+export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure" | "awaiting-approval";
 
-export interface ACIProtocolV010 {
+export interface ACIProtocolV020 {
   [k: string]: unknown;
+}
+/**
+ * The tool call that tripped an approval gate, carried on a paused final.
+ *
+ * Emitted by the runner on a ``Final`` whose status is ``awaiting-approval`` so
+ * the platform can build the durable approval record (and the human-facing
+ * card) without reconstructing the tool from a preceding ``tool_note``.
+ * ``tool_use_id`` is the SDK's per-call id and the correlation key that ties
+ * the runner's permission callback, the durable record, and the resume
+ * decision together. ``input_digest`` is a stable digest of the tool input for
+ * display and tamper-evidence; ``prompt`` is the human-readable ask.
+ *
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * via the `definition` "ApprovalRequest".
+ */
+export interface ApprovalRequest {
+  input_digest: InputDigest;
+  prompt: Prompt;
+  tool: Tool;
+  tool_use_id: ToolUseId;
 }
 /**
  * Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.
@@ -86,7 +125,7 @@ export interface ACIProtocolV010 {
  * ``task_budget_hint`` is the optional hint passed through to the model so it
  * self paces (section 6b); it is not a hard ceiling.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "Budget".
  */
 export interface Budget {
@@ -97,7 +136,7 @@ export interface Budget {
 /**
  * A classified failure surfaced to the platform.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "ErrorEvent".
  */
 export interface ErrorEvent {
@@ -109,7 +148,7 @@ export interface ErrorEvent {
 /**
  * An inbound event delivered into a live session (initial or follow-up).
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "Event".
  */
 export interface Event {
@@ -120,12 +159,14 @@ export interface Event {
   user: User;
 }
 /**
- * The terminal response event, carrying the session status.
+ * The terminal (or awaiting-approval) response event, carrying the status.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "Final".
  */
 export interface Final {
+  approval_request?: ApprovalRequest | null;
+  session_id?: SessionId;
   status?: SessionStatus;
   text: Text1;
   type: Type2;
@@ -134,7 +175,7 @@ export interface Final {
 /**
  * A hard stop delivered on the control channel, distinct from a steer.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "Interrupt".
  */
 export interface Interrupt {
@@ -148,7 +189,7 @@ export interface Interrupt {
  * fields the prototype used (endpoint, headers, protocol); any others pass
  * through as raw env vars untouched and are out of scope for this typed view.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "OtelConfig".
  */
 export interface OtelConfig {
@@ -159,7 +200,7 @@ export interface OtelConfig {
 /**
  * A streamed chunk of assistant text.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "TextDelta".
  */
 export interface TextDelta {
@@ -170,12 +211,12 @@ export interface TextDelta {
 /**
  * A human readable note about a tool call the harness is making.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "ToolNote".
  */
 export interface ToolNote {
   text: Text3;
-  tool?: Tool;
+  tool?: Tool1;
   type: Type4;
   version: Version3;
 }
@@ -185,12 +226,12 @@ export interface ToolNote {
  * Its presence gates the no-retry-after-side-effects rule (section 2b): a
  * failed run carrying this flag escalates to a human instead of retrying.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "SideEffectFlag".
  */
 export interface SideEffectFlag {
   detail?: Detail;
-  tool?: Tool1;
+  tool?: Tool2;
   type: Type5;
   version: Version4;
 }
@@ -202,7 +243,7 @@ export interface SideEffectFlag {
  * stream-encoding helpers live with the producer (the dispatcher), not on this
  * frozen model, so the contract stays transport-agnostic.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "QueuedTurn".
  */
 export interface QueuedTurn {
@@ -230,7 +271,7 @@ export interface QueuedTurn {
  * (its ``slack_api_base_url``, i.e. real Slack), so a producer that does not set
  * it keeps the pre-#19 behavior.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "ReplyHandle".
  */
 export interface ReplyHandle {
@@ -245,7 +286,7 @@ export interface ReplyHandle {
  * section 0 describes these as per-tool secrets via K8s Secret refs, so the
  * contract carries the reference, not the secret material itself.
  *
- * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
  * via the `definition` "SessionConfig".
  */
 export interface SessionConfig {
@@ -255,5 +296,5 @@ export interface SessionConfig {
   otel?: OtelConfig;
   plugin_dir: PluginDir;
   sandbox_id: SandboxId;
-  session_id: SessionId;
+  session_id: SessionId1;
 }

@@ -1,7 +1,7 @@
 # 10. Approval gates and human-in-the-loop
 
 Date: 2026-07-09
-Status: Proposed
+Status: Accepted (2026-07-13)
 
 ## Context
 

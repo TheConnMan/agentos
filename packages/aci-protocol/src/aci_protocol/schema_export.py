@@ -16,6 +16,7 @@ from pydantic import RootModel
 from pydantic.json_schema import models_json_schema
 
 from .events import (
+    ApprovalRequest,
     ErrorEvent,
     Event,
     Final,
@@ -54,6 +55,7 @@ _MODELS = (
     TextDelta,
     ToolNote,
     Final,
+    ApprovalRequest,
     ErrorEvent,
     SideEffectFlag,
     ReplyHandle,

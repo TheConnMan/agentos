@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.1.0";
+pub const PROTOCOL_VERSION: &str = "0.2.0";
 
 fn require_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -30,6 +30,8 @@ pub enum SessionStatus {
     IdleAwaitingInput,
     #[serde(rename = "classified-failure")]
     ClassifiedFailure,
+    #[serde(rename = "awaiting-approval")]
+    AwaitingApproval,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,6 +99,15 @@ pub struct QueuedTurn {
     pub received_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalRequest {
+    pub tool: String,
+    pub tool_use_id: String,
+    pub input_digest: String,
+    pub prompt: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum InboundMessage {
@@ -137,6 +148,10 @@ pub enum OutboundEvent {
         text: String,
         #[serde(default)]
         status: SessionStatus,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        approval_request: Option<ApprovalRequest>,
     },
     #[serde(rename = "error")]
     ErrorEvent {
@@ -167,6 +182,8 @@ mod tests {
             version: PROTOCOL_VERSION.to_string(),
             text: "hi".to_string(),
             status: SessionStatus::Done,
+            session_id: None,
+            approval_request: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -194,7 +211,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields() {
-        let raw = r#"{"type":"final","version":"0.1.0","text":"x","status":"done","extra":1}"#;
+        let raw = r#"{"type":"final","version":"0.2.0","text":"x","status":"done","extra":1}"#;
         assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
     }
 }
