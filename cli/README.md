@@ -154,7 +154,7 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 
 | Command | What it does |
 |---|---|
-| `agentos cluster up` | Install or upgrade the release (`helm upgrade --install`). Exposes the UI and Langfuse on node ports; `--no-expose` keeps them ClusterIP-only. Set `AGENTOS_MODEL_CREDENTIALS` for a real model, or install sealed with canned replies. |
+| `agentos cluster up` | Install or upgrade the release (`helm upgrade --install`). Exposes the UI and Langfuse on node ports; `--no-expose` keeps them ClusterIP-only. Set `AGENTOS_MODEL_CREDENTIALS` for a real model, or install sealed with canned replies. A shell `AGENTOS_MODEL` now defaults the sandbox runner model (`agentSandbox.runner.model`) for cross-tier parity with `local up`, unless an explicit `--set agentSandbox.runner.model=` is passed; a shell `AGENTOS_MODEL` that disagrees with such an explicit `--set` fails loud. |
 | `agentos cluster down` | Uninstall the release and sweep its runtime namespaces (`helm uninstall` + `kubectl delete namespace`); prompts unless `--yes`. |
 | `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
