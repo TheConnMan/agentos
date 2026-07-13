@@ -6,7 +6,7 @@
 
 use agentos::commands::{eval_json, status_json};
 use agentos::exit;
-use agentos::message::message_reply_json;
+use agentos::message::{message_dry_run_json, message_reply_json, message_timeout_json};
 use agentos_aci_protocol::SessionStatus;
 
 fn load_schema(name: &str) -> serde_json::Value {
@@ -87,6 +87,78 @@ fn message_reply_json_validates_against_message_schema() {
     );
     assert_eq!(no_edit["thread"], serde_json::json!("1700000000.000100"));
     assert_eq!(no_edit["finalized"], serde_json::json!(false));
+}
+
+#[test]
+fn message_timeout_json_validates_against_message_schema() {
+    let schema = load_schema("message.schema.json");
+    let v = validator(&schema);
+    let timed_out = message_timeout_json();
+    assert!(
+        v.is_valid(&timed_out),
+        "message_timeout_json must validate against message.schema.json: {timed_out}"
+    );
+    // Pin the timeout shape: null reply, finalized false, timed_out true.
+    assert!(
+        timed_out["reply"].is_null(),
+        "timeout reply must be JSON null: {timed_out}"
+    );
+    assert_eq!(timed_out["finalized"], serde_json::json!(false));
+    assert_eq!(timed_out["timed_out"], serde_json::json!(true));
+}
+
+#[test]
+fn message_dry_run_json_validates_against_message_schema() {
+    let schema = load_schema("message.schema.json");
+    let v = validator(&schema);
+    // Explicit channel (local target).
+    let with_channel = message_dry_run_json(
+        "local",
+        "agentos:turns",
+        Some("C123"),
+        "http://localhost:8155/api/",
+    );
+    assert!(
+        v.is_valid(&with_channel),
+        "message_dry_run_json (with channel) must validate: {with_channel}"
+    );
+    assert_eq!(with_channel["dry_run"], serde_json::json!(true));
+    assert_eq!(with_channel["target"], serde_json::json!("local"));
+    assert_eq!(with_channel["channel"], serde_json::json!("C123"));
+    // Null channel (cluster target, sole-agent resolution).
+    let no_channel = message_dry_run_json(
+        "cluster",
+        "agentos:turns",
+        None,
+        "http://10.1.2.3:8155/api/",
+    );
+    assert!(
+        v.is_valid(&no_channel),
+        "message_dry_run_json (no channel) must validate: {no_channel}"
+    );
+    assert!(
+        no_channel["channel"].is_null(),
+        "omitted channel must be JSON null: {no_channel}"
+    );
+    assert_eq!(no_channel["target"], serde_json::json!("cluster"));
+}
+
+#[test]
+fn message_schema_variants_are_mutually_exclusive() {
+    // The schema is a oneOf; each builder's output must match exactly one variant.
+    let schema = load_schema("message.schema.json");
+    let v = validator(&schema);
+    for value in [
+        message_reply_json("1700000000.000100", Some("hi")),
+        message_reply_json("1700000000.000100", None),
+        message_timeout_json(),
+        message_dry_run_json("local", "s", Some("C1"), "http://x/api/"),
+    ] {
+        assert!(
+            v.is_valid(&value),
+            "each builder output must satisfy the oneOf: {value}"
+        );
+    }
 }
 
 #[test]
