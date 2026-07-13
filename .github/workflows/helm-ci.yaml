@@ -106,6 +106,15 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/langfuse-runasuser-assertions.sh
 
+      # Prove the controller NetworkPolicy RBAC split (issue #350): exactly one
+      # read-only cluster grant (get/list/watch) so the informer syncs, no
+      # cluster-wide mutate anywhere (#66 guarded), namespaced mutate intact, and
+      # the controller-ready install gate renders/suppresses with its flags.
+      - name: helm render assertions (controller netpol RBAC)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/controller-rbac-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail

@@ -1,13 +1,17 @@
 # NOTE: This is the upstream kubernetes-sigs/agent-sandbox v0.5.0 controller
-# bundle, with two AgentOS security patches (issue #66):
+# bundle, with two AgentOS security patches (issues #66 and #350):
 #   1. The cluster-wide `networkpolicies` rule has been REMOVED from the
-#      agent-sandbox-controller-extensions ClusterRole below. That permission is
-#      re-granted, scoped to the release namespace only, by a namespaced
-#      Role/RoleBinding in templates/agent-sandbox.yaml, so a compromised
-#      controller SA cannot delete the fail-closed egress policy (Rail 1) in
-#      any other namespace.
+#      agent-sandbox-controller-extensions ClusterRole below. It is replaced by a
+#      verb SPLIT in templates/agent-sandbox.yaml (issue #350, ADR-0023): a
+#      cluster-scoped read-only ClusterRole grants get/list/watch (which the
+#      controller's cluster-scope NetworkPolicy informer needs to sync), while a
+#      namespaced Role/RoleBinding grants the mutating verbs
+#      create/delete/patch/update (plus get) confined to the release namespace, so
+#      a compromised controller SA cannot delete the fail-closed egress policy
+#      (Rail 1) in any other namespace.
 #   2. The Deployment carries a non-root / read-only-rootfs securityContext.
-# Re-vendoring a newer upstream release must re-apply both patches.
+# Re-vendoring a newer upstream release must re-apply both patches -- including the
+# cluster-read + namespaced-mutate split in patch 1.
 kind: Namespace
 apiVersion: v1
 metadata:
