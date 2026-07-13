@@ -20,6 +20,23 @@ the contract that proves parity: a tier-to-tier divergence is the harness catchi
 a real environment bug, not the agent's skill logic. For that contract to mean
 anything, two things must be true, and today neither fully is.
 
+**Put plainly: as a parity contract, the eval system is broken today — it does not
+prove what AgentOS advertises it proves.** The cold-start dogfood (run 2) makes this
+concrete and is worth stating outright. That agent *did* drive the same bundle to
+5/5 green at all three tiers — but the green was **hand-assembled around the eval
+system, not produced by it.** To assert the deterministic engine actually ran, the
+agent had to invent a tamper-proof "proof token" and grep the final text for it,
+because no grader can check that a tool was ever called (axis 2 below). To "run the
+same evals" at `local` and `cluster`, it had to hand-drive every case through
+`message` and grep the reply itself, because those tiers have no `eval` verb (axis 1
+below). A reader who sees "5/5 parity at every tier" concludes the contract works;
+in fact a skilled agent manually reconstructed what the eval system could not do on
+its own. The green proves the **runner's** parity, not the **eval system's** — and
+on the fake-model CI path the same suite greens without a single tool call
+([#337](https://github.com/curie-eng/agentos/issues/337)), so a green there proves
+even less. Closing the gap between what a green eval *appears* to prove and what it
+*actually* proves is the whole purpose of this ADR.
+
 **1. You cannot actually run the same evals at every tier.** The CLI exposes
 `skill eval` only (`cli/src/main.rs`, dispatched to `commands::eval`); there is no
 `local eval` or `cluster eval` verb. The platform runs suites as fanned-out Jobs
