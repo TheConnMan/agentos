@@ -36,6 +36,33 @@ updates `@agentos-dev`, merging to `prod` promotes the same built artifact to
 component map, a message-flow sequence diagram, and the deploy-flow sequence
 diagram.
 
+## Why did my agent work locally but break once deployed?
+
+Because "locally" and "deployed" were different runtimes: a different Python, a
+missing tool, an MCP server that resolved on your laptop and not in the cluster,
+a credential that was present in one place and absent in the other. AgentOS
+removes that gap by construction. The thing you run locally and the thing that
+runs in production are the **same immutable bundle** claimed by the **same
+runner image** speaking the **same frozen ACI contract**; only the substrate
+underneath changes (in-process, docker compose, Kubernetes). So a difference in
+behavior between tiers is a real environment difference the harness surfaces —
+not a mystery you debug after users hit it. Start from the
+[target table](#which-target-do-i-want) and climb `skill` → `local` → `cluster`;
+each rung is the same bundle on a heavier substrate.
+
+## How do I test an agent the same way locally and on Kubernetes?
+
+You run the **same `evals/cases.json`** at every tier. `agentos skill eval`
+grades the bundle in-process; the `local` and `cluster` targets drive the same
+cases through the real queue → worker → sandbox → runner path a Slack mention
+takes, so an eval that passes on your laptop and fails on the cluster is the
+harness catching a deployment bug, not a flaky test. The grader, the case shape,
+and the bundle are identical across tiers — that identity is the whole point (a
+tier-to-tier eval divergence is signal, not noise). See
+[How do I develop and verify a change?](#how-do-i-develop-and-verify-a-change)
+for the per-package verify commands and
+[`cli/README.md`](cli/README.md) for the full `eval` reference across targets.
+
 ## Status
 
 The core spine is built, covered by CI, and was live-verified end to end

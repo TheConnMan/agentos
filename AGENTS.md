@@ -11,7 +11,13 @@ plugin under a bot identity via the API's git-flow engine. Relay is the project
 codename; `agentos` is the product-surface name (bot handle, CLI binary). Read
 `ARCHITECTURE.md` before touching a cross-component seam. If you are a coding
 agent orienting in this repo, [`llms.txt`](llms.txt) is the curated machine map
-of these docs, organized around the parity ladder.
+of these docs, organized around the parity ladder. The two questions this repo
+exists to answer are
+[why did my agent work locally but break once deployed?](README.md#why-did-my-agent-work-locally-but-break-once-deployed)
+and
+[how do I test an agent the same way locally and on Kubernetes?](README.md#how-do-i-test-an-agent-the-same-way-locally-and-on-kubernetes) —
+the same immutable bundle and the same `evals/cases.json` across `skill`,
+`local`, and `cluster` is the answer to both.
 
 ## Directory map
 
