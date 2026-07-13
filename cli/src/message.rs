@@ -23,15 +23,18 @@
 //!    once, instead of contending for a single `worker.slackApiBaseUrl`.
 
 use std::env;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use redis::aio::MultiplexedConnection;
 
 use crate::api::{Agent, ApiClient};
 use crate::chat::{
     await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
 };
+use crate::evals::{EvalCase, EvalSuite};
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
 use crate::queue::{self, connect, diagnostics, synthetic_turn, xadd};
 use crate::state::{save_turn, TurnContext, TurnVerb};
@@ -724,6 +727,286 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// eval: the same evals/cases.json at the local and cluster tiers
+// ---------------------------------------------------------------------------
+
+/// Options for `agentos local eval` / `agentos cluster eval`, mirroring their
+/// clap flags. The connection surface is the `message` subset (no per-turn
+/// `text`/`thread`); `cases` selects the suite and `local` picks the tier.
+pub struct EvalOpts {
+    /// Explicit eval-case file; `None` resolves `evals/cases.json` like
+    /// `skill eval` (cwd, then the recorded bundle dir).
+    pub cases: Option<PathBuf>,
+    pub channel: Option<String>,
+    pub namespace: String,
+    pub release: String,
+    pub listen_host: Option<String>,
+    pub listen_port: u16,
+    pub valkey_local_port: u16,
+    pub valkey_password: String,
+    pub api_local_port: u16,
+    pub api_key: String,
+    pub user: String,
+    pub stream: String,
+    pub timeout_secs: u64,
+    pub dry_run: bool,
+    /// Local mode: drive the compose stack instead of a Kubernetes release.
+    pub local: bool,
+    /// Local mode only: platform API base URL for the channel lookup.
+    pub api_url: Option<String>,
+}
+
+/// Grade one tier turn's reply with the SAME grader `skill eval` uses. A turn
+/// passes only when the worker finalized it WITH reply text (`Replied`) and that
+/// text satisfies the case's grader -- the exact condition `evals::turn_passes`
+/// enforces over the runner's event stream, applied here to the reply the
+/// message enqueue+await path captures. `CompletedNoEdit` (finished, no
+/// placeholder edit) and `TimedOut` never pass, mirroring `turn_passes`'s
+/// requirement that the turn reach a `done` final.
+pub fn reply_passes(case: &EvalCase, outcome: &Outcome) -> bool {
+    match outcome {
+        Outcome::Replied(reply) => case.grader.grade(reply),
+        Outcome::CompletedNoEdit | Outcome::TimedOut => false,
+    }
+}
+
+/// The plan a `--dry-run` eval prints: the tier, the suite/case count, and the
+/// same enqueue/port-forward description a real run would produce. Pure so the
+/// rendering is unit-testable with no stack or cluster (mirrors `dry_run_lines`).
+pub fn eval_dry_run_lines(opts: &EvalOpts, suite_name: &str, case_count: usize) -> Vec<String> {
+    let tier = if opts.local { "local" } else { "cluster" };
+    let mut lines = vec![format!(
+        "grade {case_count} case(s) from suite {suite_name:?} against the {tier} tier"
+    )];
+    if opts.local {
+        let valkey_url = local_valkey_url(&opts.valkey_password);
+        let api_base = local_api_base(opts.api_url.as_deref());
+        lines.push("local mode (compose stack; no kubectl/helm)".to_string());
+        lines.push(format!("enqueue onto redis {valkey_url}"));
+        lines.push(format!(
+            "stub advertised at http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/"
+        ));
+        match opts.channel.as_deref() {
+            Some(channel) => lines.push(format!("channel {channel}")),
+            None => lines.push(format!(
+                "channel <the sole deployed agent via {api_base}/agents>"
+            )),
+        }
+    } else {
+        let host = opts
+            .listen_host
+            .clone()
+            .unwrap_or_else(|| "<auto-detected-local-ip>".to_string());
+        lines.push(
+            port_forward_command(
+                &opts.namespace,
+                &opts.release,
+                "valkey",
+                opts.valkey_local_port,
+                VALKEY_REMOTE_PORT,
+            )
+            .display(),
+        );
+        if opts.channel.is_none() {
+            lines.push(
+                port_forward_command(
+                    &opts.namespace,
+                    &opts.release,
+                    "api",
+                    opts.api_local_port,
+                    API_REMOTE_PORT,
+                )
+                .display(),
+            );
+        }
+        lines.push(format!(
+            "stub advertised at {}",
+            advertised_url(&host, opts.listen_port)
+        ));
+    }
+    lines.push(format!(
+        "enqueue one synthetic QueuedTurn per case on stream {}",
+        opts.stream
+    ));
+    lines
+}
+
+/// Resolve the eval suite the way `skill eval` does: an explicit `--cases`
+/// wins, else `evals/cases.json` in the cwd, then the recorded bundle dir.
+fn resolve_suite(explicit: Option<PathBuf>) -> Result<EvalSuite> {
+    let state_plugin_dir = crate::state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
+    let path =
+        crate::commands::resolve_cases_path(explicit, Path::new("."), state_plugin_dir.as_deref())?;
+    crate::evals::load_suite(&path)
+}
+
+/// The shared per-tier eval engine: enqueue one synthetic `QueuedTurn` per case
+/// through the already-stood-up stub + Valkey (the same enqueue+await path a
+/// single `message` walks), grade the captured reply, and collect
+/// `(id, passed, seconds)` rows for `report_eval`. Tier-agnostic: the caller
+/// binds the stub/connection for its tier, then hands them here.
+async fn run_eval_turns(
+    opts: &EvalOpts,
+    channel: &str,
+    suite: &EvalSuite,
+    conn: &mut MultiplexedConnection,
+    stub: &mut SlackStub,
+) -> Result<Vec<(String, bool, f64)>> {
+    let ui = crate::ui::ui();
+    let total = suite.cases.len();
+    let bar = ui.progress_bar(total as u64, "running evals");
+    let mut results: Vec<(String, bool, f64)> = Vec::with_capacity(total);
+    for case in &suite.cases {
+        // Each case is its own thread so turns never cross-talk on the stub.
+        let (channel_id, thread_ts, placeholder_ts) = resolve_targets(Some(channel), None);
+        let reply_endpoint = stub.base_api_url().to_string();
+        let event = synthetic_turn(
+            &channel_id,
+            &opts.user,
+            &case.input,
+            &thread_ts,
+            &placeholder_ts,
+            Some(reply_endpoint),
+        );
+        let started = Instant::now();
+        let stream_id = xadd(conn, &opts.stream, &event).await?;
+        let outcome = await_reply(
+            stub,
+            conn,
+            &opts.stream,
+            &stream_id,
+            &placeholder_ts,
+            Duration::from_secs(opts.timeout_secs),
+        )
+        .await;
+        let elapsed = started.elapsed().as_secs_f64();
+        results.push((case.id.clone(), reply_passes(case, &outcome), elapsed));
+        bar.inc(1);
+    }
+    bar.finish();
+    Ok(results)
+}
+
+/// The shared `eval` handler: run the bundle's `evals/cases.json` through the
+/// target tier's message enqueue+await path and grade with the shared grader,
+/// so a suite that passes at `skill` can be re-asserted verbatim at `local` and
+/// `cluster` (issue #344, the per-tier parity gate).
+pub async fn eval(opts: EvalOpts) -> Result<()> {
+    let suite = resolve_suite(opts.cases.clone())?;
+    if opts.local {
+        eval_local(opts, suite).await
+    } else {
+        eval_cluster(opts, suite).await
+    }
+}
+
+async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
+    let ui = crate::ui::ui();
+    let valkey_url = local_valkey_url(&opts.valkey_password);
+    let api_base = local_api_base(opts.api_url.as_deref());
+
+    if opts.dry_run {
+        for line in eval_dry_run_lines(&opts, &suite.name, suite.cases.len()) {
+            ui.payload_plain(&line);
+        }
+        return Ok(());
+    }
+
+    let mut conn = connect(&valkey_url).await?;
+    let mut stub = SlackStub::start("127.0.0.1", DEFAULT_LOCAL_STUB_PORT, "localhost").await?;
+    ui.note(&format!(
+        "slack stub listening; the worker posts to {}",
+        stub.base_api_url()
+    ));
+
+    let channel = match opts.channel.as_deref() {
+        Some(channel) => channel.to_string(),
+        None => {
+            let api = ApiClient::new(&api_base, &opts.api_key)?;
+            let agents = api.list_agents().await.with_context(|| {
+                format!("listing agents via {api_base} (is `agentos local up` running?)")
+            })?;
+            select_channel(&agents, None)?
+        }
+    };
+    ui.note(&format!("routing to channel {channel}"));
+
+    let results = run_eval_turns(&opts, &channel, &suite, &mut conn, &mut stub).await?;
+    crate::commands::report_eval(&results)
+}
+
+async fn eval_cluster(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
+    let ui = crate::ui::ui();
+
+    if opts.dry_run {
+        for line in eval_dry_run_lines(&opts, &suite.name, suite.cases.len()) {
+            ui.payload_plain(&line);
+        }
+        return Ok(());
+    }
+
+    require_on_path("kubectl")?;
+
+    let advertise_host = resolve_advertise_host(opts.listen_host.as_deref()).await?;
+    let mut stub = SlackStub::start("0.0.0.0", opts.listen_port, &advertise_host).await?;
+    ui.note(&format!(
+        "slack stub listening; the worker will post to {}",
+        stub.base_api_url()
+    ));
+
+    // Valkey port-forward for the enqueue, kept alive for the whole eval loop.
+    let _valkey_pf = start_port_forward(
+        &port_forward_command(
+            &opts.namespace,
+            &opts.release,
+            "valkey",
+            opts.valkey_local_port,
+            VALKEY_REMOTE_PORT,
+        ),
+        opts.valkey_local_port,
+        "valkey",
+    )
+    .await?;
+
+    let channel = match opts.channel.as_deref() {
+        Some(channel) => channel.to_string(),
+        None => {
+            let _api_pf = start_port_forward(
+                &port_forward_command(
+                    &opts.namespace,
+                    &opts.release,
+                    "api",
+                    opts.api_local_port,
+                    API_REMOTE_PORT,
+                ),
+                opts.api_local_port,
+                "api",
+            )
+            .await?;
+            let api = ApiClient::new(
+                &format!("http://localhost:{}", opts.api_local_port),
+                &opts.api_key,
+            )?;
+            let agents = api
+                .list_agents()
+                .await
+                .context("listing agents through the api port-forward")?;
+            select_channel(&agents, None)?
+        }
+    };
+    ui.note(&format!("routing to channel {channel}"));
+
+    let valkey_url = format!(
+        "redis://:{}@localhost:{}",
+        opts.valkey_password, opts.valkey_local_port
+    );
+    let mut conn = connect(&valkey_url).await?;
+
+    let results = run_eval_turns(&opts, &channel, &suite, &mut conn, &mut stub).await?;
+    crate::commands::report_eval(&results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -954,5 +1237,126 @@ mod tests {
         let v = message_dry_run_json("cluster", "s", None, "http://10.1.2.3:8155/api/");
         assert!(v["channel"].is_null(), "{v}");
         assert_eq!(v["target"], serde_json::json!("cluster"));
+    }
+
+    // --- eval parity verb ---------------------------------------------------
+
+    use crate::evals::{EvalCase, Grader, GraderKind};
+
+    fn eval_opts(local: bool, channel: Option<&str>) -> EvalOpts {
+        EvalOpts {
+            cases: None,
+            channel: channel.map(str::to_string),
+            namespace: "agentos".into(),
+            release: "agentos".into(),
+            listen_host: None,
+            listen_port: DEFAULT_LISTEN_PORT,
+            valkey_local_port: DEFAULT_VALKEY_LOCAL_PORT,
+            valkey_password: DEFAULT_VALKEY_PASSWORD.into(),
+            api_local_port: DEFAULT_API_LOCAL_PORT,
+            api_key: DEFAULT_API_KEY.into(),
+            user: DEFAULT_USER.into(),
+            stream: DEFAULT_STREAM.into(),
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            dry_run: true,
+            local,
+            api_url: None,
+        }
+    }
+
+    fn eval_case(kind: GraderKind, expected: &str) -> EvalCase {
+        EvalCase {
+            id: "c1".into(),
+            input: "ping".into(),
+            grader: Grader {
+                kind,
+                expected: expected.into(),
+                case_sensitive: false,
+            },
+        }
+    }
+
+    #[test]
+    fn reply_passes_only_on_a_matching_captured_reply() {
+        let case = eval_case(GraderKind::Contains, "pong");
+        // Replied + grader matches -> pass; the shared Grader grades the reply.
+        assert!(reply_passes(
+            &case,
+            &Outcome::Replied("the answer is PONG".into())
+        ));
+        // Replied but grader misses -> fail.
+        assert!(!reply_passes(&case, &Outcome::Replied("nope".into())));
+        // No reply text and no completion never pass, mirroring turn_passes.
+        assert!(!reply_passes(&case, &Outcome::CompletedNoEdit));
+        assert!(!reply_passes(&case, &Outcome::TimedOut));
+    }
+
+    #[test]
+    fn local_eval_dry_run_plan_names_the_tier_suite_and_enqueue() {
+        // The `local eval` path with no live stack: the plan is a pure render.
+        let lines = eval_dry_run_lines(&eval_opts(true, Some("C123")), "smoke", 3);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "grade 3 case(s) from suite \"smoke\" against the local tier"),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "enqueue onto redis redis://:valkeypass@localhost:26379"),
+            "{lines:?}"
+        );
+        assert!(lines.iter().any(|l| l == "channel C123"), "{lines:?}");
+        // No cluster plumbing (a kubectl port-forward command) leaks into the
+        // local plan; the "no kubectl/helm" descriptor line is fine.
+        assert!(
+            !lines.iter().any(|l| l.starts_with("kubectl ")),
+            "local plan has no kubectl command: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(
+                |l| l.contains("enqueue one synthetic QueuedTurn per case on stream")
+                    && l.contains(DEFAULT_STREAM)
+            ),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn local_eval_dry_run_names_the_channel_lookup_when_omitted() {
+        let lines = eval_dry_run_lines(&eval_opts(true, None), "smoke", 1);
+        assert!(
+            lines.iter().any(|l| l.contains("sole deployed agent")),
+            "channel placeholder when omitted: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn cluster_eval_dry_run_plan_lists_the_valkey_forward_and_stub() {
+        let lines = eval_dry_run_lines(&eval_opts(false, Some("C1")), "smoke", 2);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "grade 2 case(s) from suite \"smoke\" against the cluster tier"),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "kubectl -n agentos port-forward svc/agentos-valkey 56381:6379"),
+            "{lines:?}"
+        );
+        // Explicit channel -> no api forward.
+        assert!(
+            !lines.iter().any(|l| l.contains("svc/agentos-api")),
+            "explicit channel needs no api forward: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("stub advertised at http://")),
+            "{lines:?}"
+        );
     }
 }

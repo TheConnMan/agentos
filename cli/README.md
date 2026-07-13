@@ -16,12 +16,15 @@ disk and targets no environment.
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
 | `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `check` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
-| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
-| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `deploy` `kill` `resume` `budget` `delete` | Operate and drive a deployed cluster release, and control its agents' lifecycle. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `eval` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `eval` `deploy` `kill` `resume` `budget` `delete` | Operate and drive a deployed cluster release, and control its agents' lifecycle. |
 
 The universal quartet `up`/`down`/`status`/`message` is on all three targets;
-`skill` adds `eval`, while `local` and `cluster` add `comms` plus `deploy`; `cluster`
-further adds the agent-lifecycle verbs `kill`/`resume`/`budget`/`delete`. The distinction
+`skill` adds `eval`, while `local` and `cluster` add `comms`, `eval`, plus `deploy`; `cluster`
+further adds the agent-lifecycle verbs `kill`/`resume`/`budget`/`delete`. `eval` is on
+all three: it runs the SAME `evals/cases.json` with the SAME grader at each tier (the
+per-tier parity gate), so a suite that passes at `skill` can be re-asserted verbatim at
+`local` and `cluster`. The distinction
 that matters: `skill` is the **runner-only** loop, talking straight to a runner
 container's ACI HTTP surface with no platform in front; `local` and `cluster`
 put the **full platform** (queue, worker, sandbox) in front of the identical
@@ -144,6 +147,7 @@ the optional Slack dispatcher.
 | `agentos local status` | Show the compose stack's service status (`docker compose ps`). |
 | `agentos local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
 | `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
+| `agentos local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. |
 | `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
 
 ## `cluster` target: deployed Helm release
@@ -159,6 +163,7 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
+| `agentos cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. |
 | `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. Reaches the API through the deployed release's UI `/api` NodePort proxy when `--api-url` is omitted (no port-forward); pass `--api-url` / `AGENTOS_API_URL` to target it directly. Auth via `--api-key` or `AGENTOS_API_KEY`. |
 | `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
 | `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |

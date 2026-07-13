@@ -367,6 +367,46 @@ enum LocalAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Run the bundle's `evals/cases.json` through the local tier and grade with
+    /// the same grader `skill eval` uses (the per-tier parity gate).
+    Eval {
+        /// Eval case file (default: `evals/cases.json` here, then the recorded
+        /// bundle's).
+        #[arg(long)]
+        cases: Option<PathBuf>,
+        /// Slack channel id to send as; must match the target agent's
+        /// slack_channel. Omit to use the sole deployed agent's channel.
+        #[arg(long)]
+        channel: Option<String>,
+        /// Valkey password (compose default `valkeypass`). Prefer the
+        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
+        /// command line, where it leaks via `ps` and shell history.
+        #[arg(
+            long,
+            env = "AGENTOS_VALKEY_PASSWORD",
+            hide_env_values = true,
+            default_value = message::DEFAULT_VALKEY_PASSWORD
+        )]
+        valkey_password: String,
+        /// Platform API base URL for the channel lookup.
+        #[arg(long)]
+        api_url: Option<String>,
+        /// Platform API key for the default-channel lookup.
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        api_key: String,
+        /// Synthetic Slack user id for the enqueued events.
+        #[arg(long, default_value = message::DEFAULT_USER)]
+        user: String,
+        /// Stream the dispatcher enqueues onto.
+        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        stream: String,
+        /// How long to wait for each case's reply. Default: 300 seconds.
+        #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
+        timeout_secs: u64,
+        /// Print the plan that a real run would produce, and exit.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Push the bundle to the local platform API and deploy it.
     Deploy {
         /// Plugin bundle directory.
@@ -578,6 +618,64 @@ enum ClusterAction {
         /// Default: 300 seconds.
         #[arg(long)]
         timeout_secs: Option<u64>,
+        /// Print the kubectl commands, stub URL, and enqueue description that a
+        /// real run would produce, and exit without executing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Run the bundle's `evals/cases.json` through the deployed Kubernetes
+    /// release and grade with the same grader `skill eval` uses (the per-tier
+    /// parity gate).
+    Eval {
+        /// Eval case file (default: `evals/cases.json` here, then the recorded
+        /// bundle's).
+        #[arg(long)]
+        cases: Option<PathBuf>,
+        /// Slack channel id to send as; must match the target agent's
+        /// slack_channel. Omit to use the sole deployed agent's channel.
+        #[arg(long)]
+        channel: Option<String>,
+        /// Kubernetes namespace of the release. Default: agentos.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name. Default: agentos.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Host the in-cluster worker uses to reach the stub. Omit to auto-detect
+        /// the local IP the kernel would use to reach the cluster.
+        #[arg(long)]
+        listen_host: Option<String>,
+        /// Port the stub binds (0.0.0.0); the worker posts here.
+        #[arg(long, default_value_t = message::DEFAULT_LISTEN_PORT)]
+        listen_port: u16,
+        /// Local port the Valkey port-forward binds.
+        #[arg(long, default_value_t = message::DEFAULT_VALKEY_LOCAL_PORT)]
+        valkey_local_port: u16,
+        /// Valkey password (chart default `valkeypass`). Prefer the
+        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
+        /// command line, where it leaks via `ps` and shell history.
+        #[arg(
+            long,
+            env = "AGENTOS_VALKEY_PASSWORD",
+            hide_env_values = true,
+            default_value = message::DEFAULT_VALKEY_PASSWORD
+        )]
+        valkey_password: String,
+        /// Local port the API port-forward binds (default-channel lookup).
+        #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
+        api_local_port: u16,
+        /// Platform API key for the default-channel lookup.
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        api_key: String,
+        /// Synthetic Slack user id for the enqueued events.
+        #[arg(long, default_value = message::DEFAULT_USER)]
+        user: String,
+        /// Stream the dispatcher enqueues onto.
+        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        stream: String,
+        /// How long to wait for each case's reply. Default: 300 seconds.
+        #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
+        timeout_secs: u64,
         /// Print the kubectl commands, stub URL, and enqueue description that a
         /// real run would produce, and exit without executing anything.
         #[arg(long)]
@@ -944,6 +1042,37 @@ async fn run(command: Command) -> Result<()> {
                 })
                 .await
             }
+            LocalAction::Eval {
+                cases,
+                channel,
+                valkey_password,
+                api_url,
+                api_key,
+                user,
+                stream,
+                timeout_secs,
+                dry_run,
+            } => {
+                message::eval(message::EvalOpts {
+                    cases,
+                    channel,
+                    namespace: "agentos".into(),
+                    release: "agentos".into(),
+                    listen_host: None,
+                    listen_port: message::DEFAULT_LISTEN_PORT,
+                    valkey_local_port: message::DEFAULT_VALKEY_LOCAL_PORT,
+                    valkey_password,
+                    api_local_port: message::DEFAULT_API_LOCAL_PORT,
+                    api_key,
+                    user,
+                    stream,
+                    timeout_secs,
+                    dry_run,
+                    local: true,
+                    api_url,
+                })
+                .await
+            }
             LocalAction::Deploy {
                 plugin_dir,
                 api_url,
@@ -1151,6 +1280,42 @@ async fn run(command: Command) -> Result<()> {
                     user,
                     stream,
                     timeout_secs: resolved.timeout_secs,
+                    dry_run,
+                    local: false,
+                    api_url: None,
+                })
+                .await
+            }
+            ClusterAction::Eval {
+                cases,
+                channel,
+                namespace,
+                release,
+                listen_host,
+                listen_port,
+                valkey_local_port,
+                valkey_password,
+                api_local_port,
+                api_key,
+                user,
+                stream,
+                timeout_secs,
+                dry_run,
+            } => {
+                message::eval(message::EvalOpts {
+                    cases,
+                    channel,
+                    namespace,
+                    release,
+                    listen_host,
+                    listen_port,
+                    valkey_local_port,
+                    valkey_password,
+                    api_local_port,
+                    api_key,
+                    user,
+                    stream,
+                    timeout_secs,
                     dry_run,
                     local: false,
                     api_url: None,

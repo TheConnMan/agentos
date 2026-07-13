@@ -675,6 +675,107 @@
           "name": "message"
         },
         {
+          "about": "Run the bundle's `evals/cases.json` through the local tier and grade with the same grader `skill eval` uses (the per-tier parity gate)",
+          "args": [
+            {
+              "global": false,
+              "help": "Eval case file (default: `evals/cases.json` here, then the recorded bundle's)",
+              "id": "cases",
+              "long": "cases",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Slack channel id to send as; must match the target agent's slack_channel. Omit to use the sole deployed agent's channel",
+              "id": "channel",
+              "long": "channel",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "valkeypass"
+              ],
+              "env": "AGENTOS_VALKEY_PASSWORD",
+              "global": false,
+              "help": "Valkey password (compose default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "id": "valkey_password",
+              "long": "valkey-password",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Platform API base URL for the channel lookup",
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "help": "Platform API key for the default-channel lookup",
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "U-agentos-message"
+              ],
+              "global": false,
+              "help": "Synthetic Slack user id for the enqueued events",
+              "id": "user",
+              "long": "user",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos:runs"
+              ],
+              "env": "AGENTOS_STREAM",
+              "global": false,
+              "help": "Stream the dispatcher enqueues onto",
+              "id": "stream",
+              "long": "stream",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "300"
+              ],
+              "global": false,
+              "help": "How long to wait for each case's reply. Default: 300 seconds",
+              "id": "timeout_secs",
+              "long": "timeout-secs",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Print the plan that a real run would produce, and exit",
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "eval"
+        },
+        {
           "about": "Push the bundle to the local platform API and deploy it",
           "args": [
             {
@@ -1231,6 +1332,162 @@
           ],
           "hidden": false,
           "name": "message"
+        },
+        {
+          "about": "Run the bundle's `evals/cases.json` through the deployed Kubernetes release and grade with the same grader `skill eval` uses (the per-tier parity gate)",
+          "args": [
+            {
+              "global": false,
+              "help": "Eval case file (default: `evals/cases.json` here, then the recorded bundle's)",
+              "id": "cases",
+              "long": "cases",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Slack channel id to send as; must match the target agent's slack_channel. Omit to use the sole deployed agent's channel",
+              "id": "channel",
+              "long": "channel",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Host the in-cluster worker uses to reach the stub. Omit to auto-detect the local IP the kernel would use to reach the cluster",
+              "id": "listen_host",
+              "long": "listen-host",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "8155"
+              ],
+              "global": false,
+              "help": "Port the stub binds (0.0.0.0); the worker posts here",
+              "id": "listen_port",
+              "long": "listen-port",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "56381"
+              ],
+              "global": false,
+              "help": "Local port the Valkey port-forward binds",
+              "id": "valkey_local_port",
+              "long": "valkey-local-port",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "valkeypass"
+              ],
+              "env": "AGENTOS_VALKEY_PASSWORD",
+              "global": false,
+              "help": "Valkey password (chart default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "id": "valkey_password",
+              "long": "valkey-password",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "8123"
+              ],
+              "global": false,
+              "help": "Local port the API port-forward binds (default-channel lookup)",
+              "id": "api_local_port",
+              "long": "api-local-port",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "help": "Platform API key for the default-channel lookup",
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "U-agentos-message"
+              ],
+              "global": false,
+              "help": "Synthetic Slack user id for the enqueued events",
+              "id": "user",
+              "long": "user",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos:runs"
+              ],
+              "env": "AGENTOS_STREAM",
+              "global": false,
+              "help": "Stream the dispatcher enqueues onto",
+              "id": "stream",
+              "long": "stream",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "300"
+              ],
+              "global": false,
+              "help": "How long to wait for each case's reply. Default: 300 seconds",
+              "id": "timeout_secs",
+              "long": "timeout-secs",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Print the kubectl commands, stub URL, and enqueue description that a real run would produce, and exit without executing anything",
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "eval"
         },
         {
           "about": "Push the bundle to the platform API and deploy it",
