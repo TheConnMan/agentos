@@ -171,6 +171,10 @@ pub fn primer() -> Primer {
                 detail: "A string-pointer declaration silently fails to load; use the bare inline object form.",
             },
             Landmine {
+                title: "Fake vs live model is symmetric across skill and local",
+                detail: "`agentos skill up` and `agentos local up` both run the real model when a credential is present and the fake model otherwise; `agentos skill up --fake-model` or AGENTOS_FAKE_MODEL=1 forces the offline fake at either tier.",
+            },
+            Landmine {
                 title: "In-cluster sandboxes need dnsPolicy ClusterFirst",
                 detail: "Otherwise the bound bundle fetch cannot resolve the in-cluster object store.",
             },

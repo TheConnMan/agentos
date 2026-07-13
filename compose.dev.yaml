@@ -416,9 +416,12 @@ services:
       - AGENTOS_API_BASE_URL=http://localhost:28000
       - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}
-      # Fake model by default (no credential needed). For a real model set
-      # AGENTOS_FAKE_MODEL=0 and provide a credential in your SHELL (never in this
-      # file): the bare names below forward it from your environment only if set.
+      # Fake model by default (no credential needed). `agentos local up` reaches
+      # skill-tier parity: when a credential (one of the bare names below) is set
+      # in your SHELL it injects AGENTOS_FAKE_MODEL=0 automatically, so local goes
+      # live like `skill up`. Set AGENTOS_FAKE_MODEL=1 in your shell to force the
+      # fake model even with a credential. Provide credentials in the SHELL only,
+      # never in this file: the bare names below forward from your environment.
       - AGENTOS_FAKE_MODEL=${AGENTOS_FAKE_MODEL:-1}
       - ANTHROPIC_API_KEY
       - CLAUDE_CODE_OAUTH_TOKEN

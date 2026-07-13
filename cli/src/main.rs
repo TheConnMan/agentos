@@ -224,6 +224,12 @@ enum SkillAction {
 #[derive(Subcommand)]
 enum LocalAction {
     /// Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.
+    ///
+    /// Model parity with `agentos skill up`: `local up` runs the real model when a
+    /// model credential is present in the shell (`ANTHROPIC_API_KEY`,
+    /// `CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`), and the offline fake
+    /// model otherwise. Set `AGENTOS_FAKE_MODEL=1` to force the fake even with a
+    /// credential; set `AGENTOS_FAKE_MODEL=0` (or provide a credential) to go live.
     Up {
         /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
         #[arg(short = 'f', long)]
@@ -789,6 +795,7 @@ async fn run(command: Command) -> Result<()> {
                     minimal,
                     local_model,
                     slack,
+                    model_mode: local::model_mode_from_env(),
                 })
                 .await
             }
@@ -806,6 +813,7 @@ async fn run(command: Command) -> Result<()> {
                         minimal: false,
                         local_model: None,
                         slack: false,
+                        model_mode: local::ModelMode::DefaultFake,
                     },
                     wipe,
                     yes,
@@ -820,6 +828,7 @@ async fn run(command: Command) -> Result<()> {
                     minimal: false,
                     local_model: None,
                     slack: false,
+                    model_mode: local::ModelMode::DefaultFake,
                 })
                 .await
             }

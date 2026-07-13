@@ -36,6 +36,63 @@ const ENDPOINTS: &[(&str, &str, bool)] = &[
     ("OTel HTTP", "localhost:24318", false),
 ];
 
+/// Credential env vars the compose stack forwards from the shell (bare names in
+/// `compose.dev.yaml`). Any one set non-empty makes `local up` go live, matching
+/// `skill up`. Empty counts as unset (the empty-string-is-not-a-credential rule).
+pub const CREDENTIAL_ENV_VARS: &[&str] = &[
+    "AGENTOS_CREDENTIALS",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+];
+
+/// The model mode `local up` resolves from the shell so the local tier reaches
+/// skill-tier parity: a credential present makes local go live exactly like
+/// `skill up`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModelMode {
+    /// A credential is present and fake is not pinned truthy: inject
+    /// AGENTOS_FAKE_MODEL=0 so local goes live like `skill up`.
+    LiveFromCredential,
+    /// A credential is present but AGENTOS_FAKE_MODEL is pinned truthy: run fake
+    /// anyway (the operator asked for it) but warn loudly.
+    FakePinnedDespiteCredential,
+    /// No credential: compose's fake default stands; nothing to inject.
+    DefaultFake,
+}
+
+/// Match the runner's truthy parse of `AGENTOS_FAKE_MODEL`
+/// (`runner/src/agentos_runner/__main__.py`): lowercase one of `1`/`true`/`yes`.
+fn fake_model_is_truthy(v: &str) -> bool {
+    matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+}
+
+/// Pure parity core. `explicit_fake_model` is the shell AGENTOS_FAKE_MODEL (None
+/// when unset or empty). `has_credential` is whether any CREDENTIAL_ENV_VARS is
+/// set non-empty.
+pub fn resolve_model_mode(explicit_fake_model: Option<&str>, has_credential: bool) -> ModelMode {
+    if !has_credential {
+        return ModelMode::DefaultFake;
+    }
+    match explicit_fake_model {
+        Some(v) if fake_model_is_truthy(v) => ModelMode::FakePinnedDespiteCredential,
+        _ => ModelMode::LiveFromCredential,
+    }
+}
+
+/// Snapshot the shell for the parity decision. An empty AGENTOS_FAKE_MODEL is
+/// treated as unset (matches compose's `${AGENTOS_FAKE_MODEL:-1}` and the
+/// empty-string-is-not-a-credential rule); a credential is any non-empty
+/// CREDENTIAL_ENV_VARS value.
+pub fn model_mode_from_env() -> ModelMode {
+    let explicit = std::env::var("AGENTOS_FAKE_MODEL")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let has_credential = CREDENTIAL_ENV_VARS
+        .iter()
+        .any(|v| std::env::var(v).map(|s| !s.is_empty()).unwrap_or(false));
+    resolve_model_mode(explicit.as_deref(), has_credential)
+}
+
 /// Flags shared by every `local` verb.
 pub struct LocalOpts {
     pub file: String,
@@ -43,6 +100,9 @@ pub struct LocalOpts {
     pub minimal: bool,
     pub local_model: Option<String>,
     pub slack: bool,
+    /// Model mode resolved from the shell (skill-tier parity). Only `up`
+    /// consumes it; `down`/`status` set `DefaultFake`.
+    pub model_mode: ModelMode,
 }
 
 pub struct LocalDownOpts {
@@ -86,8 +146,12 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
         plain("--wait"),
     ]);
     let mut cmd = OpsCommand::new("docker", args);
-    if let Some(model) = &o.local_model {
-        cmd = cmd.with_env(vec![
+    // `with_env` REPLACES the env vec, so build it once. `--local-model` and the
+    // credential-driven live injection are mutually exclusive: local-model
+    // carries its own live env (AGENTOS_FAKE_MODEL=0 + the ollama routing), so
+    // the parity injection only applies when no local model is requested.
+    let env: Vec<(String, String)> = if let Some(model) = &o.local_model {
+        vec![
             ("AGENTOS_FAKE_MODEL".into(), "0".into()),
             (
                 "AGENTOS_MODEL_BASE_URL".into(),
@@ -99,7 +163,17 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
             // `agentos_default`, regardless of the working-directory basename
             // (which is what compose otherwise derives the project name from).
             ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
-        ]);
+        ]
+    } else if o.model_mode == ModelMode::LiveFromCredential {
+        // A credential is present: flip compose's fake default to live, matching
+        // `skill up`. (FakePinnedDespiteCredential/DefaultFake inject nothing so
+        // compose's `${AGENTOS_FAKE_MODEL:-1}` default stands.)
+        vec![("AGENTOS_FAKE_MODEL".into(), "0".into())]
+    } else {
+        Vec::new()
+    };
+    if !env.is_empty() {
+        cmd = cmd.with_env(env);
     }
     cmd
 }
@@ -150,6 +224,21 @@ pub async fn up(o: LocalOpts) -> Result<()> {
     require_on_path("docker")?;
     let cl = ui.checklist();
     run_step(&cl, "starting dev stack", "up", &cmd).await?;
+    // `--local-model` is its own live path (routes to ollama); the shell-credential
+    // parity note only applies when no local model was requested.
+    if o.local_model.is_none() {
+        match o.model_mode {
+            ModelMode::LiveFromCredential => ui.note(
+                "Running the LIVE model: a credential is set in your shell (parity with `agentos skill up`). Set AGENTOS_FAKE_MODEL=1 to force the offline fake model.",
+            ),
+            ModelMode::FakePinnedDespiteCredential => ui.warn(
+                "Running the FAKE model despite a credential in your shell: AGENTOS_FAKE_MODEL is pinned on. Unset it or set AGENTOS_FAKE_MODEL=0 to go live.",
+            ),
+            ModelMode::DefaultFake => ui.note(
+                "Running the fake model (no credential set). Provide a credential (ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN / AGENTOS_CREDENTIALS) or --local-model to go live.",
+            ),
+        }
+    }
     for (label, url, is_core) in ENDPOINTS {
         // Under `--minimal` only the `core` services started, so advertise only
         // their endpoints; the `full`-only URLs would 404.
@@ -273,6 +362,7 @@ mod tests {
             minimal: false,
             local_model: None,
             slack: false,
+            model_mode: ModelMode::DefaultFake,
         }
     }
 
@@ -283,6 +373,7 @@ mod tests {
             minimal: false,
             local_model: Some(model.into()),
             slack: false,
+            model_mode: ModelMode::DefaultFake,
         }
     }
 
@@ -348,6 +439,106 @@ mod tests {
         assert!(cmd.env.contains(&(
             String::from("COMPOSE_PROJECT_NAME"),
             String::from("agentos"),
+        )));
+    }
+
+    #[test]
+    fn resolve_model_mode_truth_table() {
+        // No credential -> DefaultFake regardless of any pin.
+        assert_eq!(resolve_model_mode(None, false), ModelMode::DefaultFake);
+        assert_eq!(resolve_model_mode(Some("1"), false), ModelMode::DefaultFake);
+        assert_eq!(
+            resolve_model_mode(Some("banana"), false),
+            ModelMode::DefaultFake
+        );
+        // Credential + no explicit pin -> live.
+        assert_eq!(
+            resolve_model_mode(None, true),
+            ModelMode::LiveFromCredential
+        );
+        // Credential + truthy pin (any casing the runner accepts) -> fake pinned.
+        for pin in ["1", "true", "YES", "Yes"] {
+            assert_eq!(
+                resolve_model_mode(Some(pin), true),
+                ModelMode::FakePinnedDespiteCredential,
+                "pin {pin:?} should pin fake"
+            );
+        }
+        // Credential + non-truthy pin -> live (0/off/garbage are not "fake on").
+        // A whitespace-padded value like " true " is not truthy because the
+        // runner does not trim before comparing.
+        for pin in ["0", "banana", "off", "", " true "] {
+            assert_eq!(
+                resolve_model_mode(Some(pin), true),
+                ModelMode::LiveFromCredential,
+                "pin {pin:?} should stay live"
+            );
+        }
+    }
+
+    #[test]
+    fn up_live_from_credential_injects_fake_zero() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.model_mode = ModelMode::LiveFromCredential;
+        let cmd = up_command(&o);
+        assert!(
+            cmd.env
+                .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))),
+            "live-from-credential must inject AGENTOS_FAKE_MODEL=0; env={:?}",
+            cmd.env
+        );
+        assert!(
+            cmd.display().contains("AGENTOS_FAKE_MODEL=0"),
+            "display must show the injected env: {}",
+            cmd.display()
+        );
+    }
+
+    #[test]
+    fn up_fake_pinned_does_not_inject() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.model_mode = ModelMode::FakePinnedDespiteCredential;
+        let cmd = up_command(&o);
+        assert!(
+            !cmd.env.iter().any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
+            "fake-pinned must leave compose's default alone; env={:?}",
+            cmd.env
+        );
+    }
+
+    #[test]
+    fn up_default_fake_does_not_inject() {
+        let cmd = up_command(&opts(DEFAULT_COMPOSE_FILE));
+        assert!(
+            !cmd.env.iter().any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
+            "default-fake must leave compose's default alone; env={:?}",
+            cmd.env
+        );
+    }
+
+    #[test]
+    fn up_local_model_unchanged_by_model_mode() {
+        // --local-model owns the live env; a LiveFromCredential model_mode must
+        // not duplicate or override it (exactly one AGENTOS_FAKE_MODEL=0, plus the
+        // ollama routing env).
+        let mut o = opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b");
+        o.model_mode = ModelMode::LiveFromCredential;
+        let cmd = up_command(&o);
+        assert_eq!(
+            cmd.env
+                .iter()
+                .filter(|(k, _)| k == "AGENTOS_FAKE_MODEL")
+                .count(),
+            1,
+            "exactly one AGENTOS_FAKE_MODEL under --local-model; env={:?}",
+            cmd.env
+        );
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+        assert!(cmd.env.contains(&(
+            String::from("AGENTOS_MODEL_BASE_URL"),
+            String::from("http://ollama:11434"),
         )));
     }
 

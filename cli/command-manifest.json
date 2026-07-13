@@ -361,6 +361,7 @@
             }
           ],
           "hidden": false,
+          "long_about": "Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.\n\nModel parity with `agentos skill up`: `local up` runs the real model when a model credential is present in the shell (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`), and the offline fake model otherwise. Set `AGENTOS_FAKE_MODEL=1` to force the fake even with a credential; set `AGENTOS_FAKE_MODEL=0` (or provide a credential) to go live.",
           "name": "up"
         },
         {
