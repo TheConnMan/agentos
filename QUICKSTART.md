@@ -7,9 +7,18 @@ the runner container on your host Docker daemon, talking straight to the agent.
 ## Before you start
 
 - **Docker** running locally.
-- The **`agentos`** binary on your PATH. Grab it from
-  [GitHub Releases](https://github.com/curie-eng/agentos/releases) (or build the
-  CLI from `cli/` with `cargo build --release`).
+- The **`agentos`** binary on your PATH. Download the prebuilt binary for
+  your platform from the latest release (no Rust toolchain required):
+
+  ```bash
+  # Linux (x86_64); for macOS Apple silicon swap in agentos-aarch64-apple-darwin
+  curl -L -o agentos \
+    https://github.com/curie-eng/agentos/releases/latest/download/agentos-x86_64-unknown-linux-gnu
+  chmod +x agentos && sudo mv agentos /usr/local/bin/
+  ```
+
+  Building the CLI from source (`cargo build --release` in `cli/`) is the
+  contributor path — see [`docs/onboarding.md`](docs/onboarding.md).
 
 ## Your first agent reply
 
