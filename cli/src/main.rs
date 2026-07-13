@@ -588,9 +588,17 @@ enum ClusterAction {
         /// Plugin bundle directory.
         #[arg(long, default_value = ".")]
         plugin_dir: PathBuf,
-        /// Platform API base URL.
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
+        /// Platform API base URL. Omit to auto-discover the deployed release's UI
+        /// `/api` proxy (NodePort + node host); no port-forward. AGENTOS_API_URL or
+        /// an explicit value is dialed as given.
+        #[arg(long, env = "AGENTOS_API_URL")]
+        api_url: Option<String>,
+        /// Kubernetes namespace of the release (for UI proxy discovery). Default: agentos.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name (for UI proxy discovery). Default: agentos.
+        #[arg(long, default_value = "agentos")]
+        release: String,
         /// Platform API key.
         #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
         api_key: String,
@@ -1146,13 +1154,22 @@ async fn run(command: Command) -> Result<()> {
             ClusterAction::Deploy {
                 plugin_dir,
                 api_url,
+                namespace,
+                release,
                 api_key,
                 slack_channel,
                 env,
                 label,
             } => {
+                // An explicit --api-url / AGENTOS_API_URL is dialed as given;
+                // otherwise reach the platform API through the deployed release's
+                // UI `/api` NodePort proxy (never self-plumb a port-forward).
+                let api_url = match api_url {
+                    Some(url) => url,
+                    None => ops::discover_ui_api_url(&namespace, &release).await?,
+                };
                 let connect_hint = format!(
-                    "the platform API at {api_url} is unreachable. `cluster deploy` does not port-forward for you; open one first, e.g.:\n    kubectl -n agentos port-forward svc/agentos-api 8000:8000\nthen re-run (or pass --api-url if your API is elsewhere)."
+                    "the platform API at {api_url} is unreachable. `cluster deploy` reaches the API through the UI /api proxy (no port-forward); confirm the release is healthy with `agentos cluster status`, or pass --api-url to target the API directly."
                 );
                 commands::deploy(DeployOpts {
                     plugin_dir,
@@ -1310,6 +1327,72 @@ mod tests {
                 action: LocalAction::Message { api_key, .. },
             } => assert_eq!(api_key, "K"),
             _ => panic!("expected local message command"),
+        }
+    }
+
+    #[test]
+    fn cluster_deploy_defaults_to_proxy_discovery() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "deploy"])
+            .expect("cluster deploy should parse");
+        match cli.command {
+            Command::Cluster {
+                action:
+                    ClusterAction::Deploy {
+                        api_url,
+                        namespace,
+                        release,
+                        ..
+                    },
+            } => {
+                assert_eq!(api_url, None);
+                assert_eq!(namespace, "agentos");
+                assert_eq!(release, "agentos");
+            }
+            _ => panic!("expected cluster deploy command"),
+        }
+    }
+
+    #[test]
+    fn cluster_deploy_accepts_explicit_api_url() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "deploy",
+            "--api-url",
+            "http://h:30080/api",
+        ])
+        .expect("cluster deploy --api-url should parse");
+        match cli.command {
+            Command::Cluster {
+                action: ClusterAction::Deploy { api_url, .. },
+            } => assert_eq!(api_url.as_deref(), Some("http://h:30080/api")),
+            _ => panic!("expected cluster deploy command"),
+        }
+    }
+
+    #[test]
+    fn cluster_deploy_captures_namespace_and_release() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "deploy",
+            "--namespace",
+            "ns1",
+            "--release",
+            "rel1",
+        ])
+        .expect("cluster deploy --namespace --release should parse");
+        match cli.command {
+            Command::Cluster {
+                action:
+                    ClusterAction::Deploy {
+                        namespace, release, ..
+                    },
+            } => {
+                assert_eq!(namespace, "ns1");
+                assert_eq!(release, "rel1");
+            }
+            _ => panic!("expected cluster deploy command"),
         }
     }
 

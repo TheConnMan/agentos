@@ -1121,20 +1121,96 @@ fn print_pod_summary(pods: &[serde_json::Value]) -> (usize, usize, Vec<String>) 
     (ready, total, unhealthy)
 }
 
-/// Resolve the node host: the kubeconfig cluster server hostname, falling back
-/// to the first node's InternalIP.
-async fn discover_host() -> String {
+/// Resolve a routable node host: kubeconfig cluster server hostname, falling
+/// back to the first node's InternalIP. None when neither is available.
+async fn resolve_node_host() -> Option<String> {
     if let Ok((true, out, _)) = run_capture(&kubeconfig_host_cmd()).await {
         if let Some(host) = host_from_server_url(out.trim()) {
-            return host;
+            return Some(host);
         }
     }
     if let Ok((true, out, _)) = run_capture(&nodes_cmd()).await {
         if let Some(ip) = node_internal_ip(&out) {
-            return ip;
+            return Some(ip);
         }
     }
-    "localhost".to_string()
+    None
+}
+
+/// Resolve the node host: the kubeconfig cluster server hostname, falling back
+/// to the first node's InternalIP, then to the literal `localhost`.
+async fn discover_host() -> String {
+    resolve_node_host()
+        .await
+        .unwrap_or_else(|| "localhost".to_string())
+}
+
+/// Format an `http://host:port<path>` URL for a node, bracketing an IPv6 host
+/// literal so the authority is valid (`::1` -> `[::1]`). `host` is expected
+/// unbracketed (as `resolve_node_host` returns it); `path` is appended verbatim
+/// (`/api`, `/?api=1`, or `""`).
+fn node_http_url(host: &str, port: u16, path: &str) -> String {
+    if host.contains(':') {
+        format!("http://[{host}]:{port}{path}")
+    } else {
+        format!("http://{host}:{port}{path}")
+    }
+}
+
+/// A usage error (exit 2) whose fix hint points the operator at `--api-url`,
+/// the escape hatch for every UI-proxy discovery failure.
+fn api_url_usage_err(msg: impl Into<String>) -> anyhow::Error {
+    crate::exit::CliError::usage(msg)
+        .with_fix("pass --api-url")
+        .into()
+}
+
+/// Build the UI `/api` proxy base URL (`http://<host>:<ui-nodeport>/api`) from
+/// the UI service JSON and a resolved node host, or an actionable usage error.
+/// `cluster deploy` reaches the platform API through this proxy (the UI pod
+/// serves `/api`), so it never falls back to a port-forward.
+fn ui_api_url_from_parts(ui_svc_json: &str, host: Option<&str>) -> Result<String> {
+    match parse_service(ui_svc_json) {
+        Some((svc_type, node_port, _)) if svc_type == "NodePort" => {
+            let np = node_port.ok_or_else(|| {
+                api_url_usage_err(
+                    "the UI service is NodePort but has not been assigned a nodePort yet; wait for the release to settle or pass --api-url to target the API directly",
+                )
+            })?;
+            let host = host.ok_or_else(|| {
+                api_url_usage_err(
+                    "could not determine a node host to reach the UI /api proxy; pass --api-url to target the API directly",
+                )
+            })?;
+            Ok(node_http_url(host, np, "/api"))
+        }
+        Some(_) => Err(api_url_usage_err(
+            "the UI service is not NodePort-exposed (installed with --no-expose?); re-run `cluster up` without --no-expose or pass --api-url to target the API directly",
+        )),
+        None => Err(api_url_usage_err(
+            "could not read the UI service to discover the platform API URL; pass --api-url to target the API directly",
+        )),
+    }
+}
+
+/// Discover the UI `/api` proxy URL for a NodePort-exposed release so
+/// `cluster deploy` reaches the platform API with no port-forward.
+pub async fn discover_ui_api_url(namespace: &str, release: &str) -> Result<String> {
+    let common = CommonOpts {
+        namespace: namespace.to_string(),
+        release: release.to_string(),
+        dry_run: false,
+    };
+    let svc_json = match run_capture(&svc_cmd(&common, "ui")).await {
+        Ok((true, out, _)) => out,
+        _ => {
+            return Err(api_url_usage_err(format!(
+                "could not read the {release}-ui service in namespace {namespace} to discover the platform API URL; pass --api-url to target the API directly"
+            )))
+        }
+    };
+    let host = resolve_node_host().await;
+    ui_api_url_from_parts(&svc_json, host.as_deref())
 }
 
 /// First node InternalIP from `kubectl get nodes -o json`.
@@ -1173,7 +1249,7 @@ async fn print_service_url(o: &CommonOpts, suffix: &str, label: &str, host: &str
     match parse_service(&out) {
         Some((svc_type, node_port, _port)) if svc_type == "NodePort" => {
             if let Some(np) = node_port {
-                ui.kv(label, &ui.url(&format!("http://{host}:{np}{suffix_path}")));
+                ui.kv(label, &ui.url(&node_http_url(host, np, suffix_path)));
             } else {
                 ui.kv(
                     label,
@@ -2075,5 +2151,71 @@ mod tests {
     fn helm_get_values_reads_user_supplied_values_as_json() {
         let cmd = helm_get_values_cmd(&common());
         assert_eq!(cmd.display(), "helm get values agentos -n agentos -o json");
+    }
+
+    #[test]
+    fn ui_api_url_nodeport_with_host_builds_proxy_url() {
+        let json = r#"{"spec":{"type":"NodePort","ports":[{"port":80,"nodePort":31234}]}}"#;
+        let url = ui_api_url_from_parts(json, Some("10.0.0.5")).expect("should build a proxy URL");
+        assert_eq!(url, "http://10.0.0.5:31234/api");
+    }
+
+    #[test]
+    fn node_http_url_brackets_ipv6_and_appends_path() {
+        assert_eq!(
+            node_http_url("10.0.0.5", 31234, "/api"),
+            "http://10.0.0.5:31234/api"
+        );
+        assert_eq!(
+            node_http_url("::1", 31234, "/api"),
+            "http://[::1]:31234/api"
+        );
+        assert_eq!(
+            node_http_url("node.local", 30080, "/?api=1"),
+            "http://node.local:30080/?api=1"
+        );
+        assert_eq!(
+            node_http_url("10.0.0.5", 30080, ""),
+            "http://10.0.0.5:30080"
+        );
+    }
+
+    #[test]
+    fn ui_api_url_ipv6_host_is_bracketed() {
+        let json = r#"{"spec":{"type":"NodePort","ports":[{"port":80,"nodePort":31234}]}}"#;
+        let url = ui_api_url_from_parts(json, Some("::1")).expect("should build a proxy URL");
+        assert_eq!(url, "http://[::1]:31234/api");
+    }
+
+    #[test]
+    fn ui_api_url_nodeport_without_host_errs_mentioning_api_url() {
+        let json = r#"{"spec":{"type":"NodePort","ports":[{"port":80,"nodePort":31234}]}}"#;
+        let err = ui_api_url_from_parts(json, None).expect_err("a missing host must error");
+        assert!(err.to_string().contains("--api-url"), "{err}");
+    }
+
+    #[test]
+    fn ui_api_url_nodeport_without_assigned_nodeport_errs_mentioning_api_url() {
+        let json = r#"{"spec":{"type":"NodePort","ports":[{"port":80}]}}"#;
+        let err = ui_api_url_from_parts(json, Some("10.0.0.5"))
+            .expect_err("an unassigned nodePort must error");
+        assert!(err.to_string().contains("--api-url"), "{err}");
+    }
+
+    #[test]
+    fn ui_api_url_clusterip_errs_mentioning_no_expose_and_api_url() {
+        let json = r#"{"spec":{"type":"ClusterIP","ports":[{"port":80}]}}"#;
+        let err = ui_api_url_from_parts(json, Some("10.0.0.5"))
+            .expect_err("a non-NodePort service must error");
+        let msg = err.to_string();
+        assert!(msg.contains("--no-expose"), "{msg}");
+        assert!(msg.contains("--api-url"), "{msg}");
+    }
+
+    #[test]
+    fn ui_api_url_malformed_json_errs_mentioning_api_url() {
+        let err =
+            ui_api_url_from_parts("", Some("10.0.0.5")).expect_err("malformed JSON must error");
+        assert!(err.to_string().contains("--api-url"), "{err}");
     }
 }
