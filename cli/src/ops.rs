@@ -1022,7 +1022,16 @@ pub async fn down(opts: DownOpts) -> Result<()> {
 
 /// Read a y/N confirmation from stderr/stdin for `down` when `--yes` is absent.
 fn confirm(o: &CommonOpts) -> Result<bool> {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    // An agent (or any piped stdin) can never answer this prompt; refuse instead
+    // of blocking on a read that will never complete. `--yes` is the non-interactive path.
+    if !std::io::stdin().is_terminal() {
+        return Err(crate::exit::CliError::usage(
+            "refusing to prompt for confirmation in a non-interactive session; re-run with --yes to proceed",
+        )
+        .with_fix("pass --yes")
+        .into());
+    }
     eprint!(
         "This uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'. Continue? [y/N] ",
         o.release, o.namespace

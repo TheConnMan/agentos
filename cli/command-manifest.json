@@ -41,6 +41,18 @@
         "never"
       ],
       "required": false
+    },
+    {
+      "global": true,
+      "help": "Machine-readable JSON to stdout; human/log text to stderr",
+      "id": "json",
+      "long": "json",
+      "positional": false,
+      "possible_values": [
+        "true",
+        "false"
+      ],
+      "required": false
     }
   ],
   "hidden": false,
@@ -1537,22 +1549,8 @@
     },
     {
       "about": "Print a self-contained primer for a coding agent driving the harness (ADR-0021)",
-      "args": [
-        {
-          "global": false,
-          "help": "Emit the primer as structured JSON (stdout=data, human text=stderr)",
-          "id": "json",
-          "long": "json",
-          "positional": false,
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false
-        }
-      ],
       "hidden": false,
-      "long_about": "Print a self-contained primer for a coding agent driving the harness (ADR-0021).\n\nOrdered by what the agent needs first (roughly 100 lines), carrying only non-discoverable knowledge: the parity ladder, when/which decision logic, the landmines, and verify-first. Human-readable Markdown by default; `--json` emits a structured variant (data on stdout, human text on stderr).",
+      "long_about": "Print a self-contained primer for a coding agent driving the harness (ADR-0021).\n\nOrdered by what the agent needs first (roughly 100 lines), carrying only non-discoverable knowledge: the parity ladder, when/which decision logic, the landmines, and verify-first. Human-readable Markdown by default; The global `--json` emits a structured variant (data on stdout, human text on stderr).",
       "name": "guide"
     }
   ]

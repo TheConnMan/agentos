@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agentos skill eval --json",
+  "description": "The agent-facing payload of `agentos skill eval --json`: the pass/fail roll-up plus one row per eval case.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["total", "passed", "failed", "cases"],
+  "properties": {
+    "total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "passed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "passed", "seconds"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "seconds": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

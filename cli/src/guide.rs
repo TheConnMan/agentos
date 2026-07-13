@@ -275,13 +275,14 @@ pub fn primer_markdown() -> String {
     render_markdown(&primer())
 }
 
-/// `agentos guide`: print the primer. Markdown to stdout by default; `--json`
-/// prints the structured variant to stdout (any human text would go to stderr).
-pub fn run(json: bool) -> Result<()> {
+/// `agentos guide`: print the primer. Markdown to stdout by default; the global
+/// `--json` flag prints the structured variant to stdout via the shared
+/// machine-output path (any human text would go to stderr).
+pub fn run() -> Result<()> {
     let p = primer();
     let ui = ui::ui();
-    if json {
-        ui.payload_plain(&serde_json::to_string_pretty(&p)?);
+    if ui.json() {
+        ui.emit_json(&serde_json::to_value(&p)?);
     } else {
         ui.payload_plain(&render_markdown(&p));
     }

@@ -93,6 +93,7 @@ pub struct Ui {
     debug: bool,
     quiet: bool,
     interactive: bool,
+    json: bool,
 }
 
 /// Resolve whether a given stream should embed ANSI, honoring the `--color`
@@ -123,11 +124,13 @@ impl Ui {
     /// resolved per stream: stdout (payload) and stderr (diagnostics) each
     /// follow their own tty state, so redirecting one never taints the other.
     /// Interactivity (spinners and redraws) is independent of color: on only
-    /// for a non-CI, non-dumb terminal. Unicode mirrors the locale.
-    pub fn resolve(color: ColorFlag, debug: bool, quiet: bool, env: &UiEnv) -> Ui {
+    /// for a non-CI, non-dumb terminal. Unicode mirrors the locale. Under
+    /// `--json` the run is never interactive: a spinner on stderr is fine, but
+    /// the machine payload owns stdout and must not share it with progress redraws.
+    pub fn resolve(color: ColorFlag, debug: bool, quiet: bool, json: bool, env: &UiEnv) -> Ui {
         let color_stdout = want_color(color, env, env.stdout_tty);
         let color_stderr = want_color(color, env, env.stderr_tty);
-        let interactive = env.stderr_tty && !env.ci && !env.term_dumb;
+        let interactive = env.stderr_tty && !env.ci && !env.term_dumb && !json;
         Ui {
             color_stdout,
             color_stderr,
@@ -136,11 +139,12 @@ impl Ui {
             debug,
             quiet,
             interactive,
+            json,
         }
     }
 
     /// Snapshot the real process environment and resolve. Non-pure wrapper.
-    pub fn from_process(color: ColorFlag, debug: bool, quiet: bool) -> Ui {
+    pub fn from_process(color: ColorFlag, debug: bool, quiet: bool, json: bool) -> Ui {
         let env = UiEnv {
             no_color: std::env::var_os("NO_COLOR")
                 .map(|v| !v.is_empty())
@@ -156,7 +160,21 @@ impl Ui {
             utf8: detect_utf8(),
             truecolor: anstyle_query::truecolor(),
         };
-        Ui::resolve(color, debug, quiet, &env)
+        Ui::resolve(color, debug, quiet, json, &env)
+    }
+
+    /// Whether `--json` is in effect: the human stdout emitters are suppressed so
+    /// they cannot corrupt the single-line machine payload.
+    pub fn json(&self) -> bool {
+        self.json
+    }
+
+    /// Write one compact JSON line (plus a trailing newline) to stdout. No color;
+    /// the payload is machine-consumed.
+    pub fn emit_json(&self, value: &serde_json::Value) {
+        if let Ok(line) = serde_json::to_string(value) {
+            let _ = writeln!(anstream::stdout(), "{line}");
+        }
     }
 
     // -- styling helpers ---------------------------------------------------
@@ -330,6 +348,9 @@ impl Ui {
 
     /// A bright bold-white payload line on stdout.
     pub fn payload(&self, line: &str) {
+        if self.json {
+            return;
+        }
         let _ = writeln!(
             anstream::stdout(),
             "{}",
@@ -339,11 +360,17 @@ impl Ui {
 
     /// An unstyled payload line on stdout (raw data).
     pub fn payload_plain(&self, line: &str) {
+        if self.json {
+            return;
+        }
         let _ = writeln!(anstream::stdout(), "{line}");
     }
 
     /// Write raw streamed tokens to stdout with no newline, flushing.
     pub fn print_tokens(&self, s: &str) {
+        if self.json {
+            return;
+        }
         let mut out = anstream::stdout();
         let _ = write!(out, "{s}");
         let _ = out.flush();
@@ -352,6 +379,9 @@ impl Ui {
     /// Write agent answer text to stdout in the bright payload color (non-bold),
     /// no trailing newline, flushed. Used for streamed tokens and returned replies.
     pub fn answer(&self, s: &str) {
+        if self.json {
+            return;
+        }
         let styled = self.paint_out(self.answer_style(), s);
         let mut out = anstream::stdout();
         let _ = write!(out, "{styled}");
@@ -361,6 +391,9 @@ impl Ui {
     /// A key/value line on stdout: dim padded key, then value. The caller
     /// pre-styles the value (e.g. via `url`) when it is a URL or id.
     pub fn kv(&self, key: &str, val: &str) {
+        if self.json {
+            return;
+        }
         let key_styled = self.paint_out(self.dim(), &format!("{key:<12}"));
         let _ = writeln!(anstream::stdout(), "{key_styled}  {val}");
     }
@@ -450,7 +483,7 @@ pub fn init(ui: Ui) {
 /// The process-global `Ui`. Falls back to a safe auto default (for tests and
 /// any pre-init caller).
 pub fn ui() -> &'static Ui {
-    UI.get_or_init(|| Ui::from_process(ColorFlag::Auto, false, false))
+    UI.get_or_init(|| Ui::from_process(ColorFlag::Auto, false, false, false))
 }
 
 // ---------------------------------------------------------------------------
@@ -680,7 +713,7 @@ mod tests {
             no_color: true,
             ..base_env()
         };
-        assert!(Ui::resolve(ColorFlag::Always, false, false, &env).color_stderr);
+        assert!(Ui::resolve(ColorFlag::Always, false, false, false, &env).color_stderr);
     }
 
     #[test]
@@ -690,7 +723,7 @@ mod tests {
             stderr_tty: true,
             ..base_env()
         };
-        assert!(!Ui::resolve(ColorFlag::Never, false, false, &env).color_stderr);
+        assert!(!Ui::resolve(ColorFlag::Never, false, false, false, &env).color_stderr);
     }
 
     #[test]
@@ -700,8 +733,8 @@ mod tests {
             ..base_env()
         };
         let off = base_env();
-        assert!(Ui::resolve(ColorFlag::Auto, false, false, &on).color_stderr);
-        assert!(!Ui::resolve(ColorFlag::Auto, false, false, &off).color_stderr);
+        assert!(Ui::resolve(ColorFlag::Auto, false, false, false, &on).color_stderr);
+        assert!(!Ui::resolve(ColorFlag::Auto, false, false, false, &off).color_stderr);
     }
 
     #[test]
@@ -711,7 +744,7 @@ mod tests {
             clicolor_force: true,
             ..base_env()
         };
-        assert!(Ui::resolve(ColorFlag::Auto, false, false, &env).color_stderr);
+        assert!(Ui::resolve(ColorFlag::Auto, false, false, false, &env).color_stderr);
     }
 
     #[test]
@@ -721,7 +754,7 @@ mod tests {
             stderr_tty: true,
             ..base_env()
         };
-        let ui = Ui::resolve(ColorFlag::Auto, false, false, &env);
+        let ui = Ui::resolve(ColorFlag::Auto, false, false, false, &env);
         assert!(ui.color_stderr, "color follows tty under CI+Auto");
         assert!(!ui.interactive, "CI is never interactive");
     }
@@ -733,7 +766,7 @@ mod tests {
             stderr_tty: true,
             ..base_env()
         };
-        let ui = Ui::resolve(ColorFlag::Auto, false, false, &env);
+        let ui = Ui::resolve(ColorFlag::Auto, false, false, false, &env);
         assert!(!ui.color_stderr);
         assert!(!ui.interactive);
     }
@@ -745,7 +778,7 @@ mod tests {
             stdout_tty: false,
             ..base_env()
         };
-        let ui = Ui::resolve(ColorFlag::Auto, false, false, &env);
+        let ui = Ui::resolve(ColorFlag::Auto, false, false, false, &env);
         assert!(
             ui.color_stderr,
             "diagnostics on a terminal stderr are colored"
@@ -760,8 +793,8 @@ mod tests {
             utf8: false,
             ..base_env()
         };
-        assert!(Ui::resolve(ColorFlag::Auto, false, false, &utf8).unicode);
-        assert!(!Ui::resolve(ColorFlag::Auto, false, false, &ascii).unicode);
+        assert!(Ui::resolve(ColorFlag::Auto, false, false, false, &utf8).unicode);
+        assert!(!Ui::resolve(ColorFlag::Auto, false, false, false, &ascii).unicode);
     }
 
     #[test]
@@ -773,7 +806,7 @@ mod tests {
             truecolor: false,
             ..base_env()
         };
-        let ui = Ui::resolve(ColorFlag::Always, false, false, &tc_off);
+        let ui = Ui::resolve(ColorFlag::Always, false, false, false, &tc_off);
         let s = ui.paint_err(ui.green(), "x");
         assert!(
             s.contains("\x1b[32m") || s.contains("[32m"),
@@ -789,7 +822,7 @@ mod tests {
             truecolor: true,
             ..base_env()
         };
-        let ui2 = Ui::resolve(ColorFlag::Always, false, false, &tc_on);
+        let ui2 = Ui::resolve(ColorFlag::Always, false, false, false, &tc_on);
         assert!(
             ui2.paint_err(ui2.green(), "x").contains("38;2"),
             "truecolor path emits 24-bit"
