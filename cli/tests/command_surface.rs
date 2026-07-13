@@ -35,6 +35,7 @@ fn process_help_routes_positive_forms() {
         &["skill", "status"],
         &["skill", "message"],
         &["skill", "eval"],
+        &["skill", "check"],
         &["local", "up"],
         &["local", "down"],
         &["local", "status"],

@@ -1,0 +1,10 @@
+{
+  "name": "mcp-red-broken",
+  "version": "0.1.0",
+  "description": "Inline MCP server whose command exits immediately, so it reaches status failed.",
+  "mcpServers": {
+    "broken-probe": {
+      "command": "false"
+    }
+  }
+}

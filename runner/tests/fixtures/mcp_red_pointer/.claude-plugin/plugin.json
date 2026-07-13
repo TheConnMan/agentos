@@ -1,0 +1,6 @@
+{
+  "name": "mcp-red-pointer",
+  "version": "0.1.0",
+  "description": "Mirrors #336: mcpServers is a string pointer to a non-root file, silently ignored by the real loader.",
+  "mcpServers": "config/mcp.json"
+}

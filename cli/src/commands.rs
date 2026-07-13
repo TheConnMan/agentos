@@ -10,10 +10,11 @@ use std::time::{Duration, Instant};
 use agentos_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
-use crate::docker::{self, StartSpec};
+use crate::docker::{self, CheckSpec, StartSpec};
 use crate::evals::{load_suite, turn_passes};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
@@ -70,6 +71,144 @@ pub struct StartOpts {
     pub budget: String,
     pub model: Option<String>,
     pub local_model: Option<String>,
+}
+
+/// The versioned report emitted by `agentos_runner.check`.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CheckReport {
+    pub check: String,
+    pub version: u64,
+    pub plugin_dir: String,
+    pub declared: Vec<DeclaredServer>,
+    /// Opaque pass-through of the runner's registered-server list. Never read by
+    /// the human render (only round-tripped through `--json`), so it is kept as
+    /// raw JSON: it round-trips losslessly and can never fail `parse_check_report`
+    /// on a future tool/server shape.
+    pub registered: Vec<serde_json::Value>,
+    pub matches: Vec<CheckMatch>,
+    pub verdict: String,
+    pub reasons: Vec<String>,
+    pub hints: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DeclaredServer {
+    pub name: String,
+    pub source: String,
+    pub form: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CheckMatch {
+    pub declared: String,
+    pub registered: Option<String>,
+    pub connected: bool,
+    pub tool_count: u64,
+}
+
+/// Parse the frozen runner to CLI check report contract.
+pub fn parse_check_report(stdout: &str) -> Result<CheckReport> {
+    let report: CheckReport = serde_json::from_str(stdout)
+        .context("runner check output is not valid JSON for the check report contract")?;
+    if report.version != 1 {
+        bail!(
+            "runner check report contract version {} is unsupported; expected version 1",
+            report.version
+        );
+    }
+    Ok(report)
+}
+
+/// Map a runner check verdict to the CLI semantic exit contract.
+pub fn check_outcome(report: &CheckReport) -> std::result::Result<(), crate::exit::CliError> {
+    match report.verdict.as_str() {
+        "green" => Ok(()),
+        "red" => Err(crate::exit::CliError {
+            message: "MCP load check reported red".into(),
+            fix: None,
+            class: crate::exit::ExitClass::Failure,
+        }
+        .with_fix(
+            "declare MCP servers as an inline object in .claude-plugin/plugin.json (or a bare .mcp.json); run agentos skill check again",
+        )),
+        "invalid_bundle" => {
+            // An invalid bundle is a deterministic input error (exit 2, Usage),
+            // matching the runner's own `check.py` exit-2 for this verdict: the
+            // bundle dir exists but fails structural validation, so retrying the
+            // same argv fails identically. Surface the structural `reasons` so
+            // the user sees WHY the bundle is invalid.
+            let mut message = String::from("MCP load check reported an invalid bundle");
+            if !report.reasons.is_empty() {
+                message.push_str(": ");
+                message.push_str(&report.reasons.join("; "));
+            }
+            Err(crate::exit::CliError::usage(message).with_fix(
+                "fix the reported bundle-structure errors (.claude-plugin/plugin.json and skills/) and run agentos skill check again",
+            ))
+        }
+        verdict => Err(crate::exit::CliError {
+            message: format!("MCP load check reported unknown verdict '{verdict}'"),
+            fix: None,
+            class: crate::exit::ExitClass::Failure,
+        }),
+    }
+}
+
+/// Run the offline MCP load check for a plugin bundle.
+pub async fn check(plugin_dir: PathBuf, image: String, timeout_s: u64) -> Result<()> {
+    let requested_dir = plugin_dir.display().to_string();
+    let plugin_dir = plugin_dir.canonicalize().map_err(|err| {
+        crate::exit::CliError::usage(format!("plugin dir not found: {requested_dir}: {err}"))
+    })?;
+    read_manifest(&plugin_dir).map_err(|err| {
+        crate::exit::CliError::usage(format!("plugin dir is not a usable bundle: {err}"))
+    })?;
+
+    let spec = CheckSpec {
+        image,
+        plugin_dir: plugin_dir.display().to_string(),
+        timeout_s,
+    };
+    let (status, stdout, stderr) = docker::docker_capture(&spec.run_args()).await?;
+    // A container that DID run and produced parseable JSON is data (a
+    // green/red/invalid verdict) regardless of its exit code. Only when the
+    // stdout is NOT a valid report is this a real docker failure -- surface the
+    // captured stderr (e.g. "Cannot connect to the Docker daemon") so the true
+    // cause is visible instead of being dropped. Stays a plain Failure (exit 1);
+    // Transient/exit 3 is reserved for reqwest connect/timeout errors (#323).
+    let report = parse_check_report(&stdout).map_err(|err| {
+        anyhow::anyhow!(
+            "runner check output violated the check report contract: {err}; \
+             docker exited {status}; stdout: {stdout}; stderr: {stderr}"
+        )
+    })?;
+
+    let ui = crate::ui::ui();
+    if ui.json() {
+        ui.emit_json(&serde_json::to_value(&report)?);
+    } else {
+        let mut lines = vec![format!("declared: {}", report.declared.len())];
+        lines.extend(report.matches.iter().map(|entry| {
+            format!(
+                "match: {} -> {} (connected: {}, tools: {})",
+                entry.declared,
+                entry.registered.as_deref().unwrap_or("none"),
+                entry.connected,
+                entry.tool_count
+            )
+        }));
+        lines.push(format!("verdict: {}", report.verdict));
+        lines.extend(
+            report
+                .reasons
+                .iter()
+                .map(|reason| format!("reason: {reason}")),
+        );
+        lines.extend(report.hints.iter().map(|hint| format!("hint: {hint}")));
+        ui.payload_plain(&lines.join("\n"));
+    }
+
+    check_outcome(&report).map_err(anyhow::Error::from)
 }
 
 pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBuf>) -> Result<()> {

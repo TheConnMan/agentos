@@ -201,6 +201,43 @@
           "name": "up"
         },
         {
+          "about": "Check that the bundle's MCP servers load in an offline runner container",
+          "args": [
+            {
+              "default_values": [
+                "."
+              ],
+              "global": false,
+              "help": "Plugin bundle directory",
+              "id": "plugin_dir",
+              "long": "plugin-dir",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Runner image. Defaults to the same image resolution as `skill up`",
+              "id": "image",
+              "long": "image",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "30"
+              ],
+              "global": false,
+              "help": "Check deadline in seconds, forwarded to the runner container",
+              "id": "timeout",
+              "long": "timeout",
+              "positional": false,
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "check"
+        },
+        {
           "about": "Stop and remove the local runner container",
           "hidden": false,
           "name": "down"

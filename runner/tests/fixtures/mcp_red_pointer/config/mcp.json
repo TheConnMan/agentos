@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pointer-probe": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/probe_server.py"]
+    }
+  }
+}
