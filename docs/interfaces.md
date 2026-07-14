@@ -20,7 +20,7 @@ is documentation of where the code already draws the line, not a new abstraction
 | Evals (case + scorer) | SOFT | 1 grader family | B | #8, #26 | [interfaces/evals/INTERFACE.md](interfaces/evals/INTERFACE.md) |
 | Blob storage (S3/MinIO) | SOFT | 2 concretes | B+ | #83 | [interfaces/blob-storage/INTERFACE.md](interfaces/blob-storage/INTERFACE.md) |
 | Relational DB (Postgres) | SOFT | 1 | A- | #84 | [interfaces/relational-db/INTERFACE.md](interfaces/relational-db/INTERFACE.md) |
-| Queue / stream (Valkey) | SOFT | 1 (redis-py) | not separately graded | #85, #7 | [interfaces/queue-stream/INTERFACE.md](interfaces/queue-stream/INTERFACE.md) |
+| Queue / stream (Valkey) | CLEAN | 1 (redis-py) behind the broker port | not separately graded | #85, #7 | [interfaces/queue-stream/INTERFACE.md](interfaces/queue-stream/INTERFACE.md) |
 | Bundle format | CLEAN, frozen | 1 | not separately graded | #30 | [interfaces/bundle-format/INTERFACE.md](interfaces/bundle-format/INTERFACE.md) |
 | Approval / authorizer | NONE | 0 | not separately graded | #22 | [interfaces/approval/INTERFACE.md](interfaces/approval/INTERFACE.md) |
 | Workflow state store | NONE | 0 (concrete AffinityStore) | not separately graded | #23 | [interfaces/workflow-state/INTERFACE.md](interfaces/workflow-state/INTERFACE.md) |
