@@ -67,6 +67,17 @@ fn json_global_flag_parses_before_subcommand() {
 }
 
 #[test]
+fn bare_agentos_requires_a_tty_in_non_interactive_contexts() {
+    let output = Command::new(bin()).output().expect("run bare agentos");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "bare agentos should dispatch to the interactive UI and fail as usage without a TTY\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn skill_status_connection_refused_exits_transient() {
     // Hermetic: port 1 is reserved/closed, so the runner status call fails with
     // a connect error -> transient class -> exit 3 (safe to retry). RED until

@@ -23,11 +23,11 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "agentos",
     version,
-    about = "AgentOS CLI: run a plugin locally, no Slack workspace needed"
+    about = "AgentOS CLI: run `agentos` for the interactive terminal, or pass a subcommand for scripts"
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
     /// Show verbose plumbing (helm/kubectl/rollout/port-forward).
     #[arg(
         long,
@@ -108,6 +108,13 @@ enum Command {
     /// release binary has no source tree to install and errors clearly; a
     /// missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
     Install,
+    /// Open the interactive terminal interface.
+    ///
+    /// A keyboard-driven terminal UI for humans: browse targets and actions,
+    /// preview exact commands, fill required values, and run workflows without
+    /// memorizing the full command surface.
+    #[command(alias = "ui", alias = "tui")]
+    Interactive,
     /// Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.
     ///
     /// Thin wrappers over the repo's dev scripts so contributors get a unified
@@ -861,25 +868,29 @@ async fn main() {
     }
 }
 
-/// Dispatch one parsed command. Returns the command's `Result`; `main`
+/// Dispatch one parsed command. No subcommand opens the interactive terminal,
+/// matching `agentos interactive` / `agentos ui`. Returns the command's
+/// `Result`; `main`
 /// classifies any error into a semantic exit code (see `agentos::exit`).
-async fn run(command: Command) -> Result<()> {
+async fn run(command: Option<Command>) -> Result<()> {
     match command {
-        Command::Init {
+        None => agentos::interactive::run().await,
+        Some(Command::Init {
             name,
             dir,
             from_spec,
-        } => commands::init(name, dir, from_spec),
-        Command::Build { tag } => commands::build(&tag).await,
-        Command::Install => commands::install().await,
-        Command::Dev { action } => match action {
+        }) => commands::init(name, dir, from_spec),
+        Some(Command::Build { tag }) => commands::build(&tag).await,
+        Some(Command::Install) => commands::install().await,
+        Some(Command::Interactive) => agentos::interactive::run().await,
+        Some(Command::Dev { action }) => match action {
             DevAction::Contracts => commands::dev_script("scripts/check-contracts.sh").await,
             DevAction::ChartCheck => {
                 commands::dev_script("charts/agentos/ci/render-assertions.sh").await
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
         },
-        Command::Skill { action } => match action {
+        Some(Command::Skill { action }) => match action {
             SkillAction::Up {
                 plugin_dir,
                 image,
@@ -938,7 +949,7 @@ async fn run(command: Command) -> Result<()> {
                 agentos::eval_init::run(agentos::eval_init::EvalInitOpts { out, force })
             }
         },
-        Command::Local { action } => match action {
+        Some(Command::Local { action }) => match action {
             LocalAction::Up {
                 file,
                 dry_run,
@@ -1124,7 +1135,7 @@ async fn run(command: Command) -> Result<()> {
                 .await
             }
         },
-        Command::Cluster { action } => match action {
+        Some(Command::Cluster { action }) => match action {
             ClusterAction::Up {
                 namespace,
                 release,
@@ -1456,12 +1467,12 @@ async fn run(command: Command) -> Result<()> {
                 .await
             }
         },
-        Command::Schema => {
+        Some(Command::Schema) => {
             use clap::CommandFactory;
             print!("{}", agentos::schema::manifest_json(&Cli::command()));
             Ok(())
         }
-        Command::Guide => agentos::guide::run(),
+        Some(Command::Guide) => agentos::guide::run(),
     }
 }
 
@@ -1479,21 +1490,38 @@ mod tests {
     fn build_defaults_tag_and_accepts_override() {
         let cli = Cli::try_parse_from(["agentos", "build"]).expect("build should parse");
         match cli.command {
-            Command::Build { tag } => assert_eq!(tag, "agentos-runner"),
+            Some(Command::Build { tag }) => assert_eq!(tag, "agentos-runner"),
             _ => panic!("expected build command"),
         }
         let cli = Cli::try_parse_from(["agentos", "build", "--tag", "my-runner:dev"])
             .expect("build --tag should parse");
         match cli.command {
-            Command::Build { tag } => assert_eq!(tag, "my-runner:dev"),
+            Some(Command::Build { tag }) => assert_eq!(tag, "my-runner:dev"),
             _ => panic!("expected build command"),
         }
     }
 
     #[test]
+    fn no_subcommand_defaults_to_interactive() {
+        let cli = Cli::try_parse_from(["agentos"]).expect("bare agentos should parse");
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
     fn install_parses() {
         let cli = Cli::try_parse_from(["agentos", "install"]).expect("install should parse");
-        assert!(matches!(cli.command, Command::Install));
+        assert!(matches!(cli.command, Some(Command::Install)));
+    }
+
+    #[test]
+    fn interactive_parses_with_aliases() {
+        let cli =
+            Cli::try_parse_from(["agentos", "interactive"]).expect("interactive should parse");
+        assert!(matches!(cli.command, Some(Command::Interactive)));
+        let cli = Cli::try_parse_from(["agentos", "ui"]).expect("ui alias should parse");
+        assert!(matches!(cli.command, Some(Command::Interactive)));
+        let cli = Cli::try_parse_from(["agentos", "tui"]).expect("tui alias should parse");
+        assert!(matches!(cli.command, Some(Command::Interactive)));
     }
 
     #[test]
@@ -1502,24 +1530,24 @@ mod tests {
             .expect("dev contracts should parse");
         assert!(matches!(
             cli.command,
-            Command::Dev {
+            Some(Command::Dev {
                 action: DevAction::Contracts
-            }
+            })
         ));
         let cli = Cli::try_parse_from(["agentos", "dev", "chart-check"])
             .expect("dev chart-check should parse");
         assert!(matches!(
             cli.command,
-            Command::Dev {
+            Some(Command::Dev {
                 action: DevAction::ChartCheck
-            }
+            })
         ));
         let cli = Cli::try_parse_from(["agentos", "dev", "e2e"]).expect("dev e2e should parse");
         assert!(matches!(
             cli.command,
-            Command::Dev {
+            Some(Command::Dev {
                 action: DevAction::E2e
-            }
+            })
         ));
     }
 
@@ -1528,9 +1556,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "local", "message", "--api-key", "K", "hi"])
             .expect("local message --api-key should parse");
         match cli.command {
-            Command::Local {
+            Some(Command::Local {
                 action: LocalAction::Message { api_key, .. },
-            } => assert_eq!(api_key, "K"),
+            }) => assert_eq!(api_key, "K"),
             _ => panic!("expected local message command"),
         }
     }
@@ -1540,7 +1568,7 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "cluster", "deploy"])
             .expect("cluster deploy should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action:
                     ClusterAction::Deploy {
                         api_url,
@@ -1548,7 +1576,7 @@ mod tests {
                         release,
                         ..
                     },
-            } => {
+            }) => {
                 assert_eq!(api_url, None);
                 assert_eq!(namespace, "agentos");
                 assert_eq!(release, "agentos");
@@ -1568,9 +1596,9 @@ mod tests {
         ])
         .expect("cluster deploy --api-url should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action: ClusterAction::Deploy { api_url, .. },
-            } => assert_eq!(api_url.as_deref(), Some("http://h:30080/api")),
+            }) => assert_eq!(api_url.as_deref(), Some("http://h:30080/api")),
             _ => panic!("expected cluster deploy command"),
         }
     }
@@ -1588,12 +1616,12 @@ mod tests {
         ])
         .expect("cluster deploy --namespace --release should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action:
                     ClusterAction::Deploy {
                         namespace, release, ..
                     },
-            } => {
+            }) => {
                 assert_eq!(namespace, "ns1");
                 assert_eq!(release, "rel1");
             }
@@ -1615,21 +1643,21 @@ mod tests {
         for (argv, verb) in cases {
             let cli = Cli::try_parse_from(argv).expect("local verb accepts -f");
             match cli.command {
-                Command::Local {
+                Some(Command::Local {
                     action: LocalAction::Up { file, .. },
-                } => {
+                }) => {
                     assert_eq!(verb, "up");
                     assert_eq!(file.as_deref(), Some("custom.yaml"));
                 }
-                Command::Local {
+                Some(Command::Local {
                     action: LocalAction::Down { file, .. },
-                } => {
+                }) => {
                     assert_eq!(verb, "down");
                     assert_eq!(file.as_deref(), Some("custom.yaml"));
                 }
-                Command::Local {
+                Some(Command::Local {
                     action: LocalAction::Status { file, .. },
-                } => {
+                }) => {
                     assert_eq!(verb, "status");
                     assert_eq!(file.as_deref(), Some("custom.yaml"));
                 }
@@ -1643,9 +1671,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "local", "up", "--minimal"])
             .expect("local up --minimal should parse");
         match cli.command {
-            Command::Local {
+            Some(Command::Local {
                 action: LocalAction::Up { minimal, .. },
-            } => assert!(minimal),
+            }) => assert!(minimal),
             _ => panic!("expected local up command"),
         }
     }
@@ -1655,9 +1683,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "local", "up", "--slack"])
             .expect("local up --slack should parse");
         match cli.command {
-            Command::Local {
+            Some(Command::Local {
                 action: LocalAction::Up { slack, .. },
-            } => assert!(slack),
+            }) => assert!(slack),
             _ => panic!("expected local up command"),
         }
     }
@@ -1675,7 +1703,7 @@ mod tests {
         ])
         .expect("local comms flags should parse");
         match cli.command {
-            Command::Local {
+            Some(Command::Local {
                 action:
                     LocalAction::Comms {
                         slack,
@@ -1683,7 +1711,7 @@ mod tests {
                         app_token,
                         ..
                     },
-            } => {
+            }) => {
                 assert!(slack);
                 assert!(disconnect);
                 assert_eq!(app_token, "X");
@@ -1697,9 +1725,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "cluster", "kill", "deal-desk", "--yes"])
             .expect("cluster kill should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action: ClusterAction::Kill { agent, yes, .. },
-            } => {
+            }) => {
                 assert_eq!(agent, "deal-desk");
                 assert!(yes);
             }
@@ -1712,7 +1740,7 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "cluster", "kill", "a"])
             .expect("cluster kill without flags should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action:
                     ClusterAction::Kill {
                         agent,
@@ -1720,7 +1748,7 @@ mod tests {
                         dry_run,
                         ..
                     },
-            } => {
+            }) => {
                 assert_eq!(agent, "a");
                 assert!(!yes);
                 assert!(!dry_run);
@@ -1734,9 +1762,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "cluster", "resume", "a", "--dry-run"])
             .expect("cluster resume should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action: ClusterAction::Resume { agent, dry_run, .. },
-            } => {
+            }) => {
                 assert_eq!(agent, "a");
                 assert!(dry_run);
             }
@@ -1749,9 +1777,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "cluster", "budget", "a", "--limit", "12.5"])
             .expect("cluster budget should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action: ClusterAction::Budget { agent, limit, .. },
-            } => {
+            }) => {
                 assert_eq!(agent, "a");
                 assert_eq!(limit, 12.5);
             }
@@ -1771,9 +1799,9 @@ mod tests {
         let cli = Cli::try_parse_from(["agentos", "cluster", "delete", "a", "--yes"])
             .expect("cluster delete should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action: ClusterAction::Delete { agent, yes, .. },
-            } => {
+            }) => {
                 assert_eq!(agent, "a");
                 assert!(yes);
             }
@@ -1794,7 +1822,7 @@ mod tests {
         ])
         .expect("cluster comms flags should parse");
         match cli.command {
-            Command::Cluster {
+            Some(Command::Cluster {
                 action:
                     ClusterAction::Comms {
                         slack,
@@ -1802,7 +1830,7 @@ mod tests {
                         app_token,
                         ..
                     },
-            } => {
+            }) => {
                 assert!(slack);
                 assert!(disconnect);
                 assert_eq!(app_token, "X");

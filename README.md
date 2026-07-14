@@ -251,6 +251,7 @@ your PATH (from the Quickstart above), the binary pulls the pinned runner
 image from GHCR on first run — nothing to build:
 
 ```bash
+agentos   # optional full-screen terminal UI for the same workflows
 agentos init my-agent && cd my-agent
 # Real model is the default. Export a credential first (forwarded into the runner
 # container): CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or AGENTOS_CREDENTIALS.
