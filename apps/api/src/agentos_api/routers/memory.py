@@ -13,7 +13,7 @@ key, edits and deletes are reflected at the next boot.
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 
 from .. import crud
@@ -28,6 +28,7 @@ from ..schemas import (
     MemoryTraceBackOut,
     SourceTraceOut,
 )
+from .state import _enforce_caps
 
 router = APIRouter(
     prefix="/agents", tags=["memory"], dependencies=[Depends(require_api_key)]
@@ -69,11 +70,12 @@ def _provenance_of(record: dict[str, Any]) -> dict[str, Any]:
     return prov if isinstance(prov, dict) else {}
 
 
-def _to_out(index: int, record: dict[str, Any]) -> MemoryEntryOut:
+def _to_out(index: int, record: dict[str, Any], version: int) -> MemoryEntryOut:
     return MemoryEntryOut(
         index=index,
         content=str(record.get("content", "")),
         provenance=MemoryProvenanceOut(**_provenance_of(record)),
+        version=version,
     )
 
 
@@ -88,7 +90,9 @@ async def list_memory(agent_id: uuid.UUID, session: SessionDep) -> list[MemoryEn
     """List an agent's learned memory entries, oldest first, with provenance."""
     await _require_agent(session, agent_id)
     entry = await _get_log_entry(session, agent_id)
-    return [_to_out(i, r) for i, r in enumerate(_records_of(entry))]
+    if entry is None:
+        return []
+    return [_to_out(i, r, entry.version) for i, r in enumerate(_records_of(entry))]
 
 
 @router.get(
@@ -126,35 +130,82 @@ async def memory_trace_back(
 async def edit_memory(
     agent_id: uuid.UUID, index: int, data: MemoryEntryEdit, session: SessionDep
 ) -> MemoryEntryOut:
-    """Edit one entry's content in place; its provenance is preserved (#267).
+    """Edit one entry's content using the parent log version.
 
     Rewrites the log array with the entry's ``content`` replaced. The recorded
-    provenance is carried through unchanged -- editing the lesson text must not
-    erase where it was learned from.
+    provenance is carried through unchanged. A stale version conflicts before
+    the positional index can address a changed or reordered log.
     """
     await _require_agent(session, agent_id)
-    entry = await _get_log_entry(session, agent_id)
+    entry: WorkflowStateEntry | None = await session.scalar(
+        select(WorkflowStateEntry)
+        .where(
+            WorkflowStateEntry.agent_id == agent_id,
+            WorkflowStateEntry.namespace == MEMORY_NAMESPACE,
+            WorkflowStateEntry.key == MEMORY_LOG_KEY,
+        )
+        .with_for_update()
+    )
+    if entry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "memory entry not found")
+    if data.expected_version != entry.version:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"version mismatch: expected {data.expected_version}, "
+            f"stored {entry.version}",
+        )
     records = _records_of(entry)
-    if entry is None or index < 0 or index >= len(records):
+    if index < 0 or index >= len(records):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "memory entry not found")
     updated = {**records[index], "content": data.content}
-    entry.value = [*records[:index], updated, *records[index + 1 :]]
+    replacement = [*records[:index], updated, *records[index + 1 :]]
+    await _enforce_caps(
+        session, agent_id, MEMORY_NAMESPACE, MEMORY_LOG_KEY, replacement
+    )
+    entry.value = replacement
     entry.version += 1
     await session.commit()
-    return _to_out(index, updated)
+    return _to_out(index, updated, entry.version)
 
 
 @router.delete(
     "/{agent_id}/memory/{index}", status_code=status.HTTP_204_NO_CONTENT
 )
 async def delete_memory(
-    agent_id: uuid.UUID, index: int, session: SessionDep
+    agent_id: uuid.UUID,
+    index: int,
+    session: SessionDep,
+    expected_version: int = Query(
+        description=(
+            "Parent log version returned with the positional memory entry. "
+            "A stale version conflicts if the log changed or reordered."
+        )
+    ),
 ) -> Response:
-    """Delete exactly one memory entry; remaining entries keep their order (#267)."""
+    """Delete one entry using its parent log version.
+
+    Remaining entries keep their order. A stale version conflicts before the
+    positional index can address a changed or reordered log.
+    """
     await _require_agent(session, agent_id)
-    entry = await _get_log_entry(session, agent_id)
+    entry: WorkflowStateEntry | None = await session.scalar(
+        select(WorkflowStateEntry)
+        .where(
+            WorkflowStateEntry.agent_id == agent_id,
+            WorkflowStateEntry.namespace == MEMORY_NAMESPACE,
+            WorkflowStateEntry.key == MEMORY_LOG_KEY,
+        )
+        .with_for_update()
+    )
+    if entry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "memory entry not found")
+    if expected_version != entry.version:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"version mismatch: expected {expected_version}, stored {entry.version}",
+        )
     records = _records_of(entry)
-    if entry is None or index < 0 or index >= len(records):
+    if index < 0 or index >= len(records):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "memory entry not found")
     entry.value = [*records[:index], *records[index + 1 :]]
     entry.version += 1

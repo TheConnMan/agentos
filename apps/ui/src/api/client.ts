@@ -497,10 +497,11 @@ export interface MemoryProvenance {
   recorded_at: string;
 }
 
-// One learned memory entry. `index` is its position in the append-only memory
-// log — the stable handle the edit/delete calls address.
+// One learned memory entry. `index` is its position in the append only memory
+// log. It is valid only with the accompanying parent log version.
 export interface MemoryEntry {
   index: number;
+  version: number;
   content: string;
   provenance: MemoryProvenance;
 }
@@ -517,21 +518,29 @@ export async function editMemory(
   agentId: string,
   index: number,
   content: string,
+  expectedVersion: number,
 ): Promise<MemoryEntry> {
   const resp = await fetch(url(`/agents/${agentId}/memory/${index}`), {
     method: "PUT",
     headers: headers({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, expected_version: expectedVersion }),
   });
   return jsonOrThrow<MemoryEntry>(resp);
 }
 
 // Delete exactly one memory entry (204 on success). Remaining entries keep order.
-export async function deleteMemory(agentId: string, index: number): Promise<void> {
-  const resp = await fetch(url(`/agents/${agentId}/memory/${index}`), {
-    method: "DELETE",
-    headers: headers(),
-  });
+export async function deleteMemory(
+  agentId: string,
+  index: number,
+  expectedVersion: number,
+): Promise<void> {
+  const resp = await fetch(
+    url(`/agents/${agentId}/memory/${index}${query({ expected_version: expectedVersion })}`),
+    {
+      method: "DELETE",
+      headers: headers(),
+    },
+  );
   if (resp.ok) return;
   const body = await resp.json().catch(() => null);
   throw new ApiError(resp.status, describeError(body) ?? resp.statusText);

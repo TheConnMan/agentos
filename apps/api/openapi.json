@@ -923,21 +923,26 @@
         "type": "object"
       },
       "MemoryEntryEdit": {
-        "description": "Edit the ``content`` of one memory entry (#267); provenance is preserved.",
+        "description": "Edit one memory entry using its parent log version.\n\nThe required version prevents a stale positional index from changing an\nentry after the log has changed. Provenance is preserved.",
         "properties": {
           "content": {
             "title": "Content",
             "type": "string"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "integer"
           }
         },
         "required": [
-          "content"
+          "content",
+          "expected_version"
         ],
         "title": "MemoryEntryEdit",
         "type": "object"
       },
       "MemoryEntryOut": {
-        "description": "One learned memory entry as returned to an operator.\n\n``index`` is the entry's position in the append-only log; it is the stable\nhandle the edit/delete endpoints (#267) address, and it survives as long as\nthe log is not consolidated (#265) or reordered.",
+        "description": "One learned memory entry as returned to an operator.\n\n``index`` is the entry's current position in the memory log. It is valid for\nmutation only with this response's parent log ``version``. A mutation with\na stale version conflicts if another change has reordered the log.",
         "properties": {
           "content": {
             "title": "Content",
@@ -949,12 +954,17 @@
           },
           "provenance": {
             "$ref": "#/components/schemas/MemoryProvenanceOut"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
           "index",
           "content",
-          "provenance"
+          "provenance",
+          "version"
         ],
         "title": "MemoryEntryOut",
         "type": "object"
@@ -2552,7 +2562,7 @@
     },
     "/agents/{agent_id}/memory/{index}": {
       "delete": {
-        "description": "Delete exactly one memory entry; remaining entries keep their order (#267).",
+        "description": "Delete one entry using its parent log version.\n\nRemaining entries keep their order. A stale version conflicts before the\npositional index can address a changed or reordered log.",
         "operationId": "delete_memory_agents__agent_id__memory__index__delete",
         "parameters": [
           {
@@ -2571,6 +2581,17 @@
             "required": true,
             "schema": {
               "title": "Index",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Parent log version returned with the positional memory entry. A stale version conflicts if the log changed or reordered.",
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "description": "Parent log version returned with the positional memory entry. A stale version conflicts if the log changed or reordered.",
+              "title": "Expected Version",
               "type": "integer"
             }
           },
@@ -2612,7 +2633,7 @@
         ]
       },
       "put": {
-        "description": "Edit one entry's content in place; its provenance is preserved (#267).\n\nRewrites the log array with the entry's ``content`` replaced. The recorded\nprovenance is carried through unchanged -- editing the lesson text must not\nerase where it was learned from.",
+        "description": "Edit one entry's content using the parent log version.\n\nRewrites the log array with the entry's ``content`` replaced. The recorded\nprovenance is carried through unchanged. A stale version conflicts before\nthe positional index can address a changed or reordered log.",
         "operationId": "edit_memory_agents__agent_id__memory__index__put",
         "parameters": [
           {
