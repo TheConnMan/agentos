@@ -54,3 +54,70 @@ def test_version_limit_keeps_the_most_recent_columns() -> None:
     ]
     matrix = build_matrix(traces, "s", 2)
     assert matrix.versions == ["shaC", "shaB"]
+
+
+def _mtrace(
+    tid: str,
+    version: str,
+    case: str,
+    ts: str,
+    passed: bool,
+    model: str | None,
+    cost: float | None = None,
+) -> dict[str, Any]:
+    tags = ["eval", f"version:{version}", "suite:s"]
+    if model:
+        tags.append(f"model:{model}")
+    meta: dict[str, Any] = {
+        "version": version,
+        "case_id": case,
+        "passed": passed,
+        "model": model,
+    }
+    if cost is not None:
+        meta["cost_usd"] = cost
+    return {"id": tid, "timestamp": ts, "tags": tags, "metadata": meta}
+
+
+def test_model_dimension_rolls_up_pass_rate_and_cost_per_model() -> None:
+    # Same suite run across two models: the matrix slices pass-rate and summed
+    # cost per model (issue #255). opus: 2/2 passed, $0.03; sonnet: 1/2, $0.01.
+    traces = [
+        _mtrace("o1", "shaA", "c1", "2026-07-01T00:00:00Z", True, "opus", 0.02),
+        _mtrace("o2", "shaA", "c2", "2026-07-01T00:00:00Z", True, "opus", 0.01),
+        _mtrace("s1", "shaB", "c1", "2026-07-02T00:00:00Z", True, "sonnet", 0.006),
+        _mtrace("s2", "shaB", "c2", "2026-07-02T00:00:00Z", False, "sonnet", 0.004),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    assert matrix.models == ["opus", "sonnet"]
+    summaries = {m.model: m for m in matrix.model_summaries}
+    assert summaries["opus"].passed == 2
+    assert summaries["opus"].total == 2
+    assert summaries["opus"].pass_rate == 1.0
+    assert abs(summaries["opus"].cost_usd - 0.03) < 1e-9
+    assert summaries["sonnet"].passed == 1
+    assert summaries["sonnet"].total == 2
+    assert summaries["sonnet"].pass_rate == 0.5
+    assert abs(summaries["sonnet"].cost_usd - 0.01) < 1e-9
+
+
+def test_cells_carry_model_and_unlabelled_runs_sort_last() -> None:
+    traces = [
+        _mtrace("m1", "shaA", "c1", "2026-07-01T00:00:00Z", True, "opus"),
+        _mtrace("u1", "shaB", "c1", "2026-07-02T00:00:00Z", True, None),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    cell_models = {
+        cell.version: cell.model for row in matrix.rows for cell in row.cells
+    }
+    assert cell_models["shaA"] == "opus"
+    assert cell_models["shaB"] is None
+    # Unlabelled (None) model rolls up too and sorts after named models.
+    assert matrix.models == ["opus", None]
+    # A model with no reported cost anywhere stays None, not a misleading 0.
+    assert {m.model: m.cost_usd for m in matrix.model_summaries} == {
+        "opus": None,
+        None: None,
+    }

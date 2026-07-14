@@ -75,6 +75,14 @@ class LangfuseEvalRecorder:
     def _trace_event(
         self, trace_id: str, run: EvalRunResult, result: EvalCaseResult, now: str
     ) -> dict[str, Any]:
+        # The model dimension is a tag *and* a metadata field, mirroring the
+        # version/suite convention: the tag lets the matrix reader filter/slice by
+        # model, the metadata field is what build_matrix reads straight off the
+        # trace. A run with no resolved model (target_url shortcut) records no
+        # model: tag, so its cases land in the matrix's unlabelled column.
+        tags = ["eval", f"version:{run.version}", f"suite:{run.suite}"]
+        if run.model:
+            tags.append(f"model:{run.model}")
         return {
             "id": uuid.uuid4().hex,
             "type": "trace-create",
@@ -83,15 +91,17 @@ class LangfuseEvalRecorder:
                 "id": trace_id,
                 "name": f"eval:{run.suite}:{result.case_id}",
                 "timestamp": now,
-                "tags": ["eval", f"version:{run.version}", f"suite:{run.suite}"],
+                "tags": tags,
                 "input": None,
                 "output": result.output,
                 "metadata": {
                     "version": run.version,
                     "suite": run.suite,
+                    "model": run.model,
                     "case_id": result.case_id,
                     "passed": result.passed,
                     "latency_ms": result.latency_ms,
+                    "cost_usd": result.cost_usd,
                     "error": result.error,
                 },
             },

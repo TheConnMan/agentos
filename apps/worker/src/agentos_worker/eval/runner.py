@@ -43,10 +43,18 @@ class EvalRunner:
         self._scorer: Scorer = scorer if scorer is not None else GraderScorer()
 
     async def run(
-        self, suite: EvalSuite, *, base_url: str, version: str, token: str | None = None
+        self,
+        suite: EvalSuite,
+        *,
+        base_url: str,
+        version: str,
+        token: str | None = None,
+        model: str | None = None,
     ) -> EvalRunResult:
         results = [await self._run_case(case, base_url, token) for case in suite.cases]
-        return EvalRunResult(version=version, suite=suite.name, results=results)
+        return EvalRunResult(
+            version=version, suite=suite.name, results=results, model=model
+        )
 
     async def _run_case(
         self, case: EvalCase, base_url: str, token: str | None = None

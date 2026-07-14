@@ -301,6 +301,7 @@ class EvalStreamConsumer(StreamConsumer):
                 version=item.sha,
                 recorder=self._recorder,
                 token=token,
+                model=self._eval_model(item),
             )
         finally:
             if release_key is not None:
@@ -335,6 +336,15 @@ class EvalStreamConsumer(StreamConsumer):
             logger.exception("could not provision a runner for eval %s", item.sha)
             return None, None, None
         return handle.base_url, release_key, handle.token or None
+
+    def _eval_model(self, item: EvalWorkItem) -> str | None:
+        """The model dimension for this run: the model the eval's runner is booted
+        with (``config.model``, the same value ``apply_model_env`` forwards as
+        ``AGENTOS_MODEL``). The dev/test ``target_url`` shortcut evals a runner we
+        did not boot, so its model is unknown and left unlabelled."""
+        if item.target_url is not None:
+            return None
+        return self._config.model or None
 
     def _boot_env(self, item: EvalWorkItem) -> dict[str, str]:
         budget = Budget(

@@ -95,21 +95,39 @@ class EvalSuite(BaseModel):
 
 
 class EvalCaseResult(BaseModel):
-    """The outcome of running one case: pass/fail, the output, and any error."""
+    """The outcome of running one case: pass/fail, the output, and any error.
+
+    ``cost_usd`` is the dollar cost the runner attributed to this case's turn
+    when the harness reported usage/pricing; it is ``None`` when cost is not
+    available (e.g. the fake-model path, or a provider that reports no usage), so
+    the matrix simply omits that case from a model's cost rollup rather than
+    counting it as free. Not part of the frozen eval-case schema (a *result*
+    shape, not a *case* shape), so it is safe to extend here.
+    """
 
     case_id: str
     passed: bool
     output: str
     latency_ms: float
     error: str | None = None
+    cost_usd: float | None = None
 
 
 class EvalRunResult(BaseModel):
-    """A whole suite run against one version: the per-case rows plus rollups."""
+    """A whole suite run against one version: the per-case rows plus rollups.
+
+    ``model`` is the model id the suite was run under (the eval matrix's model
+    dimension: results are sliceable by model so a suite can be compared across
+    models for pass-rate and cost). It is ``None`` when the run layer could not
+    resolve a concrete model (the dev/test ``target_url`` shortcut evals whatever
+    the runner was already booted with), in which case the recorder records no
+    ``model:`` tag and the case falls into the matrix's unlabelled column.
+    """
 
     version: str
     suite: str
     results: list[EvalCaseResult]
+    model: str | None = None
 
     @property
     def total(self) -> int:
