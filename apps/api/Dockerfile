@@ -22,6 +22,13 @@ COPY . .
 RUN uv sync --frozen --no-dev --no-editable --package agentos-api
 
 FROM python:3.13-slim
+# git is a RUNTIME dependency: the git-flow engine (gitflow.py) shells out to
+# `git clone --mirror` / `git archive` to build a bundle from a pushed sha. The
+# slim base does not ship it, so without this a push webhook fails
+# `git.archive_failed` and no deploy is ever built.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd -g 1000 app && useradd -u 1000 -g app -m -d /home/app app
 WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv /app/.venv

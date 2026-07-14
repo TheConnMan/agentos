@@ -66,6 +66,26 @@ def test_report_eval_success_state() -> None:
     assert state == "success"
 
 
+def test_report_eval_skips_post_when_no_token() -> None:
+    # With no GitHub token (local/dev, or a deploy without a GitHub App) there is
+    # nothing to post a commit status to. The reporter must skip the network call
+    # entirely and return the computed state, rather than sending an empty
+    # "Authorization: Bearer " header that httpx rejects (LocalProtocolError),
+    # which would 500 an otherwise successful eval report.
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("no GitHub request should be made without a token")
+
+    async def go() -> str:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            reporter = GitHubStatusReporter(
+                client, api_url="https://api.github.com", token="", context="c"
+            )
+            return await reporter.report_eval("octo/demo", "abc123", 7, 7)
+
+    assert asyncio.run(go()) == "success"
+
+
 def test_report_eval_raises_typed_error_on_github_rejection() -> None:
     # An unknown repo/commit (or a bad token) makes GitHub reject the post. The
     # reporter must surface that as a typed GitHubReportError carrying the
