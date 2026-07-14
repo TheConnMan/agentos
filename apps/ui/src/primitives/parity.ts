@@ -6,11 +6,12 @@
 // verb breaks `pnpm typecheck` at this call site) OR an explicit
 // `noCliEquivalent` marker carrying the tracking issue for the gap.
 //
-// The parity test (`CliHint.parity.test.tsx`) enumerates this registry and
-// asserts each entry resolves to a real command or an honest gap — so a new
-// wired action cannot ship without a deliberate CLI mapping decision. Surfaces
-// render `CliHint` from these same entries, so the hint a user sees and the
-// invariant the test enforces never drift.
+// Direct `cliCommand` calls are typed against the manifest. The parity test
+// recursively inventories those calls across the complete production `src`
+// tree, excluding tests, and verifies each literal command has a registry
+// mapping. It also checks that typed `noCliEquivalent` action IDs resolve to
+// entries linked to `PARITY_TRACKING_ISSUE`. Registry enumeration separately
+// verifies every entry is a real command or an explicit gap.
 
 import type { ActionId } from "./cliCommand";
 
@@ -34,7 +35,7 @@ export interface WiredAction {
 // The wired actions, grouped by surface in comments. `deploy`/`status`/`message`
 // are env-scoped in the UI (prod -> cluster, dev -> local); both tiers are
 // listed so the parity gate covers each concrete command the surface can emit.
-export const WIRED_ACTIONS: readonly WiredAction[] = [
+export const WIRED_ACTIONS = [
   // WiredAgents / NewAgentModal
   { id: "scaffold-agent", label: "New agent / scaffold", mapping: { command: "init" } },
 
@@ -45,13 +46,6 @@ export const WIRED_ACTIONS: readonly WiredAction[] = [
   // WiredOverview / WiredVersions — status (env-scoped)
   { id: "status-cluster", label: "Overview / versions status (prod)", mapping: { command: "cluster.status" } },
   { id: "status-local", label: "Overview / versions status (dev)", mapping: { command: "local.status" } },
-
-  // Send-message / test-turn (env-scoped)
-  { id: "message-cluster", label: "Send message / test turn (prod)", mapping: { command: "cluster.message" } },
-  { id: "message-local", label: "Send message / test turn (dev)", mapping: { command: "local.message" } },
-
-  // Evals matrix
-  { id: "eval", label: "Run eval suite", mapping: { command: "skill.eval" } },
 
   // Lifecycle controls — real verbs since #149 landed kill/resume/budget/delete.
   { id: "kill", label: "Kill a run", mapping: { command: "cluster.kill" } },
@@ -68,4 +62,6 @@ export const WIRED_ACTIONS: readonly WiredAction[] = [
   // CLI verb exists yet, so both render the honest amber gap glyph.
   { id: "memory-edit", label: "Edit a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
   { id: "memory-delete", label: "Delete a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
-] as const;
+] as const satisfies readonly WiredAction[];
+
+export type WiredActionId = (typeof WIRED_ACTIONS)[number]["id"];

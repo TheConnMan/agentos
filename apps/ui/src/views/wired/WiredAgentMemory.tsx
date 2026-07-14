@@ -89,7 +89,11 @@ export function WiredAgentMemory({ agentId }: { agentId: string }) {
           <div style={{ fontWeight: 600, fontSize: 14, color: C.text2 }}>
             Learned memory
           </div>
-          <CliHint noCliEquivalent={PARITY_TRACKING_ISSUE} label="No CLI equivalent" />
+          <CliHint
+            noCliEquivalent={PARITY_TRACKING_ISSUE}
+            actionIds={["memory-edit", "memory-delete"]}
+            label="No CLI equivalent"
+          />
           <div style={{ marginLeft: "auto" }}>
             <Button label="Refresh" variant="ghost" size="sm" onClick={() => void load()} />
           </div>
