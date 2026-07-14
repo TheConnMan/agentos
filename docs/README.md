@@ -33,6 +33,9 @@ git history (`git log -- docs/`).
   black line) with the swap-readiness grade table.
 - [`operations.md`](operations.md): running a cluster install, plus
   operator-facing findings from early installs.
+- [`design/multi-dev-shared-cluster.md`](design/multi-dev-shared-cluster.md): the
+  design pass for many developers iterating against one shared cluster (isolation,
+  targeting, ambient context), answering epic #44's deferred open questions.
 - [`slack-local-runbook.md`](slack-local-runbook.md): connect your own Slack
   app to the local compose stack to exercise real mentions and threads without a
   cluster.
