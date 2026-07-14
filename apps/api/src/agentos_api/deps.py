@@ -11,7 +11,7 @@ from .github_checks import GitHubStatusReporter
 from .k8s import PodLister, PodLogReader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
-from .storage import BundleStore
+from .storage import ObjectStore
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -25,8 +25,8 @@ def get_langfuse(request: Request) -> LangfuseClient:
     return client
 
 
-def get_store(request: Request) -> BundleStore:
-    store: BundleStore = request.app.state.bundle_store
+def get_store(request: Request) -> ObjectStore:
+    store: ObjectStore = request.app.state.bundle_store
     return store
 
 
@@ -57,7 +57,7 @@ def get_github_reporter(request: Request) -> GitHubStatusReporter:
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LangfuseDep = Annotated[LangfuseClient, Depends(get_langfuse)]
-StoreDep = Annotated[BundleStore, Depends(get_store)]
+StoreDep = Annotated[ObjectStore, Depends(get_store)]
 PodLogReaderDep = Annotated[PodLogReader, Depends(get_pod_log_reader)]
 PodListerDep = Annotated[PodLister, Depends(get_pod_lister)]
 KillSwitchDep = Annotated[KillSwitch, Depends(get_kill_switch)]

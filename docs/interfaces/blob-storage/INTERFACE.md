@@ -1,20 +1,21 @@
 # INTERFACE: Blob storage (S3/MinIO)
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 2 &nbsp;·&nbsp; **Swap-readiness grade:** B+
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 backend (S3/MinIO) behind the `ObjectStore` port &nbsp;·&nbsp; **Swap-readiness grade:** A-
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
 ## The black line
 
 Immutable plugin bundles are addressed by a deterministic `(agent, version)` key in
-an S3-compatible object store. The swappable thing is the **backend behind the S3
-wire protocol** (MinIO today, AWS S3 or any path-style S3 API tomorrow). What stays
-opinionated core is the write-once/no-mutation key discipline and the bundle bytes
-themselves. This is a deliberately un-abstracted seam: **the S3 protocol IS the port**
-— there is no `StorageInterface` class, and one is extracted only when a non-S3
-backend actually demands it (per the vision doc's "second implementation teaches the
-interface" restraint).
+an object store, behind the **`ObjectStore` port** (`apps/api/.../storage.py`,
+#282 / ADR-0026): `ensure_bucket` / `exists` / `put` / `get`, with the
+write-once/no-mutation key discipline promoted from convention **into the port's
+contract**. The one backing today is S3/MinIO (`BundleStore`); a future non-S3
+backend (GCS-native, Azure Blob) is a drop-in that satisfies the Protocol. The
+GCS/Azure adapter itself is deliberately **not built** — it stays gated on a real
+non-S3 customer (ADR-0007), so only the *port* is extracted now, not a speculative
+second implementation.
 
 ## Current contract
 
@@ -31,21 +32,27 @@ configured entirely through env/settings — no code changes:
 
 ## Implementations today
 
-Two concrete client sites plus a third in the chart:
+One backend (S3/MinIO) behind the port, plus the chart's `mc` init:
 
-- **API writer** — `apps/api/src/agentos_api/storage.py:22` (`BundleStore`, async-offloaded boto3 write path).
-- **Worker reader** — `apps/worker/src/agentos_worker/bundle_store.py:37` (`BundleStore`, read-only `get`, path-style, "same construction the API's write path uses").
-- **Chart bundle-fetch init** — `charts/agentos/templates/agent-sandbox.yaml:110-111` uses the `mc` CLI (`mc alias set` / `mc cp`) rather than boto3, a third dialect of the same S3 protocol.
+- **`ObjectStore` port** — `apps/api/src/agentos_api/storage.py` (`Protocol`: the
+  five ops + the write-once contract). Consumers (`deps`/`gitflow`/`deploy`) type
+  against it, so a second backend is a drop-in.
+- **API writer** — `apps/api/.../storage.py` `BundleStore`, the S3/MinIO backing
+  (async-offloaded boto3); client built by the shared `build_s3_client` factory.
+- **Worker reader** — `apps/worker/.../bundle_store.py`: a local `BundleReader`
+  Protocol (the read-only slice of the port; the worker does not import the API
+  package) with `BundleStore` as its S3/MinIO backing.
+- **Chart bundle-fetch init** — `charts/agentos/templates/agent-sandbox.yaml`
+  uses the `mc` CLI, still a third dialect of the same S3 protocol (left as-is).
 
 ## Known leakage
 
-The seam bleeds through **three hand-aligned client sites** that must agree on the
-same endpoint/credentials/bucket by convention, not by a shared interface: the API's
-boto3 writer, the worker's boto3 reader, and the chart's `mc`-based init container.
-The worker's docstring even notes it mirrors the API "so the env names line up." A
-switch to a fundamentally different backend (e.g. GCS-native rather than its S3
-compatibility layer) would touch all three independently — that is the cost of not
-abstracting, and the trigger that would justify extracting a real port.
+The port now names the contract, but two physically separate S3 clients remain
+(API/worker) plus the chart's `mc` init — fully unifying the client construction
+(and the `mc` path) is left for when a second, non-S3 backend actually lands, at
+which point the adapter is a drop-in `ObjectStore`/`BundleReader` rather than a
+three-site sweep. Building that adapter ahead of a real non-S3 customer is still
+out of scope (ADR-0007, ADR-0026).
 
 ## Cross-links
 

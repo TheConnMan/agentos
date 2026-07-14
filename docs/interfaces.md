@@ -18,7 +18,7 @@ is documentation of where the code already draws the line, not a new abstraction
 | Model provider / credentials | SOFT | 1 (Anthropic) | not separately graded | #24, #46 | [interfaces/model-provider/INTERFACE.md](interfaces/model-provider/INTERFACE.md) |
 | Telemetry / OTEL | SOFT | 1 | B+ | #47 | [interfaces/telemetry-otel/INTERFACE.md](interfaces/telemetry-otel/INTERFACE.md) |
 | Evals (case + scorer) | SOFT | 1 grader family | B | #8, #26 | [interfaces/evals/INTERFACE.md](interfaces/evals/INTERFACE.md) |
-| Blob storage (S3/MinIO) | SOFT | 2 concretes | B+ | #83 | [interfaces/blob-storage/INTERFACE.md](interfaces/blob-storage/INTERFACE.md) |
+| Blob storage (S3/MinIO) | CLEAN | 1 backend behind the ObjectStore port | A- | #83 | [interfaces/blob-storage/INTERFACE.md](interfaces/blob-storage/INTERFACE.md) |
 | Relational DB (Postgres) | SOFT | 1 | A- | #84 | [interfaces/relational-db/INTERFACE.md](interfaces/relational-db/INTERFACE.md) |
 | Queue / stream (Valkey) | SOFT | 1 (redis-py) | not separately graded | #85, #7 | [interfaces/queue-stream/INTERFACE.md](interfaces/queue-stream/INTERFACE.md) |
 | Bundle format | CLEAN, frozen | 1 | not separately graded | #30 | [interfaces/bundle-format/INTERFACE.md](interfaces/bundle-format/INTERFACE.md) |

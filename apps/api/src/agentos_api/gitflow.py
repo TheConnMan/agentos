@@ -24,7 +24,7 @@ from .config import Settings
 from .evalqueue import EvalJobRequest, EvalQueue, now_iso
 from .models import Environment
 from .schemas import WebhookResult
-from .storage import BundleStore
+from .storage import ObjectStore
 
 _ZERO_SHA = "0" * 40
 # A full lowercase-hex git object id: SHA-1 (40) or SHA-256 (64).
@@ -112,7 +112,7 @@ def clone_and_archive(clone_url: str, sha: str, settings: Settings) -> bytes:
 
 async def process_push(
     session: AsyncSession,
-    store: BundleStore,
+    store: ObjectStore,
     settings: Settings,
     eval_queue: EvalQueue,
     payload: dict[str, object],
