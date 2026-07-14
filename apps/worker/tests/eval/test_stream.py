@@ -709,10 +709,17 @@ def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
     async def _capture_run(
-        suite: EvalSuite, *, base_url: str, version: str, recorder: Any = None, token: Any = None
+        suite: EvalSuite,
+        *,
+        base_url: str,
+        version: str,
+        recorder: Any = None,
+        token: Any = None,
+        model: Any = None,
     ) -> EvalRunResult:
         captured["base_url"] = base_url
         captured["token"] = token
+        captured["model"] = model
         return EvalRunResult(version=version, suite=suite.name, results=[])
 
     monkeypatch.setattr(stream_module, "run_eval_suite", _capture_run)

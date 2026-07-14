@@ -143,11 +143,25 @@ class _GenerationSpan:
         self._model_recorded = True
 
     def record_usage(self, usage: Mapping[str, Any] | None) -> None:
-        """Attach gen_ai token-usage attributes from an SDK usage mapping."""
+        """Attach gen_ai token-usage attributes from an SDK usage mapping.
+
+        Prompt-cache tokens (``cache_read_input_tokens`` /
+        ``cache_creation_input_tokens``, the Anthropic wire shape preserved even
+        through OpenRouter) are recorded alongside the plain input/output counts,
+        so a warm thread's cache reuse is observable in the trace rather than
+        silently folded away. This is the signal the prompt-cache smoke test
+        asserts on: a translating gateway that silently breaks caching shows up
+        here as a warm turn with zero cache-read tokens.
+        """
 
         if not usage:
             return
-        for key in ("input_tokens", "output_tokens"):
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        ):
             value = usage.get(key)
             if isinstance(value, int):
                 self._span.set_attribute(f"gen_ai.usage.{key}", value)

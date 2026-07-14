@@ -70,6 +70,89 @@ def test_empty_run_skips_the_ingestion_post() -> None:
     asyncio.run(go())
 
 
+def test_model_dimension_is_tagged_and_in_metadata() -> None:
+    # The model dimension (issue #255): a run with a resolved model tags each
+    # trace with model:<name> and carries model + per-case cost_usd in metadata,
+    # so the matrix can slice pass-rate/cost by model. A run with model=None
+    # records neither tag nor a non-null model field.
+    async def go() -> None:
+        captured: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            import json
+
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            recorder = LangfuseEvalRecorder(
+                base_url="http://langfuse.invalid",
+                public_key="pk",
+                secret_key="sk",
+                client=client,
+            )
+            run = EvalRunResult(
+                version="v1",
+                suite="s",
+                model="claude-opus-4-8",
+                results=[
+                    EvalCaseResult(
+                        case_id="c1",
+                        passed=True,
+                        output="ok",
+                        latency_ms=1.0,
+                        cost_usd=0.0021,
+                    )
+                ],
+            )
+            await recorder.record(run)
+
+        batch = captured[0]["batch"]
+        trace = next(e for e in batch if e["type"] == "trace-create")["body"]
+        assert "model:claude-opus-4-8" in trace["tags"]
+        assert trace["metadata"]["model"] == "claude-opus-4-8"
+        assert trace["metadata"]["cost_usd"] == 0.0021
+
+    asyncio.run(go())
+
+
+def test_model_none_records_no_model_tag() -> None:
+    async def go() -> None:
+        captured: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            import json
+
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            recorder = LangfuseEvalRecorder(
+                base_url="http://langfuse.invalid",
+                public_key="pk",
+                secret_key="sk",
+                client=client,
+            )
+            run = EvalRunResult(
+                version="v1",
+                suite="s",
+                results=[
+                    EvalCaseResult(case_id="c1", passed=True, output="ok", latency_ms=1.0)
+                ],
+            )
+            await recorder.record(run)
+
+        trace = next(
+            e for e in captured[0]["batch"] if e["type"] == "trace-create"
+        )["body"]
+        assert not any(t.startswith("model:") for t in trace["tags"])
+        assert trace["metadata"]["model"] is None
+
+    asyncio.run(go())
+
+
 def test_records_per_case_results_and_reads_them_back() -> None:
     async def go() -> None:
         async with httpx.AsyncClient(timeout=30.0) as client:

@@ -328,10 +328,15 @@ class RunnerPods(BaseModel):
 
 
 class EvalCell(BaseModel):
-    """One cell of the eval matrix: a case's result on a version."""
+    """One cell of the eval matrix: a case's result on a version.
+
+    ``model`` is the model the result was produced under (the matrix's model
+    dimension), or ``None`` when the recording run carried no model tag.
+    """
 
     version: str
     status: Literal["pass", "fail", "missing"]
+    model: str | None = None
 
 
 class EvalMatrixRow(BaseModel):
@@ -341,13 +346,41 @@ class EvalMatrixRow(BaseModel):
     cells: list[EvalCell]
 
 
+class EvalModelSummary(BaseModel):
+    """A per-model rollup across the suite: pass-rate and total cost.
+
+    The model dimension of the matrix (issue #255): the same suite run across
+    models is sliceable here into ``passed/total`` pass-rate and summed
+    ``cost_usd`` per model, so BYO-model work can compare which models a use case
+    tolerates and at what cost. ``cost_usd`` is ``None`` when no case under this
+    model reported a cost (e.g. the fake-model path), rather than a misleading 0.
+    """
+
+    model: str | None = None
+    passed: int
+    total: int
+    cost_usd: float | None = None
+
+    @property
+    def pass_rate(self) -> float:
+        return self.passed / self.total if self.total else 0.0
+
+
 class EvalMatrix(BaseModel):
-    """The eval matrix grid: rows = cases, columns = versions (most recent first)."""
+    """The eval matrix grid: rows = cases, columns = versions (most recent first).
+
+    ``models`` and ``model_summaries`` add the model dimension: the distinct
+    models observed across the fetched traces, and a pass-rate + cost rollup per
+    model for BYO-model comparison. They are additive; the version grid is
+    unchanged.
+    """
 
     suite: str
     versions: list[str]
     cases: list[str]
     rows: list[EvalMatrixRow]
+    models: list[str | None] = []
+    model_summaries: list[EvalModelSummary] = []
 
 
 class EvalTriggerRequest(BaseModel):

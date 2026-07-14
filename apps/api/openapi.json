@@ -482,8 +482,19 @@
         "type": "object"
       },
       "EvalCell": {
-        "description": "One cell of the eval matrix: a case's result on a version.",
+        "description": "One cell of the eval matrix: a case's result on a version.\n\n``model`` is the model the result was produced under (the matrix's model\ndimension), or ``None`` when the recording run carried no model tag.",
         "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "status": {
             "enum": [
               "pass",
@@ -506,13 +517,36 @@
         "type": "object"
       },
       "EvalMatrix": {
-        "description": "The eval matrix grid: rows = cases, columns = versions (most recent first).",
+        "description": "The eval matrix grid: rows = cases, columns = versions (most recent first).\n\n``models`` and ``model_summaries`` add the model dimension: the distinct\nmodels observed across the fetched traces, and a pass-rate + cost rollup per\nmodel for BYO-model comparison. They are additive; the version grid is\nunchanged.",
         "properties": {
           "cases": {
             "items": {
               "type": "string"
             },
             "title": "Cases",
+            "type": "array"
+          },
+          "model_summaries": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvalModelSummary"
+            },
+            "title": "Model Summaries",
+            "type": "array"
+          },
+          "models": {
+            "default": [],
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Models",
             "type": "array"
           },
           "rows": {
@@ -563,6 +597,47 @@
           "cells"
         ],
         "title": "EvalMatrixRow",
+        "type": "object"
+      },
+      "EvalModelSummary": {
+        "description": "A per-model rollup across the suite: pass-rate and total cost.\n\nThe model dimension of the matrix (issue #255): the same suite run across\nmodels is sliceable here into ``passed/total`` pass-rate and summed\n``cost_usd`` per model, so BYO-model work can compare which models a use case\ntolerates and at what cost. ``cost_usd`` is ``None`` when no case under this\nmodel reported a cost (e.g. the fake-model path), rather than a misleading 0.",
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "passed",
+          "total"
+        ],
+        "title": "EvalModelSummary",
         "type": "object"
       },
       "EvalReport": {
