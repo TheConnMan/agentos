@@ -142,7 +142,15 @@ async def append_state(
     """
     if await crud.get_agent(session, agent_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
-    entry = await _get_entry(session, agent_id, namespace, key)
+    entry: WorkflowStateEntry | None = await session.scalar(
+        select(WorkflowStateEntry)
+        .where(
+            WorkflowStateEntry.agent_id == agent_id,
+            WorkflowStateEntry.namespace == namespace,
+            WorkflowStateEntry.key == key,
+        )
+        .with_for_update()
+    )
     if entry is None:
         new_value = [data.item]
         await _enforce_caps(session, agent_id, namespace, key, new_value)

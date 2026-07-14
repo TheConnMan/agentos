@@ -24,6 +24,7 @@ vi.mock("../../api/client", async (importOriginal) => {
 const ENTRIES: MemoryEntry[] = [
   {
     index: 0,
+    version: 7,
     content: "deploy is a git push",
     provenance: {
       learned_from_session_id: "sess-1",
@@ -33,6 +34,7 @@ const ENTRIES: MemoryEntry[] = [
   },
   {
     index: 1,
+    version: 7,
     content: "prod reuses the dev bundle",
     provenance: { learned_from_session_id: null, source_trace_ids: [], recorded_at: "" },
   },
@@ -86,7 +88,7 @@ describe("WiredAgentMemory (#267)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
-      expect(editMemory).toHaveBeenCalledWith("a1", 0, "corrected"),
+      expect(editMemory).toHaveBeenCalledWith("a1", 0, "corrected", 7),
     );
     expect(await screen.findByText("corrected")).toBeInTheDocument();
   });
@@ -101,7 +103,7 @@ describe("WiredAgentMemory (#267)", () => {
     await screen.findByText("deploy is a git push");
     await userEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
 
-    await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith("a1", 0));
+    await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith("a1", 0, 7));
   });
 
   it("surfaces a load error", async () => {

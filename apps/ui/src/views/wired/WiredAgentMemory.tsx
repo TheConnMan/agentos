@@ -48,11 +48,11 @@ export function WiredAgentMemory({ agentId }: { agentId: string }) {
     setError(null);
   };
 
-  const saveEdit = async (index: number) => {
+  const saveEdit = async (index: number, expectedVersion: number) => {
     setBusyIndex(index);
     setError(null);
     try {
-      await editMemory(agentId, index, draft);
+      await editMemory(agentId, index, draft, expectedVersion);
       setEditingIndex(null);
       await load();
     } catch (e) {
@@ -62,11 +62,11 @@ export function WiredAgentMemory({ agentId }: { agentId: string }) {
     }
   };
 
-  const remove = async (index: number) => {
+  const remove = async (index: number, expectedVersion: number) => {
     setBusyIndex(index);
     setError(null);
     try {
-      await deleteMemory(agentId, index);
+      await deleteMemory(agentId, index, expectedVersion);
       await load();
     } catch (e) {
       setError(String(e));
@@ -154,7 +154,7 @@ export function WiredAgentMemory({ agentId }: { agentId: string }) {
                           variant="primary"
                           size="sm"
                           disabled={busy}
-                          onClick={() => void saveEdit(entry.index)}
+                          onClick={() => void saveEdit(entry.index, entry.version)}
                         />
                         <Button
                           label="Cancel"
@@ -199,7 +199,7 @@ export function WiredAgentMemory({ agentId }: { agentId: string }) {
                         variant="ghost"
                         size="sm"
                         disabled={busy}
-                        onClick={() => void remove(entry.index)}
+                        onClick={() => void remove(entry.index, entry.version)}
                       />
                     </div>
                   )}

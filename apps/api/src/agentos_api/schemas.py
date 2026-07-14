@@ -501,14 +501,15 @@ class SourceTraceOut(BaseModel):
 class MemoryEntryOut(BaseModel):
     """One learned memory entry as returned to an operator.
 
-    ``index`` is the entry's position in the append-only log; it is the stable
-    handle the edit/delete endpoints (#267) address, and it survives as long as
-    the log is not consolidated (#265) or reordered.
+    ``index`` is the entry's current position in the memory log. It is valid for
+    mutation only with this response's parent log ``version``. A mutation with
+    a stale version conflicts if another change has reordered the log.
     """
 
     index: int
     content: str
     provenance: MemoryProvenanceOut
+    version: int
 
 
 class MemoryTraceBackOut(BaseModel):
@@ -526,6 +527,11 @@ class MemoryTraceBackOut(BaseModel):
 
 
 class MemoryEntryEdit(BaseModel):
-    """Edit the ``content`` of one memory entry (#267); provenance is preserved."""
+    """Edit one memory entry using its parent log version.
+
+    The required version prevents a stale positional index from changing an
+    entry after the log has changed. Provenance is preserved.
+    """
 
     content: str
+    expected_version: int
