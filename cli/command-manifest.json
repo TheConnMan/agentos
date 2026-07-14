@@ -886,7 +886,7 @@
       "name": "cluster",
       "subcommands": [
         {
-          "about": "Install or upgrade the AgentOS release via Helm (helm upgrade --install). By default it puts the UI and Langfuse on node ports for tailnet/LAN access; pass --no-expose to keep them ClusterIP-only. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) to install with the real model and egress opened to the provider; without it the install is sealed (fake model, canned replies) and re-running with the env var set goes live",
+          "about": "Install or upgrade the AgentOS release via Helm (helm upgrade --install). By default it puts the UI and Langfuse on node ports for tailnet/LAN access; pass --no-expose to keep them ClusterIP-only. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) to install with the real model; without it the install is sealed (fake model, canned replies). A real model is still unreachable behind the fail-closed sandbox until you open its egress with --allow-egress-host <provider> (or --allow-web-egress <CIDR> for a raw range)",
           "args": [
             {
               "default_values": [
@@ -956,7 +956,15 @@
             },
             {
               "global": false,
-              "help": "Open runner egress to a declared destination for skill web access, repeatable CIDR, TCP 443. Additive to the model egress; omit to stay fully sealed",
+              "help": "Open runner egress to a named model provider's API host(s), resolved to narrow host routes at install time (repeatable). One of: anthropic, openrouter. For a raw CIDR, use --allow-web-egress",
+              "id": "allow_egress_host",
+              "long": "allow-egress-host",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Open runner egress to a declared destination for skill web access, repeatable CIDR, TCP 443. Additive to the provider egress; omit to stay fully sealed",
               "id": "allow_web_egress",
               "long": "allow-web-egress",
               "positional": false,

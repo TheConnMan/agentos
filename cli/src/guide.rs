@@ -199,6 +199,10 @@ pub fn primer() -> Primer {
                 detail: "Otherwise the bound bundle fetch cannot resolve the in-cluster object store.",
             },
             Landmine {
+                title: "A real model in-cluster needs its provider's egress opened",
+                detail: "The runner sandbox is default-deny egress, so `agentos cluster up` with a credential is still sealed and the model unreachable until you pass --allow-egress-host <provider> (anthropic/openrouter); a web-fetching skill additionally needs --allow-web-egress <CIDR> for its hosts.",
+            },
+            Landmine {
                 title: "secretKeyRef env vars resolve once, at pod start",
                 detail: "A connect that rotates a secret must also roll the pod; `agentos cluster comms` does this for you.",
             },
@@ -226,7 +230,7 @@ pub fn primer() -> Primer {
             },
             Recovery {
                 symptom: "\"(no response)\" or an empty reply",
-                fix: "You are on the fake model (--fake-model, or a sealed install). Provide a credential to go live.",
+                fix: "You are on the fake model (--fake-model, or a sealed install). Provide a credential to go live; on cluster, also open the provider egress with --allow-egress-host <provider> or the model stays unreachable.",
             },
             Recovery {
                 symptom: "the agent answers but never calls your MCP tools",

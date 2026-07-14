@@ -300,16 +300,30 @@ pub struct UpOpts {
     pub chart: String,
     pub no_expose: bool,
     pub set: Vec<String>,
+    /// Named model providers (validated against [`parse_egress_provider`]) whose
+    /// API host(s) runner egress is opened to. Resolved to narrow host-route
+    /// CIDRs at install time into [`resolved_egress_cidrs`]; empty means no
+    /// provider egress. This is the explicit replacement for the old
+    /// unconditional Anthropic carve-out (#362).
+    pub allow_egress_host: Vec<String>,
+    /// The single-host CIDRs the named providers resolved to, populated by [`up`]
+    /// from [`resolve_provider_egress_cidrs`] (offline under `--dry-run`, so
+    /// empty there). Empty in the pure argv tests. Emitted as the first
+    /// `allowedEgress` entries, before any `allow_web_egress` destination.
+    pub resolved_egress_cidrs: Vec<String>,
     /// Operator declared CIDRs to open runner egress to for skill or tool web
-    /// access, additive to the model carve out. Empty means fail closed by
-    /// default.
+    /// access, additive to the resolved provider egress. Empty means fail closed
+    /// by default.
     pub allow_web_egress: Vec<String>,
     /// Whether `--fake-model` was passed (forces the sealed install and
     /// suppresses the fake-model warning even when the env credential is set).
     pub fake_model: bool,
     /// The model credential to install with, resolved from
-    /// `AGENTOS_MODEL_CREDENTIALS`. `Some(non-empty)` enables the real model and
-    /// opens egress to the provider; `None` installs sealed (fake model).
+    /// `AGENTOS_MODEL_CREDENTIALS`. `Some(non-empty)` enables the real model;
+    /// `None` installs sealed (fake model). A credential alone opens NO egress --
+    /// the model stays unreachable behind the fail-closed sandbox until a
+    /// provider (`allow_egress_host`) or a raw range (`allow_web_egress`) is
+    /// named (#362).
     pub credentials: Option<String>,
     pub local_model: Option<String>,
     /// The shell `AGENTOS_MODEL` resolved by the caller (`None` when unset or
@@ -337,11 +351,7 @@ pub struct DownOpts {
 // Command builders (pure; unit-tested below)
 // ---------------------------------------------------------------------------
 
-/// Egress the runner NetworkPolicy is opened to when a real model credential is
-/// installed: Anthropic's published API range over TLS. The runner policy is
-/// fail-closed, so a real model call needs this allowlist entry too.
-const MODEL_EGRESS_CIDR: &str = "160.79.104.0/23";
-/// Egress port shared by every runner allowlist entry (model + web): TLS only.
+/// Egress port shared by every runner allowlist entry (provider + web): TLS only.
 const EGRESS_TCP_PORT: u16 = 443;
 
 /// Push the three `helm --set` args for one `security.networkPolicy.allowedEgress`
@@ -465,6 +475,242 @@ pub fn default_route_egress_warning(cidrs: &[String]) -> Option<String> {
         "`--allow-web-egress` includes a default route ({}); this removes the egress rail -- the sandbox can reach the entire internet",
         routes.join(", ")
     ))
+}
+
+/// The canonical model providers `--allow-egress-host` accepts, each paired with
+/// the API hostname(s) its runner must reach, in the order shown in help and
+/// error text. The single source of truth for both the accepted-provider set and
+/// their egress hosts, so adding a provider is a one-line edit here.
+///
+/// This set is deliberately limited to the providers the runner can drive
+/// end-to-end today (`anthropic` via `sk-ant-` keys, `openrouter` via `sk-or-`
+/// keys). Opening egress to a host the runner cannot actually talk to gives
+/// false confidence, so a provider is only listed once the runner has runtime
+/// support for it. When the runner gains that support for additional providers
+/// (e.g. the `PROVIDER_BASE_URLS` base-URL providers zhipu/moonshot/deepseek, or
+/// native OpenAI/Gemini), layer them in here at the same time so the egress
+/// convenience list never advertises a provider the harness cannot use.
+///
+/// HOSTNAMES, never CIDRs: provider IPs rotate, so they are resolved to narrow
+/// host routes at install time (see [`resolve_provider_egress_cidrs`]) instead of
+/// baked into this binary where a stale literal would silently break a real model
+/// call.
+const EGRESS_PROVIDERS: &[(&str, &[&str])] = &[
+    ("anthropic", &["api.anthropic.com"]),
+    ("openrouter", &["openrouter.ai"]),
+];
+
+/// The API hostname(s) a named model provider's runner must reach, or `None`
+/// when the value is not one of the known providers. Lowercase-exact only, so an
+/// uppercased spelling is rejected rather than silently normalized.
+pub fn provider_egress_hosts(provider: &str) -> Option<&'static [&'static str]> {
+    EGRESS_PROVIDERS
+        .iter()
+        .find(|(n, _)| *n == provider)
+        .map(|(_, hosts)| *hosts)
+}
+
+/// Validate one `--allow-egress-host` value against the known providers,
+/// returning its canonical `'static` name. An unknown value is a deterministic
+/// input error (exit 2 / Usage) that enumerates the accepted providers and
+/// points at the `--allow-web-egress` escape hatch for arbitrary destinations.
+pub fn parse_egress_provider(value: &str) -> Result<&'static str, crate::exit::CliError> {
+    EGRESS_PROVIDERS
+        .iter()
+        .find(|(n, _)| *n == value)
+        .map(|(n, _)| *n)
+        .ok_or_else(|| {
+            let known = EGRESS_PROVIDERS
+                .iter()
+                .map(|(n, _)| *n)
+                .collect::<Vec<_>>()
+                .join(", ");
+            crate::exit::CliError::usage(format!(
+                "`--allow-egress-host` value `{value}` is not a known provider (expected one of: {known})"
+            ))
+            .with_fix(
+                "pick a named provider, or open a raw range with `--allow-web-egress <CIDR>`",
+            )
+        })
+}
+
+/// A resolved host address as a single-host CIDR: `/32` for IPv4, `/128` for
+/// IPv6. The egress rule opens exactly that address, nothing wider.
+pub fn ip_to_egress_cidr(ip: std::net::IpAddr) -> String {
+    let prefix = if ip.is_ipv4() { 32 } else { 128 };
+    format!("{ip}/{prefix}")
+}
+
+/// Whether a resolved provider address is safe to open a runner egress route to:
+/// a globally-routable unicast address. A poisoned or split-horizon DNS answer
+/// that maps a provider host to the node metadata endpoint or any internal /
+/// overlay host must never mint an egress /32 -- the chart emits no
+/// metadataExcept for an exact-host allow, so this predicate is the only guard.
+///
+/// This is a COMPREHENSIVE denylist that mirrors, by hand, the special-use
+/// ranges excluded by `std`'s `Ipv4Addr::is_global`/`Ipv6Addr::is_global` --
+/// those APIs are still unstable, so we cannot call them and a partial denylist
+/// would give false assurance. Every non-global-unicast range is rejected,
+/// including ones reachable on internal/overlay networks (CGNAT, benchmarking,
+/// reserved/future) that the earlier selective list let slip through.
+fn is_globally_routable_egress(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            // Reject if the address falls in ANY special-use / non-global range.
+            let non_global = o[0] == 0                        // 0.0.0.0/8 "this host on this network"
+                || v4.is_private()                            // 10/8, 172.16/12, 192.168/16
+                || (o[0] == 100 && (o[1] & 0xc0) == 0x40)     // CGNAT 100.64.0.0/10 (RFC6598)
+                || v4.is_loopback()                           // 127.0.0.0/8
+                || v4.is_link_local()                         // 169.254.0.0/16 (incl. IMDS 169.254.169.254)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)    // IETF protocol assignments 192.0.0.0/24
+                || v4.is_documentation()                      // 192.0.2/24, 198.51.100/24, 203.0.113/24
+                || (o[0] == 192 && o[1] == 88 && o[2] == 99)  // 6to4 relay anycast 192.88.99.0/24
+                || (o[0] == 198 && (o[1] & 0xfe) == 18)       // benchmarking 198.18.0.0/15 (RFC2544)
+                || o[0] >= 240                                // reserved/future 240.0.0.0/4 (incl. 255.255.255.255 broadcast)
+                || v4.is_multicast()                          // 224.0.0.0/4
+                || v4.is_unspecified()                        // 0.0.0.0 (belt-and-suspenders; covered by o[0]==0)
+                || v4.is_broadcast(); // 255.255.255.255 (belt-and-suspenders; covered by o[0]>=240)
+            !non_global
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return false;
+            }
+            // Map an IPv4-mapped v6 back to v4 and re-check.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_globally_routable_egress(IpAddr::V4(v4));
+            }
+            let seg = v6.segments();
+            let is_ula = (seg[0] & 0xfe00) == 0xfc00; // fc00::/7
+            let is_link_local = (seg[0] & 0xffc0) == 0xfe80; // fe80::/10
+            let is_documentation = seg[0] == 0x2001 && seg[1] == 0x0db8; // 2001:db8::/32
+            !(is_ula || is_link_local || is_documentation)
+        }
+    }
+}
+
+/// Resolve each named provider's API host(s) to single-host egress CIDRs. The
+/// resolver is injected so the pure logic (dedup, sort, empty/error handling) is
+/// unit-testable without touching real DNS. An unknown provider, a resolver
+/// failure, or a host that resolves to no addresses is a hard error naming the
+/// host -- never a silent skip, which would leave a real model call failing
+/// closed with no clue why. The result is deduplicated and sorted so the install
+/// argv is stable across runs.
+pub fn resolve_provider_egress_cidrs(
+    providers: &[String],
+    resolve: impl Fn(&str) -> std::io::Result<Vec<std::net::IpAddr>>,
+) -> Result<Vec<String>> {
+    let mut cidrs = Vec::new();
+    for p in providers {
+        let hosts = provider_egress_hosts(p)
+            .ok_or_else(|| anyhow::anyhow!("unknown egress provider `{p}`"))?;
+        for host in hosts {
+            let ips = resolve(host)
+                .with_context(|| format!("resolving egress host {host} for provider {p}"))?;
+            if ips.is_empty() {
+                bail!("egress host {host} (provider {p}) resolved to no addresses");
+            }
+            for ip in ips {
+                if !is_globally_routable_egress(ip) {
+                    bail!("egress host {host} (provider {p}) resolved to non-routable address {ip}; refusing to open an egress route (possible DNS poisoning or split-horizon)");
+                }
+                cidrs.push(ip_to_egress_cidr(ip));
+            }
+        }
+    }
+    cidrs.sort();
+    cidrs.dedup();
+    Ok(cidrs)
+}
+
+/// A note naming the model provider(s) whose egress `cluster up` opened, or
+/// `None` when no provider was requested.
+pub fn provider_egress_note(providers: &[String]) -> Option<String> {
+    if providers.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "real model egress opened to provider(s): {}",
+        providers.join(", ")
+    ))
+}
+
+/// The warning to emit when a real model credential is installed but no egress
+/// was opened: the runner sandbox is fail-closed, so the model is unreachable.
+/// `Some` only in that one combination (a credential present with nothing opened);
+/// every other case stays silent. Names both the provider flag and the raw
+/// escape hatch so the operator can fix it without reading source.
+pub fn sealed_credential_warning(
+    credentials_present: bool,
+    any_egress_opened: bool,
+) -> Option<String> {
+    if credentials_present && !any_egress_opened {
+        Some(
+            "a real model credential is set but the sandbox is sealed -- no egress opened, so the \
+             model is unreachable. Pass --allow-egress-host <anthropic|openrouter> \
+             (or --allow-web-egress <CIDR>) and re-run."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
+/// The ordered model+egress status lines `up` prints, as (is_warning, message)
+/// pairs, derived purely so every credential/egress combination is unit-tested.
+/// The web-egress *count* note and the default-route warning stay in the handler
+/// (they keep their own tested helpers). `any_egress_opened` folds resolved
+/// provider routes, declared web egress, and (under dry-run) the intent to open.
+pub fn model_egress_status_lines(
+    credentials_present: bool,
+    local_model: bool,
+    fake_model: bool,
+    providers: &[String],
+    any_egress_opened: bool,
+    dry_run: bool,
+) -> Vec<(bool, String)> {
+    let mut lines: Vec<(bool, String)> = Vec::new();
+    // Past-tense provider note only on a live run; under dry-run the handler
+    // prints its own "a live run resolves..." note instead.
+    if !providers.is_empty() && !dry_run {
+        lines.push((
+            false,
+            provider_egress_note(providers).expect("providers non-empty"),
+        ));
+        lines.push((
+            false,
+            "resolved provider IPs can rotate; re-run `agentos cluster up` if model calls start failing".into(),
+        ));
+    }
+    if credentials_present {
+        if let Some(w) = sealed_credential_warning(true, any_egress_opened) {
+            lines.push((true, w));
+        }
+    } else if local_model {
+        lines.push((
+            false,
+            "local model enabled; installing the chart inference deployment".into(),
+        ));
+    } else if !fake_model {
+        lines.push((
+            true,
+            format!(
+                "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model{}",
+                if any_egress_opened {
+                    ""
+                } else {
+                    " (model egress stays sealed)"
+                }
+            ),
+        ));
+        lines.push((
+            false,
+            "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.".into(),
+        ));
+    }
+    lines
 }
 
 /// The chart secrets a bare `helm install` would otherwise render from the
@@ -605,10 +851,11 @@ async fn fetch_existing_values(o: &CommonOpts) -> Result<Option<serde_json::Valu
 
 /// `helm upgrade --install` for the release, exposing the UI and Langfuse on
 /// node ports unless `--no-expose`, plus any pass-through `--set` values. When a
-/// model credential is present it also switches the fake model off, forwards the
-/// credential (masked when printed), opens the fail-closed runner egress to the
-/// model provider, and then adds declared web destinations additively after the
-/// model carve out.
+/// model credential is present it switches the fake model off and forwards the
+/// credential (masked when printed) -- but opens NO egress on its own (#362).
+/// Runner egress comes only from the resolved named-provider host routes
+/// (`resolved_egress_cidrs`, first) and the declared web destinations
+/// (`allow_web_egress`, after), sharing one contiguous array index.
 pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     let mut args = vec![
         plain("upgrade"),
@@ -638,11 +885,6 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
         args.push(plain("--set"));
         args.push(plain(format!("inference.model={model}")));
     }
-    // Egress allowlist entries share one running index so the array stays
-    // contiguous no matter which sources contribute: the model carve-out (only
-    // when a credential is present) takes the first slot, then each declared web
-    // destination follows in order.
-    let mut egress_idx = 0;
     if let Some(credentials) = &o.credentials {
         args.push(plain("--set"));
         args.push(plain("agentSandbox.runner.fakeModel=false"));
@@ -650,14 +892,24 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
         // key). Deliver it through a private 0600 `-f` values file instead of an
         // argv `--set`, so it never lands in the process table where any local
         // user / EDR / crash reporter could read it via `ps -ef` or
-        // `/proc/<pid>/cmdline`. `fakeModel` and the egress rules are not secret
-        // and stay as plain `--set`. helm merges `-f` values before `--set`, so a
-        // later operator `--set` still overrides, matching the prior precedence.
+        // `/proc/<pid>/cmdline`. `fakeModel` is not secret and stays as plain
+        // `--set`. helm merges `-f` values before `--set`, so a later operator
+        // `--set` still overrides, matching the prior precedence. Enabling the
+        // real model opens NO egress on its own (#362) -- see the egress rules
+        // below, which come only from named providers and declared web ranges.
         args.push(secret_values_file(
             "agentSandbox.runner.credentials",
             credentials,
         ));
-        push_egress_rule(&mut args, egress_idx, MODEL_EGRESS_CIDR, EGRESS_TCP_PORT);
+    }
+    // Egress allowlist entries share one running index so the array stays
+    // contiguous no matter which source contributes: the resolved named-provider
+    // host routes take the first slots (in order), then each declared web
+    // destination follows. When both are empty, no `allowedEgress` entry is
+    // emitted and the runner stays fail-closed.
+    let mut egress_idx = 0;
+    for cidr in &o.resolved_egress_cidrs {
+        push_egress_rule(&mut args, egress_idx, cidr, EGRESS_TCP_PORT);
         egress_idx += 1;
     }
     for cidr in &o.allow_web_egress {
@@ -881,6 +1133,12 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
     // Fail loud (even under --dry-run) if AGENTOS_MODEL and an explicit
     // `--set agentSandbox.runner.model=` disagree (#361).
     check_runner_model_conflict(opts.model.as_deref(), &opts.set)?;
+    // Each `--allow-egress-host` must name a known provider. An unknown value is
+    // a usage error (exit 2) pointing at `--allow-web-egress`; the `?` carries
+    // the CliError's exit class into the anyhow chain.
+    for h in &opts.allow_egress_host {
+        parse_egress_provider(h)?;
+    }
 
     // Resolve the required chart secrets so a no-override `cluster up` never
     // ships the published dev defaults (#196). `--dev` keeps the chart's
@@ -908,18 +1166,58 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
         }
     }
 
+    // Resolve the named providers' API host(s) to narrow host-route CIDRs. This
+    // is the only DNS the installer does, and it stays offline under `--dry-run`
+    // (the offline invariant): dry-run previews the intent without resolving,
+    // and a live run resolves and opens exactly the resolved addresses.
+    if !opts.allow_egress_host.is_empty() {
+        if opts.common.dry_run {
+            // Name each provider's host(s) without resolving them, so the
+            // preview stays offline yet shows exactly what a live run reaches.
+            let named = opts
+                .allow_egress_host
+                .iter()
+                .map(|p| match provider_egress_hosts(p) {
+                    Some(hosts) if !hosts.is_empty() => format!("{p} ({})", hosts.join(", ")),
+                    _ => p.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.note(&format!(
+                "a live run resolves {named} to narrow /32+/128 host routes and opens runner egress to the resolved addresses (skipped here to keep --dry-run offline)"
+            ));
+        } else {
+            let real_resolver = |host: &str| -> std::io::Result<Vec<std::net::IpAddr>> {
+                use std::net::ToSocketAddrs;
+                (host, 443u16)
+                    .to_socket_addrs()
+                    .map(|it| it.map(|s| s.ip()).collect())
+            };
+            opts.resolved_egress_cidrs =
+                resolve_provider_egress_cidrs(&opts.allow_egress_host, real_resolver)
+                    .context("resolving named provider egress hosts")?;
+        }
+    }
+
     let cmds = up_commands(&opts);
-    if opts.credentials.is_some() {
-        ui.note("real model enabled; egress opened to the model provider");
-    } else if opts.local_model.is_some() {
-        ui.note("local model enabled; installing the chart inference deployment");
-    } else if !opts.fake_model {
-        ui.warn(
-            "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model (model egress stays sealed)",
-        );
-        ui.note(
-            "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.",
-        );
+    // Provider egress is opened iff a provider was named: on a live run
+    // resolve_provider_egress_cidrs bails on an empty/failed resolution (so a
+    // non-empty allow_egress_host always yields non-empty resolved_egress_cidrs),
+    // and under --dry-run resolution is skipped but the intent still counts.
+    let any_egress = !opts.allow_egress_host.is_empty() || !opts.allow_web_egress.is_empty();
+    for (warn, msg) in model_egress_status_lines(
+        opts.credentials.is_some(),
+        opts.local_model.is_some(),
+        opts.fake_model,
+        &opts.allow_egress_host,
+        any_egress,
+        opts.common.dry_run,
+    ) {
+        if warn {
+            ui.warn(&msg)
+        } else {
+            ui.note(&msg)
+        }
     }
     if let Some(warning) = default_route_egress_warning(&opts.allow_web_egress) {
         ui.warn(&warning);
@@ -1355,6 +1653,8 @@ mod tests {
     fn up_defaults_expose_ui_and_langfuse() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1379,6 +1679,8 @@ mod tests {
     fn up_no_expose_drops_the_nodeport_sets() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1399,6 +1701,8 @@ mod tests {
     fn up_passthrough_set_is_appended_verbatim() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1423,6 +1727,8 @@ mod tests {
         // or egress sets (the fake model stays on, egress stays fail-closed).
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1446,6 +1752,8 @@ mod tests {
         // install even when the caller had a credential in the environment.
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1466,6 +1774,8 @@ mod tests {
     fn up_with_credentials_enables_real_model_and_masks() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec!["anthropic".into()],
+            resolved_egress_cidrs: vec!["192.0.2.10/32".into()],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1495,7 +1805,7 @@ mod tests {
         assert!(!line.contains("secretsecret"), "secret leaked: {line}");
         // Model-provider egress entry (array-index keys print single-quoted).
         assert!(
-            line.contains("'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23'"),
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=192.0.2.10/32'"),
             "{line}"
         );
         assert!(
@@ -1597,6 +1907,8 @@ mod tests {
     fn up_local_model_adds_inference_sets() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1617,6 +1929,8 @@ mod tests {
     fn up_without_local_model_omits_inference_sets() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1638,6 +1952,8 @@ mod tests {
         // AGENTOS_MODEL set, no explicit --set: inject the runner model (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1661,6 +1977,8 @@ mod tests {
         // No AGENTOS_MODEL: inject nothing, the chart default stands (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1682,6 +2000,8 @@ mod tests {
         // already carries it, so no duplicate injection (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1709,6 +2029,8 @@ mod tests {
         // `--set agentSandbox.runner.model=<model>` on top of it (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1780,6 +2102,8 @@ mod tests {
     fn up_opens_web_egress_after_model() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec!["anthropic".into()],
+            resolved_egress_cidrs: vec!["192.0.2.10/32".into()],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1793,7 +2117,7 @@ mod tests {
         });
         let line = cmds[0].display();
         assert!(
-            line.contains("'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23'"),
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=192.0.2.10/32'"),
             "{line}"
         );
         assert!(
@@ -1814,6 +2138,8 @@ mod tests {
     fn up_web_egress_without_model_uses_index_zero() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1845,6 +2171,8 @@ mod tests {
     fn up_web_egress_multiple_cidrs_contiguous() {
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec!["anthropic".into()],
+            resolved_egress_cidrs: vec!["192.0.2.10/32".into()],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1858,7 +2186,7 @@ mod tests {
         });
         let line = cmds[0].display();
         assert!(
-            line.contains("'security.networkPolicy.allowedEgress[0].cidr=160.79.104.0/23'"),
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=192.0.2.10/32'"),
             "{line}"
         );
         assert!(
@@ -1875,6 +2203,8 @@ mod tests {
     fn up_no_web_egress_stays_sealed() {
         let sealed_cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -1891,6 +2221,8 @@ mod tests {
 
         let model_cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -2244,6 +2576,8 @@ mod tests {
         // private -f values file, never in the executed argv / process table.
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![
                 ("api.apiKey".into(), "generated-api-key".into()),
@@ -2296,6 +2630,8 @@ mod tests {
         // pre-#196 argv test) emits no secret values file.
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: true,
@@ -2318,6 +2654,8 @@ mod tests {
         // random values and the dev/e2e stack would not match compose.
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: true,
@@ -2342,6 +2680,8 @@ mod tests {
         // the sealed chart generates strong per-release credentials there.
         let cmds = up_commands(&UpOpts {
             common: common(),
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
             chart: "charts/agentos".into(),
             secrets: vec![],
             dev: false,
@@ -2430,5 +2770,502 @@ mod tests {
         let err =
             ui_api_url_from_parts("", Some("10.0.0.5")).expect_err("malformed JSON must error");
         assert!(err.to_string().contains("--api-url"), "{err}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Explicit provider egress (issue #362): the model-provider carve-out is no
+    // longer a hardcoded Anthropic CIDR pushed whenever a credential is present;
+    // egress is opened only for operator-named providers, resolved to their API
+    // host IPs, so a real model call fails closed unless the provider is asked
+    // for by name.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn provider_egress_hosts_maps_known_providers_and_rejects_unknown() {
+        // The two runner-drivable providers map to their canonical API host(s).
+        assert_eq!(
+            provider_egress_hosts("anthropic").unwrap().to_vec(),
+            vec!["api.anthropic.com"]
+        );
+        assert_eq!(
+            provider_egress_hosts("openrouter").unwrap().to_vec(),
+            vec!["openrouter.ai"]
+        );
+
+        // `openai` and `gemini` are not runner-drivable today, so they are NOT
+        // known providers: they fall through to `None` rather than minting an
+        // egress route to a host the harness cannot talk to (#362).
+        assert!(provider_egress_hosts("openai").is_none());
+        assert!(provider_egress_hosts("gemini").is_none());
+
+        // Anything that is not a canonical provider name is unknown: a bare
+        // domain, a host, the empty string.
+        assert!(provider_egress_hosts("acme.com").is_none());
+        assert!(provider_egress_hosts("api.anthropic.com").is_none());
+        assert!(provider_egress_hosts("").is_none());
+
+        // Case-sensitive: only the lowercase canonical names resolve, so an
+        // uppercased spelling is rejected rather than silently normalized.
+        assert!(provider_egress_hosts("Anthropic").is_none());
+        assert!(provider_egress_hosts("ANTHROPIC").is_none());
+    }
+
+    #[test]
+    fn parse_egress_provider_accepts_known_and_errs_usage_on_unknown() {
+        // Each runner-drivable provider parses to its own canonical name.
+        for p in ["anthropic", "openrouter"] {
+            assert_eq!(parse_egress_provider(p).unwrap(), p);
+        }
+
+        // `openai` and `gemini` are no longer accepted -- the runner cannot
+        // drive them, so they are usage errors like any other unknown value.
+        for p in ["openai", "gemini"] {
+            assert_eq!(
+                parse_egress_provider(p).unwrap_err().class,
+                crate::exit::ExitClass::Usage
+            );
+        }
+
+        // An unknown value is a deterministic input error (exit 2 / Usage).
+        let err = parse_egress_provider("acme.com").unwrap_err();
+        assert_eq!(err.class, crate::exit::ExitClass::Usage);
+        assert!(err.message.contains("acme.com"), "{}", err.message);
+        assert!(
+            err.message.contains("not a known provider"),
+            "{}",
+            err.message
+        );
+        // The message enumerates the accepted providers so the operator can fix
+        // the flag without reading source.
+        for p in ["anthropic", "openrouter"] {
+            assert!(
+                err.message.contains(p),
+                "message should list `{p}`: {}",
+                err.message
+            );
+        }
+        // ...and does NOT advertise the providers the runner cannot drive.
+        assert!(
+            !err.message.contains("openai") && !err.message.contains("gemini"),
+            "message should not list undrivable providers: {}",
+            err.message
+        );
+        // The fix hint points at the escape hatch for arbitrary destinations.
+        let fix = err.fix.expect("a usage error should carry a fix hint");
+        assert!(fix.contains("--allow-web-egress"), "{fix}");
+
+        // Case-sensitivity is enforced here too: `Anthropic` is not `anthropic`.
+        assert_eq!(
+            parse_egress_provider("Anthropic").unwrap_err().class,
+            crate::exit::ExitClass::Usage
+        );
+    }
+
+    #[test]
+    fn ip_to_egress_cidr_appends_full_host_prefix() {
+        use std::net::IpAddr;
+        // An IPv4 host is a /32; an IPv6 host is a /128 -- a single-host CIDR so
+        // the egress rule opens exactly that resolved address, nothing wider.
+        let v4: IpAddr = "1.2.3.4".parse().unwrap();
+        assert_eq!(ip_to_egress_cidr(v4), "1.2.3.4/32");
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        assert_eq!(ip_to_egress_cidr(v6), "2001:db8::1/128");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_dedups_sorts_and_covers_all_hosts() {
+        use std::net::IpAddr;
+        // Injected resolver so the test never touches real DNS. Anthropic and
+        // OpenRouter share 1.1.1.1 to prove deduplication; Anthropic also
+        // yields an IPv6 address to prove the v4/v6 mix. All addresses are
+        // globally routable so they survive the split-horizon guard.
+        let resolve = |host: &str| -> std::io::Result<Vec<IpAddr>> {
+            Ok(match host {
+                "api.anthropic.com" => {
+                    vec![
+                        "1.1.1.1".parse().unwrap(),
+                        "2606:4700::1111".parse().unwrap(),
+                    ]
+                }
+                "openrouter.ai" => {
+                    vec!["1.1.1.1".parse().unwrap(), "1.0.0.1".parse().unwrap()]
+                }
+                other => panic!("unexpected host {other}"),
+            })
+        };
+        let providers = vec!["anthropic".to_string(), "openrouter".to_string()];
+        let cidrs = resolve_provider_egress_cidrs(&providers, resolve).unwrap();
+        // Deduplicated (one 1.1.1.1/32) and sorted for a stable install argv.
+        assert_eq!(
+            cidrs,
+            vec!["1.0.0.1/32", "1.1.1.1/32", "2606:4700::1111/128"]
+        );
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_errs_when_host_resolves_empty() {
+        use std::net::IpAddr;
+        // A host that resolves to nothing is a hard error naming the host, not a
+        // silent skip -- a real model call would otherwise fail closed with no
+        // clue why.
+        let resolve = |_host: &str| -> std::io::Result<Vec<IpAddr>> { Ok(vec![]) };
+        let err = resolve_provider_egress_cidrs(&["anthropic".to_string()], resolve).unwrap_err();
+        assert!(format!("{err:#}").contains("api.anthropic.com"), "{err:#}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_propagates_resolver_error_naming_host() {
+        use std::net::IpAddr;
+        // A resolver failure propagates as an error that names the host that
+        // failed to resolve.
+        let resolve = |host: &str| -> std::io::Result<Vec<IpAddr>> {
+            Err(std::io::Error::other(format!("dns down for {host}")))
+        };
+        let err = resolve_provider_egress_cidrs(&["openrouter".to_string()], resolve).unwrap_err();
+        assert!(format!("{err:#}").contains("openrouter.ai"), "{err:#}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_errs_on_unknown_provider() {
+        use std::net::IpAddr;
+        // An unknown provider in the slice fails loudly (should be pre-validated,
+        // but never silently skipped).
+        let resolve =
+            |_host: &str| -> std::io::Result<Vec<IpAddr>> { Ok(vec!["10.0.0.1".parse().unwrap()]) };
+        let err = resolve_provider_egress_cidrs(&["acme.com".to_string()], resolve).unwrap_err();
+        assert!(format!("{err:#}").contains("acme.com"), "{err:#}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_rejects_imds_address() {
+        use std::net::IpAddr;
+        // A poisoned DNS answer mapping a provider host to the node metadata
+        // endpoint must fail loud, naming both the host and the address.
+        let resolve = |_host: &str| -> std::io::Result<Vec<IpAddr>> {
+            Ok(vec!["169.254.169.254".parse().unwrap()])
+        };
+        let err = resolve_provider_egress_cidrs(&["anthropic".to_string()], resolve).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("api.anthropic.com"), "{msg}");
+        assert!(msg.contains("169.254.169.254"), "{msg}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_rejects_private_v4() {
+        use std::net::IpAddr;
+        let resolve =
+            |_host: &str| -> std::io::Result<Vec<IpAddr>> { Ok(vec!["10.0.0.5".parse().unwrap()]) };
+        let err = resolve_provider_egress_cidrs(&["openrouter".to_string()], resolve).unwrap_err();
+        assert!(format!("{err:#}").contains("10.0.0.5"), "{err:#}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_rejects_non_routable_v6() {
+        use std::net::IpAddr;
+        // Loopback, link-local, and ULA v6 answers all fail closed.
+        for addr in ["::1", "fe80::1", "fc00::1"] {
+            let resolve = move |_host: &str| -> std::io::Result<Vec<IpAddr>> {
+                Ok(vec![addr.parse().unwrap()])
+            };
+            let err =
+                resolve_provider_egress_cidrs(&["openrouter".to_string()], resolve).unwrap_err();
+            assert!(format!("{err:#}").contains(addr), "{addr}: {err:#}");
+        }
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_accepts_public_addresses() {
+        use std::net::IpAddr;
+        // A normal public v4 + v6 pair mints the expected single-host CIDRs.
+        let resolve = |_host: &str| -> std::io::Result<Vec<IpAddr>> {
+            Ok(vec![
+                "1.1.1.1".parse().unwrap(),
+                "2606:4700::1111".parse().unwrap(),
+            ])
+        };
+        let cidrs = resolve_provider_egress_cidrs(&["anthropic".to_string()], resolve).unwrap();
+        assert_eq!(cidrs, vec!["1.1.1.1/32", "2606:4700::1111/128"]);
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_rejects_mix_with_one_private() {
+        use std::net::IpAddr;
+        // A host that resolves to a public AND a private address fails loud --
+        // the private one must never be silently dropped.
+        let resolve = |_host: &str| -> std::io::Result<Vec<IpAddr>> {
+            Ok(vec![
+                "1.1.1.1".parse().unwrap(),
+                "10.0.0.5".parse().unwrap(),
+            ])
+        };
+        let err = resolve_provider_egress_cidrs(&["anthropic".to_string()], resolve).unwrap_err();
+        assert!(format!("{err:#}").contains("10.0.0.5"), "{err:#}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_rejects_ipv4_mapped_private_v6() {
+        use std::net::IpAddr;
+        // An IPv4-mapped v6 of a private v4 is unmapped and re-checked, so it
+        // is rejected just like the bare private v4.
+        let resolve = |_host: &str| -> std::io::Result<Vec<IpAddr>> {
+            Ok(vec!["::ffff:10.0.0.5".parse().unwrap()])
+        };
+        let err = resolve_provider_egress_cidrs(&["openrouter".to_string()], resolve).unwrap_err();
+        assert!(format!("{err:#}").contains("10.0.0.5"), "{err:#}");
+    }
+
+    #[test]
+    fn resolve_provider_egress_cidrs_routability_table() {
+        use std::net::IpAddr;
+        // Every non-globally-routable range must fail closed (Err), and every
+        // public address must succeed (Ok). Injecting a single resolved answer
+        // per case exercises `is_globally_routable_egress` end to end through
+        // the resolver seam.
+        let cases: &[(&str, bool)] = &[
+            // Non-routable v4 -- each must be rejected.
+            ("0.0.0.0", false),         // 0.0.0.0/8 / unspecified
+            ("10.0.0.5", false),        // private 10/8
+            ("100.64.0.1", false),      // CGNAT 100.64.0.0/10
+            ("169.254.169.254", false), // link-local / IMDS
+            ("192.0.0.1", false),       // IETF protocol assignments 192.0.0.0/24
+            ("192.88.99.1", false),     // 6to4 relay anycast 192.88.99.0/24
+            ("198.18.0.1", false),      // benchmarking 198.18.0.0/15
+            ("240.0.0.1", false),       // reserved/future 240.0.0.0/4
+            ("255.255.255.255", false), // broadcast (240/4)
+            // Non-routable v6 -- each must be rejected.
+            ("::1", false),             // loopback
+            ("fe80::1", false),         // link-local
+            ("fc00::1", false),         // ULA
+            ("2001:db8::1", false),     // documentation
+            ("::ffff:10.0.0.5", false), // IPv4-mapped private
+            // Public addresses -- each must succeed.
+            ("1.1.1.1", true),
+            ("8.8.8.8", true),
+            ("2606:4700::1111", true),
+            ("2001:4860:4860::8888", true),
+        ];
+        for (addr, expect_ok) in cases {
+            let a = *addr;
+            let resolve =
+                move |_host: &str| -> std::io::Result<Vec<IpAddr>> { Ok(vec![a.parse().unwrap()]) };
+            let res = resolve_provider_egress_cidrs(&["anthropic".to_string()], resolve);
+            if *expect_ok {
+                let cidrs = res.unwrap_or_else(|e| panic!("{a} should be routable: {e:#}"));
+                assert_eq!(cidrs.len(), 1, "{a} should mint one CIDR");
+            } else {
+                let err = res
+                    .err()
+                    .unwrap_or_else(|| panic!("{a} should be rejected as non-routable"));
+                assert!(format!("{err:#}").contains(a), "{a}: {err:#}");
+            }
+        }
+    }
+
+    #[test]
+    fn provider_egress_note_none_on_empty_and_lists_providers() {
+        // No providers -> no note.
+        assert!(provider_egress_note(&[]).is_none());
+        // Non-empty -> a note that says egress was opened and names each provider.
+        let note = provider_egress_note(&["anthropic".to_string(), "openrouter".to_string()])
+            .expect("a note for a non-empty provider list");
+        assert!(note.contains("egress opened"), "{note}");
+        assert!(note.contains("anthropic"), "{note}");
+        assert!(note.contains("openrouter"), "{note}");
+    }
+
+    #[test]
+    fn sealed_credential_warning_only_when_cred_present_and_no_egress() {
+        // The one combination that warns: a credential is present but nothing
+        // opened egress, so the model is unreachable behind the sealed sandbox.
+        let warn =
+            sealed_credential_warning(true, false).expect("cred present + no egress must warn");
+        assert!(warn.contains("sealed"), "{warn}");
+        assert!(warn.contains("unreachable"), "{warn}");
+        assert!(warn.contains("--allow-egress-host"), "{warn}");
+        assert!(warn.contains("--allow-web-egress"), "{warn}");
+
+        // Every other combination stays silent.
+        assert!(sealed_credential_warning(true, true).is_none());
+        assert!(sealed_credential_warning(false, false).is_none());
+        assert!(sealed_credential_warning(false, true).is_none());
+    }
+
+    #[test]
+    fn model_egress_status_lines_no_cred_open_egress_never_says_sealed() {
+        // The exact contradiction bug: no credential but egress opened via a
+        // provider. The provider note must report the open, and the fake-model
+        // warning must NOT claim the egress is sealed.
+        let lines =
+            model_egress_status_lines(false, false, false, &["anthropic".to_string()], true, false);
+        let msgs: Vec<&str> = lines.iter().map(|(_, m)| m.as_str()).collect();
+        assert!(msgs.iter().any(|m| m.contains("egress opened")), "{msgs:?}");
+        for m in &msgs {
+            assert!(!m.contains("sealed"), "{m}");
+        }
+    }
+
+    #[test]
+    fn model_egress_status_lines_cred_no_egress_warns_sealed() {
+        // A credential present with nothing opened surfaces the sealed warning
+        // naming both flags.
+        let lines = model_egress_status_lines(true, false, false, &[], false, false);
+        let warn = lines
+            .iter()
+            .find(|(w, _)| *w)
+            .map(|(_, m)| m.as_str())
+            .expect("a warn line");
+        assert!(warn.contains("sealed"), "{warn}");
+        assert!(warn.contains("--allow-egress-host"), "{warn}");
+        assert!(warn.contains("--allow-web-egress"), "{warn}");
+    }
+
+    #[test]
+    fn model_egress_status_lines_cred_open_egress_no_sealed() {
+        // A credential with a provider egress opened: provider note + rotation
+        // present, and no message claims the sandbox is sealed.
+        let lines =
+            model_egress_status_lines(true, false, false, &["openrouter".to_string()], true, false);
+        let msgs: Vec<&str> = lines.iter().map(|(_, m)| m.as_str()).collect();
+        assert!(msgs.iter().any(|m| m.contains("egress opened")), "{msgs:?}");
+        assert!(msgs.iter().any(|m| m.contains("can rotate")), "{msgs:?}");
+        for m in &msgs {
+            assert!(!m.contains("sealed"), "{m}");
+        }
+    }
+
+    #[test]
+    fn model_egress_status_lines_fake_model_sealed_and_canned() {
+        // No credential, no egress, real (not --fake-model) install: the
+        // fake-model warning keeps the "(model egress stays sealed)" clause and
+        // a canned-replies note follows.
+        let lines = model_egress_status_lines(false, false, false, &[], false, false);
+        let msgs: Vec<&str> = lines.iter().map(|(_, m)| m.as_str()).collect();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("(model egress stays sealed)")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter().any(|m| m.contains("Replies will be canned")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn model_egress_status_lines_dry_run_skips_past_tense_note() {
+        // Under dry-run the handler prints its own "a live run resolves..."
+        // note, so this fn emits no past-tense "egress opened" line.
+        let lines =
+            model_egress_status_lines(true, false, false, &["anthropic".to_string()], true, true);
+        for (_, m) in &lines {
+            assert!(!m.contains("egress opened"), "{m}");
+        }
+    }
+
+    #[test]
+    fn up_emits_resolved_provider_cidrs_before_web_egress_contiguously() {
+        // Resolved provider CIDRs take the first slots (in order), then declared
+        // web destinations continue contiguously -- one array, no gaps.
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            model: None,
+            allow_egress_host: vec!["anthropic".into()],
+            resolved_egress_cidrs: vec!["10.0.0.1/32".into(), "2001:db8::1/128".into()],
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec!["203.0.113.0/24".into()],
+            fake_model: false,
+            credentials: Some("sk-ant-secretsecret".into()),
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        // Provider CIDRs occupy [0] and [1], each with the shared TCP/443 shape.
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=10.0.0.1/32'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].ports[0].protocol=TCP'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].ports[0].port=443'"),
+            "{line}"
+        );
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[1].cidr=2001:db8::1/128'"),
+            "{line}"
+        );
+        // The declared web destination continues at the next index, not [0].
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[2].cidr=203.0.113.0/24'"),
+            "{line}"
+        );
+        // The old unconditional Anthropic carve-out is gone.
+        assert!(!line.contains("160.79.104.0/23"), "{line}");
+    }
+
+    #[test]
+    fn up_credential_without_any_egress_emits_no_allowed_egress() {
+        // A credential with neither a resolved provider CIDR nor a web egress
+        // destination enables the real model but opens NO egress -- the old
+        // unconditional Anthropic carve-out is removed entirely (#362). The
+        // sandbox stays sealed and the model is unreachable by design.
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            model: None,
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec![],
+            fake_model: false,
+            credentials: Some("sk-ant-secretsecret".into()),
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        // Real model still enabled and the credential still delivered by file.
+        assert!(
+            line.contains("agentSandbox.runner.fakeModel=false"),
+            "{line}"
+        );
+        assert!(line.contains("-f '<secret values file:"), "{line}");
+        // But NO egress rule at all -- and specifically not the old Anthropic one.
+        assert!(!line.contains("160.79.104.0/23"), "{line}");
+        assert!(!line.contains("allowedEgress"), "{line}");
+    }
+
+    #[test]
+    fn up_web_egress_alone_still_starts_at_index_zero() {
+        // Existing behavior preserved: with no credential and no provider host,
+        // a declared web destination still occupies index [0].
+        let cmds = up_commands(&UpOpts {
+            common: common(),
+            model: None,
+            allow_egress_host: vec![],
+            resolved_egress_cidrs: vec![],
+            chart: "charts/agentos".into(),
+            secrets: vec![],
+            dev: false,
+            no_expose: true,
+            set: vec![],
+            allow_web_egress: vec!["203.0.113.0/24".into()],
+            fake_model: true,
+            credentials: None,
+            local_model: None,
+        });
+        let line = cmds[0].display();
+        assert!(
+            line.contains("'security.networkPolicy.allowedEgress[0].cidr=203.0.113.0/24'"),
+            "{line}"
+        );
+        assert!(!line.contains("allowedEgress[1]"), "{line}");
+        assert!(!line.contains("160.79.104.0/23"), "{line}");
     }
 }

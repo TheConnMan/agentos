@@ -412,9 +412,13 @@ Use `--chart <path>` when developing the chart locally. The short version:
 - `agentos cluster up` runs `helm upgrade --install` of `charts/agentos`; it reads
   `AGENTOS_MODEL_CREDENTIALS` to enable a real model (absent, the release
   installs sealed with canned replies), and `--no-expose` keeps the UI and
-  Langfuse ClusterIP-only. `--allow-web-egress <CIDR>` (repeatable) opens runner
-  egress for skill web access (e.g. the weather example's live web search),
-  additive to the sealed default. Connecting Slack is a raw `helm upgrade
+  Langfuse ClusterIP-only. The credential alone still leaves the runner sandbox
+  sealed against default-deny egress, so a real model stays unreachable until you
+  open its provider with `--allow-egress-host <provider>` (currently `anthropic`
+  or `openrouter`). `--allow-web-egress <CIDR>` (repeatable) opens runner egress
+  for skill web access (e.g. the weather example's live web search), additive to
+  the sealed default; `--allow-egress-host` is the model-provider convenience on
+  top of it. Connecting Slack is a raw `helm upgrade
   --reuse-values` (not a CLI verb; the chart's `NOTES.txt` prints it).
 - `agentos cluster status` reports release health and access URLs; `agentos cluster down`
   uninstalls and sweeps the runtime namespaces. Every verb takes `--dry-run`.

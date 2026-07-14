@@ -38,29 +38,48 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   It installs into the `agentos` namespace, exposing the UI and Langfuse on node
   ports (pass `--no-expose` to keep them ClusterIP-only). It reads
   `AGENTOS_MODEL_CREDENTIALS`: when the env var is set it switches the runner
-  off the fake model, forwards the credential through the masked `--set`
-  machinery (so `--dry-run` never prints it), and opens the runner's
-  fail-closed egress to the model provider; when it is absent the release
+  off the fake model and forwards the credential through the masked `--set`
+  machinery (so `--dry-run` never prints it); when it is absent the release
   installs sealed (canned replies) and `up` warns that replies stay canned
   until the env var is set and `up` is re-run. Pass `--fake-model` to force the
   sealed install even when the credential is present (a dev/CI escape hatch).
+  A model credential alone opens **no** egress: the sandbox stays fail-closed, so
+  the model host is unreachable until you open its provider egress explicitly.
+  When a credential is present but no egress was opened, `up` warns the sandbox is
+  sealed and the model is unreachable, naming both flags below.
+  Pass `--allow-egress-host <provider>` (repeatable) to open runner egress on TCP
+  443 to a named model provider -- one of `anthropic` or `openrouter`. Each maps
+  to that provider's API hostname (`anthropic` -> `api.anthropic.com`,
+  `openrouter` -> `openrouter.ai`), which the
+  CLI resolves to narrow host routes (`/32` + `/128`) at install time, from the
+  machine running `cluster up` (so the resolved IPs can differ from the runner's
+  in-cluster view under GeoDNS or split-horizon DNS). The set is
+  intentionally limited to the two providers the runner can drive today
+  (`anthropic` via `sk-ant-`, `openrouter` via `sk-or-`); others (OpenAI, Gemini,
+  the base-URL-override providers) are layered in only once the runner supports
+  them. No provider
+  IPs are baked into the binary, only hostnames, because provider/CDN IPs rotate;
+  if calls start failing after a rotation, re-run `up` to re-resolve. An unknown
+  `--allow-egress-host` value is a usage error listing the accepted providers and
+  pointing at `--allow-web-egress` for arbitrary destinations.
   Pass `--allow-web-egress <CIDR>` (repeatable) to open runner egress on TCP 443
-  to each declared CIDR for skill/tool web access -- appended additively after
-  the model carve-out at index `[0]`, so it never weakens the model rule; omit it
-  and egress stays sealed. This is the platform enablement the weather example
-  (#36) needs, whose skill answers via a live web search: `agentos cluster up
-  --allow-web-egress 0.0.0.0/0` opens the open internet (still minus the
-  `169.254.169.254` metadata endpoint the chart carves out of `0.0.0.0/0`), or
-  narrow the CIDR to a specific web-search provider for a tighter posture. When a
-  declared value is a default route (`0.0.0.0/0`, `::/0`, or any `/0` prefix),
-  `up` prints a distinct rail-removal warning -- opening egress to the whole
-  internet removes the default-deny rail for a prompt-injectable sandbox, so
-  prefer a narrow CIDR unless you genuinely need the open internet. The
-  raw helm equivalent is
-  `--set 'security.networkPolicy.allowedEgress[1].cidr=0.0.0.0/0'` plus
-  `...[1].ports[0].protocol=TCP` and `...[1].ports[0].port=443` (index `[1]`
-  because the model entry is `[0]`; use index `[0]` instead when installing
-  sealed with no model credential, so the array has no gap).
+  to each declared CIDR for skill/tool web access or for a destination no named
+  provider covers; omit both flags and egress stays sealed. This is the platform
+  enablement the weather example (#36) needs, whose skill answers via a live web
+  search: `agentos cluster up --allow-web-egress 0.0.0.0/0` opens the open
+  internet (still minus the `169.254.169.254` metadata endpoint the chart carves
+  out of `0.0.0.0/0`), or narrow the CIDR to a specific web-search provider for a
+  tighter posture. When a declared value is a default route (`0.0.0.0/0`, `::/0`,
+  or any `/0` prefix), `up` prints a distinct rail-removal warning -- opening
+  egress to the whole internet removes the default-deny rail for a
+  prompt-injectable sandbox, so prefer a narrow CIDR unless you genuinely need the
+  open internet. The declared egress entries occupy the `allowedEgress` array in
+  order: provider host routes from `--allow-egress-host` take the leading indices
+  only when that flag is passed, followed by any `--allow-web-egress` CIDRs. The
+  raw helm equivalent of a single web-egress rule (with no provider egress) is
+  `--set 'security.networkPolicy.allowedEgress[0].cidr=0.0.0.0/0'` plus
+  `...[0].ports[0].protocol=TCP` and `...[0].ports[0].port=443`; shift the index
+  up by one for each preceding `--allow-egress-host` entry so the array has no gap.
 - `agentos cluster status` reports release health, pod readiness, and the access URLs;
   the UI URL carries `?api=1`, so it opens wired to the in-cluster API (the
   deployed UI proxies `/api/` there).
