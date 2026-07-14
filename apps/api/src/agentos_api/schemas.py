@@ -445,3 +445,54 @@ class StateEntryOut(BaseModel):
     value: Any
     version: int
     updated_at: datetime
+
+
+# --- Agent memory (#266 trace-back; #267 inspect/edit/delete) ---------------
+
+
+class MemoryProvenanceOut(BaseModel):
+    """Where a memory entry was learned from (#264 ``Provenance`` shape)."""
+
+    learned_from_session_id: str | None = None
+    source_trace_ids: list[str] = Field(default_factory=list)
+    recorded_at: str = ""
+
+
+class SourceTraceOut(BaseModel):
+    """One resolved source trace: its id plus a link to view it in Langfuse."""
+
+    trace_id: str
+    trace_url: str
+
+
+class MemoryEntryOut(BaseModel):
+    """One learned memory entry as returned to an operator.
+
+    ``index`` is the entry's position in the append-only log; it is the stable
+    handle the edit/delete endpoints (#267) address, and it survives as long as
+    the log is not consolidated (#265) or reordered.
+    """
+
+    index: int
+    content: str
+    provenance: MemoryProvenanceOut
+
+
+class MemoryTraceBackOut(BaseModel):
+    """The learned-from trace-back for one memory entry (#266).
+
+    Resolves an entry's recorded provenance into the concrete session and source
+    traces the lesson was learned from -- the answer to "how did it learn that?".
+    """
+
+    index: int
+    content: str
+    learned_from_session_id: str | None = None
+    recorded_at: str = ""
+    source_traces: list[SourceTraceOut] = Field(default_factory=list)
+
+
+class MemoryEntryEdit(BaseModel):
+    """Edit the ``content`` of one memory entry (#267); provenance is preserved."""
+
+    content: str
