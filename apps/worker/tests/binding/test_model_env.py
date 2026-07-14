@@ -222,3 +222,56 @@ def test_binding_boot_env_token_survives_credentials() -> None:
     env = resolver.boot_env(_resolved(), "thread-1")
     assert env.get(RUNNER_TOKEN_ENV), "the runner token must survive credential selection"
     assert env[CREDENTIALS_ENV] == "cred-1"
+
+
+# --- Conversation-history ref delivery (#20, ADR-0029) ------------------------
+# The env-var names are the cross-package contract with the runner; asserted by
+# their literal strings so this file never depends on a constant that only exists
+# after the feature lands.
+HISTORY_REF_ENV = "AGENTOS_HISTORY_REF"
+HISTORY_TOKEN_ENV = "AGENTOS_HISTORY_TOKEN"
+
+
+def test_binding_boot_env_sets_per_thread_transcript_ref() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    config = WorkerConfig()
+    resolver._config = config  # type: ignore[attr-defined]
+
+    resolved = _resolved()
+    env = resolver.boot_env(resolved, "1720000000.000100")
+    base = config.api_base_url.rstrip("/")
+    assert env[HISTORY_REF_ENV] == (
+        f"{base}/agents/{resolved.agent_id}/state/transcript/1720000000.000100"
+    )
+    # The API key is forwarded as the history token (shared with memory today).
+    assert env[HISTORY_TOKEN_ENV] == config.api_key
+
+
+def test_binding_boot_env_history_ref_is_deterministic_per_thread() -> None:
+    # Every claim for a thread yields the same ref, so a fresh, a restarted, and a
+    # resumed sandbox all rehydrate the same transcript (#20) with no special path.
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+
+    resolved = _resolved()
+    first = resolver.boot_env(resolved, "t-1")[HISTORY_REF_ENV]
+    second = resolver.boot_env(resolved, "t-1")[HISTORY_REF_ENV]
+    assert first == second
+
+
+def test_binding_boot_env_url_encodes_thread_key() -> None:
+    # A thread key with reserved characters must not escape the transcript key
+    # path; it is percent-encoded (safe="") so slashes cannot inject a new path.
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+
+    env = resolver.boot_env(_resolved(), "weird/../key")
+    assert "/state/transcript/weird%2F..%2Fkey" in env[HISTORY_REF_ENV]
+
+
+def test_binding_boot_env_omits_history_token_without_api_key() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig(api_key="")  # type: ignore[attr-defined]
+
+    env = resolver.boot_env(_resolved(), "t-1")
+    assert HISTORY_TOKEN_ENV not in env

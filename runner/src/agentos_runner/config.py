@@ -43,12 +43,13 @@ class RunnerConfig:
 
         The ACI-frozen vars are parsed by ``SessionConfig.from_env``; a malformed
         or missing required var raises there. ``history_ref`` is read only from an
-        explicit ``AGENTOS_HISTORY_REF``, which is an SDK ``resume`` session id
-        (transcript- or session-store-backed). It is deliberately NOT derived from
-        ``AGENTOS_MEMORY_REF``: the memory ref is an externalized-memory pointer
-        (S3 path / API URL), a different concept the SDK cannot resume from. The
-        worker/G1 is what turns externalized history into a resume id; the runner
-        only accepts one (ADR-0003, stateless-first).
+        explicit ``AGENTOS_HISTORY_REF``, the URL of this thread's transcript
+        namespace on the state API (ADR-0029, resolved by ``history.py`` into a
+        ``TranscriptStore`` and delivered as a boot preamble). It is deliberately
+        NOT derived from ``AGENTOS_MEMORY_REF``: memory is per-agent durable
+        lessons, history is this thread's conversation (ADR-0025 keeps them
+        distinct). Both live outside the sandbox and are rehydrated at boot
+        (ADR-0003, stateless-first).
         """
 
         session = SessionConfig.from_env(env)

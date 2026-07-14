@@ -18,6 +18,12 @@ from aiohttp import web
 from .adapter import ClaudeAgentSession, ModelSession, build_options
 from .config import RunnerConfig
 from .fake import FakeModelSession
+from .history import (
+    TranscriptStore,
+    TurnRecord,
+    format_conversation_preamble,
+    resolve_history,
+)
 from .hooks import load_bundle_hooks
 from .memory import MemoryRecord, MemoryStore, format_memory_preamble, resolve_memory
 from .otel import RunTracer, build_tracer_provider
@@ -30,15 +36,20 @@ from .side_effects import SideEffectClassifier
 logger = logging.getLogger(__name__)
 
 
-def _compose_system_prompt(base: str | None, memory_preamble: str | None) -> str | None:
-    """Prepend the loaded-memory preamble to the effective system prompt.
+def _compose_system_prompt(
+    base: str | None,
+    memory_preamble: str | None,
+    conversation_preamble: str | None = None,
+) -> str | None:
+    """Prepend the loaded-memory and conversation preambles to the system prompt.
 
-    Memory delivered from outside the sandbox becomes durable model context by
-    leading the system prompt; the bundle/env system prompt follows it. Either
-    part may be absent.
+    State delivered from outside the sandbox becomes durable model context by
+    leading the system prompt: durable memory (ADR-0025) first, then this thread's
+    recovered conversation (ADR-0029), then the bundle/env system prompt. Any part
+    may be absent.
     """
 
-    parts = [p for p in (memory_preamble, base) if p]
+    parts = [p for p in (memory_preamble, conversation_preamble, base) if p]
     return "\n\n".join(parts) if parts else None
 
 
@@ -49,6 +60,8 @@ def build_runner(
     sdk_env: dict[str, str] | None = None,
     memory_store: MemoryStore | None = None,
     memory_preamble: str | None = None,
+    history_store: TranscriptStore | None = None,
+    conversation_preamble: str | None = None,
 ) -> SessionRunner:
     """Wire a SessionRunner backed by a real claude-agent-sdk session.
 
@@ -64,9 +77,10 @@ def build_runner(
     system_prompt = config.system_prompt
     if system_prompt is None:
         system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
-    # Prior memory loaded from outside the sandbox (#264) leads the system prompt
-    # so the model sees learned lessons as durable context.
-    system_prompt = _compose_system_prompt(system_prompt, memory_preamble)
+    # Prior memory (#264) and this thread's recovered conversation (#20), both
+    # loaded from outside the sandbox, lead the system prompt so the model sees
+    # learned lessons and the prior exchange as durable context.
+    system_prompt = _compose_system_prompt(system_prompt, memory_preamble, conversation_preamble)
     # In-bundle PreToolUse guardrails declared in the manifest hooks field (#272),
     # translated into SDK HookMatcher callbacks. None when the bundle declares none.
     bundle_hooks = load_bundle_hooks(config.session.plugin_dir)
@@ -81,7 +95,11 @@ def build_runner(
             system_prompt=system_prompt,
             max_turns=config.max_turns,
             max_budget_usd=config.max_usd_per_day,
-            resume=config.history_ref,
+            # History is rehydrated harness-agnostically as a conversation preamble
+            # (ADR-0029), not through the SDK-specific resume path, so history_ref
+            # no longer feeds resume. build_options keeps the param for an explicit
+            # caller; the boot path passes None.
+            resume=None,
             task_budget_hint=config.session.budget.task_budget_hint,
             env=sdk_env or {},
             hooks=bundle_hooks,
@@ -102,6 +120,7 @@ def build_runner(
         session_id=config.session.session_id,
         model=config.model,
         memory_store=memory_store,
+        history_store=history_store,
     )
 
 
@@ -135,6 +154,36 @@ def _load_memory(config: RunnerConfig) -> tuple[MemoryStore, str | None]:
     return store, format_memory_preamble(records)
 
 
+def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
+    """Resolve AGENTOS_HISTORY_REF and load this thread's transcript into a preamble.
+
+    Mirrors ``_load_memory`` (ADR-0029): runs synchronously at boot so a bad ref
+    fails the process visibly, but a transient load failure degrades to "no
+    history" rather than blocking boot -- a thread must still run when its
+    transcript store is briefly unavailable (the answer just lacks prior context).
+    """
+
+    store = resolve_history(config.history_ref, os.environ)
+
+    async def _load() -> list[TurnRecord]:
+        return await store.load()
+
+    try:
+        turns = anyio.run(_load)
+    except Exception as exc:  # noqa: BLE001 - degrade to no-history, never fail boot
+        logger.warning(
+            "history load failed session=%s error_class=%s: %s (booting without history)",
+            config.session.session_id,
+            type(exc).__name__,
+            exc,
+        )
+        return store, None
+    logger.info(
+        "history loaded session=%s turns=%d", config.session.session_id, len(turns)
+    )
+    return store, format_conversation_preamble(turns)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     fake_model = os.environ.get("AGENTOS_FAKE_MODEL", "").lower() in ("1", "true", "yes")
@@ -158,12 +207,15 @@ def main() -> None:
         config.port,
     )
     memory_store, memory_preamble = _load_memory(config)
+    history_store, conversation_preamble = _load_history(config)
     runner = build_runner(
         config,
         fake_model=fake_model,
         sdk_env=override,
         memory_store=memory_store,
         memory_preamble=memory_preamble,
+        history_store=history_store,
+        conversation_preamble=conversation_preamble,
     )
     app = create_app(runner, token=config.runner_token)
 

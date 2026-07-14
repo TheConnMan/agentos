@@ -47,14 +47,17 @@ stop -- that is scope creep on the sacred module.
   binding the warm pool, because env cannot be injected into an
   already-running pod. Expected latency, not a bug.
 - **Suspend deletes the pod.** Never assume a suspended sandbox's process or
-  prompt cache survives; `resume()` always rehydrates from
-  `AGENTOS_HISTORY_REF`.
+  prompt cache survives; a resumed or restarted sandbox rehydrates from external
+  state via `AGENTOS_HISTORY_REF`.
 - **The client seam is sync; unit tests fake only `SandboxClient`** (the K8s
   control plane) -- Valkey is never mocked.
-- **Producing a history ref is the caller's job.** The frozen ACI `final`
-  frame does not carry the SDK session id today; surfacing it is an
-  `aci-protocol` change -- stop and raise it in an issue/PR first, do not
-  invent a side channel.
+- **The history ref is a deterministic state-store URL, not an SDK session id**
+  (ADR-0029). `binding.boot_env` sets `AGENTOS_HISTORY_REF` to this thread's
+  transcript key on the durable state store (`.../state/transcript/<thread_key>`)
+  on **every** claim, so a fresh, restarted, or resumed sandbox all boot with the
+  same ref and the runner rehydrates the conversation as a preamble. There is no
+  SDK session id to capture off the ACI `final` frame and no frozen-contract
+  change; do not reintroduce a frame-captured resume id.
 
 ## Deployment-to-runtime binding (implemented)
 

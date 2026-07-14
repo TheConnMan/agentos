@@ -38,6 +38,7 @@ from claude_agent_sdk import AssistantMessage, ResultMessage
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
+from .history import NullTranscriptStore, TranscriptStore, TurnRecord
 from .memory import (
     ConsolidationResult,
     MemoryRecord,
@@ -94,6 +95,7 @@ class SessionRunner:
         session_id: str | None = None,
         model: str | None = None,
         memory_store: MemoryStore | None = None,
+        history_store: TranscriptStore | None = None,
     ) -> None:
         self._factory = session_factory
         self._ceiling = ceiling
@@ -106,6 +108,11 @@ class SessionRunner:
         # via the system prompt; this store is the write side for learned records
         # (append + provenance). NullMemoryStore when no AGENTOS_MEMORY_REF.
         self._memory: MemoryStore = memory_store or NullMemoryStore()
+        # The conversation-history port (#20). Prior turns are loaded at boot and
+        # delivered via the system prompt; this store is the write side, appended
+        # once per successful turn so a restarted sandbox rehydrates the thread.
+        # NullTranscriptStore when no AGENTOS_HISTORY_REF.
+        self._history: TranscriptStore = history_store or NullTranscriptStore()
 
         self._session: ModelSession | None = None
         self._turn_lock = anyio.Lock()
@@ -157,6 +164,34 @@ class SessionRunner:
             ),
         )
         await self._memory.append(record)
+
+    async def _record_turn(self, event: Event, state: TurnState) -> None:
+        """Append one completed turn to the durable conversation transcript (#20).
+
+        Only a successful terminal final sets ``state.final_text``; a failed,
+        budget-halted, or auth-halted turn leaves it None and is not persisted, so
+        the transcript holds the delivered exchange, not error stubs. Best-effort:
+        a transient store failure is logged and never propagated -- recording
+        history must not fail a turn the user already received an answer to.
+        """
+
+        if state.final_text is None:
+            return
+        try:
+            await self._history.append(
+                TurnRecord(
+                    user=event.text,
+                    assistant=state.final_text,
+                    ts=utcnow_iso(),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort; never fail a completed turn
+            logger.warning(
+                "history append failed session=%s error_class=%s: %s",
+                self._session_id,
+                type(exc).__name__,
+                exc,
+            )
 
     async def consolidate_memory(self) -> ConsolidationResult:
         """Compact accumulated memory, merging duplicates and unioning provenance.
@@ -253,6 +288,9 @@ class SessionRunner:
                         self._status.value,
                         int((time.monotonic() - start) * 1000),
                     )
+                    # Persist the completed turn to the durable transcript so a
+                    # restarted sandbox can rehydrate this thread (#20).
+                    await self._record_turn(event, state)
                 except Exception as exc:  # noqa: BLE001 - the ACI stream must
                     # always terminate in a final; a raised SDK/transport error
                     # (CLI disconnect, auth expiry, model error) becomes a
@@ -339,6 +377,9 @@ class SessionRunner:
                     final = self._reclassify(outbound)
                     self._status = final.status
                     self._turn_open = False
+                    # Capture the delivered reply so run_turn can persist the
+                    # {user, assistant} pair to the conversation transcript (#20).
+                    state.final_text = final.text
                     yield to_ndjson_line(final)
                     return
                 yield to_ndjson_line(outbound)
