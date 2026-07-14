@@ -185,6 +185,13 @@ enum SkillAction {
             conflicts_with = "model"
         )]
         local_model: Option<String>,
+        /// Forward an environment variable BY NAME into the runner sandbox, so a
+        /// bundle's authed MCP server can read a secret (e.g. an API token) the
+        /// same way model credentials are forwarded: the value is read from your
+        /// environment by docker and never placed in argv. Repeatable. Example:
+        /// `--secret GITHUB_PERSONAL_ACCESS_TOKEN` with that var exported.
+        #[arg(long = "secret", value_name = "NAME")]
+        secret: Vec<String>,
     },
     /// Check that the bundle's MCP servers load in an offline runner container.
     Check {
@@ -884,6 +891,7 @@ async fn run(command: Command) -> Result<()> {
                 budget,
                 model,
                 local_model,
+                secret,
             } => {
                 let image = artifacts::resolve_image(
                     image.as_deref(),
@@ -901,6 +909,7 @@ async fn run(command: Command) -> Result<()> {
                     budget,
                     model,
                     local_model,
+                    secret,
                 })
                 .await
             }

@@ -71,6 +71,11 @@ pub struct StartOpts {
     pub budget: String,
     pub model: Option<String>,
     pub local_model: Option<String>,
+    /// Extra env var NAMES to forward by name into the runner sandbox, for a
+    /// bundle's authed MCP server to read a secret. Forwarded exactly like the
+    /// model credentials (docker reads the value from the caller's env; the
+    /// value never appears in argv). From `skill up --secret <NAME>`.
+    pub secret: Vec<String>,
 }
 
 /// The versioned report emitted by `agentos_runner.check`.
@@ -454,6 +459,20 @@ fn select_passthrough_env(suppress_credential: bool, byo_credential: Option<&str
     }
 }
 
+/// Append `--secret` env var NAMES to the model-credential passthrough list,
+/// de-duplicating. Unlike the model credential these are NOT suppressed under a
+/// fake/local model run: a bundle's authed MCP server needs its token
+/// regardless of which model drives the session. Names already present (a user
+/// passing a model-credential var as a secret) are not duplicated.
+fn merge_secret_env(mut passthrough: Vec<String>, secrets: &[String]) -> Vec<String> {
+    for name in secrets {
+        if !passthrough.contains(name) {
+            passthrough.push(name.clone());
+        }
+    }
+    passthrough
+}
+
 pub async fn start(opts: StartOpts) -> Result<()> {
     let plugin_dir = opts
         .plugin_dir
@@ -542,7 +561,19 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // select_passthrough_env.
     let suppress_credential = opts.local_model.is_some() || opts.fake_model;
     let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok();
-    let passthrough_env = select_passthrough_env(suppress_credential, byo_credential.as_deref());
+    // Warn (do not fail) on a `--secret NAME` that is not set in the caller's
+    // env, since the by-name forward silently no-ops for an unset var (docker.rs).
+    for name in &opts.secret {
+        if std::env::var_os(name).is_none() {
+            crate::ui::ui().note(&format!(
+                "--secret {name}: not set in the environment; nothing will be forwarded for it"
+            ));
+        }
+    }
+    let passthrough_env = merge_secret_env(
+        select_passthrough_env(suppress_credential, byo_credential.as_deref()),
+        &opts.secret,
+    );
 
     let spec = StartSpec {
         image: opts.image.clone(),
@@ -1276,7 +1307,9 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_cases_path, select_passthrough_env, validate_slack_channel};
+    use super::{
+        merge_secret_env, resolve_cases_path, select_passthrough_env, validate_slack_channel,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -1377,6 +1410,51 @@ mod tests {
             vec![
                 "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
                 "ANTHROPIC_API_KEY".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn secret_env_appends_after_the_model_credential() {
+        // --secret names ride alongside the model credential, in order, so an
+        // authed MCP server gets its token next to the model token.
+        assert_eq!(
+            merge_secret_env(
+                select_passthrough_env(false, None),
+                &["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
+            ),
+            vec![
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "ANTHROPIC_API_KEY".to_string(),
+                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn secret_env_forwarded_even_when_model_credential_suppressed() {
+        // A fake/local model suppresses the model credential but a bundle's MCP
+        // secret must still reach the sandbox.
+        assert_eq!(
+            merge_secret_env(
+                select_passthrough_env(true, None),
+                &["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
+            ),
+            vec!["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
+        );
+    }
+
+    #[test]
+    fn secret_env_deduplicates_against_the_credential_vars() {
+        // Passing a model-credential var as --secret must not duplicate it.
+        assert_eq!(
+            merge_secret_env(
+                select_passthrough_env(false, None),
+                &["ANTHROPIC_API_KEY".to_string()]
+            ),
+            vec![
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "ANTHROPIC_API_KEY".to_string(),
             ]
         );
     }

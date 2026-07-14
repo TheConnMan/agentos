@@ -1,0 +1,7 @@
+{
+  "name": "github-issues",
+  "version": "0.1.0",
+  "description": "Example bundle: an agent that reads and triages GitHub issues through the off-the-shelf GitHub MCP server, authenticated with a personal access token forwarded into the sandbox.",
+  "author": { "name": "CurieTech" },
+  "keywords": ["example", "mcp", "authed", "github", "stdio"]
+}

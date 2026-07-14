@@ -23,6 +23,14 @@ RUN apt-get update \
 # The Claude Code CLI the SDK spawns for a real (non-fake) session.
 RUN npm install -g @anthropic-ai/claude-code
 
+# Off-the-shelf MCP servers pre-installed at build time so a bundle that
+# declares one starts it from the on-disk binary with NO runtime network fetch
+# (the runner rootfs is read-only at runtime, so an `npx`-style fetch would fail
+# anyway). Bundles reference these by the package's bin name, e.g.
+# `"command": "mcp-server-github"` -- see examples/github-issues. Add a line here
+# to bless another authed third-party MCP server for the same shape.
+RUN npm install -g @modelcontextprotocol/server-github
+
 WORKDIR /app
 
 # The three source trees the runner needs: the two frozen workspace packages and
