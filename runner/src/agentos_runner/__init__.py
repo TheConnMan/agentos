@@ -16,13 +16,18 @@ from .conformance import conformance_producer
 from .fake import FakeModelSession
 from .hooks import load_bundle_hooks
 from .memory import (
+    ConsolidationResult,
     MemoryError,
     MemoryRecord,
     MemoryStore,
     NullMemoryStore,
     Provenance,
     StateApiMemoryStore,
+    SupportsReplace,
+    consolidate_memory,
+    consolidate_records,
     format_memory_preamble,
+    merge_provenance,
     resolve_memory,
 )
 from .otel import RunTracer, build_tracer_provider
@@ -60,4 +65,9 @@ __all__ = [
     "MemoryError",
     "resolve_memory",
     "format_memory_preamble",
+    "SupportsReplace",
+    "ConsolidationResult",
+    "consolidate_memory",
+    "consolidate_records",
+    "merge_provenance",
 ]

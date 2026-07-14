@@ -123,6 +123,23 @@ class MemoryStore(Protocol):
         ...
 
 
+@runtime_checkable
+class SupportsReplace(Protocol):
+    """Optional capability: atomically replace the whole record set.
+
+    The narrow ``MemoryStore`` port is append-only, which is all the boot path
+    (#264) needs. Consolidation (#265) additionally needs to *rewrite* the log
+    with a compacted record set, so it is a separate, opt-in capability rather
+    than a widening of the frozen ``MemoryStore`` contract. A store that cannot
+    rewrite (``NullMemoryStore``) simply does not implement it, and the
+    consolidation pass no-ops against such a store.
+    """
+
+    async def replace(self, records: Sequence[MemoryRecord]) -> None:
+        """Overwrite the durable record set with ``records`` (oldest first)."""
+        ...
+
+
 class NullMemoryStore:
     """The no-memory store used when ``AGENTOS_MEMORY_REF`` is unset.
 
@@ -134,6 +151,9 @@ class NullMemoryStore:
         return []
 
     async def append(self, record: MemoryRecord) -> None:  # noqa: ARG002 - null sink
+        return None
+
+    async def replace(self, records: Sequence[MemoryRecord]) -> None:  # noqa: ARG002
         return None
 
 
@@ -195,6 +215,29 @@ class StateApiMemoryStore:
                         f"memory append failed: {resp.status} {text[:200]}"
                     )
 
+    async def replace(self, records: Sequence[MemoryRecord]) -> None:
+        """Overwrite the log key with ``records`` via a blind PUT (#248).
+
+        This is the write-back side of consolidation (#265): the compacted
+        record set replaces the append-only log in a single PUT. A blind put
+        (no ``expected_version``) is deliberate -- consolidation runs at boot
+        before any turn appends, so there is no concurrent writer to race, and
+        we want the compaction to land rather than 409 on a stale version.
+        """
+        timeout = aiohttp.ClientTimeout(total=15)
+        value = [record.to_dict() for record in records]
+        body = json.dumps({"value": value})
+        headers = {**self._headers(), "Content-Type": "application/json"}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.put(
+                self._log_url, data=body, headers=headers
+            ) as resp:
+                if resp.status not in (200, 201):
+                    text = await resp.text()
+                    raise MemoryError(
+                        f"memory replace failed: {resp.status} {text[:200]}"
+                    )
+
 
 def resolve_memory(memory_ref: str | None, env: Mapping[str, str]) -> MemoryStore:
     """Resolve ``AGENTOS_MEMORY_REF`` to a concrete ``MemoryStore`` at boot.
@@ -239,3 +282,110 @@ def format_memory_preamble(records: Sequence[MemoryRecord]) -> str | None:
 def utcnow_iso() -> str:
     """An RFC3339 UTC timestamp for a provenance record's ``recorded_at``."""
     return datetime.now(UTC).isoformat()
+
+
+# --- Consolidation pipeline (#265) ---------------------------------------
+#
+# Raw ``remember`` calls accumulate an append-only log that grows monotonically
+# and can hold near-duplicate lessons (the same thing learned across several
+# sessions). Consolidation compacts that log: it merges records with equivalent
+# content into one, **unioning their provenance** so no source trace is lost,
+# then writes the compacted set back over a store that supports ``replace``.
+# The load-bearing acceptance constraint (#265) is *compaction reduces
+# redundancy without losing provenance* -- so the merge is provenance-preserving
+# by construction, never a lossy summarize-and-discard.
+
+
+def _normalize_content(content: str) -> str:
+    """The dedup key for a lesson: case- and whitespace-insensitive content."""
+    return " ".join(content.split()).casefold()
+
+
+def merge_provenance(a: Provenance, b: Provenance) -> Provenance:
+    """Union two provenances without losing any source link.
+
+    ``source_trace_ids`` are unioned preserving first-seen order; the
+    ``learned_from_session_id`` keeps the first non-empty value; ``recorded_at``
+    keeps the earliest timestamp so a consolidated record still points at when
+    the lesson was *first* learned.
+    """
+    trace_ids: list[str] = list(a.source_trace_ids)
+    for tid in b.source_trace_ids:
+        if tid not in trace_ids:
+            trace_ids.append(tid)
+    session_id = a.learned_from_session_id or b.learned_from_session_id
+    stamps = [s for s in (a.recorded_at, b.recorded_at) if s]
+    recorded_at = min(stamps) if stamps else ""
+    return Provenance(
+        learned_from_session_id=session_id,
+        source_trace_ids=tuple(trace_ids),
+        recorded_at=recorded_at,
+    )
+
+
+def consolidate_records(records: Sequence[MemoryRecord]) -> list[MemoryRecord]:
+    """Merge equivalent-content records into one, unioning provenance.
+
+    Deterministic and model-free: records whose normalized content matches are
+    collapsed into a single record (keeping the first-seen surface form of the
+    content), and their provenances are merged via :func:`merge_provenance`.
+    Order of first appearance is preserved so the compacted log reads oldest
+    first, matching ``load``'s contract. This is the default consolidator; a
+    model-backed summarizer is a drop-in that produces a shorter record set.
+    """
+    merged: dict[str, MemoryRecord] = {}
+    for record in records:
+        key = _normalize_content(record.content)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = record
+        else:
+            merged[key] = MemoryRecord(
+                content=existing.content,
+                provenance=merge_provenance(existing.provenance, record.provenance),
+            )
+    return list(merged.values())
+
+
+@dataclass(frozen=True)
+class ConsolidationResult:
+    """Outcome of a consolidation pass: what changed and whether it was written."""
+
+    before: int
+    after: int
+    records: list[MemoryRecord]
+    written: bool
+
+    @property
+    def removed(self) -> int:
+        """How many redundant records the pass compacted away."""
+        return self.before - self.after
+
+
+async def consolidate_memory(
+    store: MemoryStore,
+    *,
+    consolidate: Any = consolidate_records,
+) -> ConsolidationResult:
+    """Load, consolidate, and write back the agent's memory (the #265 entry point).
+
+    Loads the current record set, runs ``consolidate`` (default:
+    :func:`consolidate_records`) over it, and -- only when the pass actually
+    reduced the record count and the store advertises the ``replace`` capability
+    -- writes the compacted set back. A store that cannot rewrite
+    (``NullMemoryStore``, or any future read-only backing) is a no-op that still
+    reports what a pass *would* have done. Nothing is written when there is no
+    redundancy to remove, so a steady-state boot does not churn the store.
+    """
+    records = await store.load()
+    consolidated = list(consolidate(records))
+    written = False
+    if len(consolidated) < len(records) and isinstance(store, SupportsReplace):
+        await store.replace(consolidated)
+        written = True
+    return ConsolidationResult(
+        before=len(records),
+        after=len(consolidated),
+        records=consolidated,
+        written=written,
+    )

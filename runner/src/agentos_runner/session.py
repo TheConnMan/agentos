@@ -38,7 +38,15 @@ from claude_agent_sdk import AssistantMessage, ResultMessage
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
-from .memory import MemoryRecord, MemoryStore, NullMemoryStore, Provenance, utcnow_iso
+from .memory import (
+    ConsolidationResult,
+    MemoryRecord,
+    MemoryStore,
+    NullMemoryStore,
+    Provenance,
+    consolidate_memory,
+    utcnow_iso,
+)
 from .otel import RunTracer, _GenerationSpan
 from .side_effects import SideEffectClassifier
 from .translate import TurnState, translate_message
@@ -149,6 +157,26 @@ class SessionRunner:
             ),
         )
         await self._memory.append(record)
+
+    async def consolidate_memory(self) -> ConsolidationResult:
+        """Compact accumulated memory, merging duplicates and unioning provenance.
+
+        The consolidation entry point (#265): loads the append-only memory log,
+        collapses equivalent-content records into one while preserving every
+        source trace, and writes the compacted set back when the store supports
+        it. Safe to call at boot -- it is a no-op when there is no redundancy or
+        when the store cannot rewrite (``NullMemoryStore``).
+        """
+
+        result = await consolidate_memory(self._memory)
+        if result.written:
+            logger.info(
+                "memory consolidated: %d -> %d records (%d merged)",
+                result.before,
+                result.after,
+                result.removed,
+            )
+        return result
 
     async def start(self) -> None:
         """Create and connect the model session (rehydrating if configured)."""
