@@ -106,9 +106,16 @@ Keyboard:
 | `Enter` or `r` | Prompt for fields and run the selected command |
 | `q` or `Esc` | Exit |
 
-The first surface focuses on the common inner-loop and operations paths:
-`skill up/message/eval`, `local up/message/status`, `cluster status/message`,
-`install`, and `dev contracts`.
+The first surface focuses on the common inner-loop, example verification, and
+operations paths: `skill up/message/eval`, a guided `examples/github-issues`
+MCP auth e2e, `local up/message/status`, `cluster status/message`, `install`,
+and `dev contracts`.
+
+The guided MCP auth example checks for a model credential plus
+`GITHUB_PERSONAL_ACCESS_TOKEN`, optionally builds the runner image, starts the
+`examples/github-issues` bundle with `--secret GITHUB_PERSONAL_ACCESS_TOKEN`,
+sends a live GitHub issue query, and stops the example runner afterward. It is
+the interactive form of the manual `agentos skill up --secret ...` runbook.
 
 ## `agentos install`
 

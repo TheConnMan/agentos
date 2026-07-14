@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -29,9 +30,21 @@ struct Recipe {
     target: &'static str,
     title: &'static str,
     description: &'static str,
+    kind: RecipeKind,
     args: Vec<ArgPart>,
     fields: Vec<Field>,
     notes: &'static [&'static str],
+}
+
+#[derive(Clone, Debug)]
+enum RecipeKind {
+    Command,
+    Workflow(Workflow),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Workflow {
+    McpAuthExample,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,7 +108,7 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec!["all", "skill", "local", "cluster", "dev"],
+            targets: vec!["all", "skill", "examples", "local", "cluster", "dev"],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -227,16 +240,159 @@ fn prompt_and_run(recipe: &Recipe) -> Result<()> {
         let value = prompt_field(field)?;
         values.insert(field.key.to_string(), value);
     }
-    let argv = build_argv(recipe, &values);
+    match &recipe.kind {
+        RecipeKind::Command => {
+            let argv = build_argv(recipe, &values);
+            println!();
+            run_agentos(&argv, Path::new("."))?;
+        }
+        RecipeKind::Workflow(Workflow::McpAuthExample) => run_mcp_auth_example(&values)?,
+    }
+    Ok(())
+}
+
+fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
+    let repo = values
+        .get("repo")
+        .filter(|value| !value.is_empty())
+        .map(String::as_str)
+        .unwrap_or("curie-eng/agentos");
+    let message = values
+        .get("message")
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .unwrap_or_else(|| format!("List the open issues in {repo} and group them by label."));
+    let port = values
+        .get("port")
+        .filter(|value| !value.is_empty())
+        .map(String::as_str)
+        .unwrap_or("7247");
+    let should_build = yesish(values.get("build").map(String::as_str).unwrap_or("y"));
+
+    require_env_any(&[
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "AGENTOS_CREDENTIALS",
+    ])?;
+    require_env("GITHUB_PERSONAL_ACCESS_TOKEN")?;
+
+    let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
+        .context(
+        "could not find AgentOS repo root; run this workflow from the source checkout",
+    )?;
+    let example_dir = repo_root.join("examples/github-issues");
+    if !example_dir.join(".mcp.json").is_file() {
+        anyhow::bail!(
+            "missing MCP auth example at {}; expected examples/github-issues/.mcp.json",
+            example_dir.display()
+        );
+    }
+
+    println!("This workflow will verify the authenticated GitHub MCP example end to end.");
+    println!("Example bundle: {}", example_dir.display());
+    println!("Target repository: {repo}");
     println!();
-    println!("$ {}", render_command(&argv));
+
+    if should_build {
+        run_agentos(&["build".to_string()], &repo_root)?;
+    } else {
+        println!("Skipping runner image build because you answered no.");
+        println!();
+    }
+
+    let container_name = "agentos-mcp-auth-example";
+    let url = format!("http://localhost:{port}");
+    let mut started = false;
+    let run_result = (|| -> Result<()> {
+        run_agentos(
+            &[
+                "skill".to_string(),
+                "up".to_string(),
+                "--plugin-dir".to_string(),
+                example_dir.display().to_string(),
+                "--port".to_string(),
+                port.to_string(),
+                "--name".to_string(),
+                container_name.to_string(),
+                "--secret".to_string(),
+                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+            ],
+            &repo_root,
+        )?;
+        started = true;
+        run_agentos(
+            &[
+                "skill".to_string(),
+                "message".to_string(),
+                message,
+                "--url".to_string(),
+                url,
+            ],
+            &repo_root,
+        )
+    })();
+
+    if started {
+        println!();
+        println!("Cleaning up the example runner...");
+        if let Err(err) = run_agentos(&["skill".to_string(), "down".to_string()], &example_dir) {
+            println!("Cleanup warning: {err:#}");
+        }
+    }
+
+    run_result?;
+    println!();
+    println!(
+        "Pass condition: the answer above should cite live issue titles or numbers from {repo}."
+    );
+    Ok(())
+}
+
+fn yesish(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "y" | "yes" | "true" | "1"
+    )
+}
+
+fn require_env(name: &str) -> Result<()> {
+    if std::env::var_os(name).is_some() {
+        return Ok(());
+    }
+    anyhow::bail!("{name} is not set. Export it in your shell, then rerun this workflow.")
+}
+
+fn require_env_any(names: &[&str]) -> Result<()> {
+    if names.iter().any(|name| std::env::var_os(name).is_some()) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "no model credential is set. Export one of {} before running the live MCP auth workflow.",
+        names.join(", ")
+    )
+}
+
+fn find_repo_root(mut dir: PathBuf) -> Option<PathBuf> {
+    loop {
+        if dir.join("runner/Dockerfile").is_file() && dir.join("examples/github-issues").is_dir() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn run_agentos(argv: &[String], cwd: &Path) -> Result<()> {
+    println!("$ {}", render_command(argv));
     println!();
     let status = Command::new(std::env::current_exe().context("resolving current executable")?)
-        .args(&argv)
+        .args(argv)
+        .current_dir(cwd)
         .status()
-        .context("running selected agentos command")?;
+        .with_context(|| format!("running {}", render_command(argv)))?;
     if !status.success() {
-        anyhow::bail!("selected command exited with {status}");
+        anyhow::bail!("{} exited with {status}", render_command(argv));
     }
     Ok(())
 }
@@ -414,19 +570,37 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .map(|value| (field.key.to_string(), value.to_string()))
         })
         .collect();
-    let preview = build_argv(recipe, &values);
     let mut lines = vec![
         Line::from(Span::styled(recipe.title, Style::default().bold())),
         Line::from(""),
         Line::from(recipe.description),
         Line::from(""),
-        Line::from(Span::styled(
-            "Command preview",
-            Style::default().fg(Color::Yellow).bold(),
-        )),
-        Line::from(render_command(&preview)),
-        Line::from(""),
     ];
+    match &recipe.kind {
+        RecipeKind::Command => {
+            let preview = build_argv(recipe, &values);
+            lines.push(Line::from(Span::styled(
+                "Command preview",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from(render_command(&preview)));
+            lines.push(Line::from(""));
+        }
+        RecipeKind::Workflow(Workflow::McpAuthExample) => {
+            lines.push(Line::from(Span::styled(
+                "Guided workflow",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("1. Check model and GitHub token env vars"));
+            lines.push(Line::from("2. Build the runner image if requested"));
+            lines.push(Line::from(
+                "3. Start examples/github-issues with --secret GITHUB_PERSONAL_ACCESS_TOKEN",
+            ));
+            lines.push(Line::from("4. Send a live GitHub issue query"));
+            lines.push(Line::from("5. Stop the example runner"));
+            lines.push(Line::from(""));
+        }
+    }
     if !recipe.fields.is_empty() {
         lines.push(Line::from(Span::styled(
             "Prompts before run",
@@ -481,6 +655,7 @@ fn recipes() -> Vec<Recipe> {
             target: "skill",
             title: "Start runner",
             description: "Boot the current plugin bundle in a local runner container.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("up"),
@@ -515,6 +690,7 @@ fn recipes() -> Vec<Recipe> {
             target: "skill",
             title: "Send skill message",
             description: "Send a synthetic event to the local runner and stream the reply.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("message"),
@@ -532,6 +708,7 @@ fn recipes() -> Vec<Recipe> {
             target: "skill",
             title: "Run skill eval",
             description: "Run evals/cases.json through the local runner.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("eval"),
@@ -549,9 +726,50 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
+            target: "examples",
+            title: "Verify MCP auth example",
+            description: "Guided e2e for examples/github-issues using a live GitHub MCP server.",
+            kind: RecipeKind::Workflow(Workflow::McpAuthExample),
+            args: vec![],
+            fields: vec![
+                Field {
+                    key: "repo",
+                    label: "GitHub repo to inspect",
+                    default: Some("curie-eng/agentos"),
+                    required: true,
+                },
+                Field {
+                    key: "message",
+                    label: "Live verification prompt",
+                    default: Some(
+                        "List the open issues in curie-eng/agentos and group them by label.",
+                    ),
+                    required: true,
+                },
+                Field {
+                    key: "port",
+                    label: "Runner host port",
+                    default: Some("7247"),
+                    required: true,
+                },
+                Field {
+                    key: "build",
+                    label: "Build runner image first? (y/n)",
+                    default: Some("y"),
+                    required: true,
+                },
+            ],
+            notes: &[
+                "Requires a model credential in the shell: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
+                "Requires GITHUB_PERSONAL_ACCESS_TOKEN in the shell; the value is forwarded by name and not placed in argv.",
+                "A passing run cites live GitHub issue titles or numbers.",
+            ],
+        },
+        Recipe {
             target: "local",
             title: "Start local stack",
             description: "Bring up the compose stack for the local platform loop.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("local"), ArgPart::Literal("up")],
             fields: vec![],
             notes: &["Use the regular CLI for --minimal, --slack, or --local-model variants."],
@@ -560,6 +778,7 @@ fn recipes() -> Vec<Recipe> {
             target: "local",
             title: "Send local message",
             description: "Drive the compose stack end to end with zero Slack contact.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("local"),
                 ArgPart::Literal("message"),
@@ -589,6 +808,7 @@ fn recipes() -> Vec<Recipe> {
             target: "local",
             title: "Local status",
             description: "Show compose service status.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("local"), ArgPart::Literal("status")],
             fields: vec![],
             notes: &[],
@@ -597,6 +817,7 @@ fn recipes() -> Vec<Recipe> {
             target: "cluster",
             title: "Cluster status",
             description: "Report release health and access URLs.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("cluster"),
                 ArgPart::Literal("status"),
@@ -629,6 +850,7 @@ fn recipes() -> Vec<Recipe> {
             target: "cluster",
             title: "Send cluster message",
             description: "Drive a deployed release end to end with zero Slack contact.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("cluster"),
                 ArgPart::Literal("message"),
@@ -658,6 +880,7 @@ fn recipes() -> Vec<Recipe> {
             target: "dev",
             title: "Install checkout",
             description: "Bootstrap a dev checkout: deps, CLI build, runner image.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("install")],
             fields: vec![],
             notes: &["Starts nothing; run once after cloning."],
@@ -666,6 +889,7 @@ fn recipes() -> Vec<Recipe> {
             target: "dev",
             title: "Check contracts",
             description: "Run the frozen contract drift checks.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("dev"), ArgPart::Literal("contracts")],
             fields: vec![],
             notes: &[],
@@ -683,6 +907,7 @@ mod tests {
             target: "skill",
             title: "x",
             description: "x",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("message"),
@@ -708,5 +933,23 @@ mod tests {
     fn render_command_quotes_shell_specials() {
         let argv = vec!["skill".into(), "message".into(), "hello world".into()];
         assert_eq!(render_command(&argv), "agentos skill message 'hello world'");
+    }
+
+    #[test]
+    fn examples_target_includes_mcp_auth_workflow() {
+        let app = App::new();
+        let idx = app
+            .targets
+            .iter()
+            .position(|target| *target == "examples")
+            .expect("examples target exists");
+        let mut app = app;
+        app.target_idx = idx;
+        let titles: Vec<&str> = app
+            .visible_indices()
+            .iter()
+            .map(|idx| app.recipes[*idx].title)
+            .collect();
+        assert!(titles.contains(&"Verify MCP auth example"));
     }
 }
