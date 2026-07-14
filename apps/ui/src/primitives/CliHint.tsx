@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { C } from "../tokens";
 import { useStore } from "../state/store";
+import type { WiredActionId } from "./parity";
 
 // CliHint: a resting `>_` glyph that morphs in place into a copy button on
 // hover / keyboard-focus (cross-fades to `⧉`, accent color), previews the exact
@@ -16,21 +17,32 @@ import { useStore } from "../state/store";
 // Honest no-equivalent state (epic #145): a wired action with no CLI verb yet
 // passes `noCliEquivalent={<tracking issue url>}` instead of a `command`. That
 // renders an amber `◇` glyph whose tooltip says there is no CLI equivalent and
-// whose click opens the tracking issue in a new tab — it never copies a
-// misleading command. The parity test (CliHint.parity.test.tsx) enforces that
-// every wired action resolves to a `command` or an explicit `noCliEquivalent`.
+// whose click opens the tracking issue in a new tab. Typed action IDs identify
+// the registry entries for this mode, and the parity test verifies those IDs
+// link to `PARITY_TRACKING_ISSUE`. The same test scans direct `cliCommand`
+// calls across production source and checks their literal command mappings.
 
 const COPIED_RESET_MS = 1200;
+
+type CliHintProps =
+  | {
+      command?: string;
+      label?: string;
+      noCliEquivalent?: never;
+      actionIds?: never;
+    }
+  | {
+      command?: never;
+      label?: string;
+      noCliEquivalent: string;
+      actionIds: readonly WiredActionId[];
+    };
 
 export function CliHint({
   command,
   label,
   noCliEquivalent,
-}: {
-  command?: string;
-  label?: string;
-  noCliEquivalent?: string;
-}) {
+}: CliHintProps) {
   const { dispatch } = useStore();
   const [active, setActive] = useState(false); // hover or keyboard focus
   const [copied, setCopied] = useState(false);

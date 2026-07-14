@@ -35,16 +35,18 @@ structure and wiring detail in `apps/ui/README.md`.
   `?dev=1` gives an equivalent state switcher for development; keep it
   hidden without that param so the product view stays clean.
 - **Console/CLI parity: hints resolve from the manifest, never hardcoded**
-  (epic #145). CLI hints on wired surfaces come from `cliCommand()`
+  (epic #145). CLI hints on wired surfaces call `cliCommand()` directly
   (`src/primitives/cliCommand.ts`), which is typed against the committed
-  command manifest (`src/generated/commandManifest.ts`) — never hand-write an
-  `agentos …` string in a component. Every wired action is enumerated in the
-  parity registry (`src/primitives/parity.ts`) and must map to EITHER a real
-  `command` (an `ActionId`) OR an explicit `noCliEquivalent` marker that renders
-  the honest amber `CliHint` linking to the tracking issue. Adding a wired
-  action means adding its parity entry; `CliHint.parity.test.tsx` fails on a
-  silent gap. When the CLI surface changes, run `pnpm gen:manifest` and commit
-  the regenerated manifest (CI drift-checks it).
+  command manifest (`src/generated/commandManifest.ts`). Never hand write an
+  `agentos` command string in a component. `CliHint.parity.test.tsx` inventories
+  these direct calls recursively across the complete production `src` tree,
+  excluding tests, and requires every literal command to have a parity registry
+  mapping (`src/primitives/parity.ts`). It also verifies that each
+  `noCliEquivalent` hint uses typed action IDs whose entries point to
+  `PARITY_TRACKING_ISSUE`. A separate registry check verifies every entry is
+  either a real command or an explicit gap. When the CLI surface
+  changes, run `pnpm gen:manifest` and commit the regenerated manifest. CI
+  checks the manifest for drift.
 
 ## Playwright ports (do not confuse these)
 
