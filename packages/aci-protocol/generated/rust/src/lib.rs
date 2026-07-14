@@ -30,6 +30,8 @@ pub enum SessionStatus {
     IdleAwaitingInput,
     #[serde(rename = "classified-failure")]
     ClassifiedFailure,
+    #[serde(rename = "awaiting-approval")]
+    AwaitingApproval,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -137,6 +139,8 @@ pub enum OutboundEvent {
         text: String,
         #[serde(default)]
         status: SessionStatus,
+        #[serde(default)]
+        approval_summary: Option<String>,
     },
     #[serde(rename = "error")]
     ErrorEvent {

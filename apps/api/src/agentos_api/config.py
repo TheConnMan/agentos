@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     valkey_port: int = 26379
     valkey_url: str | None = None
 
+    # The runs stream approval resolutions enqueue resume turns onto (#244).
+    # Must match the worker's AGENTOS_STREAM (its consumer side).
+    runs_stream: str = "agentos:runs"
+
     # Observability (OB1). kube_config_path points the runner-logs proxy at a
     # cluster; when unset the API tries in-cluster config, and if neither is
     # available the logs endpoint degrades to 503 rather than crashing.

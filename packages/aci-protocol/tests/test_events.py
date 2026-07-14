@@ -75,3 +75,24 @@ def test_models_reject_unknown_fields() -> None:
 def test_session_status_wire_values() -> None:
     assert SessionStatus.IDLE_AWAITING_INPUT.value == "idle-awaiting-input"
     assert SessionStatus.CLASSIFIED_FAILURE.value == "classified-failure"
+
+
+def test_awaiting_approval_wire_value_and_final_round_trip() -> None:
+    # ADR-0010 (#244): the fourth status and the optional summary field on
+    # final, round-tripped through the strict wire models.
+    assert SessionStatus.AWAITING_APPROVAL.value == "awaiting-approval"
+
+    final = Final(
+        text="Requesting sign-off",
+        status=SessionStatus.AWAITING_APPROVAL,
+        approval_summary="Give ACME a 20% discount",
+    )
+    wire = final.model_dump(mode="json")
+    assert wire["status"] == "awaiting-approval"
+    assert wire["approval_summary"] == "Give ACME a 20% discount"
+    assert Final.model_validate(wire) == final
+
+    # Pre-existing payloads (no approval fields) still parse, defaulting the
+    # summary to None -- the additive-change guarantee.
+    legacy = Final.model_validate({"type": "final", "text": "ok", "status": "done"})
+    assert legacy.approval_summary is None

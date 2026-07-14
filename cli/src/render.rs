@@ -12,6 +12,7 @@ pub fn status_str(status: &SessionStatus) -> &'static str {
         SessionStatus::Done => "done",
         SessionStatus::IdleAwaitingInput => "idle-awaiting-input",
         SessionStatus::ClassifiedFailure => "classified-failure",
+        SessionStatus::AwaitingApproval => "awaiting-approval",
     }
 }
 
@@ -151,6 +152,7 @@ mod tests {
             version: v(),
             text: "all done".into(),
             status: SessionStatus::Done,
+            approval_summary: None,
         };
         // A delta routes to stdout as a raw token.
         assert!(matches!(printer.part_for(&delta), Some(TurnPart::Token(t)) if t == "all done"));
@@ -167,6 +169,7 @@ mod tests {
             version: v(),
             text: "quiet answer".into(),
             status: SessionStatus::IdleAwaitingInput,
+            approval_summary: None,
         };
         // The caller prints this token to stdout, then appends the status trailer.
         assert!(
@@ -181,6 +184,7 @@ mod tests {
             version: v(),
             text: String::new(),
             status: SessionStatus::Done,
+            approval_summary: None,
         };
         assert!(
             matches!(printer.part_for(&final_frame), Some(TurnPart::Status(s)) if s == "-- final (done)")

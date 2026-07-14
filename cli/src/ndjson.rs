@@ -80,6 +80,7 @@ mod tests {
                 version: PROTOCOL_VERSION.to_string(),
                 text: "done".to_string(),
                 status: SessionStatus::Done,
+                approval_summary: None,
             }
         );
     }

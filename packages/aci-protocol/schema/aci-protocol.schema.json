@@ -114,8 +114,20 @@
     },
     "Final": {
       "additionalProperties": false,
-      "description": "The terminal response event, carrying the session status.",
+      "description": "The terminal response event, carrying the session status.\n\n``approval_summary`` accompanies an ``awaiting-approval`` status (ADR-0010):\nthe human-readable statement of what needs approval, captured from the\nrun's approval request so the platform can persist it on the durable\n``Approval`` record and show it to the approver. ``None`` on every other\nstatus.",
       "properties": {
+        "approval_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Summary"
+        },
         "status": {
           "$ref": "#/$defs/SessionStatus",
           "default": "done"
@@ -388,7 +400,8 @@
       "enum": [
         "done",
         "idle-awaiting-input",
-        "classified-failure"
+        "classified-failure",
+        "awaiting-approval"
       ],
       "title": "SessionStatus",
       "type": "string"

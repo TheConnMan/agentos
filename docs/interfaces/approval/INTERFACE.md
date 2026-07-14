@@ -17,41 +17,51 @@ explicit user-list, platform-RBAC) behind that one server-side check.
 
 ## Current contract
 
-This seam does **not exist in code yet**; the contract below is the *intended* line from
-[ADR-0010](../../adr/0010-approval-gates-and-human-in-the-loop.md) and epic
-[#22](https://github.com/curie-eng/agentos/issues/22), stated so a future implementation
-builds to it. What exists today is only the negative space it must fill:
+The durable base of the seam landed with #244; the authorizer port itself is still ahead
+(#246). What exists in code now:
 
-- **The hardcoded posture the gate replaces.** The runner today builds session options with
-  `permission_mode="bypassPermissions"` (`runner/src/agentos_runner/adapter.py:82`) and has
-  no tool-permission callback. A permission gate must introduce a `canUseTool` callback that
-  replaces this hardcoded bypass, intercepting a model-initiated tool call so it can block
-  pending an approval.
-- **The frozen status enum the gate extends.** `SessionStatus` (`packages/aci-protocol/src/aci_protocol/events.py:28`)
-  today has exactly three values — `DONE = "done"`, `IDLE_AWAITING_INPUT = "idle-awaiting-input"`,
-  `CLASSIFIED_FAILURE = "classified-failure"` (lines 35–37). The intended contract adds a
-  fourth, `awaiting-approval`, as a backward-compatible frozen-contract change regenerated
-  across all three language targets (Pydantic source, JSON Schema, TypeScript, Rust).
-- **The durable record + resolve-once semantics.** A durable `Approval` record (Postgres)
-  with compare-and-set claim semantics is the intended backing store, so losers of the claim
-  race are told it was already resolved. The authorizer check runs server-side at resolution
-  time; self-approval is blocked.
+- **The durable record + resolve-once semantics (landed, #244).** The `Approval` table
+  (`apps/api/src/agentos_api/models.py`) with the resolve-once compare-and-set
+  (`crud.claim_approval_resolution`, a conditional `UPDATE ... WHERE status='pending'`) behind
+  `POST /approvals/{id}/resolve`; losers of the claim race get 409 naming who resolved it,
+  a past-SLA record flips to expired (410). Creation is idempotent on `dedupe_key` (the
+  triggering event id).
+- **The `awaiting-approval` status (landed, #244).** `SessionStatus.AWAITING_APPROVAL` plus
+  the optional `Final.approval_summary` field
+  (`packages/aci-protocol/src/aci_protocol/events.py`), regenerated across all three language
+  targets as a backward-compatible frozen-contract change (ADR-0010 authorized it).
+- **The lifecycle (landed, #244).** A skill raises a policy gate through the runner's
+  in-process `mcp__agentos__request_approval` tool (`runner/src/agentos_runner/approval.py`);
+  the turn ends `awaiting-approval`, the worker persists the record and suspends the sandbox
+  (`kernel._pause_for_approval` — the first live use of the dormant ADR-0003 suspend path);
+  resolution enqueues a resume turn onto the ordinary runs stream
+  (`apps/api/src/agentos_api/resumequeue.py`), and the kernel's claim path rehydrates the
+  thread with its bound boot env (`substrate.resume(env=...)`).
+- **The hardcoded posture the permission gate will replace (still ahead, #245).** The runner
+  still builds session options with `permission_mode="bypassPermissions"`
+  (`runner/src/agentos_runner/adapter.py`) and has no tool-permission callback. The
+  `canUseTool` permission gate (config marks a tool approval-required; the runner intercepts
+  the call) is #245 and composes with the landed record + lifecycle.
 
 ## Implementations today
 
-**None.** Zero authorizer implementations, no durable `Approval` record, no `awaiting-approval`
-status, and no `canUseTool` gate. The seam lands with epic #22. The suspend/resume path it
-relies on (ADR-0003) is built but dormant; an approval is its first intended production use.
+**Zero authorizer implementations** — resolution is currently authorized by the shared API
+key alone, like every other endpoint; WHO may resolve (channel membership first, then
+user-group, explicit user-list, platform-RBAC) and the self-approval block land with #246 at
+the resolve endpoint, which is deliberately where the decision point already sits. The
+durable record, the `awaiting-approval` status, the request tool, and the suspend/resume
+lifecycle are live (#244).
 
 ## Known leakage
 
-Nothing to leak yet — the file records a placement constraint, not existing code. The single
-constraint a future implementation must honor: the authorizer is **enforced server-side at
-resolution time**, not inside the sandbox or runner. The runtime `canUseTool` gate blocks the
-*tool call*, but the authorization decision (who may resolve a pending approval) must live on
-the server that owns the durable `Approval` record, so it cannot be spoofed from inside the
-agent's box. Policy gate points ship versioned in the bundle; route bindings (which channel,
-who may approve) are per-agent deployment config.
+The placement constraint held in the landed base and must keep holding: the authorizer is
+**enforced server-side at resolution time**, not inside the sandbox or runner. The runner
+only *raises* a request (its tool marks the turn; the record, the resolve CAS, and the
+resume enqueue all live with the API/worker), so a compromised sandbox cannot mint or
+resolve an approval. The runtime `canUseTool` gate (#245) will block the *tool call*, but
+the authorization decision (who may resolve a pending approval) stays on the server that
+owns the durable `Approval` record. Policy gate points ship versioned in the bundle; route
+bindings (which channel, who may approve) are per-agent deployment config (#247).
 
 ## Cross-links
 

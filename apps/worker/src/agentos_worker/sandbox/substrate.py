@@ -114,29 +114,40 @@ class SandboxSubstrate:
             thread_key, history_ref, self._config.suspended_route_ttl_seconds
         )
 
-    def resume(self, thread_key: str) -> SandboxHandle:
+    def resume(
+        self, thread_key: str, *, env: dict[str, str] | None = None
+    ) -> SandboxHandle:
         """Rehydrate a suspended thread into a fresh claim.
 
         The suspended claim is retired (its process and cache are gone either
         way) and a new claim is created with ``AGENTOS_HISTORY_REF`` injected,
         so the replacement runner boots resuming from stored history.
+
+        ``env`` is the caller's bound boot env (bundle ref, budget, state
+        refs), the same one a fresh ``claim()`` would inject. The suspended
+        pod was deleted (ADR-0003), so the replacement boots from env alone;
+        resuming without it would boot a generic, bundle-less runner. The
+        session identity and any recorded history ref are preserved on top,
+        and the runner token is minted fresh when the caller did not already
+        mint one (issue #63: the old token died with the old claim).
         """
 
         record = self._affinity.get(thread_key)
         if record is None:
             raise NoRouteError(thread_key)
         old = record.handle
-        # A resume creates a NEW claim; the old token died with the old claim, so
-        # mint a fresh one into the new claim env (issue #63).
-        env = {SESSION_ENV: old.session_id, RUNNER_TOKEN_ENV: secrets.token_urlsafe(32)}
+        boot = dict(env) if env else {}
+        boot.setdefault(SESSION_ENV, old.session_id)
+        if not boot.get(RUNNER_TOKEN_ENV):
+            boot[RUNNER_TOKEN_ENV] = secrets.token_urlsafe(32)
         if old.history_ref is not None:
-            env[HISTORY_ENV] = old.history_ref
+            boot.setdefault(HISTORY_ENV, old.history_ref)
 
         self._k8s.delete_claim(old.claim_name)
         self._affinity.delete_if_claim(thread_key, old.claim_name)
         return self._claim_fresh(
             thread_key,
-            env=env,
+            env=boot,
             state=RouteState.LIVE,
             session_id=old.session_id,
             history_ref=old.history_ref,

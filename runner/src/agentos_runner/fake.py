@@ -49,6 +49,31 @@ def default_turn() -> list[Any]:
     ]
 
 
+# Explicit test-only marker: a query containing it makes the fake's default
+# script raise an approval request (ADR-0010), so the awaiting-approval
+# lifecycle round-trips fully offline (CI, `agentos skill up --fake-model`, the
+# chart's sealed default pool). Everything after the marker on the same line is
+# the approval summary. Like all fake-model behavior: no model call, no network.
+APPROVAL_MARKER = "[fake:request-approval]"
+
+
+def approval_turn(summary: str) -> list[Any]:
+    """A turn that calls the platform approval-request tool, then ends."""
+
+    text = "This needs sign-off; requesting approval."
+    return [
+        _assistant(TextBlock(text=text)),
+        _assistant(
+            ToolUseBlock(
+                id="t1",
+                name="mcp__agentos__request_approval",
+                input={"summary": summary},
+            )
+        ),
+        _result(text=text, usage={"input_tokens": 20, "output_tokens": 8}),
+    ]
+
+
 class FakeModelSession:
     """A ModelSession that replays a fixed script of SDK messages per turn.
 
@@ -66,12 +91,26 @@ class FakeModelSession:
         *,
         truncate_on_interrupt: bool = True,
     ) -> None:
-        self._script_factory = script_factory or default_turn
+        self._script_factory = script_factory or self._default_script
         self._truncate_on_interrupt = truncate_on_interrupt
         self.connected = False
         self.queries: list[str] = []
         self.interrupts = 0
         self._interrupted = False
+
+    def _default_script(self) -> list[Any]:
+        """The default per-turn script, branching on the approval marker.
+
+        A custom ``script_factory`` bypasses this entirely, so existing tests
+        keep their exact scripts; only the no-factory default (the container
+        fake-model path) reacts to the marker.
+        """
+
+        last = self.queries[-1] if self.queries else ""
+        if APPROVAL_MARKER in last:
+            summary = last.split(APPROVAL_MARKER, 1)[1].strip() or "unspecified request"
+            return approval_turn(summary)
+        return default_turn()
 
     async def connect(self) -> None:
         self.connected = True

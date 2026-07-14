@@ -17,13 +17,14 @@ export type Text = string;
 export type Ts = string;
 export type Type1 = "message" | "job" | "eval_case";
 export type User = string;
+export type ApprovalSummary = string | null;
 /**
  * Terminal or awaiting status of a session, from the output contract.
  *
  * Wire tokens follow the section 0 spelling; ``classified failure`` in prose
  * becomes the token ``classified-failure`` on the wire.
  */
-export type SessionStatus = "done" | "idle-awaiting-input" | "classified-failure";
+export type SessionStatus = "done" | "idle-awaiting-input" | "classified-failure" | "awaiting-approval";
 export type Text1 = string;
 export type Type2 = "final";
 export type Version1 = "0.1.0";
@@ -75,7 +76,7 @@ export type SessionId = string;
  * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
  * via the `definition` "SessionStatus".
  */
-export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure";
+export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure" | "awaiting-approval";
 
 export interface ACIProtocolV010 {
   [k: string]: unknown;
@@ -122,10 +123,17 @@ export interface Event {
 /**
  * The terminal response event, carrying the session status.
  *
+ * ``approval_summary`` accompanies an ``awaiting-approval`` status (ADR-0010):
+ * the human-readable statement of what needs approval, captured from the
+ * run's approval request so the platform can persist it on the durable
+ * ``Approval`` record and show it to the approver. ``None`` on every other
+ * status.
+ *
  * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
  * via the `definition` "Final".
  */
 export interface Final {
+  approval_summary?: ApprovalSummary;
   status?: SessionStatus;
   text: Text1;
   type: Type2;
