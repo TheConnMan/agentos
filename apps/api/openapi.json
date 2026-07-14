@@ -847,6 +847,101 @@
         "title": "LoadPackConfig",
         "type": "object"
       },
+      "MemoryEntryOut": {
+        "description": "One learned memory entry as returned to an operator.\n\n``index`` is the entry's position in the append-only log; it is the stable\nhandle the edit/delete endpoints (#267) address, and it survives as long as\nthe log is not consolidated (#265) or reordered.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/MemoryProvenanceOut"
+          }
+        },
+        "required": [
+          "index",
+          "content",
+          "provenance"
+        ],
+        "title": "MemoryEntryOut",
+        "type": "object"
+      },
+      "MemoryProvenanceOut": {
+        "description": "Where a memory entry was learned from (#264 ``Provenance`` shape).",
+        "properties": {
+          "learned_from_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learned From Session Id"
+          },
+          "recorded_at": {
+            "default": "",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "source_trace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Trace Ids",
+            "type": "array"
+          }
+        },
+        "title": "MemoryProvenanceOut",
+        "type": "object"
+      },
+      "MemoryTraceBackOut": {
+        "description": "The learned-from trace-back for one memory entry (#266).\n\nResolves an entry's recorded provenance into the concrete session and source\ntraces the lesson was learned from -- the answer to \"how did it learn that?\".",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "learned_from_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learned From Session Id"
+          },
+          "recorded_at": {
+            "default": "",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "source_traces": {
+            "items": {
+              "$ref": "#/components/schemas/SourceTraceOut"
+            },
+            "title": "Source Traces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "index",
+          "content"
+        ],
+        "title": "MemoryTraceBackOut",
+        "type": "object"
+      },
       "MetricPoint": {
         "properties": {
           "ts": {
@@ -1163,6 +1258,25 @@
           }
         },
         "title": "SettingsPackConfig",
+        "type": "object"
+      },
+      "SourceTraceOut": {
+        "description": "One resolved source trace: its id plus a link to view it in Langfuse.",
+        "properties": {
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "trace_url": {
+            "title": "Trace Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "trace_url"
+        ],
+        "title": "SourceTraceOut",
         "type": "object"
       },
       "StateAppendIn": {
@@ -2280,6 +2394,139 @@
         "summary": "Kill Agent",
         "tags": [
           "control"
+        ]
+      }
+    },
+    "/agents/{agent_id}/memory": {
+      "get": {
+        "description": "List an agent's learned memory entries, oldest first, with provenance.",
+        "operationId": "list_memory_agents__agent_id__memory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryEntryOut"
+                  },
+                  "title": "Response List Memory Agents  Agent Id  Memory Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Memory",
+        "tags": [
+          "memory"
+        ]
+      }
+    },
+    "/agents/{agent_id}/memory/{index}/provenance": {
+      "get": {
+        "description": "Resolve one entry's learned-from trace-back (#266).\n\nReturns the session and the source traces the lesson was distilled from,\neach with a Langfuse deep link. Reuses the provenance the runner recorded at\n``remember`` time -- it does not re-derive or invent provenance.",
+        "operationId": "memory_trace_back_agents__agent_id__memory__index__provenance_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryTraceBackOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Memory Trace Back",
+        "tags": [
+          "memory"
         ]
       }
     },
