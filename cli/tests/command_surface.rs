@@ -50,6 +50,9 @@ fn process_help_routes_positive_forms() {
         &["cluster", "deploy"],
         &["init"],
         &["interactive"],
+        &["secrets", "set"],
+        &["secrets", "list"],
+        &["secrets", "unset"],
     ];
 
     for args in cases.iter().copied() {
@@ -111,7 +114,14 @@ fn process_help_top_level_lists_new_surface_and_hides_retired_verbs() {
     );
     let text = output_text(&output);
 
-    for needle in ["skill", "local", "cluster", "init", "interactive"] {
+    for needle in [
+        "skill",
+        "local",
+        "cluster",
+        "init",
+        "interactive",
+        "secrets",
+    ] {
         assert!(
             help_lists_subcommand(&text, needle),
             "missing {needle}\n{text}"

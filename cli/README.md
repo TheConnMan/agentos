@@ -37,6 +37,9 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-agentos/SKILL.md` harness primer. |
 | `agentos init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
 | `agentos` | Open the keyboard-driven terminal interface. Explicit forms: `agentos interactive`, `agentos ui`, `agentos tui`. |
+| `agentos secrets set <NAME>` | Save a local secret in the OS credential store with hidden input. `--from-env <VAR>` reads from an existing environment variable for non-interactive use without putting the value in argv. |
+| `agentos secrets list` | List saved AgentOS secret names. Values are never printed. |
+| `agentos secrets unset <NAME>` | Remove a saved local secret. |
 | `agentos guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
 | `agentos build` | Build the runner image locally: `docker build -f runner/Dockerfile -t agentos-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
 
@@ -108,14 +111,45 @@ Keyboard:
 
 The first surface focuses on the common inner-loop, example verification, and
 operations paths: `skill up/message/eval`, a guided `examples/github-issues`
-MCP auth e2e, `local up/message/status`, `cluster status/message`, `install`,
-and `dev contracts`.
+MCP auth e2e, `secrets set/list/unset`, `local up/message/status`, `cluster
+status/message`, `install`, and `dev contracts`.
 
 The guided MCP auth example checks for a model credential plus
-`GITHUB_PERSONAL_ACCESS_TOKEN`, optionally builds the runner image, starts the
+`GITHUB_PERSONAL_ACCESS_TOKEN`, prompting to save missing values in the OS
+credential store. It then optionally builds the runner image, starts the
 `examples/github-issues` bundle with `--secret GITHUB_PERSONAL_ACCESS_TOKEN`,
 sends a live GitHub issue query, and stops the example runner afterward. It is
-the interactive form of the manual `agentos skill up --secret ...` runbook.
+the interactive form of the manual `agentos skill up --secret ...` runbook, but
+without requiring repeated shell exports.
+
+## `agentos secrets`
+
+Local secrets are stored in the OS credential store, not in the repo, shell
+history, command argv, `.env`, or AgentOS state files. On macOS this uses
+Keychain. AgentOS keeps a non-secret index of saved names under the user config
+directory only so `agentos secrets list` can show what it knows about; the
+secret values remain in the credential store.
+
+```bash
+agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN
+agentos secrets set ANTHROPIC_API_KEY
+agentos secrets list
+agentos secrets unset GITHUB_PERSONAL_ACCESS_TOKEN
+```
+
+For CI or other non-interactive setup, read from an existing environment
+variable instead of prompting:
+
+```bash
+agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN --from-env GITHUB_PAT
+```
+
+`agentos skill up --secret <NAME>` first uses a real environment variable when
+one is already set. If it is missing, the CLI tries the AgentOS secret store and
+hydrates the process environment just long enough for Docker to forward `-e
+<NAME>` into the runner. The same lookup applies to saved model credentials
+(`AGENTOS_CREDENTIALS`, `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN`) for
+live `skill up` runs.
 
 ## `agentos install`
 
@@ -155,7 +189,7 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 
 | Command | What it does |
 |---|---|
-| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). |
+| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using the OS credential store when the env var is not exported. |
 | `agentos skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
 | `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
 | `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |

@@ -108,7 +108,9 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec!["all", "skill", "examples", "local", "cluster", "dev"],
+            targets: vec![
+                "all", "skill", "examples", "secrets", "local", "cluster", "dev",
+            ],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -269,12 +271,8 @@ fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
         .unwrap_or("7247");
     let should_build = yesish(values.get("build").map(String::as_str).unwrap_or("y"));
 
-    require_env_any(&[
-        "ANTHROPIC_API_KEY",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "AGENTOS_CREDENTIALS",
-    ])?;
-    require_env("GITHUB_PERSONAL_ACCESS_TOKEN")?;
+    ensure_model_credential_available()?;
+    ensure_secret_available("GITHUB_PERSONAL_ACCESS_TOKEN")?;
 
     let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
         .context(
@@ -355,21 +353,143 @@ fn yesish(value: &str) -> bool {
     )
 }
 
-fn require_env(name: &str) -> Result<()> {
+fn ensure_secret_available(name: &str) -> Result<()> {
     if std::env::var_os(name).is_some() {
+        println!("{name}: available from the current environment.");
         return Ok(());
     }
-    anyhow::bail!("{name} is not set. Export it in your shell, then rerun this workflow.")
+    if crate::secrets::has_value(name) {
+        println!("{name}: available from the AgentOS secret store.");
+        return Ok(());
+    }
+    println!("{name}: missing.");
+    if prompt_yes_no(
+        &format!("Save {name} in the OS credential store now?"),
+        true,
+    )? {
+        crate::secrets::set(crate::secrets::SetSecretOpts {
+            name: name.to_string(),
+            from_env: None,
+        })?;
+        return Ok(());
+    }
+    anyhow::bail!("{name} is required for this workflow")
 }
 
-fn require_env_any(names: &[&str]) -> Result<()> {
-    if names.iter().any(|name| std::env::var_os(name).is_some()) {
-        return Ok(());
+fn ensure_model_credential_available() -> Result<()> {
+    const NAMES: &[&str] = &[
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ];
+    for name in NAMES {
+        if std::env::var_os(name).is_some() {
+            println!("{name}: model credential available from the current environment.");
+            return Ok(());
+        }
     }
-    anyhow::bail!(
-        "no model credential is set. Export one of {} before running the live MCP auth workflow.",
-        names.join(", ")
-    )
+    for name in NAMES {
+        if crate::secrets::has_value(name) {
+            println!("{name}: model credential available from the AgentOS secret store.");
+            return Ok(());
+        }
+    }
+
+    println!("Model credential: missing.");
+    if !prompt_yes_no(
+        "Save a model credential in the OS credential store now?",
+        true,
+    )? {
+        anyhow::bail!(
+            "a model credential is required; save AGENTOS_CREDENTIALS, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN"
+        );
+    }
+    print!("Credential name [ANTHROPIC_API_KEY]: ");
+    io::stdout().flush().ok();
+    let mut line = String::new();
+    io::stdin()
+        .read_line(&mut line)
+        .context("reading credential name")?;
+    let name = if line.trim().is_empty() {
+        "ANTHROPIC_API_KEY"
+    } else {
+        line.trim()
+    };
+    if !NAMES.contains(&name) {
+        anyhow::bail!(
+            "unsupported model credential name {name}; use AGENTOS_CREDENTIALS, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN"
+        );
+    }
+    crate::secrets::set(crate::secrets::SetSecretOpts {
+        name: name.to_string(),
+        from_env: None,
+    })?;
+    Ok(())
+}
+
+fn prompt_yes_no(prompt: &str, default: bool) -> Result<bool> {
+    loop {
+        let suffix = if default { "[Y/n]" } else { "[y/N]" };
+        print!("{prompt} {suffix}: ");
+        io::stdout().flush().ok();
+        let mut line = String::new();
+        io::stdin().read_line(&mut line)?;
+        let value = line.trim().to_ascii_lowercase();
+        if value.is_empty() {
+            return Ok(default);
+        }
+        match value.as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => println!("Please answer y or n."),
+        }
+    }
+}
+
+fn secret_status(name: &str) -> &'static str {
+    if std::env::var_os(name).is_some() {
+        "env"
+    } else if crate::secrets::has_value(name) {
+        "saved"
+    } else {
+        "missing"
+    }
+}
+
+fn model_credential_status() -> &'static str {
+    for name in [
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ] {
+        if std::env::var_os(name).is_some() || crate::secrets::has_value(name) {
+            return "available";
+        }
+    }
+    "missing"
+}
+
+fn secrets_status_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from(format!("Model credential: {}", model_credential_status())),
+        Line::from(format!(
+            "GITHUB_PERSONAL_ACCESS_TOKEN: {}",
+            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN")
+        )),
+    ]
+}
+
+fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
+    match workflow {
+        Workflow::McpAuthExample => {
+            lines.push(Line::from(Span::styled(
+                "Credential status",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.extend(secrets_status_lines());
+            lines.push(Line::from(""));
+        }
+    }
 }
 
 fn find_repo_root(mut dir: PathBuf) -> Option<PathBuf> {
@@ -599,6 +719,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from("4. Send a live GitHub issue query"));
             lines.push(Line::from("5. Stop the example runner"));
             lines.push(Line::from(""));
+            maybe_add_secret_status(&mut lines, Workflow::McpAuthExample);
         }
     }
     if !recipe.fields.is_empty() {
@@ -764,6 +885,54 @@ fn recipes() -> Vec<Recipe> {
                 "Requires GITHUB_PERSONAL_ACCESS_TOKEN in the shell; the value is forwarded by name and not placed in argv.",
                 "A passing run cites live GitHub issue titles or numbers.",
             ],
+        },
+        Recipe {
+            target: "secrets",
+            title: "Save secret",
+            description: "Store a local secret in the OS credential store with hidden input.",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("secrets"),
+                ArgPart::Literal("set"),
+                ArgPart::Field("name"),
+            ],
+            fields: vec![Field {
+                key: "name",
+                label: "Secret name",
+                default: Some("GITHUB_PERSONAL_ACCESS_TOKEN"),
+                required: true,
+            }],
+            notes: &[
+                "The value is prompted with hidden input and saved in the OS credential store.",
+                "Use env-style names such as ANTHROPIC_API_KEY or GITHUB_PERSONAL_ACCESS_TOKEN.",
+            ],
+        },
+        Recipe {
+            target: "secrets",
+            title: "List saved secrets",
+            description: "List saved AgentOS secret names without printing values.",
+            kind: RecipeKind::Command,
+            args: vec![ArgPart::Literal("secrets"), ArgPart::Literal("list")],
+            fields: vec![],
+            notes: &["Only names are listed; secret values stay in the OS credential store."],
+        },
+        Recipe {
+            target: "secrets",
+            title: "Remove secret",
+            description: "Remove a saved secret from the OS credential store.",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("secrets"),
+                ArgPart::Literal("unset"),
+                ArgPart::Field("name"),
+            ],
+            fields: vec![Field {
+                key: "name",
+                label: "Secret name",
+                default: Some("GITHUB_PERSONAL_ACCESS_TOKEN"),
+                required: true,
+            }],
+            notes: &[],
         },
         Recipe {
             target: "local",

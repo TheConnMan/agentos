@@ -1893,6 +1893,54 @@
       "name": "interactive"
     },
     {
+      "about": "Store and manage local secrets in the OS credential store",
+      "hidden": false,
+      "name": "secrets",
+      "subcommands": [
+        {
+          "about": "Save a secret in the OS credential store. Prompts with hidden input by default",
+          "args": [
+            {
+              "global": false,
+              "help": "Environment-variable-style secret name, e.g. GITHUB_PERSONAL_ACCESS_TOKEN",
+              "id": "name",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Read the value from another environment variable instead of prompting",
+              "id": "from_env",
+              "long": "from-env",
+              "positional": false,
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "set"
+        },
+        {
+          "about": "List saved AgentOS secret names. Values are never printed",
+          "hidden": false,
+          "name": "list"
+        },
+        {
+          "about": "Remove a saved secret",
+          "args": [
+            {
+              "global": false,
+              "help": "Environment-variable-style secret name",
+              "id": "name",
+              "positional": true,
+              "required": true
+            }
+          ],
+          "hidden": false,
+          "name": "unset"
+        }
+      ]
+    },
+    {
       "about": "Run a repo dev script (contracts, chart-check, e2e) -- source checkout only",
       "hidden": false,
       "long_about": "Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.\n\nThin wrappers over the repo's dev scripts so contributors get a unified `agentos <command>` surface; the scripts stay the implementation. A release binary has no scripts and errors clearly.",

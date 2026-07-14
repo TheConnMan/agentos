@@ -473,6 +473,39 @@ fn merge_secret_env(mut passthrough: Vec<String>, secrets: &[String]) -> Vec<Str
     passthrough
 }
 
+fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
+    if std::env::var_os(name).is_some() {
+        return Ok(None);
+    }
+    if let Some(value) = crate::secrets::get_value(name)? {
+        crate::ui::ui().note(&format!(
+            "{name}: loaded from the OS credential store for this run"
+        ));
+        return Ok(Some((name.to_string(), value)));
+    }
+    Ok(None)
+}
+
+fn stored_env_contains(env: &[(String, String)], name: &str) -> bool {
+    env.iter().any(|(stored_name, _)| stored_name == name)
+}
+
+fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
+    // Prefer an explicitly BYO AgentOS credential when saved, otherwise hydrate
+    // the SDK credential names in the same order `select_passthrough_env` uses.
+    if let Some(pair) = secret_store_env("AGENTOS_CREDENTIALS")? {
+        return Ok(vec![pair]);
+    }
+    let mut env = Vec::new();
+    if let Some(pair) = secret_store_env("CLAUDE_CODE_OAUTH_TOKEN")? {
+        env.push(pair);
+    }
+    if let Some(pair) = secret_store_env("ANTHROPIC_API_KEY")? {
+        env.push(pair);
+    }
+    Ok(env)
+}
+
 pub async fn start(opts: StartOpts) -> Result<()> {
     let plugin_dir = opts
         .plugin_dir
@@ -560,14 +593,29 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // the ambient SDK token alongside a chosen BYO credential. See
     // select_passthrough_env.
     let suppress_credential = opts.local_model.is_some() || opts.fake_model;
-    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok();
-    // Warn (do not fail) on a `--secret NAME` that is not set in the caller's
-    // env, since the by-name forward silently no-ops for an unset var (docker.rs).
+    let mut docker_env = Vec::new();
+    if !suppress_credential {
+        docker_env.extend(load_model_credentials_from_secret_store()?);
+    }
+    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok().or_else(|| {
+        stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
+    });
+    // Hydrate `--secret NAME` from the local OS credential store when it is not
+    // already present in the process env. The docker argv still forwards only
+    // the NAME (`-e NAME`); the value is supplied only to the Docker CLI child
+    // process so Docker can copy it into the runner container.
     for name in &opts.secret {
         if std::env::var_os(name).is_none() {
-            crate::ui::ui().note(&format!(
-                "--secret {name}: not set in the environment; nothing will be forwarded for it"
-            ));
+            if !stored_env_contains(&docker_env, name) {
+                match secret_store_env(name)? {
+                    Some(pair) => docker_env.push(pair),
+                    None => {
+                        crate::ui::ui().note(&format!(
+                            "--secret {name}: not set in the environment or AgentOS secret store; nothing will be forwarded for it"
+                        ));
+                    }
+                }
+            }
         }
     }
     let passthrough_env = merge_secret_env(
@@ -589,6 +637,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         model_base_url: model_base_url.clone(),
         model,
         passthrough_env,
+        docker_env,
     };
 
     let ui = crate::ui::ui();
@@ -596,7 +645,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         "starting runner container '{}' from '{}'",
         opts.name, opts.image
     ));
-    let container_id = match docker::docker(&spec.run_args()).await {
+    let container_id = match docker::docker_with_env(&spec.run_args(), &spec.docker_env).await {
         Ok(id) => id,
         Err(err) => {
             if let Some(ollama) = &ollama_container {
