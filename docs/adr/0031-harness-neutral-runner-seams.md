@@ -1,4 +1,4 @@
-# 9. Harness-neutral runner seams for the second harness
+# 31. Harness-neutral runner seams for the second harness
 
 Date: 2026-07-11
 Status: Proposed
