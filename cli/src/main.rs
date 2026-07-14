@@ -101,14 +101,19 @@ enum Command {
         #[arg(long, default_value = "agentos-runner")]
         tag: String,
     },
-    /// Bootstrap a dev checkout: install deps and build, start nothing (source checkout only).
+    /// Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).
     ///
     /// From the repo root, runs (each idempotent, streaming output): copy
     /// `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in
-    /// `apps/ui`, `cargo build` in `cli`, then builds the runner image. A
-    /// release binary has no source tree to install and errors clearly; a
-    /// missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
-    Install,
+    /// `apps/ui`, `cargo build` in `cli`, then builds the runner image. With
+    /// `--update`, already-present heavyweight artifacts like the runner image
+    /// are reused. A release binary has no source tree to install and errors
+    /// clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
+    Install {
+        /// Reuse already-present artifacts while refreshing dependencies and builds.
+        #[arg(long)]
+        update: bool,
+    },
     /// Open the interactive terminal interface.
     ///
     /// A keyboard-driven terminal UI for humans: browse targets and actions,
@@ -906,7 +911,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             from_spec,
         }) => commands::init(name, dir, from_spec),
         Some(Command::Build { tag }) => commands::build(&tag).await,
-        Some(Command::Install) => commands::install().await,
+        Some(Command::Install { update }) => commands::install(update).await,
         Some(Command::Interactive) => agentos::interactive::run().await,
         Some(Command::Secrets { action }) => match action {
             SecretsAction::Set { name, from_env } => {
@@ -1542,7 +1547,20 @@ mod tests {
     #[test]
     fn install_parses() {
         let cli = Cli::try_parse_from(["agentos", "install"]).expect("install should parse");
-        assert!(matches!(cli.command, Some(Command::Install)));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Install { update: false })
+        ));
+    }
+
+    #[test]
+    fn install_update_parses() {
+        let cli =
+            Cli::try_parse_from(["agentos", "install", "--update"]).expect("install should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Install { update: true })
+        ));
     }
 
     #[test]

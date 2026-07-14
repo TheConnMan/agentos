@@ -314,11 +314,12 @@ pub async fn build(tag: &str) -> Result<()> {
     Ok(())
 }
 
-/// `agentos install`: from-a-checkout dev bootstrap -- install deps and build
-/// the runner image, but start nothing. Each step is idempotent and streams its
-/// output; a missing tool prints a friendly pointer and stops. A release binary
-/// has no source tree to install, so this errors clearly outside a checkout.
-pub async fn install() -> Result<()> {
+/// `agentos install`: from-a-checkout dev bootstrap/update -- install deps and
+/// build the runner image, but start nothing. Each step is idempotent and
+/// streams its output; update mode reuses already-present heavyweight artifacts.
+/// A missing tool prints a friendly pointer and stops. A release binary has no
+/// source tree to install, so this errors clearly outside a checkout.
+pub async fn install(update: bool) -> Result<()> {
     let ui = crate::ui::ui();
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `agentos install` \
@@ -358,8 +359,16 @@ pub async fn install() -> Result<()> {
     require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
     run_step(&root.join("cli"), "cargo", &["build"], "cargo build (cli)").await?;
 
-    // 5. Build the runner image via the existing `build` handler.
-    build("agentos-runner").await?;
+    // 5. Build the runner image via the existing `build` handler. Update mode
+    // keeps reruns quick when the image is already present locally.
+    let runner_image = "agentos-runner";
+    if update && docker_image_exists(runner_image).await? {
+        ui.note(&format!(
+            "=== runner image '{runner_image}' already exists; skipping rebuild for --update ==="
+        ));
+    } else {
+        build(runner_image).await?;
+    }
 
     ui.success("Setup complete. Start the stack with: agentos local up");
     Ok(())
@@ -415,6 +424,21 @@ async fn run_step(dir: &Path, bin: &str, args: &[&str], label: &str) -> Result<(
         bail!("{label} failed ({status})");
     }
     Ok(())
+}
+
+async fn docker_image_exists(tag: &str) -> Result<bool> {
+    require_tool(
+        "docker",
+        "Docker is not installed or not on PATH. Install Docker Desktop/Engine and retry.",
+    )?;
+    let status = tokio::process::Command::new("docker")
+        .args(["image", "inspect", tag])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .context("failed to invoke docker")?;
+    Ok(status.success())
 }
 
 /// Whether `bin` resolves on PATH.

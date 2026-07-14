@@ -1884,9 +1884,23 @@ export const commandManifest = {
       "name": "build"
     },
     {
-      "about": "Bootstrap a dev checkout: install deps and build, start nothing (source checkout only)",
+      "about": "Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only)",
+      "args": [
+        {
+          "global": false,
+          "help": "Reuse already-present artifacts while refreshing dependencies and builds",
+          "id": "update",
+          "long": "update",
+          "positional": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false
+        }
+      ],
       "hidden": false,
-      "long_about": "Bootstrap a dev checkout: install deps and build, start nothing (source checkout only).\n\nFrom the repo root, runs (each idempotent, streaming output): copy `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in `apps/ui`, `cargo build` in `cli`, then builds the runner image. A release binary has no source tree to install and errors clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.",
+      "long_about": "Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).\n\nFrom the repo root, runs (each idempotent, streaming output): copy `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in `apps/ui`, `cargo build` in `cli`, then builds the runner image. With `--update`, already-present heavyweight artifacts like the runner image are reused. A release binary has no source tree to install and errors clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.",
       "name": "install"
     },
     {
