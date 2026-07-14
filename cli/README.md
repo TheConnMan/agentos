@@ -36,6 +36,7 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 |---|---|
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-agentos/SKILL.md` harness primer. |
 | `agentos init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
+| `agentos` | Open the keyboard-driven terminal interface. Explicit forms: `agentos interactive`, `agentos ui`, `agentos tui`. |
 | `agentos guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
 | `agentos build` | Build the runner image locally: `docker build -f runner/Dockerfile -t agentos-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
 
@@ -79,6 +80,35 @@ with the platform grader, not an oversight.
 ```bash
 agentos init --from-spec agent-spec.json   # bundle name (deal-desk) comes from the spec
 ```
+
+## `agentos` / `agentos interactive`
+
+The interactive terminal interface is a human-friendly command surface over the
+same `agentos ...` subcommands documented here. It opens a full-screen TUI with
+target navigation, action selection, command previews, and guarded execution:
+when an action needs values (for example message text or a channel id), the TUI
+temporarily leaves the alternate screen, prompts for the values, runs the exact
+previewed command, then returns to the interface.
+
+```bash
+agentos
+agentos interactive
+agentos ui
+agentos tui
+```
+
+Keyboard:
+
+| Key | Action |
+|---|---|
+| `Up`/`Down` or `k`/`j` | Move through actions |
+| `Tab` / `Left` / `Right` | Switch target filters |
+| `Enter` or `r` | Prompt for fields and run the selected command |
+| `q` or `Esc` | Exit |
+
+The first surface focuses on the common inner-loop and operations paths:
+`skill up/message/eval`, `local up/message/status`, `cluster status/message`,
+`install`, and `dev contracts`.
 
 ## `agentos install`
 
