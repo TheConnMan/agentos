@@ -195,6 +195,14 @@
               },
               "positional": false,
               "required": false
+            },
+            {
+              "global": false,
+              "help": "Forward an environment variable BY NAME into the runner sandbox, so a bundle's authed MCP server can read a secret (e.g. an API token) the same way model credentials are forwarded: the value is read from your environment by docker and never placed in argv. Repeatable. Example: `--secret GITHUB_PERSONAL_ACCESS_TOKEN` with that var exported",
+              "id": "secret",
+              "long": "secret",
+              "positional": false,
+              "required": false
             }
           ],
           "hidden": false,
