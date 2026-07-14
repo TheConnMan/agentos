@@ -63,4 +63,9 @@ export const WIRED_ACTIONS: readonly WiredAction[] = [
   // the honest amber glyph linking to the parity epic instead of a command.
   { id: "rollback", label: "Roll back to an earlier version", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
   { id: "promote-to-prod", label: "Promote dev version to prod", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
+
+  // WiredAgentMemory (#267) — inspect/edit/delete learned memory. No dedicated
+  // CLI verb exists yet, so both render the honest amber gap glyph.
+  { id: "memory-edit", label: "Edit a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
+  { id: "memory-delete", label: "Delete a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
 ] as const;

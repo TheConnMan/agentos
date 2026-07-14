@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { C } from "../../tokens";
 import { Button, Card, Chip, CliHint, Dot, Notice, cliCommand } from "../../primitives";
 import { SkillEditor } from "../../components/SkillEditor";
+import { WiredAgentMemory } from "./WiredAgentMemory";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 import { useAgentVersions, useVersionFiles } from "../../api/hooks";
@@ -524,6 +525,12 @@ export function WiredAgentDetail() {
           </div>
         </div>
       )}
+
+      {agentId ? (
+        <div style={{ marginTop: 16 }}>
+          <WiredAgentMemory agentId={agentId} />
+        </div>
+      ) : null}
     </div>
   );
 }
