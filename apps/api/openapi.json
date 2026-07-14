@@ -847,6 +847,20 @@
         "title": "LoadPackConfig",
         "type": "object"
       },
+      "MemoryEntryEdit": {
+        "description": "Edit the ``content`` of one memory entry (#267); provenance is preserved.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "MemoryEntryEdit",
+        "type": "object"
+      },
       "MemoryEntryOut": {
         "description": "One learned memory entry as returned to an operator.\n\n``index`` is the entry's position in the append-only log; it is the stable\nhandle the edit/delete endpoints (#267) address, and it survives as long as\nthe log is not consolidated (#265) or reordered.",
         "properties": {
@@ -2461,9 +2475,148 @@
         ]
       }
     },
+    "/agents/{agent_id}/memory/{index}": {
+      "delete": {
+        "description": "Delete exactly one memory entry; remaining entries keep their order (#267).",
+        "operationId": "delete_memory_agents__agent_id__memory__index__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Memory",
+        "tags": [
+          "memory"
+        ]
+      },
+      "put": {
+        "description": "Edit one entry's content in place; its provenance is preserved (#267).\n\nRewrites the log array with the entry's ``content`` replaced. The recorded\nprovenance is carried through unchanged -- editing the lesson text must not\nerase where it was learned from.",
+        "operationId": "edit_memory_agents__agent_id__memory__index__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryEntryEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryEntryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Memory",
+        "tags": [
+          "memory"
+        ]
+      }
+    },
     "/agents/{agent_id}/memory/{index}/provenance": {
       "get": {
-        "description": "Resolve one entry's learned-from trace-back (#266).\n\nReturns the session and the source traces the lesson was distilled from,\neach with a Langfuse deep link. Reuses the provenance the runner recorded at\n``remember`` time -- it does not re-derive or invent provenance.",
+        "description": "Resolve one entry's learned-from trace-back (#266).\n\nReturns the session and the source traces the lesson was distilled from, each\nwith a Langfuse deep link. Reuses the provenance the runner recorded at\n``remember`` time -- it does not re-derive or invent provenance.",
         "operationId": "memory_trace_back_agents__agent_id__memory__index__provenance_get",
         "parameters": [
           {

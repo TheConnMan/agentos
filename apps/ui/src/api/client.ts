@@ -487,6 +487,56 @@ export async function createDeployment(input: DeploymentCreate): Promise<Deploym
   return jsonOrThrow<DeploymentOut>(resp);
 }
 
+// ---- Agent memory: inspect / edit / delete learned memory (#267) ----
+
+// Where a memory entry was learned from (#264 Provenance shape). Provenance is
+// the differentiator: an operator can see which session/traces taught a lesson.
+export interface MemoryProvenance {
+  learned_from_session_id: string | null;
+  source_trace_ids: string[];
+  recorded_at: string;
+}
+
+// One learned memory entry. `index` is its position in the append-only memory
+// log — the stable handle the edit/delete calls address.
+export interface MemoryEntry {
+  index: number;
+  content: string;
+  provenance: MemoryProvenance;
+}
+
+// List an agent's learned memory, oldest first (empty for a fresh agent).
+export async function listMemory(agentId: string): Promise<MemoryEntry[]> {
+  const resp = await fetch(url(`/agents/${agentId}/memory`), { headers: headers() });
+  return jsonOrThrow<MemoryEntry[]>(resp);
+}
+
+// Edit one entry's content in place; the server preserves its provenance. The
+// change is reflected at the agent's next session boot (it rehydrates the log).
+export async function editMemory(
+  agentId: string,
+  index: number,
+  content: string,
+): Promise<MemoryEntry> {
+  const resp = await fetch(url(`/agents/${agentId}/memory/${index}`), {
+    method: "PUT",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ content }),
+  });
+  return jsonOrThrow<MemoryEntry>(resp);
+}
+
+// Delete exactly one memory entry (204 on success). Remaining entries keep order.
+export async function deleteMemory(agentId: string, index: number): Promise<void> {
+  const resp = await fetch(url(`/agents/${agentId}/memory/${index}`), {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (resp.ok) return;
+  const body = await resp.json().catch(() => null);
+  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+}
+
 export async function killAgent(agentId: string): Promise<KillState> {
   const resp = await fetch(url(`/agents/${agentId}/kill`), { method: "POST", headers: headers() });
   return jsonOrThrow<KillState>(resp);
