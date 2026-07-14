@@ -18,7 +18,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import cast
 
-from redis.asyncio import Redis
 from redis.exceptions import (
     ConnectionError as RedisConnectionError,
 )
@@ -28,6 +27,8 @@ from redis.exceptions import (
 from redis.exceptions import (
     TimeoutError as RedisTimeoutError,
 )
+
+from .broker import StreamBroker
 
 # One stream entry as redis returns it with decode_responses=True.
 StreamEntry = tuple[str, dict[str, str]]
@@ -66,8 +67,12 @@ class StreamConsumer:
     business logic.
     """
 
-    def __init__(self, redis: Redis) -> None:
-        self._redis = redis
+    def __init__(self, redis: StreamBroker) -> None:
+        # The stream broker behind the port (#284). ``redis.asyncio.Redis`` is the
+        # one backing today and structurally satisfies ``StreamBroker``; a second
+        # broker is a drop-in. Named ``_redis`` still so the sacred consumer.py
+        # subclass (which reads ``self._redis`` for XAUTOCLAIM) is untouched.
+        self._redis: StreamBroker = redis
         self._stop = asyncio.Event()
 
     def request_stop(self) -> None:

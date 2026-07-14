@@ -22,16 +22,35 @@ dedupe because it is O(1), TTL-bounded (no unbounded dedupe set to prune), and
 does not require scanning the Stream.
 """
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from aci_protocol import QueuedTurn
 
 from .config import DispatcherConfig
 
-if TYPE_CHECKING:
-    from redis import Redis
-
 STREAM_PAYLOAD_FIELD = "payload"
+
+
+@runtime_checkable
+class StreamPublisher(Protocol):
+    """The stream-broker port (producer side): append an entry + dedupe-claim.
+
+    Issue #284 / ADR-0027. The producer's whole coupling to the broker is these
+    two verbs: ``xadd`` (append the one-``payload`` entry to the stream) and a
+    ``SET NX EX`` dedupe-claim (``set``). Typing the producer against this
+    Protocol makes a future non-redis broker a drop-in on the write side. The
+    consumer side has its own port (``StreamBroker`` in the worker). ``redis.Redis``
+    structurally satisfies this, so it is the one backing today with no adapter.
+    The verbs are typed permissively to match redis-py's signatures.
+    """
+
+    def xadd(self, name: Any, fields: Any) -> Any:
+        """Append an entry to ``name``; returns the assigned stream id."""
+        ...
+
+    def set(self, name: Any, value: Any, *, nx: bool = ..., ex: Any = ...) -> Any:
+        """``SET`` with ``NX``/``EX`` — the dedupe-claim beside the stream."""
+        ...
 
 
 def to_stream_fields(turn: QueuedTurn) -> dict[str, str]:
@@ -44,7 +63,7 @@ def from_stream_fields(fields: dict[str, str]) -> QueuedTurn:
     return QueuedTurn.model_validate_json(fields[STREAM_PAYLOAD_FIELD])
 
 
-def claim_event(redis_client: "Redis", config: "DispatcherConfig", event_id: str) -> bool:
+def claim_event(redis_client: "StreamPublisher", config: "DispatcherConfig", event_id: str) -> bool:
     """Claim a Slack event id for processing, returning True on the first claim.
 
     Uses ``SET NX EX`` so exactly one delivery of a given event id wins; retries
@@ -60,7 +79,7 @@ def claim_event(redis_client: "Redis", config: "DispatcherConfig", event_id: str
     return bool(claimed)
 
 
-def enqueue(redis_client: "Redis", config: "DispatcherConfig", turn: QueuedTurn) -> str:
+def enqueue(redis_client: "StreamPublisher", config: "DispatcherConfig", turn: QueuedTurn) -> str:
     """Append the normalized turn to the Valkey Stream, returning its Stream id."""
     # redis-py types the fields param as an invariant dict of a broad key/value
     # union, so a plain dict[str, str] does not match; cast to satisfy the stub.
