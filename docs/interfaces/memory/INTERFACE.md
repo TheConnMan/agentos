@@ -1,48 +1,68 @@
 # INTERFACE: Memory
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** NONE &nbsp;·&nbsp; **Implementations today:** 0 loaders &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (`StateApiMemoryStore`) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
 ## The black line
 
-There is no black line yet — memory is a **field only**. `SessionConfig` carries an optional
-`memory_ref` (`packages/aci-protocol/src/aci_protocol/session.py:68`) mapped to the
-`AGENTOS_MEMORY_REF` env var (`:85` in `to_env`, `:115` in `from_env`; documented as "optional;
-S3 path / API URL" in the README contract table). The reference is plumbed end-to-end through the
-session contract but **never dereferenced**: there are zero memory loaders in the codebase today.
-The port (load / append / consolidate) is unbuilt on purpose — "the second implementation teaches
-the interface," and there is no first loader to teach it yet.
+The port is the `MemoryStore` `Protocol` in
+`runner/src/agentos_runner/memory.py` (issue #264, ADR-0025). Two methods:
+
+```python
+class MemoryStore(Protocol):
+    async def load(self) -> list[MemoryRecord]: ...
+    async def append(self, record: MemoryRecord) -> None: ...
+```
+
+A `MemoryRecord` is `content: str` plus a `Provenance`
+(`learned_from_session_id`, `source_trace_ids`, `recorded_at`) — the
+entry→source-traces link. `SessionConfig.memory_ref`
+(`packages/aci-protocol/src/aci_protocol/session.py:68`, `AGENTOS_MEMORY_REF`) is
+resolved to a concrete `MemoryStore` at runner boot by `resolve_memory`. The
+frozen ACI field is unchanged; the state-API bearer is a runner-local knob
+(`AGENTOS_MEMORY_TOKEN`), not part of the frozen env.
 
 ## Current contract
 
-The only committed surface is the optional string field:
-
-```python
-memory_ref: str | None = None   # session.py:68
-```
-
-and its env round-trip (`session.py:85`, `:115`). Nothing reads it. A future implementation must
-define the port — sketched by epic #28 as `load(memory_ref) -> records`,
-`append(record + provenance)`, `consolidate` — along with how `AGENTOS_MEMORY_REF` resolves (S3
-path vs API URL) and the shape of a provenance record. None of that exists in code on this branch.
+- **Resolution.** `resolve_memory(memory_ref, env)`: an absent ref →
+  `NullMemoryStore`; an `http(s)://` ref → `StateApiMemoryStore`; any other
+  scheme (`s3://` …) is reserved for a future loader and rejected loudly.
+- **Load side.** `load()` returns prior records oldest-first (empty when none).
+  At boot the runner loads memory and composes it into the effective system
+  prompt as a preamble — this is how memory is *delivered into the sandbox*. A
+  transient load failure degrades to "no memory" and does not block boot.
+- **Append side.** `append(record)` durably writes one record; provenance is
+  stamped by `SessionRunner.remember(content, source_trace_ids=...)`. The record
+  survives suspend/resume and is reloaded at the next boot.
 
 ## Implementations today
 
-Zero. `memory_ref` is carried by `SessionConfig` and forwarded into the sandbox environment; no
-producer or consumer dereferences it.
+One: **`StateApiMemoryStore`**, backing memory as a scoped `memory` namespace
+over the durable KV/document store landed for #23/#248
+(`apps/api` `/agents/{agent_id}/state/{namespace}/{key}`, Postgres JSONB).
+`load` GETs the single log-shaped key; `append` POSTs to that key's `/append`
+endpoint (#248), inheriting durability and the per-value/per-namespace size caps.
+The worker (`binding.boot_env`) delivers the ref as
+`http(s)://api/agents/<id>/state/memory` and forwards the API key as the memory
+token. `NullMemoryStore` is the no-ref sink.
 
 ## Known leakage
 
-Not applicable — nothing is built to leak. The load-bearing constraint the future implementation
-must honor: **memory lives OUTSIDE the sandbox.** Per ADR-0003 (stateless-first; session state is
-externalized and a resumed thread rehydrates from history, never from a surviving in-RAM process),
-the memory store must be an external, rehydratable resource resolved from `memory_ref`, not
-in-pod state — an emptyDir-scratch or in-process cache would be lost on every suspend/resume.
+- **Shared API key as the memory token.** The state API has one shared API key
+  today, so forwarding it into the sandbox as `AGENTOS_MEMORY_TOKEN` grants that
+  key's full scope. A scoped, least-privilege memory token is follow-up work
+  (ADR-0025, consequences).
+- **No consolidate / no query.** The port is deliberately `load`/`append` only;
+  consolidation and automatic learned-record extraction are later slices
+  (#265/#266/#267). The load-bearing constraint remains: **memory lives OUTSIDE
+  the sandbox** (ADR-0003) — the store is network-reachable and rehydratable, not
+  pod-local state.
 
 ## Cross-links
 
-- **Epic(s):** [#28](https://github.com/curie-eng/agentos/issues/28) — define the memory port (`load` / `append` / `consolidate`), `AGENTOS_MEMORY_REF` resolution, and the provenance record shape
+- **Epic(s):** [#28](https://github.com/curie-eng/agentos/issues/28) — the memory port, `AGENTOS_MEMORY_REF` resolution, provenance record shape
+- **Issue:** [#264](https://github.com/curie-eng/agentos/issues/264) — this first loader
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — memory is not one of the six swap-readiness Jobs; not separately graded
-- **ADR(s):** [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) — stateless-first; rehydrate on resume; externalize session state
+- **ADR(s):** [ADR-0025](../../adr/0025-memory-port-and-first-loader.md) — the port + first loader; [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) — stateless-first; rehydrate on resume; externalize session state

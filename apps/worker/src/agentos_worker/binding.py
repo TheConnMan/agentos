@@ -53,6 +53,12 @@ SESSION_ID_ENV = "AGENTOS_SESSION_ID"
 AGENT_ID_ENV = "AGENTOS_AGENT_ID"
 FAKE_MODEL_ENV = "AGENTOS_FAKE_MODEL"
 CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
+# The memory port (#264): the URL of the agent's memory namespace on the state
+# API, dereferenced by the runner at boot, plus the API key it authenticates
+# with. MEMORY_REF is the frozen ACI SessionConfig field; MEMORY_TOKEN is a
+# runner-local knob (not part of the frozen env), like AGENTOS_RUNNER_TOKEN.
+MEMORY_REF_ENV = "AGENTOS_MEMORY_REF"
+MEMORY_TOKEN_ENV = "AGENTOS_MEMORY_TOKEN"
 BASE_URL_ENV = "ANTHROPIC_BASE_URL"
 MODEL_ENV = "AGENTOS_MODEL"
 # Per-claim bearer token the runner enforces on its ACI POST routes (issue #63).
@@ -179,6 +185,15 @@ class BindingResolver:
         }
         if resolved.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = resolved.bundle_ref
+        # Deliver the memory ref (#264): the agent's scoped namespace on the
+        # durable state store (#23/#248). The runner dereferences it at boot to
+        # load prior memory and to append learned records with provenance. The
+        # API key is forwarded as the memory token; a scoped, least-privilege
+        # memory token is future work (the state API has one shared key today).
+        base = self._config.api_base_url.rstrip("/")
+        env[MEMORY_REF_ENV] = f"{base}/agents/{resolved.agent_id}/state/memory"
+        if self._config.api_key:
+            env[MEMORY_TOKEN_ENV] = self._config.api_key
         # The agent's pinned model (#254) overrides the worker default; None
         # falls back to config.model inside apply_model_env.
         apply_model_env(env, self._config, model_override=resolved.model)
