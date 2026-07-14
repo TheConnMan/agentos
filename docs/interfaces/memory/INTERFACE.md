@@ -54,11 +54,20 @@ token. `NullMemoryStore` is the no-ref sink.
   today, so forwarding it into the sandbox as `AGENTOS_MEMORY_TOKEN` grants that
   key's full scope. A scoped, least-privilege memory token is follow-up work
   (ADR-0025, consequences).
-- **No consolidate / no query.** The port is deliberately `load`/`append` only;
-  consolidation and automatic learned-record extraction are later slices
-  (#265/#266/#267). The load-bearing constraint remains: **memory lives OUTSIDE
-  the sandbox** (ADR-0003) — the store is network-reachable and rehydratable, not
-  pod-local state.
+- **Consolidation is an opt-in capability, not part of the port.** The core
+  `MemoryStore` port stays `load`/`append` only. Consolidation (#265) adds a
+  separate `SupportsReplace` capability (`replace(records)`) and the
+  `consolidate_memory(store)` entry point (also `SessionRunner.consolidate_memory`):
+  it loads the append-only log, merges equivalent-content records via
+  `consolidate_records` while **unioning their provenance** (`merge_provenance` —
+  no source trace is lost), and writes the compacted set back only when the store
+  advertises `replace` and the pass actually reduced the record count.
+  `StateApiMemoryStore.replace` is a blind PUT of the log key; `NullMemoryStore`
+  and any read-only backing make consolidation a reporting-only no-op. Automatic
+  learned-record *extraction* remains later work.
+- **No query.** There is still no query language on the port. The load-bearing
+  constraint remains: **memory lives OUTSIDE the sandbox** (ADR-0003) — the store
+  is network-reachable and rehydratable, not pod-local state.
 
 ## Cross-links
 

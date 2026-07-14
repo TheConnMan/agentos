@@ -8,12 +8,16 @@ provenance round-trip are verified end-to-end over real HTTP without the API.
 import anyio
 import pytest
 from agentos_runner.memory import (
+    ConsolidationResult,
     MemoryError,
     MemoryRecord,
     NullMemoryStore,
     Provenance,
     StateApiMemoryStore,
+    consolidate_memory,
+    consolidate_records,
     format_memory_preamble,
+    merge_provenance,
     resolve_memory,
 )
 from aiohttp import web
@@ -157,15 +161,179 @@ def test_session_runner_remember_appends_with_provenance() -> None:
         memory_store=store,
     )
 
-    anyio.run(
-        lambda: runner.remember("lesson", source_trace_ids=("trace-7",))
-    )
+    anyio.run(lambda: runner.remember("lesson", source_trace_ids=("trace-7",)))
     assert len(store.records) == 1
     prov = store.records[0].provenance
     assert store.records[0].content == "lesson"
     assert prov.learned_from_session_id == "sess-42"
     assert prov.source_trace_ids == ("trace-7",)
     assert prov.recorded_at  # a timestamp was stamped
+
+
+# --- Consolidation pipeline (#265) ---------------------------------------
+
+
+class _ReplacingStore:
+    """A memory store that supports load/append/replace, for consolidation tests."""
+
+    def __init__(self, records: list[MemoryRecord] | None = None) -> None:
+        self.records: list[MemoryRecord] = list(records or [])
+        self.replaced: list[list[MemoryRecord]] = []
+
+    async def load(self) -> list[MemoryRecord]:
+        return list(self.records)
+
+    async def append(self, record: MemoryRecord) -> None:
+        self.records.append(record)
+
+    async def replace(self, records) -> None:
+        self.records = list(records)
+        self.replaced.append(list(records))
+
+
+def test_merge_provenance_unions_traces_and_keeps_earliest() -> None:
+    a = Provenance(
+        learned_from_session_id="sess-1",
+        source_trace_ids=("t1", "t2"),
+        recorded_at="2026-07-13T02:00:00+00:00",
+    )
+    b = Provenance(
+        learned_from_session_id="sess-2",
+        source_trace_ids=("t2", "t3"),
+        recorded_at="2026-07-13T01:00:00+00:00",
+    )
+    merged = merge_provenance(a, b)
+    assert merged.source_trace_ids == ("t1", "t2", "t3")
+    assert merged.learned_from_session_id == "sess-1"
+    # Earliest timestamp wins -- points at when the lesson was first learned.
+    assert merged.recorded_at == "2026-07-13T01:00:00+00:00"
+
+
+def test_consolidate_records_dedups_and_preserves_provenance() -> None:
+    records = [
+        MemoryRecord(
+            content="deploy is a git push",
+            provenance=Provenance(
+                source_trace_ids=("t1",), recorded_at="2026-07-13T00:00:00+00:00"
+            ),
+        ),
+        MemoryRecord(content="unique lesson", provenance=Provenance(source_trace_ids=("t9",))),
+        # Near-duplicate: differing case + whitespace collapses to the same key.
+        MemoryRecord(
+            content="Deploy  is a   git push",
+            provenance=Provenance(
+                source_trace_ids=("t2",), recorded_at="2026-07-13T05:00:00+00:00"
+            ),
+        ),
+    ]
+    out = consolidate_records(records)
+    assert len(out) == 2
+    first = out[0]
+    # First-seen surface form is kept.
+    assert first.content == "deploy is a git push"
+    # No provenance lost -- both traces survive the merge.
+    assert set(first.provenance.source_trace_ids) == {"t1", "t2"}
+    assert out[1].content == "unique lesson"
+
+
+def test_consolidate_records_noop_when_no_duplicates() -> None:
+    records = [MemoryRecord(content="a"), MemoryRecord(content="b")]
+    assert consolidate_records(records) == records
+
+
+def test_consolidate_memory_writes_back_when_reduced() -> None:
+    store = _ReplacingStore(
+        [
+            MemoryRecord(content="x", provenance=Provenance(source_trace_ids=("t1",))),
+            MemoryRecord(content="x", provenance=Provenance(source_trace_ids=("t2",))),
+        ]
+    )
+
+    result: ConsolidationResult = anyio.run(consolidate_memory, store)
+    assert result.before == 2
+    assert result.after == 1
+    assert result.removed == 1
+    assert result.written is True
+    assert len(store.replaced) == 1
+    assert set(store.records[0].provenance.source_trace_ids) == {"t1", "t2"}
+
+
+def test_consolidate_memory_noop_when_nothing_to_remove() -> None:
+    store = _ReplacingStore([MemoryRecord(content="a"), MemoryRecord(content="b")])
+    result = anyio.run(consolidate_memory, store)
+    assert result.written is False
+    assert store.replaced == []
+
+
+def test_consolidate_memory_noop_on_store_without_replace() -> None:
+    # NullMemoryStore implements replace as a no-op; a store lacking it entirely
+    # must also not be written. Use a load-only store.
+    class _ReadOnly:
+        async def load(self) -> list[MemoryRecord]:
+            return [MemoryRecord(content="a"), MemoryRecord(content="a")]
+
+        async def append(self, record: MemoryRecord) -> None:  # noqa: ARG002
+            return None
+
+    result = anyio.run(consolidate_memory, _ReadOnly())
+    # Consolidation still computes the compacted set, just cannot persist it.
+    assert result.after == 1
+    assert result.written is False
+
+
+def test_null_store_replace_is_noop() -> None:
+    store = NullMemoryStore()
+    anyio.run(store.replace, [MemoryRecord(content="x")])
+    assert anyio.run(store.load) == []
+
+
+def test_state_store_replace_puts_log() -> None:
+    put_bodies: list = []
+    app = web.Application()
+
+    async def put_log(request: web.Request) -> web.Response:
+        body = await request.json()
+        put_bodies.append(body)
+        return web.json_response(
+            {"namespace": "memory", "key": "log", "value": body["value"], "version": 2}
+        )
+
+    app.router.add_put("/agents/A/state/memory/log", put_log)
+
+    async def go() -> None:
+        async with TestServer(app) as server:
+            url = str(server.make_url("/agents/A/state/memory"))
+            store = StateApiMemoryStore(url, token="k")
+            await store.replace(
+                [MemoryRecord(content="compacted", provenance=Provenance(source_trace_ids=("t1",)))]
+            )
+
+    anyio.run(go)
+    assert len(put_bodies) == 1
+    assert put_bodies[0]["value"][0]["content"] == "compacted"
+
+
+def test_session_runner_consolidate_memory() -> None:
+    from agentos_runner import RunTracer, SideEffectClassifier
+    from agentos_runner.fake import FakeModelSession
+    from agentos_runner.session import SessionRunner
+
+    store = _ReplacingStore(
+        [MemoryRecord(content="dup"), MemoryRecord(content="dup"), MemoryRecord(content="keep")]
+    )
+    runner = SessionRunner(
+        session_factory=FakeModelSession,
+        ceiling=0,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="t",
+        session_id="sess-1",
+        memory_store=store,
+    )
+    result = anyio.run(runner.consolidate_memory)
+    assert result.before == 3
+    assert result.after == 2
+    assert result.written is True
 
 
 def test_state_store_load_rejects_non_array() -> None:
