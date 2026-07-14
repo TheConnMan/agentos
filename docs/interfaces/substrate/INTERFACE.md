@@ -37,4 +37,4 @@ The `SandboxView.port` field (`types.py:134`) exists only because the Docker pat
 
 - **Epic(s):** #86 — substrate vision (pluggable runtimes beyond agent-sandbox); #44 — substrate hardening
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — core substrate, not separately graded
-- **ADR(s):** [ADR-0002](../../adr/0002-kubernetes-agent-sandbox-as-runtime-substrate.md) — Kubernetes Agent Sandbox as the interactive runtime substrate; [ADR-0008](../../adr/0008-multi-tenancy.md) — multi-tenancy: hard-siloed compute (namespace-per-tenant) rides this seam
+- **ADR(s):** [ADR-0002](../../adr/0002-kubernetes-agent-sandbox-as-runtime-substrate.md) — Kubernetes Agent Sandbox as the interactive runtime substrate; [ADR-0008](../../adr/0008-multi-tenancy.md) — multi-tenancy: hard-siloed compute (namespace-per-tenant) rides this seam; [ADR-0028](../../adr/0028-substrate-is-resilience-fallback-not-product-swap-axis.md) — the "core-with-fallback, not a marketed swap" stance above is now a recorded decision: substrate portability stays a resilience-only fallback, not a product swap axis (settles #86)
