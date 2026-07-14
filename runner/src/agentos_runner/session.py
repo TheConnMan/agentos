@@ -38,6 +38,7 @@ from claude_agent_sdk import AssistantMessage, ResultMessage
 
 from .adapter import ModelSession
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
+from .memory import MemoryRecord, MemoryStore, NullMemoryStore, Provenance, utcnow_iso
 from .otel import RunTracer, _GenerationSpan
 from .side_effects import SideEffectClassifier
 from .translate import TurnState, translate_message
@@ -84,6 +85,7 @@ class SessionRunner:
         trace_name: str,
         session_id: str | None = None,
         model: str | None = None,
+        memory_store: MemoryStore | None = None,
     ) -> None:
         self._factory = session_factory
         self._ceiling = ceiling
@@ -92,6 +94,10 @@ class SessionRunner:
         self._trace_name = trace_name
         self._session_id = session_id
         self._model = model
+        # The memory port (#264). Prior memory is loaded at boot and delivered
+        # via the system prompt; this store is the write side for learned records
+        # (append + provenance). NullMemoryStore when no AGENTOS_MEMORY_REF.
+        self._memory: MemoryStore = memory_store or NullMemoryStore()
 
         self._session: ModelSession | None = None
         self._turn_lock = anyio.Lock()
@@ -118,6 +124,31 @@ class SessionRunner:
         """True while a turn can still accept a steer (open, pre-terminal)."""
 
         return self._turn_open
+
+    async def remember(
+        self,
+        content: str,
+        *,
+        source_trace_ids: tuple[str, ...] = (),
+    ) -> None:
+        """Append a learned record to durable memory with provenance (#264).
+
+        Provenance links the entry to the session that produced it and the source
+        traces the lesson was distilled from. The write goes to the external
+        store, so the record survives suspend/resume and is reloaded at the next
+        boot. This is the write side of the memory port; the automatic
+        learned-record extraction that calls it is later work (#265/#266/#267).
+        """
+
+        record = MemoryRecord(
+            content=content,
+            provenance=Provenance(
+                learned_from_session_id=self._session_id,
+                source_trace_ids=source_trace_ids,
+                recorded_at=utcnow_iso(),
+            ),
+        )
+        await self._memory.append(record)
 
     async def start(self) -> None:
         """Create and connect the model session (rehydrating if configured)."""

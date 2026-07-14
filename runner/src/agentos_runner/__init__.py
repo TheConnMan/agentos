@@ -15,6 +15,16 @@ from .config import RunnerConfig
 from .conformance import conformance_producer
 from .fake import FakeModelSession
 from .hooks import load_bundle_hooks
+from .memory import (
+    MemoryError,
+    MemoryRecord,
+    MemoryStore,
+    NullMemoryStore,
+    Provenance,
+    StateApiMemoryStore,
+    format_memory_preamble,
+    resolve_memory,
+)
 from .otel import RunTracer, build_tracer_provider
 from .plugin import PluginBundleError, load_bundle_system_prompt, load_plugins
 from .server import create_app
@@ -42,4 +52,12 @@ __all__ = [
     "SessionRunner",
     "SideEffectClassifier",
     "DEFAULT_IDEMPOTENT_TOOLS",
+    "MemoryStore",
+    "MemoryRecord",
+    "Provenance",
+    "NullMemoryStore",
+    "StateApiMemoryStore",
+    "MemoryError",
+    "resolve_memory",
+    "format_memory_preamble",
 ]

@@ -12,12 +12,14 @@ import logging
 import os
 import sys
 
+import anyio
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .hooks import load_bundle_hooks
+from .memory import MemoryRecord, MemoryStore, format_memory_preamble, resolve_memory
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_bundle_system_prompt, load_plugins
 from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
@@ -28,11 +30,25 @@ from .side_effects import SideEffectClassifier
 logger = logging.getLogger(__name__)
 
 
+def _compose_system_prompt(base: str | None, memory_preamble: str | None) -> str | None:
+    """Prepend the loaded-memory preamble to the effective system prompt.
+
+    Memory delivered from outside the sandbox becomes durable model context by
+    leading the system prompt; the bundle/env system prompt follows it. Either
+    part may be absent.
+    """
+
+    parts = [p for p in (memory_preamble, base) if p]
+    return "\n\n".join(parts) if parts else None
+
+
 def build_runner(
     config: RunnerConfig,
     *,
     fake_model: bool = False,
     sdk_env: dict[str, str] | None = None,
+    memory_store: MemoryStore | None = None,
+    memory_preamble: str | None = None,
 ) -> SessionRunner:
     """Wire a SessionRunner backed by a real claude-agent-sdk session.
 
@@ -48,6 +64,9 @@ def build_runner(
     system_prompt = config.system_prompt
     if system_prompt is None:
         system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
+    # Prior memory loaded from outside the sandbox (#264) leads the system prompt
+    # so the model sees learned lessons as durable context.
+    system_prompt = _compose_system_prompt(system_prompt, memory_preamble)
     # In-bundle PreToolUse guardrails declared in the manifest hooks field (#272),
     # translated into SDK HookMatcher callbacks. None when the bundle declares none.
     bundle_hooks = load_bundle_hooks(config.session.plugin_dir)
@@ -82,7 +101,38 @@ def build_runner(
         trace_name=f"agentos-run:{config.session.session_id}",
         session_id=config.session.session_id,
         model=config.model,
+        memory_store=memory_store,
     )
+
+
+def _load_memory(config: RunnerConfig) -> tuple[MemoryStore, str | None]:
+    """Resolve AGENTOS_MEMORY_REF and load prior memory into a boot preamble.
+
+    Runs synchronously at boot (before the port is up), so a bad ref or an
+    unreachable store fails the process visibly rather than after serving. A
+    transient load failure degrades to "no memory" and does NOT block boot -- an
+    agent must still be able to run when its memory store is briefly unavailable.
+    """
+
+    store = resolve_memory(config.session.memory_ref, os.environ)
+
+    async def _load() -> list[MemoryRecord]:
+        return await store.load()
+
+    try:
+        records = anyio.run(_load)
+    except Exception as exc:  # noqa: BLE001 - degrade to no-memory, never fail boot
+        logger.warning(
+            "memory load failed session=%s error_class=%s: %s (booting without memory)",
+            config.session.session_id,
+            type(exc).__name__,
+            exc,
+        )
+        return store, None
+    logger.info(
+        "memory loaded session=%s records=%d", config.session.session_id, len(records)
+    )
+    return store, format_memory_preamble(records)
 
 
 def main() -> None:
@@ -107,7 +157,14 @@ def main() -> None:
         config.model,
         config.port,
     )
-    runner = build_runner(config, fake_model=fake_model, sdk_env=override)
+    memory_store, memory_preamble = _load_memory(config)
+    runner = build_runner(
+        config,
+        fake_model=fake_model,
+        sdk_env=override,
+        memory_store=memory_store,
+        memory_preamble=memory_preamble,
+    )
     app = create_app(runner, token=config.runner_token)
 
     async def _startup(_app: web.Application) -> None:
