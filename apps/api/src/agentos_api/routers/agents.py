@@ -3,6 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from .. import bundles, crud
@@ -25,7 +26,21 @@ router = APIRouter(
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
 async def create_agent(data: AgentCreate, session: SessionDep) -> AgentOut:
-    agent = await crud.create_agent(session, data)
+    # name and repo_full_name are unique. A collision is a caller conflict (409),
+    # not a server fault: catch the DB IntegrityError and map it, rather than
+    # letting it bubble as an opaque 500.
+    try:
+        agent = await crud.create_agent(session, data)
+    except IntegrityError as exc:
+        await session.rollback()
+        detail = str(exc.orig)
+        if "repo_full_name" in detail:
+            message = "an agent for that repository already exists"
+        elif "name" in detail:
+            message = "an agent with that name already exists"
+        else:
+            message = "agent violates a uniqueness constraint"
+        raise HTTPException(status.HTTP_409_CONFLICT, message) from exc
     return AgentOut.model_validate(agent)
 
 

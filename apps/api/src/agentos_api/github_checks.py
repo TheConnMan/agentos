@@ -6,9 +6,12 @@ failure, with the familiar "34/36 passed" description. The GitHub client is
 injectable so it can be mocked in tests.
 """
 
+import logging
 from typing import Literal
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 State = Literal["success", "failure", "pending", "error"]
 
@@ -55,6 +58,21 @@ class GitHubStatusReporter:
         target_url: str | None = None,
     ) -> State:
         state, description = eval_state(passed_count, total)
+        if not self._token.strip():
+            # No GitHub credential configured (local/dev, or a deploy without a
+            # GitHub App). There is nothing to post a commit status to, so skip
+            # the network call and return the computed state. Posting with an
+            # empty token sends an "Authorization: Bearer " header that httpx
+            # rejects (LocalProtocolError), which would 500 an otherwise
+            # successful eval report.
+            logger.info(
+                "no GitHub token configured; skipping commit-status post "
+                "for %s@%s (%s)",
+                repo_full_name,
+                sha,
+                description,
+            )
+            return state
         payload: dict[str, str] = {
             "state": state,
             "context": self._context,
