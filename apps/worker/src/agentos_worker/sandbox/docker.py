@@ -52,7 +52,7 @@ from ..binding import (
     FAKE_MODEL_ENV,
     PLUGIN_DIR_ENV,
 )
-from ..bundle_store import BundleStore, extract_bundle
+from ..bundle_store import BundleReader, extract_bundle
 from .k8s import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
@@ -104,7 +104,7 @@ class DockerSandboxClient:
         self,
         *,
         image: str,
-        bundle_store: BundleStore,
+        bundle_store: BundleReader,
         network: str | None = None,
         otel_endpoint: str | None = None,
         host: str = "127.0.0.1",

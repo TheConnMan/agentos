@@ -48,7 +48,7 @@ from ..binding import (
     SESSION_ID_ENV,
     apply_model_env,
 )
-from ..bundle_store import BundleStore
+from ..bundle_store import BundleReader
 from ..config import WorkerConfig
 from ..sandbox import SandboxSubstrate
 from ..sandbox.types import SandboxError
@@ -160,7 +160,7 @@ class EvalStreamConsumer(StreamConsumer):
         *,
         redis: Redis,
         config: WorkerConfig,
-        bundle_store: BundleStore,
+        bundle_store: BundleReader,
         substrate: SandboxSubstrate,
         reporter: EvalReporter,
         recorder: LangfuseEvalRecorder,

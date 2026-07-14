@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import bundles, crud
 from .models import AgentVersion
 from .schemas import BundleOut
-from .storage import BundleStore
+from .storage import ObjectStore
 
 
 class BundleInvalid(Exception):
@@ -43,7 +43,7 @@ def validate_archive(data: bytes) -> tuple[str, str]:
 
 
 async def store_bundle(
-    store: BundleStore,
+    store: ObjectStore,
     session: AsyncSession,
     agent_id: uuid.UUID,
     version: AgentVersion,
