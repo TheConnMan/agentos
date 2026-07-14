@@ -1,4 +1,4 @@
-# 25. Explicit named-provider egress, resolved at install
+# 32. Explicit named-provider egress, resolved at install
 
 Date: 2026-07-13
 Status: Accepted
