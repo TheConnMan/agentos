@@ -29,13 +29,16 @@ def _version_of(trace: dict[str, Any]) -> str | None:
     return None
 
 
-def _model_of(trace: dict[str, Any]) -> str | None:
-    """The model tag/metadata on an eval trace, or None when unlabelled.
+def _model_of(trace: dict[str, Any] | None) -> str | None:
+    """The model tag/metadata on an eval trace, or None when unlabelled/absent.
 
     Mirrors ``_version_of``: metadata field first (what the recorder writes
     straight onto the trace), falling back to the ``model:`` tag. A run with no
-    resolved model records neither, so the case is model-unlabelled (``None``).
+    resolved model records neither, so the case is model-unlabelled (``None``);
+    a missing trace for the (version, case) cell is likewise ``None``.
     """
+    if trace is None:
+        return None
     metadata = trace.get("metadata") or {}
     model = metadata.get("model")
     if isinstance(model, str) and model:
@@ -98,11 +101,7 @@ def build_matrix(
                 EvalCell(
                     version=version,
                     status=_status(version, case),
-                    model=(
-                        _model_of(trace)
-                        if (trace := latest.get((version, case))) is not None
-                        else None
-                    ),
+                    model=_model_of(latest.get((version, case))),
                 )
                 for version in versions
             ],
