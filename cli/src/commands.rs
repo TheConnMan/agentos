@@ -605,15 +605,13 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // the NAME (`-e NAME`); the value is supplied only to the Docker CLI child
     // process so Docker can copy it into the runner container.
     for name in &opts.secret {
-        if std::env::var_os(name).is_none() {
-            if !stored_env_contains(&docker_env, name) {
-                match secret_store_env(name)? {
-                    Some(pair) => docker_env.push(pair),
-                    None => {
-                        crate::ui::ui().note(&format!(
-                            "--secret {name}: not set in the environment or AgentOS secret store; nothing will be forwarded for it"
-                        ));
-                    }
+        if std::env::var_os(name).is_none() && !stored_env_contains(&docker_env, name) {
+            match secret_store_env(name)? {
+                Some(pair) => docker_env.push(pair),
+                None => {
+                    crate::ui::ui().note(&format!(
+                        "--secret {name}: not set in the environment or AgentOS secret store; nothing will be forwarded for it"
+                    ));
                 }
             }
         }
