@@ -328,6 +328,36 @@
           ],
           "hidden": false,
           "name": "eval"
+        },
+        {
+          "about": "Interview to generate a starter `evals/cases.json` (guided eval generation)",
+          "args": [
+            {
+              "default_values": [
+                "evals/cases.json"
+              ],
+              "global": false,
+              "help": "Where to write the suite (default: evals/cases.json)",
+              "id": "out",
+              "long": "out",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Overwrite an existing suite file instead of refusing",
+              "id": "force",
+              "long": "force",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "eval-init"
         }
       ]
     },
