@@ -16,13 +16,14 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import redis.asyncio as redis
-from pydantic import BaseModel
+
+from .schemas import TrajectorySelectionRequest
 
 EVAL_STREAM = "agentos:evals"
 STREAM_PAYLOAD_FIELD = "payload"
 
 
-class EvalJobRequest(BaseModel):
+class EvalJobRequest(TrajectorySelectionRequest):
     """One eval job: run ``suite`` against the version built from ``sha``."""
 
     agent_id: uuid.UUID

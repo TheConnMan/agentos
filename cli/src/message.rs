@@ -34,7 +34,10 @@ use crate::api::{Agent, ApiClient};
 use crate::chat::{
     await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
 };
-use crate::evals::{EvalCase, EvalSuite};
+use crate::evals::{
+    cases_sha256, load_trajectory_sidecar, validate_trajectory_case_ids, EvalCase, EvalSuite,
+    TrajectorySpecs,
+};
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
 use crate::queue::{self, connect, diagnostics, synthetic_turn, xadd};
 use crate::state::{save_turn, TurnContext, TurnVerb};
@@ -834,11 +837,21 @@ pub fn eval_dry_run_lines(opts: &EvalOpts, suite_name: &str, case_count: usize) 
 
 /// Resolve the eval suite the way `skill eval` does: an explicit `--cases`
 /// wins, else `evals/cases.json` in the cwd, then the recorded bundle dir.
-fn resolve_suite(explicit: Option<PathBuf>) -> Result<EvalSuite> {
+fn resolve_suite(
+    explicit: Option<PathBuf>,
+) -> Result<(EvalSuite, Option<(TrajectorySpecs, String)>)> {
     let state_plugin_dir = crate::state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
     let path =
         crate::commands::resolve_cases_path(explicit, Path::new("."), state_plugin_dir.as_deref())?;
-    crate::evals::load_suite(&path)
+    let suite = crate::evals::load_suite(&path)?;
+    let trajectory = match load_trajectory_sidecar(&path)? {
+        Some(specs) => {
+            validate_trajectory_case_ids(&suite)?;
+            Some((specs, cases_sha256(&path)?))
+        }
+        None => None,
+    };
+    Ok((suite, trajectory))
 }
 
 /// The shared per-tier eval engine: enqueue one synthetic `QueuedTurn` per case
@@ -893,12 +906,229 @@ async fn run_eval_turns(
 /// so a suite that passes at `skill` can be re-asserted verbatim at `local` and
 /// `cluster` (issue #344, the per-tier parity gate).
 pub async fn eval(opts: EvalOpts) -> Result<()> {
-    let suite = resolve_suite(opts.cases.clone())?;
+    let (suite, trajectory) = resolve_suite(opts.cases.clone())?;
+    if let Some((trajectory_specs, cases_sha256)) = trajectory {
+        return if opts.local {
+            eval_local_trajectory(opts, suite, trajectory_specs, cases_sha256).await
+        } else {
+            eval_cluster_trajectory(opts, suite, trajectory_specs, cases_sha256).await
+        };
+    }
     if opts.local {
         eval_local(opts, suite).await
     } else {
         eval_cluster(opts, suite).await
     }
+}
+
+fn select_eval_agent<'a>(agents: &'a [Agent], channel: Option<&str>) -> Result<&'a Agent> {
+    if let Some(channel) = channel {
+        return agents
+            .iter()
+            .find(|agent| agent.slack_channel == channel)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no deployed agent uses channel {channel:?}; pass a channel from GET /agents"
+                )
+            });
+    }
+    match agents {
+        [] => bail!("no agents are deployed on the platform API; deploy one before running eval"),
+        [only] => Ok(only),
+        many => {
+            let listed = many
+                .iter()
+                .map(|agent| format!("{} -> {}", agent.name, agent.slack_channel))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("multiple agents are deployed; pass --channel to select one ({listed})")
+        }
+    }
+}
+
+fn current_matrix_results(
+    suite: &EvalSuite,
+    matrix: &crate::api::EvalMatrix,
+    sha: &str,
+    seconds: f64,
+) -> Result<Option<Vec<(String, bool, f64)>>> {
+    let mut results = Vec::with_capacity(suite.cases.len());
+    for case in &suite.cases {
+        let Some(row) = matrix.rows.iter().find(|row| row.case_id == case.id) else {
+            return Ok(None);
+        };
+        let Some(cell) = row.cells.iter().find(|cell| cell.version == sha) else {
+            return Ok(None);
+        };
+        let passed = match cell.status.as_str() {
+            "pass" => true,
+            "fail" => false,
+            "missing" => return Ok(None),
+            status => bail!(
+                "eval matrix returned invalid status {status:?} for case {:?}",
+                case.id
+            ),
+        };
+        results.push((case.id.clone(), passed, seconds));
+    }
+    Ok(Some(results))
+}
+
+async fn run_platform_trajectory_eval(
+    api: &ApiClient,
+    agent: &Agent,
+    suite: &EvalSuite,
+    trajectory_specs: &TrajectorySpecs,
+    cases_sha256: &str,
+    timeout_secs: u64,
+) -> Result<Vec<(String, bool, f64)>> {
+    let invocation = format!("{}_{}", suite.name, uuid::Uuid::new_v4().simple());
+    let case_ids: Vec<String> = suite.cases.iter().map(|case| case.id.clone()).collect();
+    let started = Instant::now();
+    let trigger = api
+        .trigger_eval(
+            &agent.id,
+            &invocation,
+            Some(trajectory_specs),
+            Some(&case_ids),
+            Some(cases_sha256),
+        )
+        .await?;
+    if trigger.suite != invocation {
+        bail!(
+            "eval trigger returned suite {:?}, expected {:?}",
+            trigger.suite,
+            invocation
+        );
+    }
+    let timeout = Duration::from_secs(timeout_secs);
+    loop {
+        let matrix = api.eval_matrix(&trigger.suite).await?;
+        let elapsed = started.elapsed();
+        if let Some(results) =
+            current_matrix_results(suite, &matrix, &trigger.sha, elapsed.as_secs_f64())?
+        {
+            return Ok(results);
+        }
+        if elapsed >= timeout {
+            return Err(crate::exit::CliError::transient(format!(
+                "timed out after {timeout_secs}s waiting for trajectory eval {:?} at sha {:?}",
+                trigger.suite, trigger.sha
+            ))
+            .with_fix("retry after the worker and Langfuse are healthy")
+            .into());
+        }
+        tokio::time::sleep(Duration::from_millis(100).min(timeout - elapsed)).await;
+    }
+}
+
+fn trajectory_eval_dry_run_lines(opts: &EvalOpts, suite: &EvalSuite) -> Vec<String> {
+    let tier = if opts.local { "local" } else { "cluster" };
+    let mut lines = vec![format!(
+        "trigger {} trajectory case(s) from suite {:?} against the {tier} tier",
+        suite.cases.len(),
+        suite.name
+    )];
+    if opts.local {
+        lines.push(format!(
+            "resolve the selected agent through {}/agents",
+            local_api_base(opts.api_url.as_deref())
+        ));
+    } else {
+        lines.push(
+            port_forward_command(
+                &opts.namespace,
+                &opts.release,
+                "api",
+                opts.api_local_port,
+                API_REMOTE_PORT,
+            )
+            .display(),
+        );
+    }
+    lines.push("POST /evals/trigger with a unique suite invocation".to_string());
+    lines.push("poll GET /evals/matrix for the returned sha".to_string());
+    lines
+}
+
+async fn eval_local_trajectory(
+    opts: EvalOpts,
+    suite: EvalSuite,
+    trajectory_specs: TrajectorySpecs,
+    cases_sha256: String,
+) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        for line in trajectory_eval_dry_run_lines(&opts, &suite) {
+            ui.payload_plain(&line);
+        }
+        return Ok(());
+    }
+
+    let api_base = local_api_base(opts.api_url.as_deref());
+    let api = ApiClient::new(&api_base, &opts.api_key)?;
+    let agents = api.list_agents().await.with_context(|| {
+        format!("listing agents via {api_base} (is `agentos local up` running?)")
+    })?;
+    let agent = select_eval_agent(&agents, opts.channel.as_deref())?;
+    ui.note(&format!("running trajectory eval for agent {}", agent.name));
+    let results = run_platform_trajectory_eval(
+        &api,
+        agent,
+        &suite,
+        &trajectory_specs,
+        &cases_sha256,
+        opts.timeout_secs,
+    )
+    .await?;
+    crate::commands::report_eval(&results)
+}
+
+async fn eval_cluster_trajectory(
+    opts: EvalOpts,
+    suite: EvalSuite,
+    trajectory_specs: TrajectorySpecs,
+    cases_sha256: String,
+) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        for line in trajectory_eval_dry_run_lines(&opts, &suite) {
+            ui.payload_plain(&line);
+        }
+        return Ok(());
+    }
+
+    require_on_path("kubectl")?;
+    let _api_pf = start_port_forward(
+        &port_forward_command(
+            &opts.namespace,
+            &opts.release,
+            "api",
+            opts.api_local_port,
+            API_REMOTE_PORT,
+        ),
+        opts.api_local_port,
+        "api",
+    )
+    .await?;
+    let api_base = format!("http://localhost:{}", opts.api_local_port);
+    let api = ApiClient::new(&api_base, &opts.api_key)?;
+    let agents = api
+        .list_agents()
+        .await
+        .context("listing agents through the api port forward")?;
+    let agent = select_eval_agent(&agents, opts.channel.as_deref())?;
+    ui.note(&format!("running trajectory eval for agent {}", agent.name));
+    let results = run_platform_trajectory_eval(
+        &api,
+        agent,
+        &suite,
+        &trajectory_specs,
+        &cases_sha256,
+        opts.timeout_secs,
+    )
+    .await?;
+    crate::commands::report_eval(&results)
 }
 
 async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {

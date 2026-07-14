@@ -9,12 +9,14 @@
 //! Python models. Grading semantics mirror the platform's `Grader.grade`. This is
 //! the CLI-local seed of the K1 eval machinery, not a replacement for it.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use agentos_aci_protocol::{OutboundEvent, SessionStatus};
 use anyhow::{anyhow, bail, Context, Result};
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// How a case's expected value is compared against the agent's answer.
 // `Serialize` is derived alongside `Deserialize` so the spec scaffold path
@@ -81,6 +83,157 @@ pub struct EvalCase {
 pub struct EvalSuite {
     pub name: String,
     pub cases: Vec<EvalCase>,
+}
+
+/// How an observed tool sequence is compared with one case's expectation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrajectoryMode {
+    Exact,
+    InOrder,
+    AnyOrder,
+    Precision,
+    Recall,
+}
+
+fn default_trajectory_mode() -> TrajectoryMode {
+    TrajectoryMode::InOrder
+}
+
+fn default_trajectory_threshold() -> f64 {
+    1.0
+}
+
+/// One case's trajectory expectation from `evals/trajectory.json`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrajectorySpec {
+    pub expected: Vec<String>,
+    #[serde(default = "default_trajectory_mode")]
+    pub mode: TrajectoryMode,
+    #[serde(default = "default_trajectory_threshold")]
+    pub threshold: f64,
+}
+
+pub type TrajectorySpecs = HashMap<String, TrajectorySpec>;
+
+/// Load the optional trajectory sidecar beside `cases.json`.
+///
+/// Presence selects trajectory scoring for the whole suite. An empty mapping is
+/// valid and therefore fails every case through the missing spec rule. Invalid
+/// content is a usage error instead of silently selecting the text grader.
+pub fn load_trajectory_sidecar(cases_path: &Path) -> Result<Option<TrajectorySpecs>> {
+    let path = cases_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("trajectory.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let invalid = |detail: String| {
+        crate::exit::CliError::usage(format!(
+            "{} is not a valid trajectory sidecar: {detail}",
+            path.display()
+        ))
+        .with_fix("fix evals/trajectory.json or remove it to use text grading")
+    };
+    let body = std::fs::read_to_string(&path)
+        .map_err(|err| invalid(format!("could not read it: {err}")))?;
+    let specs: TrajectorySpecs =
+        serde_json::from_str(&body).map_err(|err| invalid(err.to_string()))?;
+    for (case_id, spec) in &specs {
+        if !spec.threshold.is_finite() || !(0.0..=1.0).contains(&spec.threshold) {
+            return Err(invalid(format!(
+                "case {case_id:?} has threshold {}, expected a value from 0 through 1",
+                spec.threshold
+            ))
+            .into());
+        }
+    }
+    Ok(Some(specs))
+}
+
+/// Lowercase SHA256 of the exact selected `cases.json` bytes.
+pub fn cases_sha256(path: &Path) -> Result<String> {
+    let body = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(body)))
+}
+
+/// Validate the case identity required by explicit trajectory selection.
+pub fn validate_trajectory_case_ids(suite: &EvalSuite) -> Result<()> {
+    let mut case_ids = HashSet::with_capacity(suite.cases.len());
+    for case in &suite.cases {
+        if case.id.is_empty() {
+            return Err(crate::exit::CliError::usage(format!(
+                "suite {:?} contains an empty eval case id",
+                suite.name
+            ))
+            .with_fix("give every trajectory eval case a nonempty unique id")
+            .into());
+        }
+        if !case_ids.insert(case.id.as_str()) {
+            return Err(crate::exit::CliError::usage(format!(
+                "suite {:?} contains duplicate eval case id {:?}",
+                suite.name, case.id
+            ))
+            .with_fix("give every trajectory eval case a nonempty unique id")
+            .into());
+        }
+    }
+    Ok(())
+}
+
+/// Apply the same five deterministic trajectory modes as the platform worker.
+pub fn trajectory_matches(spec: &TrajectorySpec, observed: &[String]) -> bool {
+    match spec.mode {
+        TrajectoryMode::Exact => observed == spec.expected,
+        TrajectoryMode::InOrder => {
+            let mut expected = spec.expected.iter();
+            let mut next = expected.next();
+            for tool in observed {
+                if next.is_some_and(|wanted| wanted == tool) {
+                    next = expected.next();
+                }
+            }
+            next.is_none()
+        }
+        TrajectoryMode::AnyOrder => {
+            let mut remaining: HashMap<&str, usize> = HashMap::new();
+            for tool in &spec.expected {
+                *remaining.entry(tool.as_str()).or_default() += 1;
+            }
+            for tool in observed {
+                if let Some(count) = remaining.get_mut(tool.as_str()) {
+                    *count = count.saturating_sub(1);
+                }
+            }
+            remaining.values().all(|count| *count == 0)
+        }
+        TrajectoryMode::Precision => {
+            let expected: HashSet<&str> = spec.expected.iter().map(String::as_str).collect();
+            let ratio = if observed.is_empty() {
+                1.0
+            } else {
+                observed
+                    .iter()
+                    .filter(|tool| expected.contains(tool.as_str()))
+                    .count() as f64
+                    / observed.len() as f64
+            };
+            ratio >= spec.threshold
+        }
+        TrajectoryMode::Recall => {
+            let expected: HashSet<&str> = spec.expected.iter().map(String::as_str).collect();
+            let observed: HashSet<&str> = observed.iter().map(String::as_str).collect();
+            let ratio = if expected.is_empty() {
+                1.0
+            } else {
+                expected.intersection(&observed).count() as f64 / expected.len() as f64
+            };
+            ratio >= spec.threshold
+        }
+    }
 }
 
 /// Validate an assembled suite: reject an empty case list and eagerly compile
@@ -165,6 +318,39 @@ pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
         })
     );
     completed && case.grader.grade(&graded_answer(events))
+}
+
+/// Grade a completed turn from its ordered `tool_note.tool` observations.
+/// A missing case spec fails closed. The same completed turn gate as text
+/// grading runs first, so classified failures and incomplete turns cannot pass.
+pub fn trajectory_turn_passes(
+    case: &EvalCase,
+    events: &[OutboundEvent],
+    specs: &TrajectorySpecs,
+) -> bool {
+    let completed = matches!(
+        events.last(),
+        Some(OutboundEvent::Final {
+            status: SessionStatus::Done,
+            ..
+        })
+    );
+    if !completed {
+        return false;
+    }
+    let Some(spec) = specs.get(&case.id) else {
+        return false;
+    };
+    let observed: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            OutboundEvent::ToolNote {
+                tool: Some(tool), ..
+            } => Some(tool.clone()),
+            _ => None,
+        })
+        .collect();
+    trajectory_matches(spec, &observed)
 }
 
 /// One rendered result line: check-or-cross, name, duration (design canon).

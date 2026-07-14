@@ -9,6 +9,8 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::evals::TrajectorySpecs;
+
 pub struct ApiClient {
     base_url: String,
     api_key: String,
@@ -87,6 +89,31 @@ pub struct DeployOutcome {
     pub bundle: Bundle,
     pub deployment: Deployment,
     pub channel: ChannelOutcome,
+}
+
+/// Identity returned when the API enqueues one platform eval invocation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalTriggerResult {
+    pub sha: String,
+    pub suite: String,
+}
+
+/// One structured worker verdict in the eval matrix.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalCell {
+    pub version: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalMatrixRow {
+    pub case_id: String,
+    pub cells: Vec<EvalCell>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalMatrix {
+    pub rows: Vec<EvalMatrixRow>,
 }
 
 /// Whether this endpoint would send the `X-API-Key` over cleartext HTTP to a
@@ -370,6 +397,53 @@ impl ApiClient {
                     "no agent found matching {identifier:?} (by name or id); deploy it first with `agentos cluster deploy`"
                 )
             })
+    }
+
+    /// Enqueue an on demand eval for the agent's active development deployment.
+    pub async fn trigger_eval(
+        &self,
+        agent_id: &str,
+        suite: &str,
+        trajectory_specs: Option<&TrajectorySpecs>,
+        case_ids: Option<&[String]>,
+        cases_sha256: Option<&str>,
+    ) -> Result<EvalTriggerResult> {
+        let resp = self
+            .http
+            .post(format!("{}/evals/trigger", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&json!({
+                "agent_id": agent_id,
+                "suite": suite,
+                "trajectory_specs": trajectory_specs,
+                "case_ids": case_ids,
+                "cases_sha256": cases_sha256,
+            }))
+            .send()
+            .await
+            .context("POST /evals/trigger")?;
+        Self::expect_ok(resp, "triggering the eval")
+            .await?
+            .json()
+            .await
+            .context("decoding eval trigger result")
+    }
+
+    /// Read the structured worker outcomes recorded for one suite invocation.
+    pub async fn eval_matrix(&self, suite: &str) -> Result<EvalMatrix> {
+        let resp = self
+            .http
+            .get(format!("{}/evals/matrix", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .query(&[("suite", suite)])
+            .send()
+            .await
+            .context("GET /evals/matrix")?;
+        Self::expect_ok(resp, "reading the eval matrix")
+            .await?
+            .json()
+            .await
+            .context("decoding eval matrix")
     }
 
     /// Flip the agent kill switch on: `POST /agents/{id}/kill` (no request body).

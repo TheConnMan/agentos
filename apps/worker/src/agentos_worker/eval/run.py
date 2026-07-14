@@ -28,6 +28,7 @@ from ..runner_client import RunnerClient
 from .models import EvalRunResult, EvalSuite
 from .recorder import LangfuseEvalRecorder
 from .runner import EvalRunner
+from .scorer import Scorer
 
 
 def load_suite(path: str | Path) -> EvalSuite:
@@ -42,6 +43,7 @@ async def run_eval_suite(
     recorder: LangfuseEvalRecorder | None = None,
     token: str | None = None,
     model: str | None = None,
+    scorer: Scorer | None = None,
 ) -> EvalRunResult:
     """Run a suite against a runner endpoint and, if configured, record it.
 
@@ -50,7 +52,7 @@ async def run_eval_suite(
     eval matrix can slice pass-rate/cost by model.
     """
     async with RunnerClient() as runner:
-        result = await EvalRunner(runner).run(
+        result = await EvalRunner(runner, scorer=scorer).run(
             suite, base_url=base_url, version=version, token=token, model=model
         )
     if recorder is not None:

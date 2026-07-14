@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, CheckSpec, StartSpec};
-use crate::evals::{load_suite, turn_passes};
+use crate::evals::{
+    load_suite, load_trajectory_sidecar, trajectory_turn_passes, turn_passes,
+    validate_trajectory_case_ids,
+};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
 use crate::scaffold::{read_manifest, scaffold, scaffold_from_spec};
@@ -849,6 +852,10 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
     let state_plugin_dir = state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
     let cases_path = resolve_cases_path(cases_path, Path::new("."), state_plugin_dir.as_deref())?;
     let suite = load_suite(&cases_path)?;
+    let trajectory = load_trajectory_sidecar(&cases_path)?;
+    if trajectory.is_some() {
+        validate_trajectory_case_ids(&suite)?;
+    }
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let ui = crate::ui::ui();
@@ -863,7 +870,11 @@ pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
-        results.push((case.id.clone(), turn_passes(case, &events), elapsed));
+        let passed = match trajectory.as_ref() {
+            Some(specs) => trajectory_turn_passes(case, &events, specs),
+            None => turn_passes(case, &events),
+        };
+        results.push((case.id.clone(), passed, elapsed));
         bar.inc(1);
     }
     bar.finish();

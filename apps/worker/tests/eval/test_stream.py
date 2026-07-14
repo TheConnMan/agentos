@@ -13,6 +13,7 @@ provisioned-runner end-to-end (no ``target_url``) that tears the sandbox down.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import pytest
 import redis
 from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV
 from agentos_worker.bundle_store import BundleStore
@@ -162,7 +164,14 @@ def _cfg(stream: str, group: str, **overrides: object) -> WorkerConfig:
 
 
 def _item(
-    *, suite: str, sha: str, bundle_ref: str | None, target_url: str | None
+    *,
+    suite: str,
+    sha: str,
+    bundle_ref: str | None,
+    target_url: str | None,
+    trajectory_specs: dict[str, object] | None = None,
+    case_ids: list[str] | None = None,
+    cases_sha256: str | None = None,
 ) -> EvalWorkItem:
     return EvalWorkItem(
         agent_id=uuid.uuid4(),
@@ -171,6 +180,9 @@ def _item(
         suite=suite,
         bundle_ref=bundle_ref,
         target_url=target_url,
+        trajectory_specs=trajectory_specs,
+        case_ids=case_ids,
+        cases_sha256=cases_sha256,
         requested_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -336,6 +348,410 @@ def test_seam_full_consume_eval_report_cycle(make_eval_harness, bundles) -> None
     asyncio.run(go())
 
 
+@pytest.mark.parametrize(
+    (
+        "bundle_trajectory",
+        "selected_trajectory",
+        "tool_calls",
+        "output",
+        "idle",
+        "expected_passed",
+        "expected_total",
+    ),
+    [
+        (
+            {"ordered": {"expected": ["search", "fetch"], "mode": "exact"}},
+            None,
+            ["search", "fetch"],
+            "grader miss",
+            False,
+            1,
+            1,
+        ),
+        (
+            {"ordered": {"expected": ["search", "fetch"], "mode": "exact"}},
+            None,
+            ["fetch", "search"],
+            "grader pass",
+            False,
+            0,
+            1,
+        ),
+        ({}, None, ["search", "fetch"], "grader pass", False, 0, 1),
+        (None, None, ["fetch", "search"], "grader pass", False, 1, 1),
+        (
+            {"ordered": {"expected": ["search", "fetch"], "mode": "exact"}},
+            None,
+            ["search", "fetch"],
+            "grader pass",
+            True,
+            0,
+            1,
+        ),
+        (
+            {"ordered": {"expected": ["fetch", "search"], "mode": "exact"}},
+            {"ordered": {"expected": ["search", "fetch"], "mode": "exact"}},
+            ["search", "fetch"],
+            "grader miss",
+            False,
+            1,
+            1,
+        ),
+        (
+            {"ordered": {"expected": ["search", "fetch"], "mode": "exact"}},
+            {},
+            ["search", "fetch"],
+            "grader pass",
+            False,
+            0,
+            1,
+        ),
+    ],
+    ids=[
+        "matching_order",
+        "wrong_order",
+        "missing_spec",
+        "no_sidecar",
+        "incomplete_turn",
+        "explicit_map_precedence",
+        "explicit_empty_map",
+    ],
+)
+def test_stream_selects_trajectory_scorer_from_job_or_bundle(
+    make_eval_harness,
+    bundles,
+    bundle_trajectory: dict[str, object] | None,
+    selected_trajectory: dict[str, object] | None,
+    tool_calls: list[str],
+    output: str,
+    idle: bool,
+    expected_passed: int,
+    expected_total: int,
+) -> None:
+    store, upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, _client):
+            suite = EvalSuite(
+                name="trajectory",
+                cases=[
+                    EvalCase(
+                        id="ordered",
+                        input="run tools",
+                        grader=Grader(kind=CONTAINS, expected="grader pass"),
+                    )
+                ],
+            )
+            fake.responses = {"run tools": output}
+            fake.tool_calls = {"run tools": tool_calls}
+            if idle:
+                fake.idle_inputs = {"run tools"}
+            bundle_ref = upload(_suite_bundle(suite, trajectory=bundle_trajectory))
+            explicit_case_ids = ["ordered"] if selected_trajectory is not None else None
+            explicit_cases_sha256 = (
+                hashlib.sha256(suite.model_dump_json().encode("utf-8")).hexdigest()
+                if selected_trajectory is not None
+                else None
+            )
+            token = uuid.uuid4().hex[:8]
+            cfg = _cfg(f"test:evals:{token}", f"g-{token}")
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=30.0) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                item = _item(
+                    suite="trajectory",
+                    sha=f"sha-{token}",
+                    bundle_ref=bundle_ref,
+                    target_url=base_url,
+                    trajectory_specs=selected_trajectory,
+                    case_ids=explicit_case_ids,
+                    cases_sha256=explicit_cases_sha256,
+                )
+                await client.xadd(cfg.eval_stream, {"payload": item.model_dump_json()})
+
+                await _drain_one(consumer, reports)
+
+                assert reports[0]["passed_count"] == expected_passed
+                assert reports[0]["total"] == expected_total
+                if selected_trajectory is not None:
+                    assert [frame["text"] for frame in fake.seen] == ["run tools"]
+
+            await client.delete(cfg.eval_stream)
+            await client.aclose()
+
+    asyncio.run(go())
+
+
+def test_malformed_bundle_trajectory_records_terminal_case_failures(
+    make_eval_harness, bundles
+) -> None:
+    store, upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, _client):
+            suite = EvalSuite(
+                name="malformed",
+                cases=[
+                    EvalCase(
+                        id="first",
+                        input="first input",
+                        grader=Grader(kind=CONTAINS, expected="grader pass"),
+                    ),
+                    EvalCase(
+                        id="second",
+                        input="second input",
+                        grader=Grader(kind=CONTAINS, expected="grader pass"),
+                    ),
+                ],
+            )
+            fake.responses = {
+                "first input": "grader pass",
+                "second input": "grader pass",
+            }
+            bundle_ref = upload(_suite_bundle(suite, trajectory="{"))
+            token = uuid.uuid4().hex[:8]
+            sha = f"sha-{token}"
+            cfg = _cfg(f"test:evals:{token}", f"g-{token}")
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            ingestions: list[dict[str, Any]] = []
+
+            def record_ingestion(request: httpx.Request) -> httpx.Response:
+                ingestions.append(json.loads(request.content))
+                return httpx.Response(200, json={"errors": []})
+
+            transport = httpx.MockTransport(record_ingestion)
+            async with httpx.AsyncClient(transport=transport) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                item = _item(
+                    suite="malformed",
+                    sha=sha,
+                    bundle_ref=bundle_ref,
+                    target_url=base_url,
+                )
+                await client.xadd(cfg.eval_stream, {"payload": item.model_dump_json()})
+
+                await _drain_one(consumer, reports)
+
+                assert fake.seen == []
+                assert reports[0]["passed_count"] == 0
+                assert reports[0]["total"] == 2
+                traces = [
+                    event["body"]
+                    for event in ingestions[0]["batch"]
+                    if event["type"] == "trace-create"
+                ]
+                assert sorted(trace["metadata"]["case_id"] for trace in traces) == [
+                    "first",
+                    "second",
+                ]
+                assert all(
+                    trace["metadata"]["error"] == "invalid trajectory configuration"
+                    for trace in traces
+                )
+                summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert summary["pending"] == 0
+
+            await client.delete(cfg.eval_stream)
+            await client.aclose()
+
+    asyncio.run(go())
+
+
+def test_invalid_direct_stream_trajectory_map_is_poison_acked(
+    make_eval_harness, bundles
+) -> None:
+    store, upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, _client):
+            fake.responses = {"run tools": "grader pass"}
+            suite = EvalSuite(
+                name="invalid",
+                cases=[
+                    EvalCase(
+                        id="ordered",
+                        input="run tools",
+                        grader=Grader(kind=CONTAINS, expected="grader pass"),
+                    )
+                ],
+            )
+            bundle_ref = upload(suite)
+            token = uuid.uuid4().hex[:8]
+            cfg = _cfg(f"test:evals:{token}", f"g-{token}")
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=30.0) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                item = _item(
+                    suite="invalid",
+                    sha=f"sha-{token}",
+                    bundle_ref=bundle_ref,
+                    target_url=base_url,
+                ).model_dump(mode="json")
+                item["trajectory_specs"] = {
+                    "ordered": {"expected": "search", "mode": "exact", "threshold": 1.0}
+                }
+                item["case_ids"] = ["ordered"]
+                item["cases_sha256"] = hashlib.sha256(
+                    suite.model_dump_json().encode("utf-8")
+                ).hexdigest()
+                await client.xadd(cfg.eval_stream, {"payload": json.dumps(item)})
+
+                task = asyncio.create_task(consumer.run())
+                await asyncio.sleep(0.5)
+                consumer.request_stop()
+                await task
+
+                assert reports == []
+                assert fake.seen == []
+                summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert summary["pending"] == 0
+
+            await client.delete(cfg.eval_stream)
+            await client.aclose()
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    ("deployed_cases", "selected_cases", "requested_ids"),
+    [
+        (
+            [("first", "deployed input")],
+            [("first", "selected input")],
+            ["first"],
+        ),
+        (
+            [("first", "first input"), ("second", "second input")],
+            [("first", "first input")],
+            ["first"],
+        ),
+        (
+            [("first", "first input")],
+            [("first", "first input")],
+            ["first", "missing"],
+        ),
+        (
+            [("first", "first input"), ("second", "second input")],
+            [("first", "first input"), ("second", "second input")],
+            ["second", "first"],
+        ),
+    ],
+    ids=["changed_input", "extra_deployed_case", "requested_extra_id", "dishonest_order"],
+)
+def test_explicit_trajectory_identity_mismatch_fails_requested_cases(
+    make_eval_harness,
+    bundles,
+    deployed_cases: list[tuple[str, str]],
+    selected_cases: list[tuple[str, str]],
+    requested_ids: list[str],
+) -> None:
+    store, upload = bundles
+
+    def make_suite(definitions: list[tuple[str, str]]) -> EvalSuite:
+        return EvalSuite(
+            name="identity",
+            cases=[
+                EvalCase(
+                    id=case_id,
+                    input=case_input,
+                    grader=Grader(kind=CONTAINS, expected="grader pass"),
+                )
+                for case_id, case_input in definitions
+            ],
+        )
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, _client):
+            deployed_suite = make_suite(deployed_cases)
+            selected_suite = make_suite(selected_cases)
+            fake.responses = {case.input: "grader pass" for case in deployed_suite.cases}
+            bundle_ref = upload(_suite_bundle(deployed_suite))
+            token = uuid.uuid4().hex[:8]
+            cfg = _cfg(f"test:evals:{token}", f"g-{token}")
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            ingestions: list[dict[str, Any]] = []
+
+            def record_ingestion(request: httpx.Request) -> httpx.Response:
+                ingestions.append(json.loads(request.content))
+                return httpx.Response(200, json={"errors": []})
+
+            transport = httpx.MockTransport(record_ingestion)
+            async with httpx.AsyncClient(transport=transport) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                item = _item(
+                    suite="identity",
+                    sha=f"sha-{token}",
+                    bundle_ref=bundle_ref,
+                    target_url=base_url,
+                    trajectory_specs={},
+                    case_ids=requested_ids,
+                    cases_sha256=hashlib.sha256(
+                        selected_suite.model_dump_json().encode("utf-8")
+                    ).hexdigest(),
+                )
+                await client.xadd(cfg.eval_stream, {"payload": item.model_dump_json()})
+
+                await _drain_one(consumer, reports)
+
+                assert fake.seen == []
+                assert reports[0]["passed_count"] == 0
+                assert reports[0]["total"] == len(requested_ids)
+                traces = [
+                    event["body"]
+                    for event in ingestions[0]["batch"]
+                    if event["type"] == "trace-create"
+                ]
+                assert [trace["metadata"]["case_id"] for trace in traces] == requested_ids
+                assert all(
+                    trace["metadata"]["error"]
+                    == "selected eval cases do not match deployed bundle"
+                    for trace in traces
+                )
+                summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert summary["pending"] == 0
+
+            await client.delete(cfg.eval_stream)
+            await client.aclose()
+
+    asyncio.run(go())
+
+
 def test_malformed_payload_is_acked_and_dropped(make_eval_harness, bundles) -> None:
     """A payload that will never parse on any redelivery is logged, acked, and
     dropped -- never reported, never stuck pending."""
@@ -485,16 +901,25 @@ def test_provisioned_runner_end_to_end(make_eval_harness, bundles) -> None:
 
     async def go() -> None:
         async with make_eval_harness() as (base_url, fake, _client):
-            fake.responses = {"ping": "pong"}
+            fake.responses = {"ping": "grader miss"}
+            fake.tool_calls = {"ping": ["search", "fetch"]}
             port = int(base_url.rsplit(":", 1)[1])
+            suite = EvalSuite(
+                name="prov",
+                cases=[
+                    EvalCase(
+                        id="ordered",
+                        input="ping",
+                        grader=Grader(kind=CONTAINS, expected="pong"),
+                    )
+                ],
+            )
             bundle_ref = upload(
-                EvalSuite(
-                    name="prov",
-                    cases=[
-                        EvalCase(
-                            id="1", input="ping", grader=Grader(kind=CONTAINS, expected="pong")
-                        )
-                    ],
+                _suite_bundle(
+                    suite,
+                    trajectory={
+                        "ordered": {"expected": ["search", "fetch"], "mode": "exact"}
+                    },
                 )
             )
             token = uuid.uuid4().hex[:8]
@@ -634,7 +1059,9 @@ def test_pending_entry_from_a_dead_consumer_is_reclaimed(make_eval_harness, bund
 RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
 
 
-def _suite_bundle(suite: EvalSuite) -> bytes:
+def _suite_bundle(
+    suite: EvalSuite, *, trajectory: dict[str, object] | str | None = None
+) -> bytes:
     """A minimal tar.gz carrying evals/cases.json, so the real
     load_suite_from_bundle returns a real suite (the MinIO fetch is the only
     faked boundary)."""
@@ -644,6 +1071,13 @@ def _suite_bundle(suite: EvalSuite) -> bytes:
         info = tarfile.TarInfo("evals/cases.json")
         info.size = len(payload)
         tf.addfile(info, io.BytesIO(payload))
+        if trajectory is not None:
+            trajectory_payload = (
+                trajectory if isinstance(trajectory, str) else json.dumps(trajectory)
+            ).encode("utf-8")
+            trajectory_info = tarfile.TarInfo("evals/trajectory.json")
+            trajectory_info.size = len(trajectory_payload)
+            tf.addfile(trajectory_info, io.BytesIO(trajectory_payload))
     return buf.getvalue()
 
 
