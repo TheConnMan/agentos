@@ -707,6 +707,35 @@
             "title": "Agent Id",
             "type": "string"
           },
+          "case_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Ids"
+          },
+          "cases_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cases Sha256"
+          },
           "suite": {
             "anyOf": [
               {
@@ -728,6 +757,20 @@
               }
             ],
             "title": "Target Url"
+          },
+          "trajectory_specs": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/TrajectorySpecRequest"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trajectory Specs"
           },
           "version_id": {
             "anyOf": [
@@ -1501,6 +1544,43 @@
           "tree"
         ],
         "title": "TraceTree",
+        "type": "object"
+      },
+      "TrajectorySpecRequest": {
+        "additionalProperties": false,
+        "description": "One strict trajectory scorer specification supplied by an API caller.",
+        "properties": {
+          "expected": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected",
+            "type": "array"
+          },
+          "mode": {
+            "default": "in_order",
+            "enum": [
+              "exact",
+              "in_order",
+              "any_order",
+              "precision",
+              "recall"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "threshold": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "expected"
+        ],
+        "title": "TrajectorySpecRequest",
         "type": "object"
       },
       "ValidationError": {

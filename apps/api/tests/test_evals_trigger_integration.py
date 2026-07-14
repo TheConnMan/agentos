@@ -11,6 +11,7 @@ import json
 import uuid
 from typing import Any
 
+import pytest
 import redis
 from agentos_api import crud
 from agentos_api.config import get_settings
@@ -19,6 +20,7 @@ from agentos_api.models import Environment
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 REPO = "octo/trigger-10"
+VALID_CASES_SHA256 = "a" * 64
 
 
 def _create_agent(client: Any, auth_headers: dict[str, str], name: str) -> dict[str, Any]:
@@ -141,6 +143,143 @@ def test_trigger_enqueues_for_active_dev_deployment(
     assert req.suite == get_settings().eval_default_suite
     assert req.bundle_ref == seeded["bundle_ref"]
     assert req.target_url is None
+    assert req.trajectory_specs is None
+    assert req.case_ids is None
+    assert req.cases_sha256 is None
+
+
+@pytest.mark.parametrize(
+    "trajectory_specs",
+    [
+        {},
+        {
+            "weather": {
+                "expected": ["WebSearch", "WebFetch"],
+                "mode": "in_order",
+                "threshold": 0.75,
+            }
+        },
+    ],
+    ids=["empty_selection", "explicit_selection"],
+)
+def test_trigger_propagates_explicit_trajectory_specs_to_stream(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    trajectory_specs: dict[str, object],
+) -> None:
+    agent = _create_agent(client, auth_headers, "trigger-trajectory")
+    _seed(agent["id"])
+    case_ids = ["weather", "followup"]
+
+    resp = client.post(
+        "/evals/trigger",
+        json={
+            "agent_id": agent["id"],
+            "trajectory_specs": trajectory_specs,
+            "case_ids": case_ids,
+            "cases_sha256": VALID_CASES_SHA256,
+        },
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    payload = _payload_for_stream_id(resp.json()["stream_id"])
+    assert payload is not None
+    assert payload["trajectory_specs"] == trajectory_specs
+    assert payload["case_ids"] == case_ids
+    assert payload["cases_sha256"] == VALID_CASES_SHA256
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"expected": "WebSearch", "mode": "exact", "threshold": 1.0},
+        {"expected": ["WebSearch"], "mode": "sideways", "threshold": 1.0},
+        {"expected": ["WebSearch"], "mode": "exact", "threshold": 1.01},
+        {
+            "expected": ["WebSearch"],
+            "mode": "exact",
+            "threshold": 1.0,
+            "unexpected": True,
+        },
+    ],
+    ids=["expected", "mode", "threshold", "unknown_field"],
+)
+def test_trigger_rejects_invalid_trajectory_specs(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    spec: dict[str, object],
+) -> None:
+    agent = _create_agent(client, auth_headers, f"triggerinvalid{uuid.uuid4().hex[:8]}")
+    _seed(agent["id"])
+
+    resp = client.post(
+        "/evals/trigger",
+        json={
+            "agent_id": agent["id"],
+            "trajectory_specs": {"case": spec},
+            "case_ids": ["case"],
+            "cases_sha256": VALID_CASES_SHA256,
+        },
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert _count_eval_entries_for_agent(agent["id"]) == 0
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"trajectory_specs": {}},
+        {"trajectory_specs": {}, "case_ids": ["case"]},
+        {"trajectory_specs": {}, "cases_sha256": VALID_CASES_SHA256},
+        {"case_ids": ["case"], "cases_sha256": VALID_CASES_SHA256},
+        {
+            "trajectory_specs": {},
+            "case_ids": [],
+            "cases_sha256": VALID_CASES_SHA256,
+        },
+        {
+            "trajectory_specs": {},
+            "case_ids": ["case", "case"],
+            "cases_sha256": VALID_CASES_SHA256,
+        },
+        {"trajectory_specs": {}, "case_ids": ["case"], "cases_sha256": "a" * 63},
+        {"trajectory_specs": {}, "case_ids": ["case"], "cases_sha256": "A" * 64},
+        {"trajectory_specs": {}, "case_ids": ["case"], "cases_sha256": "g" * 64},
+    ],
+    ids=[
+        "missing_identity",
+        "missing_digest",
+        "missing_case_ids",
+        "identity_without_specs",
+        "empty_case_ids",
+        "duplicate_case_ids",
+        "short_digest",
+        "uppercase_digest",
+        "nonhex_digest",
+    ],
+)
+def test_trigger_rejects_invalid_trajectory_identity(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    selection: dict[str, object],
+) -> None:
+    agent = _create_agent(client, auth_headers, f"triggeridentity{uuid.uuid4().hex[:8]}")
+    _seed(agent["id"])
+
+    resp = client.post(
+        "/evals/trigger",
+        json={"agent_id": agent["id"], **selection},
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert _count_eval_entries_for_agent(agent["id"]) == 0
 
 
 def test_trigger_requires_api_key(client: Any) -> None:

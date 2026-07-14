@@ -3,9 +3,9 @@
 import re
 import uuid
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import Environment
 
@@ -383,7 +383,73 @@ class EvalMatrix(BaseModel):
     model_summaries: list[EvalModelSummary] = []
 
 
-class EvalTriggerRequest(BaseModel):
+class TrajectorySpecRequest(BaseModel):
+    """One strict trajectory scorer specification supplied by an API caller."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected: list[str]
+    mode: Literal["exact", "in_order", "any_order", "precision", "recall"] = (
+        "in_order"
+    )
+    threshold: float = Field(default=1.0, ge=0.0, le=1.0, allow_inf_nan=False)
+
+    @field_validator("expected", mode="before")
+    @classmethod
+    def _expected_is_string_list(cls, value: object) -> object:
+        if not isinstance(value, list) or not all(
+            isinstance(tool, str) for tool in value
+        ):
+            raise ValueError("expected must be a string list")
+        return value
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def _threshold_is_number(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("threshold must be a number")
+        return value
+
+
+class TrajectorySelectionRequest(BaseModel):
+    """Optional explicit trajectory selection and its eval case identity."""
+
+    trajectory_specs: dict[str, TrajectorySpecRequest] | None = None
+    case_ids: (
+        Annotated[
+            list[Annotated[str, Field(min_length=1)]],
+            Field(min_length=1, json_schema_extra={"uniqueItems": True}),
+        ]
+        | None
+    ) = None
+    cases_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("case_ids", mode="before")
+    @classmethod
+    def _case_ids_is_string_list(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, list) or not all(
+            isinstance(case_id, str) for case_id in value
+        ):
+            raise ValueError("case_ids must be a string list")
+        return value
+
+    @model_validator(mode="after")
+    def _identity_matches_selection(self) -> Self:
+        if self.trajectory_specs is None:
+            if self.case_ids is not None or self.cases_sha256 is not None:
+                raise ValueError("case identity requires trajectory_specs")
+            return self
+
+        if self.case_ids is None or self.cases_sha256 is None:
+            raise ValueError("trajectory_specs require case identity")
+        if len(set(self.case_ids)) != len(self.case_ids):
+            raise ValueError("case_ids must be unique")
+        return self
+
+
+class EvalTriggerRequest(TrajectorySelectionRequest):
     """Ask for an on-demand platform eval run for an agent (issue #10).
 
     Enqueues the same EvalJobRequest the git-push fan-out uses, minus the

@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import pytest
 import redis
 import redis.asyncio as aioredis
 from agentos_api.config import get_settings
@@ -28,7 +29,30 @@ VALID_FILES = {
 }
 
 
-def test_enqueue_lands_with_exact_shape() -> None:
+@pytest.mark.parametrize(
+    ("trajectory_specs", "case_ids", "cases_sha256"),
+    [
+        (None, None, None),
+        ({}, ["weather"], "a" * 64),
+        (
+            {
+                "weather": {
+                    "expected": ["WebSearch", "WebFetch"],
+                    "mode": "in_order",
+                    "threshold": 0.75,
+                }
+            },
+            ["weather"],
+            "b" * 64,
+        ),
+    ],
+    ids=["no_selection", "empty_selection", "explicit_selection"],
+)
+def test_enqueue_lands_with_exact_shape(
+    trajectory_specs: dict[str, object] | None,
+    case_ids: list[str] | None,
+    cases_sha256: str | None,
+) -> None:
     stream = f"agentos:evals:test-{secrets.token_hex(4)}"
     agent_id, version_id = uuid.uuid4(), uuid.uuid4()
     request = EvalJobRequest(
@@ -37,6 +61,9 @@ def test_enqueue_lands_with_exact_shape() -> None:
         sha="deadbeef",
         suite="default",
         bundle_ref="bundles/x/y.tar.gz",
+        trajectory_specs=trajectory_specs,
+        case_ids=case_ids,
+        cases_sha256=cases_sha256,
         requested_at=now_iso(),
     )
 
@@ -62,6 +89,9 @@ def test_enqueue_lands_with_exact_shape() -> None:
             "suite": "default",
             "bundle_ref": "bundles/x/y.tar.gz",
             "target_url": None,
+            "trajectory_specs": trajectory_specs,
+            "case_ids": case_ids,
+            "cases_sha256": cases_sha256,
             "requested_at": request.requested_at,
         }
     finally:
@@ -163,6 +193,9 @@ def test_dev_push_fans_out_prod_push_does_not(
     assert entry is not None, "dev push should fan out an eval job"
     assert entry["agent_id"] == agent["id"]
     assert entry["suite"] == "default"
+    assert entry["trajectory_specs"] is None
+    assert entry["case_ids"] is None
+    assert entry["cases_sha256"] is None
 
     # A prod push (same sha) promotes but must NOT add another eval entry.
     sync = redis.from_url(get_settings().valkey_dsn())

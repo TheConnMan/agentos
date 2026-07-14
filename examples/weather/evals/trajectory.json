@@ -1,0 +1,10 @@
+{
+  "weather-answers": {
+    "expected": [
+      "WebSearch",
+      "WebFetch"
+    ],
+    "mode": "in_order",
+    "threshold": 1.0
+  }
+}

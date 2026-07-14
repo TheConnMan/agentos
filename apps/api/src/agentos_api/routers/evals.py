@@ -85,6 +85,9 @@ async def trigger_eval(
             suite=suite,
             bundle_ref=version.bundle_ref,
             target_url=body.target_url,
+            trajectory_specs=body.trajectory_specs,
+            case_ids=body.case_ids,
+            cases_sha256=body.cases_sha256,
             requested_at=now_iso(),
         )
     )

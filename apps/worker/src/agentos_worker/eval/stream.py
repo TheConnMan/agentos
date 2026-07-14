@@ -26,6 +26,8 @@ acked, not a crash; a failing eval case is a failed count in the report.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import secrets
 import tempfile
@@ -37,7 +39,7 @@ from typing import Any, cast
 import httpx
 from aci_protocol import Budget
 from plugin_format import safe_extract
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
 from ..binding import (
@@ -53,9 +55,10 @@ from ..config import WorkerConfig
 from ..sandbox import SandboxSubstrate
 from ..sandbox.types import SandboxError
 from ..stream_consumer import ReadLoopSpec, StreamConsumer, StreamEntry
-from .models import EvalRunResult, EvalSuite
+from .models import EvalCaseResult, EvalRunResult, EvalSuite
 from .recorder import LangfuseEvalRecorder
 from .run import run_eval_suite
+from .scorer import Scorer, TrajectoryMode, TrajectoryScorer, TrajectorySpec
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,32 @@ logger = logging.getLogger(__name__)
 _EVAL_READ_ERROR_BACKOFF_S = 0.5
 
 STREAM_PAYLOAD_FIELD = "payload"
+
+
+class _TrajectorySpecInput(BaseModel):
+    """Strict stream and sidecar representation of one trajectory spec."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    expected: list[str]
+    mode: TrajectoryMode = TrajectoryMode.IN_ORDER
+    threshold: float = Field(default=1.0, ge=0.0, le=1.0, allow_inf_nan=False)
+
+    @field_validator("expected", mode="before")
+    @classmethod
+    def _expected_is_string_list(cls, value: object) -> object:
+        if not isinstance(value, list) or not all(
+            isinstance(tool, str) for tool in value
+        ):
+            raise ValueError("expected must be a string list")
+        return value
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def _threshold_is_number(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("threshold must be a number")
+        return value
 
 
 class EvalWorkItem(BaseModel):
@@ -74,7 +103,52 @@ class EvalWorkItem(BaseModel):
     suite: str
     bundle_ref: str | None = None
     target_url: str | None = None
+    trajectory_specs: dict[str, _TrajectorySpecInput] | None = None
+    case_ids: list[str] | None = None
+    cases_sha256: str | None = None
     requested_at: str
+
+    @field_validator("trajectory_specs", mode="before")
+    @classmethod
+    def _trajectory_specs_is_string_map(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, dict) or not all(
+            isinstance(case_id, str) for case_id in value
+        ):
+            raise ValueError("trajectory_specs must map case ids to specs")
+        return value
+
+    @field_validator("case_ids", mode="before")
+    @classmethod
+    def _case_ids_is_string_list(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, list) or not all(
+            isinstance(case_id, str) for case_id in value
+        ):
+            raise ValueError("case_ids must be a string list")
+        return value
+
+    @model_validator(mode="after")
+    def _trajectory_identity_matches_selection(self) -> EvalWorkItem:
+        if self.trajectory_specs is None:
+            if self.case_ids is not None or self.cases_sha256 is not None:
+                raise ValueError("case identity requires trajectory_specs")
+            return self
+
+        if (
+            not self.case_ids
+            or any(not case_id for case_id in self.case_ids)
+            or len(set(self.case_ids)) != len(self.case_ids)
+        ):
+            raise ValueError("explicit trajectory_specs require unique case_ids")
+        if self.cases_sha256 is None or (
+            len(self.cases_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in self.cases_sha256)
+        ):
+            raise ValueError("explicit trajectory_specs require a lowercase sha256")
+        return self
 
     @classmethod
     def from_stream_fields(cls, fields: dict[str, str]) -> EvalWorkItem:
@@ -137,19 +211,61 @@ def load_suite_from_bundle(data: bytes, suite_name: str) -> EvalSuite | None:
     named with ``suite_name`` (the payload's authoritative name / Langfuse tag).
     Returns None on a corrupt archive or a missing/invalid suite file."""
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            dest = Path(tmp)
-            safe_extract(data, dest)
-            cases = next(
-                (p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None
-            )
-            if cases is None:
-                return None
-            loaded = EvalSuite.model_validate_json(cases.read_text())
+        extracted = _extract_eval_files(data)
+        if extracted is None:
+            return None
+        cases_data, _trajectory_data = extracted
+        loaded = EvalSuite.model_validate_json(cases_data)
     except Exception:
         logger.exception("could not load eval suite from bundle")
         return None
     return EvalSuite(name=suite_name, cases=loaded.cases)
+
+
+def _extract_eval_files(data: bytes) -> tuple[bytes, bytes | None] | None:
+    """Extract exact cases bytes and the optional sibling trajectory sidecar."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp)
+        safe_extract(data, dest)
+        cases = next(
+            (p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None
+        )
+        if cases is None:
+            return None
+        sidecar = cases.parent / "trajectory.json"
+        return cases.read_bytes(), sidecar.read_bytes() if sidecar.is_file() else None
+
+
+def _load_trajectory_scorer(data: bytes | None) -> TrajectoryScorer | None:
+    """Load an optional evals/trajectory.json sidecar from its exact bytes."""
+    if data is None:
+        return None
+    raw = json.loads(data)
+    if not isinstance(raw, dict):
+        raise ValueError("evals/trajectory.json must contain an object")
+
+    specs: dict[str, _TrajectorySpecInput] = {}
+    for case_id, value in raw.items():
+        if not isinstance(case_id, str):
+            raise ValueError("trajectory spec case ids must be strings")
+        specs[case_id] = _TrajectorySpecInput.model_validate(value)
+
+    return _trajectory_scorer(specs)
+
+
+def _trajectory_scorer(
+    specs: dict[str, _TrajectorySpecInput],
+) -> TrajectoryScorer:
+    return TrajectoryScorer(
+        specs={
+            case_id: TrajectorySpec(
+                expected=tuple(spec.expected),
+                mode=spec.mode,
+                threshold=spec.threshold,
+            )
+            for case_id, spec in specs.items()
+        }
+    )
 
 
 class EvalStreamConsumer(StreamConsumer):
@@ -287,22 +403,60 @@ class EvalStreamConsumer(StreamConsumer):
 
     async def _run_and_report(self, item: EvalWorkItem) -> EvalRunResult:
         repo = await self._repo_lookup.repo_full_name(item.agent_id)
-        suite = await self._load_suite(item)
-        if suite is None:
+        loaded = await self._load_suite(item)
+        if loaded is None:
             return await self._report_failed(item, repo, "unresolvable suite/bundle")
+        suite, scorer, terminal_error = loaded
+
+        if terminal_error is not None:
+            failed_case_ids = (
+                item.case_ids
+                if item.trajectory_specs is not None and item.case_ids is not None
+                else [case.id for case in suite.cases]
+            )
+            result = EvalRunResult(
+                version=item.sha,
+                suite=suite.name,
+                model=self._eval_model(item),
+                results=[
+                    EvalCaseResult(
+                        case_id=case_id,
+                        passed=False,
+                        output="",
+                        latency_ms=0.0,
+                        error=terminal_error,
+                    )
+                    for case_id in failed_case_ids
+                ],
+            )
+            if self._recorder is not None:
+                await self._recorder.record(result)
+            await self._report(item, repo, result)
+            return result
 
         base_url, release_key, token = await self._acquire_target(item)
         if base_url is None:
             return await self._report_failed(item, repo, "runner provisioning failed")
         try:
-            result = await run_eval_suite(
-                suite,
-                base_url=base_url,
-                version=item.sha,
-                recorder=self._recorder,
-                token=token,
-                model=self._eval_model(item),
-            )
+            if scorer is None:
+                result = await run_eval_suite(
+                    suite,
+                    base_url=base_url,
+                    version=item.sha,
+                    recorder=self._recorder,
+                    token=token,
+                    model=self._eval_model(item),
+                )
+            else:
+                result = await run_eval_suite(
+                    suite,
+                    base_url=base_url,
+                    version=item.sha,
+                    recorder=self._recorder,
+                    token=token,
+                    model=self._eval_model(item),
+                    scorer=scorer,
+                )
         finally:
             if release_key is not None:
                 await asyncio.to_thread(self._substrate.release, release_key)
@@ -310,7 +464,9 @@ class EvalStreamConsumer(StreamConsumer):
         await self._report(item, repo, result)
         return result
 
-    async def _load_suite(self, item: EvalWorkItem) -> EvalSuite | None:
+    async def _load_suite(
+        self, item: EvalWorkItem
+    ) -> tuple[EvalSuite, Scorer | None, str | None] | None:
         if item.bundle_ref is None:
             return None
         try:
@@ -318,7 +474,34 @@ class EvalStreamConsumer(StreamConsumer):
         except Exception:
             logger.exception("could not fetch bundle %s", item.bundle_ref)
             return None
-        return load_suite_from_bundle(data, item.suite)
+        try:
+            extracted = _extract_eval_files(data)
+            if extracted is None:
+                return None
+            cases_data, trajectory_data = extracted
+            loaded = EvalSuite.model_validate_json(cases_data)
+            suite = EvalSuite(name=item.suite, cases=loaded.cases)
+        except Exception:
+            logger.exception("could not load eval suite from bundle")
+            return None
+        if item.trajectory_specs is not None:
+            deployed_case_ids = [case.id for case in suite.cases]
+            if (
+                hashlib.sha256(cases_data).hexdigest() != item.cases_sha256
+                or deployed_case_ids != item.case_ids
+            ):
+                return (
+                    suite,
+                    None,
+                    "selected eval cases do not match deployed bundle",
+                )
+            return suite, _trajectory_scorer(item.trajectory_specs), None
+        try:
+            scorer = _load_trajectory_scorer(trajectory_data)
+        except ValueError:
+            logger.exception("invalid evals/trajectory.json in bundle %s", item.bundle_ref)
+            return suite, None, "invalid trajectory configuration"
+        return suite, scorer, None
 
     async def _acquire_target(
         self, item: EvalWorkItem
