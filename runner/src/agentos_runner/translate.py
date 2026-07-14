@@ -50,6 +50,11 @@ class TurnState:
     # but their empty-signature thinking block trips the SDK's result extraction,
     # leaving ``ResultMessage.result`` empty (issue #107).
     assistant_text: str = ""
+    # The delivered text of the terminal ``final`` for a successful turn, set by
+    # the session loop when a DONE/idle final is produced. It is the assistant
+    # reply recorded into the conversation transcript (#20); left None on a
+    # failure/budget/auth final so those turns are not persisted as history.
+    final_text: str | None = None
 
 
 def translate_message(

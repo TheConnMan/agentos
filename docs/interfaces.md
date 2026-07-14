@@ -25,6 +25,7 @@ is documentation of where the code already draws the line, not a new abstraction
 | Approval / authorizer | NONE | 0 | not separately graded | #22 | [interfaces/approval/INTERFACE.md](interfaces/approval/INTERFACE.md) |
 | Workflow state store | NONE | 0 (concrete AffinityStore) | not separately graded | #23 | [interfaces/workflow-state/INTERFACE.md](interfaces/workflow-state/INTERFACE.md) |
 | Memory | CLEAN | 1 loader (StateApiMemoryStore) | not separately graded | #28 | [interfaces/memory/INTERFACE.md](interfaces/memory/INTERFACE.md) |
+| Conversation history | CLEAN | 1 loader (StateApiTranscriptStore) | not separately graded | #20 | [interfaces/conversation-history/INTERFACE.md](interfaces/conversation-history/INTERFACE.md) |
 | Triggers | SOFT | 2 hardcoded (Slack, GH push) | not separately graded | #29 | [interfaces/triggers/INTERFACE.md](interfaces/triggers/INTERFACE.md) |
 
 ## Kind legend

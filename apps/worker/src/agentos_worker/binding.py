@@ -32,6 +32,7 @@ import logging
 import secrets
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 from aci_protocol import Budget
 from pydantic import BaseModel
@@ -59,6 +60,12 @@ CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 # runner-local knob (not part of the frozen env), like AGENTOS_RUNNER_TOKEN.
 MEMORY_REF_ENV = "AGENTOS_MEMORY_REF"
 MEMORY_TOKEN_ENV = "AGENTOS_MEMORY_TOKEN"
+# The conversation-history port (#20, ADR-0029): the URL of THIS thread's
+# transcript key on the same durable state store, dereferenced by the runner at
+# boot to rehydrate the conversation after an unplanned restart, plus the API key
+# it authenticates with. Both are runner-local knobs, NOT frozen ACI env.
+HISTORY_REF_ENV = "AGENTOS_HISTORY_REF"
+HISTORY_TOKEN_ENV = "AGENTOS_HISTORY_TOKEN"
 BASE_URL_ENV = "ANTHROPIC_BASE_URL"
 MODEL_ENV = "AGENTOS_MODEL"
 # Per-claim bearer token the runner enforces on its ACI POST routes (issue #63).
@@ -194,6 +201,18 @@ class BindingResolver:
         env[MEMORY_REF_ENV] = f"{base}/agents/{resolved.agent_id}/state/memory"
         if self._config.api_key:
             env[MEMORY_TOKEN_ENV] = self._config.api_key
+        # Deliver the history ref (#20, ADR-0029): this thread's transcript key on
+        # the same state store. It is deterministic per (agent, thread), so a
+        # fresh, restarted, or resumed sandbox all boot with the same ref and the
+        # runner rehydrates the conversation identically -- an unplanned restart
+        # needs no special branch. thread_key is URL-encoded so a channel/ts with
+        # reserved characters cannot break the key path.
+        thread_segment = quote(thread_key, safe="")
+        env[HISTORY_REF_ENV] = (
+            f"{base}/agents/{resolved.agent_id}/state/transcript/{thread_segment}"
+        )
+        if self._config.api_key:
+            env[HISTORY_TOKEN_ENV] = self._config.api_key
         # The agent's pinned model (#254) overrides the worker default; None
         # falls back to config.model inside apply_model_env.
         apply_model_env(env, self._config, model_override=resolved.model)

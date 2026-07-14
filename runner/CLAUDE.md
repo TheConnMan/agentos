@@ -30,10 +30,15 @@ Docker via `agentos skill up`. Full behavior spec in `runner/README.md`.
   the worker's no-retry-after-side-effects rule depends on this flag being
   conservative.
 - **Rehydration on start is stateless-first** (ADR-0003): the runner
-  rehydrates from `AGENTOS_HISTORY_REF` (falling back to `AGENTOS_MEMORY_REF`)
-  on boot rather than assuming any surviving in-process state. Never write a
-  code path that depends on the runner having been "the same process" as an
-  earlier turn.
+  rehydrates external state on boot rather than assuming any surviving
+  in-process state. Two distinct external refs, each resolved to a store over
+  the durable state API and delivered as a system-prompt preamble, never a
+  surviving process: `AGENTOS_HISTORY_REF` is this thread's conversation
+  transcript (`history.py`, ADR-0029), `AGENTOS_MEMORY_REF` is the agent's
+  durable memory (`memory.py`, ADR-0025). `AGENTOS_HISTORY_REF` is a state-API
+  URL, no longer an SDK `resume` id, and is not fed to the SDK `resume=` path.
+  Never write a code path that depends on the runner having been "the same
+  process" as an earlier turn.
 - **One turn consumes the SDK generator at a time.** Steer and interrupt are
   side-channel injections whose output surfaces on the already-open
   `/v1/event` stream -- do not open a second concurrent generator for a steer.
