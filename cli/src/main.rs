@@ -230,6 +230,15 @@ enum SkillAction {
         #[arg(long)]
         url: Option<String>,
     },
+    /// Interview to generate a starter `evals/cases.json` (guided eval generation).
+    EvalInit {
+        /// Where to write the suite (default: evals/cases.json).
+        #[arg(long, default_value = "evals/cases.json")]
+        out: PathBuf,
+        /// Overwrite an existing suite file instead of refusing.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// Subcommands of `agentos local`.
@@ -909,6 +918,9 @@ async fn run(command: Command) -> Result<()> {
                 url,
             } => commands::send(&text, &user, event_type.into(), url).await,
             SkillAction::Eval { cases, url } => commands::eval(cases, url).await,
+            SkillAction::EvalInit { out, force } => {
+                agentos::eval_init::run(agentos::eval_init::EvalInitOpts { out, force })
+            }
         },
         Command::Local { action } => match action {
             LocalAction::Up {
