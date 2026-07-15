@@ -132,9 +132,7 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec![
-                "all", "skill", "examples", "secrets", "local", "cluster", "dev",
-            ],
+            targets: vec!["all", "skill", "secrets", "local", "cluster", "dev"],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -1848,7 +1846,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "examples",
+            target: "skill",
             title: "Chat with GitHub agent",
             description: "Start the GitHub MCP bundle and have a live conversation with the agent.",
             kind: RecipeKind::Workflow(Workflow::GithubAgentChat),
@@ -2061,13 +2059,13 @@ mod tests {
     }
 
     #[test]
-    fn examples_target_includes_github_agent_chat() {
+    fn skill_target_includes_github_agent_chat() {
         let app = App::new();
         let idx = app
             .targets
             .iter()
-            .position(|target| *target == "examples")
-            .expect("examples target exists");
+            .position(|target| *target == "skill")
+            .expect("skill target exists");
         let mut app = app;
         app.target_idx = idx;
         let titles: Vec<&str> = app
