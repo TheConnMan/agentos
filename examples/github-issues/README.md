@@ -70,6 +70,23 @@ If the message reply cites real issue titles/numbers from the repo, the authed
 MCP path worked end to end: token forwarded → server authenticated → tools
 called → answer grounded in live data.
 
+## Evals
+
+`evals/cases.json` grades the agent the same way at every tier. With the runner
+up (`skill up --secret ...`), run:
+
+```bash
+agentos skill eval
+```
+
+The three cases are deliberately robust to changing issue data — they assert on
+things that do not churn: that the agent returns real issue numbers (`#\d+`),
+that it finds the stable `enhancement` label when grouping, and that it can read
+a specific **closed** historical issue (#7, whose title is about `aci-protocol`).
+If the repo is ever restructured so those anchors no longer hold, update the
+`expected` values here — a case that starts failing is the grader catching a real
+change, which is the point.
+
 ## Swapping in a different service
 
 The mechanism is service-agnostic. To point at another authed MCP server,
