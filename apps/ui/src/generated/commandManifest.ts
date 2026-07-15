@@ -1910,12 +1910,12 @@ export const commandManifest = {
       "name": "interactive"
     },
     {
-      "about": "Store and manage local secrets in the OS credential store",
+      "about": "Store and manage local secrets in AgentOS private storage",
       "hidden": false,
       "name": "secrets",
       "subcommands": [
         {
-          "about": "Save a secret in the OS credential store. Prompts with hidden input by default",
+          "about": "Save a secret in AgentOS private storage. Prompts with hidden input by default",
           "args": [
             {
               "global": false,
