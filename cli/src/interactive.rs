@@ -3,14 +3,15 @@
 //! This is a ratatui/crossterm surface over the existing clap command grammar:
 //! it does not invent a second implementation path. The TUI helps a human pick
 //! a target and action, previews the exact `agentos ...` command, prompts for
-//! any required values, then either handles a small read-only action in the TUI
-//! or suspends the alternate screen and runs that command as a normal child
-//! process.
+//! any required values, then keeps prompts, command output, and workflow results
+//! inside the alternate-screen interface.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -203,19 +204,15 @@ impl App {
         let Some(recipe) = self.selected_recipe().cloned() else {
             return Ok(());
         };
-        if let RecipeKind::Tui(action) = &recipe.kind {
-            self.message = match run_tui_action(*action, terminal, self) {
-                Ok(message) => message,
-                Err(err) => format!("Action failed: {err:#}"),
-            };
-            return Ok(());
-        }
-        suspend_terminal()?;
-        let result = prompt_and_run(&recipe);
-        resume_terminal()?;
+        let result = match &recipe.kind {
+            RecipeKind::Tui(action) => run_tui_action(*action, terminal, self),
+            RecipeKind::Command | RecipeKind::Workflow(_) => {
+                run_recipe_in_tui(terminal, self, &recipe)
+            }
+        };
         self.message = match result {
-            Ok(()) => format!("Finished: {}", recipe.title),
-            Err(err) => format!("Command failed to start or complete: {err:#}"),
+            Ok(message) => message,
+            Err(err) => format!("Action failed: {err:#}"),
         };
         Ok(())
     }
@@ -255,40 +252,59 @@ impl Drop for TerminalSession {
     }
 }
 
-fn suspend_terminal() -> Result<()> {
-    disable_raw_mode().ok();
-    execute!(io::stdout(), LeaveAlternateScreen).context("leaving alternate screen")
-}
-
-fn resume_terminal() -> Result<()> {
-    print!("Press Enter to return to AgentOS interactive...");
-    io::stdout().flush().ok();
-    let mut line = String::new();
-    let _ = io::stdin().read_line(&mut line);
-    execute!(io::stdout(), EnterAlternateScreen).context("entering alternate screen")?;
-    enable_raw_mode().context("enabling terminal raw mode")
-}
-
-fn prompt_and_run(recipe: &Recipe) -> Result<()> {
-    println!("AgentOS interactive: {}", recipe.title);
-    println!("{}", recipe.description);
-    println!();
-
+fn prompt_recipe_fields(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    recipe: &Recipe,
+) -> Result<Option<BTreeMap<String, String>>> {
     let mut values = BTreeMap::new();
     for field in &recipe.fields {
-        let value = prompt_field(field)?;
+        let Some(value) = prompt_text(
+            terminal,
+            app,
+            recipe.title,
+            field.label,
+            field.default,
+            false,
+            !field.required,
+        )?
+        else {
+            return Ok(None);
+        };
+        if field.required && value.is_empty() {
+            return Ok(None);
+        }
         values.insert(field.key.to_string(), value);
     }
-    match &recipe.kind {
+    Ok(Some(values))
+}
+
+fn run_recipe_in_tui(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    recipe: &Recipe,
+) -> Result<String> {
+    let Some(values) = prompt_recipe_fields(terminal, app, recipe)? else {
+        return Ok(format!("Canceled: {}", recipe.title));
+    };
+    let mut view = RunView::new(recipe.title);
+    let run_result = match &recipe.kind {
         RecipeKind::Command => {
             let argv = build_argv(recipe, &values);
-            println!();
-            run_agentos(&argv, Path::new("."))?;
+            run_agentos_in_tui(terminal, app, &argv, Path::new("."), &mut view)
         }
-        RecipeKind::Tui(_) => {}
-        RecipeKind::Workflow(Workflow::McpAuthExample) => run_mcp_auth_example(&values)?,
+        RecipeKind::Tui(_) => Ok(()),
+        RecipeKind::Workflow(Workflow::McpAuthExample) => {
+            run_mcp_auth_example(terminal, app, &values, &mut view)
+        }
+    };
+    if let Err(err) = &run_result {
+        view.push("");
+        view.push(format!("ERROR: {err:#}"));
     }
-    Ok(())
+    show_run_view(terminal, app, &mut view)?;
+    run_result?;
+    Ok(format!("Finished: {}", recipe.title))
 }
 
 fn run_tui_action(
@@ -318,6 +334,7 @@ fn run_tui_action(
                         "Custom secret name",
                         None,
                         false,
+                        false,
                     )?
                     else {
                         return Ok("Save secret canceled.".to_string());
@@ -326,7 +343,8 @@ fn run_tui_action(
                 }
             };
             crate::secrets::validate_name(&name)?;
-            let Some(value) = prompt_text(terminal, app, "Save Secret", &name, None, true)? else {
+            let Some(value) = prompt_text(terminal, app, "Save Secret", &name, None, true, false)?
+            else {
                 return Ok("Save secret canceled.".to_string());
             };
             crate::secrets::save_value(&name, &value)?;
@@ -361,6 +379,7 @@ fn run_tui_action(
                         "Custom secret name",
                         None,
                         false,
+                        false,
                     )?
                     else {
                         return Ok("Remove secret canceled.".to_string());
@@ -375,6 +394,7 @@ fn run_tui_action(
                 "Remove Secret",
                 &format!("Type {name} to confirm"),
                 None,
+                false,
                 false,
             )?
             else {
@@ -407,7 +427,7 @@ fn secret_name_choices_for(saved_names: &BTreeSet<String>) -> Vec<SelectChoice<S
         ),
         (
             "OPENAI_API_KEY",
-            "OpenAI API key for model or MCP workflows",
+            "OpenAI integrations (not AgentOS runner model auth)",
         ),
         (
             "GITHUB_PERSONAL_ACCESS_TOKEN",
@@ -511,6 +531,7 @@ fn prompt_text(
     label: &str,
     default: Option<&str>,
     secret: bool,
+    allow_empty: bool,
 ) -> Result<Option<String>> {
     let mut value = String::new();
     loop {
@@ -526,7 +547,13 @@ fn prompt_text(
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
             (KeyCode::Enter, _) => {
                 if value.is_empty() {
-                    return Ok(default.map(str::to_string));
+                    if let Some(default) = default {
+                        return Ok(Some(default.to_string()));
+                    }
+                    if allow_empty {
+                        return Ok(Some(String::new()));
+                    }
+                    continue;
                 }
                 return Ok(Some(value));
             }
@@ -541,7 +568,12 @@ fn prompt_text(
     }
 }
 
-fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
+fn run_mcp_auth_example(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    values: &BTreeMap<String, String>,
+    view: &mut RunView,
+) -> Result<()> {
     let repo = values
         .get("repo")
         .filter(|value| !value.is_empty())
@@ -559,8 +591,8 @@ fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
         .unwrap_or("7247");
     let should_build = yesish(values.get("build").map(String::as_str).unwrap_or("y"));
 
-    ensure_model_credential_available()?;
-    ensure_secret_available("GITHUB_PERSONAL_ACCESS_TOKEN")?;
+    ensure_model_credential_available(terminal, app)?;
+    ensure_secret_available(terminal, app, "GITHUB_PERSONAL_ACCESS_TOKEN")?;
 
     let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
         .context(
@@ -574,23 +606,25 @@ fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
         );
     }
 
-    println!("This workflow will verify the authenticated GitHub MCP example end to end.");
-    println!("Example bundle: {}", example_dir.display());
-    println!("Target repository: {repo}");
-    println!();
+    view.push("Authenticated GitHub MCP end-to-end verification");
+    view.push(format!("Example bundle: {}", example_dir.display()));
+    view.push(format!("Target repository: {repo}"));
+    view.push("");
 
     if should_build {
-        run_agentos(&["build".to_string()], &repo_root)?;
+        run_agentos_in_tui(terminal, app, &["build".to_string()], &repo_root, view)?;
     } else {
-        println!("Skipping runner image build because you answered no.");
-        println!();
+        view.push("Skipping runner image build.");
+        view.push("");
     }
 
     let container_name = "agentos-mcp-auth-example";
     let url = format!("http://localhost:{port}");
     let mut started = false;
     let run_result = (|| -> Result<()> {
-        run_agentos(
+        run_agentos_in_tui(
+            terminal,
+            app,
             &[
                 "skill".to_string(),
                 "up".to_string(),
@@ -604,9 +638,12 @@ fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
                 "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
             ],
             &repo_root,
+            view,
         )?;
         started = true;
-        run_agentos(
+        run_agentos_in_tui(
+            terminal,
+            app,
             &[
                 "skill".to_string(),
                 "message".to_string(),
@@ -615,22 +652,27 @@ fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
                 url,
             ],
             &repo_root,
+            view,
         )
     })();
 
     if started {
-        println!();
-        println!("Cleaning up the example runner...");
-        if let Err(err) = run_agentos(&["skill".to_string(), "down".to_string()], &example_dir) {
-            println!("Cleanup warning: {err:#}");
+        view.push("Cleaning up the example runner...");
+        if let Err(err) = run_agentos_in_tui(
+            terminal,
+            app,
+            &["skill".to_string(), "down".to_string()],
+            &example_dir,
+            view,
+        ) {
+            view.push(format!("Cleanup warning: {err:#}"));
         }
     }
 
     run_result?;
-    println!();
-    println!(
-        "Pass condition: the answer above should cite live issue titles or numbers from {repo}."
-    );
+    view.push(format!(
+        "PASS CONDITION: the answer above cites live issue titles or numbers from {repo}."
+    ));
     Ok(())
 }
 
@@ -641,30 +683,51 @@ fn yesish(value: &str) -> bool {
     )
 }
 
-fn ensure_secret_available(name: &str) -> Result<()> {
+fn ensure_secret_available(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    name: &str,
+) -> Result<()> {
     if std::env::var_os(name).is_some() {
-        println!("{name}: available from the current environment.");
         return Ok(());
     }
     if crate::secrets::has_value(name) {
-        println!("{name}: available from the AgentOS secret store.");
         return Ok(());
     }
-    println!("{name}: missing.");
-    if prompt_yes_no(
-        &format!("Save {name} in the OS credential store now?"),
-        true,
-    )? {
-        crate::secrets::set(crate::secrets::SetSecretOpts {
-            name: name.to_string(),
-            from_env: None,
-        })?;
-        return Ok(());
+    let Some(save) = prompt_select(
+        terminal,
+        app,
+        "Missing Credential",
+        &format!("{name} is required"),
+        vec![
+            SelectChoice {
+                label: "Save it now".to_string(),
+                description: "Store it in the OS credential store".to_string(),
+                value: true,
+            },
+            SelectChoice {
+                label: "Cancel workflow".to_string(),
+                description: "Return to AgentOS without running".to_string(),
+                value: false,
+            },
+        ],
+    )?
+    else {
+        anyhow::bail!("{name} is required for this workflow");
+    };
+    if !save {
+        anyhow::bail!("{name} is required for this workflow");
     }
-    anyhow::bail!("{name} is required for this workflow")
+    let Some(value) = prompt_text(terminal, app, "Save Secret", name, None, true, false)? else {
+        anyhow::bail!("{name} is required for this workflow");
+    };
+    crate::secrets::save_value(name, &value)
 }
 
-fn ensure_model_credential_available() -> Result<()> {
+fn ensure_model_credential_available(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+) -> Result<()> {
     const NAMES: &[&str] = &[
         "AGENTOS_CREDENTIALS",
         "ANTHROPIC_API_KEY",
@@ -672,66 +735,46 @@ fn ensure_model_credential_available() -> Result<()> {
     ];
     for name in NAMES {
         if std::env::var_os(name).is_some() {
-            println!("{name}: model credential available from the current environment.");
             return Ok(());
         }
     }
     for name in NAMES {
         if crate::secrets::has_value(name) {
-            println!("{name}: model credential available from the AgentOS secret store.");
             return Ok(());
         }
     }
 
-    println!("Model credential: missing.");
-    if !prompt_yes_no(
-        "Save a model credential in the OS credential store now?",
-        true,
-    )? {
-        anyhow::bail!(
-            "a model credential is required; save AGENTOS_CREDENTIALS, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN"
-        );
-    }
-    print!("Credential name [ANTHROPIC_API_KEY]: ");
-    io::stdout().flush().ok();
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .context("reading credential name")?;
-    let name = if line.trim().is_empty() {
-        "ANTHROPIC_API_KEY"
-    } else {
-        line.trim()
+    let choices = NAMES
+        .iter()
+        .map(|name| SelectChoice {
+            label: (*name).to_string(),
+            description: "Supported by the AgentOS Claude SDK runner".to_string(),
+            value: (*name).to_string(),
+        })
+        .collect();
+    let Some(name) = prompt_select(
+        terminal,
+        app,
+        "Missing Model Credential",
+        "Choose a model credential to save",
+        choices,
+    )?
+    else {
+        anyhow::bail!("a supported model credential is required");
     };
-    if !NAMES.contains(&name) {
-        anyhow::bail!(
-            "unsupported model credential name {name}; use AGENTOS_CREDENTIALS, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN"
-        );
-    }
-    crate::secrets::set(crate::secrets::SetSecretOpts {
-        name: name.to_string(),
-        from_env: None,
-    })?;
-    Ok(())
-}
-
-fn prompt_yes_no(prompt: &str, default: bool) -> Result<bool> {
-    loop {
-        let suffix = if default { "[Y/n]" } else { "[y/N]" };
-        print!("{prompt} {suffix}: ");
-        io::stdout().flush().ok();
-        let mut line = String::new();
-        io::stdin().read_line(&mut line)?;
-        let value = line.trim().to_ascii_lowercase();
-        if value.is_empty() {
-            return Ok(default);
-        }
-        match value.as_str() {
-            "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            _ => println!("Please answer y or n."),
-        }
-    }
+    let Some(value) = prompt_text(
+        terminal,
+        app,
+        "Save Model Credential",
+        &name,
+        None,
+        true,
+        false,
+    )?
+    else {
+        anyhow::bail!("a supported model credential is required");
+    };
+    crate::secrets::save_value(&name, &value)
 }
 
 fn secret_status(name: &str) -> &'static str {
@@ -791,41 +834,203 @@ fn find_repo_root(mut dir: PathBuf) -> Option<PathBuf> {
     }
 }
 
-fn run_agentos(argv: &[String], cwd: &Path) -> Result<()> {
-    println!("$ {}", render_command(argv));
-    println!();
-    let status = Command::new(std::env::current_exe().context("resolving current executable")?)
+#[derive(Debug)]
+struct RunView {
+    title: String,
+    lines: Vec<String>,
+    scroll: u16,
+    follow: bool,
+    running: bool,
+}
+
+impl RunView {
+    fn new(title: &str) -> Self {
+        Self {
+            title: title.to_string(),
+            lines: Vec::new(),
+            scroll: 0,
+            follow: true,
+            running: true,
+        }
+    }
+
+    fn push(&mut self, line: impl Into<String>) {
+        self.lines.push(line.into());
+    }
+
+    fn follow_tail(&mut self, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            let viewport = terminal_height.saturating_sub(8) as usize;
+            let output_width = terminal_width.saturating_sub(6).max(1) as usize;
+            self.scroll = wrap_output_lines(&self.lines, output_width)
+                .len()
+                .saturating_sub(viewport)
+                .min(u16::MAX as usize) as u16;
+        }
+    }
+}
+
+fn run_agentos_in_tui(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    argv: &[String],
+    cwd: &Path,
+    view: &mut RunView,
+) -> Result<()> {
+    view.push(format!("$ {}", render_command(argv)));
+    view.push("");
+    view.running = true;
+    let mut child = Command::new(std::env::current_exe().context("resolving current executable")?)
         .args(argv)
         .current_dir(cwd)
-        .status()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("running {}", render_command(argv)))?;
+
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take().context("capturing agentos stdout")?;
+    let stderr = child.stderr.take().context("capturing agentos stderr")?;
+    let readers = [stdout_reader(stdout, tx.clone()), stderr_reader(stderr, tx)];
+    let mut canceled = false;
+
+    let status_result = (|| -> Result<std::process::ExitStatus> {
+        loop {
+            while let Ok(line) = rx.try_recv() {
+                view.push(line);
+            }
+            let size = terminal.size()?;
+            view.follow_tail(size.width, size.height);
+            terminal.draw(|frame| {
+                draw(frame, app);
+                draw_run_view(frame, view);
+            })?;
+
+            if event::poll(Duration::from_millis(50))? {
+                if let Event::Key(key) = event::read()? {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            child.kill().context("canceling agentos command")?;
+                            canceled = true;
+                        }
+                        (KeyCode::Up | KeyCode::Char('k'), _) => {
+                            view.follow = false;
+                            view.scroll = view.scroll.saturating_sub(1);
+                        }
+                        (KeyCode::Down | KeyCode::Char('j'), _) => {
+                            view.scroll = view.scroll.saturating_add(1);
+                        }
+                        (KeyCode::End, _) => view.follow = true,
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(status) = child.try_wait().context("waiting for agentos command")? {
+                break Ok(status);
+            }
+        }
+    })();
+
+    if status_result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    for reader in readers {
+        let _ = reader.join();
+    }
+    while let Ok(line) = rx.try_recv() {
+        view.push(line);
+    }
+    view.running = false;
+    view.push("");
+    let status = status_result?;
+    if canceled {
+        view.push("Canceled by user.");
+        anyhow::bail!("{} was canceled", render_command(argv));
+    }
     if !status.success() {
+        view.push(format!("Exited with {status}."));
         anyhow::bail!("{} exited with {status}", render_command(argv));
     }
+    view.push("Completed successfully.");
+    view.push("");
     Ok(())
 }
 
-fn prompt_field(field: &Field) -> Result<String> {
+fn stdout_reader(
+    stdout: std::process::ChildStdout,
+    tx: mpsc::Sender<String>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || read_output(stdout, tx))
+}
+
+fn stderr_reader(
+    stderr: std::process::ChildStderr,
+    tx: mpsc::Sender<String>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || read_output(stderr, tx))
+}
+
+fn read_output(reader: impl io::Read, tx: mpsc::Sender<String>) {
+    for line in BufReader::new(reader).lines() {
+        match line {
+            Ok(line) => {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+            Err(err) => {
+                let _ = tx.send(format!("Unable to read command output: {err}"));
+                break;
+            }
+        }
+    }
+}
+
+fn show_run_view(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    view: &mut RunView,
+) -> Result<()> {
+    view.running = false;
     loop {
-        match field.default {
-            Some(default) => print!("{} [{default}]: ", field.label),
-            None => print!("{}: ", field.label),
-        }
-        io::stdout().flush().ok();
-        let mut line = String::new();
-        io::stdin()
-            .read_line(&mut line)
-            .context("reading interactive answer")?;
-        let trimmed = line.trim();
-        let value = if trimmed.is_empty() {
-            field.default.unwrap_or("").to_string()
-        } else {
-            trimmed.to_string()
+        let size = terminal.size()?;
+        view.follow_tail(size.width, size.height);
+        terminal.draw(|frame| {
+            draw(frame, app);
+            draw_run_view(frame, view);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
         };
-        if !field.required || !value.is_empty() {
-            return Ok(value);
+        match (key.code, key.modifiers) {
+            (KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q'), _) => return Ok(()),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(()),
+            (KeyCode::Up | KeyCode::Char('k'), _) => {
+                view.follow = false;
+                view.scroll = view.scroll.saturating_sub(1);
+            }
+            (KeyCode::Down | KeyCode::Char('j'), _) => {
+                view.follow = false;
+                view.scroll = view.scroll.saturating_add(1);
+            }
+            (KeyCode::PageUp, _) => {
+                view.follow = false;
+                view.scroll = view.scroll.saturating_sub(10);
+            }
+            (KeyCode::PageDown, _) => {
+                view.follow = false;
+                view.scroll = view.scroll.saturating_add(10);
+            }
+            (KeyCode::Home, _) => {
+                view.follow = false;
+                view.scroll = 0;
+            }
+            (KeyCode::End, _) => view.follow = true,
+            _ => {}
         }
-        println!("{} is required.", field.label);
     }
 }
 
@@ -1056,7 +1261,11 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Style::default().fg(Color::Yellow).bold(),
         )));
         for field in &recipe.fields {
-            let default = field.default.unwrap_or("required");
+            let default = field.default.unwrap_or(if field.required {
+                "required"
+            } else {
+                "optional"
+            });
             lines.push(Line::from(format!("{}: {default}", field.label)));
         }
         lines.push(Line::from(""));
@@ -1096,6 +1305,78 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .block(Block::default().borders(Borders::ALL)),
         area,
     );
+}
+
+fn draw_run_view(frame: &mut Frame<'_>, view: &RunView) {
+    let frame_area = frame.area();
+    let area = Rect {
+        x: frame_area.x.saturating_add(2),
+        y: frame_area.y.saturating_add(1),
+        width: frame_area.width.saturating_sub(4).max(20),
+        height: frame_area.height.saturating_sub(2).max(7),
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(2)])
+        .split(area);
+    let status = if view.running { "running" } else { "finished" };
+    let output_width = chunks[0].width.saturating_sub(2).max(1) as usize;
+    let wrapped_lines = wrap_output_lines(&view.lines, output_width);
+    let lines = wrapped_lines
+        .iter()
+        .map(|line| Line::from(line.as_str()))
+        .collect::<Vec<_>>();
+    let viewport = chunks[0].height.saturating_sub(2) as usize;
+    let max_scroll = wrapped_lines
+        .len()
+        .saturating_sub(viewport)
+        .min(u16::MAX as usize) as u16;
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .scroll((view.scroll.min(max_scroll), 0))
+            .block(
+                Block::default()
+                    .title(format!("{} · {status}", view.title))
+                    .borders(Borders::ALL),
+            ),
+        chunks[0],
+    );
+    let help = if view.running {
+        "Up/Down scroll    End follow output    Ctrl-C cancel"
+    } else {
+        "Up/Down or PgUp/PgDn scroll    Home/End jump    Enter return"
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
+            .alignment(Alignment::Center),
+        chunks[1],
+    );
+}
+
+fn wrap_output_lines(lines: &[String], max_width: usize) -> Vec<String> {
+    let mut wrapped = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            wrapped.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        let mut width = 0;
+        for ch in line.chars() {
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if !current.is_empty() && width + char_width > max_width {
+                wrapped.push(current);
+                current = String::new();
+                width = 0;
+            }
+            current.push(ch);
+            width += char_width;
+        }
+        wrapped.push(current);
+    }
+    wrapped
 }
 
 fn draw_prompt(
@@ -1326,8 +1607,8 @@ fn recipes() -> Vec<Recipe> {
                 },
             ],
             notes: &[
-                "Requires a model credential in the shell: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
-                "Requires GITHUB_PERSONAL_ACCESS_TOKEN in the shell; the value is forwarded by name and not placed in argv.",
+                "Requires a saved or environment model credential: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
+                "Requires a saved or environment GITHUB_PERSONAL_ACCESS_TOKEN; the value is forwarded by name and not placed in argv.",
                 "A passing run cites live GitHub issue titles or numbers.",
             ],
         },
@@ -1612,5 +1893,23 @@ mod tests {
         assert_eq!(input_window("abcdefgh", false, 5), "defgh");
         assert_eq!(input_window("ab界", false, 3), "b界");
         assert_eq!(input_window("secret", true, 4), "****");
+    }
+
+    #[test]
+    fn command_output_wraps_without_losing_wide_characters() {
+        let lines = vec!["abcdef".to_string(), "ab界cd".to_string(), String::new()];
+        assert_eq!(
+            wrap_output_lines(&lines, 4),
+            vec!["abcd", "ef", "ab界", "cd", ""]
+        );
+    }
+
+    #[test]
+    fn interactive_routes_do_not_restore_the_regular_terminal_mid_session() {
+        let source = include_str!("interactive.rs");
+        let old_suspend_path = ["suspend", "_terminal"].concat();
+        let old_line_prompt = ["prompt", "_field"].concat();
+        assert!(!source.contains(&old_suspend_path));
+        assert!(!source.contains(&old_line_prompt));
     }
 }
