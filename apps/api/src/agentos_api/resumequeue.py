@@ -18,7 +18,7 @@ from typing import Any
 import redis.asyncio as redis
 from aci_protocol import QueuedTurn, ReplyHandle
 
-from .models import Approval
+from .models import Approval, ApprovalStatus
 
 RUNS_STREAM = "agentos:runs"
 STREAM_PAYLOAD_FIELD = "payload"
@@ -95,6 +95,29 @@ def build_expiry_resume_turn(approval: Approval) -> QueuedTurn:
         "expiry and proceed or stop accordingly."
     )
     return _build_turn(approval, author="system", text=text)
+
+
+def resume_turn_for(approval: Approval) -> QueuedTurn:
+    """The resume turn owed for a resolved-or-expired approval, by status.
+
+    The single status -> builder mapping, kept beside the builders so a new
+    resumable status cannot be added without extending it, and so the one
+    status-agnostic caller (the reconciler, #418) stays mapping-free. Raises
+    ValueError for a status that owes no wake (pending), mirroring how
+    ``crud._RESUMABLE_STATUSES`` fences the reconciler's finder and its per-row
+    claim.
+
+    The three inline callers do NOT come through here: each just performed the
+    CAS that established its record's status, so it names its builder directly.
+    """
+
+    if approval.status == ApprovalStatus.expired:
+        return build_expiry_resume_turn(approval)
+    if approval.status in (ApprovalStatus.approved, ApprovalStatus.rejected):
+        return build_resume_turn(approval)
+    raise ValueError(
+        f"approval {approval.id} status {approval.status} owes no resume turn"
+    )
 
 
 class ResumeQueue:

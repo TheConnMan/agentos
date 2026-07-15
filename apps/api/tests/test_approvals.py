@@ -27,6 +27,7 @@ from agentos_api.config import get_settings
 from agentos_api.main import create_app
 from agentos_api.models import Approval
 from agentos_api.resumequeue import ResumeQueue
+from agentos_api.resumereconciler import ResumeReconciler
 from agentos_api.sandbox_token import mint
 from agentos_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
 from fastapi.testclient import TestClient
@@ -406,6 +407,11 @@ def test_expired_approval_resolve_returns_410_and_resumes(
     assert "expired" in turn.text
     assert payload["summary"] in turn.text
 
+    # #418: the wake made it onto the stream, so the record is marked resumed and
+    # the reconciler owes it nothing. Enqueue-first-then-mark, the same ordering
+    # the resolve path uses.
+    assert _read_resumed_at(created["id"]) is not None
+
 
 def test_unknown_approval_is_404(
     approvals_client: TestClient, auth_headers: dict[str, str], clean_db: None
@@ -730,6 +736,24 @@ def test_sweeper_expires_lapsed_pending_and_enqueues_resume_turn(
     assert row["authorized"] is True
     assert row["decision"] == ""
 
+    # #418: the wake reached the stream, so the sweeper marked the record resumed.
+    assert _read_resumed_at(created["id"]) is not None
+
+    # ...which is what keeps the reconciler off a healthy sweep. Now that expired
+    # rows are reconciler candidates, an unmarked one would be re-enqueued past
+    # the grace horizon and steer the resumed thread a second time. Run the
+    # backstop against the same DB with grace 0 (the worst case: every expired
+    # row is instantly past the horizon) and it must find nothing to do.
+    async def _reconcile() -> int:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            reconciler = ResumeReconciler(
+                sessionmaker, queue, interval_seconds=30, grace_seconds=0, batch_limit=100
+            )
+            return await reconciler.reconcile_once()
+
+    assert asyncio.run(_reconcile()) == 0
+    assert len(valkey.xrange(runs_stream)) == 1
+
 
 def test_sweeper_ignores_unexpired_and_unbounded_records(
     approvals_client: TestClient,
@@ -904,6 +928,91 @@ def test_resolve_path_expiry_returns_410_even_if_enqueue_fails(
     # The enqueue failed, so no resume turn reached the stream.
     assert valkey.xrange(runs_stream) == []
 
+    # #418: and because nothing was delivered, the record stays unmarked -- an
+    # owed wake the reconciler picks up past the grace horizon. Marking before
+    # enqueuing would write the wake off as delivered and strand the session
+    # permanently, since an expired record is never re-selected as pending.
+    assert _read_resumed_at(created["id"]) is None
+
+
+def test_resolve_path_expiry_returns_410_when_the_resumed_mark_fails(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late resolver on a lapsed approval must still get 410 when the MARK
+    fails, not just when the enqueue does.
+
+    Distinct from ``test_resolve_path_expiry_returns_410_even_if_enqueue_fails``:
+    there the enqueue raises FIRST, so the mark never runs. Here the enqueue
+    SUCCEEDS and ``crud.mark_approval_resumed`` raises, which is the only ordering
+    that reaches the ``except``'s ``session.rollback()`` with a live ORM instance
+    still needed by the 410 message. That rollback expires every instance in the
+    session, so reading ``expired.expires_at`` off the record afterwards would
+    trigger an implicit reload and raise ``MissingGreenlet`` under the async
+    session, turning the owed 410 into a 500. The endpoint hoists ``expires_at``
+    into a local before the try to keep the deadline readable after the rollback;
+    this test pins that hoist.
+
+    ``resumed_at`` must stay NULL: the mark is what writes the wake off as
+    delivered, and it did not commit, so the reconciler still owns the retry past
+    its grace horizon (a redundant wake, the safe direction, since the turn did
+    reach the stream).
+    """
+
+    payload = _payload(expires_in_seconds=1)
+    created = approvals_client.post(
+        "/approvals", json=payload, headers=auth_headers
+    ).json()
+    assert created["expires_at"] is not None
+    time.sleep(1.1)
+
+    real_mark = crud.mark_approval_resumed
+
+    async def _failing_mark(session: Any, approval_id: uuid.UUID) -> Any:
+        # Wrap the real collaborator: only this record's mark fails (a DB blip),
+        # every other caller keeps the genuine implementation.
+        if str(approval_id) == created["id"]:
+            raise RuntimeError("postgres unreachable")
+        return await real_mark(session, approval_id)
+
+    monkeypatch.setattr(crud, "mark_approval_resumed", _failing_mark)
+
+    # Observe the real 500 the error middleware would return in production rather
+    # than letting TestClient re-raise it -- the regression pinned here is
+    # precisely "500 leaks out where 410 is owed".
+    monkeypatch.setattr(approvals_client._transport, "raise_server_exceptions", False)
+
+    resolved = approvals_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert resolved.status_code == 410, resolved.text
+
+    # The 410 still names the expiry deadline. This is what the hoist protects: a
+    # lazy reload after the rollback 500s before this body is ever built.
+    deadline = str(datetime.fromisoformat(created["expires_at"]))
+    assert deadline in resolved.json()["detail"]
+
+    # The SLA flip committed independently of the failed mark.
+    got = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert got.json()["status"] == "expired"
+
+    # The enqueue ran BEFORE the mark, so the wake did reach the stream -- this is
+    # the ordering the enqueue-failure test cannot reach.
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.event_id == f"approval-{created['id']}-resolved"
+    assert turn.author == "system"
+
+    # The mark did not commit, so the record still reads as owing its wake.
+    assert _read_resumed_at(created["id"]) is None
+
 
 def test_sweeper_isolates_a_failing_record(
     approvals_client: TestClient,
@@ -988,6 +1097,15 @@ def test_sweeper_isolates_a_failing_record(
     assert resumed_id in ids
     assert turn.event_id == f"approval-{resumed_id}-resolved"
     assert turn.author == "system"
+
+    # #418: enqueue-first-then-mark, per record. The record whose enqueue landed
+    # is marked; the poisoned one stays NULL so the reconciler re-enqueues it
+    # later. Marking before the enqueue would leave the failed record marked --
+    # its wake written off as delivered with nothing on the stream, which is the
+    # permanent strand this issue exists to close.
+    (stranded_id,) = ids - {resumed_id}
+    assert _read_resumed_at(resumed_id) is not None
+    assert _read_resumed_at(stranded_id) is None
 
 
 def test_sweeper_disabled_when_interval_nonpositive(

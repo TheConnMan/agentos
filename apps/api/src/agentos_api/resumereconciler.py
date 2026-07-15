@@ -8,6 +8,14 @@ the resume turn, setting ``resumed_at`` only AFTER a successful enqueue
 (enqueue-first-then-mark), so a failed enqueue is retried on the next pass
 rather than lost.
 
+An ``expired`` record is an owed wake on the same terms (#418): since #412 both
+expiry paths enqueue a wake of their own, so a NULL ``resumed_at`` there means
+the same failed enqueue -- and, unlike a resolved record, the flipped row is no
+longer ``pending`` and so is never re-selected by the sweeper, which made an
+expiry wake the one permanently unrecoverable case. Which turn a candidate owes
+follows from its status, so the reconciler defers to ``resume_turn_for`` rather
+than carrying the mapping itself.
+
 Three qualifications shape the design:
 
 - **Grace window (load-bearing).** ``reconcile_once`` only considers records
@@ -25,7 +33,9 @@ Three qualifications shape the design:
   dedupes it -- but only within ``idempotency_ttl_s`` (default 24h). In steady
   state the reconciler retries on the interval (seconds), far inside that
   window. The bound only bites for pre-fix historical rows, which the migration
-  0011 backfill (``resumed_at = resolved_at``) excludes from the work-list.
+  backfills (``resumed_at = resolved_at``) exclude from the work-list: 0011 for
+  the resolved rows, 0012 for the expired rows that #418's widened work-list
+  first made candidates.
 - **Concurrency.** The done-marker CANNOT dedupe a concurrent double-enqueue
   (it is written only post-terminal), so two overlapping copies steer into one
   live turn. Two races, two guards: (1) *reconciler vs reconciler* (``api.replicas
@@ -47,7 +57,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from . import crud
-from .resumequeue import ResumeQueue, build_resume_turn
+from .resumequeue import ResumeQueue, resume_turn_for
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +113,7 @@ class ResumeReconciler:
                             # Another replica holds it, or it is already resumed;
                             # exit the txn block cleanly, releasing any lock.
                             continue
-                        turn = build_resume_turn(approval)
+                        turn = resume_turn_for(approval)
                         await self._resume_queue.enqueue(turn)
                         approval.resumed_at = datetime.now(UTC).replace(tzinfo=None)
                     # session.begin() committed here, releasing the row lock.

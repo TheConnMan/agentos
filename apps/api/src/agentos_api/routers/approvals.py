@@ -166,10 +166,16 @@ async def resolve_approval(
         # None means a concurrent resolution won the CAS before the expiry did;
         # fall through to the claim below, which will lose and report the winner.
         if expired is not None:
+            # Read expires_at into a plain value up front: the except below now
+            # rolls back, which expires every ORM instance in this session, so
+            # reading it off the record afterwards for the 410 message would
+            # trigger an implicit reload (MissingGreenlet under the async
+            # session) and turn the owed 410 back into a 500.
+            expires_at = expired.expires_at
             await _audit(
                 "expired",
                 authorized=True,
-                reason=f"approval expired at {expired.expires_at}",
+                reason=f"approval expired at {expires_at}",
             )
             # This resolver lost the SLA (it still gets 410), but the session is
             # suspended and must be woken down its timeout branch. This resolver
@@ -181,19 +187,50 @@ async def resolve_approval(
             # not the shared key, that keeps this wakeup single.
             try:
                 await resume_queue.enqueue(build_expiry_resume_turn(expired))
+                # Enqueue-first-then-mark (#418): only a wake that reached the
+                # stream is written off, so a failure below leaves resumed_at
+                # NULL and the reconciler re-enqueues it past its grace horizon.
+                # This is the sole recovery path for an expiry wake -- a flipped
+                # record is no longer pending, so no later sweep re-selects it.
+                await crud.mark_approval_resumed(session, approval_id)
             except Exception:
+                # Reset the session before raising: the mark inside the try is a
+                # DB write, so its failure leaves this session in
+                # PendingRollbackError until dependency teardown. Nothing
+                # committed is discarded -- expire_approval and the audit each
+                # commit themselves above, so the rollback only clears the failed
+                # mark's aborted transaction. Mirrors the sweeper's except.
+                await session.rollback()
                 # A queue blip must not turn the 410 into a 500; the flip is
-                # already committed, so log the possibly-lost wakeup and still
-                # report the expiry. (A durable outbox to guarantee delivery is
-                # tracked as follow-up.)
+                # already committed, so report the expiry regardless. Unlike the
+                # resolve path below, this branch never re-raises when the
+                # reconciler is disabled: a 410 claims no delivery, it reports
+                # the true fact that the approval expired, and a 500 here would
+                # misinform the resolver about an outcome that did happen.
+                #
+                # The log must not name the enqueue as the failure: this except
+                # also catches a failed mark, in which case the wake DID reach
+                # the stream. An operator reads this line while deciding whether
+                # a session is stranded, so it states the uncertainty rather than
+                # guessing.
+                retry = (
+                    "the reconciler will re-enqueue it past its grace horizon "
+                    "(a redundant wake if it did land, which is the safe "
+                    "direction)"
+                    if get_settings().resume_reconciler_enabled
+                    else "nothing will retry it (resume reconciler disabled) "
+                    "and the session wakeup may be lost"
+                )
                 logger.exception(
-                    "failed to enqueue expiry resume turn for approval %s on the "
-                    "resolve path; session wakeup may be lost",
+                    "expiry wakeup incomplete for approval %s on the resolve "
+                    "path; the resume turn may or may not have reached the "
+                    "stream, so %s",
                     approval_id,
+                    retry,
                 )
             raise HTTPException(
                 status.HTTP_410_GONE,
-                f"approval expired at {expired.expires_at} and can no longer be resolved",
+                f"approval expired at {expires_at} and can no longer be resolved",
             )
 
     claimed = await crud.claim_approval_resolution(
