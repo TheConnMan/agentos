@@ -62,9 +62,35 @@ in code now:
   `runner/src/agentos_runner/approval.py`) -- the call is denied before execution, and the
   turn ends `awaiting-approval` on the same override the policy gate uses, so both trigger
   types share one record/suspend/resume lifecycle. An agent with no configured gates keeps
-  the historical `bypassPermissions` posture verbatim (zero behavior change). Not yet built:
-  a grant mechanism for the resumed turn (an approved tool call is still gated on retry
-  after resume; a one-shot allowance delivered at boot remains open follow-up work).
+  the historical `bypassPermissions` posture verbatim (zero behavior change).
+- **The one-shot post-approval allowance (landed, #430, ADR-0035).** A prior gap: after an
+  approval was granted and the session resumed, the resume turn re-called the gated tool
+  and `can_use_tool` denied it again, because the approval-required set is rebuilt from
+  durable config on every claim -- so a manifest `approvalPolicy`-gated tool (the
+  unliftable, production-intended form) could never complete post-approval without an
+  operator PATCH. Now, when the worker builds the boot env for a claim whose `event_id` is
+  the deterministic resume id (`resumequeue.resume_event_id` -> `approval-<id>-resolved`)
+  AND that approval is `status='approved'` AND its `summary` is a permission-gate block
+  (the `summarize_tool_call` prefix), the worker injects `AGENTOS_APPROVAL_GRANT_TOOL=<tool>`
+  (`binding.approval_grant_tool`). The runner gate allows exactly one call to that tool on
+  the boot turn (`ApprovalGate.consume_grant`), then re-denies; `reset()` expires an unspent
+  grant on the next turn so an adopted warm-pod follow-up cannot inherit it. The grant is
+  **tool-name-scoped** (a different gated tool, or a second call to the same one, still
+  gates), **agent-bound** (delivered only when the approval's `agent_id` matches the
+  agent resolved for the channel, so a rebound channel cannot cross-grant), **permission-gate
+  only** (the `summarize_tool_call` prefix is a RESERVED namespace: the runner guards
+  model-authored policy-gate summaries out of it via `guard_reserved_summary`, so a
+  policy-gate request cannot forge a permission-gate grant), and **server-side** --
+  derived by the worker from the durable record, never minted by the sandbox, so the
+  ADR-0010/0033/0034 "enforced server-side, unspoofable from the sandbox" guarantee holds.
+  The non-requester guarantee is upstream: the authorizer denies self-approval before the
+  status flips to `approved`. **Known gaps:** (1) *fail-safe adoption* -- if the pod is
+  still live when the resume arrives (suspend failed, or a user mention resumed the thread
+  first), `claim()` adopts it and the boot env is ignored, so the grant is lost and the
+  action re-pauses (self-heals via re-approval). (2) *tool-name, not argument, scoping* --
+  the granted tool may be invoked on the resume turn with different arguments than the
+  human saw; argument-binding needs runner-persisted structured provenance across the
+  frozen ACI contract (ADR-0035 follow-up).
 - **The policy/route/audit layer (landed, #247).** The bundle manifest's `approvalPolicy`
   gates (schema + deploy validation from #273) are consumed at runner boot
   (`load_approval_policy`): each `{gate, route}` pair adds the tool to the permission gate

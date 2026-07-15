@@ -34,7 +34,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from .approval import APPROVAL_TOOL_NAME
+from .approval import APPROVAL_TOOL_NAME, guard_reserved_summary
 from .otel import _GenerationSpan
 from .side_effects import SideEffectClassifier
 
@@ -127,7 +127,12 @@ def _translate_assistant(
                 payload = block.input if isinstance(block.input, dict) else {}
                 summary = str(payload.get("summary") or "").strip()
                 if summary:
-                    state.approval_summary = summary
+                    # The summary is the model's own argument (attacker-
+                    # influenced). Guard it out of the reserved permission-gate
+                    # namespace so it can never masquerade as a genuine
+                    # can_use_tool denial the worker would grant a bypass for
+                    # (#430, ADR-0035).
+                    state.approval_summary = guard_reserved_summary(summary)
                     route = str(payload.get("route") or "").strip()
                     state.approval_route = route or None
             if classifier.is_side_effecting(block.name) and not state.side_effect_emitted:

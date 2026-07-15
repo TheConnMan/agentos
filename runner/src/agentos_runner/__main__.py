@@ -106,7 +106,11 @@ def build_runner(
         policy_routes
     )
     approval_gate = (
-        ApprovalGate(required=gated_tools, route_by_tool=policy_routes)
+        ApprovalGate(
+            required=gated_tools,
+            route_by_tool=policy_routes,
+            grant_tool=config.approval_grant_tool,
+        )
         if gated_tools
         else None
     )

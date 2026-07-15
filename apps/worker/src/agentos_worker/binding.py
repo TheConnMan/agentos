@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import time
 import uuid
@@ -77,8 +78,40 @@ RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
 # calls the runner intercepts via can_use_tool and pauses awaiting approval.
 # A runner-local knob (not frozen ACI env), like AGENTOS_IDEMPOTENT_TOOLS.
 APPROVAL_REQUIRED_ENV = "AGENTOS_APPROVAL_REQUIRED_TOOLS"
+# #430 one-shot post-approval allowance (ADR-0035): a runner-local knob carrying
+# the single approved tool name the runner gate lets through once on a resume boot.
+GRANT_TOOL_ENV = "AGENTOS_APPROVAL_GRANT_TOOL"
 # the worker re-mints every turn; this only bounds a leaked-token window (ADR-0033)
 SANDBOX_TOKEN_TTL_SECONDS = 24 * 60 * 60
+
+# The permission-gate summary prefix. Duplicated (not imported) from
+# runner/src/agentos_runner/approval.py::summarize_tool_call /
+# APPROVAL_SUMMARY_PREFIX -- the worker must not import the runner package at
+# runtime, and a pinning test asserts the two literals agree so divergence fails CI.
+_PERMISSION_GATE_SUMMARY_PREFIX = "Tool call awaiting approval: "
+
+# The deterministic resume event id shape emitted by
+# apps/api/src/agentos_api/resumequeue.py::resume_event_id ("approval-<id>-resolved").
+# That suffix is a frozen convention; a pinning test guards format divergence.
+_RESUME_EVENT_ID_RE = re.compile(
+    r"^approval-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})-resolved$"
+)
+
+
+def _parse_resume_event_id(event_id: str) -> uuid.UUID | None:
+    """The approval id embedded in a resume event id, or None if it is not one.
+
+    Returns None (never raises) for a non-approval event id or a malformed uuid,
+    so a non-resume turn fast-returns without any DB round-trip.
+    """
+    match = _RESUME_EVENT_ID_RE.match(event_id)
+    if match is None:
+        return None
+    try:
+        return uuid.UUID(match.group(1))
+    except ValueError:
+        return None
 
 _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
@@ -180,6 +213,53 @@ class BindingResolver:
             return None
         value: str | None = row[0]
         return value
+
+    async def approval_grant_tool(
+        self, event_id: str, agent_id: uuid.UUID
+    ) -> str | None:
+        """The one-shot post-approval grant for a resume turn (#430, ADR-0035).
+
+        When ``event_id`` is the deterministic resume id of a genuinely
+        ``approved`` PERMISSION-GATE approval, return the single approved tool
+        name the runner gate should let through once; otherwise None. Derived
+        server-side from the durable ``approvals`` row, so a compromised sandbox
+        cannot mint one. Permission-gate only: a policy-gate approval
+        (``request_approval``, a business decision) carries an arbitrary summary
+        without the permission-gate prefix and MUST NOT grant a tool bypass.
+
+        The grant is agent-bound: the row's ``agent_id`` MUST be non-NULL and
+        equal ``agent_id`` (the agent currently resolved for this channel).
+        A NULL row agent_id or a mismatch returns None -- fail-safe, never a
+        cross-agent grant. This closes a rebind leak: if a channel is rebound to
+        a different agent while an approval is pending, agent A's grant must not
+        be injected into agent B's runner and cross-authorize a shared tool name.
+
+        A non-approval event id fast-returns None with no DB round-trip.
+        """
+        approval_id = _parse_resume_event_id(event_id)
+        if approval_id is None:
+            return None
+        sql = text(
+            f"SELECT status, summary, agent_id "
+            f"FROM {self._config.db_schema}.approvals WHERE id = :id"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": approval_id})
+            row = result.mappings().first()
+        if row is None:
+            return None
+        # Literal status compare: the worker must not import the API's ApprovalStatus.
+        if row["status"] != "approved":
+            return None
+        # Agent-bind the grant: never cross-authorize across a channel rebind.
+        row_agent_id = row["agent_id"]
+        if row_agent_id is None or row_agent_id != agent_id:
+            return None
+        summary: str | None = row["summary"]
+        if not summary or not summary.startswith(_PERMISSION_GATE_SUMMARY_PREFIX):
+            return None
+        tool = summary[len(_PERMISSION_GATE_SUMMARY_PREFIX):].split(" ", 1)[0]
+        return tool or None
 
     def packs_for(self, resolved: ResolvedDeployment) -> BehaviorPacks:
         """The agent's parsed behavior packs (all-off when none are configured).

@@ -53,7 +53,7 @@ from .behaviorpacks import (
     sample_load,
     sample_tip,
 )
-from .binding import BindingResolver
+from .binding import GRANT_TOOL_ENV, BindingResolver
 from .blocks import approval_card
 from .config import WorkerConfig
 from .killswitch import KillSwitch
@@ -294,6 +294,20 @@ class Kernel:
                     return
                 agent_id = resolved.agent_id
                 boot_env = self._binding.boot_env(resolved, thread)
+                # One-shot post-approval allowance (#430, ADR-0035): when THIS turn is the
+                # resume of a genuinely-approved permission-gate approval, deliver a single
+                # gated-tool grant so the approved action completes once; the gate re-arms
+                # on the next claim. Server-side and tool-name-scoped; never minted by the
+                # sandbox. getattr: binding doubles may not carry the method, like the
+                # approval_routes probe below. See docs/interfaces/approval/INTERFACE.md.
+                grant_fn = getattr(self._binding, "approval_grant_tool", None)
+                grant_tool = (
+                    await grant_fn(qevent.event_id, resolved.agent_id)
+                    if grant_fn is not None
+                    else None
+                )
+                if grant_tool:
+                    boot_env[GRANT_TOOL_ENV] = grant_tool
                 # Resolve the agent's packs once here (a pure parse, no I/O) and
                 # reuse: the nav pack is threaded to the final render, the same
                 # packs feed the shimmer below.
