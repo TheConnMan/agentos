@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .. import crud
 from ..auth import require_api_key
+from ..authorizer import Authorizer, ChannelMembershipAuthorizer
 from ..deps import ResumeQueueDep, SessionDep
 from ..models import Approval, ApprovalStatus
 from ..resumequeue import build_resume_turn
@@ -32,6 +33,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/approvals", tags=["approvals"], dependencies=[Depends(require_api_key)]
 )
+
+# The server-side authorizer (#246): channel membership is the first
+# implementation of the swappable Authorizer seam (user-group, user-list, and
+# platform-RBAC come later); it is module-level state because the decision is
+# pure over the record and the attempt.
+_AUTHORIZER: Authorizer = ChannelMembershipAuthorizer()
 
 
 def _expired(approval: Approval) -> bool:
@@ -104,14 +111,21 @@ async def resolve_approval(
 ) -> ApprovalOut:
     """Claim the resolution (resolve-once) and wake the suspended session.
 
-    Exactly one resolver wins the conditional UPDATE; a loser gets 409 naming
-    who resolved it, and a past-SLA record flips to expired and returns 410.
-    The winner's response is sent only after the resume turn is enqueued.
+    The authorizer runs first, server-side (#246): self-approval is blocked
+    and channel membership is checked against the attempt's channel; a denied
+    actor gets 403 with the reason. Then exactly one authorized resolver wins
+    the conditional UPDATE; a loser gets 409 naming who resolved it, and a
+    past-SLA record flips to expired and returns 410. The winner's response is
+    sent only after the resume turn is enqueued.
     """
 
     approval = await crud.get_approval(session, approval_id)
     if approval is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
+
+    decision = _AUTHORIZER.authorize(approval, data.resolved_by, data.actor_channel)
+    if not decision.allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, decision.reason)
 
     if approval.status == ApprovalStatus.pending and _expired(approval):
         expired = await crud.expire_approval(session, approval_id)

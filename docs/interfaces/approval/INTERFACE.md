@@ -1,7 +1,7 @@
 # INTERFACE: Approval / authorizer
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** NONE &nbsp;·&nbsp; **Implementations today:** 0 &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 (channel membership) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -51,12 +51,17 @@ The durable base of the seam landed with #244; the authorizer port itself is sti
 
 ## Implementations today
 
-**Zero authorizer implementations** — resolution is currently authorized by the shared API
-key alone, like every other endpoint; WHO may resolve (channel membership first, then
-user-group, explicit user-list, platform-RBAC) and the self-approval block land with #246 at
-the resolve endpoint, which is deliberately where the decision point already sits. The
-durable record, the `awaiting-approval` status, the request tool, and the suspend/resume
-lifecycle are live (#244).
+**One: `ChannelMembershipAuthorizer`** (`apps/api/src/agentos_api/authorizer.py`), behind
+the `Authorizer` Protocol at the resolve endpoint (#246). Self-approval is blocked
+unconditionally; channel membership is proven by the resolution attempt's channel — the
+worker routes the Block Kit approval card into the approval's channel, Slack only renders
+that message (and accepts clicks) for members of that channel, and the click reaches the
+platform over the dispatcher's authenticated Socket Mode connection, which relays the
+click's channel as `actor_channel`. Non-dispatcher callers (operator curl, CLI) authenticate
+with the platform API key and assert the channel explicitly. User-group, explicit
+user-list, and platform-RBAC implementations swap in behind the same Protocol later. The
+durable record, the `awaiting-approval` status, both gate trigger types, the card
+click-to-resolve flow, and the suspend/resume lifecycle are live (#244, #245, #246).
 
 ## Known leakage
 

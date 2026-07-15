@@ -317,3 +317,41 @@ def test_render_bounds_fallback_text_for_oversized_body() -> None:
     rendered_text, blocks = render(text)
     assert blocks is not None
     assert len(rendered_text) <= 40000
+
+
+def test_approval_card_shape_and_click_contract() -> None:
+    # The card carries what needs approval, who asked, and two buttons whose
+    # action ids are the dispatcher's click contract with the record id as value.
+    from agentos_dispatcher.approval_actions import APPROVE_ACTION_ID, REJECT_ACTION_ID
+    from agentos_worker.blocks import approval_card
+
+    fallback, card = approval_card(
+        approval_id="appr-1",
+        summary="Give ACME a 20% discount",
+        requested_by="U_AE",
+    )
+    assert "Give ACME a 20% discount" in fallback
+    assert card[0]["type"] == "header"
+    assert "Give ACME a 20% discount" in card[1]["text"]["text"]
+    assert "<@U_AE>" in card[2]["elements"][0]["text"]
+
+    actions = card[-1]
+    assert actions["type"] == "actions"
+    approve, reject = actions["elements"]
+    assert approve["action_id"] == APPROVE_ACTION_ID
+    assert approve["value"] == "appr-1"
+    assert approve["style"] == "primary"
+    assert reject["action_id"] == REJECT_ACTION_ID
+    assert reject["value"] == "appr-1"
+    assert reject["style"] == "danger"
+
+
+def test_approval_card_clamps_oversized_summary() -> None:
+    from agentos_worker.blocks import approval_card
+
+    fallback, card = approval_card(
+        approval_id="appr-2", summary="x" * 10000, requested_by="U1"
+    )
+    # Section mrkdwn stays under Slack's 3000-char cap; fallback under 40k.
+    assert len(card[1]["text"]["text"]) <= 2900
+    assert len(fallback) <= 39000

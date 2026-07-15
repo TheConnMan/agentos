@@ -297,13 +297,17 @@ class ApprovalCreate(BaseModel):
 
 
 class ApprovalResolve(BaseModel):
-    """One resolution attempt. Exactly one attempt wins (compare-and-set);
-    the identity here is caller-asserted for now -- the server-side authorizer
-    (channel membership, self-approval block) lands with #246."""
+    """One resolution attempt. Exactly one attempt wins (compare-and-set), and
+    the server-side authorizer (#246) decides first whether this actor may
+    resolve at all: self-approval is blocked, and channel membership is proven
+    by ``actor_channel`` -- the channel the resolution attempt was made from
+    (the card click's channel, relayed by the dispatcher; asserted explicitly
+    by API-key operators)."""
 
     decision: Literal["approved", "rejected"]
     resolved_by: str = Field(min_length=1)
     note: str | None = None
+    actor_channel: str | None = None
 
 
 class ApprovalOut(BaseModel):

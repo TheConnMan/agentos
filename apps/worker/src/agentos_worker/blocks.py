@@ -256,3 +256,62 @@ def render(text: str, nav: NavPack | None = None) -> tuple[str, list[dict[str, A
         prefix = text[:open_at].strip()
         return (to_mrkdwn(prefix) if prefix else "…", None)
     return (to_mrkdwn(text), None)
+
+
+# --- The approval card (#246, ADR-0010) ------------------------------------------
+
+# Slack caps a section's mrkdwn at 3000 chars; the summary is clamped well under
+# it so the card never bounces (the durable record keeps the full text).
+_APPROVAL_SUMMARY_MAX = 2900
+
+
+def approval_card(
+    *, approval_id: str, summary: str, requested_by: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """The Block Kit approval card: what needs approval plus Approve/Reject.
+
+    The button action ids are the dispatcher's click-to-resolve contract
+    (``agentos_dispatcher.approval_actions``); each button's ``value`` carries
+    the durable record id, so a click resolves exactly this approval. Returns
+    ``(fallback_text, blocks)`` for ``chat.postMessage``.
+    """
+
+    # Imported here (not module top) to keep the module importable in isolation;
+    # the worker package already depends on the dispatcher for the queue seam.
+    from agentos_dispatcher.approval_actions import (
+        APPROVE_ACTION_ID,
+        REJECT_ACTION_ID,
+    )
+
+    clamped = _truncate(to_mrkdwn(summary), _APPROVAL_SUMMARY_MAX)
+    fallback = _truncate(f"Approval required: {summary}", _SLACK_TEXT_MAX)
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": _truncate("Approval required", _HEADER_MAX),
+                "emoji": True,
+            },
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": clamped}},
+        _context_block(f"Requested by <@{requested_by}>"),
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    **_button_shell("Approve"),
+                    "style": "primary",
+                    "action_id": _truncate(APPROVE_ACTION_ID, _ACTION_ID_MAX),
+                    "value": approval_id,
+                },
+                {
+                    **_button_shell("Reject"),
+                    "style": "danger",
+                    "action_id": _truncate(REJECT_ACTION_ID, _ACTION_ID_MAX),
+                    "value": approval_id,
+                },
+            ],
+        },
+    ]
+    return fallback, blocks

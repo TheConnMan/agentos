@@ -118,6 +118,13 @@ class DispatcherConfig(BaseSettings):
         default=3600, validation_alias="AGENTOS_DEDUPE_TTL_SECONDS"
     )
 
+    # Platform API for the approval click-to-resolve flow (#246). Defaults match
+    # the API's dev stack, mirroring the worker's settings for the same seam.
+    api_base_url: str = Field(
+        default="http://localhost:8000", validation_alias="AGENTOS_API_BASE_URL"
+    )
+    api_key: str = Field(default="agentos-dev-key", validation_alias="AGENTOS_API_KEY")
+
     placeholder_text: str = Field(
         default="On it. Working on your request.",
         validation_alias="AGENTOS_PLACEHOLDER_TEXT",

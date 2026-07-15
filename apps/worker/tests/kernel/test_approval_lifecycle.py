@@ -202,3 +202,37 @@ def test_backend_failure_escalates_and_does_not_suspend(make_harness) -> None:
             assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
+
+
+def test_pause_posts_the_approval_card(make_harness) -> None:
+    """#246: pausing posts a Block Kit card into the approval's thread whose
+    buttons carry the record id, alongside the placeholder notice."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        async with make_harness(approvals=approvals) as h:
+            h.runner.default_script = _awaiting_script("Give ACME a 20% discount")
+            ev = _qevent("please discount", thread="th-card")
+            await h.kernel.process_event(ev)
+
+            assert len(h.sink.posts) == 1
+            channel, fallback, blocks, thread_ts = h.sink.posts[0]
+            assert channel == "C1"
+            assert thread_ts == "th-card"
+            assert "Give ACME a 20% discount" in fallback
+            assert blocks is not None
+            actions = blocks[-1]
+            assert actions["type"] == "actions"
+            assert [e["value"] for e in actions["elements"]] == ["appr-1", "appr-1"]
+
+    asyncio.run(go())
+
+
+def test_escalation_paths_post_no_card(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:  # no approvals backend wired
+            h.runner.default_script = _awaiting_script("Anything")
+            await h.kernel.process_event(_qevent("gate this"))
+            assert h.sink.posts == []
+
+    asyncio.run(go())
