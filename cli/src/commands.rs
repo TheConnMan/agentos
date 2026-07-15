@@ -375,6 +375,43 @@ pub async fn install(update: bool) -> Result<()> {
     Ok(())
 }
 
+/// `agentos update`: rebuild the CLI from this source checkout and reinstall it
+/// on PATH (`cargo install --path cli --force` -> ~/.cargo/bin), so a code change
+/// is picked up on the next `agentos` invocation without re-running the bootstrap
+/// script. Optionally rebuilds the local runner image too. Source-checkout only,
+/// like `install` -- a release binary has no source to rebuild from. Replacing the
+/// running binary is safe: the current process keeps running from the old inode
+/// and the next invocation is the freshly installed one.
+pub async fn update(image: bool) -> Result<()> {
+    let ui = crate::ui::ui();
+    // `update` rebuilds from a source checkout; a release-installed binary has no
+    // checkout to rebuild from. Point that user at the release assets instead of
+    // the generic install error, and be explicit that self-update-from-release is
+    // not built here (#443 review).
+    let root = find_repo_root().ok_or_else(|| {
+        crate::exit::usage(
+            "`agentos update` rebuilds the CLI from a source checkout, but this binary is not \
+             running inside one.\n  - From a git clone: run `agentos update` from the repo.\n  \
+             - Installed from a GitHub release: download the latest agentos-<target> asset from \
+             https://github.com/curie-eng/agentos/releases and replace this binary (updating a \
+             released binary from the latest release is not built yet).",
+        )
+    })?;
+    require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
+    run_step(
+        &root,
+        "cargo",
+        &["install", "--path", "cli", "--force"],
+        "cargo install (cli -> ~/.cargo/bin)",
+    )
+    .await?;
+    if image {
+        build("agentos-runner").await?;
+    }
+    ui.success("agentos updated. The new binary is live on your next `agentos` invocation.");
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EnvSeed {
     Preserved,

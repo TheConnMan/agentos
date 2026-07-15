@@ -46,3 +46,7 @@ echo "==> agentos install ${UPDATE_ARGS[*]} (deps + runner image as needed)"
 echo
 echo "Done. If 'agentos' is not found in this shell, add ~/.cargo/bin to PATH"
 echo "(rustup writes ~/.cargo/env for this) and open a new shell."
+echo
+echo "For future changes you don't need this script -- run 'agentos update' to"
+echo "rebuild and reinstall the CLI on PATH ('agentos update --image' also rebuilds"
+echo "the runner image)."
