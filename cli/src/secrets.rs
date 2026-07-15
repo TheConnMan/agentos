@@ -119,6 +119,30 @@ pub fn sync_vault_index() -> Result<()> {
     write_index(&index)
 }
 
+/// Move one required credential from the legacy per-secret Keychain layout to
+/// the consolidated vault. No value is shown or requested from the user.
+pub fn migrate_legacy_value(name: &str) -> Result<bool> {
+    if !needs_vault_upgrade(name)? {
+        return Ok(false);
+    }
+    let value = match legacy_entry(name)?.get_password() {
+        Ok(value) => value,
+        Err(keyring::Error::NoEntry) => return Ok(false),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("authorizing saved credential {name} for migration"));
+        }
+    };
+    save_value(name, &value)?;
+    match legacy_entry(name)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(err) => crate::ui::ui().warn(&format!(
+            "migrated {name}, but could not remove its old credential-store item: {err}"
+        )),
+    }
+    Ok(true)
+}
+
 pub fn set_value(name: &str, value: &str) -> Result<()> {
     validate_name(name)?;
     let mut vault = read_vault()?;
@@ -197,6 +221,11 @@ fn prompt_secret(name: &str) -> Result<String> {
 fn vault_entry() -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, VAULT_ACCOUNT)
         .context("opening the AgentOS OS credential-store vault")
+}
+
+fn legacy_entry(name: &str) -> Result<keyring::Entry> {
+    keyring::Entry::new(SERVICE, &format!("agentos:global:{name}"))
+        .with_context(|| format!("opening legacy OS credential-store entry for {name}"))
 }
 
 fn vault_cache() -> &'static Mutex<VaultCache> {

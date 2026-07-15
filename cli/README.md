@@ -110,15 +110,15 @@ Keyboard:
 | `q` or `Esc` | Exit |
 
 The first surface focuses on the common inner-loop and operations paths:
-`skill up/message/eval`, a live chat with the `examples/github-issues` agent,
+`skill up/message/eval`, an **Explore examples** picker with live agent chat,
 `secrets set/list/unset`, `local up/message/status`, `cluster status/message`,
 `install`, and `dev contracts`.
 
-The GitHub agent chat checks for a model credential plus
-`GITHUB_PERSONAL_ACCESS_TOKEN`, prompting to save missing values inside the TUI.
-It starts the authenticated MCP bundle once and opens a persistent conversation:
-type a message, read the reply, and continue for as many turns as needed. Leaving
-the chat stops the runner and returns to AgentOS.
+**Explore examples** opens a dialog for GitHub issues, Text stats engine, or
+Weather. After selection, AgentOS checks that example's credentials, starts its
+bundle once, and opens a persistent conversation. Type a message, read the
+reply, and continue for as many turns as needed. Leaving chat stops the runner
+and returns to AgentOS.
 
 ## `agentos secrets`
 

@@ -68,7 +68,15 @@ enum TuiAction {
 
 #[derive(Clone, Copy, Debug)]
 enum Workflow {
-    GithubAgentChat,
+    ExploreExamples,
+}
+
+#[derive(Clone, Debug)]
+struct ExampleChoice {
+    name: &'static str,
+    description: &'static str,
+    directory: &'static str,
+    secrets: &'static [&'static str],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,9 +140,7 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec![
-                "all", "skill", "examples", "secrets", "local", "cluster", "dev",
-            ],
+            targets: vec!["all", "skill", "secrets", "local", "cluster", "dev"],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -293,8 +299,8 @@ fn run_recipe_in_tui(
     let Some(values) = prompt_recipe_fields(terminal, app, recipe)? else {
         return Ok(format!("Canceled: {}", recipe.title));
     };
-    if matches!(recipe.kind, RecipeKind::Workflow(Workflow::GithubAgentChat)) {
-        run_github_agent_chat(terminal, app, &values)?;
+    if matches!(recipe.kind, RecipeKind::Workflow(Workflow::ExploreExamples)) {
+        explore_examples(terminal, app, &values)?;
         return Ok(format!("Finished: {}", recipe.title));
     }
     let mut view = RunView::new(recipe.title);
@@ -576,59 +582,73 @@ fn prompt_text(
     }
 }
 
-fn run_github_agent_chat(
+fn explore_examples(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
     _values: &BTreeMap<String, String>,
 ) -> Result<()> {
+    let choices = example_choices()
+        .into_iter()
+        .map(|example| SelectChoice {
+            label: example.name.to_string(),
+            description: example.description.to_string(),
+            value: example,
+        })
+        .collect();
+    let Some(example) = prompt_select(
+        terminal,
+        app,
+        "Explore Examples",
+        "Choose an agent to run",
+        choices,
+    )?
+    else {
+        return Ok(());
+    };
+
     crate::secrets::sync_vault_index()?;
     ensure_model_credential_available(terminal, app)?;
-    ensure_secret_available(terminal, app, "GITHUB_PERSONAL_ACCESS_TOKEN")?;
-    let secret_env = github_chat_secret_env()?;
+    for name in example.secrets {
+        ensure_secret_available(terminal, app, name)?;
+    }
+    let secret_env = example_secret_env(example.secrets)?;
 
     let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
         .context(
         "could not find AgentOS repo root; run this workflow from the source checkout",
     )?;
-    let example_dir = repo_root.join("examples/github-issues");
-    if !example_dir.join(".mcp.json").is_file() {
-        anyhow::bail!(
-            "missing MCP auth example at {}; expected examples/github-issues/.mcp.json",
-            example_dir.display()
-        );
+    let example_dir = repo_root.join(example.directory);
+    if !example_dir.join(".claude-plugin/plugin.json").is_file() {
+        anyhow::bail!("missing example bundle at {}", example_dir.display());
     }
 
-    let container_name = "agentos-github-agent-chat";
+    let container_name = format!("agentos-example-{}", example.name);
     let port = "7247";
     let url = format!("http://localhost:{port}");
-    let mut setup = RunView::new("Starting GitHub agent");
+    let mut setup = RunView::new(&format!("Starting {}", example.name));
     let mut started = false;
     let run_result = (|| -> Result<()> {
-        run_agentos_in_tui_with_env(
-            terminal,
-            app,
-            &[
-                "skill".to_string(),
-                "up".to_string(),
-                "--plugin-dir".to_string(),
-                example_dir.display().to_string(),
-                "--port".to_string(),
-                port.to_string(),
-                "--name".to_string(),
-                container_name.to_string(),
-                "--secret".to_string(),
-                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
-            ],
-            &repo_root,
-            &mut setup,
-            &secret_env,
-        )?;
+        let mut argv = vec![
+            "skill".to_string(),
+            "up".to_string(),
+            "--plugin-dir".to_string(),
+            example_dir.display().to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--name".to_string(),
+            container_name.clone(),
+        ];
+        for name in example.secrets {
+            argv.push("--secret".to_string());
+            argv.push((*name).to_string());
+        }
+        run_agentos_in_tui_with_env(terminal, app, &argv, &repo_root, &mut setup, &secret_env)?;
         started = true;
-        chat_with_runner(terminal, &repo_root, &url)
+        chat_with_runner(terminal, &repo_root, &url, example.name)
     })();
 
     if started {
-        let mut cleanup = RunView::new("Stopping GitHub agent");
+        let mut cleanup = RunView::new(&format!("Stopping {}", example.name));
         if let Err(err) = run_agentos_in_tui(
             terminal,
             app,
@@ -650,7 +670,31 @@ fn run_github_agent_chat(
     Ok(())
 }
 
-fn github_chat_secret_env() -> Result<Vec<(String, String)>> {
+fn example_choices() -> Vec<ExampleChoice> {
+    vec![
+        ExampleChoice {
+            name: "GitHub issues",
+            description:
+                "Explore live repositories and issues through authenticated GitHub MCP tools",
+            directory: "examples/github-issues",
+            secrets: &["GITHUB_PERSONAL_ACCESS_TOKEN"],
+        },
+        ExampleChoice {
+            name: "Text stats engine",
+            description: "Use an in-bundle MCP server to inspect and analyze text",
+            directory: "examples/text-stats-engine",
+            secrets: &[],
+        },
+        ExampleChoice {
+            name: "Weather",
+            description: "Chat with the minimal weather agent bundle",
+            directory: "examples/weather",
+            secrets: &[],
+        },
+    ]
+}
+
+fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {
     let mut env = Vec::new();
     if ![
         "AGENTOS_CREDENTIALS",
@@ -671,9 +715,11 @@ fn github_chat_secret_env() -> Result<Vec<(String, String)>> {
             }
         }
     }
-    if std::env::var_os("GITHUB_PERSONAL_ACCESS_TOKEN").is_none() {
-        if let Some(value) = crate::secrets::get_value("GITHUB_PERSONAL_ACCESS_TOKEN")? {
-            env.push(("GITHUB_PERSONAL_ACCESS_TOKEN".to_string(), value));
+    for name in extra_secrets {
+        if std::env::var_os(name).is_none() {
+            if let Some(value) = crate::secrets::get_value(name)? {
+                env.push(((*name).to_string(), value));
+            }
         }
     }
     Ok(env)
@@ -690,20 +736,8 @@ fn ensure_secret_available(
     if crate::secrets::is_saved(name)? {
         return Ok(());
     }
-    if crate::secrets::needs_vault_upgrade(name)? {
-        let Some(value) = prompt_text(
-            terminal,
-            app,
-            "Update Credential Storage",
-            &format!("Re-enter {name} to move it into the AgentOS vault"),
-            None,
-            true,
-            false,
-        )?
-        else {
-            anyhow::bail!("{name} is required for this workflow");
-        };
-        return crate::secrets::save_value(name, &value);
+    if crate::secrets::needs_vault_upgrade(name)? && crate::secrets::migrate_legacy_value(name)? {
+        return Ok(());
     }
     let Some(save) = prompt_select(
         terminal,
@@ -764,19 +798,9 @@ fn ensure_model_credential_available(
         })
         .collect::<Vec<_>>();
     if let Some(name) = legacy_names.first() {
-        let Some(value) = prompt_text(
-            terminal,
-            app,
-            "Update Credential Storage",
-            &format!("Re-enter {name} to move it into the AgentOS vault"),
-            None,
-            true,
-            false,
-        )?
-        else {
-            anyhow::bail!("a supported model credential is required");
-        };
-        return crate::secrets::save_value(name, &value);
+        if crate::secrets::migrate_legacy_value(name)? {
+            return Ok(());
+        }
     }
 
     let choices = NAMES
@@ -810,22 +834,6 @@ fn ensure_model_credential_available(
         anyhow::bail!("a supported model credential is required");
     };
     crate::secrets::save_value(&name, &value)
-}
-
-fn secret_status(
-    name: &str,
-    saved_names: &BTreeSet<String>,
-    legacy_names: &BTreeSet<String>,
-) -> &'static str {
-    if std::env::var_os(name).is_some() {
-        "env"
-    } else if saved_names.contains(name) {
-        "saved"
-    } else if legacy_names.contains(name) {
-        "saved (upgrade needed)"
-    } else {
-        "missing"
-    }
 }
 
 fn model_credential_status(
@@ -865,21 +873,15 @@ fn secrets_status_lines() -> Vec<Line<'static>> {
         .into_iter()
         .filter(|name| !saved_names.contains(name))
         .collect::<BTreeSet<_>>();
-    vec![
-        Line::from(format!(
-            "Model credential: {}",
-            model_credential_status(&saved_names, &legacy_names)
-        )),
-        Line::from(format!(
-            "GITHUB_PERSONAL_ACCESS_TOKEN: {}",
-            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved_names, &legacy_names)
-        )),
-    ]
+    vec![Line::from(format!(
+        "Model credential: {}",
+        model_credential_status(&saved_names, &legacy_names)
+    ))]
 }
 
 fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
     match workflow {
-        Workflow::GithubAgentChat => {
+        Workflow::ExploreExamples => {
             lines.push(Line::from(Span::styled(
                 "Credential status",
                 Style::default().fg(Color::Yellow).bold(),
@@ -958,6 +960,7 @@ impl RunView {
 
 #[derive(Debug)]
 struct ChatView {
+    agent_name: String,
     lines: Vec<String>,
     input: String,
     scroll: u16,
@@ -966,12 +969,12 @@ struct ChatView {
 }
 
 impl ChatView {
-    fn new() -> Self {
+    fn new(agent_name: &str) -> Self {
         Self {
+            agent_name: agent_name.to_string(),
             lines: vec![
-                "GitHub agent is ready.".to_string(),
-                "Ask about repositories, issues, pull requests, or anything its tools can answer."
-                    .to_string(),
+                format!("{agent_name} is ready."),
+                "Send a message to interact with this example agent.".to_string(),
                 String::new(),
             ],
             input: String::new(),
@@ -1001,8 +1004,9 @@ fn chat_with_runner(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     cwd: &Path,
     url: &str,
+    agent_name: &str,
 ) -> Result<()> {
-    let mut chat = ChatView::new();
+    let mut chat = ChatView::new(agent_name);
     loop {
         let Some(message) = read_chat_input(terminal, &mut chat)? else {
             return Ok(());
@@ -1079,7 +1083,7 @@ fn run_chat_turn(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("sending message to the GitHub agent")?;
+        .context("sending message to the example agent")?;
     let (tx, rx) = mpsc::channel();
     let stdout = child.stdout.take().context("capturing agent response")?;
     let stderr = child.stderr.take().context("capturing agent diagnostics")?;
@@ -1511,21 +1515,17 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from("3. Remove from the OS credential store"));
             lines.push(Line::from(""));
         }
-        RecipeKind::Workflow(Workflow::GithubAgentChat) => {
+        RecipeKind::Workflow(Workflow::ExploreExamples) => {
             lines.push(Line::from(Span::styled(
-                "Interactive session",
+                "Example browser",
                 Style::default().fg(Color::Yellow).bold(),
             )));
-            lines.push(Line::from("1. Check model and GitHub credentials"));
-            lines.push(Line::from(
-                "2. Start the GitHub agent with its authenticated MCP tools",
-            ));
-            lines.push(Line::from(
-                "3. Chat with the agent for as many turns as needed",
-            ));
+            lines.push(Line::from("1. Choose an example agent"));
+            lines.push(Line::from("2. Start its runner and required tools"));
+            lines.push(Line::from("3. Chat for as many turns as needed"));
             lines.push(Line::from("4. Stop the runner when you leave chat"));
             lines.push(Line::from(""));
-            maybe_add_secret_status(&mut lines, Workflow::GithubAgentChat);
+            maybe_add_secret_status(&mut lines, Workflow::ExploreExamples);
         }
     }
     if !recipe.fields.is_empty() {
@@ -1642,7 +1642,7 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("AgentOS", Style::default().fg(Color::Cyan).bold()),
-            Span::raw("  GitHub agent"),
+            Span::raw(format!("  {}", chat.agent_name)),
             if chat.thinking {
                 Span::styled("  thinking...", Style::default().fg(Color::Yellow))
             } else {
@@ -1951,15 +1951,15 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "examples",
-            title: "Chat with GitHub agent",
-            description: "Start the GitHub MCP bundle and have a live conversation with the agent.",
-            kind: RecipeKind::Workflow(Workflow::GithubAgentChat),
+            target: "all",
+            title: "Explore examples",
+            description: "Choose an example agent, start it, and chat with it interactively.",
+            kind: RecipeKind::Workflow(Workflow::ExploreExamples),
             args: vec![],
             fields: vec![],
             notes: &[
                 "Requires a saved or environment model credential: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
-                "Requires a saved or environment GITHUB_PERSONAL_ACCESS_TOKEN; the value is forwarded by name and not placed in argv.",
+                "Examples request any additional credentials they need after you choose one.",
                 "The runner stays up for a multi-turn conversation and stops when you leave chat.",
             ],
         },
@@ -2164,21 +2164,14 @@ mod tests {
     }
 
     #[test]
-    fn examples_target_includes_github_agent_chat() {
+    fn explore_examples_is_an_action_not_a_target_tab() {
         let app = App::new();
-        let idx = app
-            .targets
+        assert!(!app.targets.contains(&"examples"));
+        assert!(app
+            .recipes
             .iter()
-            .position(|target| *target == "examples")
-            .expect("examples target exists");
-        let mut app = app;
-        app.target_idx = idx;
-        let titles: Vec<&str> = app
-            .visible_indices()
-            .iter()
-            .map(|idx| app.recipes[*idx].title)
-            .collect();
-        assert!(titles.contains(&"Chat with GitHub agent"));
+            .any(|recipe| recipe.title == "Explore examples"));
+        assert_eq!(example_choices().len(), 3);
     }
 
     #[test]
@@ -2256,18 +2249,13 @@ mod tests {
     }
 
     #[test]
-    fn credential_status_uses_saved_names_without_secret_reads() {
+    fn model_status_uses_saved_names_without_secret_reads() {
         let saved = BTreeSet::from([
             "ANTHROPIC_API_KEY".to_string(),
             "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
         ]);
         let legacy = BTreeSet::new();
         assert_eq!(model_credential_status(&saved, &legacy), "available");
-        assert_eq!(
-            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved, &legacy),
-            "saved"
-        );
-        assert_eq!(secret_status("OPENAI_API_KEY", &saved, &legacy), "missing");
     }
 
     #[test]

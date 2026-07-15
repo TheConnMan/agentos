@@ -36,9 +36,9 @@ own MCP secrets.
 
 ## Run it end-to-end (manual)
 
-For the interactive path, run `agentos`, choose **examples**, then **Chat with
-GitHub agent**. AgentOS starts the runner, keeps the entire conversation in its
-TUI, and stops the runner when you leave the chat.
+For the interactive path, run `agentos`, choose **Explore examples**, then
+**GitHub issues**. AgentOS starts the runner, keeps the entire conversation in
+its TUI, and stops the runner when you leave the chat.
 
 Prerequisites: the runner image built once (`agentos build`), a model credential
 in your environment (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`), and a
