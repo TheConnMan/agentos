@@ -522,7 +522,7 @@ fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
     }
     if let Some(value) = crate::secrets::get_value(name)? {
         crate::ui::ui().note(&format!(
-            "{name}: loaded from the OS credential store for this run"
+            "{name}: loaded from AgentOS private storage for this run"
         ));
         return Ok(Some((name.to_string(), value)));
     }
@@ -643,7 +643,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok().or_else(|| {
         stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
     });
-    // Hydrate `--secret NAME` from the local OS credential store when it is not
+    // Hydrate `--secret NAME` from AgentOS private storage when it is not
     // already present in the process env. The docker argv still forwards only
     // the NAME (`-e NAME`); the value is supplied only to the Docker CLI child
     // process so Docker can copy it into the runner container.

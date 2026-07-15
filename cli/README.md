@@ -37,7 +37,7 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-agentos/SKILL.md` harness primer. |
 | `agentos init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
 | `agentos` | Open the keyboard-driven terminal interface. Explicit forms: `agentos interactive`, `agentos ui`, `agentos tui`. |
-| `agentos secrets set <NAME>` | Save a local secret in the OS credential store with hidden input. `--from-env <VAR>` reads from an existing environment variable for non-interactive use without putting the value in argv. |
+| `agentos secrets set <NAME>` | Save a local secret in AgentOS's mode-0600 credential file with hidden input. `--from-env <VAR>` reads from an existing environment variable for non-interactive use without putting the value in argv. |
 | `agentos secrets list` | List saved AgentOS secret names. Values are never printed. |
 | `agentos secrets unset <NAME>` | Remove a saved local secret. |
 | `agentos guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
@@ -122,15 +122,12 @@ and returns to AgentOS.
 
 ## `agentos secrets`
 
-Local secrets are stored in the OS credential store, not in the repo, shell
-history, command argv, `.env`, or AgentOS state files. On macOS this uses
-Keychain. AgentOS keeps a non-secret index of saved names under the user config
-directory only so `agentos secrets list` can show what it knows about; the
-secret values remain in the credential store. All values share one AgentOS vault
-item so macOS authorizes the workflow once. Legacy names remain visible. If an
-earlier run already populated the vault, AgentOS reconciles its index after one
-authorization; otherwise the TUI asks you to re-save only the credentials the
-workflow needs, without opening every legacy Keychain item.
+Local secrets are stored in `~/.config/agentos/credentials.json` with mode 0600,
+not in the repo, shell history, command argv, `.env`, or AgentOS state files.
+This follows the prompt-free private-config pattern used by developer CLIs.
+AgentOS keeps a separate non-secret index so secret names can be listed without
+opening values. Existing Keychain credentials are copied into the private file
+on first use; AgentOS never writes to or deletes from Keychain during migration.
 
 ```bash
 agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN
@@ -199,7 +196,7 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 
 | Command | What it does |
 |---|---|
-| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using the OS credential store when the env var is not exported. |
+| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using AgentOS private storage when the env var is not exported. |
 | `agentos skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
 | `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
 | `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |

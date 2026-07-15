@@ -73,6 +73,7 @@ enum Workflow {
 
 #[derive(Clone, Debug)]
 struct ExampleChoice {
+    id: &'static str,
     name: &'static str,
     description: &'static str,
     directory: &'static str,
@@ -362,7 +363,7 @@ fn run_tui_action(
                 return Ok("Save secret canceled.".to_string());
             };
             crate::secrets::save_value(&name, &value)?;
-            Ok(format!("Saved {name} in the OS credential store."))
+            Ok(format!("Saved {name} in AgentOS private storage."))
         }
         TuiAction::ListSecrets => {
             let count = crate::secrets::list_names()?.len();
@@ -480,7 +481,7 @@ fn saved_secret_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
         .into_iter()
         .map(|name| SelectChoice {
             label: name.clone(),
-            description: "Saved in the OS credential store".to_string(),
+            description: "Saved in AgentOS private storage".to_string(),
             value: SecretNameChoice::Name(name),
         })
         .collect();
@@ -606,7 +607,7 @@ fn explore_examples(
         return Ok(());
     };
 
-    crate::secrets::sync_vault_index()?;
+    crate::secrets::sync_secret_file()?;
     ensure_model_credential_available(terminal, app)?;
     for name in example.secrets {
         ensure_secret_available(terminal, app, name)?;
@@ -622,7 +623,7 @@ fn explore_examples(
         anyhow::bail!("missing example bundle at {}", example_dir.display());
     }
 
-    let container_name = format!("agentos-example-{}", example.name);
+    let container_name = format!("agentos-example-{}", example.id);
     let port = "7247";
     let url = format!("http://localhost:{port}");
     let mut setup = RunView::new(&format!("Starting {}", example.name));
@@ -673,6 +674,7 @@ fn explore_examples(
 fn example_choices() -> Vec<ExampleChoice> {
     vec![
         ExampleChoice {
+            id: "github-issues",
             name: "GitHub issues",
             description:
                 "Explore live repositories and issues through authenticated GitHub MCP tools",
@@ -680,12 +682,14 @@ fn example_choices() -> Vec<ExampleChoice> {
             secrets: &["GITHUB_PERSONAL_ACCESS_TOKEN"],
         },
         ExampleChoice {
+            id: "text-stats-engine",
             name: "Text stats engine",
             description: "Use an in-bundle MCP server to inspect and analyze text",
             directory: "examples/text-stats-engine",
             secrets: &[],
         },
         ExampleChoice {
+            id: "weather",
             name: "Weather",
             description: "Chat with the minimal weather agent bundle",
             directory: "examples/weather",
@@ -747,7 +751,7 @@ fn ensure_secret_available(
         vec![
             SelectChoice {
                 label: "Save it now".to_string(),
-                description: "Store it in the OS credential store".to_string(),
+                description: "Store it in AgentOS private storage".to_string(),
                 value: true,
             },
             SelectChoice {
@@ -1482,7 +1486,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )));
             lines.push(Line::from("1. Choose a common secret name or Custom"));
             lines.push(Line::from("2. Secret value, hidden while typing"));
-            lines.push(Line::from("3. Save to the OS credential store"));
+            lines.push(Line::from("3. Save to AgentOS private storage"));
             lines.push(Line::from(""));
         }
         RecipeKind::Tui(TuiAction::ListSecrets) => {
@@ -1512,7 +1516,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )));
             lines.push(Line::from("1. Choose a saved secret name or Custom"));
             lines.push(Line::from("2. Type the same name to confirm removal"));
-            lines.push(Line::from("3. Remove from the OS credential store"));
+            lines.push(Line::from("3. Remove from AgentOS private storage"));
             lines.push(Line::from(""));
         }
         RecipeKind::Workflow(Workflow::ExploreExamples) => {
@@ -1966,12 +1970,12 @@ fn recipes() -> Vec<Recipe> {
         Recipe {
             target: "secrets",
             title: "Save secret",
-            description: "Store a local secret in the OS credential store with hidden input.",
+            description: "Store a local secret in AgentOS private storage with hidden input.",
             kind: RecipeKind::Tui(TuiAction::SaveSecret),
             args: vec![],
             fields: vec![],
             notes: &[
-                "The value is prompted with hidden input and saved in the OS credential store.",
+                "The value is prompted with hidden input and saved in a mode-0600 config file.",
                 "Choose a common env var or enter any env-style custom name.",
             ],
         },
@@ -1982,12 +1986,12 @@ fn recipes() -> Vec<Recipe> {
             kind: RecipeKind::Tui(TuiAction::ListSecrets),
             args: vec![],
             fields: vec![],
-            notes: &["Only names are listed; secret values stay in the OS credential store."],
+            notes: &["Only names are listed; secret values stay in private storage."],
         },
         Recipe {
             target: "secrets",
             title: "Remove secret",
-            description: "Remove a saved secret from the OS credential store.",
+            description: "Remove a saved secret from AgentOS private storage.",
             kind: RecipeKind::Tui(TuiAction::RemoveSecret),
             args: vec![],
             fields: vec![],
@@ -2171,7 +2175,15 @@ mod tests {
             .recipes
             .iter()
             .any(|recipe| recipe.title == "Explore examples"));
-        assert_eq!(example_choices().len(), 3);
+        let examples = example_choices();
+        assert_eq!(examples.len(), 3);
+        assert!(examples.iter().all(|example| {
+            !example.id.is_empty()
+                && example
+                    .id
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        }));
     }
 
     #[test]

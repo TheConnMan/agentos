@@ -1,9 +1,8 @@
-//! OS-backed secret storage for local AgentOS workflows.
+//! Private local secret storage for AgentOS workflows.
 //!
-//! Secret values live together in one platform credential-store vault via
-//! `keyring`, so a workflow authorizes AgentOS once rather than once per key.
-//! The only filesystem state here is a non-secret index of names so `agentos
-//! secrets list` can show what AgentOS has saved without opening the vault.
+//! Secret values live in a mode-0600 file under the AgentOS config directory,
+//! avoiding repeated platform credential-store authorization dialogs. `keyring`
+//! remains only as a read-only migration path for older AgentOS installations.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -35,6 +34,8 @@ struct SecretIndex {
     #[serde(default)]
     legacy_names: BTreeSet<String>,
     names: BTreeSet<String>,
+    #[serde(default)]
+    file_names: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -58,7 +59,7 @@ pub fn set(opts: SetSecretOpts) -> Result<()> {
         None => prompt_secret(&opts.name)?,
     };
     save_value(&opts.name, &value)?;
-    crate::ui::ui().success(&format!("saved {} in the OS credential store", opts.name));
+    crate::ui::ui().success(&format!("saved {} in AgentOS private storage", opts.name));
     Ok(())
 }
 
@@ -85,15 +86,27 @@ pub fn unset(opts: UnsetSecretOpts) -> Result<()> {
 
 pub fn get_value(name: &str) -> Result<Option<String>> {
     validate_name(name)?;
-    Ok(read_vault()?.values.get(name).cloned())
+    if let Some(value) = read_credentials()?.values.get(name).cloned() {
+        return Ok(Some(value));
+    }
+    sync_secret_file()?;
+    if let Some(value) = read_credentials()?.values.get(name).cloned() {
+        return Ok(Some(value));
+    }
+    if needs_vault_upgrade(name)? {
+        migrate_legacy_value(name)?;
+    }
+    Ok(read_credentials()?.values.get(name).cloned())
 }
 
-/// Check the non-secret index without opening the platform credential store.
+/// Check the non-secret index without opening any credential values.
 /// UI status rendering must use this instead of `get_value`.
 pub fn is_saved(name: &str) -> Result<bool> {
     validate_name(name)?;
     let index = read_index()?;
-    Ok(index.vault && index.names.contains(name))
+    Ok(index.file_names.contains(name)
+        || index.names.contains(name)
+        || index.legacy_names.contains(name))
 }
 
 /// Whether a name belongs to the older one-Keychain-item-per-secret layout.
@@ -110,17 +123,27 @@ pub fn needs_vault_upgrade(name: &str) -> Result<bool> {
 
 /// Reconcile an older non-secret index with the consolidated vault. This opens
 /// exactly one credential-store item and never reads legacy per-secret items.
-pub fn sync_vault_index() -> Result<()> {
+pub fn sync_secret_file() -> Result<()> {
+    let credentials = read_credentials()?;
+    if !credentials.values.is_empty() {
+        let index = reconcile_file_names(read_index()?, credentials.values.keys());
+        return write_index(&index);
+    }
+    let index = read_index()?;
+    if index.names.is_empty() {
+        return Ok(());
+    }
     let vault = read_vault()?;
     if vault.values.is_empty() {
         return Ok(());
     }
-    let index = reconcile_vault_names(read_index()?, vault.values.keys());
+    write_credentials(&vault)?;
+    let index = reconcile_file_names(index, vault.values.keys());
     write_index(&index)
 }
 
-/// Move one required credential from the legacy per-secret Keychain layout to
-/// the consolidated vault. No value is shown or requested from the user.
+/// Copy one required credential from the legacy per-secret Keychain layout to
+/// the private file. The old Keychain item is deliberately left untouched.
 pub fn migrate_legacy_value(name: &str) -> Result<bool> {
     if !needs_vault_upgrade(name)? {
         return Ok(false);
@@ -134,20 +157,16 @@ pub fn migrate_legacy_value(name: &str) -> Result<bool> {
         }
     };
     save_value(name, &value)?;
-    match legacy_entry(name)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(err) => crate::ui::ui().warn(&format!(
-            "migrated {name}, but could not remove its old credential-store item: {err}"
-        )),
-    }
     Ok(true)
 }
 
 pub fn set_value(name: &str, value: &str) -> Result<()> {
     validate_name(name)?;
-    let mut vault = read_vault()?;
-    vault.values.insert(name.to_string(), value.to_string());
-    write_vault(&vault)
+    let mut credentials = read_credentials()?;
+    credentials
+        .values
+        .insert(name.to_string(), value.to_string());
+    write_credentials(&credentials)
 }
 
 pub fn save_value(name: &str, value: &str) -> Result<()> {
@@ -161,14 +180,9 @@ pub fn save_value(name: &str, value: &str) -> Result<()> {
 
 pub fn delete_value(name: &str) -> Result<()> {
     validate_name(name)?;
-    let mut vault = read_vault()?;
-    if vault.values.remove(name).is_some() {
-        if vault.values.is_empty() {
-            delete_vault()?;
-        } else {
-            write_vault(&vault)?;
-        }
-        return Ok(());
+    let mut credentials = read_credentials()?;
+    if credentials.values.remove(name).is_some() {
+        write_credentials(&credentials)?;
     }
     Ok(())
 }
@@ -185,6 +199,7 @@ pub fn list_names() -> Result<Vec<String>> {
         .names
         .into_iter()
         .chain(index.legacy_names)
+        .chain(index.file_names)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect())
@@ -249,63 +264,47 @@ fn read_vault() -> Result<SecretVault> {
     Ok(vault)
 }
 
-fn write_vault(vault: &SecretVault) -> Result<()> {
-    let raw = serde_json::to_string(vault).context("serializing the AgentOS credential vault")?;
-    vault_entry()?
-        .set_password(&raw)
-        .context("saving the AgentOS OS credential-store vault")?;
-    let mut cache = vault_cache()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("AgentOS credential vault cache is unavailable"))?;
-    cache.loaded = true;
-    cache.vault = vault.clone();
-    Ok(())
+fn read_credentials() -> Result<SecretVault> {
+    let path = credentials_path()?;
+    if !path.is_file() {
+        return Ok(SecretVault::default());
+    }
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("reading AgentOS credentials {}", path.display()))?;
+    serde_json::from_str(&raw)
+        .with_context(|| format!("parsing AgentOS credentials {}", path.display()))
 }
 
-fn delete_vault() -> Result<()> {
-    match vault_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(err) => return Err(err).context("removing the AgentOS credential-store vault"),
+fn write_credentials(credentials: &SecretVault) -> Result<()> {
+    let path = credentials_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating AgentOS config dir {}", parent.display()))?;
     }
-    let mut cache = vault_cache()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("AgentOS credential vault cache is unavailable"))?;
-    cache.loaded = true;
-    cache.vault = SecretVault::default();
-    Ok(())
+    let body = serde_json::to_vec_pretty(credentials).context("serializing AgentOS credentials")?;
+    write_private(&path, &body)
 }
 
 fn add_to_index(name: &str) -> Result<()> {
-    let index = mark_vault_saved(read_index()?, name);
+    let index = mark_file_saved(read_index()?, name);
     write_index(&index)
 }
 
-fn mark_vault_saved(mut index: SecretIndex, name: &str) -> SecretIndex {
-    if !index.vault {
-        // Older releases indexed one Keychain item per secret. Do not read
-        // those items during migration: macOS would authorize each one
-        // separately. Re-saving through the TUI creates the single vault and
-        // marks each re-saved name as upgraded without exposing a multi-prompt
-        // workflow or hiding the names that still use the legacy layout.
-        index.legacy_names.append(&mut index.names);
-        index.vault = true;
-    }
+fn mark_file_saved(mut index: SecretIndex, name: &str) -> SecretIndex {
     index.legacy_names.remove(name);
-    index.names.insert(name.to_string());
+    index.names.remove(name);
+    index.file_names.insert(name.to_string());
     index
 }
 
-fn reconcile_vault_names<'a>(
+fn reconcile_file_names<'a>(
     mut index: SecretIndex,
-    vault_names: impl Iterator<Item = &'a String>,
+    file_names: impl Iterator<Item = &'a String>,
 ) -> SecretIndex {
-    if !index.vault {
-        index.legacy_names.append(&mut index.names);
-        index.vault = true;
-    }
-    for name in vault_names {
+    for name in file_names {
         index.legacy_names.remove(name);
-        index.names.insert(name.clone());
+        index.names.remove(name);
+        index.file_names.insert(name.clone());
     }
     index
 }
@@ -314,6 +313,7 @@ fn remove_from_index(name: &str) -> Result<()> {
     let mut index = read_index()?;
     index.names.remove(name);
     index.legacy_names.remove(name);
+    index.file_names.remove(name);
     write_index(&index)
 }
 
@@ -339,7 +339,7 @@ fn write_index(index: &SecretIndex) -> Result<()> {
 
 #[cfg(unix)]
 fn write_private(path: &Path, body: &[u8]) -> Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -347,23 +347,33 @@ fn write_private(path: &Path, body: &[u8]) -> Result<()> {
         .write(true)
         .mode(0o600)
         .open(path)
-        .with_context(|| format!("writing secret index {}", path.display()))?;
+        .with_context(|| format!("opening private file {}", path.display()))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("securing private file {}", path.display()))?;
     file.write_all(body)
-        .with_context(|| format!("writing secret index {}", path.display()))
+        .with_context(|| format!("writing private file {}", path.display()))
 }
 
 #[cfg(not(unix))]
 fn write_private(path: &Path, body: &[u8]) -> Result<()> {
-    fs::write(path, body).with_context(|| format!("writing secret index {}", path.display()))
+    fs::write(path, body).with_context(|| format!("writing private file {}", path.display()))
 }
 
 fn index_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("secrets.json"))
+}
+
+fn credentials_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("credentials.json"))
+}
+
+fn config_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("AGENTOS_CONFIG_DIR") {
-        return Ok(PathBuf::from(dir).join("secrets.json"));
+        return Ok(PathBuf::from(dir));
     }
     let home =
         std::env::var("HOME").context("HOME is not set; cannot locate AgentOS config dir")?;
-    Ok(PathBuf::from(home).join(".config/agentos/secrets.json"))
+    Ok(PathBuf::from(home).join(".config/agentos"))
 }
 
 #[cfg(test)]
@@ -397,19 +407,18 @@ mod tests {
         )
         .unwrap();
 
-        let upgraded = mark_vault_saved(legacy, "ANTHROPIC_API_KEY");
+        let upgraded = mark_file_saved(legacy, "ANTHROPIC_API_KEY");
 
-        assert!(upgraded.vault);
         assert_eq!(
             upgraded.names,
-            BTreeSet::from(["ANTHROPIC_API_KEY".to_string()])
-        );
-        assert_eq!(
-            upgraded.legacy_names,
             BTreeSet::from([
                 "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
                 "OPENAI_API_KEY".to_string()
             ])
+        );
+        assert_eq!(
+            upgraded.file_names,
+            BTreeSet::from(["ANTHROPIC_API_KEY".to_string()])
         );
     }
 
@@ -419,18 +428,18 @@ mod tests {
             r#"{"names":["ANTHROPIC_API_KEY","GITHUB_PERSONAL_ACCESS_TOKEN","OPENAI_API_KEY"]}"#,
         )
         .unwrap();
-        let vault_names = [
+        let file_names = [
             "ANTHROPIC_API_KEY".to_string(),
             "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
         ];
 
-        let recovered = reconcile_vault_names(legacy, vault_names.iter());
+        let recovered = reconcile_file_names(legacy, file_names.iter());
 
-        assert_eq!(recovered.names, BTreeSet::from(vault_names));
         assert_eq!(
-            recovered.legacy_names,
+            recovered.names,
             BTreeSet::from(["OPENAI_API_KEY".to_string()])
         );
+        assert_eq!(recovered.file_names, BTreeSet::from(file_names));
     }
 
     #[test]
@@ -449,5 +458,23 @@ mod tests {
 
         assert_eq!(decoded.values, vault.values);
         assert_eq!(VAULT_ACCOUNT, "agentos:global:vault");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_forced_to_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.json");
+        fs::write(&path, b"old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private(&path, br#"{"values":{}}"#).unwrap();
+
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

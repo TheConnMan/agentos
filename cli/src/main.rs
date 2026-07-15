@@ -121,7 +121,7 @@ enum Command {
     /// memorizing the full command surface.
     #[command(alias = "ui", alias = "tui")]
     Interactive,
-    /// Store and manage local secrets in the OS credential store.
+    /// Store and manage local secrets in AgentOS private storage.
     Secrets {
         #[command(subcommand)]
         action: SecretsAction,
@@ -164,7 +164,7 @@ enum DevAction {
 
 #[derive(Subcommand)]
 enum SecretsAction {
-    /// Save a secret in the OS credential store. Prompts with hidden input by default.
+    /// Save a secret in AgentOS private storage. Prompts with hidden input by default.
     Set {
         /// Environment-variable-style secret name, e.g. GITHUB_PERSONAL_ACCESS_TOKEN.
         name: String,

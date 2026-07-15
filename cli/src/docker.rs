@@ -32,7 +32,7 @@ pub struct StartSpec {
     /// credentials for real-model runs; never baked into the args as values).
     pub passthrough_env: Vec<String>,
     /// Env values supplied only to the Docker CLI process. Used for secrets
-    /// loaded from the OS credential store so they can be forwarded by `-e NAME`
+    /// loaded from AgentOS private storage so they can be forwarded by `-e NAME`
     /// without mutating the AgentOS process env or appearing in argv.
     pub docker_env: Vec<(String, String)>,
 }
