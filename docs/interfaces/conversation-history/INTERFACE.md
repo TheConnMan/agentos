@@ -64,10 +64,14 @@ unplanned-restart case needs no special worker/kernel branch.
   shared key today, so forwarding it as `AGENTOS_HISTORY_TOKEN` grants that key's
   scope. Scoped, least-privilege tokens are shared follow-up auth-hardening work.
 - **Unbounded append log under the state-store size caps.** A very long thread
-  will eventually hit the per-namespace/per-value cap; windowing/summarization of
-  the replayed context is deferred. The replay is a prompt preamble, not a
-  token-exact reconstruction, so it does not restore the model's original prompt
-  cache (consistent with ADR-0003, which assumes cache-cold on a restart).
+  will eventually hit the per-namespace/per-value cap on the stored transcript.
+  Delivery-side windowing now bounds the *rehydrated preamble* to a tail window
+  (most-recent turns, byte-capped; `AGENTOS_HISTORY_MAX_TURNS` /
+  `AGENTOS_HISTORY_MAX_BYTES`, overridable) -- but the stored transcript itself
+  stays unwindowed, so the append log still grows unbounded until it hits the
+  state-store cap. The replay is a prompt preamble, not a token-exact
+  reconstruction, so it does not restore the model's original prompt cache
+  (consistent with ADR-0003, which assumes cache-cold on a restart).
 - **History lives OUTSIDE the sandbox** (ADR-0003) — the store is
   network-reachable and rehydratable, never pod-local state.
 

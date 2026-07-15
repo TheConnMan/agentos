@@ -51,9 +51,10 @@ export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
 cd examples/github-issues
 
 # Optional: confirm the server binary is present and loads in an offline check.
-# It runs --network none and forwards no secret, so if the GitHub server
-# refuses to start without a token this may report red -- `skill up` below is
-# the real end-to-end test.
+# It runs --network none and forwards no secret, so for an authed server the
+# check prints an explicit `authed server ... not exercised offline` advisory:
+# a green proves only the wiring, not the token, and a red may mean just a
+# missing credential -- `skill up` below is the real end-to-end test.
 agentos skill check
 
 # Boot the runner with the model credential AND the GitHub token forwarded.
@@ -76,3 +77,7 @@ change `.mcp.json` (`command`/`args` for a stdio server, or `type`/`url`/
 `headers` for a remote one) and forward its secret with `--secret <NAME>`. A
 remote server that authenticates with a bearer token, for example, reads the
 forwarded variable in its `headers` (`"Authorization": "Bearer ${TOKEN}"`).
+
+If you swap in a write-capable server, make its writes idempotent: a mid-turn
+crash can make the platform replay the last instruction (history append is
+at-least-once), so a non-idempotent write could run twice.

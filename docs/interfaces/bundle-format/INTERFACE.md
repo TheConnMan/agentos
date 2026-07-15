@@ -41,8 +41,11 @@ field is no longer dead: as of #272 it is validated at deploy time (`HookMatcher
 `HookDefinition` in `models.py`, enforced by `_validate_hooks` in `validate.py`) and its
 `PreToolUse` command hooks are consumed by the runner (`runner/src/agentos_runner/hooks.py`),
 which translates them into SDK `HookMatcher` guardrails that run before a matching tool call (exit 0
-allows, exit 2 denies). Only `PreToolUse` is wired today; other hook events validate but are not yet
-consumed. Epic #30 continues to define the remaining authoring extensions (approval-policy and
+allows, exit 2 denies). Command hooks are advisory-unless-exit-2 (fail-OPEN): only a clean exit 2
+denies the call; any non-2 exit, a timeout (60s budget), or a spawn failure is treated as a
+non-blocking hook error and the tool call proceeds -- so a command hook is not a fail-closed security
+control, matching Claude Code convention for author-declared hooks. Only `PreToolUse` is wired today;
+other hook events validate but are not yet consumed. Epic #30 continues to define the remaining authoring extensions (approval-policy and
 trigger declarations) alongside this.
 
 The bundle also carries two AgentOS authoring extensions that are **deploy-time validated** (shape

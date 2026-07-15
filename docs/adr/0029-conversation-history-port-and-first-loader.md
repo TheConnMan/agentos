@@ -117,4 +117,10 @@ resume).
   The state API has one shared key today, so forwarding it as the history token
   grants the sandbox that key's scope -- the same auth-hardening follow-up ADR-0025
   notes. Live proof of the pod-death-then-rehydrate path needs a real cluster; the
-  load-as-preamble mechanism is verified at boot without killing a pod.
+  load-as-preamble mechanism is verified at boot without killing a pod. The
+  transcript append is best-effort and runs only after a successful terminal
+  `final`, so it is at-least-once: a mid-turn crash after a side effect but before
+  the append leaves the exchange unrecorded, and a client resend replays the
+  instruction -- for a write-capable authed-MCP bundle that means the model can
+  repeat the side effect, so such bundles should treat their writes as needing
+  idempotency.

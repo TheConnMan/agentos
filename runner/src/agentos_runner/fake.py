@@ -13,7 +13,13 @@ import re
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from claude_agent_sdk import (
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+)
+from claude_agent_sdk.types import CanUseTool, ToolPermissionContext
 
 
 def _assistant(*blocks: Any, usage: dict[str, Any] | None = None) -> AssistantMessage:
@@ -90,6 +96,16 @@ class FakeModelSession:
     default), emulating an SDK interrupt that aborts the iterator before a result;
     set it False to model the other real shape, where the SDK still delivers a
     terminal error result after the interrupt.
+
+    ``can_use_tool`` (the #245 permission gate) lets the offline path exercise the
+    same intercept the SDK applies: before each scripted ``ToolUseBlock`` is
+    yielded, the permission callback runs for its side effect (a gated tool's deny
+    records the block on the shared gate, flipping the turn to awaiting-approval).
+    The block itself is delivered unchanged -- matching the real SDK, which emits
+    the ``tool_use`` even for a denied call -- so a gated turn still surfaces the
+    tool note it would in production. Defaults None, so a fake constructed without
+    it behaves exactly as before. Bundle PreToolUse command hooks (#272) are NOT
+    run here: they shell out and would break the fake's offline no-op guarantee.
     """
 
     def __init__(
@@ -97,9 +113,11 @@ class FakeModelSession:
         script_factory: Callable[[], list[Any]] | None = None,
         *,
         truncate_on_interrupt: bool = True,
+        can_use_tool: CanUseTool | None = None,
     ) -> None:
         self._script_factory = script_factory or self._default_script
         self._truncate_on_interrupt = truncate_on_interrupt
+        self._can_use_tool = can_use_tool
         self.connected = False
         self.queries: list[str] = []
         self.interrupts = 0
@@ -135,7 +153,27 @@ class FakeModelSession:
         for message in self._script_factory():
             if self._interrupted and self._truncate_on_interrupt:
                 return
+            await self._apply_gate(message)
             yield message
+
+    async def _apply_gate(self, message: Any) -> None:
+        """Run the permission gate over each ToolUseBlock for its side effect.
+
+        Mirrors the SDK: the gate decides a call before it executes, and a gated
+        deny records the block on the shared ``ApprovalGate`` (flipping the turn to
+        awaiting-approval). The block is delivered unchanged either way -- the real
+        SDK emits the ``tool_use`` before the permission decision, so a denied call
+        still surfaces as a tool note. A no-op unless a gate is configured, keeping
+        the un-gated fake unchanged.
+        """
+
+        if self._can_use_tool is None:
+            return
+        if not isinstance(message, AssistantMessage):
+            return
+        for block in message.content:
+            if isinstance(block, ToolUseBlock):
+                await self._can_use_tool(block.name, block.input, ToolPermissionContext())
 
     async def close(self) -> None:
         self.connected = False

@@ -101,6 +101,11 @@ pub struct DeclaredServer {
     pub name: String,
     pub source: String,
     pub form: String,
+    /// True when the server carries a credential (env/headers) the credential-free
+    /// offline check never exercised. `#[serde(default)]` keeps older reports that
+    /// predate the field parsing (they default to false).
+    #[serde(default)]
+    pub authed: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1406,6 +1411,56 @@ mod tests {
     #[test]
     fn default_channel_passes_local_validation() {
         assert!(validate_slack_channel(crate::api::DEFAULT_SLACK_CHANNEL).is_ok());
+    }
+
+    #[test]
+    fn parse_check_report_accepts_declared_authed_flag() {
+        // The frozen check-report contract gains `authed` on each declared server
+        // so the CLI/UI can flag credential-gated servers the offline check never
+        // exercised. It must round-trip through parse_check_report.
+        let json = r#"{
+            "check": "mcp-load",
+            "version": 1,
+            "plugin_dir": "/x",
+            "declared": [
+                {"name": "github", "source": ".mcp.json", "form": "bare_file", "authed": true}
+            ],
+            "registered": [],
+            "matches": [],
+            "verdict": "green",
+            "reasons": [],
+            "hints": []
+        }"#;
+        let report = super::parse_check_report(json).expect("authed report must parse");
+        assert!(
+            report.declared[0].authed,
+            "declared[].authed must round-trip true"
+        );
+    }
+
+    #[test]
+    fn parse_check_report_defaults_authed_false_when_absent() {
+        // Backward compat: a report from an older runner has no `authed` key. It
+        // must still parse and default to false (#[serde(default)]), never fail
+        // the contract on the missing field.
+        let json = r#"{
+            "check": "mcp-load",
+            "version": 1,
+            "plugin_dir": "/x",
+            "declared": [
+                {"name": "plain", "source": "plugin.json", "form": "inline"}
+            ],
+            "registered": [],
+            "matches": [],
+            "verdict": "green",
+            "reasons": [],
+            "hints": []
+        }"#;
+        let report = super::parse_check_report(json).expect("report without authed must parse");
+        assert!(
+            !report.declared[0].authed,
+            "absent authed must default to false"
+        );
     }
 
     #[test]

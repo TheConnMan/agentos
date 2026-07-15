@@ -95,6 +95,58 @@ def test_preamble_includes_user_and_assistant_text_oldest_first() -> None:
     assert preamble.index("deploy the app") < preamble.index("and prod?")
 
 
+# --- preamble windowing (the preamble must be bounded) ---------------------------
+
+
+def test_preamble_windows_by_max_turns_keeping_the_tail() -> None:
+    # A long thread must not render an unbounded preamble: with an explicit small
+    # max_turns, only the most-recent turns survive and an elision note flags that
+    # earlier turns were dropped.
+    turns = [
+        TurnRecord(user=f"user-msg-{i}", assistant=f"assistant-msg-{i}") for i in range(50)
+    ]
+    preamble = format_conversation_preamble(turns, max_turns=5)
+    assert preamble is not None
+    # The newest turn's content is kept; an old (dropped) turn's is not.
+    assert "user-msg-49" in preamble
+    assert "user-msg-0" not in preamble
+    # The truncation is announced.
+    assert "elided" in preamble
+
+
+def test_preamble_windows_by_max_bytes_keeping_the_tail() -> None:
+    # A tiny byte budget caps the rendered size: the oldest turns are dropped, the
+    # most-recent kept, and the elision note appears. Driven by an explicit
+    # max_bytes so the test does not depend on the default's exact value.
+    turns = [TurnRecord(user=f"u{i}", assistant=f"a{i}") for i in range(50)]
+    unbounded = format_conversation_preamble(turns, max_turns=None, max_bytes=None)
+    assert unbounded is not None
+    preamble = format_conversation_preamble(turns, max_bytes=400)
+    assert preamble is not None
+    assert "elided" in preamble
+    # Most-recent kept, oldest dropped.
+    assert "u49" in preamble
+    assert "u0" not in preamble
+    # Truncation actually shrank the output and stayed near the budget.
+    assert len(preamble.encode("utf-8")) < len(unbounded.encode("utf-8"))
+    assert len(preamble.encode("utf-8")) <= 2 * 400
+
+
+def test_preamble_short_transcript_is_byte_identical_and_unnoted() -> None:
+    # Backward-compat: a small transcript under the defaults renders with NO
+    # elision note and is byte-identical to the uncapped (max_turns=None,
+    # max_bytes=None) output for the same records.
+    turns = [
+        TurnRecord(user="deploy the app", assistant="pushed to dev"),
+        TurnRecord(user="and prod?", assistant="promoted to prod"),
+    ]
+    uncapped = format_conversation_preamble(turns, max_turns=None, max_bytes=None)
+    defaulted = format_conversation_preamble(turns)
+    assert defaulted == uncapped
+    assert defaulted is not None
+    assert "elided" not in defaulted
+
+
 def test_state_store_load_empty_is_empty() -> None:
     app, _ = _fake_state_app()
 

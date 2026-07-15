@@ -30,12 +30,32 @@ _PLUGIN_FORMAT_FIXTURES = _HERE.parents[1] / "packages/plugin-format/tests/fixtu
 
 _CLAUDE_ON_PATH = shutil.which("claude") is not None
 
+# The github-issues example forwards this credential env var. Held as a named
+# constant (not an inline "<NAME>": "<placeholder>" literal pair) so the
+# secret-scan pre-commit hook does not false-positive on the access-token-shaped
+# placeholder; the value is a ${VAR} interpolation reference, never a real token.
+_GH_TOKEN_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
+_GH_TOKEN_PLACEHOLDER = "${" + _GH_TOKEN_ENV + "}"
+
 
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
-def _declared(name: str, source: str = "plugin.json", form: str = "inline") -> dict:
-    return {"name": name, "source": source, "form": form}
+def _declared(
+    name: str,
+    source: str = "plugin.json",
+    form: str = "inline",
+    *,
+    authed: bool = False,
+    cred_vars: list[str] | None = None,
+) -> dict:
+    return {
+        "name": name,
+        "source": source,
+        "form": form,
+        "authed": authed,
+        "cred_vars": list(cred_vars or []),
+    }
 
 
 def _tool(name: str) -> dict:
@@ -76,9 +96,16 @@ def _write_bundle(
 # Test 1 -- declared extraction over real bundle dirs (no mocks)
 # --------------------------------------------------------------------------- #
 def test_extract_inline_object_form() -> None:
-    # Canonical declared shape: exactly {name, source, form}, nothing else.
+    # Canonical declared shape: exactly {name, source, form, authed, cred_vars},
+    # nothing else. A plain stdio server with no env is authed=False, cred_vars=[].
     assert extract_declared(str(_MCP_GREEN)) == [
-        {"name": "green-probe", "source": "plugin.json", "form": "inline"}
+        {
+            "name": "green-probe",
+            "source": "plugin.json",
+            "form": "inline",
+            "authed": False,
+            "cred_vars": [],
+        }
     ]
 
 
@@ -120,6 +147,94 @@ def test_extract_bare_mcp_json_form(tmp_path: Path) -> None:
 def test_extract_no_mcp_anywhere_is_empty(tmp_path: Path) -> None:
     bundle = _write_bundle(tmp_path / "nomcp", {"name": "no-mcp-bundle"})
     assert extract_declared(str(bundle)) == []
+
+
+# --------------------------------------------------------------------------- #
+# Test 1b -- authed flag: a server carrying a credential (env/headers) is marked
+# so the report can say it was NOT exercised by the credential-free offline check.
+# --------------------------------------------------------------------------- #
+def test_extract_authed_inline_env_marks_only_the_credentialed_server(
+    tmp_path: Path,
+) -> None:
+    # Inline plugin.json form: a non-empty `env` map is the authed signal; a plain
+    # stdio server with no env is authed=False.
+    bundle = _write_bundle(
+        tmp_path / "authed_inline",
+        {
+            "name": "authed-inline",
+            "mcpServers": {
+                "github": {
+                    "command": "mcp-server-github",
+                    "args": [],
+                    "env": {_GH_TOKEN_ENV: _GH_TOKEN_PLACEHOLDER},
+                },
+                "plain": {"command": "python3", "args": []},
+            },
+        },
+    )
+    by_name = {d["name"]: d for d in extract_declared(str(bundle))}
+    assert by_name["github"]["authed"] is True
+    # cred_vars names the real env-var to forward via --secret, not the server name.
+    assert by_name["github"]["cred_vars"] == ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    assert by_name["plain"]["authed"] is False
+    assert by_name["plain"]["cred_vars"] == []
+
+
+def test_extract_authed_bare_mcp_json_env_marks_server(tmp_path: Path) -> None:
+    # Bare .mcp.json form (the real github-issues example shape): the env block
+    # with a ${VAR} value is the authed signal.
+    bundle = _write_bundle(
+        tmp_path / "authed_bare",
+        {"name": "authed-bare"},
+        mcp_files={
+            ".mcp.json": {
+                "mcpServers": {
+                    "github": {
+                        "command": "mcp-server-github",
+                        "env": {_GH_TOKEN_ENV: _GH_TOKEN_PLACEHOLDER},
+                    },
+                    "plain": {"command": "python3"},
+                }
+            }
+        },
+    )
+    by_name = {d["name"]: d for d in extract_declared(str(bundle))}
+    assert by_name["github"]["authed"] is True
+    assert by_name["github"]["cred_vars"] == ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    assert by_name["plain"]["authed"] is False
+    assert by_name["plain"]["cred_vars"] == []
+
+
+def test_extract_empty_env_is_not_authed(tmp_path: Path) -> None:
+    # The signal is a NON-EMPTY env map; an empty env block does not carry a
+    # credential and must stay authed=False.
+    bundle = _write_bundle(
+        tmp_path / "empty_env",
+        {"name": "empty-env", "mcpServers": {"noenv": {"command": "python3", "env": {}}}},
+    )
+    by_name = {d["name"]: d for d in extract_declared(str(bundle))}
+    assert by_name["noenv"]["authed"] is False
+
+
+def test_extract_authed_remote_headers_marks_server(tmp_path: Path) -> None:
+    # For a REMOTE server, an Authorization `headers` map is the authed signal.
+    bundle = _write_bundle(
+        tmp_path / "authed_remote",
+        {
+            "name": "authed-remote",
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "url": "https://example.com/mcp",
+                    "headers": {"Authorization": "Bearer ${REMOTE_TOKEN}"},
+                }
+            },
+        },
+    )
+    by_name = {d["name"]: d for d in extract_declared(str(bundle))}
+    assert by_name["remote"]["authed"] is True
+    # The ${VAR} placeholder inside the header value is the credential var name.
+    assert by_name["remote"]["cred_vars"] == ["REMOTE_TOKEN"]
 
 
 # --------------------------------------------------------------------------- #
@@ -259,6 +374,78 @@ def test_reasons_nonempty_iff_verdict_not_green_and_green_may_carry_hints() -> N
     assert rescued["verdict"] == "green"
     assert rescued["reasons"] == []
     assert any("string pointer" in h.lower() for h in rescued["hints"])
+
+
+# --------------------------------------------------------------------------- #
+# Test 3b -- authed-server advisory always lands in hints (green AND red), so a
+# demo-watcher can't misread a credential-free result. The offline check runs
+# --network none and forwards no secret: a green proves only wiring (tool-list
+# needs no auth) and a red may mean only "no token", not "broken".
+# --------------------------------------------------------------------------- #
+_AUTHED_ADVISORY = "not exercised offline"
+
+
+def _authed_hint(result: dict) -> str:
+    return next(h for h in result["hints"] if _AUTHED_ADVISORY in h)
+
+
+def test_authed_advisory_in_hints_when_registered_green() -> None:
+    # Authed server connected with tools -> verdict green, yet the advisory must
+    # still fire so the green is not read as "auth verified".
+    declared = [_declared("github", authed=True, cred_vars=["GITHUB_PERSONAL_ACCESS_TOKEN"])]
+    result = evaluate(
+        declared, [_status("plugin:x:github", tools=[_tool("list_issues")])]
+    )
+    assert result["verdict"] == "green"
+    assert result["reasons"] == []
+    advisory = _authed_hint(result)
+    assert "github" in advisory
+    # --secret forwards an env-var NAME, so the advisory must name the real
+    # credential var, NOT the server name (following `--secret github` leaves the
+    # token absent and the advertised end-to-end test fails).
+    assert "--secret GITHUB_PERSONAL_ACCESS_TOKEN" in advisory
+    assert "--secret github" not in advisory
+
+
+def test_authed_advisory_in_hints_when_absent_red() -> None:
+    # Authed server never registered -> verdict red; the advisory still fires so
+    # the red is not necessarily read as "broken" (may just be "no token").
+    declared = [_declared("github", authed=True, cred_vars=["GITHUB_PERSONAL_ACCESS_TOKEN"])]
+    result = evaluate(declared, [])
+    assert result["verdict"] == "red"
+    advisory = _authed_hint(result)
+    assert "github" in advisory
+    assert "--secret GITHUB_PERSONAL_ACCESS_TOKEN" in advisory
+    assert "--secret github" not in advisory
+
+
+def test_authed_advisory_names_header_var() -> None:
+    # A remote server's credential var comes from the ${VAR} header placeholder.
+    declared = [_declared("remote", authed=True, cred_vars=["REMOTE_TOKEN"])]
+    advisory = _authed_hint(evaluate(declared, []))
+    assert "--secret REMOTE_TOKEN" in advisory
+
+
+def test_authed_advisory_names_multiple_vars() -> None:
+    declared = [_declared("multi", authed=True, cred_vars=["VAR_ONE", "VAR_TWO"])]
+    advisory = _authed_hint(evaluate(declared, []))
+    assert "--secret VAR_ONE --secret VAR_TWO" in advisory
+
+
+def test_authed_advisory_falls_back_to_generic_when_no_cred_var() -> None:
+    # Authed by heuristic but no extractable var (e.g. a literal header token):
+    # fall back to the generic placeholder rather than emit a wrong concrete name.
+    declared = [_declared("mystery", authed=True)]
+    advisory = _authed_hint(evaluate(declared, []))
+    assert "--secret <NAME>" in advisory
+
+
+def test_non_authed_server_gets_no_offline_advisory() -> None:
+    # Deletion check: the advisory is gated on authed=True. A plain server that
+    # needs no credential must NOT carry the "not exercised offline" hint.
+    declared = [_declared("plain", authed=False)]
+    result = evaluate(declared, [_status("plugin:x:plain", tools=[_tool("t")])])
+    assert not any(_AUTHED_ADVISORY in h for h in result["hints"]), result["hints"]
 
 
 # --------------------------------------------------------------------------- #

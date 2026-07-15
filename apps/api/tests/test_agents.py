@@ -20,7 +20,7 @@ def test_duplicate_name_is_409(
 
     dup = _create(client, auth_headers, name="dup-name", slack_channel="C0BBBBBB2")
     assert dup.status_code == 409, dup.text
-    assert "name" in dup.json()["detail"]
+    assert dup.json()["detail"] == "an agent with that name already exists"
 
 
 def test_duplicate_repo_is_409(
@@ -43,7 +43,7 @@ def test_duplicate_repo_is_409(
         repo_full_name="octo/shared-repo",
     )
     assert dup.status_code == 409, dup.text
-    assert "repository" in dup.json()["detail"]
+    assert dup.json()["detail"] == "an agent for that repository already exists"
 
 
 def test_agent_approval_required_tools_round_trip(
