@@ -15,7 +15,6 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 const SERVICE: &str = "dev.curie.agentos";
-const ACCOUNT_PREFIX: &str = "agentos:global:";
 const VAULT_ACCOUNT: &str = "agentos:global:vault";
 
 #[derive(Clone, Debug)]
@@ -31,6 +30,8 @@ pub struct UnsetSecretOpts {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 struct SecretIndex {
+    #[serde(default)]
+    vault: bool,
     names: BTreeSet<String>,
 }
 
@@ -82,27 +83,15 @@ pub fn unset(opts: UnsetSecretOpts) -> Result<()> {
 
 pub fn get_value(name: &str) -> Result<Option<String>> {
     validate_name(name)?;
-    let mut vault = read_vault()?;
-    if let Some(value) = vault.values.get(name) {
-        return Ok(Some(value.clone()));
-    }
-
-    // Migrate legacy per-key entries lazily. Existing users authorize each old
-    // item at most once; all subsequent reads come from the single vault item.
-    if let Some(value) = read_legacy_value(name)? {
-        vault.values.insert(name.to_string(), value.clone());
-        write_vault(&vault)?;
-        let _ = delete_legacy_value(name);
-        return Ok(Some(value));
-    }
-    Ok(None)
+    Ok(read_vault()?.values.get(name).cloned())
 }
 
 /// Check the non-secret index without opening the platform credential store.
 /// UI status rendering must use this instead of `get_value`.
 pub fn is_saved(name: &str) -> Result<bool> {
     validate_name(name)?;
-    Ok(read_index()?.names.contains(name))
+    let index = read_index()?;
+    Ok(index.vault && index.names.contains(name))
 }
 
 pub fn set_value(name: &str, value: &str) -> Result<()> {
@@ -132,7 +121,7 @@ pub fn delete_value(name: &str) -> Result<()> {
         }
         return Ok(());
     }
-    delete_legacy_value(name)
+    Ok(())
 }
 
 pub fn remove_value(name: &str) -> Result<()> {
@@ -143,7 +132,11 @@ pub fn remove_value(name: &str) -> Result<()> {
 
 pub fn list_names() -> Result<Vec<String>> {
     let index = read_index()?;
-    Ok(index.names.into_iter().collect())
+    Ok(if index.vault {
+        index.names.into_iter().collect()
+    } else {
+        Vec::new()
+    })
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
@@ -177,11 +170,6 @@ fn prompt_secret(name: &str) -> Result<String> {
 fn vault_entry() -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, VAULT_ACCOUNT)
         .context("opening the AgentOS OS credential-store vault")
-}
-
-fn legacy_entry(name: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, &account_name(name))
-        .with_context(|| format!("opening OS credential-store entry for {name}"))
 }
 
 fn vault_cache() -> &'static Mutex<VaultCache> {
@@ -231,31 +219,16 @@ fn delete_vault() -> Result<()> {
     Ok(())
 }
 
-fn read_legacy_value(name: &str) -> Result<Option<String>> {
-    match legacy_entry(name)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(err) => {
-            Err(err).with_context(|| format!("reading {name} from the OS credential store"))
-        }
-    }
-}
-
-fn delete_legacy_value(name: &str) -> Result<()> {
-    match legacy_entry(name)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => {
-            Err(err).with_context(|| format!("removing legacy {name} credential-store entry"))
-        }
-    }
-}
-
-fn account_name(name: &str) -> String {
-    format!("{ACCOUNT_PREFIX}{name}")
-}
-
 fn add_to_index(name: &str) -> Result<()> {
     let mut index = read_index()?;
+    if !index.vault {
+        // Older releases indexed one Keychain item per secret. Do not read
+        // those items during migration: macOS would authorize each one
+        // separately. Re-saving through the TUI creates the single vault and
+        // replaces the stale index without exposing a multi-prompt workflow.
+        index.names.clear();
+        index.vault = true;
+    }
     index.names.insert(name.to_string());
     write_index(&index)
 }
@@ -329,11 +302,14 @@ mod tests {
     }
 
     #[test]
-    fn account_names_are_scoped_under_agentos() {
-        assert_eq!(
-            account_name("GITHUB_PERSONAL_ACCESS_TOKEN"),
-            "agentos:global:GITHUB_PERSONAL_ACCESS_TOKEN"
-        );
+    fn legacy_index_does_not_claim_per_key_secrets_are_in_the_vault() {
+        let index: SecretIndex = serde_json::from_str(
+            r#"{"names":["ANTHROPIC_API_KEY","GITHUB_PERSONAL_ACCESS_TOKEN"]}"#,
+        )
+        .unwrap();
+
+        assert!(!index.vault);
+        assert_eq!(index.names.len(), 2);
     }
 
     #[test]

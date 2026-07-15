@@ -109,18 +109,16 @@ Keyboard:
 | `Enter` or `r` | Prompt for fields and run the selected command |
 | `q` or `Esc` | Exit |
 
-The first surface focuses on the common inner-loop, example verification, and
-operations paths: `skill up/message/eval`, a guided `examples/github-issues`
-MCP auth e2e, `secrets set/list/unset`, `local up/message/status`, `cluster
-status/message`, `install`, and `dev contracts`.
+The first surface focuses on the common inner-loop and operations paths:
+`skill up/message/eval`, a live chat with the `examples/github-issues` agent,
+`secrets set/list/unset`, `local up/message/status`, `cluster status/message`,
+`install`, and `dev contracts`.
 
-The guided MCP auth example checks for a model credential plus
-`GITHUB_PERSONAL_ACCESS_TOKEN`, prompting to save missing values in the OS
-credential store. It then optionally builds the runner image, starts the
-`examples/github-issues` bundle with `--secret GITHUB_PERSONAL_ACCESS_TOKEN`,
-sends a live GitHub issue query, and stops the example runner afterward. It is
-the interactive form of the manual `agentos skill up --secret ...` runbook, but
-without requiring repeated shell exports.
+The GitHub agent chat checks for a model credential plus
+`GITHUB_PERSONAL_ACCESS_TOKEN`, prompting to save missing values inside the TUI.
+It starts the authenticated MCP bundle once and opens a persistent conversation:
+type a message, read the reply, and continue for as many turns as needed. Leaving
+the chat stops the runner and returns to AgentOS.
 
 ## `agentos secrets`
 
@@ -128,7 +126,10 @@ Local secrets are stored in the OS credential store, not in the repo, shell
 history, command argv, `.env`, or AgentOS state files. On macOS this uses
 Keychain. AgentOS keeps a non-secret index of saved names under the user config
 directory only so `agentos secrets list` can show what it knows about; the
-secret values remain in the credential store.
+secret values remain in the credential store. All values share one AgentOS vault
+item so macOS authorizes the workflow once. Old per-secret Keychain items are not
+opened automatically; re-save those names in the TUI once to move to the vault
+without triggering one authorization dialog per legacy item.
 
 ```bash
 agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN

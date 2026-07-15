@@ -68,7 +68,7 @@ enum TuiAction {
 
 #[derive(Clone, Copy, Debug)]
 enum Workflow {
-    McpAuthExample,
+    GithubAgentChat,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,6 +293,10 @@ fn run_recipe_in_tui(
     let Some(values) = prompt_recipe_fields(terminal, app, recipe)? else {
         return Ok(format!("Canceled: {}", recipe.title));
     };
+    if matches!(recipe.kind, RecipeKind::Workflow(Workflow::GithubAgentChat)) {
+        run_github_agent_chat(terminal, app, &values)?;
+        return Ok(format!("Finished: {}", recipe.title));
+    }
     let mut view = RunView::new(recipe.title);
     let run_result = match &recipe.kind {
         RecipeKind::Command => {
@@ -300,9 +304,7 @@ fn run_recipe_in_tui(
             run_agentos_in_tui(terminal, app, &argv, Path::new("."), &mut view)
         }
         RecipeKind::Tui(_) => Ok(()),
-        RecipeKind::Workflow(Workflow::McpAuthExample) => {
-            run_mcp_auth_example(terminal, app, &values, &mut view)
-        }
+        RecipeKind::Workflow(_) => unreachable!("workflows run before the command view"),
     };
     if let Err(err) = &run_result {
         view.push("");
@@ -574,29 +576,11 @@ fn prompt_text(
     }
 }
 
-fn run_mcp_auth_example(
+fn run_github_agent_chat(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
-    values: &BTreeMap<String, String>,
-    view: &mut RunView,
+    _values: &BTreeMap<String, String>,
 ) -> Result<()> {
-    let repo = values
-        .get("repo")
-        .filter(|value| !value.is_empty())
-        .map(String::as_str)
-        .unwrap_or("curie-eng/agentos");
-    let message = values
-        .get("message")
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .unwrap_or_else(|| format!("List the open issues in {repo} and group them by label."));
-    let port = values
-        .get("port")
-        .filter(|value| !value.is_empty())
-        .map(String::as_str)
-        .unwrap_or("7247");
-    let should_build = yesish(values.get("build").map(String::as_str).unwrap_or("y"));
-
     ensure_model_credential_available(terminal, app)?;
     ensure_secret_available(terminal, app, "GITHUB_PERSONAL_ACCESS_TOKEN")?;
 
@@ -612,20 +596,10 @@ fn run_mcp_auth_example(
         );
     }
 
-    view.push("Authenticated GitHub MCP end-to-end verification");
-    view.push(format!("Example bundle: {}", example_dir.display()));
-    view.push(format!("Target repository: {repo}"));
-    view.push("");
-
-    if should_build {
-        run_agentos_in_tui(terminal, app, &["build".to_string()], &repo_root, view)?;
-    } else {
-        view.push("Skipping runner image build.");
-        view.push("");
-    }
-
-    let container_name = "agentos-mcp-auth-example";
+    let container_name = "agentos-github-agent-chat";
+    let port = "7247";
     let url = format!("http://localhost:{port}");
+    let mut setup = RunView::new("Starting GitHub agent");
     let mut started = false;
     let run_result = (|| -> Result<()> {
         run_agentos_in_tui(
@@ -644,49 +618,33 @@ fn run_mcp_auth_example(
                 "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
             ],
             &repo_root,
-            view,
+            &mut setup,
         )?;
         started = true;
-        run_agentos_in_tui(
-            terminal,
-            app,
-            &[
-                "skill".to_string(),
-                "message".to_string(),
-                message,
-                "--url".to_string(),
-                url,
-            ],
-            &repo_root,
-            view,
-        )
+        chat_with_runner(terminal, &repo_root, &url)
     })();
 
     if started {
-        view.push("Cleaning up the example runner...");
+        let mut cleanup = RunView::new("Stopping GitHub agent");
         if let Err(err) = run_agentos_in_tui(
             terminal,
             app,
             &["skill".to_string(), "down".to_string()],
             &example_dir,
-            view,
+            &mut cleanup,
         ) {
-            view.push(format!("Cleanup warning: {err:#}"));
+            cleanup.push(format!("Cleanup warning: {err:#}"));
+            show_run_view(terminal, app, &mut cleanup)?;
         }
     }
 
-    run_result?;
-    view.push(format!(
-        "PASS CONDITION: the answer above cites live issue titles or numbers from {repo}."
-    ));
+    if let Err(err) = run_result {
+        setup.push("");
+        setup.push(format!("ERROR: {err:#}"));
+        show_run_view(terminal, app, &mut setup)?;
+        return Err(err);
+    }
     Ok(())
-}
-
-fn yesish(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "" | "y" | "yes" | "true" | "1"
-    )
 }
 
 fn ensure_secret_available(
@@ -830,7 +788,7 @@ fn secrets_status_lines() -> Vec<Line<'static>> {
 
 fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
     match workflow {
-        Workflow::McpAuthExample => {
+        Workflow::GithubAgentChat => {
             lines.push(Line::from(Span::styled(
                 "Credential status",
                 Style::default().fg(Color::Yellow).bold(),
@@ -904,6 +862,185 @@ impl RunView {
             .scroll
             .saturating_add(amount)
             .min(self.max_scroll(terminal_width, terminal_height));
+    }
+}
+
+#[derive(Debug)]
+struct ChatView {
+    lines: Vec<String>,
+    input: String,
+    scroll: u16,
+    follow: bool,
+    thinking: bool,
+}
+
+impl ChatView {
+    fn new() -> Self {
+        Self {
+            lines: vec![
+                "GitHub agent is ready.".to_string(),
+                "Ask about repositories, issues, pull requests, or anything its tools can answer."
+                    .to_string(),
+                String::new(),
+            ],
+            input: String::new(),
+            scroll: 0,
+            follow: true,
+            thinking: false,
+        }
+    }
+
+    fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
+        let width = terminal_width.saturating_sub(4).max(1) as usize;
+        let viewport = terminal_height.saturating_sub(9) as usize;
+        wrap_output_lines(&self.lines, width)
+            .len()
+            .saturating_sub(viewport)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn follow_tail(&mut self, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+    }
+}
+
+fn chat_with_runner(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    cwd: &Path,
+    url: &str,
+) -> Result<()> {
+    let mut chat = ChatView::new();
+    loop {
+        let Some(message) = read_chat_input(terminal, &mut chat)? else {
+            return Ok(());
+        };
+        chat.lines.push("You".to_string());
+        chat.lines.push(message.clone());
+        chat.lines.push(String::new());
+        chat.lines.push("Agent".to_string());
+        chat.thinking = true;
+        chat.follow = true;
+        let argv = [
+            "skill".to_string(),
+            "message".to_string(),
+            message,
+            "--url".to_string(),
+            url.to_string(),
+        ];
+        run_chat_turn(terminal, cwd, &argv, &mut chat)?;
+        chat.thinking = false;
+        chat.lines.push(String::new());
+    }
+}
+
+fn read_chat_input(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    chat: &mut ChatView,
+) -> Result<Option<String>> {
+    chat.input.clear();
+    loop {
+        let size = terminal.size()?;
+        chat.follow_tail(size.width, size.height);
+        terminal.draw(|frame| draw_chat_view(frame, chat))?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Enter, _) if !chat.input.trim().is_empty() => {
+                return Ok(Some(chat.input.trim().to_string()));
+            }
+            (KeyCode::Backspace, _) => {
+                chat.input.pop();
+            }
+            (KeyCode::PageUp, _) => {
+                chat.follow = false;
+                chat.scroll = chat.scroll.saturating_sub(10);
+            }
+            (KeyCode::PageDown, _) => {
+                chat.follow = false;
+                chat.scroll = chat
+                    .scroll
+                    .saturating_add(10)
+                    .min(chat.max_scroll(size.width, size.height));
+            }
+            (KeyCode::End, _) => chat.follow = true,
+            (KeyCode::Char(ch), _) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                chat.input.push(ch);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn run_chat_turn(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    cwd: &Path,
+    argv: &[String],
+    chat: &mut ChatView,
+) -> Result<()> {
+    let mut child = Command::new(std::env::current_exe().context("resolving current executable")?)
+        .args(argv)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("sending message to the GitHub agent")?;
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take().context("capturing agent response")?;
+    let stderr = child.stderr.take().context("capturing agent diagnostics")?;
+    let readers = [stdout_reader(stdout, tx.clone()), stderr_reader(stderr, tx)];
+    let mut canceled = false;
+
+    loop {
+        while let Ok(line) = rx.try_recv() {
+            chat.lines.push(line);
+        }
+        let size = terminal.size()?;
+        chat.follow_tail(size.width, size.height);
+        terminal.draw(|frame| draw_chat_view(frame, chat))?;
+        if event::poll(Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                match (key.code, key.modifiers) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        child.kill().context("canceling agent response")?;
+                        canceled = true;
+                    }
+                    (KeyCode::PageUp, _) => {
+                        chat.follow = false;
+                        chat.scroll = chat.scroll.saturating_sub(10);
+                    }
+                    (KeyCode::PageDown, _) => {
+                        chat.follow = false;
+                        chat.scroll = chat
+                            .scroll
+                            .saturating_add(10)
+                            .min(chat.max_scroll(size.width, size.height));
+                    }
+                    (KeyCode::End, _) => chat.follow = true,
+                    _ => {}
+                }
+            }
+        }
+        if let Some(status) = child.try_wait().context("waiting for agent response")? {
+            for reader in readers {
+                let _ = reader.join();
+            }
+            while let Ok(line) = rx.try_recv() {
+                chat.lines.push(line);
+            }
+            if canceled {
+                chat.lines.push("Response canceled.".to_string());
+                return Ok(());
+            }
+            if !status.success() {
+                anyhow::bail!("agent response exited with {status}");
+            }
+            return Ok(());
+        }
     }
 }
 
@@ -1271,20 +1408,21 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from("3. Remove from the OS credential store"));
             lines.push(Line::from(""));
         }
-        RecipeKind::Workflow(Workflow::McpAuthExample) => {
+        RecipeKind::Workflow(Workflow::GithubAgentChat) => {
             lines.push(Line::from(Span::styled(
-                "Guided workflow",
+                "Interactive session",
                 Style::default().fg(Color::Yellow).bold(),
             )));
-            lines.push(Line::from("1. Check model and GitHub token env vars"));
-            lines.push(Line::from("2. Build the runner image if requested"));
+            lines.push(Line::from("1. Check model and GitHub credentials"));
             lines.push(Line::from(
-                "3. Start examples/github-issues with --secret GITHUB_PERSONAL_ACCESS_TOKEN",
+                "2. Start the GitHub agent with its authenticated MCP tools",
             ));
-            lines.push(Line::from("4. Send a live GitHub issue query"));
-            lines.push(Line::from("5. Stop the example runner"));
+            lines.push(Line::from(
+                "3. Chat with the agent for as many turns as needed",
+            ));
+            lines.push(Line::from("4. Stop the runner when you leave chat"));
             lines.push(Line::from(""));
-            maybe_add_secret_status(&mut lines, Workflow::McpAuthExample);
+            maybe_add_secret_status(&mut lines, Workflow::GithubAgentChat);
         }
     }
     if !recipe.fields.is_empty() {
@@ -1384,6 +1522,94 @@ fn draw_run_view(frame: &mut Frame<'_>, view: &RunView) {
         Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
             .alignment(Alignment::Center),
         chunks[1],
+    );
+}
+
+fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(3),
+            Constraint::Length(2),
+        ])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("AgentOS", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("  GitHub agent"),
+            if chat.thinking {
+                Span::styled("  thinking...", Style::default().fg(Color::Yellow))
+            } else {
+                Span::raw("")
+            },
+        ]))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL)),
+        chunks[0],
+    );
+
+    let output_width = chunks[1].width.saturating_sub(2).max(1) as usize;
+    let wrapped = wrap_output_lines(&chat.lines, output_width);
+    let transcript = wrapped
+        .iter()
+        .map(|line| {
+            let style = match line.as_str() {
+                "You" => Style::default().fg(Color::Cyan).bold(),
+                "Agent" => Style::default().fg(Color::Green).bold(),
+                _ => Style::default(),
+            };
+            Line::from(Span::styled(line.as_str(), style))
+        })
+        .collect::<Vec<_>>();
+    let viewport = chunks[1].height.saturating_sub(2) as usize;
+    let max_scroll = wrapped
+        .len()
+        .saturating_sub(viewport)
+        .min(u16::MAX as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(Text::from(transcript))
+            .scroll((chat.scroll.min(max_scroll), 0))
+            .block(Block::default().title("Conversation").borders(Borders::ALL)),
+        chunks[1],
+    );
+
+    let input_width = chunks[2].width.saturating_sub(4).max(1) as usize;
+    let shown_input = input_window(&chat.input, false, input_width);
+    let input_style = if chat.thinking {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(shown_input.as_str(), input_style)).block(
+            Block::default()
+                .title(if chat.thinking {
+                    "Waiting for agent"
+                } else {
+                    "Message"
+                })
+                .borders(Borders::ALL),
+        ),
+        chunks[2],
+    );
+    if !chat.thinking {
+        frame.set_cursor_position((
+            chunks[2].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
+            chunks[2].y + 1,
+        ));
+    }
+    let help = if chat.thinking {
+        "Ctrl-C cancel response    PgUp/PgDn scroll    End latest"
+    } else {
+        "Enter send    Esc leave chat    PgUp/PgDn scroll    End latest"
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
+            .alignment(Alignment::Center),
+        chunks[3],
     );
 }
 
@@ -1623,42 +1849,15 @@ fn recipes() -> Vec<Recipe> {
         },
         Recipe {
             target: "examples",
-            title: "Verify MCP auth example",
-            description: "Guided e2e for examples/github-issues using a live GitHub MCP server.",
-            kind: RecipeKind::Workflow(Workflow::McpAuthExample),
+            title: "Chat with GitHub agent",
+            description: "Start the GitHub MCP bundle and have a live conversation with the agent.",
+            kind: RecipeKind::Workflow(Workflow::GithubAgentChat),
             args: vec![],
-            fields: vec![
-                Field {
-                    key: "repo",
-                    label: "Repository to query (owner/repo)",
-                    default: Some("curie-eng/agentos"),
-                    required: true,
-                },
-                Field {
-                    key: "message",
-                    label: "Live verification prompt",
-                    default: Some(
-                        "List the open issues in curie-eng/agentos and group them by label.",
-                    ),
-                    required: true,
-                },
-                Field {
-                    key: "port",
-                    label: "Runner host port",
-                    default: Some("7247"),
-                    required: true,
-                },
-                Field {
-                    key: "build",
-                    label: "Build runner image first? (y/n)",
-                    default: Some("y"),
-                    required: true,
-                },
-            ],
+            fields: vec![],
             notes: &[
                 "Requires a saved or environment model credential: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
                 "Requires a saved or environment GITHUB_PERSONAL_ACCESS_TOKEN; the value is forwarded by name and not placed in argv.",
-                "A passing run cites live GitHub issue titles or numbers.",
+                "The runner stays up for a multi-turn conversation and stops when you leave chat.",
             ],
         },
         Recipe {
@@ -1862,7 +2061,7 @@ mod tests {
     }
 
     #[test]
-    fn examples_target_includes_mcp_auth_workflow() {
+    fn examples_target_includes_github_agent_chat() {
         let app = App::new();
         let idx = app
             .targets
@@ -1876,7 +2075,7 @@ mod tests {
             .iter()
             .map(|idx| app.recipes[*idx].title)
             .collect();
-        assert!(titles.contains(&"Verify MCP auth example"));
+        assert!(titles.contains(&"Chat with GitHub agent"));
     }
 
     #[test]
