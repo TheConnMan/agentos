@@ -7,7 +7,7 @@
 //! or suspends the alternate screen and runs that command as a normal child
 //! process.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,6 +25,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SecretNameChoice {
@@ -302,7 +303,7 @@ fn run_tui_action(
                 app,
                 "Save Secret",
                 "Choose a secret name",
-                secret_name_choices(),
+                secret_name_choices()?,
             )?
             else {
                 return Ok("Save secret canceled.".to_string());
@@ -388,39 +389,56 @@ fn run_tui_action(
     }
 }
 
-fn secret_name_choices() -> Vec<SelectChoice<SecretNameChoice>> {
-    vec![
-        SelectChoice {
-            label: "ANTHROPIC_API_KEY".to_string(),
-            description: "Anthropic API key for model calls".to_string(),
-            value: SecretNameChoice::Name("ANTHROPIC_API_KEY".to_string()),
-        },
-        SelectChoice {
-            label: "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
-            description: "Claude Code OAuth token for model calls".to_string(),
-            value: SecretNameChoice::Name("CLAUDE_CODE_OAUTH_TOKEN".to_string()),
-        },
-        SelectChoice {
-            label: "AGENTOS_CREDENTIALS".to_string(),
-            description: "Provider credential forwarded as AgentOS credentials".to_string(),
-            value: SecretNameChoice::Name("AGENTOS_CREDENTIALS".to_string()),
-        },
-        SelectChoice {
-            label: "OPENAI_API_KEY".to_string(),
-            description: "OpenAI API key for model or MCP workflows".to_string(),
-            value: SecretNameChoice::Name("OPENAI_API_KEY".to_string()),
-        },
-        SelectChoice {
-            label: "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
-            description: "GitHub token for MCP examples or bundles".to_string(),
-            value: SecretNameChoice::Name("GITHUB_PERSONAL_ACCESS_TOKEN".to_string()),
-        },
-        SelectChoice {
-            label: "Custom secret name".to_string(),
-            description: "Enter any env-style secret name".to_string(),
-            value: SecretNameChoice::Custom,
-        },
-    ]
+fn secret_name_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
+    let saved_names = crate::secrets::list_names()?.into_iter().collect();
+    Ok(secret_name_choices_for(&saved_names))
+}
+
+fn secret_name_choices_for(saved_names: &BTreeSet<String>) -> Vec<SelectChoice<SecretNameChoice>> {
+    let common = [
+        ("ANTHROPIC_API_KEY", "Anthropic API key for model calls"),
+        (
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude Code OAuth token for model calls",
+        ),
+        (
+            "AGENTOS_CREDENTIALS",
+            "Provider credential forwarded as AgentOS credentials",
+        ),
+        (
+            "OPENAI_API_KEY",
+            "OpenAI API key for model or MCP workflows",
+        ),
+        (
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "GitHub token for MCP examples or bundles",
+        ),
+    ];
+    let mut choices = common
+        .into_iter()
+        .map(|(name, description)| {
+            let saved = saved_names.contains(name);
+            SelectChoice {
+                label: if saved {
+                    format!("{name} ✓")
+                } else {
+                    name.to_string()
+                },
+                description: if saved {
+                    format!("{description} (saved)")
+                } else {
+                    description.to_string()
+                },
+                value: SecretNameChoice::Name(name.to_string()),
+            }
+        })
+        .collect::<Vec<_>>();
+    choices.push(SelectChoice {
+        label: "Custom secret name".to_string(),
+        description: "Enter any env-style secret name".to_string(),
+        value: SecretNameChoice::Custom,
+    });
+    choices
 }
 
 fn saved_secret_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
@@ -1089,11 +1107,8 @@ fn draw_prompt(
     secret: bool,
 ) {
     let area = centered_rect(64, 9, frame.area());
-    let shown_value = if secret {
-        "*".repeat(value.chars().count())
-    } else {
-        value.to_string()
-    };
+    let input_width = area.width.saturating_sub(3) as usize;
+    let shown_value = input_window(value, secret, input_width);
     let prompt = match default {
         Some(default) => format!("{label} [{default}]"),
         None => label.to_string(),
@@ -1104,7 +1119,7 @@ fn draw_prompt(
         Line::from(if shown_value.is_empty() {
             Span::styled(" ", Style::default().fg(Color::Gray))
         } else {
-            Span::raw(shown_value)
+            Span::raw(&shown_value)
         }),
         Line::from(""),
         Line::from(Span::styled(
@@ -1119,6 +1134,28 @@ fn draw_prompt(
             .block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
+    frame.set_cursor_position((
+        area.x + 1 + UnicodeWidthStr::width(shown_value.as_str()) as u16,
+        area.y + 3,
+    ));
+}
+
+fn input_window(value: &str, secret: bool, max_width: usize) -> String {
+    if secret {
+        return "*".repeat(value.chars().count().min(max_width));
+    }
+
+    let mut width = 0;
+    let mut chars = Vec::new();
+    for ch in value.chars().rev() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > max_width {
+            break;
+        }
+        width += char_width;
+        chars.push(ch);
+    }
+    chars.into_iter().rev().collect()
 }
 
 fn draw_select_prompt<T>(
@@ -1532,7 +1569,7 @@ mod tests {
 
     #[test]
     fn secret_name_choices_include_custom_and_do_not_default_to_github() {
-        let choices = secret_name_choices();
+        let choices = secret_name_choices_for(&BTreeSet::new());
         assert!(matches!(
             choices.first().map(|choice| &choice.value),
             Some(SecretNameChoice::Name(name)) if name == "ANTHROPIC_API_KEY"
@@ -1546,5 +1583,34 @@ mod tests {
         assert!(choices.iter().any(
             |choice| matches!(&choice.value, SecretNameChoice::Name(name) if name == "GITHUB_PERSONAL_ACCESS_TOKEN")
         ));
+    }
+
+    #[test]
+    fn secret_name_choices_mark_saved_common_keys() {
+        let saved = BTreeSet::from(["OPENAI_API_KEY".to_string()]);
+        let choices = secret_name_choices_for(&saved);
+        let openai = choices
+            .iter()
+            .find(|choice| {
+                matches!(&choice.value, SecretNameChoice::Name(name) if name == "OPENAI_API_KEY")
+            })
+            .expect("OpenAI choice exists");
+        let anthropic = choices
+            .iter()
+            .find(|choice| {
+                matches!(&choice.value, SecretNameChoice::Name(name) if name == "ANTHROPIC_API_KEY")
+            })
+            .expect("Anthropic choice exists");
+
+        assert_eq!(openai.label, "OPENAI_API_KEY ✓");
+        assert!(openai.description.ends_with("(saved)"));
+        assert_eq!(anthropic.label, "ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn input_window_keeps_the_caret_end_visible() {
+        assert_eq!(input_window("abcdefgh", false, 5), "defgh");
+        assert_eq!(input_window("ab界", false, 3), "b界");
+        assert_eq!(input_window("secret", true, 4), "****");
     }
 }

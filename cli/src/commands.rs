@@ -326,16 +326,12 @@ pub async fn install(update: bool) -> Result<()> {
          from an agentos source checkout -- a release binary has nothing to install.",
     )?;
 
-    // 1. Seed .env from .env.example (idempotent: skip if .env already exists).
-    let env_path = root.join(".env");
-    let env_example = root.join(".env.example");
-    if env_path.exists() {
-        ui.note("=== .env already exists; leaving it untouched ===");
-    } else if env_example.exists() {
-        ui.note("=== cp .env.example .env ===");
-        std::fs::copy(&env_example, &env_path).context("failed to copy .env.example to .env")?;
-    } else {
-        ui.note("=== no .env.example to seed .env from; skipping ===");
+    // 1. Local config is user-owned. It is gitignored and only created once,
+    // so pulling newer AgentOS sources and rerunning install cannot replace it.
+    match seed_env_if_missing(&root)? {
+        EnvSeed::Preserved => ui.note("=== .env already exists; leaving it untouched ==="),
+        EnvSeed::Created => ui.note("=== seeded .env from .env.example ==="),
+        EnvSeed::NoTemplate => ui.note("=== no .env.example to seed .env from; skipping ==="),
     }
 
     // 2. uv sync (repo root).
@@ -372,6 +368,26 @@ pub async fn install(update: bool) -> Result<()> {
 
     ui.success("Setup complete. Start the stack with: agentos local up");
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnvSeed {
+    Preserved,
+    Created,
+    NoTemplate,
+}
+
+fn seed_env_if_missing(root: &Path) -> Result<EnvSeed> {
+    let env_path = root.join(".env");
+    if env_path.exists() {
+        return Ok(EnvSeed::Preserved);
+    }
+    let env_example = root.join(".env.example");
+    if !env_example.exists() {
+        return Ok(EnvSeed::NoTemplate);
+    }
+    std::fs::copy(&env_example, &env_path).context("failed to copy .env.example to .env")?;
+    Ok(EnvSeed::Created)
 }
 
 /// `agentos dev <script>`: run a repo dev script by relative path. Thin wrapper
@@ -1379,13 +1395,34 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_secret_env, resolve_cases_path, select_passthrough_env, validate_slack_channel,
+        merge_secret_env, resolve_cases_path, seed_env_if_missing, select_passthrough_env,
+        validate_slack_channel, EnvSeed,
     };
     use std::path::PathBuf;
 
     #[test]
     fn default_channel_passes_local_validation() {
         assert!(validate_slack_channel(crate::api::DEFAULT_SLACK_CHANNEL).is_ok());
+    }
+
+    #[test]
+    fn install_preserves_existing_local_config() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".env"), "USER_SETTING=keep-me\n").unwrap();
+        std::fs::write(
+            root.path().join(".env.example"),
+            "USER_SETTING=new-default\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            seed_env_if_missing(root.path()).unwrap(),
+            EnvSeed::Preserved
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(".env")).unwrap(),
+            "USER_SETTING=keep-me\n"
+        );
     }
 
     #[test]
