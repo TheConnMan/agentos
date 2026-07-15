@@ -23,24 +23,72 @@ router = APIRouter(
     prefix="/agents", tags=["agents"], dependencies=[Depends(require_api_key)]
 )
 
+# Postgres SQLSTATE for a unique_violation. asyncpg exposes it (and the
+# violated constraint's name) as plain attributes on the wrapped driver
+# exception -- there is no psycopg-style `.diag` namespace.
+_UNIQUE_VIOLATION = "23505"
+
+# The two real unique constraints on `agents` (from the alembic migrations),
+# mapped to the human message for each. Any other unique violation falls back
+# to a generic message.
+_UNIQUE_CONSTRAINT_MESSAGES = {
+    "agents_name_key": "an agent with that name already exists",
+    "ix_agents_repo_full_name": "an agent for that repository already exists",
+}
+
+
+def _driver_diag(exc: IntegrityError, attr: str) -> str | None:
+    """Read an asyncpg diagnostic field, walking the `__cause__` chain.
+
+    asyncpg surfaces `sqlstate` on SQLAlchemy's DBAPI wrapper (`exc.orig`) but
+    exposes `constraint_name` only on the underlying `asyncpg` error one link
+    down the `__cause__` chain. Walk both so either shape resolves; guard
+    against a cyclic chain.
+    """
+    obj = getattr(exc, "orig", None)
+    seen: set[int] = set()
+    while obj is not None and id(obj) not in seen:
+        seen.add(id(obj))
+        value = getattr(obj, attr, None)
+        if value is not None:
+            return str(value)
+        obj = getattr(obj, "__cause__", None)
+    return None
+
+
+def classify_integrity_error(exc: IntegrityError) -> tuple[int, str] | None:
+    """Map a real unique-constraint violation to a `(409, message)` conflict.
+
+    Only a genuine unique_violation (SQLSTATE 23505) is a caller conflict; a
+    NOT NULL or FK violation is a server fault and must surface as a 500, so
+    this returns `None` for those (the caller re-raises). The human message is
+    chosen by the violated constraint's name from asyncpg's structured fields,
+    not by substring-matching the stringified driver error.
+    """
+    if _driver_diag(exc, "sqlstate") != _UNIQUE_VIOLATION:
+        return None
+    constraint_name = _driver_diag(exc, "constraint_name")
+    message = "agent violates a uniqueness constraint"
+    if constraint_name is not None:
+        message = _UNIQUE_CONSTRAINT_MESSAGES.get(constraint_name, message)
+    return status.HTTP_409_CONFLICT, message
+
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
 async def create_agent(data: AgentCreate, session: SessionDep) -> AgentOut:
     # name and repo_full_name are unique. A collision is a caller conflict (409),
     # not a server fault: catch the DB IntegrityError and map it, rather than
-    # letting it bubble as an opaque 500.
+    # letting it bubble as an opaque 500. A non-unique violation (NOT NULL, FK)
+    # is a genuine server fault -- re-raise it so it surfaces as a 500.
     try:
         agent = await crud.create_agent(session, data)
     except IntegrityError as exc:
         await session.rollback()
-        detail = str(exc.orig)
-        if "repo_full_name" in detail:
-            message = "an agent for that repository already exists"
-        elif "name" in detail:
-            message = "an agent with that name already exists"
-        else:
-            message = "agent violates a uniqueness constraint"
-        raise HTTPException(status.HTTP_409_CONFLICT, message) from exc
+        classified = classify_integrity_error(exc)
+        if classified is None:
+            raise
+        status_code, message = classified
+        raise HTTPException(status_code, message) from exc
     return AgentOut.model_validate(agent)
 
 

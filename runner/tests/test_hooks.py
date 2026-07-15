@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import anyio
-from agentos_runner import load_bundle_hooks
+from agentos_runner import hooks, load_bundle_hooks
 
 
 def _bundle(tmp_path: Path, hooks: object) -> str:
@@ -118,3 +119,32 @@ def test_first_denying_command_short_circuits(tmp_path: Path) -> None:
 
     out = anyio.run(go)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_command_hook_kills_child_on_timeout(monkeypatch) -> None:
+    """A hook command that outlives the timeout must not orphan its shell child."""
+
+    monkeypatch.setattr(hooks, "_HOOK_TIMEOUT_S", 0.2)
+
+    spawned: list[asyncio.subprocess.Process] = []
+    real_create_subprocess_exec = asyncio.create_subprocess_exec
+
+    async def spy_create_subprocess_exec(*args, **kwargs):
+        proc = await real_create_subprocess_exec(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(hooks.asyncio, "create_subprocess_exec", spy_create_subprocess_exec)
+
+    async def go() -> dict:
+        return await hooks._run_command_hook("sleep 30", {"tool_name": "Bash", "tool_input": {}})
+
+    result = anyio.run(go)
+
+    output = result["hookSpecificOutput"]
+    assert "permissionDecision" not in output
+    assert "failed to run" in output["additionalContext"]
+
+    assert len(spawned) == 1
+    proc = spawned[0]
+    assert proc.returncode is not None, "timed-out hook child was left running (orphaned)"

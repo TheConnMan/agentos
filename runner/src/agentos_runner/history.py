@@ -182,28 +182,80 @@ def resolve_history(history_ref: str | None, env: Mapping[str, str]) -> Transcri
     )
 
 
-def format_conversation_preamble(records: Sequence[TurnRecord]) -> str | None:
-    """Render prior turns as a system-prompt preamble, or None when empty.
+# Sane preamble caps. A restarted thread should see recent context without the
+# system prompt ballooning: ~40 turns keeps a long conversation's continuity, and
+# ~16 KB bounds the rendered history to a few KB of the boot prompt. Both are
+# overridable at the boot call site (AGENTOS_HISTORY_MAX_TURNS/_BYTES) and either
+# can be disabled with None.
+DEFAULT_PREAMBLE_MAX_TURNS = 40
+DEFAULT_PREAMBLE_MAX_BYTES = 16_000
 
-    This is how a reloaded transcript is delivered into the sandbox: it is
-    composed into the runner's effective system prompt at boot, so a restarted
-    session sees the prior exchange as context (harness-agnostic -- it is plain
-    prompt text, not a resume through any one harness's API).
+# Prepended when older turns were dropped, so the model knows its recovered
+# context is a tail window, not the whole thread. Must contain "elided".
+_ELISION_NOTE = "(earlier turns elided to fit the context budget)"
+
+
+def _render_preamble(records: Sequence[TurnRecord], *, elided: bool) -> str:
+    """Render the given turns to the preamble text (with an optional elision note).
+
+    With ``elided=False`` this is byte-identical to the original unbounded render,
+    so an under-cap transcript is unchanged.
     """
 
-    if not records:
-        return None
     lines = [
         "# Conversation so far (recovered after a restart)",
         "",
         "This thread continued from earlier turns. Prior exchange, oldest first:",
         "",
     ]
+    if elided:
+        lines.append(_ELISION_NOTE)
+        lines.append("")
     for record in records:
         lines.append(f"User: {record.user}")
         lines.append(f"Assistant: {record.assistant}")
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def format_conversation_preamble(
+    records: Sequence[TurnRecord],
+    *,
+    max_turns: int | None = DEFAULT_PREAMBLE_MAX_TURNS,
+    max_bytes: int | None = DEFAULT_PREAMBLE_MAX_BYTES,
+) -> str | None:
+    """Render prior turns as a bounded system-prompt preamble, or None when empty.
+
+    This is how a reloaded transcript is delivered into the sandbox: it is
+    composed into the runner's effective system prompt at boot, so a restarted
+    session sees the prior exchange as context (harness-agnostic -- it is plain
+    prompt text, not a resume through any one harness's API).
+
+    The preamble is windowed to the most-recent (tail) turns: when the turn count
+    exceeds ``max_turns`` or the rendered size exceeds ``max_bytes``, the oldest
+    turns are dropped until it fits and an elision note is prepended. Either cap is
+    disabled by passing None; with both None the render is byte-identical to the
+    unbounded output and carries no note (delivery-side windowing only -- the
+    stored transcript is untouched).
+    """
+
+    if not records:
+        return None
+    total = len(records)
+    kept = list(records)
+    # Cap by turn count: keep the most-recent ``max_turns`` turns.
+    if max_turns is not None and len(kept) > max_turns:
+        kept = kept[-max_turns:]
+    # Cap by rendered size: drop oldest turns until the render fits the byte
+    # budget, always keeping at least the single most-recent turn. Render with the
+    # elision flag it will actually carry so the note's own bytes are accounted for,
+    # and only re-render when ``kept`` actually shrinks (no duplicate final render).
+    rendered = _render_preamble(kept, elided=len(kept) < total)
+    if max_bytes is not None:
+        while len(kept) > 1 and len(rendered.encode("utf-8")) > max_bytes:
+            kept = kept[1:]
+            rendered = _render_preamble(kept, elided=len(kept) < total)
+    return rendered
 
 
 def utcnow_iso() -> str:

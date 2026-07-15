@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,60 +48,149 @@ _STRING_POINTER_HINT = (
 
 _EXIT_CODES = {"green": 0, "red": 1, "invalid_bundle": 2}
 
+# ``${VAR}`` placeholder in a remote server's header value (e.g. a Bearer token).
+_HEADER_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+
+
+def _authed_advisory(name: str, cred_vars: list[str]) -> str:
+    # ``--secret`` forwards an environment-variable NAME, not the server name, so
+    # name the real credential var(s) when we could extract them; otherwise fall
+    # back to a generic placeholder rather than emit a wrong concrete name.
+    if cred_vars:
+        secret_flags = " ".join(f"--secret {var}" for var in cred_vars)
+    else:
+        secret_flags = "--secret <NAME>"
+    return (
+        f"authed server {name} needs a credential and was not exercised offline; "
+        "a green here proves wiring not the credential, and a red may be just a "
+        f"missing token -- run `agentos skill up {secret_flags}` for the real "
+        "end-to-end test"
+    )
+
 
 # --------------------------------------------------------------------------- #
 # Declared-server extraction (bundle intent)
 # --------------------------------------------------------------------------- #
 def extract_declared(plugin_dir: str) -> list[dict[str, Any]]:
-    """Parse the bundle's declared MCP servers into ``{name, source, form}`` rows.
+    """Parse declared MCP servers into ``{name, source, form, authed, cred_vars}`` rows.
 
     Covers all three declaration forms (plan Section 3): a ``plugin.json``
     ``mcpServers`` object (``inline``), a ``mcpServers`` string pointer resolved
     relative to the bundle root (``string_pointer``; a missing pointed file still
     surfaces the intent), and a bare-root ``.mcp.json`` (``bare_file``, deduped by
     name against the above).
+
+    ``authed`` marks a server that carries a credential -- a non-empty ``env`` map
+    or (a remote server) a non-empty ``headers`` map -- so the report can flag that
+    the credential-free offline check never exercised it. ``cred_vars`` names the
+    actual credential environment-variable(s) the server needs (``env`` keys, or
+    ``${VAR}`` placeholders in ``headers`` values) so the advisory can point at the
+    real ``--secret <VAR>`` to forward. A missing/unparseable pointed file defaults
+    ``authed`` to False and ``cred_vars`` to empty (the declaration is unavailable).
     """
 
     root = Path(plugin_dir)
     declared: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    def _add(name: str, source: str, form: str) -> None:
+    def _add(
+        name: str, source: str, form: str, authed: bool, cred_vars: list[str]
+    ) -> None:
         if name not in seen:
-            declared.append({"name": name, "source": source, "form": form})
+            declared.append(
+                {
+                    "name": name,
+                    "source": source,
+                    "form": form,
+                    "authed": authed,
+                    "cred_vars": cred_vars,
+                }
+            )
             seen.add(name)
 
     manifest = _read_json(root / ".claude-plugin" / "plugin.json")
     mcp = manifest.get("mcpServers") if isinstance(manifest, dict) else None
 
     if isinstance(mcp, dict):
-        for name in mcp:
-            _add(str(name), "plugin.json", "inline")
+        for name, server in mcp.items():
+            _add(str(name), "plugin.json", "inline", _is_authed(server), _cred_vars(server))
     elif isinstance(mcp, str):
-        pointed = _read_json(root / mcp)
-        names = _server_names(pointed)
-        if names:
-            for name in names:
-                _add(name, "plugin.json", "string_pointer")
+        pointed = _servers_map(_read_json(root / mcp))
+        if pointed:
+            for name, server in pointed.items():
+                _add(
+                    str(name),
+                    "plugin.json",
+                    "string_pointer",
+                    _is_authed(server),
+                    _cred_vars(server),
+                )
         else:
             # Pointed file missing/unparseable: the intent (a string-pointer
-            # declaration) still surfaces so the caller can drive a red verdict.
+            # declaration) still surfaces so the caller can drive a red verdict;
+            # the declaration dict is unavailable, so authed/cred_vars default empty.
             manifest_name = manifest.get("name") if isinstance(manifest, dict) else None
             fallback = str(manifest_name) if manifest_name else mcp
-            _add(fallback, "plugin.json", "string_pointer")
+            _add(fallback, "plugin.json", "string_pointer", False, [])
 
-    bare = _read_json(root / ".mcp.json")
-    for name in _server_names(bare):
-        _add(name, ".mcp.json", "bare_file")
+    bare = _servers_map(_read_json(root / ".mcp.json"))
+    for name, server in bare.items():
+        _add(str(name), ".mcp.json", "bare_file", _is_authed(server), _cred_vars(server))
 
     return declared
 
 
-def _server_names(payload: Any) -> list[str]:
+def _servers_map(payload: Any) -> dict[str, Any]:
     if isinstance(payload, dict):
         servers = payload.get("mcpServers")
         if isinstance(servers, dict):
-            return [str(name) for name in servers]
+            return servers
+    return {}
+
+
+def _is_authed(server: Any) -> bool:
+    """A server is authed if its declaration carries a credential.
+
+    The signal is a NON-EMPTY ``env`` map (the stdio form, e.g. a ``${TOKEN}``
+    value) or a NON-EMPTY ``headers`` map (the remote form, e.g. an
+    ``Authorization`` header). An empty ``env: {}`` carries no credential.
+    """
+
+    if not isinstance(server, dict):
+        return False
+    env = server.get("env")
+    if isinstance(env, dict) and env:
+        return True
+    headers = server.get("headers")
+    return isinstance(headers, dict) and bool(headers)
+
+
+def _cred_vars(server: Any) -> list[str]:
+    """Names of the credential environment variable(s) a server needs.
+
+    For a stdio server the ``env`` map keys ARE the credential var names (e.g.
+    ``GITHUB_PERSONAL_ACCESS_TOKEN``) and are preferred. For a remote server the
+    credential lives in a ``${VAR}`` placeholder inside a ``headers`` value (e.g.
+    ``"Authorization": "Bearer ${GITHUB_TOKEN}"`` -> ``GITHUB_TOKEN``). Returns an
+    empty list when no concrete var can be extracted (e.g. an authed-by-heuristic
+    header with a literal token), so the advisory falls back to a generic name
+    rather than emitting a wrong concrete one.
+    """
+
+    if not isinstance(server, dict):
+        return []
+    env = server.get("env")
+    if isinstance(env, dict) and env:
+        return [str(key) for key in env]
+    headers = server.get("headers")
+    if isinstance(headers, dict) and headers:
+        found: list[str] = []
+        for value in headers.values():
+            if isinstance(value, str):
+                for var in _HEADER_VAR_RE.findall(value):
+                    if var not in found:
+                        found.append(var)
+        return found
     return []
 
 
@@ -133,6 +223,15 @@ def evaluate(
 
     if any(d.get("form") == "string_pointer" for d in declared):
         hints.append(_STRING_POINTER_HINT)
+
+    # An authed server needs a credential the credential-free offline check never
+    # forwards, so a green here proves only wiring and a red may be just a missing
+    # token. Advise regardless of verdict so a demo-watcher cannot misread either.
+    for row in declared:
+        if row.get("authed"):
+            hints.append(
+                _authed_advisory(str(row["name"]), list(row.get("cred_vars") or []))
+            )
 
     connected_with_tools = 0
     for row in declared:

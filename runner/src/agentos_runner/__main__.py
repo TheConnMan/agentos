@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping
 
 import anyio
 from aiohttp import web
@@ -25,6 +26,8 @@ from .approval import (
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .history import (
+    DEFAULT_PREAMBLE_MAX_BYTES,
+    DEFAULT_PREAMBLE_MAX_TURNS,
     TranscriptStore,
     TurnRecord,
     format_conversation_preamble,
@@ -110,7 +113,17 @@ def build_runner(
 
     def factory() -> ModelSession:
         if fake_model:
-            return FakeModelSession()
+            # The offline fake honors the same permission gate (#245) the real
+            # session does, using the shared approval_gate instance so a blocked
+            # call flips the turn to awaiting-approval exactly as the SDK path
+            # would. Bundle PreToolUse command hooks (#272) are NOT wired here:
+            # they shell out and would break the fake's offline no-op guarantee
+            # (the can_use_tool gate is a pure membership check, so it is safe).
+            return FakeModelSession(
+                can_use_tool=(
+                    build_can_use_tool(approval_gate) if approval_gate is not None else None
+                ),
+            )
         plugins = load_plugins(config.session.plugin_dir)
         options = build_options(
             plugins=plugins,
@@ -185,6 +198,30 @@ def _load_memory(config: RunnerConfig) -> tuple[MemoryStore, str | None]:
     return store, format_memory_preamble(records)
 
 
+def _int_env(env: Mapping[str, str], name: str, default: int | None) -> int | None:
+    """Parse an optional integer env override, defensively falling back on default.
+
+    An unset/blank value, one that does not parse as an int, or a nonpositive
+    value uses ``default`` rather than failing boot (mirrors ``check._timeout_s``
+    and the tolerant env reads elsewhere in the runner). A nonpositive budget is
+    meaningless here -- ``max_turns=0`` slices ``kept[-0:]`` (every turn) and a
+    nonpositive byte budget can never be met -- so it is rejected like a bad parse.
+    """
+
+    raw = env.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning("ignoring invalid %s=%r; using default %r", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("ignoring nonpositive %s=%r; using default %r", name, raw, default)
+        return default
+    return value
+
+
 def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
     """Resolve AGENTOS_HISTORY_REF and load this thread's transcript into a preamble.
 
@@ -192,9 +229,15 @@ def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
     fails the process visibly, but a transient load failure degrades to "no
     history" rather than blocking boot -- a thread must still run when its
     transcript store is briefly unavailable (the answer just lacks prior context).
+
+    The delivered preamble is windowed to a recent tail so a long thread does not
+    balloon the boot prompt; AGENTOS_HISTORY_MAX_TURNS/AGENTOS_HISTORY_MAX_BYTES
+    override the sane defaults (parsed defensively).
     """
 
     store = resolve_history(config.history_ref, os.environ)
+    max_turns = _int_env(os.environ, "AGENTOS_HISTORY_MAX_TURNS", DEFAULT_PREAMBLE_MAX_TURNS)
+    max_bytes = _int_env(os.environ, "AGENTOS_HISTORY_MAX_BYTES", DEFAULT_PREAMBLE_MAX_BYTES)
 
     async def _load() -> list[TurnRecord]:
         return await store.load()
@@ -212,7 +255,7 @@ def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
     logger.info(
         "history loaded session=%s turns=%d", config.session.session_id, len(turns)
     )
-    return store, format_conversation_preamble(turns)
+    return store, format_conversation_preamble(turns, max_turns=max_turns, max_bytes=max_bytes)
 
 
 def main() -> None:

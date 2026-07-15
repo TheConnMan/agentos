@@ -91,6 +91,7 @@ async def _run_command_hook(command: str, hook_input: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         payload = "{}"
 
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "/bin/sh",
@@ -104,6 +105,16 @@ async def _run_command_hook(command: str, hook_input: Any) -> dict[str, Any]:
             proc.communicate(input=payload.encode("utf-8")), timeout=_HOOK_TIMEOUT_S
         )
     except (TimeoutError, OSError) as exc:
+        # A timed-out hook leaves its shell child still running; kill it so it
+        # doesn't orphan (an OSError from create_subprocess_exec itself has no
+        # live proc to clean up). Best-effort: an already-dead child raising
+        # ProcessLookupError must not mask the original timeout/OSError.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
         # A hook that cannot run is a non-blocking error: surface context but do
         # not silently deny the tool (deploy-time validation already rejected
         # malformed declarations).
