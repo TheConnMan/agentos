@@ -823,6 +823,37 @@ fn deploy_to_slack(
     .filter(|dir| !dir.trim().is_empty())
     .unwrap_or_else(|| ".".to_string());
 
+    // Cluster targets a specific Helm release; prompt for its namespace/release
+    // so the workflow works for a release not named the default `agentos` (the
+    // API auto-discovery and `cluster comms` both key off these).
+    let (namespace, release) = if tier == SlackTier::Cluster {
+        let ns = prompt_text(
+            terminal,
+            app,
+            "Deploy to Slack",
+            "Kubernetes namespace",
+            Some("agentos"),
+            false,
+            true,
+        )?
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "agentos".to_string());
+        let rel = prompt_text(
+            terminal,
+            app,
+            "Deploy to Slack",
+            "Helm release name",
+            Some("agentos"),
+            false,
+            true,
+        )?
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "agentos".to_string());
+        (Some(ns), Some(rel))
+    } else {
+        (None, None)
+    };
+
     // 4. Forward the model credential + Slack tokens into the child processes.
     //    `<tier> comms --slack` reads SLACK_APP_TOKEN/SLACK_BOT_TOKEN from its env;
     //    a value already exported is inherited by the child, so only vault-stored
@@ -870,6 +901,16 @@ fn deploy_to_slack(
             deploy_argv.push("--api-url".to_string());
             deploy_argv.push("http://localhost:28000".to_string());
         }
+        // Cluster: target the named release (deploy auto-discovers the API from
+        // it, comms upgrades it).
+        if let (Some(ns), Some(rel)) = (&namespace, &release) {
+            deploy_argv.extend([
+                "--namespace".to_string(),
+                ns.clone(),
+                "--release".to_string(),
+                rel.clone(),
+            ]);
+        }
         run_agentos_in_tui_with_env(
             terminal,
             app,
@@ -879,10 +920,19 @@ fn deploy_to_slack(
             &secret_env,
         )?;
         // Wire the real Slack tokens and start the dispatcher.
+        let mut comms_argv = vec![verb.to_string(), "comms".to_string(), "--slack".to_string()];
+        if let (Some(ns), Some(rel)) = (&namespace, &release) {
+            comms_argv.extend([
+                "--namespace".to_string(),
+                ns.clone(),
+                "--release".to_string(),
+                rel.clone(),
+            ]);
+        }
         run_agentos_in_tui_with_env(
             terminal,
             app,
-            &[verb.to_string(), "comms".to_string(), "--slack".to_string()],
+            &comms_argv,
             &repo_root,
             &mut view,
             &secret_env,
