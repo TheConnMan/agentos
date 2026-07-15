@@ -288,3 +288,23 @@ jobs:
         run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
       - name: Build the worker-local overlay (no push)
         run: docker build --build-arg BASE_TAG=ci-local -f compose/worker-local.Dockerfile compose
+
+  # The dispatcher image builds with `uv sync --no-editable`, so it installs
+  # only the package's DECLARED dependencies. aci-protocol is a uv workspace
+  # member imported by handlers.py/queue.py; if it is not declared in
+  # apps/dispatcher/pyproject.toml it stays importable from a source checkout
+  # but is absent from the isolated image venv, and the process crash-loops on
+  # startup (issue #428). The build-only `images` job above cannot catch this
+  # (it never runs the image). Build the real image and assert the entrypoint's
+  # imports resolve inside it -- the one place that gap is observable.
+  dispatcher-image-smoke:
+    name: Dispatcher image imports resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build the dispatcher image locally
+        run: docker build -t agentos-dispatcher:ci-smoke -f apps/dispatcher/Dockerfile .
+      - name: Entrypoint imports resolve in the built image
+        run: docker run --rm --entrypoint python agentos-dispatcher:ci-smoke -c "import agentos_dispatcher; import aci_protocol"

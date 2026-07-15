@@ -89,6 +89,7 @@ name = "agentos-dispatcher"
 version = "0.0.0"
 source = { editable = "apps/dispatcher" }
 dependencies = [
+    { name = "aci-protocol" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -98,6 +99,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.7" },
