@@ -12,21 +12,41 @@ slice.
 
 import json
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import crud
-from ..auth import require_api_key
+from .. import crud, sandbox_token
+from ..auth import verify_platform_key
 from ..config import get_settings
 from ..deps import SessionDep
 from ..models import WorkflowStateEntry
 from ..schemas import StateAppendIn, StateEntryOut, StateEntryPut
 
+
+async def require_state_access(
+    agent_id: uuid.UUID,
+    x_api_key: Annotated[str | None, Header()] = None,
+) -> None:
+    """State-router auth (ADR-0033): the platform key (trusted callers) OR a
+    scoped ``state`` token bound to this path's ``agent_id`` (the sandbox). Every
+    other router keeps the platform-key-only ``require_api_key``."""
+
+    if verify_platform_key(x_api_key):
+        return
+    if x_api_key is not None and sandbox_token.verify(
+        x_api_key, get_settings().api_key, agent=str(agent_id), scope="state"
+    ):
+        return
+    raise HTTPException(
+        status.HTTP_401_UNAUTHORIZED, detail="missing or invalid credential"
+    )
+
+
 router = APIRouter(
-    prefix="/agents", tags=["state"], dependencies=[Depends(require_api_key)]
+    prefix="/agents", tags=["state"], dependencies=[Depends(require_state_access)]
 )
 
 

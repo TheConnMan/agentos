@@ -14,11 +14,21 @@ from .config import get_settings
 API_KEY_HEADER = "X-API-Key"
 
 
+def verify_platform_key(x_api_key: str | None) -> bool:
+    """True when the header carries the shared platform API key (constant-time).
+
+    The single place that defines what 'the platform key' means, shared by
+    require_api_key (raise on fail) and the state router's require_state_access
+    (fall through to the scoped-token check)."""
+    if x_api_key is None:
+        return False
+    return hmac.compare_digest(x_api_key, get_settings().api_key)
+
+
 async def require_api_key(
     x_api_key: Annotated[str | None, Header()] = None,
 ) -> None:
-    expected = get_settings().api_key
-    if x_api_key is None or not hmac.compare_digest(x_api_key, expected):
+    if not verify_platform_key(x_api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="missing or invalid API key",

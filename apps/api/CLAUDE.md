@@ -13,6 +13,15 @@ worker, Postgres, MinIO/S3, Langfuse, and GitHub.
   replace it eventually, but until that lands, do not add a second
   auth scheme for a new router without raising it in an issue/PR first --
   every router should share the one dependency.
+- **The `state` router authenticates differently, on purpose (ADR-0033, #410).**
+  `require_state_access` (`routers/state.py`) accepts EITHER the platform key OR a
+  scoped, path-`agent_id`-bound `state` token minted by the worker for the
+  sandbox, so a sandboxed agent can rehydrate its own memory/transcript without
+  holding a resolve-capable platform-wide key. Every OTHER router keeps
+  `require_api_key` (platform key only); a scoped token is rejected everywhere
+  else, including `/approvals/{id}/resolve`. Do not collapse the state router
+  back onto `require_api_key`, and do not extend scoped-token acceptance to
+  another router without a new ADR.
 - **The GitHub webhook is authenticated differently, on purpose.** `/github/webhook`
   verifies the HMAC signature GitHub sends (`x-hub-signature-256` against
   `settings.github_webhook_secret`), not the API key -- GitHub cannot send an

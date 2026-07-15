@@ -23,6 +23,7 @@ from aci_protocol import QueuedTurn
 from agentos_api.config import get_settings
 from agentos_api.main import create_app
 from agentos_api.models import Approval
+from agentos_api.sandbox_token import mint
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -402,6 +403,49 @@ def test_requires_api_key(
 ) -> None:
     denied = approvals_client.post("/approvals", json=_payload())
     assert denied.status_code in (401, 403)
+
+
+def test_scoped_state_token_cannot_resolve_an_approval(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+) -> None:
+    """The core #410 security assertion: a scoped sandbox "state" token is a
+    least-privilege credential for the agent's own state namespace ONLY. It must
+    NOT authorize resolving an approval -- otherwise a sandboxed agent could
+    forward its own state token to /approvals/{id}/resolve and self-approve its
+    own gated tool call, defeating the server-side authorizer (ADR-0010)."""
+
+    created = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+    resolve_url = f"/approvals/{created['id']}/resolve"
+
+    scoped = mint(
+        get_settings().api_key,
+        agent=str(uuid.uuid4()),
+        scope="state",
+        exp=4102444800,  # 2100-01-01, valid at test time
+    )
+    denied = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers={"X-API-Key": scoped},
+    )
+    assert denied.status_code == 401, denied.text
+    # The record is untouched by the rejected attempt.
+    record = approvals_client.get(
+        f"/approvals/{created['id']}", headers=auth_headers
+    )
+    assert record.json()["status"] == "pending"
+
+    # The platform key still resolves it (no regression).
+    ok = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert ok.status_code == 200, ok.text
 
 
 def test_authorizer_blocks_non_member_and_self_approval(

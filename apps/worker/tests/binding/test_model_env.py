@@ -22,6 +22,7 @@ from agentos_worker.binding import (
 )
 from agentos_worker.config import WorkerConfig
 from agentos_worker.eval.stream import EvalStreamConsumer, EvalWorkItem
+from agentos_worker.sandbox_token import verify
 
 
 def _resolved(model: str | None = None) -> ResolvedDeployment:
@@ -244,8 +245,15 @@ def test_binding_boot_env_sets_per_thread_transcript_ref() -> None:
     assert env[HISTORY_REF_ENV] == (
         f"{base}/agents/{resolved.agent_id}/state/transcript/1720000000.000100"
     )
-    # The API key is forwarded as the history token (shared with memory today).
-    assert env[HISTORY_TOKEN_ENV] == config.api_key
+    # The history token is a scoped state token bound to this agent
+    # (ADR-0033, #410), never the raw platform key.
+    assert env[HISTORY_TOKEN_ENV] != config.api_key
+    assert verify(
+        env[HISTORY_TOKEN_ENV],
+        config.api_key,
+        agent=str(resolved.agent_id),
+        scope="state",
+    )
 
 
 def test_binding_boot_env_history_ref_is_deterministic_per_thread() -> None:

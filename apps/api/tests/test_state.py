@@ -4,7 +4,15 @@ Nothing mocked -- exercises the API against the compose Postgres (the
 disposable-DB conftest provisions and migrates a throwaway database per run).
 """
 
+import uuid
 from typing import Any
+
+from agentos_api.config import get_settings
+from agentos_api.sandbox_token import mint
+
+# Scoped-sandbox-token auth matrix constants (#410).
+_FAR_FUTURE = 4102444800  # 2100-01-01, valid at test time
+_PAST = 1000000000  # 2001, expired at test time
 
 
 def _agent(client: Any, headers: dict[str, str]) -> str:
@@ -16,6 +24,108 @@ def _agent(client: Any, headers: dict[str, str]) -> str:
     assert resp.status_code == 201, resp.text
     agent_id: str = resp.json()["id"]
     return agent_id
+
+
+def test_state_router_accepts_a_scoped_token_for_the_path_agent(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A scoped "state" token whose agent claim matches the path agent is a
+    # first-class credential on the state router: no regression for the
+    # platform key, and the sandboxed agent reaches its own namespace with a
+    # least-privilege token instead of the raw shared key (#410).
+    aid = _agent(client, auth_headers)
+    api_key = get_settings().api_key
+    token = mint(api_key, agent=aid, scope="state", exp=_FAR_FUTURE)
+    headers = {"X-API-Key": token}
+    url = f"/agents/{aid}/state/scoped/k"
+
+    put = client.put(url, json={"value": {"n": 1}}, headers=headers)
+    assert put.status_code == 200, put.text
+    assert put.json()["value"] == {"n": 1}
+
+    got = client.get(url, headers=headers)
+    assert got.status_code == 200
+    assert got.json()["value"] == {"n": 1}
+
+    # The platform key still works on the same endpoint (no regression).
+    assert client.get(url, headers=auth_headers).status_code == 200
+
+
+def test_state_router_rejects_scoped_token_for_a_different_agent(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    aid = _agent(client, auth_headers)
+    other = str(uuid.uuid4())
+    token = mint(get_settings().api_key, agent=other, scope="state", exp=_FAR_FUTURE)
+    r = client.put(
+        f"/agents/{aid}/state/scoped/k",
+        json={"value": {"n": 1}},
+        headers={"X-API-Key": token},
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_state_router_rejects_expired_scoped_token(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    aid = _agent(client, auth_headers)
+    token = mint(get_settings().api_key, agent=aid, scope="state", exp=_PAST)
+    r = client.put(
+        f"/agents/{aid}/state/scoped/k",
+        json={"value": {"n": 1}},
+        headers={"X-API-Key": token},
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_state_router_rejects_wrong_scope_token(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    aid = _agent(client, auth_headers)
+    token = mint(get_settings().api_key, agent=aid, scope="admin", exp=_FAR_FUTURE)
+    r = client.put(
+        f"/agents/{aid}/state/scoped/k",
+        json={"value": {"n": 1}},
+        headers={"X-API-Key": token},
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_state_router_rejects_wrong_signing_key_token(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    aid = _agent(client, auth_headers)
+    # Correct agent + scope, but signed with a key that is not the platform key.
+    token = mint("not-the-platform-key", agent=aid, scope="state", exp=_FAR_FUTURE)
+    r = client.put(
+        f"/agents/{aid}/state/scoped/k",
+        json={"value": {"n": 1}},
+        headers={"X-API-Key": token},
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_state_router_rejects_garbage_token_without_echoing_it(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    aid = _agent(client, auth_headers)
+    garbage = "sbx.xxx.yyy"
+    r = client.put(
+        f"/agents/{aid}/state/scoped/k",
+        json={"value": {"n": 1}},
+        headers={"X-API-Key": garbage},
+    )
+    assert r.status_code == 401, r.text
+    # A rejected credential is never echoed back in the error body.
+    assert garbage not in r.text
+
+
+def test_state_router_rejects_missing_api_key_header(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    aid = _agent(client, auth_headers)
+    r = client.put(f"/agents/{aid}/state/scoped/k", json={"value": {"n": 1}})
+    assert r.status_code == 401, r.text
 
 
 def test_put_get_list_delete_round_trip(

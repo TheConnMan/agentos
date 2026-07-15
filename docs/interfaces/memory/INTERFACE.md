@@ -45,15 +45,20 @@ over the durable KV/document store landed for #23/#248
 `load` GETs the single log-shaped key; `append` POSTs to that key's `/append`
 endpoint (#248), inheriting durability and the per-value/per-namespace size caps.
 The worker (`binding.boot_env`) delivers the ref as
-`http(s)://api/agents/<id>/state/memory` and forwards the API key as the memory
-token. `NullMemoryStore` is the no-ref sink.
+`http(s)://api/agents/<id>/state/memory` and forwards a scoped, agent-bound
+`state` token (ADR-0033, #410) as the memory token rather than the raw platform
+key. `NullMemoryStore` is the no-ref sink.
 
 ## Known leakage
 
-- **Shared API key as the memory token.** The state API has one shared API key
-  today, so forwarding it into the sandbox as `AGENTOS_MEMORY_TOKEN` grants that
-  key's full scope. A scoped, least-privilege memory token is follow-up work
-  (ADR-0025, consequences).
+- **Scoped memory token (was: shared API key).** Earlier the state API's one
+  shared platform key was forwarded into the sandbox as `AGENTOS_MEMORY_TOKEN`,
+  granting that key's full scope. ADR-0033 (#410) closed that: the worker now
+  mints a scoped, agent-bound, HMAC-signed `state` token per turn, accepted only
+  by the state router and bound to this agent's namespace, so the sandbox
+  credential can no longer resolve approvals or reach another agent's state. The
+  platform key still authenticates the state router for operators, the CLI, and
+  the worker's own control-plane calls.
 - **Consolidation is an opt-in capability, not part of the port.** The core
   `MemoryStore` port stays `load`/`append` only. Consolidation (#265) adds a
   separate `SupportsReplace` capability (`replace(records)`) and the
