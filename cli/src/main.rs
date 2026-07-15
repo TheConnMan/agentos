@@ -109,6 +109,7 @@ enum Command {
     /// `--update`, already-present heavyweight artifacts like the runner image
     /// are reused. A release binary has no source tree to install and errors
     /// clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
+    #[command(alias = "i")]
     Install {
         /// Reuse already-present artifacts while refreshing dependencies and builds.
         #[arg(long)]
@@ -121,6 +122,7 @@ enum Command {
     /// invocation, without re-running the bootstrap script. Pass `--image` to
     /// also rebuild the local runner image (for `runner/` changes). A release
     /// binary cannot rebuild itself and errors clearly.
+    #[command(alias = "u")]
     Update {
         /// Also rebuild the local runner image (for runner/ changes).
         #[arg(long)]
