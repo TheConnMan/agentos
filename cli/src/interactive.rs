@@ -78,6 +78,7 @@ struct ExampleChoice {
     description: &'static str,
     directory: &'static str,
     secrets: &'static [&'static str],
+    suggestions: &'static [&'static str],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -645,7 +646,13 @@ fn explore_examples(
         }
         run_agentos_in_tui_with_env(terminal, app, &argv, &repo_root, &mut setup, &secret_env)?;
         started = true;
-        chat_with_runner(terminal, &repo_root, &url, example.name)
+        chat_with_runner(
+            terminal,
+            &repo_root,
+            &url,
+            example.name,
+            example.suggestions,
+        )
     })();
 
     if started {
@@ -680,6 +687,11 @@ fn example_choices() -> Vec<ExampleChoice> {
                 "Explore live repositories and issues through authenticated GitHub MCP tools",
             directory: "examples/github-issues",
             secrets: &["GITHUB_PERSONAL_ACCESS_TOKEN"],
+            suggestions: &[
+                "List the open issues in curie-eng/agentos and group them by label.",
+                "Summarize the most recently updated pull requests in curie-eng/agentos.",
+                "Find open bug reports in curie-eng/agentos that need triage.",
+            ],
         },
         ExampleChoice {
             id: "text-stats-engine",
@@ -687,6 +699,11 @@ fn example_choices() -> Vec<ExampleChoice> {
             description: "Use an in-bundle MCP server to inspect and analyze text",
             directory: "examples/text-stats-engine",
             secrets: &[],
+            suggestions: &[
+                "Explain what text analysis tools you have.",
+                "Count the words and sentences in: AgentOS makes agents portable.",
+                "Analyze the readability of: Clear tools make complex work easier.",
+            ],
         },
         ExampleChoice {
             id: "weather",
@@ -694,6 +711,11 @@ fn example_choices() -> Vec<ExampleChoice> {
             description: "Chat with the minimal weather agent bundle",
             directory: "examples/weather",
             secrets: &[],
+            suggestions: &[
+                "What can this weather agent help me with?",
+                "Give me a concise weather briefing for San Francisco.",
+                "How should I ask you to compare weather between two cities?",
+            ],
         },
     ]
 }
@@ -970,10 +992,12 @@ struct ChatView {
     scroll: u16,
     follow: bool,
     thinking: bool,
+    suggestions: Vec<String>,
+    suggestion_idx: usize,
 }
 
 impl ChatView {
-    fn new(agent_name: &str) -> Self {
+    fn new(agent_name: &str, suggestions: &[&str]) -> Self {
         Self {
             agent_name: agent_name.to_string(),
             lines: vec![
@@ -985,12 +1009,17 @@ impl ChatView {
             scroll: 0,
             follow: true,
             thinking: false,
+            suggestions: suggestions
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            suggestion_idx: 0,
         }
     }
 
     fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
         let width = terminal_width.saturating_sub(4).max(1) as usize;
-        let viewport = terminal_height.saturating_sub(9) as usize;
+        let viewport = terminal_height.saturating_sub(14) as usize;
         wrap_output_lines(&self.lines, width)
             .len()
             .saturating_sub(viewport)
@@ -1009,8 +1038,9 @@ fn chat_with_runner(
     cwd: &Path,
     url: &str,
     agent_name: &str,
+    suggestions: &[&str],
 ) -> Result<()> {
-    let mut chat = ChatView::new(agent_name);
+    let mut chat = ChatView::new(agent_name, suggestions);
     loop {
         let Some(message) = read_chat_input(terminal, &mut chat)? else {
             return Ok(());
@@ -1048,8 +1078,13 @@ fn read_chat_input(
         };
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
-            (KeyCode::Enter, _) if !chat.input.trim().is_empty() => {
-                return Ok(Some(chat.input.trim().to_string()));
+            (KeyCode::Enter, _) => {
+                if !chat.input.trim().is_empty() {
+                    return Ok(Some(chat.input.trim().to_string()));
+                }
+                if let Some(suggestion) = chat.suggestions.get(chat.suggestion_idx) {
+                    return Ok(Some(suggestion.clone()));
+                }
             }
             (KeyCode::Backspace, _) => {
                 chat.input.pop();
@@ -1066,6 +1101,16 @@ fn read_chat_input(
                     .min(chat.max_scroll(size.width, size.height));
             }
             (KeyCode::End, _) => chat.follow = true,
+            (KeyCode::Down | KeyCode::Tab, _) if !chat.suggestions.is_empty() => {
+                chat.suggestion_idx = (chat.suggestion_idx + 1) % chat.suggestions.len();
+            }
+            (KeyCode::Up | KeyCode::BackTab, _) if !chat.suggestions.is_empty() => {
+                chat.suggestion_idx = if chat.suggestion_idx == 0 {
+                    chat.suggestions.len() - 1
+                } else {
+                    chat.suggestion_idx - 1
+                };
+            }
             (KeyCode::Char(ch), _) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 chat.input.push(ch);
             }
@@ -1096,7 +1141,9 @@ fn run_chat_turn(
 
     loop {
         while let Ok(line) = rx.try_recv() {
-            chat.lines.push(line);
+            if !is_internal_chat_status(&line) {
+                chat.lines.push(line);
+            }
         }
         let size = terminal.size()?;
         chat.follow_tail(size.width, size.height);
@@ -1129,7 +1176,9 @@ fn run_chat_turn(
                 let _ = reader.join();
             }
             while let Ok(line) = rx.try_recv() {
-                chat.lines.push(line);
+                if !is_internal_chat_status(&line) {
+                    chat.lines.push(line);
+                }
             }
             if canceled {
                 chat.lines.push("Response canceled.".to_string());
@@ -1141,6 +1190,10 @@ fn run_chat_turn(
             return Ok(());
         }
     }
+}
+
+fn is_internal_chat_status(line: &str) -> bool {
+    line.trim().starts_with("-- final (")
 }
 
 fn run_agentos_in_tui(
@@ -1639,6 +1692,7 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
         .constraints([
             Constraint::Length(3),
             Constraint::Min(5),
+            Constraint::Length(5),
             Constraint::Length(3),
             Constraint::Length(2),
         ])
@@ -1683,7 +1737,30 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
         chunks[1],
     );
 
-    let input_width = chunks[2].width.saturating_sub(4).max(1) as usize;
+    let suggestions = chat
+        .suggestions
+        .iter()
+        .enumerate()
+        .map(|(idx, suggestion)| {
+            let prefix = if idx == chat.suggestion_idx {
+                "> "
+            } else {
+                "  "
+            };
+            ListItem::new(format!("{prefix}{}. {suggestion}", idx + 1))
+        })
+        .collect::<Vec<_>>();
+    let mut suggestion_state = ListState::default();
+    suggestion_state.select(Some(chat.suggestion_idx));
+    frame.render_stateful_widget(
+        List::new(suggestions)
+            .block(Block::default().title("Try a prompt").borders(Borders::ALL))
+            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)),
+        chunks[2],
+        &mut suggestion_state,
+    );
+
+    let input_width = chunks[3].width.saturating_sub(4).max(1) as usize;
     let shown_input = input_window(&chat.input, false, input_width);
     let input_style = if chat.thinking {
         Style::default().fg(Color::DarkGray)
@@ -1700,23 +1777,23 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
                 })
                 .borders(Borders::ALL),
         ),
-        chunks[2],
+        chunks[3],
     );
     if !chat.thinking {
         frame.set_cursor_position((
-            chunks[2].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
-            chunks[2].y + 1,
+            chunks[3].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
+            chunks[3].y + 1,
         ));
     }
     let help = if chat.thinking {
         "Ctrl-C cancel response    PgUp/PgDn scroll    End latest"
     } else {
-        "Enter send    Esc leave chat    PgUp/PgDn scroll    End latest"
+        "Up/Down choose prompt    Enter send    Type for free response    Esc leave"
     };
     frame.render_widget(
         Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
             .alignment(Alignment::Center),
-        chunks[3],
+        chunks[4],
     );
 }
 
@@ -2179,11 +2256,19 @@ mod tests {
         assert_eq!(examples.len(), 3);
         assert!(examples.iter().all(|example| {
             !example.id.is_empty()
+                && !example.suggestions.is_empty()
                 && example
                     .id
                     .chars()
                     .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
         }));
+    }
+
+    #[test]
+    fn chat_hides_internal_final_status() {
+        assert!(is_internal_chat_status("-- final (done)"));
+        assert!(is_internal_chat_status("  -- final (failed)"));
+        assert!(!is_internal_chat_status("The final answer is done."));
     }
 
     #[test]
