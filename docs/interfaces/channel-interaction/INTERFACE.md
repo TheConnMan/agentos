@@ -61,9 +61,11 @@ The AgentOS TUI advertises `interactive-actions`, `live-steering`, `streaming`,
 and `threading`. It renders agent-authored actions first and appends `Type a
 message...` as the final selector option when free text is allowed. Selecting
 that option enters an explicit compose mode; it is a terminal affordance and is
-never added to the agent-authored contract. The TUI sends the selected action
-value or composed text as the next turn, replaces stale actions after each
-reply, and never prints protocol fences or terminal status frames.
+never added to the agent-authored contract. The selector expands to keep every
+contract option and the appended free-response option visible. The compose
+field is hidden until free response is selected. The TUI sends the selected
+action value or composed text as the next turn, replaces stale actions after
+each reply, and never prints protocol fences or terminal status frames.
 
 The conversation transcript remains scrollable while selecting, composing, and
 waiting for a response. Scrolling suspends tail-follow until the user returns to

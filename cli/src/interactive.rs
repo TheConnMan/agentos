@@ -1032,7 +1032,7 @@ impl ChatView {
     }
 
     fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
-        let (width, viewport) = chat_transcript_dimensions(terminal_width, terminal_height);
+        let (width, viewport) = chat_transcript_dimensions(self, terminal_width, terminal_height);
         wrap_output_lines(&self.lines, width)
             .len()
             .saturating_sub(viewport)
@@ -1786,13 +1786,14 @@ fn draw_run_view(frame: &mut Frame<'_>, view: &RunView) {
 
 fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
     let area = frame.area();
+    let (action_height, input_height) = chat_panel_heights(chat);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(5),
-            Constraint::Length(3),
+            Constraint::Length(action_height),
+            Constraint::Length(input_height),
             Constraint::Length(2),
         ])
         .split(area);
@@ -1849,47 +1850,28 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
         .collect::<Vec<_>>();
     let mut action_state = ListState::default();
     action_state.select((chat.choice_count() > 0).then_some(chat.action_idx));
-    frame.render_stateful_widget(
-        List::new(actions)
-            .block(
-                Block::default()
-                    .title(chat.action_prompt.as_str())
-                    .borders(Borders::ALL),
-            )
-            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)),
-        chunks[2],
-        &mut action_state,
-    );
+    if action_height > 0 {
+        frame.render_stateful_widget(
+            List::new(actions)
+                .block(
+                    Block::default()
+                        .title(chat.action_prompt.as_str())
+                        .borders(Borders::ALL),
+                )
+                .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)),
+            chunks[2],
+            &mut action_state,
+        );
+    }
 
     let input_width = chunks[3].width.saturating_sub(4).max(1) as usize;
     let shown_input = input_window(&chat.input, false, input_width);
-    let input_style = if chat.thinking || !chat.composing {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default()
-    };
-    let input_text = if chat.composing {
-        shown_input.as_str()
-    } else {
-        ""
-    };
-    frame.render_widget(
-        Paragraph::new(Span::styled(input_text, input_style)).block(
-            Block::default()
-                .title(if chat.thinking {
-                    "Waiting for agent"
-                } else if !chat.allow_free_text {
-                    "Select a response"
-                } else if chat.composing {
-                    "Message"
-                } else {
-                    "Message (select Type a message...)"
-                })
-                .borders(Borders::ALL),
-        ),
-        chunks[3],
-    );
-    if !chat.thinking && chat.composing {
+    if input_height > 0 {
+        frame.render_widget(
+            Paragraph::new(Span::raw(shown_input.as_str()))
+                .block(Block::default().title("Message").borders(Borders::ALL)),
+            chunks[3],
+        );
         frame.set_cursor_position((
             chunks[3].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
             chunks[3].y + 1,
@@ -1909,14 +1891,33 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
     );
 }
 
-fn chat_transcript_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
+fn chat_panel_heights(chat: &ChatView) -> (u16, u16) {
+    if chat.thinking {
+        return (0, 0);
+    }
+    let choices = chat.choice_count().min(usize::from(u16::MAX)) as u16;
+    let action_height = if choices > 0 {
+        choices.saturating_add(2)
+    } else {
+        0
+    };
+    let input_height = if chat.composing { 3 } else { 0 };
+    (action_height, input_height)
+}
+
+fn chat_transcript_dimensions(
+    chat: &ChatView,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> (usize, usize) {
+    let (action_height, input_height) = chat_panel_heights(chat);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(5),
-            Constraint::Length(3),
+            Constraint::Length(action_height),
+            Constraint::Length(input_height),
             Constraint::Length(2),
         ])
         .split(Rect::new(0, 0, terminal_width, terminal_height));
@@ -2403,16 +2404,24 @@ mod tests {
     fn chat_appends_free_text_as_the_final_choice() {
         let mut chat = ChatView::new("demo", &["First".to_string(), "Second".to_string()]);
         assert_eq!(chat.choice_count(), 3);
+        assert_eq!(chat_panel_heights(&chat), (5, 0));
         assert!(!chat.free_text_selected());
 
         chat.move_selection(-1);
         assert_eq!(chat.action_idx, 2);
         assert!(chat.free_text_selected());
+        chat.composing = true;
+        assert_eq!(chat_panel_heights(&chat), (5, 3));
 
         chat.allow_free_text = false;
+        chat.composing = false;
         chat.action_idx = 0;
         assert_eq!(chat.choice_count(), 2);
+        assert_eq!(chat_panel_heights(&chat), (4, 0));
         assert!(!chat.free_text_selected());
+
+        chat.thinking = true;
+        assert_eq!(chat_panel_heights(&chat), (0, 0));
     }
 
     #[test]
