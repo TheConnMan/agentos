@@ -123,6 +123,45 @@ def build_approval_server() -> McpSdkServerConfig:
 # tool input would drown both, so it is truncated with an ellipsis marker.
 _SUMMARY_INPUT_LIMIT = 300
 
+# The permission-gate summary prefix, in one place so the worker can pin against
+# it (#430, ADR-0035): the worker treats a persisted approval summary starting
+# with this prefix as a permission-gate block eligible for the one-shot grant,
+# and reads the approved tool name from it. Keep summarize_tool_call's output
+# identical to today -- this only names the shared literal.
+#
+# This prefix is a RESERVED namespace owned by ``summarize_tool_call`` -- the
+# runner is the single writer of a genuine ``can_use_tool`` denial summary. Only
+# machine-generated permission-gate summaries may live in it. Model- and
+# skill-authored (policy-gate) summaries come from the model's own
+# ``request_approval(summary=...)`` argument and are guarded out of this
+# namespace by ``guard_reserved_summary`` before they are stored, so the worker's
+# "summary starts with the prefix" check is an authoritative provenance signal: a
+# prompt-injected agent cannot forge a real permission-gate block by naming a tool
+# in its summary and thereby mint an unreviewed one-shot bypass grant (#430,
+# ADR-0035, security).
+APPROVAL_SUMMARY_PREFIX = "Tool call awaiting approval: "
+
+# Prepended to a model/skill-authored summary that would otherwise collide with
+# the reserved permission-gate namespace, neutralizing the forgery while leaving
+# the human-facing text readable.
+_RESERVED_SUMMARY_MARKER = "[agent-requested] "
+
+
+def guard_reserved_summary(summary: str) -> str:
+    """Keep a policy-gate summary out of the reserved permission-gate namespace.
+
+    ``APPROVAL_SUMMARY_PREFIX`` is reserved for machine-generated permission-gate
+    summaries (``summarize_tool_call``), which the worker trusts as proof that a
+    real ``can_use_tool`` denial occurred before minting a one-shot bypass grant.
+    A model/skill-authored summary is attacker-influenced, so if it starts with
+    the reserved prefix this prepends a neutralizing marker so the result no
+    longer does; any other summary is returned unchanged (#430, ADR-0035).
+    """
+
+    if summary.startswith(APPROVAL_SUMMARY_PREFIX):
+        return f"{_RESERVED_SUMMARY_MARKER}{summary}"
+    return summary
+
 # What the denied model is told. It must steer the model to end the turn (so
 # the session can emit the awaiting-approval final and the platform can
 # suspend), and to not spin on retries -- a retried call is denied identically.
@@ -148,7 +187,7 @@ def summarize_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:
         rendered = str(tool_input)
     if len(rendered) > _SUMMARY_INPUT_LIMIT:
         rendered = rendered[:_SUMMARY_INPUT_LIMIT] + "... (truncated)"
-    return f"Tool call awaiting approval: {tool_name} {rendered}"
+    return f"{APPROVAL_SUMMARY_PREFIX}{tool_name} {rendered}"
 
 
 @dataclass
@@ -168,16 +207,41 @@ class ApprovalGate:
     The first blocked call of a turn wins: a model that retries the denied
     tool (against the deny message's instruction) does not overwrite the
     summary the human will resolve against.
+
+    ``grant_tool`` is the one-shot post-approval allowance (#430, ADR-0035): the
+    single tool name the worker injects from durable state at resume boot so a
+    genuinely-approved permission-gate call completes exactly once.
+    ``consume_grant`` spends it (one use, tool-name-scoped), and ``reset()``
+    expires any unspent grant after the boot turn. The grant is deliberately
+    boot-turn-only so it never leaks across turns: ``reset()`` runs at the start
+    of every turn, so the FIRST reset (the boot turn) preserves a freshly
+    injected grant and every later reset clears it.
     """
 
     required: frozenset[str] = field(default_factory=frozenset)
     route_by_tool: dict[str, str] = field(default_factory=dict)
     pending_summary: str | None = None
     pending_route: str | None = None
+    grant_tool: str | None = None
+    _boot_turn_seen: bool = False
 
     def reset(self) -> None:
         self.pending_summary = None
         self.pending_route = None
+        # Boot-turn-only grant: keep it on the first reset (the boot turn),
+        # expire any unspent grant on the second and later resets so it never
+        # leaks into a subsequent turn.
+        if self._boot_turn_seen:
+            self.grant_tool = None
+        self._boot_turn_seen = True
+
+    def consume_grant(self, tool_name: str) -> bool:
+        """Spend the one-shot grant iff it names ``tool_name`` (single use)."""
+
+        if self.grant_tool is not None and tool_name == self.grant_tool:
+            self.grant_tool = None
+            return True
+        return False
 
     def block(self, tool_name: str, tool_input: dict[str, Any]) -> None:
         if self.pending_summary is None:
@@ -201,6 +265,11 @@ def build_can_use_tool(gate: ApprovalGate) -> CanUseTool:
         _context: ToolPermissionContext,
     ) -> PermissionResultAllow | PermissionResultDeny:
         if tool_name in gate.required:
+            # The one-shot post-approval allowance (#430): a resume-boot grant
+            # for exactly this tool lets one call through (no block recorded, the
+            # approved action completes) and re-arms the gate.
+            if gate.consume_grant(tool_name):
+                return PermissionResultAllow()
             gate.block(tool_name, tool_input)
             return PermissionResultDeny(message=_DENY_MESSAGE)
         return PermissionResultAllow()

@@ -31,6 +31,12 @@ class RunnerConfig:
     # (comma separated); None/empty means no permission gates and the
     # pre-gate bypass posture is preserved.
     approval_required_tools: list[str] | None
+    # One-shot post-approval allowance (#430, ADR-0035): the single tool name a
+    # resume-boot grant lets through exactly once on the boot turn. A runner-local
+    # knob injected by the worker binding as AGENTOS_APPROVAL_GRANT_TOOL when it
+    # boots the resume claim for a genuinely-approved permission-gate block;
+    # None/empty means no grant and the ordinary deny-and-pause posture holds.
+    approval_grant_tool: str | None
     port: int
     runner_token: str | None
 
@@ -72,6 +78,8 @@ class RunnerConfig:
             if approval_raw
             else None
         )
+        grant_raw = env.get("AGENTOS_APPROVAL_GRANT_TOOL")
+        approval_grant_tool = grant_raw.strip() if grant_raw and grant_raw.strip() else None
         return cls(
             session=session,
             model=env.get("AGENTOS_MODEL"),
@@ -80,6 +88,7 @@ class RunnerConfig:
             history_ref=env.get("AGENTOS_HISTORY_REF"),
             idempotent_tools=idempotent,
             approval_required_tools=approval_required,
+            approval_grant_tool=approval_grant_tool,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
             runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None,
         )

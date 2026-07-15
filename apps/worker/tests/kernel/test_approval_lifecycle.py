@@ -170,6 +170,87 @@ def test_resume_injects_boot_env_into_replacement_claim(make_harness) -> None:
     asyncio.run(go())
 
 
+class GrantBinding:
+    """A binding stand-in that answers approval_grant_tool by event id (#430).
+
+    resolve/boot_env behave like the routed double; approval_grant_tool returns
+    the granted tool ONLY for the one resume event id it was configured with,
+    mirroring the worker's real derivation from durable approval state.
+    """
+
+    def __init__(self, *, grant_event_id: str, grant_tool: str) -> None:
+        self.grant_event_id = grant_event_id
+        self.grant_tool = grant_tool
+        self.agent_id = uuid.uuid4()
+
+    async def resolve(self, channel: str):  # noqa: ANN201
+        from agentos_worker.binding import ResolvedDeployment
+
+        return ResolvedDeployment(
+            agent_id=self.agent_id,
+            version_id=uuid.uuid4(),
+            version_label="v1",
+            bundle_ref=None,
+            max_usd_per_day=None,
+            max_output_tokens_per_run=None,
+        )
+
+    def packs_for(self, resolved):  # noqa: ANN001, ANN201
+        from agentos_worker.behaviorpacks import BehaviorPacks
+
+        return BehaviorPacks.from_config(None)
+
+    def budget_for(self, resolved):  # noqa: ANN001, ANN201
+        from aci_protocol import Budget
+
+        return Budget(max_output_tokens_per_run=1000, max_usd_per_day=1.0)
+
+    def boot_env(self, resolved, thread_key):  # noqa: ANN001, ANN201
+        return {"AGENTOS_SESSION_ID": f"s-{thread_key}"}
+
+    async def approval_grant_tool(self, event_id: str, agent_id):  # noqa: ANN001, ANN201
+        return self.grant_tool if event_id == self.grant_event_id else None
+
+
+def test_resume_claim_injects_approval_grant_tool_env(make_harness) -> None:
+    """#430: a resume claim for an approved permission-gate approval injects
+    AGENTOS_APPROVAL_GRANT_TOOL into the boot env passed to the replacement
+    claim; a fresh (non-approval) mention injects nothing (the gate re-arms)."""
+
+    async def go() -> None:
+        from agentos_api.resumequeue import resume_event_id
+
+        grant_event = resume_event_id(uuid.uuid4())
+        binding = GrantBinding(
+            grant_event_id=grant_event, grant_tool="mcp__github__create_issue"
+        )
+        async with make_harness(binding=binding) as h:
+            # The resume turn carries the approval resume event id -> the grant
+            # for the approved tool lands in the boot env of the fresh claim.
+            h.runner.default_script = [Final(text="Issue created.", status=DONE)]
+            await h.kernel.process_event(
+                _qevent(
+                    "proceed with the approved action",
+                    thread="th-grant",
+                    event_id=grant_event,
+                )
+            )
+            resumed_env = h.fake_k8s.claim_envs[-1]
+            assert resumed_env is not None
+            assert resumed_env.get("AGENTOS_APPROVAL_GRANT_TOOL") == "mcp__github__create_issue"
+
+            # A fresh, unrelated mention has a different event id -> no grant env
+            # (re-armed), so an adopted/warm follow-up cannot inherit an allowance.
+            await h.kernel.process_event(
+                _qevent("hello there", thread="th-fresh", event_id="ev-fresh-1")
+            )
+            fresh_env = h.fake_k8s.claim_envs[-1]
+            assert fresh_env is not None
+            assert "AGENTOS_APPROVAL_GRANT_TOOL" not in fresh_env
+
+    asyncio.run(go())
+
+
 def test_no_backend_escalates_instead_of_stranding(make_harness) -> None:
     async def go() -> None:
         async with make_harness() as h:  # no approvals client wired
