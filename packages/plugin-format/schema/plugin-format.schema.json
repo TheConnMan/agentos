@@ -399,6 +399,21 @@
           "default": null,
           "title": "Repository"
         },
+        "secrets": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secrets"
+        },
         "starterPrompts": {
           "anyOf": [
             {

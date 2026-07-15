@@ -4,6 +4,7 @@
   "description": "Example bundle: an agent that reads and triages GitHub issues through the off-the-shelf GitHub MCP server, authenticated with a personal access token forwarded into the sandbox.",
   "author": { "name": "CurieTech" },
   "keywords": ["example", "mcp", "authed", "github", "stdio"],
+  "secrets": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
   "starterPrompts": [
     "List the open issues in curie-eng/agentos and group them by label.",
     "Summarize the most recently updated pull requests in curie-eng/agentos.",
