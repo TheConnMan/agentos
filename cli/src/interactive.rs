@@ -76,6 +76,23 @@ enum Workflow {
     ExploreExamples,
     ParityLadder,
     DeployToSlack,
+    DeployToSlackCluster,
+}
+
+/// Which platform tier a Deploy-to-Slack workflow drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SlackTier {
+    Local,
+    Cluster,
+}
+
+impl SlackTier {
+    fn verb(self) -> &'static str {
+        match self {
+            SlackTier::Local => "local",
+            SlackTier::Cluster => "cluster",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -318,7 +335,10 @@ fn run_recipe_in_tui(
         match workflow {
             Workflow::ExploreExamples => explore_examples(terminal, app, &values)?,
             Workflow::ParityLadder => parity_ladder(terminal, app)?,
-            Workflow::DeployToSlack => deploy_to_slack(terminal, app, &values)?,
+            Workflow::DeployToSlack => deploy_to_slack(terminal, app, SlackTier::Local)?,
+            Workflow::DeployToSlackCluster => {
+                deploy_to_slack(terminal, app, SlackTier::Cluster)?
+            }
         }
         return Ok(format!("Finished: {}", recipe.title));
     }
@@ -721,21 +741,34 @@ fn explore_examples(
     Ok(())
 }
 
-/// Guided "Deploy to Slack" workflow (local tier): walk the operator through the
-/// one-time Slack-app creation (the part that can't be automated), collect the
-/// tokens + channel id into the secret vault, then run `local up` -> `local
-/// deploy` -> `local comms --slack` inside the TUI. Mirrors `explore_examples`.
+/// Guided "Deploy to Slack" workflow: walk the operator through the one-time
+/// Slack-app creation (the part that can't be automated), collect the tokens +
+/// channel id into the secret vault, then run `<tier> deploy` -> `<tier> comms
+/// --slack` (local additionally brings the compose stack up first) inside the
+/// TUI. Mirrors `explore_examples`.
 fn deploy_to_slack(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
-    _values: &BTreeMap<String, String>,
+    tier: SlackTier,
 ) -> Result<()> {
+    let verb = tier.verb();
+
     // 1. The manual, browser-only part: create the Slack app and gather the two
     //    tokens + the channel id. Pause until the operator has them.
     let mut intro = RunView::new("Deploy to Slack — create your Slack app");
+    let flow = match tier {
+        SlackTier::Local => "compose stack: local up -> local deploy -> local comms --slack.",
+        SlackTier::Cluster => "deployed release: cluster deploy -> cluster comms --slack.",
+    };
+    intro.push(format!(
+        "This connects an AgentOS agent to a real Slack workspace through the {flow}"
+    ));
+    if tier == SlackTier::Cluster {
+        intro.push("Requires an installed release (agentos cluster up) with a model credential.");
+        intro.push("One Slack app = one Socket Mode owner: do not also run a local dispatcher");
+        intro.push("on the same app token.");
+    }
     for line in [
-        "This connects a local AgentOS agent to a real Slack workspace through the",
-        "compose stack: local up -> local deploy -> local comms --slack.",
         "",
         "STEP 1 (one time, in your browser -- not automatable):",
         "  1. Open https://api.slack.com/apps  ->  Create New App  ->  From a manifest",
@@ -756,8 +789,12 @@ fn deploy_to_slack(
     show_run_view(terminal, app, &mut intro)?;
 
     // 2. Save the model credential + Slack tokens into the vault (hidden input).
+    //    On the cluster tier the model credential is configured on the release at
+    //    `cluster up` time (a chart Secret), so only the Slack tokens are gathered.
     crate::secrets::sync_secret_file()?;
-    ensure_model_credential_available(terminal, app)?;
+    if tier == SlackTier::Local {
+        ensure_model_credential_available(terminal, app)?;
+    }
     ensure_secret_available(terminal, app, "SLACK_APP_TOKEN")?;
     ensure_secret_available(terminal, app, "SLACK_BOT_TOKEN")?;
 
@@ -787,15 +824,14 @@ fn deploy_to_slack(
     .unwrap_or_else(|| ".".to_string());
 
     // 4. Forward the model credential + Slack tokens into the child processes.
-    //    `local comms --slack` reads SLACK_APP_TOKEN/SLACK_BOT_TOKEN from its env
-    //    and the compose worker reads the model credential the same way; a value
-    //    already exported is inherited by the child, so only vault-stored ones
-    //    are forwarded here.
+    //    `<tier> comms --slack` reads SLACK_APP_TOKEN/SLACK_BOT_TOKEN from its env;
+    //    a value already exported is inherited by the child, so only vault-stored
+    //    ones are forwarded here.
     let secret_env = slack_secret_env()?;
 
-    // Run from the repo root (compose files are repo-relative on a dev checkout);
-    // resolve the bundle dir to an absolute path so `--plugin-dir` finds it
-    // regardless of the run cwd.
+    // Run from the repo root (compose files / the chart are repo-relative on a dev
+    // checkout); resolve the bundle dir to an absolute path so `--plugin-dir` finds
+    // it regardless of the run cwd.
     let cwd = std::env::current_dir().context("reading current directory")?;
     let plugin_abs = cwd.join(&plugin_dir);
     if !plugin_abs.join(".claude-plugin/plugin.json").is_file() {
@@ -805,43 +841,48 @@ fn deploy_to_slack(
         );
     }
     let repo_root = find_repo_root(cwd.clone()).unwrap_or(cwd);
-    let api_url = "http://localhost:28000";
 
     let mut view = RunView::new(&format!("Deploy to Slack — channel {channel}"));
     let run_result = (|| -> Result<()> {
+        // Local brings the compose platform up first (idempotent); the cluster
+        // release is expected to already be installed.
+        if tier == SlackTier::Local {
+            run_agentos_in_tui_with_env(
+                terminal,
+                app,
+                &["local".to_string(), "up".to_string()],
+                &repo_root,
+                &mut view,
+                &secret_env,
+            )?;
+        }
+        // Ship the bundle and bind it to the Slack channel. Local targets the
+        // compose API on 28000; cluster auto-discovers the release's UI /api proxy.
+        let mut deploy_argv = vec![
+            verb.to_string(),
+            "deploy".to_string(),
+            "--plugin-dir".to_string(),
+            plugin_abs.display().to_string(),
+            "--slack-channel".to_string(),
+            channel.clone(),
+        ];
+        if tier == SlackTier::Local {
+            deploy_argv.push("--api-url".to_string());
+            deploy_argv.push("http://localhost:28000".to_string());
+        }
         run_agentos_in_tui_with_env(
             terminal,
             app,
-            &["local".to_string(), "up".to_string()],
+            &deploy_argv,
             &repo_root,
             &mut view,
             &secret_env,
         )?;
+        // Wire the real Slack tokens and start the dispatcher.
         run_agentos_in_tui_with_env(
             terminal,
             app,
-            &[
-                "local".to_string(),
-                "deploy".to_string(),
-                "--plugin-dir".to_string(),
-                plugin_abs.display().to_string(),
-                "--slack-channel".to_string(),
-                channel.clone(),
-                "--api-url".to_string(),
-                api_url.to_string(),
-            ],
-            &repo_root,
-            &mut view,
-            &secret_env,
-        )?;
-        run_agentos_in_tui_with_env(
-            terminal,
-            app,
-            &[
-                "local".to_string(),
-                "comms".to_string(),
-                "--slack".to_string(),
-            ],
+            &[verb.to_string(), "comms".to_string(), "--slack".to_string()],
             &repo_root,
             &mut view,
             &secret_env,
@@ -856,25 +897,28 @@ fn deploy_to_slack(
     }
 
     let mut done = RunView::new("Deploy to Slack — connected");
-    for line in [
-        format!("Your agent is deployed and wired to Slack channel {channel}."),
-        String::new(),
-        "Try it: in Slack, @mention the bot in that channel (or DM it) and send a".to_string(),
-        "message -- the dispatcher routes it through the worker to your agent.".to_string(),
-        String::new(),
-        "Disconnect Slack:  agentos local comms --slack --disconnect".to_string(),
-        "Stop the stack:    agentos local down".to_string(),
-    ] {
-        done.push(line);
+    done.push(format!(
+        "Your agent is deployed and wired to Slack channel {channel}."
+    ));
+    done.push("");
+    done.push("Try it: in Slack, @mention the bot in that channel (or DM it) and send a");
+    done.push("message -- the dispatcher routes it through the worker to your agent.");
+    done.push("");
+    done.push(format!(
+        "Disconnect Slack:  agentos {verb} comms --slack --disconnect"
+    ));
+    if tier == SlackTier::Local {
+        done.push("Stop the stack:    agentos local down".to_string());
     }
     show_run_view(terminal, app, &mut done)?;
     Ok(())
 }
 
-/// The env forwarded into the `local up`/`deploy`/`comms` children for the Slack
-/// deploy workflow: the first available model credential and the two Slack
-/// tokens, each pulled from the vault only when not already exported (an exported
-/// value is inherited by the child process directly).
+/// The env forwarded into the deploy/comms children for the Slack deploy
+/// workflow: the first available model credential and the two Slack tokens, each
+/// pulled from the vault only when not already exported (an exported value is
+/// inherited by the child process directly). The cluster tier ignores the model
+/// credential here (it lives on the chart Secret) but forwarding it is harmless.
 fn slack_secret_env() -> Result<Vec<(String, String)>> {
     let mut env = Vec::new();
     for name in [
@@ -1133,7 +1177,7 @@ fn secrets_status_lines() -> Vec<Line<'static>> {
 
 fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
     match workflow {
-        Workflow::ExploreExamples | Workflow::DeployToSlack => {
+        Workflow::ExploreExamples | Workflow::DeployToSlack | Workflow::DeployToSlackCluster => {
             lines.push(Line::from(Span::styled(
                 "Credential status",
                 Style::default().fg(Color::Yellow).bold(),
@@ -1924,7 +1968,12 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ));
             lines.push(Line::from(""));
         }
-        RecipeKind::Workflow(Workflow::DeployToSlack) => {
+        RecipeKind::Workflow(wf @ (Workflow::DeployToSlack | Workflow::DeployToSlackCluster)) => {
+            let tier = if matches!(wf, Workflow::DeployToSlackCluster) {
+                "cluster"
+            } else {
+                "local"
+            };
             lines.push(Line::from(Span::styled(
                 "Deploy to Slack",
                 Style::default().fg(Color::Yellow).bold(),
@@ -1935,12 +1984,12 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from(
                 "2. Save your app + bot tokens and the channel ID",
             ));
-            lines.push(Line::from(
-                "3. local up -> local deploy -> local comms --slack",
-            ));
+            lines.push(Line::from(format!(
+                "3. {tier} deploy -> {tier} comms --slack"
+            )));
             lines.push(Line::from("4. @mention the bot in Slack to test"));
             lines.push(Line::from(""));
-            maybe_add_secret_status(&mut lines, Workflow::DeployToSlack);
+            maybe_add_secret_status(&mut lines, *wf);
         }
     }
     if !recipe.fields.is_empty() {
@@ -2608,6 +2657,19 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
+            target: "cluster",
+            title: "Deploy to Slack",
+            description: "Deploy an agent to the deployed cluster release and connect it to a real Slack workspace.",
+            kind: RecipeKind::Workflow(Workflow::DeployToSlackCluster),
+            args: vec![],
+            fields: vec![],
+            notes: &[
+                "Requires an installed release (agentos cluster up) with a model credential configured on the chart.",
+                "Creating the Slack app is a one-time manual step; the workflow gives you the manifest path and links.",
+                "Runs cluster deploy -> cluster comms --slack; one Slack app owns one Socket Mode dispatcher.",
+            ],
+        },
+        Recipe {
             target: "secrets",
             title: "Save secret",
             description: "Store a local secret in AgentOS private storage with hidden input.",
@@ -2844,19 +2906,24 @@ mod tests {
     }
 
     #[test]
-    fn deploy_to_slack_recipe_is_registered_under_local() {
+    fn deploy_to_slack_recipes_registered_for_both_tiers() {
         let app = App::new();
-        let recipe = app
-            .recipes
-            .iter()
-            .find(|recipe| recipe.title == "Deploy to Slack")
-            .expect("Deploy to Slack recipe should be registered");
-        assert_eq!(recipe.target, "local");
-        assert!(matches!(
-            recipe.kind,
-            RecipeKind::Workflow(Workflow::DeployToSlack)
-        ));
-        assert!(app.targets.contains(&"local"));
+        // Local-tier Deploy to Slack under the `local` tab.
+        assert!(app.recipes.iter().any(|recipe| {
+            recipe.title == "Deploy to Slack"
+                && recipe.target == "local"
+                && matches!(recipe.kind, RecipeKind::Workflow(Workflow::DeployToSlack))
+        }));
+        // Cluster-tier Deploy to Slack under the `cluster` tab.
+        assert!(app.recipes.iter().any(|recipe| {
+            recipe.title == "Deploy to Slack"
+                && recipe.target == "cluster"
+                && matches!(
+                    recipe.kind,
+                    RecipeKind::Workflow(Workflow::DeployToSlackCluster)
+                )
+        }));
+        assert!(app.targets.contains(&"local") && app.targets.contains(&"cluster"));
     }
 
     #[test]
