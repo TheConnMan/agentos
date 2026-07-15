@@ -3,8 +3,9 @@
 //! This is a ratatui/crossterm surface over the existing clap command grammar:
 //! it does not invent a second implementation path. The TUI helps a human pick
 //! a target and action, previews the exact `agentos ...` command, prompts for
-//! any required values, then suspends the alternate screen and runs that command
-//! as a normal child process.
+//! any required values, then either handles a small read-only action in the TUI
+//! or suspends the alternate screen and runs that command as a normal child
+//! process.
 
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
@@ -39,7 +40,13 @@ struct Recipe {
 #[derive(Clone, Debug)]
 enum RecipeKind {
     Command,
+    Tui(TuiAction),
     Workflow(Workflow),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TuiAction {
+    ListSecrets,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -173,6 +180,13 @@ impl App {
         let Some(recipe) = self.selected_recipe().cloned() else {
             return Ok(());
         };
+        if let RecipeKind::Tui(action) = &recipe.kind {
+            self.message = match run_tui_action(action) {
+                Ok(message) => message,
+                Err(err) => format!("Action failed: {err:#}"),
+            };
+            return Ok(());
+        }
         suspend_terminal()?;
         let result = prompt_and_run(&recipe);
         resume_terminal()?;
@@ -248,9 +262,23 @@ fn prompt_and_run(recipe: &Recipe) -> Result<()> {
             println!();
             run_agentos(&argv, Path::new("."))?;
         }
+        RecipeKind::Tui(_) => {}
         RecipeKind::Workflow(Workflow::McpAuthExample) => run_mcp_auth_example(&values)?,
     }
     Ok(())
+}
+
+fn run_tui_action(action: &TuiAction) -> Result<String> {
+    match action {
+        TuiAction::ListSecrets => {
+            let count = crate::secrets::list_names()?.len();
+            Ok(match count {
+                0 => "No AgentOS secrets saved.".to_string(),
+                1 => "Showing 1 saved secret name.".to_string(),
+                n => format!("Showing {n} saved secret names."),
+            })
+        }
+    }
 }
 
 fn run_mcp_auth_example(values: &BTreeMap<String, String>) -> Result<()> {
@@ -706,6 +734,26 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from(render_command(&preview)));
             lines.push(Line::from(""));
         }
+        RecipeKind::Tui(TuiAction::ListSecrets) => {
+            lines.push(Line::from(Span::styled(
+                "Saved secrets",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            match crate::secrets::list_names() {
+                Ok(names) if names.is_empty() => {
+                    lines.push(Line::from("No AgentOS secrets saved."));
+                }
+                Ok(names) => {
+                    for name in names {
+                        lines.push(Line::from(format!("{name}  (value hidden)")));
+                    }
+                }
+                Err(err) => {
+                    lines.push(Line::from(format!("Unable to read secret index: {err:#}")));
+                }
+            }
+            lines.push(Line::from(""));
+        }
         RecipeKind::Workflow(Workflow::McpAuthExample) => {
             lines.push(Line::from(Span::styled(
                 "Guided workflow",
@@ -911,8 +959,8 @@ fn recipes() -> Vec<Recipe> {
             target: "secrets",
             title: "List saved secrets",
             description: "List saved AgentOS secret names without printing values.",
-            kind: RecipeKind::Command,
-            args: vec![ArgPart::Literal("secrets"), ArgPart::Literal("list")],
+            kind: RecipeKind::Tui(TuiAction::ListSecrets),
+            args: vec![],
             fields: vec![],
             notes: &["Only names are listed; secret values stay in the OS credential store."],
         },
@@ -1120,5 +1168,20 @@ mod tests {
             .map(|idx| app.recipes[*idx].title)
             .collect();
         assert!(titles.contains(&"Verify MCP auth example"));
+    }
+
+    #[test]
+    fn list_secrets_stays_inside_tui() {
+        let app = App::new();
+        let recipe = app
+            .recipes
+            .iter()
+            .find(|recipe| recipe.title == "List saved secrets")
+            .expect("list secrets recipe exists");
+        assert!(matches!(
+            recipe.kind,
+            RecipeKind::Tui(TuiAction::ListSecrets)
+        ));
+        assert!(recipe.args.is_empty());
     }
 }
