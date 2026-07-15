@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import time
 import uuid
 from typing import Any
 from urllib.parse import quote
@@ -39,6 +40,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import sandbox_token
 from .behaviorpacks import BehaviorPacks
 from .config import WorkerConfig
 
@@ -75,6 +77,8 @@ RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
 # calls the runner intercepts via can_use_tool and pauses awaiting approval.
 # A runner-local knob (not frozen ACI env), like AGENTOS_IDEMPOTENT_TOOLS.
 APPROVAL_REQUIRED_ENV = "AGENTOS_APPROVAL_REQUIRED_TOOLS"
+# the worker re-mints every turn; this only bounds a leaked-token window (ADR-0033)
+SANDBOX_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
 _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
@@ -219,12 +223,11 @@ class BindingResolver:
         # Deliver the memory ref (#264): the agent's scoped namespace on the
         # durable state store (#23/#248). The runner dereferences it at boot to
         # load prior memory and to append learned records with provenance. The
-        # API key is forwarded as the memory token; a scoped, least-privilege
-        # memory token is future work (the state API has one shared key today).
+        # runner now receives a scoped ``state`` token (ADR-0033, #410) bound to
+        # this agent, not the raw platform key, so a sandboxed agent cannot
+        # resolve approvals or reach another agent's namespace.
         base = self._config.api_base_url.rstrip("/")
         env[MEMORY_REF_ENV] = f"{base}/agents/{resolved.agent_id}/state/memory"
-        if self._config.api_key:
-            env[MEMORY_TOKEN_ENV] = self._config.api_key
         # Deliver the history ref (#20, ADR-0029): this thread's transcript key on
         # the same state store. It is deterministic per (agent, thread), so a
         # fresh, restarted, or resumed sandbox all boot with the same ref and the
@@ -235,8 +238,19 @@ class BindingResolver:
         env[HISTORY_REF_ENV] = (
             f"{base}/agents/{resolved.agent_id}/state/transcript/{thread_segment}"
         )
+        # Mint one scoped ``state`` token (ADR-0033, #410) for this agent and use
+        # it for both the memory and history tokens. When no platform key is
+        # configured (fake/local) there is nothing to sign with, so no token is
+        # minted and neither is set -- preserving the pre-#410 no-key path.
         if self._config.api_key:
-            env[HISTORY_TOKEN_ENV] = self._config.api_key
+            state_token = sandbox_token.mint(
+                self._config.api_key,
+                agent=str(resolved.agent_id),
+                scope="state",
+                exp=int(time.time()) + SANDBOX_TOKEN_TTL_SECONDS,
+            )
+            env[MEMORY_TOKEN_ENV] = state_token
+            env[HISTORY_TOKEN_ENV] = state_token
         # The agent's pinned model (#254) overrides the worker default; None
         # falls back to config.model inside apply_model_env.
         apply_model_env(env, self._config, model_override=resolved.model)

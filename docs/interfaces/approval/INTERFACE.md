@@ -81,7 +81,14 @@ The placement constraint held in the landed base and must keep holding: the auth
 **enforced server-side at resolution time**, not inside the sandbox or runner. The runner
 only *raises* a request (its tool marks the turn; the record, the resolve CAS, and the
 resume enqueue all live with the API/worker), so a compromised sandbox cannot mint or
-resolve an approval. The runtime `canUseTool` gate (#245) will block the *tool call*, but
+resolve an approval. That guarantee holds only while the sandbox does not carry a
+resolve-capable credential: earlier the worker forwarded the shared platform API key
+into the sandbox as the memory/transcript token, and because `POST /approvals/{id}/resolve`
+is guarded by the same platform key, a compromised sandbox could self-approve its own
+gated tool call. ADR-0033 (#410) closed that gap by minting a scoped, agent-bound `state`
+token for the sandbox that only the state router accepts; the resolve endpoint stays
+platform-key-only, so the sandbox credential can no longer resolve an approval. The
+runtime `canUseTool` gate (#245) will block the *tool call*, but
 the authorization decision (who may resolve a pending approval) stays on the server that
 owns the durable `Approval` record. Policy gate points ship versioned in the bundle; route
 bindings (which channel, who may approve) are per-agent deployment config (#247).

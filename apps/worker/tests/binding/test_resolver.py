@@ -19,9 +19,13 @@ from agentos_worker.binding import (
     APPROVAL_REQUIRED_ENV,
     BUDGET_ENV,
     BUNDLE_REF_ENV,
+    HISTORY_TOKEN_ENV,
+    MEMORY_TOKEN_ENV,
     BindingResolver,
+    ResolvedDeployment,
 )
 from agentos_worker.config import WorkerConfig
+from agentos_worker.sandbox_token import verify
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -418,6 +422,91 @@ def test_resolves_approval_required_tools_into_boot_env() -> None:
             await engine.dispose()
 
     asyncio.run(go())
+
+
+def test_boot_env_forwards_scoped_state_tokens_not_the_raw_key() -> None:
+    # #410 whole-fix regression guard: the memory and history tokens injected
+    # into the sandbox must be scoped "state" tokens (agent-bound, expiring),
+    # NEVER the raw shared platform key. A scoped token verifies for THIS agent
+    # and only this agent.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable at {_DB_URL}: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine, channel=channel, name=f"agent-{token}", max_usd=None, max_tokens=None
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref=f"bundles/{token}.zip"
+            )
+            try:
+                resolved = await _resolver(engine).resolve(channel)
+                assert resolved is not None
+                env = _resolver(engine).boot_env(resolved, "thread-1")
+
+                # The resolver was built with WorkerConfig(db_schema=_SCHEMA),
+                # whose api_key default is the platform signing key.
+                api_key = WorkerConfig(db_schema=_SCHEMA).api_key
+                assert env[MEMORY_TOKEN_ENV] != api_key
+                assert env[HISTORY_TOKEN_ENV] != api_key
+
+                # Both tokens verify as scoped "state" credentials for THIS agent.
+                assert verify(
+                    env[MEMORY_TOKEN_ENV],
+                    api_key,
+                    agent=str(resolved.agent_id),
+                    scope="state",
+                )
+                assert verify(
+                    env[HISTORY_TOKEN_ENV],
+                    api_key,
+                    agent=str(resolved.agent_id),
+                    scope="state",
+                )
+
+                # A different agent's identity does not verify against them.
+                assert not verify(
+                    env[MEMORY_TOKEN_ENV],
+                    api_key,
+                    agent=str(uuid.uuid4()),
+                    scope="state",
+                )
+            finally:
+                await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_boot_env_mints_no_token_when_the_signing_key_is_empty() -> None:
+    # Fake/local parity: with no platform key configured there is nothing to
+    # sign with, so no state token is minted (matching the pre-#410 behavior of
+    # forwarding no token). Shown without a DB by constructing the resolved
+    # deployment directly -- boot_env is pure and never touches the engine.
+    engine = create_async_engine(_DB_URL)
+    try:
+        resolver = BindingResolver(engine, WorkerConfig(db_schema=_SCHEMA, api_key=""))
+        resolved = ResolvedDeployment(
+            agent_id=uuid.uuid4(),
+            version_id=uuid.uuid4(),
+            version_label="v",
+            bundle_ref=None,
+            max_usd_per_day=None,
+            max_output_tokens_per_run=None,
+        )
+        env = resolver.boot_env(resolved, "thread-1")
+        assert MEMORY_TOKEN_ENV not in env
+        assert HISTORY_TOKEN_ENV not in env
+    finally:
+        asyncio.run(engine.dispose())
 
 
 def test_resolves_approval_routes_from_the_agent_row() -> None:

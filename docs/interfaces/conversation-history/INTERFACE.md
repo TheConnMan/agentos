@@ -53,16 +53,20 @@ JSONB). `load` GETs the key; `append` POSTs to the key's `/append` endpoint,
 inheriting durability and the per-value/per-namespace size caps.
 `NullTranscriptStore` is the no-ref sink. The worker (`binding.boot_env`)
 delivers the ref as `http(s)://api/agents/<id>/state/transcript/<thread_key>`
-(URL-encoded thread key) and forwards the API key as the history token. The ref
+(URL-encoded thread key) and forwards a scoped, agent-bound `state` token
+(ADR-0033, #410) as the history token rather than the raw platform key. The ref
 is **deterministic per (agent, thread)**, so a fresh, a restarted, and a resumed
 sandbox all boot with the same ref and rehydrate identically — the
 unplanned-restart case needs no special worker/kernel branch.
 
 ## Known leakage
 
-- **Shared API key as the history token.** Same as memory: the state API has one
-  shared key today, so forwarding it as `AGENTOS_HISTORY_TOKEN` grants that key's
-  scope. Scoped, least-privilege tokens are shared follow-up auth-hardening work.
+- **Scoped history token (was: shared API key).** Same as memory: earlier the
+  state API's one shared platform key was forwarded as `AGENTOS_HISTORY_TOKEN`,
+  granting that key's scope. ADR-0033 (#410) replaced it with a scoped,
+  agent-bound, HMAC-signed `state` token minted per turn, accepted only by the
+  state router and bound to this agent's namespace, so the sandbox credential can
+  no longer resolve approvals or reach another agent's state.
 - **Unbounded append log under the state-store size caps.** A very long thread
   will eventually hit the per-namespace/per-value cap on the stored transcript.
   Delivery-side windowing now bounds the *rehydrated preamble* to a tail window
