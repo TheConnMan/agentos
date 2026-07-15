@@ -1,0 +1,32 @@
+{
+  "name": "github-issues",
+  "cases": [
+    {
+      "id": "lists-real-issue-numbers",
+      "input": "List a few open issues in curie-eng/agentos. Show each with its issue number in the form #<number>.",
+      "grader": {
+        "kind": "regex",
+        "expected": "#\\d+",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "groups-by-label",
+      "input": "Group the open issues in curie-eng/agentos by their labels and name the labels you find.",
+      "grader": {
+        "kind": "contains",
+        "expected": "enhancement",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "reads-a-specific-issue",
+      "input": "In curie-eng/agentos, what is issue #7 about? Answer in one sentence.",
+      "grader": {
+        "kind": "contains",
+        "expected": "aci-protocol",
+        "case_sensitive": false
+      }
+    }
+  ]
+}
