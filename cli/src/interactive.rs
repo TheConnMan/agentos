@@ -15,7 +15,10 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -235,7 +238,8 @@ struct TerminalSession {
 impl TerminalSession {
     fn enter() -> Result<Self> {
         enable_raw_mode().context("enabling terminal raw mode")?;
-        execute!(io::stdout(), EnterAlternateScreen).context("entering alternate screen")?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)
+            .context("entering alternate screen")?;
         let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::new(backend).context("creating terminal")?;
         terminal.clear().ok();
@@ -248,7 +252,8 @@ impl TerminalSession {
     fn leave(&mut self) -> Result<()> {
         if self.active {
             disable_raw_mode().ok();
-            execute!(io::stdout(), LeaveAlternateScreen).context("leaving alternate screen")?;
+            execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen)
+                .context("leaving alternate screen")?;
             self.active = false;
         }
         Ok(())
@@ -996,6 +1001,7 @@ struct ChatView {
     action_idx: usize,
     action_prompt: String,
     allow_free_text: bool,
+    composing: bool,
 }
 
 impl ChatView {
@@ -1021,12 +1027,12 @@ impl ChatView {
             action_idx: 0,
             action_prompt: "Try a prompt".to_string(),
             allow_free_text: true,
+            composing: false,
         }
     }
 
     fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
-        let width = terminal_width.saturating_sub(4).max(1) as usize;
-        let viewport = terminal_height.saturating_sub(14) as usize;
+        let (width, viewport) = chat_transcript_dimensions(terminal_width, terminal_height);
         wrap_output_lines(&self.lines, width)
             .len()
             .saturating_sub(viewport)
@@ -1037,6 +1043,38 @@ impl ChatView {
         if self.follow {
             self.scroll = self.max_scroll(terminal_width, terminal_height);
         }
+    }
+
+    fn choice_count(&self) -> usize {
+        self.actions.len() + usize::from(self.allow_free_text)
+    }
+
+    fn free_text_selected(&self) -> bool {
+        self.allow_free_text && self.action_idx == self.actions.len()
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let count = self.choice_count();
+        if count > 0 {
+            self.action_idx =
+                ((self.action_idx as isize + delta).rem_euclid(count as isize)) as usize;
+        }
+    }
+
+    fn scroll_up(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+        self.follow = false;
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        self.follow = false;
+        self.scroll = self
+            .scroll
+            .saturating_add(amount)
+            .min(self.max_scroll(terminal_width, terminal_height));
     }
 }
 
@@ -1062,6 +1100,7 @@ fn chat_with_runner(
         chat.action_idx = 0;
         chat.action_prompt = "Responses".to_string();
         chat.allow_free_text = true;
+        chat.composing = false;
         let argv = [
             "skill".to_string(),
             "message".to_string(),
@@ -1084,46 +1123,56 @@ fn read_chat_input(
         let size = terminal.size()?;
         chat.follow_tail(size.width, size.height);
         terminal.draw(|frame| draw_chat_view(frame, chat))?;
-        let Event::Key(key) = event::read()? else {
+        let event = event::read()?;
+        if let Event::Mouse(mouse) = event {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => chat.scroll_up(3, size.width, size.height),
+                MouseEventKind::ScrollDown => chat.scroll_down(3, size.width, size.height),
+                _ => {}
+            }
             continue;
-        };
+        }
+        let Event::Key(key) = event else { continue };
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
-            (KeyCode::Enter, _) => {
-                if chat.allow_free_text && !chat.input.trim().is_empty() {
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Esc, _) if chat.composing => chat.composing = false,
+            (KeyCode::Esc, _) => return Ok(None),
+            (KeyCode::Enter, _) if chat.composing => {
+                if !chat.input.trim().is_empty() {
                     return Ok(Some(chat.input.trim().to_string()));
                 }
-                if let Some(action) = chat.actions.get(chat.action_idx) {
+            }
+            (KeyCode::Enter, _) => {
+                if chat.free_text_selected() {
+                    chat.composing = true;
+                } else if let Some(action) = chat.actions.get(chat.action_idx) {
                     return Ok(Some(action.value.clone()));
                 }
             }
-            (KeyCode::Backspace, _) if chat.allow_free_text => {
+            (KeyCode::Backspace, _) if chat.composing => {
                 chat.input.pop();
             }
-            (KeyCode::PageUp, _) => {
+            (KeyCode::Up, _) if chat.composing => {
+                chat.scroll_up(1, size.width, size.height);
+            }
+            (KeyCode::Down, _) if chat.composing => {
+                chat.scroll_down(1, size.width, size.height);
+            }
+            (KeyCode::PageUp, _) => chat.scroll_up(10, size.width, size.height),
+            (KeyCode::PageDown, _) => chat.scroll_down(10, size.width, size.height),
+            (KeyCode::Home, _) if !chat.composing => {
                 chat.follow = false;
-                chat.scroll = chat.scroll.saturating_sub(10);
+                chat.scroll = 0;
             }
-            (KeyCode::PageDown, _) => {
-                chat.follow = false;
-                chat.scroll = chat
-                    .scroll
-                    .saturating_add(10)
-                    .min(chat.max_scroll(size.width, size.height));
+            (KeyCode::End, _) if !chat.composing => chat.follow = true,
+            (KeyCode::Down | KeyCode::Tab, _) if !chat.composing => {
+                chat.move_selection(1);
             }
-            (KeyCode::End, _) => chat.follow = true,
-            (KeyCode::Down | KeyCode::Tab, _) if !chat.actions.is_empty() => {
-                chat.action_idx = (chat.action_idx + 1) % chat.actions.len();
-            }
-            (KeyCode::Up | KeyCode::BackTab, _) if !chat.actions.is_empty() => {
-                chat.action_idx = if chat.action_idx == 0 {
-                    chat.actions.len() - 1
-                } else {
-                    chat.action_idx - 1
-                };
+            (KeyCode::Up | KeyCode::BackTab, _) if !chat.composing => {
+                chat.move_selection(-1);
             }
             (KeyCode::Char(ch), _)
-                if chat.allow_free_text && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if chat.composing && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 chat.input.push(ch);
             }
@@ -1161,23 +1210,23 @@ fn run_chat_turn(
         chat.follow_tail(size.width, size.height);
         terminal.draw(|frame| draw_chat_view(frame, chat))?;
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
+            let input_event = event::read()?;
+            if let Event::Mouse(mouse) = input_event {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => chat.scroll_up(3, size.width, size.height),
+                    MouseEventKind::ScrollDown => chat.scroll_down(3, size.width, size.height),
+                    _ => {}
+                }
+            } else if let Event::Key(key) = input_event {
                 match (key.code, key.modifiers) {
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         child.kill().context("canceling agent response")?;
                         canceled = true;
                     }
-                    (KeyCode::PageUp, _) => {
-                        chat.follow = false;
-                        chat.scroll = chat.scroll.saturating_sub(10);
-                    }
-                    (KeyCode::PageDown, _) => {
-                        chat.follow = false;
-                        chat.scroll = chat
-                            .scroll
-                            .saturating_add(10)
-                            .min(chat.max_scroll(size.width, size.height));
-                    }
+                    (KeyCode::Up, _) => chat.scroll_up(1, size.width, size.height),
+                    (KeyCode::Down, _) => chat.scroll_down(1, size.width, size.height),
+                    (KeyCode::PageUp, _) => chat.scroll_up(10, size.width, size.height),
+                    (KeyCode::PageDown, _) => chat.scroll_down(10, size.width, size.height),
                     (KeyCode::End, _) => chat.follow = true,
                     _ => {}
                 }
@@ -1215,6 +1264,7 @@ fn consume_chat_line(chat: &mut ChatView, envelope: &mut Vec<String>, line: Stri
                     .action_prompt
                     .unwrap_or_else(|| "Choose a response".to_string());
                 chat.allow_free_text = message.allow_free_text;
+                chat.composing = false;
             } else if let Some((fallback, _)) = raw.split_once(REPLY_FENCE) {
                 chat.lines.extend(
                     fallback
@@ -1789,14 +1839,16 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
     let actions = chat
         .actions
         .iter()
+        .map(|action| action.label.as_str())
+        .chain(chat.allow_free_text.then_some("Type a message..."))
         .enumerate()
-        .map(|(idx, action)| {
+        .map(|(idx, label)| {
             let prefix = if idx == chat.action_idx { "> " } else { "  " };
-            ListItem::new(format!("{prefix}{}. {}", idx + 1, action.label))
+            ListItem::new(format!("{prefix}{}. {label}", idx + 1))
         })
         .collect::<Vec<_>>();
     let mut action_state = ListState::default();
-    action_state.select((!chat.actions.is_empty()).then_some(chat.action_idx));
+    action_state.select((chat.choice_count() > 0).then_some(chat.action_idx));
     frame.render_stateful_widget(
         List::new(actions)
             .block(
@@ -1811,41 +1863,67 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
 
     let input_width = chunks[3].width.saturating_sub(4).max(1) as usize;
     let shown_input = input_window(&chat.input, false, input_width);
-    let input_style = if chat.thinking {
+    let input_style = if chat.thinking || !chat.composing {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default()
     };
+    let input_text = if chat.composing {
+        shown_input.as_str()
+    } else {
+        ""
+    };
     frame.render_widget(
-        Paragraph::new(Span::styled(shown_input.as_str(), input_style)).block(
+        Paragraph::new(Span::styled(input_text, input_style)).block(
             Block::default()
                 .title(if chat.thinking {
                     "Waiting for agent"
                 } else if !chat.allow_free_text {
                     "Select a response"
-                } else {
+                } else if chat.composing {
                     "Message"
+                } else {
+                    "Message (select Type a message...)"
                 })
                 .borders(Borders::ALL),
         ),
         chunks[3],
     );
-    if !chat.thinking && chat.allow_free_text {
+    if !chat.thinking && chat.composing {
         frame.set_cursor_position((
             chunks[3].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
             chunks[3].y + 1,
         ));
     }
     let help = if chat.thinking {
-        "Ctrl-C cancel response    PgUp/PgDn scroll    End latest"
+        "Up/Down or wheel scroll    PgUp/PgDn page    End latest    Ctrl-C cancel"
+    } else if chat.composing {
+        "Type message    Enter send    Up/Down or wheel scroll    Esc responses"
     } else {
-        "Up/Down choose response    Enter send    Type when allowed    Esc leave"
+        "Up/Down choose    Enter select    PgUp/PgDn or wheel scroll    Esc leave"
     };
     frame.render_widget(
         Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
             .alignment(Alignment::Center),
         chunks[4],
     );
+}
+
+fn chat_transcript_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(5),
+            Constraint::Length(3),
+            Constraint::Length(2),
+        ])
+        .split(Rect::new(0, 0, terminal_width, terminal_height));
+    (
+        chunks[1].width.saturating_sub(2).max(1) as usize,
+        chunks[1].height.saturating_sub(2) as usize,
+    )
 }
 
 fn run_view_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
@@ -2319,6 +2397,37 @@ mod tests {
         assert!(is_internal_chat_status("-- final (done)"));
         assert!(is_internal_chat_status("  -- final (failed)"));
         assert!(!is_internal_chat_status("The final answer is done."));
+    }
+
+    #[test]
+    fn chat_appends_free_text_as_the_final_choice() {
+        let mut chat = ChatView::new("demo", &["First".to_string(), "Second".to_string()]);
+        assert_eq!(chat.choice_count(), 3);
+        assert!(!chat.free_text_selected());
+
+        chat.move_selection(-1);
+        assert_eq!(chat.action_idx, 2);
+        assert!(chat.free_text_selected());
+
+        chat.allow_free_text = false;
+        chat.action_idx = 0;
+        assert_eq!(chat.choice_count(), 2);
+        assert!(!chat.free_text_selected());
+    }
+
+    #[test]
+    fn chat_scroll_up_moves_immediately_from_following_tail() {
+        let mut chat = ChatView::new("demo", &[]);
+        chat.lines = (0..80).map(|index| format!("line {index}")).collect();
+        let max_scroll = chat.max_scroll(80, 24);
+        assert!(max_scroll > 0);
+
+        chat.follow = true;
+        chat.scroll = 0;
+        chat.scroll_up(1, 80, 24);
+
+        assert!(!chat.follow);
+        assert_eq!(chat.scroll, max_scroll - 1);
     }
 
     #[test]
