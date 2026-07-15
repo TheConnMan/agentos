@@ -44,9 +44,11 @@ enum RecipeKind {
     Workflow(Workflow),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TuiAction {
+    SaveSecret,
     ListSecrets,
+    RemoveSecret,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,7 +105,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
         let Event::Key(key) = event::read()? else {
             continue;
         };
-        if app.handle_key(key)? {
+        if app.handle_key(key, terminal)? {
             break;
         }
     }
@@ -139,7 +141,11 @@ impl App {
             .and_then(|idx| self.recipes.get(*idx))
     }
 
-    fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+    fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<bool> {
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(true),
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(true),
@@ -147,7 +153,7 @@ impl App {
             (KeyCode::Up | KeyCode::Char('k'), _) => self.move_selection(-1),
             (KeyCode::Tab | KeyCode::Right, _) => self.next_target(),
             (KeyCode::BackTab | KeyCode::Left, _) => self.prev_target(),
-            (KeyCode::Enter, _) | (KeyCode::Char('r'), _) => self.run_selected()?,
+            (KeyCode::Enter, _) | (KeyCode::Char('r'), _) => self.run_selected(terminal)?,
             _ => {}
         }
         Ok(false)
@@ -176,12 +182,15 @@ impl App {
         self.selected = 0;
     }
 
-    fn run_selected(&mut self) -> Result<()> {
+    fn run_selected(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<()> {
         let Some(recipe) = self.selected_recipe().cloned() else {
             return Ok(());
         };
         if let RecipeKind::Tui(action) = &recipe.kind {
-            self.message = match run_tui_action(action) {
+            self.message = match run_tui_action(*action, terminal, self) {
                 Ok(message) => message,
                 Err(err) => format!("Action failed: {err:#}"),
             };
@@ -268,8 +277,31 @@ fn prompt_and_run(recipe: &Recipe) -> Result<()> {
     Ok(())
 }
 
-fn run_tui_action(action: &TuiAction) -> Result<String> {
+fn run_tui_action(
+    action: TuiAction,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+) -> Result<String> {
     match action {
+        TuiAction::SaveSecret => {
+            let Some(name) = prompt_text(
+                terminal,
+                app,
+                "Save Secret",
+                "Secret name",
+                Some("GITHUB_PERSONAL_ACCESS_TOKEN"),
+                false,
+            )?
+            else {
+                return Ok("Save secret canceled.".to_string());
+            };
+            crate::secrets::validate_name(&name)?;
+            let Some(value) = prompt_text(terminal, app, "Save Secret", &name, None, true)? else {
+                return Ok("Save secret canceled.".to_string());
+            };
+            crate::secrets::save_value(&name, &value)?;
+            Ok(format!("Saved {name} in the OS credential store."))
+        }
         TuiAction::ListSecrets => {
             let count = crate::secrets::list_names()?.len();
             Ok(match count {
@@ -277,6 +309,74 @@ fn run_tui_action(action: &TuiAction) -> Result<String> {
                 1 => "Showing 1 saved secret name.".to_string(),
                 n => format!("Showing {n} saved secret names."),
             })
+        }
+        TuiAction::RemoveSecret => {
+            let default = crate::secrets::list_names()?.into_iter().next();
+            let Some(name) = prompt_text(
+                terminal,
+                app,
+                "Remove Secret",
+                "Secret name",
+                default.as_deref().or(Some("GITHUB_PERSONAL_ACCESS_TOKEN")),
+                false,
+            )?
+            else {
+                return Ok("Remove secret canceled.".to_string());
+            };
+            crate::secrets::validate_name(&name)?;
+            let Some(confirm) = prompt_text(
+                terminal,
+                app,
+                "Remove Secret",
+                &format!("Type {name} to confirm"),
+                None,
+                false,
+            )?
+            else {
+                return Ok("Remove secret canceled.".to_string());
+            };
+            if confirm != name {
+                return Ok("Remove secret canceled.".to_string());
+            }
+            crate::secrets::remove_value(&name)?;
+            Ok(format!("Removed {name}."))
+        }
+    }
+}
+
+fn prompt_text(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    title: &str,
+    label: &str,
+    default: Option<&str>,
+    secret: bool,
+) -> Result<Option<String>> {
+    let mut value = String::new();
+    loop {
+        terminal.draw(|frame| {
+            draw(frame, app);
+            draw_prompt(frame, title, label, default, &value, secret);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => return Ok(None),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Enter, _) => {
+                if value.is_empty() {
+                    return Ok(default.map(str::to_string));
+                }
+                return Ok(Some(value));
+            }
+            (KeyCode::Backspace, _) => {
+                value.pop();
+            }
+            (KeyCode::Char(ch), _) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                value.push(ch);
+            }
+            _ => {}
         }
     }
 }
@@ -734,6 +834,16 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from(render_command(&preview)));
             lines.push(Line::from(""));
         }
+        RecipeKind::Tui(TuiAction::SaveSecret) => {
+            lines.push(Line::from(Span::styled(
+                "TUI prompts",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("1. Secret name"));
+            lines.push(Line::from("2. Secret value, hidden while typing"));
+            lines.push(Line::from("3. Save to the OS credential store"));
+            lines.push(Line::from(""));
+        }
         RecipeKind::Tui(TuiAction::ListSecrets) => {
             lines.push(Line::from(Span::styled(
                 "Saved secrets",
@@ -752,6 +862,16 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     lines.push(Line::from(format!("Unable to read secret index: {err:#}")));
                 }
             }
+            lines.push(Line::from(""));
+        }
+        RecipeKind::Tui(TuiAction::RemoveSecret) => {
+            lines.push(Line::from(Span::styled(
+                "TUI prompts",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("1. Secret name"));
+            lines.push(Line::from("2. Type the same name to confirm removal"));
+            lines.push(Line::from("3. Remove from the OS credential store"));
             lines.push(Line::from(""));
         }
         RecipeKind::Workflow(Workflow::McpAuthExample) => {
@@ -816,6 +936,58 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .block(Block::default().borders(Borders::ALL)),
         area,
     );
+}
+
+fn draw_prompt(
+    frame: &mut Frame<'_>,
+    title: &str,
+    label: &str,
+    default: Option<&str>,
+    value: &str,
+    secret: bool,
+) {
+    let area = centered_rect(64, 9, frame.area());
+    let shown_value = if secret {
+        "*".repeat(value.chars().count())
+    } else {
+        value.to_string()
+    };
+    let prompt = match default {
+        Some(default) => format!("{label} [{default}]"),
+        None => label.to_string(),
+    };
+    let body = Text::from(vec![
+        Line::from(prompt),
+        Line::from(""),
+        Line::from(if shown_value.is_empty() {
+            Span::styled(" ", Style::default().fg(Color::Gray))
+        } else {
+            Span::raw(shown_value)
+        }),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter accept    Esc cancel",
+            Style::default().fg(Color::Gray),
+        )),
+    ]);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title(title).borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width.saturating_sub(2)).max(20);
+    let height = height.min(area.height.saturating_sub(2)).max(7);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
 }
 
 fn recipes() -> Vec<Recipe> {
@@ -938,18 +1110,9 @@ fn recipes() -> Vec<Recipe> {
             target: "secrets",
             title: "Save secret",
             description: "Store a local secret in the OS credential store with hidden input.",
-            kind: RecipeKind::Command,
-            args: vec![
-                ArgPart::Literal("secrets"),
-                ArgPart::Literal("set"),
-                ArgPart::Field("name"),
-            ],
-            fields: vec![Field {
-                key: "name",
-                label: "Secret name",
-                default: Some("GITHUB_PERSONAL_ACCESS_TOKEN"),
-                required: true,
-            }],
+            kind: RecipeKind::Tui(TuiAction::SaveSecret),
+            args: vec![],
+            fields: vec![],
             notes: &[
                 "The value is prompted with hidden input and saved in the OS credential store.",
                 "Use env-style names such as ANTHROPIC_API_KEY or GITHUB_PERSONAL_ACCESS_TOKEN.",
@@ -968,18 +1131,9 @@ fn recipes() -> Vec<Recipe> {
             target: "secrets",
             title: "Remove secret",
             description: "Remove a saved secret from the OS credential store.",
-            kind: RecipeKind::Command,
-            args: vec![
-                ArgPart::Literal("secrets"),
-                ArgPart::Literal("unset"),
-                ArgPart::Field("name"),
-            ],
-            fields: vec![Field {
-                key: "name",
-                label: "Secret name",
-                default: Some("GITHUB_PERSONAL_ACCESS_TOKEN"),
-                required: true,
-            }],
+            kind: RecipeKind::Tui(TuiAction::RemoveSecret),
+            args: vec![],
+            fields: vec![],
             notes: &[],
         },
         Recipe {
@@ -1171,17 +1325,20 @@ mod tests {
     }
 
     #[test]
-    fn list_secrets_stays_inside_tui() {
+    fn secret_actions_stay_inside_tui() {
         let app = App::new();
-        let recipe = app
-            .recipes
-            .iter()
-            .find(|recipe| recipe.title == "List saved secrets")
-            .expect("list secrets recipe exists");
-        assert!(matches!(
-            recipe.kind,
-            RecipeKind::Tui(TuiAction::ListSecrets)
-        ));
-        assert!(recipe.args.is_empty());
+        for (title, action) in [
+            ("Save secret", TuiAction::SaveSecret),
+            ("List saved secrets", TuiAction::ListSecrets),
+            ("Remove secret", TuiAction::RemoveSecret),
+        ] {
+            let recipe = app
+                .recipes
+                .iter()
+                .find(|recipe| recipe.title == title)
+                .unwrap_or_else(|| panic!("{title} recipe exists"));
+            assert!(matches!(&recipe.kind, RecipeKind::Tui(actual) if *actual == action));
+            assert!(recipe.args.is_empty());
+        }
     }
 }

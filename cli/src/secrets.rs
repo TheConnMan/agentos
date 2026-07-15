@@ -39,11 +39,7 @@ pub fn set(opts: SetSecretOpts) -> Result<()> {
             .with_context(|| format!("{var} is not set; cannot save {}", opts.name))?,
         None => prompt_secret(&opts.name)?,
     };
-    if value.is_empty() {
-        bail!("refusing to store an empty secret for {}", opts.name);
-    }
-    set_value(&opts.name, &value)?;
-    add_to_index(&opts.name)?;
+    save_value(&opts.name, &value)?;
     crate::ui::ui().success(&format!("saved {} in the OS credential store", opts.name));
     Ok(())
 }
@@ -64,9 +60,7 @@ pub fn list() -> Result<()> {
 }
 
 pub fn unset(opts: UnsetSecretOpts) -> Result<()> {
-    validate_name(&opts.name)?;
-    delete_value(&opts.name)?;
-    remove_from_index(&opts.name)?;
+    remove_value(&opts.name)?;
     crate::ui::ui().success(&format!("removed {}", opts.name));
     Ok(())
 }
@@ -94,6 +88,15 @@ pub fn set_value(name: &str, value: &str) -> Result<()> {
         .with_context(|| format!("saving {name} in the OS credential store"))
 }
 
+pub fn save_value(name: &str, value: &str) -> Result<()> {
+    validate_name(name)?;
+    if value.is_empty() {
+        bail!("refusing to store an empty secret for {name}");
+    }
+    set_value(name, value)?;
+    add_to_index(name)
+}
+
 pub fn delete_value(name: &str) -> Result<()> {
     validate_name(name)?;
     match entry(name)?.delete_credential() {
@@ -102,6 +105,12 @@ pub fn delete_value(name: &str) -> Result<()> {
             Err(err).with_context(|| format!("removing {name} from the OS credential store"))
         }
     }
+}
+
+pub fn remove_value(name: &str) -> Result<()> {
+    validate_name(name)?;
+    delete_value(name)?;
+    remove_from_index(name)
 }
 
 pub fn list_names() -> Result<Vec<String>> {
