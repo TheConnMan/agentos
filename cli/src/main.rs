@@ -778,11 +778,11 @@ enum ClusterAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
-        /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
-        /// is resolved from your environment or the host secret vault and sent to
-        /// the platform for the worker to forward into the sandbox. Repeatable.
-        #[arg(long = "secret", value_name = "NAME")]
-        secret: Vec<String>,
+        // NOTE: `--secret` is intentionally NOT offered on `cluster deploy` yet.
+        // Per-agent connector secrets on the cluster tier need the per-agent K8s
+        // Secret + secretKeyRef delivery (#440); until that lands, the value-only
+        // SandboxClaim CR would persist a token in plaintext in etcd. `local
+        // deploy --secret` is supported. See ADR-0009.
     },
     // Agent-lifecycle verbs (kill/resume/budget/delete) speak the platform API
     // like `deploy` does. Design decision (#149): extend the existing `cluster`
@@ -1427,7 +1427,6 @@ async fn run(command: Option<Command>) -> Result<()> {
                 slack_channel,
                 env,
                 label,
-                secret,
             } => {
                 // An explicit --api-url / AGENTOS_API_URL is dialed as given;
                 // otherwise reach the platform API through the deployed release's
@@ -1446,7 +1445,9 @@ async fn run(command: Option<Command>) -> Result<()> {
                     slack_channel,
                     env,
                     label,
-                    secret,
+                    // Cluster connector-secret delivery is deferred to #440; no
+                    // `--secret` flag on `cluster deploy` (see the note above).
+                    secret: Vec::new(),
                     connect_hint,
                 })
                 .await

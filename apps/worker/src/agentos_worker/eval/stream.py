@@ -43,6 +43,7 @@ from redis.asyncio import Redis
 from ..binding import (
     BUDGET_ENV,
     BUNDLE_REF_ENV,
+    CONNECTOR_SECRET_KEYS_ENV,
     PLUGIN_DIR_ENV,
     RUNNER_TOKEN_ENV,
     SESSION_ID_ENV,
@@ -368,9 +369,13 @@ class EvalStreamConsumer(StreamConsumer):
         # its tool calls fail auth and the eval measures the wrong thing. A
         # reserved boot-env key is never overwritten. The values are resolved by
         # the async caller (they need a DB lookup) and passed in.
+        injected_secret_keys: list[str] = []
         for name, value in (connector_secrets or {}).items():
             if name not in env:
                 env[name] = value
+                injected_secret_keys.append(name)
+        if injected_secret_keys:
+            env[CONNECTOR_SECRET_KEYS_ENV] = ",".join(sorted(injected_secret_keys))
         apply_model_env(env, self._config)
         return env
 

@@ -1633,14 +1633,6 @@ export const commandManifest = {
               "long": "label",
               "positional": false,
               "required": false
-            },
-            {
-              "global": false,
-              "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault and sent to the platform for the worker to forward into the sandbox. Repeatable",
-              "id": "secret",
-              "long": "secret",
-              "positional": false,
-              "required": false
             }
           ],
           "hidden": false,

@@ -46,6 +46,17 @@ BUNDLE_INIT_CONTAINERS = ("bundle-fetch", "bundle-extract")
 # forwards it directly; this stripping is Kubernetes-only.
 CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 
+# Per-agent connector secrets (ADR-0009, #429) travel through the substrate-
+# agnostic boot env by value. On this value-only claim CR they would be stored as
+# plaintext in etcd -- the same leak the model-credential stripping above avoids.
+# The binding marks which keys are connector secrets in this env var
+# (comma-separated names); strip both the marker and every key it names off the
+# claim. Their secretKeyRef delivery via a per-agent Secret is #440; until then
+# an authed-MCP bundle simply is not delivered its secret on the cluster tier
+# rather than leaking it. Defined locally to keep the substrate seam free of a
+# binding import (like BUNDLE_REF_ENV / CREDENTIALS_ENV above).
+CONNECTOR_SECRET_KEYS_ENV = "AGENTOS_CONNECTOR_SECRET_KEYS"
+
 
 class SandboxClient(Protocol):
     """What the substrate needs from the cluster, and nothing more."""
@@ -130,13 +141,18 @@ class KubernetesSandboxClient:
         }
         if env:
             # Unnamed entries land on the first main container (the runner). The
-            # model credential is deliberately excluded so it is never persisted
-            # in plain text on the claim (it reaches the runner via the template's
-            # secretKeyRef instead).
+            # model credential and per-agent connector secrets are deliberately
+            # excluded so no secret value is ever persisted in plain text on the
+            # claim: the credential reaches the runner via the template's
+            # secretKeyRef, and connector-secret delivery is #440. The marker var
+            # naming the connector-secret keys is stripped too.
+            marker = env.get(CONNECTOR_SECRET_KEYS_ENV, "")
+            stripped = {CREDENTIALS_ENV, CONNECTOR_SECRET_KEYS_ENV}
+            stripped.update(k for k in marker.split(",") if k)
             entries: list[dict[str, str]] = [
                 {"name": k, "value": v}
                 for k, v in sorted(env.items())
-                if k != CREDENTIALS_ENV
+                if k not in stripped
             ]
             # The bundle ref must also reach the init containers, which the
             # Overrides policy does not touch without an explicit containerName.

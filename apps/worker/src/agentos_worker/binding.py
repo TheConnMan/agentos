@@ -78,6 +78,12 @@ RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
 # calls the runner intercepts via can_use_tool and pauses awaiting approval.
 # A runner-local knob (not frozen ACI env), like AGENTOS_IDEMPOTENT_TOOLS.
 APPROVAL_REQUIRED_ENV = "AGENTOS_APPROVAL_REQUIRED_TOOLS"
+# Marks which boot-env keys are per-agent connector secrets (ADR-0009, #429).
+# The k8s substrate reads it to strip those plaintext values off the value-only
+# SandboxClaim CR (their secretKeyRef delivery is #440); the docker substrate
+# forwards them directly. The marker and the keys it names are both kept off the
+# k8s claim, so a connector secret is never persisted in etcd.
+CONNECTOR_SECRET_KEYS_ENV = "AGENTOS_CONNECTOR_SECRET_KEYS"
 # #430 one-shot post-approval allowance (ADR-0035): a runner-local knob carrying
 # the single approved tool name the runner gate lets through once on a resume boot.
 GRANT_TOOL_ENV = "AGENTOS_APPROVAL_GRANT_TOOL"
@@ -358,13 +364,19 @@ class BindingResolver:
             env[HISTORY_TOKEN_ENV] = state_token
         # Deliver the agent's connector secrets (ADR-0009, #429): named secret
         # values the bundle's authed MCP servers read from the sandbox env, where
-        # `.mcp.json` `${VAR}` expansion consumes them. Injected by value (the
-        # docker substrate forwards them as `-e KEY=VALUE`). A reserved boot-env
-        # key is never overwritten, so a misnamed secret cannot clobber the ACI
-        # contract env or the model credential.
+        # `.mcp.json` `${VAR}` expansion consumes them. Injected by value; the
+        # docker substrate forwards them as `-e KEY=VALUE`, while the k8s
+        # substrate strips them off its plaintext claim CR by the marker below
+        # (their secretKeyRef delivery is #440). A reserved boot-env key is never
+        # overwritten, so a misnamed secret cannot clobber the ACI contract env or
+        # the model credential.
+        injected_secret_keys: list[str] = []
         for name, value in (resolved.secrets or {}).items():
             if name not in env:
                 env[name] = value
+                injected_secret_keys.append(name)
+        if injected_secret_keys:
+            env[CONNECTOR_SECRET_KEYS_ENV] = ",".join(sorted(injected_secret_keys))
         # The agent's pinned model (#254) overrides the worker default; None
         # falls back to config.model inside apply_model_env.
         apply_model_env(env, self._config, model_override=resolved.model)
