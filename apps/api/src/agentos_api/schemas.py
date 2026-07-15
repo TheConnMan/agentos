@@ -5,7 +5,15 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .models import Environment
 
@@ -15,6 +23,12 @@ from .models import Environment
 # also rejects bare names ("general"), pasted URLs, and lowercase IDs -- none of
 # which the worker can route on.
 _SLACK_CHANNEL_ID = re.compile(r"^[CDG][A-Z0-9]{7,}$")
+# Slack user-group (subteam) IDs start with S; user IDs start with U, or W for
+# enterprise-grid users. Same allowlist discipline and same reason as channels:
+# a @handle or a bare name never resolves, and the S/C prefix is the whole
+# distinction between a user group and a channel.
+_SLACK_USERGROUP_ID = re.compile(r"^S[A-Z0-9]{7,}$")
+_SLACK_USER_ID = re.compile(r"^[UW][A-Z0-9]{7,}$")
 
 
 def _validate_slack_channel_id(value: str | None) -> str | None:
@@ -136,12 +150,113 @@ def _validate_tool_names(value: list[str] | None) -> list[str] | None:
     return cleaned
 
 
-class ApprovalRouteBinding(BaseModel):
+class _StoredWithoutNulls(BaseModel):
+    """Serializes to the stored-JSONB shape: unset keys are absent, not null.
+
+    Route bindings are dumped straight into ``agents.approval_routes`` by every
+    persist site, and a plain dump would rewrite every pre-#420 binding with an
+    ``approvers: null`` sibling (and every group-only approvers block with a
+    ``users: null`` one) on the next write. Making that an invariant of the
+    models themselves, rather than asking each caller for ``exclude_none=True``,
+    keeps the stored shape from depending on every writer remembering.
+
+    Tripwire for a future reader: subclasses are validation-side only today
+    (request bodies), which is why the committed ``openapi.json`` carries one
+    schema each. Using one in a RESPONSE model would make FastAPI split it into
+    ``-Input``/``-Output`` variants, because the wrap serializer above makes the
+    dumped shape differ from the validated one.
+    """
+
+    @model_serializer(mode="wrap")
+    def _dump_without_nulls(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        return {k: v for k, v in handler(self).items() if v is not None}
+
+
+class ApprovalApprovers(_StoredWithoutNulls):
+    """WHO may resolve a route's approvals (#420), as opposed to the binding's
+    ``channel``, which is only WHERE the card posts.
+
+    Declaring an approvers block is what lets a request sit in a broad channel
+    where everyone can see it while only a narrow set may act on it. Omitting it
+    keeps the zero-setup default: the card channel's members are the approvers.
+    """
+
+    # A typo in an optional key must not be ignored: silently dropping it would
+    # leave no approvers block at read time, falling the route back to channel
+    # membership and widening the approver set the operator meant to narrow.
+    model_config = ConfigDict(extra="forbid")
+
+    # A Slack user group whose current members are the approvers. Membership is
+    # resolved by the API against Slack at resolve time, never asserted by the
+    # caller. Ignored when ``users`` is set.
+    group: str | None = None
+    # An explicit allowlist of Slack user IDs. Takes precedence over ``group``
+    # (issue #420 settles the precedence rather than refusing the combination),
+    # and needs no Slack lookup at all.
+    users: list[str] | None = None
+
+    @field_validator("group")
+    @classmethod
+    def _check_group(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not _SLACK_USERGROUP_ID.match(value):
+            raise ValueError(
+                f"approvers group {value!r} is not a Slack user-group ID: pass "
+                "the ID (e.g. S0123ABCD), not a @handle or a name -- a handle "
+                "never resolves, and a C-prefixed value is a channel, not a "
+                "user group. Find it via the usergroups.list API."
+            )
+        return value
+
+    @field_validator("users")
+    @classmethod
+    def _check_users(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        if not value:
+            # Neither "unset" (omit the key) nor "nobody may approve": as silent
+            # config the latter is a footgun, since the approval could then only
+            # ever expire.
+            raise ValueError(
+                "approvers users, when present, must contain at least one user ID"
+            )
+        for user in value:
+            if not _SLACK_USER_ID.match(user):
+                raise ValueError(
+                    f"approvers user {user!r} is not a Slack user ID: pass the "
+                    "ID (e.g. U0123ABCD, or W0123ABCD on enterprise grid), not "
+                    "a @handle or a display name."
+                )
+        return value
+
+    @model_validator(mode="after")
+    def _check_not_empty(self) -> "ApprovalApprovers":
+        if self.group is None and self.users is None:
+            raise ValueError(
+                "approvers must declare at least one of group or users; omit "
+                "the approvers block entirely to keep channel membership"
+            )
+        return self
+
+
+class ApprovalRouteBinding(_StoredWithoutNulls):
     """One workspace binding for a manifest-declared approval route (#247):
     the Slack channel whose members are that route's approvers (under the
-    channel-membership authorizer)."""
+    channel-membership authorizer), and optionally the ``approvers`` block that
+    narrows WHO may act (#420), leaving ``channel`` to mean only WHERE the card
+    posts.
+    """
+
+    # Rejects a typo'd ``approver`` rather than storing a channel-only binding
+    # the operator believes narrows authority. Pre-#420 bindings are
+    # ``{"channel": ...}`` only, so forbidding extras does not reject them.
+    model_config = ConfigDict(extra="forbid")
 
     channel: str
+    approvers: ApprovalApprovers | None = None
 
     _check_channel = field_validator("channel")(_validate_slack_channel_id)
 
@@ -388,6 +503,11 @@ class ApprovalAuditOut(BaseModel):
     authorizer: str
     authorized: bool
     reason: str | None
+    # The membership facts that decided it (#420): the group and the actor's
+    # verdict, the allowlist that counted, or the channels compared. NULL for
+    # writers that made no membership decision (the expiry sweeper) and for rows
+    # written before the column existed.
+    evidence: dict[str, Any] | None
     created_at: datetime
 
 

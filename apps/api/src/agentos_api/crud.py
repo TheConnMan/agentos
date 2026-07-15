@@ -336,6 +336,37 @@ async def get_approval(session: AsyncSession, approval_id: uuid.UUID) -> Approva
     return await session.get(Approval, approval_id)
 
 
+async def get_approval_route_binding(
+    session: AsyncSession, approval: Approval
+) -> Any:
+    """The route binding governing ``approval``, read fresh at resolve time
+    (#420), or None when there is none to read.
+
+    Read fresh rather than snapshotted at creation: approvals pend for hours to
+    days, and evaluating against current policy means removing someone from the
+    approver group revokes them immediately instead of leaving them able to
+    resolve yesterday's stale request.
+
+    None covers every legitimate miss -- a generic approval with no agent
+    (``agent_id`` is nullable by design), an approval with no route, an agent
+    with no bindings, a route the map does not bind -- and each of them means
+    "no approvers declared", which is channel membership by design (AC4), not a
+    failure.
+
+    A present-but-non-dict value is NOT one of those misses, so it is returned
+    raw (the JSONB value can be anything) rather than coerced to None: the
+    selector fails a malformed binding closed, the same as a malformed
+    ``approvers`` block, instead of widening it to card-channel membership.
+    """
+
+    if approval.agent_id is None or not approval.route:
+        return None
+    agent = await get_agent(session, approval.agent_id)
+    if agent is None or not isinstance(agent.approval_routes, dict):
+        return None
+    return agent.approval_routes.get(approval.route)
+
+
 async def get_approval_by_dedupe_key(
     session: AsyncSession, dedupe_key: str
 ) -> Approval | None:
@@ -547,8 +578,13 @@ async def append_approval_audit(
     authorizer: str,
     authorized: bool,
     reason: str | None,
+    evidence: dict[str, Any] | None = None,
 ) -> ApprovalAuditEntry:
-    """Append one audit row (#247). Append-only by design; never updated."""
+    """Append one audit row (#247). Append-only by design; never updated.
+
+    ``evidence`` (#420) is the membership snapshot the authorizer decided on;
+    None for writers that made no membership decision.
+    """
 
     entry = ApprovalAuditEntry(
         approval_id=approval_id,
@@ -559,6 +595,7 @@ async def append_approval_audit(
         authorizer=authorizer,
         authorized=authorized,
         reason=reason,
+        evidence=evidence,
     )
     session.add(entry)
     await session.commit()

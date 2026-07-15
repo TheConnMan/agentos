@@ -245,6 +245,39 @@
         "title": "AppConfig",
         "type": "object"
       },
+      "ApprovalApprovers": {
+        "additionalProperties": false,
+        "description": "WHO may resolve a route's approvals (#420), as opposed to the binding's\n``channel``, which is only WHERE the card posts.\n\nDeclaring an approvers block is what lets a request sit in a broad channel\nwhere everyone can see it while only a narrow set may act on it. Omitting it\nkeeps the zero-setup default: the card channel's members are the approvers.",
+        "properties": {
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
+          "users": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Users"
+          }
+        },
+        "title": "ApprovalApprovers",
+        "type": "object"
+      },
       "ApprovalAuditOut": {
         "description": "One audit entry (#247): who attempted what, and the authorizer snapshot\nthat counted (or refused) them.",
         "properties": {
@@ -289,6 +322,18 @@
             "title": "Decision",
             "type": "string"
           },
+          "evidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -316,6 +361,7 @@
           "authorizer",
           "authorized",
           "reason",
+          "evidence",
           "created_at"
         ],
         "title": "ApprovalAuditOut",
@@ -624,8 +670,19 @@
         "type": "object"
       },
       "ApprovalRouteBinding": {
-        "description": "One workspace binding for a manifest-declared approval route (#247):\nthe Slack channel whose members are that route's approvers (under the\nchannel-membership authorizer).",
+        "additionalProperties": false,
+        "description": "One workspace binding for a manifest-declared approval route (#247):\nthe Slack channel whose members are that route's approvers (under the\nchannel-membership authorizer), and optionally the ``approvers`` block that\nnarrows WHO may act (#420), leaving ``channel`` to mean only WHERE the card\nposts.",
         "properties": {
+          "approvers": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalApprovers"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "channel": {
             "title": "Channel",
             "type": "string"
@@ -4342,7 +4399,7 @@
     },
     "/approvals/{approval_id}/resolve": {
       "post": {
-        "description": "Claim the resolution (resolve-once) and wake the suspended session.\n\nThe authorizer runs first, server-side (#246): self-approval is blocked\nand channel membership is checked against the attempt's channel; a denied\nactor gets 403 with the reason. Then exactly one authorized resolver wins\nthe conditional UPDATE; a loser gets 409 naming who resolved it, and a\npast-SLA record flips to expired and returns 410 while still enqueuing the\nexpiry resume turn so the suspended session wakes down its timeout branch.\nThe winner's response is sent only after the resume turn is enqueued.",
+        "description": "Claim the resolution (resolve-once) and wake the suspended session.\n\nThe authorizer runs first, server-side (#246): self-approval is blocked and\nthe route's approvers decide -- an explicit user list, a Slack user group,\nor (declaring none) the card channel's members (#420); a denied actor gets\n403 with the reason. Then exactly one authorized resolver wins\nthe conditional UPDATE; a loser gets 409 naming who resolved it, and a\npast-SLA record flips to expired and returns 410 while still enqueuing the\nexpiry resume turn so the suspended session wakes down its timeout branch.\nThe winner's response is sent only after the resume turn is enqueued.",
         "operationId": "resolve_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {

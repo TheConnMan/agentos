@@ -18,17 +18,21 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 import redis
 import redis.asyncio as aioredis
 from aci_protocol import QueuedTurn
 from agentos_api import crud
 from agentos_api.config import get_settings
+from agentos_api.deps import get_approver_sets
 from agentos_api.main import create_app
 from agentos_api.models import Approval
 from agentos_api.resumequeue import ResumeQueue
 from agentos_api.resumereconciler import ResumeReconciler
 from agentos_api.sandbox_token import mint
+from agentos_api.slack_approvers import SlackApproverSetSelector
+from agentos_api.slack_usergroups import SlackUserGroupClient
 from agentos_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -1168,3 +1172,692 @@ def test_run_expiry_sweeper_loop_sweeps_and_stops(
             assert task.done()
 
     asyncio.run(_scenario())
+
+
+# --- #420: approver sets unfused from the card's channel -----------------------
+#
+# Setup shape throughout: an agent binds route "managers" to the BROAD channel
+# (where the card posts) and, optionally, an `approvers` block (who may act).
+# The approval then names that agent + route, with card_channel=C_BROAD -- the
+# exact shape the worker produces at kernel.py:626-627.
+#
+# Slack is the only faked service (a MockTransport behind the real
+# SlackUserGroupClient, injected through the API's own dependency). Postgres and
+# Valkey are real. `calls` records every request that reached the transport,
+# which is how the "this path does no I/O" contracts are proven rather than
+# assumed.
+
+_GROUP = "S0MGRS001"
+_APPROVER = "U0APPROV1"
+_LISTED = "U0LISTED1"
+_OTHER = "U0OTHER01"
+_BROAD = "C0BROAD01"
+_ELSEWHERE = "C0ELSE001"
+
+
+def _agent_with_routes(
+    client: TestClient, headers: dict[str, str], routes: dict[str, Any]
+) -> str:
+    created = client.post(
+        "/agents",
+        json={
+            "name": f"routed-{uuid.uuid4().hex[:8]}",
+            "slack_channel": "C0AGENT001",
+            "approval_routes": routes,
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["id"])
+
+
+def _routed_payload(agent_id: str | None, **overrides: Any) -> dict[str, Any]:
+    return _payload(
+        agent_id=agent_id, route="managers", card_channel=_BROAD, **overrides
+    )
+
+
+def _fake_slack(
+    client: TestClient,
+    members: list[str],
+    *,
+    calls: list[httpx.Request],
+    fail: bool = False,
+) -> None:
+    """Wire the API's usergroup client to a MockTransport-backed Slack."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if fail:
+            return httpx.Response(500, text="slack is down")
+        return httpx.Response(200, json={"ok": True, "users": members})
+
+    group_client = SlackUserGroupClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(_handler)),
+        token="xoxb-test",
+    )
+    client.app.dependency_overrides[get_approver_sets] = lambda: (
+        SlackApproverSetSelector(group_client)
+    )
+
+
+def _no_slack_configured(client: TestClient) -> None:
+    """A deployment with no SLACK_BOT_TOKEN: the selector is still wired (main
+    always wires one), it just has no usergroup client behind it."""
+
+    client.app.dependency_overrides[get_approver_sets] = lambda: (
+        SlackApproverSetSelector(None)
+    )
+
+
+def _resolve(
+    client: TestClient,
+    headers: dict[str, str],
+    approval_id: str,
+    actor: str,
+    channel: str | None = _BROAD,
+) -> Any:
+    return client.post(
+        f"/approvals/{approval_id}/resolve",
+        json={"decision": "approved", "resolved_by": actor, "actor_channel": channel},
+        headers=headers,
+    )
+
+
+# --- AC1: a group binding narrows authority inside a broad channel -------------
+
+
+def test_group_bound_route_denies_non_group_member_even_in_card_channel(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC1, the headline of #420: the card sits in a BROAD channel so everyone
+    can SEE the request, but only the bound user group may act on it. U_OTHER
+    clicks from exactly the right channel -- under today's channel-membership
+    authorizer that is a 200 -- and must be refused: right room, no authority.
+    """
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_APPROVER], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"group": _GROUP}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert denied.status_code == 403, denied.text
+    assert "not an approver" in denied.json()["detail"]
+
+    # The refusal is total: no claim, no wake.
+    record = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert record.json()["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+    assert len(calls) == 1
+
+
+def test_group_member_resolves_and_session_resumes(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC1's other half: the group member's click resolves the record and wakes
+    the suspended session exactly once."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_APPROVER], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"group": _GROUP}}},
+    )
+    payload = _routed_payload(agent_id)
+    created = approvals_client.post(
+        "/approvals", json=payload, headers=auth_headers
+    ).json()
+
+    ok = _resolve(approvals_client, auth_headers, created["id"], _APPROVER)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] == "approved"
+    assert ok.json()["resolved_by"] == _APPROVER
+
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.event_id == f"approval-{created['id']}-resolved"
+    assert turn.conversation_id == payload["conversation_id"]
+    assert turn.author == _APPROVER
+
+
+def test_user_list_bound_route_denies_an_unlisted_actor_without_calling_slack(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC1 for the explicit allowlist. The zero-transport-call assertion is the
+    substance: the user-list path is pure config, so it must not depend on Slack
+    being reachable at all."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_OTHER], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"users": [_LISTED]}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert denied.status_code == 403, denied.text
+    assert "not an approver" in denied.json()["detail"]
+    assert calls == []
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_user_list_bound_route_resolves_for_a_listed_actor(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC1: the listed actor resolves and the session resumes, with Slack untouched."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"users": [_LISTED, _APPROVER]}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    ok = _resolve(approvals_client, auth_headers, created["id"], _LISTED)
+    assert ok.status_code == 200, ok.text
+    assert len(valkey.xrange(runs_stream)) == 1
+    assert calls == []
+
+
+def test_explicit_user_list_wins_over_the_group_binding(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC1 precedence, exactly as the issue states it: with BOTH declared,
+    ``users`` decides and ``group`` is ignored. A genuine group member who is
+    not on the list is refused, and Slack is never consulted."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_APPROVER], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {
+            "managers": {
+                "channel": _BROAD,
+                "approvers": {"group": _GROUP, "users": [_LISTED]},
+            }
+        },
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _APPROVER)
+    assert denied.status_code == 403, denied.text
+    assert "not an approver" in denied.json()["detail"]
+
+    ok = _resolve(approvals_client, auth_headers, created["id"], _LISTED)
+    assert ok.status_code == 200, ok.text
+    assert len(valkey.xrange(runs_stream)) == 1
+    assert calls == []
+
+
+# --- AC2: no self-approval under ANY authorizer --------------------------------
+
+
+def test_requester_cannot_self_approve_under_the_group_authorizer(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC2: the author IS a member of the approver group and still cannot resolve
+    their own request.
+
+    The zero-call assertion pins the guard's ORDERING, not just its verdict: the
+    self-approval check runs before any Slack fetch, so a self-attempt spends no
+    rate-limit budget and cannot be used to probe group membership.
+    """
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_APPROVER], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"group": _GROUP}}},
+    )
+    created = approvals_client.post(
+        "/approvals",
+        json=_routed_payload(agent_id, author=_APPROVER),
+        headers=auth_headers,
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _APPROVER)
+    assert denied.status_code == 403, denied.text
+    assert "self-approval" in denied.json()["detail"]
+    assert calls == []
+
+    record = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert record.json()["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_requester_cannot_self_approve_under_the_user_list_authorizer(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC2: the author is on the explicit allowlist and still cannot resolve."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"users": [_LISTED, _APPROVER]}}},
+    )
+    created = approvals_client.post(
+        "/approvals",
+        json=_routed_payload(agent_id, author=_LISTED),
+        headers=auth_headers,
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _LISTED)
+    assert denied.status_code == 403, denied.text
+    assert "self-approval" in denied.json()["detail"]
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_requester_cannot_self_approve_under_a_bound_channel_authorizer(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC2's third implementation. Distinct from the unbound-approval case that
+    ``test_authorizer_blocks_non_member_and_self_approval`` already pins: here a
+    route binding placed the card, so the resolver walks the binding path before
+    landing on channel membership. The self-approval block must survive that
+    route."""
+
+    agent_id = _agent_with_routes(
+        approvals_client, auth_headers, {"managers": {"channel": _BROAD}}
+    )
+    created = approvals_client.post(
+        "/approvals",
+        json=_routed_payload(agent_id, author=_APPROVER),
+        headers=auth_headers,
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _APPROVER)
+    assert denied.status_code == 403, denied.text
+    assert "self-approval" in denied.json()["detail"]
+    assert valkey.xrange(runs_stream) == []
+
+
+# --- AC3: the audit names the authorizer AND the evidence that counted ---------
+
+
+def test_audit_names_authorizer_and_membership_evidence(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC3: after a group-denied then group-approved sequence, each audit row
+    names UserGroupAuthorizer and carries the membership evidence that decided
+    it -- the group, the actor's verdict, the size of the group that proved it,
+    and when that membership was fetched. The member list itself is deliberately
+    NOT stored (a 500-member group would bloat an append-only table per click).
+    """
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_APPROVER, _LISTED], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"group": _GROUP}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    assert _resolve(approvals_client, auth_headers, created["id"], _OTHER).status_code == 403
+    assert _resolve(approvals_client, auth_headers, created["id"], _APPROVER).status_code == 200
+
+    entries = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    ).json()
+    assert [e["action"] for e in entries] == ["denied", "resolved"]
+    denied_entry, resolved_entry = entries
+
+    assert denied_entry["authorizer"] == "UserGroupAuthorizer"
+    assert denied_entry["authorized"] is False
+    assert denied_entry["evidence"]["kind"] == "user_group"
+    assert denied_entry["evidence"]["group"] == _GROUP
+    assert denied_entry["evidence"]["actor_in_group"] is False
+    assert denied_entry["evidence"]["member_count"] == 2
+    assert datetime.fromisoformat(denied_entry["evidence"]["fetched_at"])
+    assert denied_entry["evidence"]["cache_age_s"] >= 0
+
+    assert resolved_entry["authorizer"] == "UserGroupAuthorizer"
+    assert resolved_entry["authorized"] is True
+    assert resolved_entry["evidence"]["actor_in_group"] is True
+    assert resolved_entry["evidence"]["group"] == _GROUP
+    # The list itself is not the snapshot; the verdict + count + timestamp are.
+    assert "users" not in resolved_entry["evidence"]
+
+
+def test_audit_evidence_for_a_user_list_decision(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC3: a user-list resolution records the allowlist that counted and the
+    actor's verdict against it."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [], calls=calls)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"users": [_LISTED, _APPROVER]}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    assert _resolve(approvals_client, auth_headers, created["id"], _OTHER).status_code == 403
+    assert _resolve(approvals_client, auth_headers, created["id"], _LISTED).status_code == 200
+
+    denied_entry, resolved_entry = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    ).json()
+
+    assert denied_entry["authorizer"] == "ExplicitUserListAuthorizer"
+    assert denied_entry["evidence"]["kind"] == "user_list"
+    assert denied_entry["evidence"]["actor_listed"] is False
+    assert sorted(denied_entry["evidence"]["users"]) == sorted([_LISTED, _APPROVER])
+
+    assert resolved_entry["authorizer"] == "ExplicitUserListAuthorizer"
+    assert resolved_entry["evidence"]["actor_listed"] is True
+
+
+def test_audit_evidence_for_a_channel_decision(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC3 + AC4: the unchanged channel path gains evidence too, naming the
+    channel that held the authority and the channel the click came from."""
+
+    agent_id = _agent_with_routes(
+        approvals_client, auth_headers, {"managers": {"channel": _BROAD}}
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER, _ELSEWHERE)
+    assert denied.status_code == 403, denied.text
+    assert _resolve(approvals_client, auth_headers, created["id"], _OTHER).status_code == 200
+
+    denied_entry, resolved_entry = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    ).json()
+
+    assert denied_entry["authorizer"] == "ChannelMembershipAuthorizer"
+    assert denied_entry["evidence"]["kind"] == "channel_membership"
+    assert denied_entry["evidence"]["approvers_channel"] == _BROAD
+    assert denied_entry["evidence"]["actor_channel"] == _ELSEWHERE
+
+    assert resolved_entry["evidence"]["approvers_channel"] == _BROAD
+    assert resolved_entry["evidence"]["actor_channel"] == _BROAD
+
+
+def test_expiry_sweeper_audit_rows_carry_no_evidence(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """Edge cases 11 and 13: ``evidence`` is a NULLABLE column on an append-only
+    table. Writers that made no membership decision -- the expiry sweeper -- must
+    leave it NULL rather than fabricate one, and old rows must still read back
+    through ApprovalAuditOut."""
+
+    created = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+    ).json()
+    now = _naive_utc(2)
+
+    async def _scenario() -> int:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            async with sessionmaker() as session:
+                return await sweep_expired_approvals(session, queue, now=now)
+
+    assert asyncio.run(_scenario()) == 1
+
+    entries = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    ).json()
+    assert [e["action"] for e in entries] == ["expired"]
+    assert entries[0]["authorizer"] == "ExpirySweeper"
+    assert entries[0]["evidence"] is None
+
+
+# --- fail closed: a declared approvers spec never degrades to channel ----------
+
+
+def test_group_binding_without_a_bot_token_denies_instead_of_channel_fallback(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """Fail closed on config error. The deployment declared a group but wired no
+    SLACK_BOT_TOKEN, so membership is unverifiable. The actor below is standing
+    in the card channel -- a fallback to channel membership would ALLOW them,
+    silently widening the approver set the operator thought they had narrowed.
+    """
+
+    _no_slack_configured(approvals_client)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"group": _GROUP}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert denied.status_code == 403, denied.text
+    assert "could not verify" in denied.json()["detail"]
+
+    record = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert record.json()["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_group_lookup_failure_denies_and_audits_the_failure(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """Fail closed on lookup error, plus AC3 for the failure row. Slack is down;
+    the actor is in the card channel and must STILL be refused, and the audit
+    must record that infrastructure -- not policy -- refused them."""
+
+    calls: list[httpx.Request] = []
+    _fake_slack(approvals_client, [_APPROVER], calls=calls, fail=True)
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"managers": {"channel": _BROAD, "approvers": {"group": _GROUP}}},
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert denied.status_code == 403, denied.text
+    assert "could not verify" in denied.json()["detail"]
+    assert calls != []
+
+    entries = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    ).json()
+    assert [e["action"] for e in entries] == ["denied"]
+    row = entries[0]
+    assert row["authorized"] is False
+    assert row["authorizer"] != "ChannelMembershipAuthorizer"
+    assert row["evidence"]["kind"] == "user_group"
+    assert row["evidence"]["group"] == _GROUP
+    assert row["evidence"]["lookup_failed"] is True
+    assert row["evidence"]["error"]
+
+    record = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert record.json()["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+
+
+# --- AC4: no approvers declared keeps today's behavior exactly -----------------
+
+
+def test_binding_without_approvers_keeps_channel_membership(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC4: an existing deployment's bare ``{channel}`` binding keeps resolving
+    against ``card_channel`` -- anyone in the card channel, nobody outside it.
+    Zero-setup stays zero-setup."""
+
+    agent_id = _agent_with_routes(
+        approvals_client, auth_headers, {"managers": {"channel": _BROAD}}
+    )
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(agent_id), headers=auth_headers
+    ).json()
+
+    outside = _resolve(approvals_client, auth_headers, created["id"], _OTHER, _ELSEWHERE)
+    assert outside.status_code == 403, outside.text
+    assert "not an approver" in outside.json()["detail"]
+
+    inside = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert inside.status_code == 200, inside.text
+    assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_agentless_approval_keeps_channel_membership(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC4 / edge case 7: ``agent_id`` is nullable by design (the generic/dev
+    path). With no agent there is no binding to read, so the record falls back to
+    channel membership on its card_channel -- today's behavior, unchanged."""
+
+    created = approvals_client.post(
+        "/approvals", json=_routed_payload(None, author=_APPROVER), headers=auth_headers
+    ).json()
+    assert created["agent_id"] is None
+    assert created["route"] == "managers"
+
+    outside = _resolve(approvals_client, auth_headers, created["id"], _OTHER, _ELSEWHERE)
+    assert outside.status_code == 403, outside.text
+
+    # AC2 survives the no-binding path: the author is refused from the card
+    # channel, where anyone else would be allowed.
+    author = _resolve(approvals_client, auth_headers, created["id"], _APPROVER)
+    assert author.status_code == 403, author.text
+    assert "self-approval" in author.json()["detail"]
+
+    inside = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert inside.status_code == 200, inside.text
+    assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_unbound_route_name_keeps_channel_membership(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """AC4 / edge case 8: the approval names a route the agent's map does not
+    bind (renamed or removed while pending). Fresh-read semantics say current
+    config wins, and current config declares no approvers for this route, so it
+    is channel membership -- mirroring the worker's unbound-route card fallback.
+    """
+
+    agent_id = _agent_with_routes(
+        approvals_client,
+        auth_headers,
+        {"legal": {"channel": _ELSEWHERE, "approvers": {"users": [_LISTED]}}},
+    )
+    created = approvals_client.post(
+        "/approvals",
+        json=_routed_payload(agent_id, author=_APPROVER),
+        headers=auth_headers,
+    ).json()
+
+    # The OTHER route's allowlist must not leak onto this one.
+    listed_elsewhere = _resolve(
+        approvals_client, auth_headers, created["id"], _LISTED, _ELSEWHERE
+    )
+    assert listed_elsewhere.status_code == 403, listed_elsewhere.text
+
+    # AC2 survives the unbound-route path too.
+    author = _resolve(approvals_client, auth_headers, created["id"], _APPROVER)
+    assert author.status_code == 403, author.text
+    assert "self-approval" in author.json()["detail"]
+
+    inside = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
+    assert inside.status_code == 200, inside.text
+    assert len(valkey.xrange(runs_stream)) == 1

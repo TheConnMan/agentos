@@ -1,7 +1,7 @@
 # INTERFACE: Approval / authorizer
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 (channel membership) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 3 approver sets behind one authorizer (Slack channel, Slack user group, explicit user list) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -80,17 +80,141 @@ in code now:
 
 ## Implementations today
 
-**One: `ChannelMembershipAuthorizer`** (`apps/api/src/agentos_api/authorizer.py`), behind
-the `Authorizer` Protocol at the resolve endpoint (#246). Self-approval is blocked
-unconditionally; channel membership is proven by the resolution attempt's channel — the
-worker routes the Block Kit approval card into the approval's channel, Slack only renders
-that message (and accepts clicks) for members of that channel, and the click reaches the
-platform over the dispatcher's authenticated Socket Mode connection, which relays the
-click's channel as `actor_channel`. Non-dispatcher callers (operator curl, CLI) authenticate
-with the platform API key and assert the channel explicitly. User-group, explicit
-user-list, and platform-RBAC implementations swap in behind the same Protocol later. The
-durable record, the `awaiting-approval` status, both gate trigger types, the card
-click-to-resolve flow, and the suspend/resume lifecycle are live (#244, #245, #246).
+**One authorizer** (`apps/api/src/agentos_api/authorizer.py`, pure policy with no Slack in
+it) over **three approver sets** behind the `ApproverSet` port (ADR-0034). A set answers
+only "is this actor in the set"; every rule that is not membership lives in the authorizer,
+applied identically whatever the set. Self-approval is the rule that matters:
+`authorize_approval` denies a self-attempt after the set is selected and before it is asked
+(so a self-click never spends a Slack lookup), and a set is never consulted, so none can
+skip it. The durable record, the
+`awaiting-approval` status, both gate trigger types, the card click-to-resolve flow, and the
+suspend/resume lifecycle are live (#244, #245, #246).
+
+Two of the three sets are Slack's, and that is the honest framing: a channel and a user
+group are two ways Slack says "who is in the authorized set", not a neutral baseline plus a
+Slack feature.
+
+- **`SlackChannelMembers`** (#246, `slack_approvers.py`), the zero-setup default. Channel
+  membership is proven by the resolution attempt's channel — the worker routes the Block Kit
+  approval card into the approval's channel, Slack only renders that message (and accepts
+  clicks) for members of that channel, and the click reaches the platform over the
+  dispatcher's authenticated Socket Mode connection, which relays the click's channel as
+  `actor_channel`. Non-dispatcher callers (operator curl, CLI) authenticate with the
+  platform API key and assert the channel explicitly. Performs no lookup.
+- **`SlackUserGroupMembers`** (#420, `slack_approvers.py`), a Slack user group as the
+  approver set. Owns its lookup, through the `GroupMembershipSource` port below. Membership
+  is never accepted from the caller: a dispatcher-asserted membership claim would be
+  forgeable by any platform-key holder, so ADR-0034 rejected it. The only set that can come
+  back undetermined.
+- **`ExplicitUsers`** (#420, `approvers.py`), a literal allowlist of user IDs. Pure, no I/O,
+  and the only set that owes Slack nothing.
+
+Platform-RBAC remains the epic's fourth set and is not built.
+
+**The audit vocabulary is frozen.** Each set's `audit_name` pins its pre-ADR-0034 class
+name, so `approval_audit.authorizer` still records `ChannelMembershipAuthorizer`,
+`ExplicitUserListAuthorizer`, and `UserGroupAuthorizer`. Those classes no longer exist. The
+column is append-only history and rows already on main carry those values, so renaming the
+vocabulary would make old rows lie about what decided.
+
+### Unfusing who from where
+
+The route binding keeps `channel` as *where the card posts* and gains an optional
+`approvers` block as *who may approve*, so a card can be visible in a broad channel while
+authority stays narrow:
+
+```
+approval_routes: {
+  "<route-name>": {
+    "channel": "C0123ABCD",                 # where the card posts (unchanged)
+    "approvers": {                          # optional; absent means channel membership
+      "group": "S0123ABCD",                 # Slack user-group ID
+      "users": ["U0123ABCD", "U0456EFGH"]   # explicit allowlist
+    }
+  }
+}
+```
+
+Both take IDs, never `@handles` or names, matching the channel-ID precedent (#143): names
+never route and fail silently. The group and user-list authorizers deliberately ignore
+`actor_channel` — the whole point is that authority does not depend on card location.
+
+**Precedence: `users` > `group` > channel membership.** When `users` is set, `group` is
+ignored and no Slack call is made. When neither is declared, channel membership decides.
+
+**Fail closed, precisely scoped.** When a binding DOES declare an `approvers` spec, every
+lookup and config error denies: no bot token configured, HTTP error, network error,
+`ok: false`, malformed body, malformed approvers JSON. All deny with a could-not-verify
+reason and an audit row; none falls back to channel membership. Failures are not cached.
+This does NOT mean the absence of a declaration fails closed: no `approvers` declared means
+channel membership, by design. A group that legitimately resolves to zero members is a
+successful lookup, not a failure: the actor is simply not a member and is denied as a
+non-approver.
+
+**The binding is read fresh at resolve time**, from `agents.approval_routes` via the
+approval's `agent_id` and `route`; nothing is snapshotted onto the record at creation. That
+is the correct TOCTOU direction for authorization: revocation takes effect at the decision
+point, and a user removed from the approver group yesterday cannot resolve a stale pending
+approval today. The accepted consequence: deleting or renaming a binding that carried
+`approvers` while an approval pends WIDENS authority from the declared group or list to
+card-channel membership, because the resolver cannot distinguish "never bound" from "was
+bound, now unbound" without the rejected snapshot. It is accepted because mutating
+`approval_routes` requires the agent PATCH endpoint (the same platform key that can already
+resolve any approval directly, so no new escalation path), because fail-closing unbound
+routes would reject approvals that resolve fine today, and because the audit row records
+the widened basis actually used. An approval with a NULL `agent_id`, or one naming a route
+absent from the map, likewise has no binding to read and keeps channel membership.
+
+### The three ports
+
+**`ApproverSet`** (`approvers.py`) is the black line #420 draws: `async contains(actor,
+actor_channel) -> MembershipVerdict`, plus an `audit_name` for the audit row. It is async
+because a set may own a lookup; `ExplicitUsers` simply never awaits. `MembershipVerdict`
+carries a third state beyond member/not-member: `undetermined`, meaning the set could not
+find out. The authorizer fails closed on it, and it is deliberately never collapsed into
+`member=False` — "you are not in the set" and "we could not check" deny for different
+reasons, and telling a clicker the first when the second is true sends them arguing with
+policy over an outage.
+
+The two Slack sets are asymmetrical and the port does not hide it. `contains` takes
+`actor_channel` precisely because channel membership proves membership from the click itself
+and performs no lookup, while the user group has no such free evidence and must ask.
+
+A fourth set, **`InvalidApprovers`** (`approvers.py`), covers a declared block the platform
+cannot read: it admits nobody and reports `undetermined`. Modelling that as a set rather
+than a special path is what lets the authorizer have exactly one code path and never learn
+that config errors exist.
+
+**`ApproverSetSelector`** (`approvers.py`) picks the set a binding calls for:
+`(approval, binding) -> ApproverSet`. It performs no I/O and never raises. Its
+implementation, `SlackApproverSetSelector` (`slack_approvers.py`), lives on the Slack side
+deliberately — reading a binding means parsing the Slack-shaped `approvers` schema, so
+selection is provider-aware by nature. That placement is what keeps `authorizer.py` free of
+Slack entirely.
+
+**`GroupMembershipSource`** (`usergroups.py`) is the narrowest port, behind
+`SlackUserGroupMembers`: `async members(group_id) -> UserGroupMembership`, raising
+`UserGroupLookupError` for every mode that yields no member set. Its one implementation is
+`SlackUserGroupClient` (`slack_usergroups.py`), which reads `usergroups.users.list` with the
+API's own bot token (`SLACK_BOT_TOKEN`, `usergroups:read` scope) and caches member sets in
+process for `slack_usergroup_cache_ttl_s` (env `SLACK_USERGROUP_CACHE_TTL_S`, default 60s;
+`0` forces a per-resolve fetch).
+
+**`main.py` is the composition root**: the only module that names Slack to build the
+selector, so the authorizer and the resolve endpoint depend on ports rather than a provider.
+
+This narrows the coupling; it does not make the path provider-neutral. **The binding schema
+is still Slack-shaped**: `schemas.py` validates usergroup IDs as `S...` and channel IDs as
+`C...`, so a non-Slack provider would need a schema change plus an adapter and a selector.
+What the ports buy is dependency direction — #420 is the first outbound Slack call
+`apps/api` makes, and the authorization decision must not be what holds that client — plus
+the structural self-approval invariant. There is no second provider today.
+
+**Audit records the authority, not just the actor.** Each attempt's audit row carries a
+structured `evidence` object naming the basis of the decision: the channel pair for channel
+membership; the group ID, the actor's membership verdict, the member count, and the fetch
+time for a user group; the list and the actor's presence in it for a user list; the failure
+class for a lookup failure. The full member list is deliberately not stored.
 
 ## Known leakage
 
@@ -110,8 +234,19 @@ the authorization decision (who may resolve a pending approval) stays on the ser
 owns the durable `Approval` record. Policy gate points ship versioned in the bundle; route
 bindings (which channel, who may approve) are per-agent deployment config (#247).
 
+One limit the audit trail must not be read as overstating (#420, ADR-0034): the evidence
+proves that the ASSERTED identity satisfied policy at click time; it does not prove who
+clicked. Identity is dispatcher-verified on the Slack path — the dispatcher populates the
+actor from Slack's authenticated interaction payload
+(`apps/dispatcher/src/agentos_dispatcher/approval_actions.py:146`) — and caller-asserted on
+the platform-API-key path, the named ADR-0033 residual tracked as a follow-up. Richer
+evidence makes a forged resolution look MORE legitimate in the trail than today's thinner
+rows do, which is exactly why this limit is written down rather than left implicit. The
+membership authorizers narrow *who counts as an approver*; they do not change *how the
+actor is established*.
+
 ## Cross-links
 
 - **Epic(s):** [#22](https://github.com/curie-eng/agentos/issues/22) — approval gates and human-in-the-loop; adds the durable record, `awaiting-approval` status, `canUseTool` gate, and the authorizer interface.
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — not one of the six graded jobs; a cross-cutting core lifecycle change, not separately graded.
-- **ADR(s):** [ADR-0010](../../adr/0010-approval-gates-and-human-in-the-loop.md) — Approval gates and human-in-the-loop (Proposed); grounds this intended line. Composes with [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) (stateless-first suspend/resume, the pause mechanism).
+- **ADR(s):** [ADR-0010](../../adr/0010-approval-gates-and-human-in-the-loop.md) — Approval gates and human-in-the-loop (Proposed); grounds this intended line, including the authorizer sequence (channel membership first, then user-group, explicit user-list, platform-RBAC). [ADR-0034](../../adr/0034-approval-authorizers-resolve-membership-in-the-api.md) — Approval authorizers resolve membership in the API (Accepted); adds the user-group and user-list sets, the API-resident membership lookup, the scoped fail-closed rule, and fresh-read binding resolution. Supersedes ADR-0010's framing of those four as `Authorizer` implementations: they are approver SETS behind one authorizer, and platform-RBAC becomes the fourth set. Composes with [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) (stateless-first suspend/resume, the pause mechanism).
