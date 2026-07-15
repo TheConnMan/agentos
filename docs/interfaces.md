@@ -15,6 +15,7 @@ is documentation of where the code already draws the line, not a new abstraction
 | Harness in-proc / ModelSession | CLEAN | 1 + fake | A- | (folds into #25) | [interfaces/harness-modelsession/INTERFACE.md](interfaces/harness-modelsession/INTERFACE.md) |
 | ACI producer (frozen protocol) | CLEAN, frozen | 1 + reference | A- | #25, #47 | [interfaces/aci-producer/INTERFACE.md](interfaces/aci-producer/INTERFACE.md) |
 | Channel / ingress (Slack) | SOFT | 1 | C | #7, #19, #27, #38 | [interfaces/channel-ingress/INTERFACE.md](interfaces/channel-ingress/INTERFACE.md) |
+| Channel interaction message | CLEAN | 2 renderers (Slack, terminal) | not separately graded | ADR-0020 | [interfaces/channel-interaction/INTERFACE.md](interfaces/channel-interaction/INTERFACE.md) |
 | Model provider / credentials | SOFT | 1 (Anthropic) | not separately graded | #24, #46 | [interfaces/model-provider/INTERFACE.md](interfaces/model-provider/INTERFACE.md) |
 | Telemetry / OTEL | SOFT | 1 | B+ | #47 | [interfaces/telemetry-otel/INTERFACE.md](interfaces/telemetry-otel/INTERFACE.md) |
 | Evals (case + scorer) | SOFT | 1 grader family | B | #8, #26 | [interfaces/evals/INTERFACE.md](interfaces/evals/INTERFACE.md) |

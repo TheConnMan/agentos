@@ -28,6 +28,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::channel::{parse_terminal_message, TerminalAction, REPLY_FENCE};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SecretNameChoice {
     Name(String),
@@ -78,7 +80,6 @@ struct ExampleChoice {
     description: &'static str,
     directory: &'static str,
     secrets: &'static [&'static str],
-    suggestions: &'static [&'static str],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -623,6 +624,7 @@ fn explore_examples(
     if !example_dir.join(".claude-plugin/plugin.json").is_file() {
         anyhow::bail!("missing example bundle at {}", example_dir.display());
     }
+    let starter_prompts = starter_prompts(&example_dir)?;
 
     let container_name = format!("agentos-example-{}", example.id);
     let port = "7247";
@@ -646,13 +648,7 @@ fn explore_examples(
         }
         run_agentos_in_tui_with_env(terminal, app, &argv, &repo_root, &mut setup, &secret_env)?;
         started = true;
-        chat_with_runner(
-            terminal,
-            &repo_root,
-            &url,
-            example.name,
-            example.suggestions,
-        )
+        chat_with_runner(terminal, &repo_root, &url, example.name, &starter_prompts)
     })();
 
     if started {
@@ -687,11 +683,6 @@ fn example_choices() -> Vec<ExampleChoice> {
                 "Explore live repositories and issues through authenticated GitHub MCP tools",
             directory: "examples/github-issues",
             secrets: &["GITHUB_PERSONAL_ACCESS_TOKEN"],
-            suggestions: &[
-                "List the open issues in curie-eng/agentos and group them by label.",
-                "Summarize the most recently updated pull requests in curie-eng/agentos.",
-                "Find open bug reports in curie-eng/agentos that need triage.",
-            ],
         },
         ExampleChoice {
             id: "text-stats-engine",
@@ -699,11 +690,6 @@ fn example_choices() -> Vec<ExampleChoice> {
             description: "Use an in-bundle MCP server to inspect and analyze text",
             directory: "examples/text-stats-engine",
             secrets: &[],
-            suggestions: &[
-                "Explain what text analysis tools you have.",
-                "Count the words and sentences in: AgentOS makes agents portable.",
-                "Analyze the readability of: Clear tools make complex work easier.",
-            ],
         },
         ExampleChoice {
             id: "weather",
@@ -711,13 +697,27 @@ fn example_choices() -> Vec<ExampleChoice> {
             description: "Chat with the minimal weather agent bundle",
             directory: "examples/weather",
             secrets: &[],
-            suggestions: &[
-                "What can this weather agent help me with?",
-                "Give me a concise weather briefing for San Francisco.",
-                "How should I ask you to compare weather between two cities?",
-            ],
         },
     ]
+}
+
+fn starter_prompts(example_dir: &Path) -> Result<Vec<String>> {
+    let path = example_dir.join(".claude-plugin/plugin.json");
+    let value: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .with_context(|| format!("reading example manifest {}", path.display()))?,
+    )
+    .with_context(|| format!("parsing example manifest {}", path.display()))?;
+    Ok(value
+        .get("starterPrompts")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .filter(|prompt| !prompt.trim().is_empty())
+        .take(10)
+        .collect())
 }
 
 fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {
@@ -992,12 +992,14 @@ struct ChatView {
     scroll: u16,
     follow: bool,
     thinking: bool,
-    suggestions: Vec<String>,
-    suggestion_idx: usize,
+    actions: Vec<TerminalAction>,
+    action_idx: usize,
+    action_prompt: String,
+    allow_free_text: bool,
 }
 
 impl ChatView {
-    fn new(agent_name: &str, suggestions: &[&str]) -> Self {
+    fn new(agent_name: &str, suggestions: &[String]) -> Self {
         Self {
             agent_name: agent_name.to_string(),
             lines: vec![
@@ -1009,11 +1011,16 @@ impl ChatView {
             scroll: 0,
             follow: true,
             thinking: false,
-            suggestions: suggestions
+            actions: suggestions
                 .iter()
-                .map(|value| (*value).to_string())
+                .map(|value| TerminalAction {
+                    label: value.clone(),
+                    value: value.clone(),
+                })
                 .collect(),
-            suggestion_idx: 0,
+            action_idx: 0,
+            action_prompt: "Try a prompt".to_string(),
+            allow_free_text: true,
         }
     }
 
@@ -1038,7 +1045,7 @@ fn chat_with_runner(
     cwd: &Path,
     url: &str,
     agent_name: &str,
-    suggestions: &[&str],
+    suggestions: &[String],
 ) -> Result<()> {
     let mut chat = ChatView::new(agent_name, suggestions);
     loop {
@@ -1051,6 +1058,10 @@ fn chat_with_runner(
         chat.lines.push("Agent".to_string());
         chat.thinking = true;
         chat.follow = true;
+        chat.actions.clear();
+        chat.action_idx = 0;
+        chat.action_prompt = "Responses".to_string();
+        chat.allow_free_text = true;
         let argv = [
             "skill".to_string(),
             "message".to_string(),
@@ -1079,14 +1090,14 @@ fn read_chat_input(
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
             (KeyCode::Enter, _) => {
-                if !chat.input.trim().is_empty() {
+                if chat.allow_free_text && !chat.input.trim().is_empty() {
                     return Ok(Some(chat.input.trim().to_string()));
                 }
-                if let Some(suggestion) = chat.suggestions.get(chat.suggestion_idx) {
-                    return Ok(Some(suggestion.clone()));
+                if let Some(action) = chat.actions.get(chat.action_idx) {
+                    return Ok(Some(action.value.clone()));
                 }
             }
-            (KeyCode::Backspace, _) => {
+            (KeyCode::Backspace, _) if chat.allow_free_text => {
                 chat.input.pop();
             }
             (KeyCode::PageUp, _) => {
@@ -1101,17 +1112,19 @@ fn read_chat_input(
                     .min(chat.max_scroll(size.width, size.height));
             }
             (KeyCode::End, _) => chat.follow = true,
-            (KeyCode::Down | KeyCode::Tab, _) if !chat.suggestions.is_empty() => {
-                chat.suggestion_idx = (chat.suggestion_idx + 1) % chat.suggestions.len();
+            (KeyCode::Down | KeyCode::Tab, _) if !chat.actions.is_empty() => {
+                chat.action_idx = (chat.action_idx + 1) % chat.actions.len();
             }
-            (KeyCode::Up | KeyCode::BackTab, _) if !chat.suggestions.is_empty() => {
-                chat.suggestion_idx = if chat.suggestion_idx == 0 {
-                    chat.suggestions.len() - 1
+            (KeyCode::Up | KeyCode::BackTab, _) if !chat.actions.is_empty() => {
+                chat.action_idx = if chat.action_idx == 0 {
+                    chat.actions.len() - 1
                 } else {
-                    chat.suggestion_idx - 1
+                    chat.action_idx - 1
                 };
             }
-            (KeyCode::Char(ch), _) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char(ch), _)
+                if chat.allow_free_text && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 chat.input.push(ch);
             }
             _ => {}
@@ -1138,12 +1151,11 @@ fn run_chat_turn(
     let stderr = child.stderr.take().context("capturing agent diagnostics")?;
     let readers = [stdout_reader(stdout, tx.clone()), stderr_reader(stderr, tx)];
     let mut canceled = false;
+    let mut envelope = Vec::new();
 
     loop {
         while let Ok(line) = rx.try_recv() {
-            if !is_internal_chat_status(&line) {
-                chat.lines.push(line);
-            }
+            consume_chat_line(chat, &mut envelope, line);
         }
         let size = terminal.size()?;
         chat.follow_tail(size.width, size.height);
@@ -1176,9 +1188,7 @@ fn run_chat_turn(
                 let _ = reader.join();
             }
             while let Ok(line) = rx.try_recv() {
-                if !is_internal_chat_status(&line) {
-                    chat.lines.push(line);
-                }
+                consume_chat_line(chat, &mut envelope, line);
             }
             if canceled {
                 chat.lines.push("Response canceled.".to_string());
@@ -1190,6 +1200,45 @@ fn run_chat_turn(
             return Ok(());
         }
     }
+}
+
+fn consume_chat_line(chat: &mut ChatView, envelope: &mut Vec<String>, line: String) {
+    if !envelope.is_empty() {
+        envelope.push(line);
+        if reply_envelope_complete(&envelope.join("\n")) {
+            let raw = envelope.join("\n");
+            if let Some(message) = parse_terminal_message(&raw) {
+                chat.lines.extend(message.lines);
+                chat.actions = message.actions;
+                chat.action_idx = 0;
+                chat.action_prompt = message
+                    .action_prompt
+                    .unwrap_or_else(|| "Choose a response".to_string());
+                chat.allow_free_text = message.allow_free_text;
+            } else if let Some((fallback, _)) = raw.split_once(REPLY_FENCE) {
+                chat.lines.extend(
+                    fallback
+                        .trim()
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            envelope.clear();
+        }
+        return;
+    }
+    if line.contains(REPLY_FENCE) {
+        envelope.push(line);
+    } else if !is_internal_chat_status(&line) {
+        chat.lines.push(line);
+    }
+}
+
+fn reply_envelope_complete(text: &str) -> bool {
+    text.find(REPLY_FENCE)
+        .and_then(|start| text.get(start + REPLY_FENCE.len()..))
+        .is_some_and(|rest| rest.contains("```"))
 }
 
 fn is_internal_chat_status(line: &str) -> bool {
@@ -1737,27 +1786,27 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
         chunks[1],
     );
 
-    let suggestions = chat
-        .suggestions
+    let actions = chat
+        .actions
         .iter()
         .enumerate()
-        .map(|(idx, suggestion)| {
-            let prefix = if idx == chat.suggestion_idx {
-                "> "
-            } else {
-                "  "
-            };
-            ListItem::new(format!("{prefix}{}. {suggestion}", idx + 1))
+        .map(|(idx, action)| {
+            let prefix = if idx == chat.action_idx { "> " } else { "  " };
+            ListItem::new(format!("{prefix}{}. {}", idx + 1, action.label))
         })
         .collect::<Vec<_>>();
-    let mut suggestion_state = ListState::default();
-    suggestion_state.select(Some(chat.suggestion_idx));
+    let mut action_state = ListState::default();
+    action_state.select((!chat.actions.is_empty()).then_some(chat.action_idx));
     frame.render_stateful_widget(
-        List::new(suggestions)
-            .block(Block::default().title("Try a prompt").borders(Borders::ALL))
+        List::new(actions)
+            .block(
+                Block::default()
+                    .title(chat.action_prompt.as_str())
+                    .borders(Borders::ALL),
+            )
             .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)),
         chunks[2],
-        &mut suggestion_state,
+        &mut action_state,
     );
 
     let input_width = chunks[3].width.saturating_sub(4).max(1) as usize;
@@ -1772,6 +1821,8 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
             Block::default()
                 .title(if chat.thinking {
                     "Waiting for agent"
+                } else if !chat.allow_free_text {
+                    "Select a response"
                 } else {
                     "Message"
                 })
@@ -1779,7 +1830,7 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
         ),
         chunks[3],
     );
-    if !chat.thinking {
+    if !chat.thinking && chat.allow_free_text {
         frame.set_cursor_position((
             chunks[3].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
             chunks[3].y + 1,
@@ -1788,7 +1839,7 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
     let help = if chat.thinking {
         "Ctrl-C cancel response    PgUp/PgDn scroll    End latest"
     } else {
-        "Up/Down choose prompt    Enter send    Type for free response    Esc leave"
+        "Up/Down choose response    Enter send    Type when allowed    Esc leave"
     };
     frame.render_widget(
         Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
@@ -2256,7 +2307,6 @@ mod tests {
         assert_eq!(examples.len(), 3);
         assert!(examples.iter().all(|example| {
             !example.id.is_empty()
-                && !example.suggestions.is_empty()
                 && example
                     .id
                     .chars()
@@ -2269,6 +2319,41 @@ mod tests {
         assert!(is_internal_chat_status("-- final (done)"));
         assert!(is_internal_chat_status("  -- final (failed)"));
         assert!(!is_internal_chat_status("The final answer is done."));
+    }
+
+    #[test]
+    fn chat_consumes_semantic_choices_without_printing_the_envelope() {
+        let mut chat = ChatView::new("demo", &[]);
+        let mut envelope = Vec::new();
+        consume_chat_line(&mut chat, &mut envelope, "```agentos-reply".to_string());
+        consume_chat_line(
+            &mut chat,
+            &mut envelope,
+            "{\"version\":\"1.0\",\"text\":\"Pick one\",\"interaction\":{\"kind\":\"choice\",\"id\":\"pick\",\"options\":[{\"label\":\"First\",\"value\":\"first-value\"}]}}".to_string(),
+        );
+        consume_chat_line(&mut chat, &mut envelope, "```".to_string());
+
+        assert!(envelope.is_empty());
+        assert!(chat.lines.iter().any(|line| line == "Pick one"));
+        assert!(!chat.lines.iter().any(|line| line.contains("agentos-reply")));
+        assert_eq!(chat.actions[0].label, "First");
+        assert_eq!(chat.actions[0].value, "first-value");
+        assert!(chat.allow_free_text);
+    }
+
+    #[test]
+    fn malformed_envelope_keeps_only_ordinary_text_fallback() {
+        let mut chat = ChatView::new("demo", &[]);
+        let mut envelope = Vec::new();
+        consume_chat_line(
+            &mut chat,
+            &mut envelope,
+            "Still useful\n```agentos-reply".to_string(),
+        );
+        consume_chat_line(&mut chat, &mut envelope, "{broken".to_string());
+        consume_chat_line(&mut chat, &mut envelope, "```".to_string());
+        assert!(chat.lines.iter().any(|line| line == "Still useful"));
+        assert!(!chat.lines.iter().any(|line| line.contains("{broken")));
     }
 
     #[test]

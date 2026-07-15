@@ -59,6 +59,9 @@ class PluginManifest(BaseModel):
     # via the ``AGENTOS_SYSTEM_PROMPT`` env var. Inline prompt text; applied at
     # runner boot, with the env var taking precedence for backward compatibility.
     systemPrompt: str | None = None
+    # Initial terminal/chat affordances. These are bundle-authored conversation
+    # starters, not response actions; adapters discard them after the first turn.
+    starterPrompts: list[str] | None = None
     # AgentOS authoring extensions (epic #30 / #29), validated at deploy time by
     # ``validate.py``. Kept loosely typed on the manifest (the models stay
     # lenient); the dedicated ``TriggerDeclaration`` / ``ApprovalPolicy`` models

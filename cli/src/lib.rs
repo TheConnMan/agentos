@@ -7,6 +7,7 @@
 pub mod api;
 pub mod artifacts;
 pub mod bundle;
+pub mod channel;
 pub mod chat;
 pub mod commands;
 pub mod comms;

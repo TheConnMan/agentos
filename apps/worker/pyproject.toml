@@ -8,6 +8,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "kubernetes>=31.0",
     "aci-protocol",
+    "agentos-channel-protocol",
     "plugin-format",
     "agentos-dispatcher",
     "aiohttp>=3.11",

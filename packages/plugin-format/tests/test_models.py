@@ -49,6 +49,14 @@ def test_manifest_system_prompt_field() -> None:
     assert manifest.model_dump(exclude_none=True)["systemPrompt"].startswith("Be terse")
 
 
+def test_manifest_starter_prompts_round_trip() -> None:
+    manifest = PluginManifest.model_validate(
+        {"name": "demo", "starterPrompts": ["Show open issues", "Summarize activity"]}
+    )
+    assert manifest.starterPrompts == ["Show open issues", "Summarize activity"]
+    assert PluginManifest.model_validate({"name": "demo"}).starterPrompts is None
+
+
 def test_manifest_trigger_and_approval_policy_fields() -> None:
     """The AgentOS trigger + approval-policy authoring extensions parse (#273)."""
     manifest = PluginManifest.model_validate(
