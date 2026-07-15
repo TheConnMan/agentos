@@ -116,6 +116,12 @@ spec:
               value: {{ .Values.api.resumeReconciler.graceSeconds | quote }}
             - name: RESUME_RECONCILER_BATCH_LIMIT
               value: {{ .Values.api.resumeReconciler.batchLimit | quote }}
+            # Expiry sweeper cadence (#412). Rendered unconditionally, not behind
+            # an optional-value guard, because the disable value 0 is falsy in Go
+            # templates and would be silently dropped, leaving the app default
+            # instead of disabling. <= 0 disables the sweeper.
+            - name: APPROVAL_SWEEP_INTERVAL_S
+              value: {{ .Values.api.approvalSweepIntervalSeconds | quote }}
           ports:
             - name: http
               containerPort: 8000

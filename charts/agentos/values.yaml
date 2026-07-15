@@ -417,6 +417,10 @@ api:
   orgName: AgentOS
   # HMAC secret the GitHub git-flow webhook authenticates inbound events with.
   githubWebhookSecret: dev-webhook-secret
+  # How often (seconds) the API scans for lapsed pending approvals and resumes
+  # their stranded sessions (#412). Set to 0 (or any value <= 0) to disable the
+  # expiry sweeper entirely. Default matches the app's built-in 30s cadence.
+  approvalSweepIntervalSeconds: 30
   service:
     type: ClusterIP
     port: 8000

@@ -400,6 +400,31 @@ async def claim_approval_resolution(
     return approval
 
 
+async def list_expired_pending_approvals(
+    session: AsyncSession, *, now: datetime, limit: int = 100
+) -> list[Approval]:
+    """The pending approvals whose SLA has lapsed (#412), oldest-lapse-first.
+
+    ``now`` is naive UTC, matching the DateTime columns and the router's
+    ``_expired`` comparison. Ordering by ``expires_at`` drains the oldest
+    lapses first, so a backlog larger than ``limit`` clears across successive
+    sweep passes rather than starving the earliest-expired records. Records
+    with a NULL ``expires_at`` (no SLA) are never selected.
+    """
+
+    result = await session.scalars(
+        select(Approval)
+        .where(
+            Approval.status == ApprovalStatus.pending,
+            Approval.expires_at.is_not(None),
+            Approval.expires_at <= now,
+        )
+        .order_by(Approval.expires_at)
+        .limit(limit)
+    )
+    return list(result)
+
+
 async def expire_approval(
     session: AsyncSession, approval_id: uuid.UUID
 ) -> Approval | None:
