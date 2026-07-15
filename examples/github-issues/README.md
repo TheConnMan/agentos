@@ -98,3 +98,28 @@ forwarded variable in its `headers` (`"Authorization": "Bearer ${TOKEN}"`).
 If you swap in a write-capable server, make its writes idempotent: a mid-turn
 crash can make the platform replay the last instruction (history append is
 at-least-once), so a non-idempotent write could run twice.
+
+## Gating a write behind approval
+
+To require human approval before this bundle's GitHub server performs a write
+(for example, creating an issue), arm the approval gate with the tool's
+fully-namespaced LIVE name, not the bare name. The permission gate matches by
+exact string equality, so a bare or guessed name silently fails to gate: the
+tool call runs uninterrupted, with no approval prompt.
+
+For this bundle, bundle `github-issues` (from `.claude-plugin/plugin.json`) and
+server `github` (from `.mcp.json`) give:
+
+```
+Correct: mcp__plugin_github-issues_github__create_issue
+Wrong:   mcp__github__create_issue
+```
+
+The wrong (bare) form does NOT match and does NOT gate the call.
+
+Confirm the exact live name before arming the gate: `agentos skill check`
+prints a `match: github -> plugin:github-issues:github` line, which rewrites to
+the correct prefix above; or read the name directly from a tool-call trace.
+
+See [../../docs/interfaces/approval/INTERFACE.md](../../docs/interfaces/approval/INTERFACE.md)
+for the general rule.

@@ -78,6 +78,27 @@ in code now:
   `GET /approvals/{id}/audit`): actor, channel evidence, decision, and the authorizer
   snapshot -- who resolved, and why they counted (or were refused).
 
+### Arming a gate: use the fully-namespaced tool name
+
+The permission gate (`agents.approval_required_tools`, the runner's `can_use_tool`
+callback) matches a configured tool name by exact string equality -- no
+normalization, no prefix matching. The name you arm must be the tool's LIVE,
+fully-namespaced name, not the bare tool name.
+
+For a bundle-declared MCP tool that live name is
+`mcp__plugin_<bundle>_<server>__<tool>`, where `<bundle>` is the
+`.claude-plugin/plugin.json` `name` and `<server>` is the `.mcp.json` server key,
+for example `mcp__plugin_github-issues_github__create_issue`. The bare form
+`mcp__<server>__<tool>` (e.g. `mcp__github__create_issue`) does NOT match: a gate
+armed with it silently never intercepts the call, and a destructive tool runs
+with no approval whatsoever.
+
+Confirm the exact live name before arming a gate rather than guessing it.
+`agentos skill check` prints a `match: <server> -> plugin:<bundle>:<server>`
+line; rewrite that `plugin:<bundle>:<server>` value into the
+`mcp__plugin_<bundle>_<server>__<tool>` prefix and append the tool name. A
+tool-call trace also shows the exact live name directly.
+
 ## Implementations today
 
 **One authorizer** (`apps/api/src/agentos_api/authorizer.py`, pure policy with no Slack in
