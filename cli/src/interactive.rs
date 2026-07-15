@@ -258,11 +258,17 @@ fn prompt_recipe_fields(
     recipe: &Recipe,
 ) -> Result<Option<BTreeMap<String, String>>> {
     let mut values = BTreeMap::new();
-    for field in &recipe.fields {
+    for (idx, field) in recipe.fields.iter().enumerate() {
+        let title = format!(
+            "{} · Step {} of {}",
+            recipe.title,
+            idx + 1,
+            recipe.fields.len()
+        );
         let Some(value) = prompt_text(
             terminal,
             app,
-            recipe.title,
+            &title,
             field.label,
             field.default,
             false,
@@ -537,7 +543,7 @@ fn prompt_text(
     loop {
         terminal.draw(|frame| {
             draw(frame, app);
-            draw_prompt(frame, title, label, default, &value, secret);
+            draw_prompt(frame, title, label, default, &value, secret, allow_empty);
         })?;
         let Event::Key(key) = event::read()? else {
             continue;
@@ -1398,27 +1404,34 @@ fn draw_prompt(
     default: Option<&str>,
     value: &str,
     secret: bool,
+    allow_empty: bool,
 ) {
     let area = centered_rect(64, 9, frame.area());
     let input_width = area.width.saturating_sub(3) as usize;
     let shown_value = input_window(value, secret, input_width);
-    let prompt = match default {
-        Some(default) => format!("{label} [{default}]"),
-        None => label.to_string(),
+    let guidance = match default {
+        Some(default) => format!("Default: {default}"),
+        None if secret => "Input is hidden while typing".to_string(),
+        None if allow_empty => "Optional: press Enter to skip".to_string(),
+        None => "Type a value".to_string(),
+    };
+    let submit_help = if default.is_some() {
+        "Enter use default    Esc cancel"
+    } else if allow_empty {
+        "Enter accept or skip    Esc cancel"
+    } else {
+        "Enter accept    Esc cancel"
     };
     let body = Text::from(vec![
-        Line::from(prompt),
-        Line::from(""),
+        Line::from(Span::styled(label, Style::default().bold())),
+        Line::from(Span::styled(guidance, Style::default().fg(Color::Gray))),
         Line::from(if shown_value.is_empty() {
             Span::styled(" ", Style::default().fg(Color::Gray))
         } else {
             Span::raw(&shown_value)
         }),
         Line::from(""),
-        Line::from(Span::styled(
-            "Enter accept    Esc cancel",
-            Style::default().fg(Color::Gray),
-        )),
+        Line::from(Span::styled(submit_help, Style::default().fg(Color::Gray))),
     ]);
     frame.render_widget(Clear, area);
     frame.render_widget(
@@ -1593,7 +1606,7 @@ fn recipes() -> Vec<Recipe> {
             fields: vec![
                 Field {
                     key: "repo",
-                    label: "GitHub repo to inspect",
+                    label: "Repository to query (owner/repo)",
                     default: Some("curie-eng/agentos"),
                     required: true,
                 },
