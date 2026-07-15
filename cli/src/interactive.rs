@@ -691,7 +691,7 @@ fn ensure_secret_available(
     if std::env::var_os(name).is_some() {
         return Ok(());
     }
-    if crate::secrets::has_value(name) {
+    if crate::secrets::is_saved(name)? {
         return Ok(());
     }
     let Some(save) = prompt_select(
@@ -738,10 +738,11 @@ fn ensure_model_credential_available(
             return Ok(());
         }
     }
-    for name in NAMES {
-        if crate::secrets::has_value(name) {
-            return Ok(());
-        }
+    let saved_names = crate::secrets::list_names()?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if NAMES.iter().any(|name| saved_names.contains(*name)) {
+        return Ok(());
     }
 
     let choices = NAMES
@@ -777,23 +778,23 @@ fn ensure_model_credential_available(
     crate::secrets::save_value(&name, &value)
 }
 
-fn secret_status(name: &str) -> &'static str {
+fn secret_status(name: &str, saved_names: &BTreeSet<String>) -> &'static str {
     if std::env::var_os(name).is_some() {
         "env"
-    } else if crate::secrets::has_value(name) {
+    } else if saved_names.contains(name) {
         "saved"
     } else {
         "missing"
     }
 }
 
-fn model_credential_status() -> &'static str {
+fn model_credential_status(saved_names: &BTreeSet<String>) -> &'static str {
     for name in [
         "AGENTOS_CREDENTIALS",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ] {
-        if std::env::var_os(name).is_some() || crate::secrets::has_value(name) {
+        if std::env::var_os(name).is_some() || saved_names.contains(name) {
             return "available";
         }
     }
@@ -801,11 +802,22 @@ fn model_credential_status() -> &'static str {
 }
 
 fn secrets_status_lines() -> Vec<Line<'static>> {
+    let saved_names = match crate::secrets::list_names() {
+        Ok(names) => names.into_iter().collect::<BTreeSet<_>>(),
+        Err(err) => {
+            return vec![Line::from(format!(
+                "Unable to read saved credential names: {err:#}"
+            ))];
+        }
+    };
     vec![
-        Line::from(format!("Model credential: {}", model_credential_status())),
+        Line::from(format!(
+            "Model credential: {}",
+            model_credential_status(&saved_names)
+        )),
         Line::from(format!(
             "GITHUB_PERSONAL_ACCESS_TOKEN: {}",
-            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN")
+            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved_names)
         )),
     ]
 }
@@ -1902,6 +1914,20 @@ mod tests {
             wrap_output_lines(&lines, 4),
             vec!["abcd", "ef", "ab界", "cd", ""]
         );
+    }
+
+    #[test]
+    fn credential_status_uses_saved_names_without_secret_reads() {
+        let saved = BTreeSet::from([
+            "ANTHROPIC_API_KEY".to_string(),
+            "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+        ]);
+        assert_eq!(model_credential_status(&saved), "available");
+        assert_eq!(
+            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved),
+            "saved"
+        );
+        assert_eq!(secret_status("OPENAI_API_KEY", &saved), "missing");
     }
 
     #[test]

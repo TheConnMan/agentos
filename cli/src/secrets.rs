@@ -77,8 +77,11 @@ pub fn get_value(name: &str) -> Result<Option<String>> {
     }
 }
 
-pub fn has_value(name: &str) -> bool {
-    get_value(name).ok().flatten().is_some()
+/// Check the non-secret index without opening the platform credential store.
+/// UI status rendering must use this instead of `get_value`.
+pub fn is_saved(name: &str) -> Result<bool> {
+    validate_name(name)?;
+    Ok(read_index()?.names.contains(name))
 }
 
 pub fn set_value(name: &str, value: &str) -> Result<()> {

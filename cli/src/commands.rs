@@ -517,6 +517,9 @@ fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
     if std::env::var_os(name).is_some() {
         return Ok(None);
     }
+    if !crate::secrets::is_saved(name)? {
+        return Ok(None);
+    }
     if let Some(value) = crate::secrets::get_value(name)? {
         crate::ui::ui().note(&format!(
             "{name}: loaded from the OS credential store for this run"
