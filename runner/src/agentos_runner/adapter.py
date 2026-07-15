@@ -25,7 +25,7 @@ from claude_agent_sdk import (
     SdkPluginConfig,
     TaskBudget,
 )
-from claude_agent_sdk.types import McpSdkServerConfig
+from claude_agent_sdk.types import CanUseTool, McpSdkServerConfig, PermissionMode
 
 
 class ModelSession(Protocol):
@@ -64,6 +64,7 @@ def build_options(
     env: dict[str, str] | None = None,
     hooks: dict[str, list[HookMatcher]] | None = None,
     mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+    can_use_tool: CanUseTool | None = None,
 ) -> ClaudeAgentOptions:
     """Assemble ClaudeAgentOptions for the session.
 
@@ -80,6 +81,15 @@ def build_options(
     """
 
     task_budget = TaskBudget(total=task_budget_hint) if task_budget_hint else None
+    # The permission posture (#245, ADR-0010): with a can_use_tool callback the
+    # session runs in default permission mode and every tool call is decided by
+    # the callback (approval-required tools are denied and pause the run; all
+    # others are allowed, preserving the pre-gate behavior). Without one there
+    # is nothing to decide, so the historical bypassPermissions posture is kept
+    # verbatim -- an unconfigured agent sees zero behavior change.
+    permission_mode: PermissionMode = (
+        "default" if can_use_tool is not None else "bypassPermissions"
+    )
     return ClaudeAgentOptions(
         plugins=plugins,
         model=model,
@@ -88,7 +98,8 @@ def build_options(
         max_budget_usd=max_budget_usd,
         resume=resume,
         task_budget=task_budget,
-        permission_mode="bypassPermissions",
+        permission_mode=permission_mode,
+        can_use_tool=can_use_tool,
         env=env or {},
         # In-bundle PreToolUse guardrails from the manifest hooks field (#272).
         # Empty/None means no bundle hooks; the SDK default applies. The event

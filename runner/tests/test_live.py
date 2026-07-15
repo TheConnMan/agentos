@@ -168,3 +168,65 @@ def test_live_openrouter_cache_reuse() -> None:
     assert int((usage or {}).get("cache_read_input_tokens") or 0) > 0, (
         "no prompt-cache reuse on turn 2 through the OpenRouter path"
     )
+
+
+@pytest.mark.skipif(
+    not _HAS_CRED,
+    reason="no live credential (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY) in env",
+)
+def test_live_permission_gate_pauses_awaiting_approval() -> None:
+    """The #245 acceptance criterion on a real model: a tool configured as
+    approval-required is intercepted by can_use_tool (never executed) and the
+    turn ends awaiting-approval with the blocked call in the summary."""
+
+    from agentos_runner.approval import ApprovalGate, build_can_use_tool
+
+    gate = ApprovalGate(required=frozenset({"Bash"}))
+    options = build_options(
+        plugins=[],
+        model=None,
+        system_prompt=(
+            "You are a terse test agent. When asked to run a command, use the"
+            " Bash tool."
+        ),
+        max_turns=4,
+        max_budget_usd=1.0,
+        resume=None,
+        can_use_tool=build_can_use_tool(gate),
+    )
+    runner = SessionRunner(
+        session_factory=lambda: ClaudeAgentSession(options),
+        ceiling=0,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="live-permission-gate",
+        session_id="live-gate",
+        approval_gate=gate,
+    )
+
+    async def go() -> list[str]:
+        await runner.start()
+        lines = [
+            line
+            async for line in runner.run_turn(
+                Event(
+                    type="message",
+                    text="Run the shell command `echo agentos-gate-live` and report its output.",
+                    user="U-live",
+                    ts="1.0",
+                )
+            )
+        ]
+        await runner.close()
+        return lines
+
+    lines = anyio.run(go)
+    events = [parse_ndjson(line) for line in lines]
+    final = events[-1]
+    assert final.type == "final"
+    assert final.status is SessionStatus.AWAITING_APPROVAL
+    assert final.approval_summary is not None
+    assert final.approval_summary.startswith("Tool call awaiting approval: Bash")
+    # The blocked command never executed and never produced output text
+    # claiming it ran; the summary records what WOULD have run.
+    assert "echo agentos-gate-live" in final.approval_summary

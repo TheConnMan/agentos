@@ -37,11 +37,17 @@ The durable base of the seam landed with #244; the authorizer port itself is sti
   resolution enqueues a resume turn onto the ordinary runs stream
   (`apps/api/src/agentos_api/resumequeue.py`), and the kernel's claim path rehydrates the
   thread with its bound boot env (`substrate.resume(env=...)`).
-- **The hardcoded posture the permission gate will replace (still ahead, #245).** The runner
-  still builds session options with `permission_mode="bypassPermissions"`
-  (`runner/src/agentos_runner/adapter.py`) and has no tool-permission callback. The
-  `canUseTool` permission gate (config marks a tool approval-required; the runner intercepts
-  the call) is #245 and composes with the landed record + lifecycle.
+- **The permission gate (landed, #245).** Per-agent config
+  (`agents.approval_required_tools`, forwarded as `AGENTOS_APPROVAL_REQUIRED_TOOLS` by the
+  worker binding) marks tools approval-required; the runner intercepts those calls
+  proactively through an SDK `can_use_tool` callback (`build_can_use_tool`,
+  `runner/src/agentos_runner/approval.py`) -- the call is denied before execution, and the
+  turn ends `awaiting-approval` on the same override the policy gate uses, so both trigger
+  types share one record/suspend/resume lifecycle. An agent with no configured gates keeps
+  the historical `bypassPermissions` posture verbatim (zero behavior change). Not yet built:
+  a grant mechanism for the resumed turn (an approved tool call is still gated on retry
+  after resume; a one-shot allowance delivered at boot composes with #247's policy
+  evaluation).
 
 ## Implementations today
 

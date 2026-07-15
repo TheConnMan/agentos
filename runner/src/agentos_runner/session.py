@@ -37,6 +37,7 @@ from aci_protocol import (
 from claude_agent_sdk import AssistantMessage, ResultMessage
 
 from .adapter import ModelSession
+from .approval import ApprovalGate
 from .budget import BUDGET_CLASSIFICATION, BudgetTracker
 from .history import NullTranscriptStore, TranscriptStore, TurnRecord
 from .memory import (
@@ -115,6 +116,7 @@ class SessionRunner:
         model: str | None = None,
         memory_store: MemoryStore | None = None,
         history_store: TranscriptStore | None = None,
+        approval_gate: ApprovalGate | None = None,
     ) -> None:
         self._factory = session_factory
         self._ceiling = ceiling
@@ -132,6 +134,10 @@ class SessionRunner:
         # once per successful turn so a restarted sandbox rehydrates the thread.
         # NullTranscriptStore when no AGENTOS_HISTORY_REF.
         self._history: TranscriptStore = history_store or NullTranscriptStore()
+        # The permission gate (#245): the can_use_tool callback records a
+        # blocked approval-required call here, and the turn's final is flipped
+        # to awaiting-approval on the same override the policy gate uses.
+        self._approval_gate = approval_gate
 
         self._session: ModelSession | None = None
         self._turn_lock = anyio.Lock()
@@ -293,6 +299,10 @@ class SessionRunner:
             self._interrupt_requested = False
             self._turn_open = True
             state = TurnState()
+            # A permission-gate block belongs to exactly one turn: clear any
+            # prior turn's residue before the model runs (#245).
+            if self._approval_gate is not None:
+                self._approval_gate.reset()
             tracker = BudgetTracker(ceiling=self._ceiling)
 
             with self._tracer.run_span(
@@ -393,6 +403,7 @@ class SessionRunner:
                         for line in self._budget_halt_lines():
                             yield line
                         return
+                    self._merge_gate_block(state)
                     final = _apply_approval_override(self._reclassify(outbound), state)
                     self._status = final.status
                     self._turn_open = False
@@ -419,10 +430,28 @@ class SessionRunner:
             if self._interrupt_requested
             else SessionStatus.DONE
         )
+        self._merge_gate_block(state)
         final = _apply_approval_override(Final(text="", status=status), state)
         self._status = final.status
         self._turn_open = False
         yield to_ndjson_line(final)
+
+    def _merge_gate_block(self, state: TurnState) -> None:
+        """Fold a permission-gate block (#245) into the turn state.
+
+        The can_use_tool callback records a blocked call on the shared gate;
+        merging it here (only when no policy-gate summary was already raised)
+        lets ``_apply_approval_override`` treat both trigger types identically,
+        so the awaiting-approval final and the platform lifecycle behind it
+        are one shared path.
+        """
+
+        if (
+            self._approval_gate is not None
+            and self._approval_gate.pending_summary
+            and not state.approval_summary
+        ):
+            state.approval_summary = self._approval_gate.pending_summary
 
     def _budget_halt_lines(self) -> list[str]:
         """The error+final pair emitted whenever the output-token ceiling trips.

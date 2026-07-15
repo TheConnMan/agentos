@@ -16,7 +16,7 @@ import anyio
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
-from .approval import build_approval_server
+from .approval import ApprovalGate, build_approval_server, build_can_use_tool
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .history import (
@@ -85,6 +85,16 @@ def build_runner(
     # In-bundle PreToolUse guardrails declared in the manifest hooks field (#272),
     # translated into SDK HookMatcher callbacks. None when the bundle declares none.
     bundle_hooks = load_bundle_hooks(config.session.plugin_dir)
+    # The permission gate (#245): when the agent's config marks tools as
+    # approval-required, a can_use_tool callback replaces the hardcoded bypass
+    # and blocks those calls pending approval. The gate object is shared with
+    # the SessionRunner so a blocked call flips the turn's final to
+    # awaiting-approval. None (no configured tools) keeps the bypass posture.
+    approval_gate = (
+        ApprovalGate(required=frozenset(config.approval_required_tools))
+        if config.approval_required_tools
+        else None
+    )
 
     def factory() -> ModelSession:
         if fake_model:
@@ -108,6 +118,9 @@ def build_runner(
             # skill can raise a policy gate (ADR-0010) without the bundle
             # shipping its own MCP server for it.
             mcp_servers={"agentos": build_approval_server()},
+            can_use_tool=(
+                build_can_use_tool(approval_gate) if approval_gate is not None else None
+            ),
         )
         return ClaudeAgentSession(options)
 
@@ -126,6 +139,7 @@ def build_runner(
         model=config.model,
         memory_store=memory_store,
         history_store=history_store,
+        approval_gate=approval_gate,
     )
 
 

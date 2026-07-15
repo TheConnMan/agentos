@@ -41,6 +41,7 @@ async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
             if data.behavior_packs is not None
             else None
         ),
+        approval_required_tools=data.approval_required_tools,
     )
     session.add(agent)
     await session.commit()
@@ -96,6 +97,18 @@ async def update_agent_model(
     session: AsyncSession, agent: Agent, model: str | None
 ) -> Agent:
     agent.model = model
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
+async def update_agent_approval_tools(
+    session: AsyncSession, agent: Agent, tools: list[str]
+) -> Agent:
+    """Set the agent's permission gates (#245). An empty list clears them
+    (stored as NULL, the no-gates posture)."""
+
+    agent.approval_required_tools = tools or None
     await session.commit()
     await session.refresh(agent)
     return agent

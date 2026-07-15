@@ -120,6 +120,22 @@ class BehaviorPacksConfig(BaseModel):
     nav: NavPackConfig = NavPackConfig()
 
 
+def _validate_tool_names(value: list[str] | None) -> list[str] | None:
+    """Approval-required tool names (#245) must be non-empty, comma-free
+    strings: the worker forwards the list to the runner as a comma-separated
+    AGENTOS_APPROVAL_REQUIRED_TOOLS value, so a comma inside a name would
+    silently split into two wrong gates."""
+    if value is None:
+        return value
+    cleaned = [t.strip() for t in value]
+    if any(not t or "," in t for t in cleaned):
+        raise ValueError(
+            "approval_required_tools entries must be non-empty tool names "
+            "without commas (e.g. Bash, mcp__github__create_issue)"
+        )
+    return cleaned
+
+
 class AgentCreate(BaseModel):
     name: str
     slack_channel: str
@@ -128,24 +144,36 @@ class AgentCreate(BaseModel):
     # Per-agent model id, forwarded as AGENTOS_MODEL at boot (#254). None uses the
     # platform default model.
     model: str | None = None
+    # Per-agent permission gates (#245): tool names requiring human approval.
+    # None means no gates (the bypass posture).
+    approval_required_tools: list[str] | None = None
 
     _check_slack_channel = field_validator("slack_channel")(
         _validate_slack_channel_id
     )
+    _check_approval_tools = field_validator("approval_required_tools")(
+        _validate_tool_names
+    )
 
 
 class AgentUpdate(BaseModel):
-    """Partial update of mutable agent fields. slack_channel and model are
-    updatable (name and repo binding are identity); an omitted field is left
-    unchanged."""
+    """Partial update of mutable agent fields. slack_channel, model, and
+    approval_required_tools are updatable (name and repo binding are identity);
+    an omitted field is left unchanged."""
 
     slack_channel: str | None = None
     # New per-agent model id (#254). Omitted (None) leaves the current model
     # unchanged, matching the slack_channel convention.
     model: str | None = None
+    # New permission gates (#245). Omitted (None) leaves the current gates
+    # unchanged; an explicit empty list clears them.
+    approval_required_tools: list[str] | None = None
 
     _check_slack_channel = field_validator("slack_channel")(
         _validate_slack_channel_id
+    )
+    _check_approval_tools = field_validator("approval_required_tools")(
+        _validate_tool_names
     )
 
 
@@ -158,6 +186,7 @@ class AgentOut(BaseModel):
     repo_full_name: str | None
     behavior_packs: dict[str, Any] | None
     model: str | None
+    approval_required_tools: list[str] | None
     created_at: datetime
 
 

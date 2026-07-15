@@ -11,6 +11,7 @@ import uuid
 
 import pytest
 from agentos_worker.binding import (
+    APPROVAL_REQUIRED_ENV,
     BASE_URL_ENV,
     CREDENTIALS_ENV,
     FAKE_MODEL_ENV,
@@ -275,3 +276,20 @@ def test_binding_boot_env_omits_history_token_without_api_key() -> None:
 
     env = resolver.boot_env(_resolved(), "t-1")
     assert HISTORY_TOKEN_ENV not in env
+
+
+def test_binding_boot_env_carries_approval_required_tools() -> None:
+    # Permission gates (#245): the agent's approval-required tool names travel
+    # to the runner as a comma-joined env var; absent config injects nothing.
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+
+    gated = _resolved()
+    gated = gated.model_copy(
+        update={"approval_required_tools": ["Bash", "mcp__github__create_issue"]}
+    )
+    env = resolver.boot_env(gated, "thread-1")
+    assert env[APPROVAL_REQUIRED_ENV] == "Bash,mcp__github__create_issue"
+
+    env = resolver.boot_env(_resolved(), "thread-1")
+    assert APPROVAL_REQUIRED_ENV not in env

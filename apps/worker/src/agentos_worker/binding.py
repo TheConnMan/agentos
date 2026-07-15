@@ -71,6 +71,10 @@ MODEL_ENV = "AGENTOS_MODEL"
 # Per-claim bearer token the runner enforces on its ACI POST routes (issue #63).
 # Not a model credential, so apply_model_env never sees it; minted fresh per claim.
 RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+# Per-agent permission gates (#245, ADR-0010): comma-separated tool names whose
+# calls the runner intercepts via can_use_tool and pauses awaiting approval.
+# A runner-local knob (not frozen ACI env), like AGENTOS_IDEMPOTENT_TOOLS.
+APPROVAL_REQUIRED_ENV = "AGENTOS_APPROVAL_REQUIRED_TOOLS"
 
 _RESOLVE_SQL = """
 SELECT a.id AS agent_id,
@@ -78,6 +82,7 @@ SELECT a.id AS agent_id,
        a.max_output_tokens_per_run AS max_output_tokens_per_run,
        a.behavior_packs AS behavior_packs,
        a.model AS model,
+       a.approval_required_tools AS approval_required_tools,
        v.id AS version_id,
        v.version_label AS version_label,
        v.bundle_ref AS bundle_ref
@@ -104,6 +109,9 @@ class ResolvedDeployment(BaseModel):
     # The agent's pinned model id (#254), forwarded as AGENTOS_MODEL at boot.
     # None falls back to the worker's configured default model.
     model: str | None = None
+    # The agent's permission gates (#245): tool names requiring human approval,
+    # forwarded as AGENTOS_APPROVAL_REQUIRED_TOOLS at boot. None means no gates.
+    approval_required_tools: list[str] | None = None
 
 
 class BindingResolver:
@@ -140,11 +148,14 @@ class BindingResolver:
             )
         data = dict(rows[0])
         # asyncpg returns JSONB as a str for a raw-text SELECT (no column type to
-        # trigger SQLAlchemy's json deserializer); decode it to the dict the model
-        # expects. A dict (or None) passes through untouched.
+        # trigger SQLAlchemy's json deserializer); decode it to the dict/list the
+        # model expects. A dict/list (or None) passes through untouched.
         packs = data.get("behavior_packs")
         if isinstance(packs, str):
             data["behavior_packs"] = json.loads(packs)
+        gates = data.get("approval_required_tools")
+        if isinstance(gates, str):
+            data["approval_required_tools"] = json.loads(gates)
         return ResolvedDeployment.model_validate(data)
 
     async def repo_full_name(self, agent_id: uuid.UUID) -> str | None:
@@ -192,6 +203,11 @@ class BindingResolver:
         }
         if resolved.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = resolved.bundle_ref
+        # Deliver the agent's permission gates (#245): the runner intercepts
+        # these tool calls via can_use_tool and pauses awaiting approval.
+        # Names are comma-joined (validated comma-free at the API on write).
+        if resolved.approval_required_tools:
+            env[APPROVAL_REQUIRED_ENV] = ",".join(resolved.approval_required_tools)
         # Deliver the memory ref (#264): the agent's scoped namespace on the
         # durable state store (#23/#248). The runner dereferences it at boot to
         # load prior memory and to append learned records with provenance. The
