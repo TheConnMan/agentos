@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .approvers import ApproverSetSelector
 from .evalqueue import EvalQueue
 from .github_checks import GitHubStatusReporter
 from .k8s import PodLister, PodLogReader
@@ -61,6 +62,17 @@ def get_resume_queue(request: Request) -> ResumeQueue:
     return resume_queue
 
 
+def get_approver_sets(request: Request) -> ApproverSetSelector:
+    """Picks the approver set a route binding calls for (#420).
+
+    Always present: which provider's selector was wired is main's decision, and
+    a deployment with no bot token still selects sets, it just cannot resolve a
+    group's membership when one is asked for."""
+
+    selector: ApproverSetSelector = request.app.state.approver_sets
+    return selector
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LangfuseDep = Annotated[LangfuseClient, Depends(get_langfuse)]
 StoreDep = Annotated[ObjectStore, Depends(get_store)]
@@ -70,3 +82,4 @@ KillSwitchDep = Annotated[KillSwitch, Depends(get_kill_switch)]
 EvalQueueDep = Annotated[EvalQueue, Depends(get_eval_queue)]
 GitHubReporterDep = Annotated[GitHubStatusReporter, Depends(get_github_reporter)]
 ResumeQueueDep = Annotated[ResumeQueue, Depends(get_resume_queue)]
+ApproverSetSelectorDep = Annotated[ApproverSetSelector, Depends(get_approver_sets)]

@@ -225,6 +225,12 @@ class ApprovalAuditEntry(Base):
     authorizer: Mapped[str]
     authorized: Mapped[bool]
     reason: Mapped[str | None] = mapped_column(default=None)
+    # The membership facts the authorizer decided on (#420): the group ID and
+    # the actor's verdict, the allowlist that counted, or the channels compared.
+    # Nullable because writers that make no membership decision (the expiry
+    # sweeper) must leave it NULL rather than fabricate one, and because rows
+    # written before this column existed have none.
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

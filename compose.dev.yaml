@@ -316,6 +316,18 @@ services:
       LANGFUSE_HOST: http://langfuse-web:3000
       LANGFUSE_PUBLIC_KEY: pk-lf-agentos-dev
       LANGFUSE_SECRET_KEY: sk-lf-agentos-dev
+      # Approval user-group authorizers (#420) look up Slack usergroup
+      # membership from the API itself, so the API reads the same bot token the
+      # worker and dispatcher use. Empty by default: the Slack-free local loop
+      # needs nothing here, and a route that declares an approver group without a
+      # token fails closed at resolve time rather than widening to channel
+      # membership. Needs the `usergroups:read` bot scope.
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      # How long a fetched user-group member set is reused. The fallback repeats
+      # the app's own 60s default rather than being empty, because the setting is
+      # float-typed: an empty value fails validation and the API would not boot.
+      # Set SLACK_USERGROUP_CACHE_TTL_S=0 to fetch on every resolve.
+      SLACK_USERGROUP_CACHE_TTL_S: ${SLACK_USERGROUP_CACHE_TTL_S:-60}
     ports:
       - "28000:8000"
     healthcheck:

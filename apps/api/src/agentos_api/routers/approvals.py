@@ -22,9 +22,9 @@ from sqlalchemy.exc import IntegrityError
 
 from .. import crud
 from ..auth import require_api_key
-from ..authorizer import Authorizer, ChannelMembershipAuthorizer
+from ..authorizer import authorize_approval
 from ..config import get_settings
-from ..deps import ResumeQueueDep, SessionDep
+from ..deps import ApproverSetSelectorDep, ResumeQueueDep, SessionDep
 from ..models import Approval, ApprovalStatus
 from ..resumequeue import build_expiry_resume_turn, build_resume_turn
 from ..schemas import ApprovalAuditOut, ApprovalCreate, ApprovalOut, ApprovalResolve
@@ -34,12 +34,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/approvals", tags=["approvals"], dependencies=[Depends(require_api_key)]
 )
-
-# The server-side authorizer (#246): channel membership is the first
-# implementation of the swappable Authorizer seam (user-group, user-list, and
-# platform-RBAC come later); it is module-level state because the decision is
-# pure over the record and the attempt.
-_AUTHORIZER: Authorizer = ChannelMembershipAuthorizer()
 
 
 def _expired(approval: Approval) -> bool:
@@ -123,12 +117,14 @@ async def resolve_approval(
     data: ApprovalResolve,
     session: SessionDep,
     resume_queue: ResumeQueueDep,
+    approver_sets: ApproverSetSelectorDep,
 ) -> ApprovalOut:
     """Claim the resolution (resolve-once) and wake the suspended session.
 
-    The authorizer runs first, server-side (#246): self-approval is blocked
-    and channel membership is checked against the attempt's channel; a denied
-    actor gets 403 with the reason. Then exactly one authorized resolver wins
+    The authorizer runs first, server-side (#246): self-approval is blocked and
+    the route's approvers decide -- an explicit user list, a Slack user group,
+    or (declaring none) the card channel's members (#420); a denied actor gets
+    403 with the reason. Then exactly one authorized resolver wins
     the conditional UPDATE; a loser gets 409 naming who resolved it, and a
     past-SLA record flips to expired and returns 410 while still enqueuing the
     expiry resume turn so the suspended session wakes down its timeout branch.
@@ -139,12 +135,29 @@ async def resolve_approval(
     if approval is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
 
-    authorizer_name = type(_AUTHORIZER).__name__
-    decision = _AUTHORIZER.authorize(approval, data.resolved_by, data.actor_channel)
+    # The route binding is read fresh at resolve time (#420), so revoking an
+    # approver takes effect on the next click rather than at the next restart.
+    binding = await crud.get_approval_route_binding(session, approval)
+    approver_set = approver_sets(approval, binding)
+    # Release the pooled DB connection before the membership lookup. A
+    # group-bound set performs a Slack HTTP call (up to the client timeout), and
+    # holding the read transaction's connection across it lets a Slack outage
+    # plus concurrent clicks exhaust the pool and stall unrelated routes (#420).
+    # The reads above are complete; expire_on_commit is False (create_sessionmaker)
+    # so `approval` stays usable, and the CAS/audit below check out a fresh
+    # connection, each committing itself as they already do.
+    await session.commit()
+    authorizer_name, decision = await authorize_approval(
+        approval,
+        data.resolved_by,
+        data.actor_channel,
+        approver_set=approver_set,
+    )
 
     async def _audit(action: str, *, authorized: bool, reason: str | None) -> None:
         # The audit log (#247): every authorization-relevant event, with the
-        # authorizer snapshot that counted (or refused) the actor.
+        # authorizer snapshot that counted (or refused) the actor, and the
+        # membership evidence it decided on (#420).
         await crud.append_approval_audit(
             session,
             approval_id=approval_id,
@@ -155,6 +168,7 @@ async def resolve_approval(
             authorizer=authorizer_name,
             authorized=authorized,
             reason=reason,
+            evidence=decision.evidence,
         )
 
     if not decision.allowed:

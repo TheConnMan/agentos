@@ -107,6 +107,22 @@ class Settings(BaseSettings):
     resume_reconciler_grace_seconds: int = 900
     resume_reconciler_batch_limit: int = 100
 
+    # The Slack bot token the API uses for its OWN user-group lookups (#420),
+    # rather than trusting a caller's claim about who is in a group. The same
+    # token the dispatcher and worker already hold; empty is the normal state
+    # for a Slack-free install. Empty does NOT relax anything: a route that
+    # declares an approvers group then fails closed at resolve time, while
+    # channel and user-list authorizers are unaffected. Left out of the #57 prod
+    # boot gate deliberately -- Slack is optional, and that resolve-time denial
+    # is the enforcement.
+    slack_bot_token: str = ""
+    # How long a fetched user-group member set is reused (#420).
+    # usergroups.users.list is a Slack Tier 2 method (~20 req/min), so a fetch
+    # per click would let a busy approval channel hit the rate limit; 60s of
+    # revocation lag against an hours-to-days human flow is negligible. 0 is the
+    # operator lever for a per-resolve fetch, trading that headroom for no lag.
+    slack_usergroup_cache_ttl_s: float = 60.0
+
     # Observability (OB1). kube_config_path points the runner-logs proxy at a
     # cluster; when unset the API tries in-cluster config, and if neither is
     # available the logs endpoint degrades to 503 rather than crashing.

@@ -35,6 +35,8 @@ from .routers import (
     runs,
     state,
 )
+from .slack_approvers import SlackApproverSetSelector
+from .slack_usergroups import SlackUserGroupClient
 from .storage import BundleStore
 from .sweeper import run_expiry_sweeper
 
@@ -61,6 +63,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.kill_switch = KillSwitch(valkey)
     app.state.eval_queue = EvalQueue(valkey)
     app.state.resume_queue = ResumeQueue(valkey, stream=settings.runs_stream)
+    # The composition root for approvals (#420, ADR-0034): the only place that
+    # names Slack to build the approver-set selector, so the authorizer and the
+    # resolve endpoint depend on ports rather than on a provider. The usergroup
+    # client shares the app's httpx client and is None when no bot token is
+    # configured, which is the normal Slack-free deployment -- a route that
+    # declares an approvers group then fails closed at resolve time rather than
+    # silently widening.
+    usergroups = (
+        SlackUserGroupClient(
+            http_client,
+            token=settings.slack_bot_token,
+            ttl_s=settings.slack_usergroup_cache_ttl_s,
+        )
+        if settings.slack_bot_token
+        else None
+    )
+    app.state.approver_sets = SlackApproverSetSelector(usergroups)
     app.state.github_reporter = GitHubStatusReporter(
         http_client,
         api_url=settings.github_api_url,

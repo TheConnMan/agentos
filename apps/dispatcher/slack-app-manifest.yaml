@@ -31,6 +31,13 @@ oauth_config:
       # has no stable manifest key, so it is a one-click manual step. Harmless to
       # keep the scope even with shimmer off.
       - assistant:write
+      # Required only for approval user-group authorizers (#420): the API calls
+      # usergroups.users.list with this same bot token to resolve who is in a
+      # route's approver group. Not needed for channel-membership or
+      # explicit-user-list approvers. ADDING A SCOPE REQUIRES REINSTALLING THE
+      # APP to the workspace -- an existing installation keeps its old grant
+      # until then, and a route with a declared approver group fails closed.
+      - usergroups:read
 settings:
   socket_mode_enabled: true
   event_subscriptions:

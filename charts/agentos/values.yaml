@@ -421,6 +421,15 @@ api:
   # their stranded sessions (#412). Set to 0 (or any value <= 0) to disable the
   # expiry sweeper entirely. Default matches the app's built-in 30s cadence.
   approvalSweepIntervalSeconds: 30
+  # How long (seconds) the API reuses a fetched Slack user-group member set when
+  # resolving a user-group approver (#420). Default matches the app's built-in
+  # 60s. The tradeoff: within the window a member revoked from the group can
+  # still approve. Set to 0 to force a fetch on every resolve and close that lag
+  # entirely, at the cost of Slack Tier 2 rate-limit headroom on
+  # usergroups.users.list (~20 req/min) -- under the fail-closed rule a rate
+  # limit becomes a false denial of a legitimate approver, so 0 suits low-volume
+  # or strict-revocation deployments.
+  slackUsergroupCacheTtlSeconds: 60
   service:
     type: ClusterIP
     port: 8000
@@ -475,7 +484,13 @@ dispatcher:
   # Slack credentials. Socket Mode means the process dials out (no ingress), so
   # there is no Service. Left empty the supervisor just backs off and retries, so
   # the pod stays up without them; fill them (or an existingSecret) to connect.
-  # slackBotToken is shared with the worker (it edits the Slack placeholder).
+  # slackBotToken is shared with the worker (it edits the Slack placeholder) and,
+  # when set, with the API, whose approval user-group authorizers look up
+  # usergroup membership themselves (#420, ADR-0034). That lookup needs the
+  # `usergroups:read` bot scope, which existing Slack apps get only by
+  # reinstalling the app to the workspace. Changing this token requires a pod
+  # rollout of the consumers, not just a `helm upgrade`: a secretKeyRef env
+  # resolves once at pod start.
   slack:
     appToken: ""
     botToken: ""
