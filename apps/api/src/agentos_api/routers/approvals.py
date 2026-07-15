@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from .. import crud
 from ..auth import require_api_key
 from ..authorizer import Authorizer, ChannelMembershipAuthorizer
+from ..config import get_settings
 from ..deps import ResumeQueueDep, SessionDep
 from ..models import Approval, ApprovalStatus
 from ..resumequeue import build_resume_turn
@@ -206,7 +207,28 @@ async def resolve_approval(
     # so the kernel's ordinary consume -> claim path rehydrates the thread
     # (ADR-0003) and delivers the decision. The turn's event_id is deterministic
     # per approval, so the worker's done-marker absorbs a duplicate enqueue.
-    stream_id = await resume_queue.enqueue(build_resume_turn(claimed))
+    # If the enqueue fails (a Valkey blip), the resolution still committed (CAS
+    # won, audit written): return 200 and leave resumed_at NULL so the reconciler
+    # (#411) backstops the failed enqueue on its next pass. Raising here would
+    # dead-end the client into the 409-forever branch on retry.
+    # BUT the 200-and-defer contract is only safe when a reconciler will recover
+    # the owed wake. With resume_reconciler_enabled=false there is no backstop, so
+    # a 200 would silently strand the suspended session -- re-raise instead, so the
+    # failure surfaces as a 500 the caller can see (the CAS/audit already committed).
+    try:
+        stream_id = await resume_queue.enqueue(build_resume_turn(claimed))
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "approval %s %s by %s; resume enqueue failed, reconciler will retry",
+            approval_id,
+            claimed.status,
+            claimed.resolved_by,
+            exc_info=True,
+        )
+        if not get_settings().resume_reconciler_enabled:
+            raise
+        return ApprovalOut.model_validate(claimed)
+    await crud.mark_approval_resumed(session, approval_id)
     logger.info(
         "approval %s %s by %s; resume turn enqueued (%s)",
         approval_id,

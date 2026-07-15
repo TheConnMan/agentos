@@ -191,6 +191,9 @@ class Approval(Base):
     resolution_note: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+    # Set once the resume turn is enqueued onto the runs stream (#411); NULL on a
+    # resolved record means the wake is still owed (the reconciler's work-list).
+    resumed_at: Mapped[datetime | None] = mapped_column(default=None)
 
 
 class ApprovalAuditEntry(Base):

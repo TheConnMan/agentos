@@ -105,6 +105,17 @@ spec:
             # an operator override of bundleFetch.bucket keeps them in lockstep.
             - name: BUNDLE_BUCKET
               value: {{ .Values.agentSandbox.runner.bundleFetch.bucket | quote }}
+            # Resume reconciler (#411) knobs; see values.yaml api.resumeReconciler.
+            # ENABLED false also switches the resolve endpoint to fail-loud on
+            # enqueue failure (no backstop to defer to).
+            - name: RESUME_RECONCILER_ENABLED
+              value: {{ .Values.api.resumeReconciler.enabled | quote }}
+            - name: RESUME_RECONCILER_INTERVAL_SECONDS
+              value: {{ .Values.api.resumeReconciler.intervalSeconds | quote }}
+            - name: RESUME_RECONCILER_GRACE_SECONDS
+              value: {{ .Values.api.resumeReconciler.graceSeconds | quote }}
+            - name: RESUME_RECONCILER_BATCH_LIMIT
+              value: {{ .Values.api.resumeReconciler.batchLimit | quote }}
           ports:
             - name: http
               containerPort: 8000

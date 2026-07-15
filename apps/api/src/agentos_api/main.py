@@ -4,6 +4,7 @@ The engine, sessionmaker, httpx client, and Langfuse client are created once at
 startup and stored on app.state; dependencies (deps.py) read them per request.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,7 @@ from .k8s import build_lazy_pod_lister, build_lazy_pod_log_reader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
 from .resumequeue import ResumeQueue
+from .resumereconciler import ResumeReconciler
 from .routers import (
     agents,
     approvals,
@@ -64,9 +66,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         token=settings.github_token,
         context=settings.eval_check_context,
     )
+    # The resume reconciler (#411) backstops a failed inline resume enqueue by
+    # periodically re-enqueuing owed wakes. It enqueues via resume_queue (which
+    # uses the valkey client), so it is cancelled BEFORE valkey.aclose() below.
+    reconciler = ResumeReconciler(
+        app.state.sessionmaker,
+        app.state.resume_queue,
+        interval_seconds=settings.resume_reconciler_interval_seconds,
+        grace_seconds=settings.resume_reconciler_grace_seconds,
+        batch_limit=settings.resume_reconciler_batch_limit,
+    )
+    app.state.resume_reconciler = reconciler
+    app.state.resume_reconciler_task = (
+        asyncio.create_task(reconciler.run_forever())
+        if settings.resume_reconciler_enabled
+        else None
+    )
     try:
         yield
     finally:
+        task = getattr(app.state, "resume_reconciler_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await valkey.aclose()
         await http_client.aclose()
         await engine.dispose()
