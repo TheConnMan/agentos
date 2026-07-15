@@ -62,6 +62,12 @@ class PluginManifest(BaseModel):
     # Initial terminal/chat affordances. These are bundle-authored conversation
     # starters, not response actions; adapters discard them after the first turn.
     starterPrompts: list[str] | None = None
+    # AgentOS authoring extension (ADR-0009, #429): the named secrets this
+    # bundle's connectors need (e.g. an authed MCP server's API token). Policy
+    # only -- the NAMES, never values. Values are supplied per-agent at deploy
+    # time and delivered into the sandbox env, where ``.mcp.json`` ``${VAR}``
+    # expansion consumes them. Validated env-var-style by ``validate.py``.
+    secrets: list[str] | None = None
     # AgentOS authoring extensions (epic #30 / #29), validated at deploy time by
     # ``validate.py``. Kept loosely typed on the manifest (the models stay
     # lenient); the dedicated ``TriggerDeclaration`` / ``ApprovalPolicy`` models

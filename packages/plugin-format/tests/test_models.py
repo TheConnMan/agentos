@@ -57,6 +57,20 @@ def test_manifest_starter_prompts_round_trip() -> None:
     assert PluginManifest.model_validate({"name": "demo"}).starterPrompts is None
 
 
+def test_manifest_secrets_field() -> None:
+    """The AgentOS ``secrets`` policy extension round-trips (ADR-0009 / #429)."""
+    manifest = PluginManifest.model_validate(
+        {"name": "demo", "secrets": ["GITHUB_PERSONAL_ACCESS_TOKEN"]}
+    )
+    assert manifest.secrets == ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    # Absent -> None (backward compatible; bundles without it still validate).
+    assert PluginManifest.model_validate({"name": "demo"}).secrets is None
+    # Serializes back under the verbatim key.
+    assert manifest.model_dump(exclude_none=True)["secrets"] == [
+        "GITHUB_PERSONAL_ACCESS_TOKEN"
+    ]
+
+
 def test_manifest_trigger_and_approval_policy_fields() -> None:
     """The AgentOS trigger + approval-policy authoring extensions parse (#273)."""
     manifest = PluginManifest.model_validate(

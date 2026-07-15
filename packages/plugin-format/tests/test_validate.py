@@ -145,6 +145,25 @@ def test_trigger_entry_not_object_is_rejected(tmp_path: Path) -> None:
     assert "triggers.invalid" in _codes(bundle)
 
 
+def test_valid_secrets_policy_passes(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path, '{"name": "demo", "secrets": ["GITHUB_PERSONAL_ACCESS_TOKEN", "API_KEY"]}'
+    )
+    assert validate_bundle(bundle).valid
+
+
+def test_non_env_var_secret_name_is_rejected(tmp_path: Path) -> None:
+    # A lowercase/hyphenated name cannot be forwarded as an env var -> rejected.
+    bundle = _bundle(tmp_path, '{"name": "demo", "secrets": ["github-token"]}')
+    assert "secrets.name_invalid" in _codes(bundle)
+
+
+def test_malformed_secrets_shape_is_rejected(tmp_path: Path) -> None:
+    # A non-list secrets value is rejected.
+    bundle = _bundle(tmp_path, '{"name": "demo", "secrets": "nope"}')
+    assert not validate_bundle(bundle).valid
+
+
 def test_valid_approval_policy_passes(tmp_path: Path) -> None:
     bundle = _bundle(
         tmp_path,

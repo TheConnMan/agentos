@@ -82,6 +82,7 @@ def validate_bundle(path: str | Path) -> ValidationResult:
         _validate_hooks(root, manifest, c)
         _validate_triggers(manifest, c)
         _validate_approval_policy(manifest, c)
+        _validate_secrets(manifest, c)
         _validate_scripts(root, c)
 
     return c.result()
@@ -337,6 +338,37 @@ def _validate_approval_policy(manifest: PluginManifest, c: _Collector) -> None:
             c.error(
                 "approval_policy.incomplete",
                 "an approval gate must define a non-empty 'gate' and 'route'",
+                loc,
+            )
+
+
+_SECRET_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+
+def _validate_secrets(manifest: PluginManifest, c: _Collector) -> None:
+    """Validate the manifest ``secrets`` policy (deploy-time gate, ADR-0009 / #429).
+
+    ``secrets`` is a list of the named connector secrets the bundle needs (the
+    NAMES only, never values). Each must be an environment-variable-style name
+    (``^[A-Z_][A-Z0-9_]*$``) so it can be forwarded into the sandbox env and
+    consumed by ``.mcp.json`` ``${VAR}`` expansion; a malformed name is rejected
+    at deploy before an agent ships expecting a secret that can never bind.
+    """
+
+    declared = manifest.secrets
+    if declared is None:
+        return
+    if not isinstance(declared, list):
+        c.error("secrets.invalid", "secrets must be a list of names", "plugin.json")
+        return
+
+    for i, name in enumerate(declared):
+        loc = f"plugin.json (secrets[{i}])"
+        if not isinstance(name, str) or not _SECRET_NAME_RE.match(name):
+            c.error(
+                "secrets.name_invalid",
+                f"secret name {name!r} must be an env-var-style name "
+                "(uppercase letters, digits, underscore; not starting with a digit)",
                 loc,
             )
 
