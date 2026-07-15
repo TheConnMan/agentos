@@ -67,6 +67,11 @@ class _StubRepo:
     async def repo_full_name(self, _agent_id: uuid.UUID) -> str:
         return "owner/repo"
 
+    async def secrets_for(self, _agent_id: uuid.UUID) -> dict[str, str] | None:
+        # No connector secrets in the eval stub; a real BindingResolver returns
+        # the agent's secrets so an authed-MCP bundle authenticates during eval.
+        return None
+
 
 class _UnusedSubstrate:
     """A substrate that must never be touched. Passed to the target_url tests so a

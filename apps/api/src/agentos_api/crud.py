@@ -55,6 +55,7 @@ async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
             if data.approval_routes is not None
             else None
         ),
+        secrets=data.secrets,
     )
     session.add(agent)
     await session.commit()
@@ -156,6 +157,16 @@ async def update_behavior_packs(
     session: AsyncSession, agent: Agent, behavior_packs: dict[str, Any] | None
 ) -> Agent:
     agent.behavior_packs = behavior_packs
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
+async def update_agent_secrets(
+    session: AsyncSession, agent: Agent, secrets: dict[str, str] | None
+) -> Agent:
+    """Set the per-agent connector secrets (#429). An empty dict clears them."""
+    agent.secrets = secrets
     await session.commit()
     await session.refresh(agent)
     return agent

@@ -121,6 +121,7 @@ SELECT a.id AS agent_id,
        a.model AS model,
        a.approval_required_tools AS approval_required_tools,
        a.approval_routes AS approval_routes,
+       a.secrets AS secrets,
        v.id AS version_id,
        v.version_label AS version_label,
        v.bundle_ref AS bundle_ref
@@ -154,6 +155,12 @@ class ResolvedDeployment(BaseModel):
     # workspace binding ({"channel": "C..."}), resolved by the kernel when a
     # raised approval names a route. None means no bindings.
     approval_routes: dict[str, Any] | None = None
+    # The agent's connector secrets (ADR-0009, #429): env-var name -> secret
+    # value, injected by name into the sandbox boot env so a bundle's authed MCP
+    # server can read its token via `.mcp.json` `${VAR}` expansion. None means no
+    # connector secrets. (Local tier stores values on the agent row; the cluster
+    # tier delivers them via a per-agent K8s Secret instead.)
+    secrets: dict[str, str] | None = None
 
 
 class BindingResolver:
@@ -201,6 +208,9 @@ class BindingResolver:
         routes = data.get("approval_routes")
         if isinstance(routes, str):
             data["approval_routes"] = json.loads(routes)
+        conn_secrets = data.get("secrets")
+        if isinstance(conn_secrets, str):
+            data["secrets"] = json.loads(conn_secrets)
         return ResolvedDeployment.model_validate(data)
 
     async def repo_full_name(self, agent_id: uuid.UUID) -> str | None:
@@ -260,6 +270,21 @@ class BindingResolver:
             return None
         tool = summary[len(_PERMISSION_GATE_SUMMARY_PREFIX):].split(" ", 1)[0]
         return tool or None
+
+    async def secrets_for(self, agent_id: uuid.UUID) -> dict[str, str] | None:
+        """The agent's connector secrets (#429), for lanes that boot by agent_id
+        rather than by channel (the eval consumer). Decodes the JSONB the same
+        way ``resolve`` does; None when the agent is unknown or has no secrets."""
+        sql = text(f"SELECT secrets FROM {self._config.db_schema}.agents WHERE id = :id")
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": agent_id})
+            row = result.first()
+        if row is None or row[0] is None:
+            return None
+        value = row[0]
+        if isinstance(value, str):
+            value = json.loads(value)
+        return value if isinstance(value, dict) else None
 
     def packs_for(self, resolved: ResolvedDeployment) -> BehaviorPacks:
         """The agent's parsed behavior packs (all-off when none are configured).
@@ -331,6 +356,15 @@ class BindingResolver:
             )
             env[MEMORY_TOKEN_ENV] = state_token
             env[HISTORY_TOKEN_ENV] = state_token
+        # Deliver the agent's connector secrets (ADR-0009, #429): named secret
+        # values the bundle's authed MCP servers read from the sandbox env, where
+        # `.mcp.json` `${VAR}` expansion consumes them. Injected by value (the
+        # docker substrate forwards them as `-e KEY=VALUE`). A reserved boot-env
+        # key is never overwritten, so a misnamed secret cannot clobber the ACI
+        # contract env or the model credential.
+        for name, value in (resolved.secrets or {}).items():
+            if name not in env:
+                env[name] = value
         # The agent's pinned model (#254) overrides the worker default; None
         # falls back to config.model inside apply_model_env.
         apply_model_env(env, self._config, model_override=resolved.model)

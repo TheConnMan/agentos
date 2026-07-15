@@ -881,6 +881,14 @@
               "long": "label",
               "positional": false,
               "required": false
+            },
+            {
+              "global": false,
+              "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault (`agentos secrets set <NAME>`) and sent to the platform, which stores it on the agent so the worker forwards it into the sandbox for a bundle's authed MCP server. The value never appears in argv. Repeatable",
+              "id": "secret",
+              "long": "secret",
+              "positional": false,
+              "required": false
             }
           ],
           "hidden": false,
@@ -1620,6 +1628,14 @@
               "help": "Version label; defaults to <manifest version>-<unix time>",
               "id": "label",
               "long": "label",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault and sent to the platform for the worker to forward into the sandbox. Repeatable",
+              "id": "secret",
+              "long": "secret",
               "positional": false,
               "required": false
             }

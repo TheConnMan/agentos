@@ -45,6 +45,7 @@ async def _seed_agent(
     max_tokens: int | None,
     approval_tools: list[str] | None = None,
     approval_routes: dict | None = None,
+    secrets: dict | None = None,
 ) -> uuid.UUID:
     agent_id = uuid.uuid4()
     async with engine.begin() as conn:
@@ -52,9 +53,10 @@ async def _seed_agent(
             text(
                 f"INSERT INTO {_SCHEMA}.agents "
                 "(id, name, slack_channel, max_usd_per_day, max_output_tokens_per_run, "
-                "approval_required_tools, approval_routes) "
+                "approval_required_tools, approval_routes, secrets) "
                 "VALUES (:id, :name, :channel, :usd, :tokens, "
-                "CAST(:approval_tools AS jsonb), CAST(:approval_routes AS jsonb))"
+                "CAST(:approval_tools AS jsonb), CAST(:approval_routes AS jsonb), "
+                "CAST(:secrets AS jsonb))"
             ),
             {
                 "id": agent_id,
@@ -68,6 +70,7 @@ async def _seed_agent(
                 "approval_routes": (
                     json.dumps(approval_routes) if approval_routes is not None else None
                 ),
+                "secrets": (json.dumps(secrets) if secrets is not None else None),
             },
         )
     return agent_id
@@ -538,6 +541,50 @@ def test_resolves_approval_routes_from_the_agent_row() -> None:
                 resolved = await _resolver(engine).resolve(channel)
                 assert resolved is not None
                 assert resolved.approval_routes == {"managers": {"channel": "C_MGRS"}}
+            finally:
+                await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_resolves_connector_secrets_into_boot_env() -> None:
+    # Connector secrets (#429): the per-agent JSONB name->value map survives the
+    # SQL resolve (decode included) and is injected by name into the sandbox boot
+    # env so an authed-MCP bundle can read its token.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable at {_DB_URL}: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine,
+                channel=channel,
+                name=f"agent-{token}",
+                max_usd=None,
+                max_tokens=None,
+                secrets={"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_seeded"},
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref=f"b/{token}.zip"
+            )
+            try:
+                resolver = _resolver(engine)
+                resolved = await resolver.resolve(channel)
+                assert resolved is not None
+                assert resolved.secrets == {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_seeded"}
+                env = resolver.boot_env(resolved, thread_key="t1")
+                assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_seeded"
+                # secrets_for resolves the same map by agent_id (the eval lane).
+                by_id = await resolver.secrets_for(agent_id)
+                assert by_id == {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_seeded"}
             finally:
                 await _cleanup(engine, [agent_id])
         finally:

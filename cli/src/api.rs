@@ -210,6 +210,29 @@ impl ApiClient {
             .context("decoding updated agent")
     }
 
+    /// Bind the per-agent connector secrets (ADR-0009, #429). The values travel
+    /// in the JSON request body (over the API's X-API-Key channel), never in
+    /// argv; the API stores them and returns the agent with names only.
+    pub async fn update_agent_secrets(
+        &self,
+        agent_id: &str,
+        secrets: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Agent> {
+        let resp = self
+            .http
+            .patch(format!("{}/agents/{agent_id}", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&json!({ "secrets": secrets }))
+            .send()
+            .await
+            .context("PATCH /agents/{id}")?;
+        Self::expect_ok(resp, "binding agent connector secrets")
+            .await?
+            .json()
+            .await
+            .context("decoding updated agent")
+    }
+
     /// Find the agent by name (or create it), reconciling its Slack channel with
     /// an explicitly-passed `--slack-channel`. A new agent binds to the passed
     /// channel (or the default); an existing agent's channel is moved via PATCH
@@ -330,6 +353,7 @@ impl ApiClient {
 
     /// The full deploy flow: resolve agent (create or channel-reconcile),
     /// version, bundle, deployment.
+    #[allow(clippy::too_many_arguments)] // one cohesive deploy call; a struct would not clarify it
     pub async fn deploy(
         &self,
         agent_name: &str,
@@ -338,8 +362,15 @@ impl ApiClient {
         created_by: &str,
         environment: &str,
         archive: Vec<u8>,
+        secrets: &std::collections::BTreeMap<String, String>,
     ) -> Result<DeployOutcome> {
         let (agent, channel) = self.resolve_agent(agent_name, slack_channel).await?;
+        // Bind per-agent connector secrets (ADR-0009, #429). A PATCH covers both
+        // a freshly created agent and a redeploy that rotates a value; an empty
+        // map leaves the agent's current secrets untouched.
+        if !secrets.is_empty() {
+            self.update_agent_secrets(&agent.id, secrets).await?;
+        }
         let version = self
             .create_version(&agent.id, version_label, created_by)
             .await?;

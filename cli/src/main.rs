@@ -486,6 +486,13 @@ enum LocalAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
+        /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
+        /// is resolved from your environment or the host secret vault (`agentos
+        /// secrets set <NAME>`) and sent to the platform, which stores it on the
+        /// agent so the worker forwards it into the sandbox for a bundle's authed
+        /// MCP server. The value never appears in argv. Repeatable.
+        #[arg(long = "secret", value_name = "NAME")]
+        secret: Vec<String>,
     },
 }
 
@@ -771,6 +778,11 @@ enum ClusterAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
+        /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
+        /// is resolved from your environment or the host secret vault and sent to
+        /// the platform for the worker to forward into the sandbox. Repeatable.
+        #[arg(long = "secret", value_name = "NAME")]
+        secret: Vec<String>,
     },
     // Agent-lifecycle verbs (kill/resume/budget/delete) speak the platform API
     // like `deploy` does. Design decision (#149): extend the existing `cluster`
@@ -1156,6 +1168,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 slack_channel,
                 env,
                 label,
+                secret,
             } => {
                 let connect_hint = format!(
                     "the platform API at {api_url} is unreachable. Start the local stack first with `agentos local up`, then re-run (or pass --api-url if your API is elsewhere)."
@@ -1167,6 +1180,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     slack_channel,
                     env,
                     label,
+                    secret,
                     connect_hint,
                 })
                 .await
@@ -1413,6 +1427,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 slack_channel,
                 env,
                 label,
+                secret,
             } => {
                 // An explicit --api-url / AGENTOS_API_URL is dialed as given;
                 // otherwise reach the platform API through the deployed release's
@@ -1431,6 +1446,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     slack_channel,
                     env,
                     label,
+                    secret,
                     connect_hint,
                 })
                 .await

@@ -83,6 +83,14 @@ class Agent(Base):
     approval_routes: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, default=None
     )
+    # Per-agent connector secrets (ADR-0009, #429): the named secret VALUES the
+    # bundle's authed MCP servers need (e.g. GITHUB_PERSONAL_ACCESS_TOKEN). The
+    # bundle declares the NAMES (plugin-format `secrets`); values are supplied at
+    # deploy and stored here for the LOCAL tier. The worker binding injects them
+    # by name into the sandbox boot env, where `.mcp.json` `${VAR}` expansion
+    # consumes them. NULL means no connector secrets. (The cluster tier delivers
+    # values via a per-agent K8s Secret instead; only the names live here there.)
+    secrets: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     versions: Mapped[list["AgentVersion"]] = relationship(

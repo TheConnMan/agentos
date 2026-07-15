@@ -150,6 +150,28 @@ def _validate_tool_names(value: list[str] | None) -> list[str] | None:
     return cleaned
 
 
+_SECRET_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+
+def _validate_secret_map(value: dict[str, str] | None) -> dict[str, str] | None:
+    """Per-agent connector secrets (ADR-0009, #429): keys are env-var-style
+    NAMES, values the secret material the worker forwards into the sandbox env.
+    A non-env-var name cannot be forwarded (and would break ``.mcp.json``
+    ``${VAR}`` expansion); an empty value is a misconfigure that fails connector
+    auth silently, so both are rejected on write."""
+    if value is None:
+        return value
+    for name, secret in value.items():
+        if not _SECRET_NAME_RE.match(name):
+            raise ValueError(
+                f"secret name {name!r} must be an env-var-style name "
+                "(uppercase letters, digits, underscore; not starting with a digit)"
+            )
+        if not secret:
+            raise ValueError(f"secret {name!r} has an empty value")
+    return value
+
+
 class _StoredWithoutNulls(BaseModel):
     """Serializes to the stored-JSONB shape: unset keys are absent, not null.
 
@@ -288,6 +310,10 @@ class AgentCreate(BaseModel):
     # channel. None means no bindings (unbound routes fall back to the
     # requesting channel).
     approval_routes: dict[str, ApprovalRouteBinding] | None = None
+    # Per-agent connector secret VALUES (ADR-0009, #429): env-var-style name ->
+    # secret. Stored on the agent row for the local tier and forwarded into the
+    # sandbox by the worker binding. None means no connector secrets.
+    secrets: dict[str, str] | None = None
 
     _check_slack_channel = field_validator("slack_channel")(
         _validate_slack_channel_id
@@ -298,6 +324,7 @@ class AgentCreate(BaseModel):
     _check_approval_routes = field_validator("approval_routes")(
         _validate_route_names
     )
+    _check_secrets = field_validator("secrets")(_validate_secret_map)
 
 
 class AgentUpdate(BaseModel):
@@ -315,6 +342,9 @@ class AgentUpdate(BaseModel):
     # New route bindings (#247). Omitted (None) leaves the current bindings
     # unchanged; an explicit empty dict clears them.
     approval_routes: dict[str, ApprovalRouteBinding] | None = None
+    # New connector secrets (#429). Omitted (None) leaves current secrets
+    # unchanged; an explicit empty dict clears them.
+    secrets: dict[str, str] | None = None
 
     _check_slack_channel = field_validator("slack_channel")(
         _validate_slack_channel_id
@@ -325,6 +355,7 @@ class AgentUpdate(BaseModel):
     _check_approval_routes = field_validator("approval_routes")(
         _validate_route_names
     )
+    _check_secrets = field_validator("secrets")(_validate_secret_map)
 
 
 class AgentOut(BaseModel):
@@ -338,7 +369,16 @@ class AgentOut(BaseModel):
     model: str | None
     approval_required_tools: list[str] | None
     approval_routes: dict[str, Any] | None
+    # Connector secret NAMES only (#429) -- values are never returned. The stored
+    # column is a name->value map; expose just the sorted names so an operator can
+    # see which secrets an agent has bound without the material leaving the API.
+    secrets: list[str] | None
     created_at: datetime
+
+    @field_validator("secrets", mode="before")
+    @classmethod
+    def _secret_names_only(cls, value: Any) -> Any:
+        return sorted(value) if isinstance(value, dict) else value
 
 
 class GraderOut(BaseModel):

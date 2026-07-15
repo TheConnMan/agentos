@@ -67,6 +67,20 @@
             ],
             "title": "Repo Full Name"
           },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          },
           "slack_channel": {
             "title": "Slack Channel",
             "type": "string"
@@ -155,6 +169,20 @@
             ],
             "title": "Repo Full Name"
           },
+          "secrets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          },
           "slack_channel": {
             "title": "Slack Channel",
             "type": "string"
@@ -169,6 +197,7 @@
           "model",
           "approval_required_tools",
           "approval_routes",
+          "secrets",
           "created_at"
         ],
         "title": "AgentOut",
@@ -215,6 +244,20 @@
               }
             ],
             "title": "Model"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
           },
           "slack_channel": {
             "anyOf": [

@@ -132,6 +132,9 @@ async def update_agent(
             agent,
             {name: b.model_dump() for name, b in data.approval_routes.items()},
         )
+    if data.secrets is not None:
+        # Omitted leaves the secrets unchanged; an explicit {} clears them (#429).
+        agent = await crud.update_agent_secrets(session, agent, data.secrets)
     return AgentOut.model_validate(agent)
 
 
