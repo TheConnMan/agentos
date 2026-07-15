@@ -64,6 +64,14 @@ class Agent(Base):
     behavior_packs: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, default=None
     )
+    # Per-agent permission gates (#245, ADR-0010): tool names whose calls
+    # require human approval. Forwarded by the worker binding as
+    # AGENTOS_APPROVAL_REQUIRED_TOOLS at sandbox boot; the runner's
+    # can_use_tool callback blocks these calls and ends the turn
+    # awaiting-approval. NULL means no permission gates (the bypass posture).
+    approval_required_tools: Mapped[list[str] | None] = mapped_column(
+        JSONB, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     versions: Mapped[list["AgentVersion"]] = relationship(

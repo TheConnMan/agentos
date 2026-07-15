@@ -3,6 +3,20 @@
     "schemas": {
       "AgentCreate": {
         "properties": {
+          "approval_required_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Required Tools"
+          },
           "behavior_packs": {
             "anyOf": [
               {
@@ -53,6 +67,20 @@
       },
       "AgentOut": {
         "properties": {
+          "approval_required_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Required Tools"
+          },
           "behavior_packs": {
             "anyOf": [
               {
@@ -113,14 +141,29 @@
           "repo_full_name",
           "behavior_packs",
           "model",
+          "approval_required_tools",
           "created_at"
         ],
         "title": "AgentOut",
         "type": "object"
       },
       "AgentUpdate": {
-        "description": "Partial update of mutable agent fields. slack_channel and model are\nupdatable (name and repo binding are identity); an omitted field is left\nunchanged.",
+        "description": "Partial update of mutable agent fields. slack_channel, model, and\napproval_required_tools are updatable (name and repo binding are identity);\nan omitted field is left unchanged.",
         "properties": {
+          "approval_required_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Required Tools"
+          },
           "model": {
             "anyOf": [
               {

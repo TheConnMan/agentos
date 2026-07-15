@@ -44,3 +44,66 @@ def test_duplicate_repo_is_409(
     )
     assert dup.status_code == 409, dup.text
     assert "repository" in dup.json()["detail"]
+
+
+def test_agent_approval_required_tools_round_trip(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # Create with permission gates (#245); they come back on reads.
+    created = client.post(
+        "/agents",
+        json={
+            "name": "gated-agent",
+            "slack_channel": "C000000G01",
+            "approval_required_tools": ["Bash", "mcp__github__create_issue"],
+        },
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["approval_required_tools"] == ["Bash", "mcp__github__create_issue"]
+
+    # PATCH replaces the set; an explicit empty list clears it (NULL posture).
+    patched = client.patch(
+        f"/agents/{body['id']}",
+        json={"approval_required_tools": ["WebFetch"]},
+        headers=auth_headers,
+    )
+    assert patched.status_code == 200
+    assert patched.json()["approval_required_tools"] == ["WebFetch"]
+
+    cleared = client.patch(
+        f"/agents/{body['id']}",
+        json={"approval_required_tools": []},
+        headers=auth_headers,
+    )
+    assert cleared.json()["approval_required_tools"] is None
+
+    # Omitting the field leaves the gates unchanged.
+    repatched = client.patch(
+        f"/agents/{body['id']}",
+        json={"approval_required_tools": ["Bash"]},
+        headers=auth_headers,
+    )
+    assert repatched.json()["approval_required_tools"] == ["Bash"]
+    untouched = client.patch(
+        f"/agents/{body['id']}", json={"model": "claude-sonnet-5"}, headers=auth_headers
+    )
+    assert untouched.json()["approval_required_tools"] == ["Bash"]
+
+
+def test_agent_approval_required_tools_rejects_bad_names(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A comma inside a name would split into two wrong gates on the env wire.
+    for bad in (["Bash,Read"], [""], ["  "]):
+        resp = client.post(
+            "/agents",
+            json={
+                "name": f"bad-{bad[0].strip() or 'blank'}",
+                "slack_channel": "C000000G02",
+                "approval_required_tools": bad,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422, resp.text

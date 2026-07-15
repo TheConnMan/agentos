@@ -9,12 +9,14 @@ up afterwards.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 
 import pytest
 from agentos_worker.binding import (
     AGENT_ID_ENV,
+    APPROVAL_REQUIRED_ENV,
     BUDGET_ENV,
     BUNDLE_REF_ENV,
     BindingResolver,
@@ -37,14 +39,17 @@ async def _seed_agent(
     name: str,
     max_usd: float | None,
     max_tokens: int | None,
+    approval_tools: list[str] | None = None,
 ) -> uuid.UUID:
     agent_id = uuid.uuid4()
     async with engine.begin() as conn:
         await conn.execute(
             text(
                 f"INSERT INTO {_SCHEMA}.agents "
-                "(id, name, slack_channel, max_usd_per_day, max_output_tokens_per_run) "
-                "VALUES (:id, :name, :channel, :usd, :tokens)"
+                "(id, name, slack_channel, max_usd_per_day, max_output_tokens_per_run, "
+                "approval_required_tools) "
+                "VALUES (:id, :name, :channel, :usd, :tokens, "
+                "CAST(:approval_tools AS jsonb))"
             ),
             {
                 "id": agent_id,
@@ -52,6 +57,9 @@ async def _seed_agent(
                 "channel": channel,
                 "usd": max_usd,
                 "tokens": max_tokens,
+                "approval_tools": (
+                    json.dumps(approval_tools) if approval_tools is not None else None
+                ),
             },
         )
     return agent_id
@@ -360,6 +368,48 @@ def test_unknown_channel_resolves_to_none() -> None:
                 pytest.skip(f"Postgres not reachable: {exc}")
             resolved = await _resolver(engine).resolve(f"C-nonexistent-{uuid.uuid4().hex}")
             assert resolved is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_resolves_approval_required_tools_into_boot_env() -> None:
+    # Permission gates (#245): a gated agent's tool list survives the SQL
+    # resolve (JSONB decode included) and lands comma-joined in the boot env.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable at {_DB_URL}: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine,
+                channel=channel,
+                name=f"agent-{token}",
+                max_usd=None,
+                max_tokens=None,
+                approval_tools=["Bash", "mcp__github__create_issue"],
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref=f"bundles/{token}.zip"
+            )
+            try:
+                resolved = await _resolver(engine).resolve(channel)
+                assert resolved is not None
+                assert resolved.approval_required_tools == [
+                    "Bash",
+                    "mcp__github__create_issue",
+                ]
+                env = _resolver(engine).boot_env(resolved, "thread-1")
+                assert env[APPROVAL_REQUIRED_ENV] == "Bash,mcp__github__create_issue"
+            finally:
+                await _cleanup(engine, [agent_id])
         finally:
             await engine.dispose()
 

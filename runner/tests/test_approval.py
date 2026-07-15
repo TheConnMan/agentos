@@ -12,7 +12,15 @@ import json
 
 import anyio
 from aci_protocol import Event, Final, SessionStatus
-from agentos_runner.approval import APPROVAL_TOOL_NAME, build_approval_server
+from agentos_runner.adapter import build_options
+from agentos_runner.approval import (
+    APPROVAL_TOOL_NAME,
+    ApprovalGate,
+    build_approval_server,
+    build_can_use_tool,
+    summarize_tool_call,
+)
+from agentos_runner.config import RunnerConfig
 from agentos_runner.fake import (
     APPROVAL_MARKER,
     FakeModelSession,
@@ -24,6 +32,11 @@ from agentos_runner.session import SessionRunner, _apply_approval_override
 from agentos_runner.side_effects import SideEffectClassifier
 from agentos_runner.translate import TurnState, translate_message
 from claude_agent_sdk import AssistantMessage, ToolUseBlock
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 
 
 def _event(text: str = "hello") -> Event:
@@ -176,3 +189,168 @@ def test_approval_server_config_shape() -> None:
     assert config["name"] == "agentos"
     # The qualified tool name translation matches on.
     assert APPROVAL_TOOL_NAME == "mcp__agentos__request_approval"
+
+
+# --- the permission gate (#245): canUseTool over approval-required tools --------
+
+
+def test_can_use_tool_denies_configured_tool_and_records_block() -> None:
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        callback = build_can_use_tool(gate)
+
+        result = await callback(
+            "Bash", {"command": "rm -rf /tmp/x"}, ToolPermissionContext()
+        )
+        assert isinstance(result, PermissionResultDeny)
+        assert "requires human approval" in result.message
+        assert gate.pending_summary is not None
+        assert gate.pending_summary.startswith("Tool call awaiting approval: Bash")
+        assert "rm -rf /tmp/x" in gate.pending_summary
+
+    anyio.run(go)
+
+
+def test_can_use_tool_allows_unconfigured_tools() -> None:
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        callback = build_can_use_tool(gate)
+
+        result = await callback("Read", {"file_path": "/etc/hosts"}, ToolPermissionContext())
+        assert isinstance(result, PermissionResultAllow)
+        assert gate.pending_summary is None
+
+    anyio.run(go)
+
+
+def test_first_blocked_call_wins_the_summary() -> None:
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        callback = build_can_use_tool(gate)
+        await callback("Bash", {"command": "first"}, ToolPermissionContext())
+        await callback("Bash", {"command": "second retry"}, ToolPermissionContext())
+        assert gate.pending_summary is not None
+        assert "first" in gate.pending_summary
+        assert "second retry" not in gate.pending_summary
+
+    anyio.run(go)
+
+
+def test_summary_truncates_oversized_tool_input() -> None:
+    summary = summarize_tool_call("Bash", {"command": "x" * 5000})
+    assert len(summary) < 500
+    assert summary.endswith("... (truncated)")
+
+
+def test_gate_reset_clears_the_block() -> None:
+    gate = ApprovalGate(required=frozenset({"Bash"}))
+    gate.block("Bash", {"command": "x"})
+    assert gate.pending_summary is not None
+    gate.reset()
+    assert gate.pending_summary is None
+
+
+def test_blocked_turn_ends_awaiting_approval() -> None:
+    """The session half: a turn during which the callback blocked a call ends
+    awaiting-approval, carrying the blocked-call summary. The script factory
+    sets the gate as a side effect, standing in for the SDK invoking the
+    callback mid-turn."""
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        turns = {"n": 0}
+
+        def factory() -> list:
+            # Only the first turn's script blocks a call, so the second turn
+            # also proves the per-turn reset (a stale block never leaks).
+            turns["n"] += 1
+            if turns["n"] == 1:
+                gate.block("Bash", {"command": "echo hi"})
+            return default_turn()
+
+        session = FakeModelSession(factory)
+        runner = SessionRunner(
+            session_factory=lambda: session,
+            ceiling=10_000,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(),
+            trace_name="test",
+            session_id="s-1",
+            approval_gate=gate,
+        )
+        await runner.start()
+        frames = await _drain(runner, "run echo hi")
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_summary"] is not None
+        assert final["approval_summary"].startswith("Tool call awaiting approval: Bash")
+
+        # The block is per-turn: a clean next turn ends done again.
+        frames = await _drain(runner, "hello")
+        assert frames[-1]["status"] == "done"
+
+    anyio.run(go)
+
+
+def test_policy_gate_summary_outranks_gate_block() -> None:
+    """When the model explicitly called request_approval AND a permission gate
+    blocked a call in the same turn, the model-authored summary wins (it is
+    the intentional, richer statement of what needs approval)."""
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+
+        def factory() -> list:
+            gate.block("Bash", {"command": "x"})
+            return approval_turn("Explicit policy summary")
+
+        session = FakeModelSession(factory)
+        runner = SessionRunner(
+            session_factory=lambda: session,
+            ceiling=10_000,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(),
+            trace_name="test",
+            session_id="s-1",
+            approval_gate=gate,
+        )
+        await runner.start()
+        frames = await _drain(runner, "gate this")
+        assert frames[-1]["status"] == "awaiting-approval"
+        assert frames[-1]["approval_summary"] == "Explicit policy summary"
+
+    anyio.run(go)
+
+
+def test_build_options_permission_posture() -> None:
+    # Without a callback the historical bypass posture is preserved verbatim;
+    # with one, the session runs in default mode and the callback decides.
+    plain = build_options(
+        plugins=[], model=None, system_prompt=None, max_turns=1,
+        max_budget_usd=None, resume=None,
+    )
+    assert plain.permission_mode == "bypassPermissions"
+    assert plain.can_use_tool is None
+
+    gate = ApprovalGate(required=frozenset({"Bash"}))
+    gated = build_options(
+        plugins=[], model=None, system_prompt=None, max_turns=1,
+        max_budget_usd=None, resume=None, can_use_tool=build_can_use_tool(gate),
+    )
+    assert gated.permission_mode == "default"
+    assert gated.can_use_tool is not None
+
+
+def test_runner_config_parses_approval_required_tools() -> None:
+    base = {
+        "AGENTOS_PLUGIN_DIR": "/plugin",
+        "AGENTOS_SESSION_ID": "s",
+        "AGENTOS_SANDBOX_ID": "b",
+        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+    }
+    config = RunnerConfig.from_env(
+        {**base, "AGENTOS_APPROVAL_REQUIRED_TOOLS": "Bash, mcp__github__create_issue ,"}
+    )
+    assert config.approval_required_tools == ["Bash", "mcp__github__create_issue"]
+    assert RunnerConfig.from_env(base).approval_required_tools is None

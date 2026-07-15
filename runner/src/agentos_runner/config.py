@@ -24,6 +24,13 @@ class RunnerConfig:
     max_turns: int
     history_ref: str | None
     idempotent_tools: list[str] | None
+    # Tool names whose calls require human approval (#245, ADR-0010). The
+    # runner intercepts these proactively via the SDK can_use_tool callback
+    # and ends the turn awaiting-approval instead of executing. Injected
+    # per-agent by the worker binding as AGENTOS_APPROVAL_REQUIRED_TOOLS
+    # (comma separated); None/empty means no permission gates and the
+    # pre-gate bypass posture is preserved.
+    approval_required_tools: list[str] | None
     port: int
     runner_token: str | None
 
@@ -59,6 +66,12 @@ class RunnerConfig:
             if idempotent_raw
             else None
         )
+        approval_raw = env.get("AGENTOS_APPROVAL_REQUIRED_TOOLS")
+        approval_required = (
+            [t.strip() for t in approval_raw.split(",") if t.strip()]
+            if approval_raw
+            else None
+        )
         return cls(
             session=session,
             model=env.get("AGENTOS_MODEL"),
@@ -66,6 +79,7 @@ class RunnerConfig:
             max_turns=int(env.get("AGENTOS_MAX_TURNS", "20")),
             history_ref=env.get("AGENTOS_HISTORY_REF"),
             idempotent_tools=idempotent,
+            approval_required_tools=approval_required,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
             runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None,
         )

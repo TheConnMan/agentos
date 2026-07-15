@@ -72,6 +72,11 @@ async def update_agent(
         agent = await crud.update_agent_channel(session, agent, data.slack_channel)
     if data.model is not None:
         agent = await crud.update_agent_model(session, agent, data.model)
+    if data.approval_required_tools is not None:
+        # Omitted leaves the gates unchanged; an explicit [] clears them (#245).
+        agent = await crud.update_agent_approval_tools(
+            session, agent, data.approval_required_tools
+        )
     return AgentOut.model_validate(agent)
 
 
