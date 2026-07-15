@@ -372,3 +372,47 @@ def test_agent_approval_routes_patch_rejects_bad_approvers(
         headers=auth_headers,
     )
     assert patched.status_code == 422, patched.text
+
+
+def test_agent_secrets_round_trip_exposes_names_only(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # Create with connector secrets (#429): values go in, only NAMES come back.
+    created = client.post(
+        "/agents",
+        json={
+            "name": "secret-agent",
+            "slack_channel": "C000000S01",
+            "secrets": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_supersecret"},
+        },
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["secrets"] == ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    assert "ghp_supersecret" not in created.text
+
+    # PATCH adds a second secret and reflects both names, still no values.
+    patched = client.patch(
+        f"/agents/{body['id']}",
+        json={"secrets": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x", "API_KEY": "k"}},
+        headers=auth_headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["secrets"] == ["API_KEY", "GITHUB_PERSONAL_ACCESS_TOKEN"]
+    assert "ghp_x" not in patched.text
+
+
+def test_agent_non_env_var_secret_name_is_422(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    bad = client.post(
+        "/agents",
+        json={
+            "name": "bad-secret-agent",
+            "slack_channel": "C000000S02",
+            "secrets": {"github-token": "x"},
+        },
+        headers=auth_headers,
+    )
+    assert bad.status_code == 422, bad.text

@@ -1082,6 +1082,11 @@ pub struct DeployOpts {
     pub slack_channel: Option<String>,
     pub env: DeployEnv,
     pub label: Option<String>,
+    /// Per-agent connector secret NAMES to bind on deploy (ADR-0009, #429). Each
+    /// value is resolved from the caller's env or the host secret vault and sent
+    /// to the platform API, which stores it on the agent for the worker to
+    /// forward into the sandbox. From `deploy --secret <NAME>`.
+    pub secret: Vec<String>,
     /// Actionable remediation line printed when the platform API connection
     /// fails (e.g. the kubectl port-forward command for cluster, or
     /// `agentos local up` for local). Naming the fix turns a raw
@@ -1112,6 +1117,35 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         opts.api_url,
     ));
 
+    // Resolve each --secret NAME to a value (env wins, else the host vault) so
+    // the connector secret is bound on the agent for the worker to forward into
+    // the sandbox (ADR-0009, #429). The value never appears in argv.
+    let mut secrets: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for name in &opts.secret {
+        let value = std::env::var(name)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or(crate::secrets::get_value(name)?);
+        match value {
+            Some(v) => {
+                secrets.insert(name.clone(), v);
+            }
+            None => {
+                return Err(crate::exit::usage(format!(
+                    "--secret {name}: not set in the environment and not saved in AgentOS \
+                     storage; export it or run `agentos secrets set {name}` first"
+                )));
+            }
+        }
+    }
+    if !secrets.is_empty() {
+        ui.note(&format!(
+            "binding {} connector secret(s): {}",
+            secrets.len(),
+            secrets.keys().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let cl = ui.checklist();
     let step = cl.step(&format!("deploying {plugin_name}"));
@@ -1123,6 +1157,7 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
             &created_by,
             env,
             archive,
+            &secrets,
         )
         .await
     {
@@ -1638,6 +1673,7 @@ mod tests {
             slack_channel: None,
             env: super::DeployEnv::Dev,
             label: Some("v0".to_string()),
+            secret: vec![],
             connect_hint: hint.to_string(),
         };
         let err = super::deploy(opts).await.unwrap_err();

@@ -43,6 +43,7 @@ from redis.asyncio import Redis
 from ..binding import (
     BUDGET_ENV,
     BUNDLE_REF_ENV,
+    CONNECTOR_SECRET_KEYS_ENV,
     PLUGIN_DIR_ENV,
     RUNNER_TOKEN_ENV,
     SESSION_ID_ENV,
@@ -329,8 +330,10 @@ class EvalStreamConsumer(StreamConsumer):
             return item.target_url, None, None
         release_key = f"eval-{uuid.uuid4().hex}"
         try:
+            connector_secrets = await self._repo_lookup.secrets_for(item.agent_id)
+            env = self._boot_env(item, connector_secrets)
             handle = await asyncio.to_thread(
-                self._substrate.claim, release_key, env=self._boot_env(item)
+                self._substrate.claim, release_key, env=env
             )
         except SandboxError:
             logger.exception("could not provision a runner for eval %s", item.sha)
@@ -346,7 +349,9 @@ class EvalStreamConsumer(StreamConsumer):
             return None
         return self._config.model or None
 
-    def _boot_env(self, item: EvalWorkItem) -> dict[str, str]:
+    def _boot_env(
+        self, item: EvalWorkItem, connector_secrets: dict[str, str] | None = None
+    ) -> dict[str, str]:
         budget = Budget(
             max_output_tokens_per_run=self._config.default_max_output_tokens_per_run,
             max_usd_per_day=self._config.default_max_usd_per_day,
@@ -359,6 +364,18 @@ class EvalStreamConsumer(StreamConsumer):
         }
         if item.bundle_ref is not None:
             env[BUNDLE_REF_ENV] = item.bundle_ref
+        # Deliver the agent's connector secrets (#429) so an authed-MCP bundle
+        # authenticates during eval exactly as it does on a bound run -- otherwise
+        # its tool calls fail auth and the eval measures the wrong thing. A
+        # reserved boot-env key is never overwritten. The values are resolved by
+        # the async caller (they need a DB lookup) and passed in.
+        injected_secret_keys: list[str] = []
+        for name, value in (connector_secrets or {}).items():
+            if name not in env:
+                env[name] = value
+                injected_secret_keys.append(name)
+        if injected_secret_keys:
+            env[CONNECTOR_SECRET_KEYS_ENV] = ",".join(sorted(injected_secret_keys))
         apply_model_env(env, self._config)
         return env
 

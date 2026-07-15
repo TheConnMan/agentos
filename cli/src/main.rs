@@ -486,6 +486,13 @@ enum LocalAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
+        /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
+        /// is resolved from your environment or the host secret vault (`agentos
+        /// secrets set <NAME>`) and sent to the platform, which stores it on the
+        /// agent so the worker forwards it into the sandbox for a bundle's authed
+        /// MCP server. The value never appears in argv. Repeatable.
+        #[arg(long = "secret", value_name = "NAME")]
+        secret: Vec<String>,
     },
 }
 
@@ -771,6 +778,11 @@ enum ClusterAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
+        // NOTE: `--secret` is intentionally NOT offered on `cluster deploy` yet.
+        // Per-agent connector secrets on the cluster tier need the per-agent K8s
+        // Secret + secretKeyRef delivery (#440); until that lands, the value-only
+        // SandboxClaim CR would persist a token in plaintext in etcd. `local
+        // deploy --secret` is supported. See ADR-0009.
     },
     // Agent-lifecycle verbs (kill/resume/budget/delete) speak the platform API
     // like `deploy` does. Design decision (#149): extend the existing `cluster`
@@ -1156,6 +1168,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 slack_channel,
                 env,
                 label,
+                secret,
             } => {
                 let connect_hint = format!(
                     "the platform API at {api_url} is unreachable. Start the local stack first with `agentos local up`, then re-run (or pass --api-url if your API is elsewhere)."
@@ -1167,6 +1180,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     slack_channel,
                     env,
                     label,
+                    secret,
                     connect_hint,
                 })
                 .await
@@ -1431,6 +1445,9 @@ async fn run(command: Option<Command>) -> Result<()> {
                     slack_channel,
                     env,
                     label,
+                    // Cluster connector-secret delivery is deferred to #440; no
+                    // `--secret` flag on `cluster deploy` (see the note above).
+                    secret: Vec::new(),
                     connect_hint,
                 })
                 .await

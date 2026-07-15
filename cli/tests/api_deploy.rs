@@ -62,6 +62,7 @@ async fn deploy_walks_the_full_contract_flow_with_auth() {
             "tester",
             "dev",
             archive,
+            &std::collections::BTreeMap::new(),
         )
         .await
         .unwrap();
@@ -167,7 +168,15 @@ async fn run_deploy(client: &ApiClient, channel: Option<&str>) -> ChannelOutcome
     scaffold(dir.path(), "deal-desk").unwrap();
     let archive = pack_tar_gz(dir.path()).unwrap();
     client
-        .deploy("deal-desk", channel, "0.1.0-1", "tester", "dev", archive)
+        .deploy(
+            "deal-desk",
+            channel,
+            "0.1.0-1",
+            "tester",
+            "dev",
+            archive,
+            &std::collections::BTreeMap::new(),
+        )
         .await
         .unwrap()
         .channel

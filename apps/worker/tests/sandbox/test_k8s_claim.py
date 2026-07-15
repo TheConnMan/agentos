@@ -101,3 +101,31 @@ def test_runner_token_is_a_plaintext_env_entry_credential_excluded() -> None:
     entries = _env_entries(api)
     assert {"name": "AGENTOS_RUNNER_TOKEN", "value": "tok-26"} in entries
     assert all(e.get("name") != "AGENTOS_CREDENTIALS" for e in entries)
+
+
+def test_connector_secrets_are_never_written_to_the_claim() -> None:
+    # Per-agent connector secrets (#429) ride the substrate-agnostic boot env by
+    # value, but the value-only claim CR would persist them in plaintext in etcd.
+    # The binding marks their keys in AGENTOS_CONNECTOR_SECRET_KEYS; the substrate
+    # strips both the marker and every key it names (cluster delivery is #440).
+    api = _FakeApi()
+    _client(api).create_claim(
+        "claim-1",
+        pool="pool",
+        env={
+            "AGENTOS_BUDGET": "{}",
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_super_secret",
+            "API_KEY": "k-secret",
+            "AGENTOS_CONNECTOR_SECRET_KEYS": "API_KEY,GITHUB_PERSONAL_ACCESS_TOKEN",
+        },
+    )
+    entries = _env_entries(api)
+    # Neither the secret values nor the marker land on the claim.
+    for leaked in ("ghp_super_secret", "k-secret"):
+        assert all(leaked not in e.get("value", "") for e in entries)
+    names = {e.get("name") for e in entries}
+    assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in names
+    assert "API_KEY" not in names
+    assert "AGENTOS_CONNECTOR_SECRET_KEYS" not in names
+    # Non-secret boot env is still written.
+    assert {"name": "AGENTOS_BUDGET", "value": "{}"} in entries
