@@ -1,20 +1,22 @@
 //! OS-backed secret storage for local AgentOS workflows.
 //!
-//! Secret values live in the platform credential store via `keyring`. The only
-//! filesystem state here is a non-secret index of names so `agentos secrets
-//! list` can show what AgentOS has saved without needing credential-store
-//! enumeration support.
+//! Secret values live together in one platform credential-store vault via
+//! `keyring`, so a workflow authorizes AgentOS once rather than once per key.
+//! The only filesystem state here is a non-secret index of names so `agentos
+//! secrets list` can show what AgentOS has saved without opening the vault.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 const SERVICE: &str = "dev.curie.agentos";
 const ACCOUNT_PREFIX: &str = "agentos:global:";
+const VAULT_ACCOUNT: &str = "agentos:global:vault";
 
 #[derive(Clone, Debug)]
 pub struct SetSecretOpts {
@@ -31,6 +33,19 @@ pub struct UnsetSecretOpts {
 struct SecretIndex {
     names: BTreeSet<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+struct SecretVault {
+    values: BTreeMap<String, String>,
+}
+
+#[derive(Default)]
+struct VaultCache {
+    loaded: bool,
+    vault: SecretVault,
+}
+
+static VAULT_CACHE: OnceLock<Mutex<VaultCache>> = OnceLock::new();
 
 pub fn set(opts: SetSecretOpts) -> Result<()> {
     validate_name(&opts.name)?;
@@ -67,14 +82,20 @@ pub fn unset(opts: UnsetSecretOpts) -> Result<()> {
 
 pub fn get_value(name: &str) -> Result<Option<String>> {
     validate_name(name)?;
-    let entry = entry(name)?;
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(err) => {
-            Err(err).with_context(|| format!("reading {name} from the OS credential store"))
-        }
+    let mut vault = read_vault()?;
+    if let Some(value) = vault.values.get(name) {
+        return Ok(Some(value.clone()));
     }
+
+    // Migrate legacy per-key entries lazily. Existing users authorize each old
+    // item at most once; all subsequent reads come from the single vault item.
+    if let Some(value) = read_legacy_value(name)? {
+        vault.values.insert(name.to_string(), value.clone());
+        write_vault(&vault)?;
+        let _ = delete_legacy_value(name);
+        return Ok(Some(value));
+    }
+    Ok(None)
 }
 
 /// Check the non-secret index without opening the platform credential store.
@@ -86,9 +107,9 @@ pub fn is_saved(name: &str) -> Result<bool> {
 
 pub fn set_value(name: &str, value: &str) -> Result<()> {
     validate_name(name)?;
-    entry(name)?
-        .set_password(value)
-        .with_context(|| format!("saving {name} in the OS credential store"))
+    let mut vault = read_vault()?;
+    vault.values.insert(name.to_string(), value.to_string());
+    write_vault(&vault)
 }
 
 pub fn save_value(name: &str, value: &str) -> Result<()> {
@@ -102,12 +123,16 @@ pub fn save_value(name: &str, value: &str) -> Result<()> {
 
 pub fn delete_value(name: &str) -> Result<()> {
     validate_name(name)?;
-    match entry(name)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => {
-            Err(err).with_context(|| format!("removing {name} from the OS credential store"))
+    let mut vault = read_vault()?;
+    if vault.values.remove(name).is_some() {
+        if vault.values.is_empty() {
+            delete_vault()?;
+        } else {
+            write_vault(&vault)?;
         }
+        return Ok(());
     }
+    delete_legacy_value(name)
 }
 
 pub fn remove_value(name: &str) -> Result<()> {
@@ -149,9 +174,80 @@ fn prompt_secret(name: &str) -> Result<String> {
     rpassword::read_password().context("reading secret from terminal")
 }
 
-fn entry(name: &str) -> Result<keyring::Entry> {
+fn vault_entry() -> Result<keyring::Entry> {
+    keyring::Entry::new(SERVICE, VAULT_ACCOUNT)
+        .context("opening the AgentOS OS credential-store vault")
+}
+
+fn legacy_entry(name: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, &account_name(name))
         .with_context(|| format!("opening OS credential-store entry for {name}"))
+}
+
+fn vault_cache() -> &'static Mutex<VaultCache> {
+    VAULT_CACHE.get_or_init(|| Mutex::new(VaultCache::default()))
+}
+
+fn read_vault() -> Result<SecretVault> {
+    let mut cache = vault_cache()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AgentOS credential vault cache is unavailable"))?;
+    if cache.loaded {
+        return Ok(cache.vault.clone());
+    }
+    let vault = match vault_entry()?.get_password() {
+        Ok(raw) => serde_json::from_str(&raw).context("parsing the AgentOS credential vault")?,
+        Err(keyring::Error::NoEntry) => SecretVault::default(),
+        Err(err) => return Err(err).context("reading the AgentOS OS credential-store vault"),
+    };
+    cache.loaded = true;
+    cache.vault = vault.clone();
+    Ok(vault)
+}
+
+fn write_vault(vault: &SecretVault) -> Result<()> {
+    let raw = serde_json::to_string(vault).context("serializing the AgentOS credential vault")?;
+    vault_entry()?
+        .set_password(&raw)
+        .context("saving the AgentOS OS credential-store vault")?;
+    let mut cache = vault_cache()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AgentOS credential vault cache is unavailable"))?;
+    cache.loaded = true;
+    cache.vault = vault.clone();
+    Ok(())
+}
+
+fn delete_vault() -> Result<()> {
+    match vault_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(err) => return Err(err).context("removing the AgentOS credential-store vault"),
+    }
+    let mut cache = vault_cache()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AgentOS credential vault cache is unavailable"))?;
+    cache.loaded = true;
+    cache.vault = SecretVault::default();
+    Ok(())
+}
+
+fn read_legacy_value(name: &str) -> Result<Option<String>> {
+    match legacy_entry(name)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(err) => {
+            Err(err).with_context(|| format!("reading {name} from the OS credential store"))
+        }
+    }
+}
+
+fn delete_legacy_value(name: &str) -> Result<()> {
+    match legacy_entry(name)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => {
+            Err(err).with_context(|| format!("removing legacy {name} credential-store entry"))
+        }
+    }
 }
 
 fn account_name(name: &str) -> String {
@@ -238,5 +334,23 @@ mod tests {
             account_name("GITHUB_PERSONAL_ACCESS_TOKEN"),
             "agentos:global:GITHUB_PERSONAL_ACCESS_TOKEN"
         );
+    }
+
+    #[test]
+    fn vault_round_trips_multiple_credentials_in_one_payload() {
+        let vault = SecretVault {
+            values: BTreeMap::from([
+                ("ANTHROPIC_API_KEY".to_string(), "model-secret".to_string()),
+                (
+                    "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+                    "github-secret".to_string(),
+                ),
+            ]),
+        };
+        let raw = serde_json::to_string(&vault).unwrap();
+        let decoded: SecretVault = serde_json::from_str(&raw).unwrap();
+
+        assert_eq!(decoded.values, vault.values);
+        assert_eq!(VAULT_ACCOUNT, "agentos:global:vault");
     }
 }

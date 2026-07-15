@@ -878,13 +878,32 @@ impl RunView {
 
     fn follow_tail(&mut self, terminal_width: u16, terminal_height: u16) {
         if self.follow {
-            let viewport = terminal_height.saturating_sub(8) as usize;
-            let output_width = terminal_width.saturating_sub(6).max(1) as usize;
-            self.scroll = wrap_output_lines(&self.lines, output_width)
-                .len()
-                .saturating_sub(viewport)
-                .min(u16::MAX as usize) as u16;
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
         }
+    }
+
+    fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
+        let (output_width, viewport) = run_view_dimensions(terminal_width, terminal_height);
+        wrap_output_lines(&self.lines, output_width)
+            .len()
+            .saturating_sub(viewport)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn scroll_up(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+        self.follow = false;
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        self.follow = false;
+        self.scroll = self
+            .scroll
+            .saturating_add(amount)
+            .min(self.max_scroll(terminal_width, terminal_height));
     }
 }
 
@@ -933,11 +952,10 @@ fn run_agentos_in_tui(
                             canceled = true;
                         }
                         (KeyCode::Up | KeyCode::Char('k'), _) => {
-                            view.follow = false;
-                            view.scroll = view.scroll.saturating_sub(1);
+                            view.scroll_up(1, size.width, size.height);
                         }
                         (KeyCode::Down | KeyCode::Char('j'), _) => {
-                            view.scroll = view.scroll.saturating_add(1);
+                            view.scroll_down(1, size.width, size.height);
                         }
                         (KeyCode::End, _) => view.follow = true,
                         _ => {}
@@ -1027,20 +1045,16 @@ fn show_run_view(
             (KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q'), _) => return Ok(()),
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(()),
             (KeyCode::Up | KeyCode::Char('k'), _) => {
-                view.follow = false;
-                view.scroll = view.scroll.saturating_sub(1);
+                view.scroll_up(1, size.width, size.height);
             }
             (KeyCode::Down | KeyCode::Char('j'), _) => {
-                view.follow = false;
-                view.scroll = view.scroll.saturating_add(1);
+                view.scroll_down(1, size.width, size.height);
             }
             (KeyCode::PageUp, _) => {
-                view.follow = false;
-                view.scroll = view.scroll.saturating_sub(10);
+                view.scroll_up(10, size.width, size.height);
             }
             (KeyCode::PageDown, _) => {
-                view.follow = false;
-                view.scroll = view.scroll.saturating_add(10);
+                view.scroll_down(10, size.width, size.height);
             }
             (KeyCode::Home, _) => {
                 view.follow = false;
@@ -1371,6 +1385,16 @@ fn draw_run_view(frame: &mut Frame<'_>, view: &RunView) {
             .alignment(Alignment::Center),
         chunks[1],
     );
+}
+
+fn run_view_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
+    let area_width = terminal_width.saturating_sub(4).max(20);
+    let area_height = terminal_height.saturating_sub(2).max(7);
+    let body_height = area_height.saturating_sub(2);
+    (
+        area_width.saturating_sub(2).max(1) as usize,
+        body_height.saturating_sub(2) as usize,
+    )
 }
 
 fn wrap_output_lines(lines: &[String], max_width: usize) -> Vec<String> {
@@ -1941,6 +1965,21 @@ mod tests {
             "saved"
         );
         assert_eq!(secret_status("OPENAI_API_KEY", &saved), "missing");
+    }
+
+    #[test]
+    fn first_scroll_up_moves_off_the_output_tail() {
+        let mut view = RunView::new("test");
+        for idx in 0..30 {
+            view.push(format!("line {idx}"));
+        }
+        view.follow_tail(80, 24);
+        let bottom = view.scroll;
+
+        view.scroll_up(1, 80, 24);
+
+        assert!(!view.follow);
+        assert_eq!(view.scroll, bottom - 1);
     }
 
     #[test]
