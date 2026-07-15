@@ -75,6 +75,7 @@ enum TuiAction {
 enum Workflow {
     ExploreExamples,
     ParityLadder,
+    DeployToSlack,
 }
 
 #[derive(Clone, Debug)]
@@ -317,6 +318,7 @@ fn run_recipe_in_tui(
         match workflow {
             Workflow::ExploreExamples => explore_examples(terminal, app, &values)?,
             Workflow::ParityLadder => parity_ladder(terminal, app)?,
+            Workflow::DeployToSlack => deploy_to_slack(terminal, app, &values)?,
         }
         return Ok(format!("Finished: {}", recipe.title));
     }
@@ -719,6 +721,185 @@ fn explore_examples(
     Ok(())
 }
 
+/// Guided "Deploy to Slack" workflow (local tier): walk the operator through the
+/// one-time Slack-app creation (the part that can't be automated), collect the
+/// tokens + channel id into the secret vault, then run `local up` -> `local
+/// deploy` -> `local comms --slack` inside the TUI. Mirrors `explore_examples`.
+fn deploy_to_slack(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    _values: &BTreeMap<String, String>,
+) -> Result<()> {
+    // 1. The manual, browser-only part: create the Slack app and gather the two
+    //    tokens + the channel id. Pause until the operator has them.
+    let mut intro = RunView::new("Deploy to Slack — create your Slack app");
+    for line in [
+        "This connects a local AgentOS agent to a real Slack workspace through the",
+        "compose stack: local up -> local deploy -> local comms --slack.",
+        "",
+        "STEP 1 (one time, in your browser -- not automatable):",
+        "  1. Open https://api.slack.com/apps  ->  Create New App  ->  From a manifest",
+        "  2. Paste the manifest from this repo: apps/dispatcher/slack-app-manifest.yaml",
+        "  3. 'Basic Information' -> 'App-Level Tokens' -> Generate a token with the",
+        "     'connections:write' scope. Copy the xapp-... value  (SLACK_APP_TOKEN).",
+        "  4. 'Install App' -> 'Install to Workspace'. Copy the 'Bot User OAuth Token'",
+        "     (xoxb-...)  (SLACK_BOT_TOKEN).",
+        "  5. In Slack, invite the bot to a channel:  /invite @agentos",
+        "  6. Copy that channel's ID: channel name -> 'View channel details' -> the",
+        "     C0... id at the very bottom.",
+        "",
+        "Next you'll paste the two tokens (hidden) and the channel id.",
+        "Press Enter when you have all three.",
+    ] {
+        intro.push(line);
+    }
+    show_run_view(terminal, app, &mut intro)?;
+
+    // 2. Save the model credential + Slack tokens into the vault (hidden input).
+    crate::secrets::sync_secret_file()?;
+    ensure_model_credential_available(terminal, app)?;
+    ensure_secret_available(terminal, app, "SLACK_APP_TOKEN")?;
+    ensure_secret_available(terminal, app, "SLACK_BOT_TOKEN")?;
+
+    // 3. Channel id + bundle dir, prompted after the operator has completed step 1.
+    let Some(channel) = prompt_text(
+        terminal,
+        app,
+        "Deploy to Slack",
+        "Slack channel ID (C0...)",
+        None,
+        false,
+        false,
+    )?
+    else {
+        return Ok(());
+    };
+    let plugin_dir = prompt_text(
+        terminal,
+        app,
+        "Deploy to Slack",
+        "Agent bundle directory",
+        Some("."),
+        false,
+        true,
+    )?
+    .filter(|dir| !dir.trim().is_empty())
+    .unwrap_or_else(|| ".".to_string());
+
+    // 4. Forward the model credential + Slack tokens into the child processes.
+    //    `local comms --slack` reads SLACK_APP_TOKEN/SLACK_BOT_TOKEN from its env
+    //    and the compose worker reads the model credential the same way; a value
+    //    already exported is inherited by the child, so only vault-stored ones
+    //    are forwarded here.
+    let secret_env = slack_secret_env()?;
+
+    // Run from the repo root (compose files are repo-relative on a dev checkout);
+    // resolve the bundle dir to an absolute path so `--plugin-dir` finds it
+    // regardless of the run cwd.
+    let cwd = std::env::current_dir().context("reading current directory")?;
+    let plugin_abs = cwd.join(&plugin_dir);
+    if !plugin_abs.join(".claude-plugin/plugin.json").is_file() {
+        anyhow::bail!(
+            "no agent bundle at {} (expected a .claude-plugin/plugin.json there)",
+            plugin_abs.display()
+        );
+    }
+    let repo_root = find_repo_root(cwd.clone()).unwrap_or(cwd);
+    let api_url = "http://localhost:28000";
+
+    let mut view = RunView::new(&format!("Deploy to Slack — channel {channel}"));
+    let run_result = (|| -> Result<()> {
+        run_agentos_in_tui_with_env(
+            terminal,
+            app,
+            &["local".to_string(), "up".to_string()],
+            &repo_root,
+            &mut view,
+            &secret_env,
+        )?;
+        run_agentos_in_tui_with_env(
+            terminal,
+            app,
+            &[
+                "local".to_string(),
+                "deploy".to_string(),
+                "--plugin-dir".to_string(),
+                plugin_abs.display().to_string(),
+                "--slack-channel".to_string(),
+                channel.clone(),
+                "--api-url".to_string(),
+                api_url.to_string(),
+            ],
+            &repo_root,
+            &mut view,
+            &secret_env,
+        )?;
+        run_agentos_in_tui_with_env(
+            terminal,
+            app,
+            &[
+                "local".to_string(),
+                "comms".to_string(),
+                "--slack".to_string(),
+            ],
+            &repo_root,
+            &mut view,
+            &secret_env,
+        )
+    })();
+
+    if let Err(err) = run_result {
+        view.push("");
+        view.push(format!("ERROR: {err:#}"));
+        show_run_view(terminal, app, &mut view)?;
+        return Err(err);
+    }
+
+    let mut done = RunView::new("Deploy to Slack — connected");
+    for line in [
+        format!("Your agent is deployed and wired to Slack channel {channel}."),
+        String::new(),
+        "Try it: in Slack, @mention the bot in that channel (or DM it) and send a".to_string(),
+        "message -- the dispatcher routes it through the worker to your agent.".to_string(),
+        String::new(),
+        "Disconnect Slack:  agentos local comms --slack --disconnect".to_string(),
+        "Stop the stack:    agentos local down".to_string(),
+    ] {
+        done.push(line);
+    }
+    show_run_view(terminal, app, &mut done)?;
+    Ok(())
+}
+
+/// The env forwarded into the `local up`/`deploy`/`comms` children for the Slack
+/// deploy workflow: the first available model credential and the two Slack
+/// tokens, each pulled from the vault only when not already exported (an exported
+/// value is inherited by the child process directly).
+fn slack_secret_env() -> Result<Vec<(String, String)>> {
+    let mut env = Vec::new();
+    for name in [
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ] {
+        if std::env::var_os(name).is_some() {
+            break;
+        }
+        if let Some(value) = crate::secrets::get_value(name)? {
+            env.push((name.to_string(), value));
+            break;
+        }
+    }
+    for name in ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"] {
+        if std::env::var_os(name).is_none() {
+            if let Some(value) = crate::secrets::get_value(name)? {
+                env.push((name.to_string(), value));
+            }
+        }
+    }
+    Ok(env)
+}
+
 fn example_choices() -> Vec<ExampleChoice> {
     vec![
         ExampleChoice {
@@ -952,7 +1133,7 @@ fn secrets_status_lines() -> Vec<Line<'static>> {
 
 fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
     match workflow {
-        Workflow::ExploreExamples => {
+        Workflow::ExploreExamples | Workflow::DeployToSlack => {
             lines.push(Line::from(Span::styled(
                 "Credential status",
                 Style::default().fg(Color::Yellow).bold(),
@@ -1743,6 +1924,24 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ));
             lines.push(Line::from(""));
         }
+        RecipeKind::Workflow(Workflow::DeployToSlack) => {
+            lines.push(Line::from(Span::styled(
+                "Deploy to Slack",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from(
+                "1. Create a Slack app from the repo manifest (one time)",
+            ));
+            lines.push(Line::from(
+                "2. Save your app + bot tokens and the channel ID",
+            ));
+            lines.push(Line::from(
+                "3. local up -> local deploy -> local comms --slack",
+            ));
+            lines.push(Line::from("4. @mention the bot in Slack to test"));
+            lines.push(Line::from(""));
+            maybe_add_secret_status(&mut lines, Workflow::DeployToSlack);
+        }
     }
     if !recipe.fields.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -2396,6 +2595,19 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
+            target: "local",
+            title: "Deploy to Slack",
+            description: "Deploy an agent to the local platform and connect it to a real Slack workspace.",
+            kind: RecipeKind::Workflow(Workflow::DeployToSlack),
+            args: vec![],
+            fields: vec![],
+            notes: &[
+                "Creating the Slack app is a one-time manual step; the workflow gives you the manifest path and links.",
+                "Requires a model credential plus your Slack app-level (xapp-) and bot (xoxb-) tokens, saved when prompted.",
+                "Runs local up -> local deploy -> local comms --slack; then @mention the bot in your channel to test.",
+            ],
+        },
+        Recipe {
             target: "secrets",
             title: "Save secret",
             description: "Store a local secret in AgentOS private storage with hidden input.",
@@ -2629,6 +2841,22 @@ mod tests {
         }
         // And they lead the recipe list (first recipe is on the platform tab).
         assert_eq!(app.recipes.first().map(|r| r.target), Some("platform"));
+    }
+
+    #[test]
+    fn deploy_to_slack_recipe_is_registered_under_local() {
+        let app = App::new();
+        let recipe = app
+            .recipes
+            .iter()
+            .find(|recipe| recipe.title == "Deploy to Slack")
+            .expect("Deploy to Slack recipe should be registered");
+        assert_eq!(recipe.target, "local");
+        assert!(matches!(
+            recipe.kind,
+            RecipeKind::Workflow(Workflow::DeployToSlack)
+        ));
+        assert!(app.targets.contains(&"local"));
     }
 
     #[test]
