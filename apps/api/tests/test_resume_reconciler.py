@@ -106,6 +106,29 @@ def _run_async[T](
     return asyncio.run(_main())
 
 
+def _detached_approval(status: str, *, resolved_by: str | None = "U9") -> Approval:
+    """An unpersisted ``Approval`` in a chosen status, for the pure-unit selector
+    test: the turn builders read the record's fields only, so no DB round-trip is
+    needed to exercise the status -> builder mapping.
+
+    Also the single construction site for ``_insert_approval`` below, so a new
+    non-nullable column on ``Approval`` is added once, and the record the unit
+    test exercises cannot drift from the one the DB tests insert.
+    """
+
+    return Approval(
+        id=uuid.uuid4(),
+        conversation_id=f"th-{uuid.uuid4().hex[:8]}",
+        author="U1",
+        summary="Give ACME a 20% discount",
+        reply_channel="C1",
+        reply_placeholder="p-1",
+        dedupe_key=uuid.uuid4().hex,
+        status=status,
+        resolved_by=resolved_by,
+    )
+
+
 async def _insert_approval(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
@@ -119,20 +142,12 @@ async def _insert_approval(
     endpoint), so a test can construct the exact stranded/settled/expired shapes
     the reconciler must include or exclude."""
 
+    approval = _detached_approval(status, resolved_by=resolved_by)
+    approval.reply_endpoint = reply_endpoint
+    approval.resolved_at = resolved_at
+    approval.resumed_at = resumed_at
+
     async with sessionmaker() as session:
-        approval = Approval(
-            conversation_id=f"th-{uuid.uuid4().hex[:8]}",
-            author="U1",
-            summary="Give ACME a 20% discount",
-            reply_channel="C1",
-            reply_placeholder="p-1",
-            reply_endpoint=reply_endpoint,
-            dedupe_key=uuid.uuid4().hex,
-            status=status,
-            resolved_by=resolved_by,
-            resolved_at=resolved_at,
-            resumed_at=resumed_at,
-        )
         session.add(approval)
         await session.commit()
         await session.refresh(approval)
@@ -212,33 +227,94 @@ def test_reconciler_skips_already_resumed_record(
     assert resumed_at is not None
 
 
-def test_reconciler_skips_expired_record(
+def test_reconciler_reenqueues_stranded_expired_record(
     clean_db: None, valkey: redis.Redis, runs_stream: str
 ) -> None:
-    """An expired record has ``resolved_at`` set but was never enqueued and must
-    never be woken -- this pins the expired-exclusion in
-    ``list_resolved_unresumed`` (out-of-scope expiry-stranding stays out)."""
+    """#418: an expired record whose expiry wake never reached the stream is an
+    owed wake, and the reconciler must deliver it -- with the EXPIRY turn.
+
+    Since #412 both expiry paths (the sweeper and the resolve-path expiry branch)
+    enqueue a wake, so ``status=expired, resolved_at`` set, ``resumed_at`` NULL
+    means the enqueue failed and the session is stranded. It gets the same
+    durable backstop a resolved record already had.
+
+    ``resolved_by`` is None because expiry records no human decision. That is
+    also why the builder choice is load-bearing rather than cosmetic: sending
+    this row through ``build_resume_turn`` would author the wake as "approver"
+    and tell the model the request "was expired by None". The text/author
+    assertions below are what prove the expiry builder was dispatched.
+    """
 
     async def steps(
         sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
-    ) -> tuple[int, datetime | None]:
+    ) -> tuple[uuid.UUID, int, datetime | None]:
         approval_id = await _insert_approval(
             sessionmaker,
             status=ApprovalStatus.expired,
             resolved_at=_naive(120),
             resumed_at=None,
+            resolved_by=None,
         )
         reconciler = ResumeReconciler(
             sessionmaker, queue, interval_seconds=30, grace_seconds=0, batch_limit=100
         )
         count = await reconciler.reconcile_once()
-        return count, await _resumed_at(sessionmaker, approval_id)
+        return approval_id, count, await _resumed_at(sessionmaker, approval_id)
 
-    count, resumed_at = _run_async(steps, runs_stream)
+    approval_id, count, resumed_at = _run_async(steps, runs_stream)
 
-    assert count == 0
-    assert valkey.xrange(runs_stream) == []
-    assert resumed_at is None
+    assert count == 1
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+
+    # The shared deterministic key: the ``-resolved`` suffix is historical and
+    # must NOT fork per status, or the worker's done-marker stops recognizing a
+    # redelivery of the already-finished turn for this approval.
+    assert turn.event_id == f"approval-{approval_id}-resolved"
+
+    # The expiry turn, not the human-decision one.
+    assert turn.text.startswith("[approval expired]")
+    assert turn.author == "system"
+
+    assert resumed_at is not None
+
+
+def test_resume_turn_selector_domain_matches_resumable_statuses() -> None:
+    """The status -> turn-builder mapping is total over the resumable statuses,
+    and its domain cannot silently desync from ``crud._RESUMABLE_STATUSES``.
+
+    The selector lives beside the builders while the finder and the per-row claim
+    are fenced by crud's private tuple. Nothing in the type system ties the two
+    together, so a future status added to the tuple would reach the selector and
+    raise, or a status added to the selector would never be selected. The set
+    equality below is the executable form of that invariant.
+
+    Pure unit: no DB, no Valkey -- the selector is a function of the record.
+    """
+
+    from agentos_api import crud
+    from agentos_api.resumequeue import resume_turn_for
+
+    approved = resume_turn_for(_detached_approval(ApprovalStatus.approved))
+    assert "[approval resolved]" in approved.text
+
+    rejected = resume_turn_for(_detached_approval(ApprovalStatus.rejected))
+    assert "[approval resolved]" in rejected.text
+
+    expired = resume_turn_for(
+        _detached_approval(ApprovalStatus.expired, resolved_by=None)
+    )
+    assert "[approval expired]" in expired.text
+    assert expired.author == "system"
+
+    # A pending record owes no wake: it has not been decided and has not lapsed.
+    with pytest.raises(ValueError):
+        resume_turn_for(_detached_approval(ApprovalStatus.pending, resolved_by=None))
+
+    assert {s for s in ApprovalStatus if s is not ApprovalStatus.pending} == set(
+        crud._RESUMABLE_STATUSES
+    )
 
 
 def test_reconciler_skips_pending_record(
@@ -270,12 +346,22 @@ def test_reconciler_skips_pending_record(
 def test_reconciler_ignores_backfilled_historical_row(
     clean_db: None, valkey: redis.Redis, runs_stream: str
 ) -> None:
-    """A pre-migration resolution is backfilled to ``resumed_at = resolved_at``;
-    the reconciler must treat it as settled and never auto-wake it after deploy.
+    """Historical rows are backfilled to ``resumed_at = resolved_at``; the
+    reconciler must treat them as settled and never auto-wake them after deploy.
 
-    This pins the Change 1 backfill contract: without it, the first pass after
-    deploy would re-deliver stale resume turns into long-finished threads (the
-    worker done-marker's 24h TTL means an old wake is re-delivered, not absorbed).
+    This pins the reconciler-level steady-state contract only: a row that
+    already carries ``resumed_at`` -- whoever set it, migration 0011 (#411),
+    migration 0012 (#418), or the runtime -- is never re-woken, because
+    ``list_resolved_unresumed`` filters on ``resumed_at IS NULL``. That contract
+    is what makes settling history sufficient; without it, the first pass after
+    deploy would re-deliver stale wakes into long-finished threads (past the
+    worker done-marker's 24h TTL an old wake is re-delivered, not absorbed, so it
+    steers a thread that already moved on).
+
+    It does NOT verify either migration's WHERE clause: the rows here are
+    hand-inserted already carrying ``resumed_at``, so deleting a migration leaves
+    this test green. The 24h window is verified separately against a disposable
+    database.
     """
 
     async def steps(
@@ -288,6 +374,14 @@ def test_reconciler_ignores_backfilled_historical_row(
             resolved_at=resolved,
             resumed_at=resolved,
         )
+        # The exact shape migration 0012 produces for a historical expired row.
+        await _insert_approval(
+            sessionmaker,
+            status=ApprovalStatus.expired,
+            resolved_at=resolved,
+            resumed_at=resolved,
+            resolved_by=None,
+        )
         reconciler = ResumeReconciler(
             sessionmaker, queue, interval_seconds=30, grace_seconds=0, batch_limit=100
         )
@@ -297,6 +391,58 @@ def test_reconciler_ignores_backfilled_historical_row(
 
     assert count == 0
     assert valkey.xrange(runs_stream) == []
+
+
+def test_reconciler_grace_applies_to_expired_rows(
+    clean_db: None, valkey: redis.Redis, runs_stream: str
+) -> None:
+    """The grace horizon guards expired rows exactly as it guards resolved ones.
+
+    Grace is what keeps the reconciler from racing an inline enqueue that is
+    still being consumed: it must exceed the worker's max turn duration. For an
+    expired row the horizon keys off the ``resolved_at`` the expiry CAS stamps at
+    flip time, so a freshly expired record whose sweeper-delivered wake is still
+    in flight is skipped, and only a genuinely stale one is re-enqueued. A
+    work-list that special-cased expired rows out of the grace filter would pass
+    every other test here and fail this one.
+    """
+
+    async def steps(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> tuple[int, int, datetime | None]:
+        approval_id = await _insert_approval(
+            sessionmaker,
+            status=ApprovalStatus.expired,
+            resolved_at=_naive(0),
+            resumed_at=None,
+            resolved_by=None,
+        )
+        within = ResumeReconciler(
+            sessionmaker, queue, interval_seconds=30, grace_seconds=3600, batch_limit=100
+        )
+        count_within = await within.reconcile_once()
+
+        # Backdate the expiry well past the grace horizon.
+        async with sessionmaker() as session:
+            await session.execute(
+                update(Approval)
+                .where(Approval.id == approval_id)
+                .values(resolved_at=_naive(7200))
+            )
+            await session.commit()
+
+        past = ResumeReconciler(
+            sessionmaker, queue, interval_seconds=30, grace_seconds=3600, batch_limit=100
+        )
+        count_past = await past.reconcile_once()
+        return count_within, count_past, await _resumed_at(sessionmaker, approval_id)
+
+    count_within, count_past, resumed_at = _run_async(steps, runs_stream)
+
+    assert count_within == 0
+    assert count_past == 1
+    assert len(valkey.xrange(runs_stream)) == 1
+    assert resumed_at is not None
 
 
 def test_reconciler_respects_grace_window(

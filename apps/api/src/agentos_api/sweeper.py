@@ -18,14 +18,24 @@ resolver -- and every loser gets None back and neither audits nor enqueues. This
 pending-guarded CAS is what guarantees a single wakeup: only the flip winner
 ever enqueues.
 
-Warning for anyone adding a re-enqueue path (retry, durable outbox, reconciler):
-the worker's done-marker (``markers.py``) only skips an event that was already
-handled to a TERMINAL point (streamed to a final, or escalated). It does NOT
-collapse a duplicate that lands while the resumed turn is still in flight --
-that duplicate would steer the live turn instead of being absorbed. The shared
-``resume_event_id`` (see ``resumequeue.build_expiry_resume_turn``) prevents a
-redelivery of an already-finished turn from re-running; it does not make a
-re-enqueue free, so do not rely on it as a mid-turn dedupe.
+A successful enqueue is recorded with ``crud.mark_approval_resumed`` (#418), the
+same enqueue-first-then-mark ordering the resolve path uses: a NULL
+``resumed_at`` on a flipped record means the wake never reached the stream, and
+the resume reconciler (#411) re-enqueues it past its grace horizon. That is the
+only recovery path for an expiry wake, because a flipped record is no longer
+``pending`` and so is never re-selected by a later sweep. Marking before the
+enqueue would write the wake off as delivered and strand the session for good.
+
+Warning for anyone adding a re-enqueue path (retry, durable outbox, another
+reconciler): the worker's done-marker (``markers.py``) only skips an event that
+was already handled to a TERMINAL point (streamed to a final, or escalated). It
+does NOT collapse a duplicate that lands while the resumed turn is still in
+flight -- that duplicate would steer the live turn instead of being absorbed.
+The shared ``resume_event_id`` (see ``resumequeue.build_expiry_resume_turn``)
+prevents a redelivery of an already-finished turn from re-running; it does not
+make a re-enqueue free, so do not rely on it as a mid-turn dedupe. What keeps
+the reconciler's re-enqueue safe is its grace horizon (longer than the worker's
+maximum turn), not the shared key.
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from . import crud
+from .config import get_settings
 from .resumequeue import ResumeQueue, build_expiry_resume_turn
 
 logger = logging.getLogger(__name__)
@@ -53,7 +64,10 @@ async def sweep_expired_approvals(
 
     ``now`` defaults to naive UTC (matching ``expires_at`` and the router's
     ``_expired`` comparison); tests pass an explicit ``now`` to avoid real
-    sleeps. Returns the number of records this pass successfully flipped.
+    sleeps. Returns the number of records this pass flipped AND landed a resume
+    turn on the stream for. The count is taken at the enqueue rather than after
+    the mark below: at that point the wake is delivered, so a failed mark must
+    not subtract from a wake the session already got.
 
     Per record, the order is flip -> audit -> enqueue, each guarded by a
     per-record try/except so one poisoned record cannot block the rest of the
@@ -92,6 +106,10 @@ async def sweep_expired_approvals(
             )
             stream_id = await resume_queue.enqueue(build_expiry_resume_turn(expired))
             flipped += 1
+            # Enqueue-first-then-mark: only a wake that actually reached the
+            # stream is written off. The mark's ``resumed_at IS NULL`` guard
+            # makes a race with the reconciler a no-op rather than a conflict.
+            await crud.mark_approval_resumed(session, expired.id)
             logger.info(
                 "approval %s expired by sweeper; resume turn enqueued (%s)",
                 expired.id,
@@ -101,11 +119,27 @@ async def sweep_expired_approvals(
             # Reset the shared session so a failed commit on this record cannot
             # poison the rest of the batch (PendingRollbackError); mirrors the
             # rollback-after-DB-error convention in the routers. If the flip
-            # already committed, the audit/enqueue loss means the wakeup may be
-            # dropped (documented durability gap; a durable outbox is future work).
+            # already committed, this record is left expired with ``resumed_at``
+            # NULL, which is exactly the owed-wake shape the resume reconciler
+            # (#411) re-enqueues past its grace horizon -- so the wakeup is
+            # retried rather than dropped, provided that backstop is enabled.
             await session.rollback()
+            # The log must not name the enqueue as the failure: this except also
+            # catches a failed mark, in which case the wake DID reach the stream.
+            # An operator reads this line while deciding whether a session is
+            # stranded, so it states the uncertainty instead of guessing.
+            retry = (
+                "the reconciler will re-enqueue it past its grace horizon (a "
+                "redundant wake if it did land, which is the safe direction)"
+                if get_settings().resume_reconciler_enabled
+                else "nothing will retry it (resume reconciler disabled) and "
+                "the wakeup may be lost"
+            )
             logger.exception(
-                "expiry sweep failed for approval %s; wakeup may be lost", approval_id
+                "expiry sweep failed for approval %s after the flip; the resume "
+                "turn may or may not have reached the stream, so %s",
+                approval_id,
+                retry,
             )
             continue
     return flipped

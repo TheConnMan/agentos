@@ -460,10 +460,18 @@ async def mark_approval_resumed(session: AsyncSession, approval_id: uuid.UUID) -
     await session.commit()
 
 
-# The statuses an owed-wake row can carry: a resolution that must still reach its
-# suspended session. ``expired``/``pending`` are never resumed. Shared by the
-# reconciler's candidate finder and its per-row claim so the two never desync.
-_RESUMABLE_STATUSES = (ApprovalStatus.approved, ApprovalStatus.rejected)
+# The statuses an owed-wake row can carry: a terminal outcome that must still
+# reach its suspended session. ``expired`` belongs here since #412 gave both
+# expiry paths (the sweeper and the resolve-path expiry branch) a resume turn of
+# their own, so an expired record owes a wake exactly as a decided one does
+# (#418). Only ``pending`` is excluded: it has neither been decided nor lapsed,
+# so nothing is owed yet. Shared by the reconciler's candidate finder and its
+# per-row claim so the two never desync.
+_RESUMABLE_STATUSES = (
+    ApprovalStatus.approved,
+    ApprovalStatus.rejected,
+    ApprovalStatus.expired,
+)
 
 
 async def claim_resume_row(
@@ -496,11 +504,17 @@ async def claim_resume_row(
 async def list_resolved_unresumed(
     session: AsyncSession, *, resolved_before: datetime, limit: int
 ) -> list[uuid.UUID]:
-    """The reconciler's work-list: ids of resolved approvals whose wake is owed.
+    """The reconciler's work-list: ids of settled approvals whose wake is owed.
 
-    ``expired`` is deliberately excluded -- an expired record has ``resolved_at``
-    set but never had a resume turn enqueued, so it must never be woken.
-    ``resolved_before`` is naive UTC, matching the DateTime columns.
+    A row in any ``_RESUMABLE_STATUSES`` with ``resolved_at`` set and
+    ``resumed_at`` NULL is an owed wake: every path that settles a record (the
+    resolve endpoint, the expiry sweeper, and the resolve-path expiry branch)
+    enqueues a resume turn and marks ``resumed_at`` only once that enqueue
+    succeeded, so NULL means the wake never reached the stream. That now includes
+    ``expired`` records (#418), whose expiry wake was previously unrecoverable
+    because a flipped record is no longer ``pending`` and so is never re-selected
+    by ``list_expired_pending_approvals``. ``resolved_before`` is naive UTC,
+    matching the DateTime columns.
 
     Returns ids only (the unlocked candidate finder): each id is then claimed
     atomically by ``claim_resume_row`` in its own short transaction, which
