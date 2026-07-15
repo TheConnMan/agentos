@@ -115,6 +115,14 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/controller-rbac-assertions.sh
 
+      # Prove per-agent connector secrets (ADR-0009, #429) render as their own
+      # Secret, do not leak into the shared chart Secret, and are absent by
+      # default.
+      - name: helm render assertions (per-agent connector secrets)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/connector-secrets-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail

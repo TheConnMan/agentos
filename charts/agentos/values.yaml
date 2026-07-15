@@ -668,6 +668,19 @@ preflights:
 # ---------------------------------------------------------------------------
 agentSandbox:
   deploy: true
+  # Per-agent connector secrets (ADR-0009, #429): a map of agent name -> the
+  # named connector secret VALUES that agent's authed MCP servers need. Each
+  # entry renders as its OWN Kubernetes Secret
+  # (<fullname>-agent-<name>-connector-secrets), kept off the shared chart
+  # Secret and off the value-only SandboxClaim CR. The runner sandbox reads a
+  # value via a per-agent SandboxTemplate `secretKeyRef` (the binding half is
+  # cluster-verified, tracked separately). Empty by default; supply per agent,
+  # e.g.:
+  #   connectorSecrets:
+  #     github-issues:
+  #       GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+  # Prefer `--set-file`/a sealed values file over inlining a real token.
+  connectorSecrets: {}
   controller:
     # Installs the vendored kubernetes-sigs/agent-sandbox v0.5.0 controller
     # (namespace agent-sandbox-system, RBAC, webhook Service, Deployment with

@@ -10,6 +10,10 @@ oauth.env
 # this the chart is silently uninstallable (backing stores reference a Secret
 # that never gets committed).
 !charts/agentos/templates/secrets.yaml
+# Same exception for the per-agent connector-secret template + its render-
+# assertion script (ADR-0009, #429): Helm syntax / a test, not secret material.
+!charts/agentos/templates/agent-connector-secrets.yaml
+!charts/agentos/ci/connector-secrets-assertions.sh
 
 # Python
 __pycache__/
