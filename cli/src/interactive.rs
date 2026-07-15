@@ -26,6 +26,19 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SecretNameChoice {
+    Name(String),
+    Custom,
+}
+
+#[derive(Clone, Debug)]
+struct SelectChoice<T> {
+    label: String,
+    description: String,
+    value: T,
+}
+
 #[derive(Clone, Debug)]
 struct Recipe {
     target: &'static str,
@@ -284,16 +297,32 @@ fn run_tui_action(
 ) -> Result<String> {
     match action {
         TuiAction::SaveSecret => {
-            let Some(name) = prompt_text(
+            let Some(choice) = prompt_select(
                 terminal,
                 app,
                 "Save Secret",
-                "Secret name",
-                Some("GITHUB_PERSONAL_ACCESS_TOKEN"),
-                false,
+                "Choose a secret name",
+                secret_name_choices(),
             )?
             else {
                 return Ok("Save secret canceled.".to_string());
+            };
+            let name = match choice {
+                SecretNameChoice::Name(name) => name,
+                SecretNameChoice::Custom => {
+                    let Some(name) = prompt_text(
+                        terminal,
+                        app,
+                        "Save Secret",
+                        "Custom secret name",
+                        None,
+                        false,
+                    )?
+                    else {
+                        return Ok("Save secret canceled.".to_string());
+                    };
+                    name
+                }
             };
             crate::secrets::validate_name(&name)?;
             let Some(value) = prompt_text(terminal, app, "Save Secret", &name, None, true)? else {
@@ -311,17 +340,32 @@ fn run_tui_action(
             })
         }
         TuiAction::RemoveSecret => {
-            let default = crate::secrets::list_names()?.into_iter().next();
-            let Some(name) = prompt_text(
+            let Some(choice) = prompt_select(
                 terminal,
                 app,
                 "Remove Secret",
-                "Secret name",
-                default.as_deref().or(Some("GITHUB_PERSONAL_ACCESS_TOKEN")),
-                false,
+                "Choose a saved secret",
+                saved_secret_choices()?,
             )?
             else {
                 return Ok("Remove secret canceled.".to_string());
+            };
+            let name = match choice {
+                SecretNameChoice::Name(name) => name,
+                SecretNameChoice::Custom => {
+                    let Some(name) = prompt_text(
+                        terminal,
+                        app,
+                        "Remove Secret",
+                        "Custom secret name",
+                        None,
+                        false,
+                    )?
+                    else {
+                        return Ok("Remove secret canceled.".to_string());
+                    };
+                    name
+                }
             };
             crate::secrets::validate_name(&name)?;
             let Some(confirm) = prompt_text(
@@ -340,6 +384,99 @@ fn run_tui_action(
             }
             crate::secrets::remove_value(&name)?;
             Ok(format!("Removed {name}."))
+        }
+    }
+}
+
+fn secret_name_choices() -> Vec<SelectChoice<SecretNameChoice>> {
+    vec![
+        SelectChoice {
+            label: "ANTHROPIC_API_KEY".to_string(),
+            description: "Anthropic API key for model calls".to_string(),
+            value: SecretNameChoice::Name("ANTHROPIC_API_KEY".to_string()),
+        },
+        SelectChoice {
+            label: "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+            description: "Claude Code OAuth token for model calls".to_string(),
+            value: SecretNameChoice::Name("CLAUDE_CODE_OAUTH_TOKEN".to_string()),
+        },
+        SelectChoice {
+            label: "AGENTOS_CREDENTIALS".to_string(),
+            description: "Provider credential forwarded as AgentOS credentials".to_string(),
+            value: SecretNameChoice::Name("AGENTOS_CREDENTIALS".to_string()),
+        },
+        SelectChoice {
+            label: "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+            description: "GitHub token for MCP examples or bundles".to_string(),
+            value: SecretNameChoice::Name("GITHUB_PERSONAL_ACCESS_TOKEN".to_string()),
+        },
+        SelectChoice {
+            label: "Custom secret name".to_string(),
+            description: "Enter any env-style secret name".to_string(),
+            value: SecretNameChoice::Custom,
+        },
+    ]
+}
+
+fn saved_secret_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
+    let mut choices: Vec<SelectChoice<SecretNameChoice>> = crate::secrets::list_names()?
+        .into_iter()
+        .map(|name| SelectChoice {
+            label: name.clone(),
+            description: "Saved in the OS credential store".to_string(),
+            value: SecretNameChoice::Name(name),
+        })
+        .collect();
+    choices.push(SelectChoice {
+        label: "Custom secret name".to_string(),
+        description: "Remove a name not shown here".to_string(),
+        value: SecretNameChoice::Custom,
+    });
+    Ok(choices)
+}
+
+fn prompt_select<T: Clone>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    title: &str,
+    label: &str,
+    choices: Vec<SelectChoice<T>>,
+) -> Result<Option<T>> {
+    if choices.is_empty() {
+        return Ok(None);
+    }
+    let mut selected = 0usize;
+    loop {
+        terminal.draw(|frame| {
+            draw(frame, app);
+            draw_select_prompt(frame, title, label, &choices, selected);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => return Ok(None),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Enter, _) => return Ok(Some(choices[selected].value.clone())),
+            (KeyCode::Down | KeyCode::Char('j'), _) => {
+                selected = (selected + 1) % choices.len();
+            }
+            (KeyCode::Up | KeyCode::Char('k'), _) => {
+                selected = if selected == 0 {
+                    choices.len() - 1
+                } else {
+                    selected - 1
+                };
+            }
+            (KeyCode::Char(ch), _) if ch.is_ascii_digit() => {
+                if let Some(digit) = ch.to_digit(10) {
+                    let idx = digit as usize;
+                    if idx > 0 && idx <= choices.len() {
+                        selected = idx - 1;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -839,7 +976,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 "TUI prompts",
                 Style::default().fg(Color::Yellow).bold(),
             )));
-            lines.push(Line::from("1. Secret name"));
+            lines.push(Line::from("1. Choose a common secret name or Custom"));
             lines.push(Line::from("2. Secret value, hidden while typing"));
             lines.push(Line::from("3. Save to the OS credential store"));
             lines.push(Line::from(""));
@@ -869,7 +1006,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 "TUI prompts",
                 Style::default().fg(Color::Yellow).bold(),
             )));
-            lines.push(Line::from("1. Secret name"));
+            lines.push(Line::from("1. Choose a saved secret name or Custom"));
             lines.push(Line::from("2. Type the same name to confirm removal"));
             lines.push(Line::from("3. Remove from the OS credential store"));
             lines.push(Line::from(""));
@@ -973,6 +1110,52 @@ fn draw_prompt(
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title(title).borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn draw_select_prompt<T>(
+    frame: &mut Frame<'_>,
+    title: &str,
+    label: &str,
+    choices: &[SelectChoice<T>],
+    selected: usize,
+) {
+    let height = (choices.len() as u16)
+        .saturating_mul(2)
+        .saturating_add(6)
+        .min(18);
+    let area = centered_rect(74, height, frame.area());
+    let mut lines = vec![
+        Line::from(label.to_string()),
+        Line::from(Span::styled(
+            "Up/Down move    Enter choose    Esc cancel",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+    ];
+    for (idx, choice) in choices.iter().enumerate() {
+        let focused = idx == selected;
+        let marker = if focused { ">" } else { " " };
+        let style = if focused {
+            Style::default().fg(Color::Black).bg(Color::Green)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {}. {}", idx + 1, choice.label),
+            style,
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("     {}", choice.description),
+            Style::default().fg(Color::Gray),
+        )));
+    }
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
             .block(Block::default().title(title).borders(Borders::ALL)),
         area,
@@ -1115,7 +1298,7 @@ fn recipes() -> Vec<Recipe> {
             fields: vec![],
             notes: &[
                 "The value is prompted with hidden input and saved in the OS credential store.",
-                "Use env-style names such as ANTHROPIC_API_KEY or GITHUB_PERSONAL_ACCESS_TOKEN.",
+                "Choose a common env var or enter any env-style custom name.",
             ],
         },
         Recipe {
@@ -1340,5 +1523,20 @@ mod tests {
             assert!(matches!(&recipe.kind, RecipeKind::Tui(actual) if *actual == action));
             assert!(recipe.args.is_empty());
         }
+    }
+
+    #[test]
+    fn secret_name_choices_include_custom_and_do_not_default_to_github() {
+        let choices = secret_name_choices();
+        assert!(matches!(
+            choices.first().map(|choice| &choice.value),
+            Some(SecretNameChoice::Name(name)) if name == "ANTHROPIC_API_KEY"
+        ));
+        assert!(choices
+            .iter()
+            .any(|choice| choice.value == SecretNameChoice::Custom));
+        assert!(choices.iter().any(
+            |choice| matches!(&choice.value, SecretNameChoice::Name(name) if name == "GITHUB_PERSONAL_ACCESS_TOKEN")
+        ));
     }
 }
