@@ -17,6 +17,20 @@
             ],
             "title": "Approval Required Tools"
           },
+          "approval_routes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/ApprovalRouteBinding"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Routes"
+          },
           "behavior_packs": {
             "anyOf": [
               {
@@ -81,6 +95,18 @@
             ],
             "title": "Approval Required Tools"
           },
+          "approval_routes": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Routes"
+          },
           "behavior_packs": {
             "anyOf": [
               {
@@ -142,6 +168,7 @@
           "behavior_packs",
           "model",
           "approval_required_tools",
+          "approval_routes",
           "created_at"
         ],
         "title": "AgentOut",
@@ -163,6 +190,20 @@
               }
             ],
             "title": "Approval Required Tools"
+          },
+          "approval_routes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/ApprovalRouteBinding"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Routes"
           },
           "model": {
             "anyOf": [
@@ -204,8 +245,84 @@
         "title": "AppConfig",
         "type": "object"
       },
+      "ApprovalAuditOut": {
+        "description": "One audit entry (#247): who attempted what, and the authorizer snapshot\nthat counted (or refused) them.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "actor_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Channel"
+          },
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "authorized": {
+            "title": "Authorized",
+            "type": "boolean"
+          },
+          "authorizer": {
+            "title": "Authorizer",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "id",
+          "approval_id",
+          "action",
+          "actor",
+          "actor_channel",
+          "decision",
+          "authorizer",
+          "authorized",
+          "reason",
+          "created_at"
+        ],
+        "title": "ApprovalAuditOut",
+        "type": "object"
+      },
       "ApprovalCreate": {
-        "description": "A durable approval request (#244), created by the worker when a run ends\nawaiting-approval. ``dedupe_key`` is the triggering event id, so a\nredelivered turn adopts the existing record instead of forking a second one.",
+        "description": "A durable approval request (#244), created by the worker when a run ends\nawaiting-approval. ``dedupe_key`` is the triggering event id, so a\nredelivered turn adopts the existing record instead of forking a second one.\n``route``/``card_channel`` (#247) record the manifest route the request\nnamed and the channel the worker routed the card to after binding\nresolution; the authorizer proves membership against ``card_channel``.",
         "properties": {
           "agent_id": {
             "anyOf": [
@@ -223,6 +340,17 @@
             "minLength": 1,
             "title": "Author",
             "type": "string"
+          },
+          "card_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Channel"
           },
           "conversation_id": {
             "minLength": 1,
@@ -267,6 +395,17 @@
             "title": "Reply Placeholder",
             "type": "string"
           },
+          "route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          },
           "summary": {
             "minLength": 1,
             "title": "Summary",
@@ -301,6 +440,17 @@
           "author": {
             "title": "Author",
             "type": "string"
+          },
+          "card_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Channel"
           },
           "conversation_id": {
             "title": "Conversation Id",
@@ -385,6 +535,17 @@
             ],
             "title": "Resolved By"
           },
+          "route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -404,6 +565,8 @@
           "reply_placeholder",
           "reply_endpoint",
           "dedupe_key",
+          "route",
+          "card_channel",
           "status",
           "expires_at",
           "resolved_by",
@@ -458,6 +621,20 @@
           "resolved_by"
         ],
         "title": "ApprovalResolve",
+        "type": "object"
+      },
+      "ApprovalRouteBinding": {
+        "description": "One workspace binding for a manifest-declared approval route (#247):\nthe Slack channel whose members are that route's approvers (under the\nchannel-membership authorizer).",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "ApprovalRouteBinding",
         "type": "object"
       },
       "BehaviorPacksConfig": {
@@ -4094,6 +4271,70 @@
           }
         },
         "summary": "Get Approval",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/approvals/{approval_id}/audit": {
+      "get": {
+        "description": "The approval's audit trail (#247), oldest first: every resolution\nattempt with the authorizer snapshot that counted or refused it.",
+        "operationId": "get_approval_audit_approvals__approval_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalAuditOut"
+                  },
+                  "title": "Response Get Approval Audit Approvals  Approval Id  Audit Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Approval Audit",
         "tags": [
           "approvals"
         ]

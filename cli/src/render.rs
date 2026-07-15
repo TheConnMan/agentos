@@ -153,6 +153,7 @@ mod tests {
             text: "all done".into(),
             status: SessionStatus::Done,
             approval_summary: None,
+            approval_route: None,
         };
         // A delta routes to stdout as a raw token.
         assert!(matches!(printer.part_for(&delta), Some(TurnPart::Token(t)) if t == "all done"));
@@ -170,6 +171,7 @@ mod tests {
             text: "quiet answer".into(),
             status: SessionStatus::IdleAwaitingInput,
             approval_summary: None,
+            approval_route: None,
         };
         // The caller prints this token to stdout, then appends the status trailer.
         assert!(
@@ -185,6 +187,7 @@ mod tests {
             text: String::new(),
             status: SessionStatus::Done,
             approval_summary: None,
+            approval_route: None,
         };
         assert!(
             matches!(printer.part_for(&final_frame), Some(TurnPart::Status(s)) if s == "-- final (done)")

@@ -354,3 +354,112 @@ def test_runner_config_parses_approval_required_tools() -> None:
     )
     assert config.approval_required_tools == ["Bash", "mcp__github__create_issue"]
     assert RunnerConfig.from_env(base).approval_required_tools is None
+
+
+# --- the manifest approval policy + routes (#247) --------------------------------
+
+
+def test_load_approval_policy_reads_manifest_gates(tmp_path) -> None:
+    import json as _json
+
+    from agentos_runner.approval import load_approval_policy
+
+    plugin = tmp_path / ".claude-plugin"
+    plugin.mkdir()
+    (plugin / "plugin.json").write_text(
+        _json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {"gate": "Bash", "route": "managers"},
+                        {"gate": "mcp__crm__send_contract", "route": "legal"},
+                    ]
+                },
+            }
+        )
+    )
+    assert load_approval_policy(str(tmp_path)) == {
+        "Bash": "managers",
+        "mcp__crm__send_contract": "legal",
+    }
+    # No dir / no manifest / no policy all yield the empty map.
+    assert load_approval_policy(None) == {}
+    assert load_approval_policy(str(tmp_path / "missing")) == {}
+
+
+def test_gate_block_records_the_declared_route() -> None:
+    gate = ApprovalGate(
+        required=frozenset({"Bash", "Read"}), route_by_tool={"Bash": "managers"}
+    )
+    gate.block("Bash", {"command": "x"})
+    assert gate.pending_route == "managers"
+    gate.reset()
+    # An env-configured tool with no manifest route carries no route.
+    gate.block("Read", {"file_path": "/x"})
+    assert gate.pending_route is None
+
+
+def test_blocked_turn_final_carries_the_route() -> None:
+    async def go() -> None:
+        gate = ApprovalGate(
+            required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"}
+        )
+        turns = {"n": 0}
+
+        def factory() -> list:
+            turns["n"] += 1
+            if turns["n"] == 1:
+                gate.block("Bash", {"command": "echo hi"})
+            return default_turn()
+
+        session = FakeModelSession(factory)
+        runner = SessionRunner(
+            session_factory=lambda: session,
+            ceiling=10_000,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(),
+            trace_name="test",
+            session_id="s-1",
+            approval_gate=gate,
+        )
+        await runner.start()
+        frames = await _drain(runner, "run echo hi")
+        assert frames[-1]["status"] == "awaiting-approval"
+        assert frames[-1]["approval_route"] == "managers"
+
+    anyio.run(go)
+
+
+def test_policy_tool_route_param_reaches_the_final() -> None:
+    async def go() -> None:
+        session = FakeModelSession(
+            lambda: approval_turn("Discount for ACME", route="managers")
+        )
+        runner = _runner(session)
+        await runner.start()
+        frames = await _drain(runner, "discount please")
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_route"] == "managers"
+
+    anyio.run(go)
+
+
+def test_fake_routed_marker_names_the_route() -> None:
+    async def go() -> None:
+        session = FakeModelSession()
+        runner = _runner(session)
+        await runner.start()
+        frames = await _drain(
+            runner, "[fake:request-approval:managers] Give ACME 20% off"
+        )
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_summary"] == "Give ACME 20% off"
+        assert final["approval_route"] == "managers"
+        # The un-routed marker still works, with no route.
+        frames = await _drain(runner, f"{APPROVAL_MARKER} plain request")
+        assert frames[-1]["approval_route"] is None
+
+    anyio.run(go)

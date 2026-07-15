@@ -107,3 +107,53 @@ def test_agent_approval_required_tools_rejects_bad_names(
             headers=auth_headers,
         )
         assert resp.status_code == 422, resp.text
+
+
+def test_agent_approval_routes_round_trip(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    created = client.post(
+        "/agents",
+        json={
+            "name": "routed-agent",
+            "slack_channel": "C000000R01",
+            "approval_routes": {"managers": {"channel": "C000000R02"}},
+        },
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["approval_routes"] == {"managers": {"channel": "C000000R02"}}
+
+    # PATCH replaces the map; an explicit empty dict clears it.
+    patched = client.patch(
+        f"/agents/{body['id']}",
+        json={"approval_routes": {"legal": {"channel": "C000000R03"}}},
+        headers=auth_headers,
+    )
+    assert patched.json()["approval_routes"] == {"legal": {"channel": "C000000R03"}}
+    cleared = client.patch(
+        f"/agents/{body['id']}", json={"approval_routes": {}}, headers=auth_headers
+    )
+    assert cleared.json()["approval_routes"] is None
+
+
+def test_agent_approval_routes_rejects_bad_bindings(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # A binding must carry a Slack channel ID, not a #name; route names must be
+    # non-empty.
+    for routes in (
+        {"managers": {"channel": "#managers"}},
+        {" ": {"channel": "C000000R04"}},
+    ):
+        resp = client.post(
+            "/agents",
+            json={
+                "name": f"bad-routes-{list(routes)[0].strip() or 'blank'}",
+                "slack_channel": "C000000R05",
+                "approval_routes": routes,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422, resp.text

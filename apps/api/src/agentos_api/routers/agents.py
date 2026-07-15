@@ -77,6 +77,13 @@ async def update_agent(
         agent = await crud.update_agent_approval_tools(
             session, agent, data.approval_required_tools
         )
+    if data.approval_routes is not None:
+        # Omitted leaves the bindings unchanged; an explicit {} clears them (#247).
+        agent = await crud.update_agent_approval_routes(
+            session,
+            agent,
+            {name: b.model_dump() for name, b in data.approval_routes.items()},
+        )
     return AgentOut.model_validate(agent)
 
 

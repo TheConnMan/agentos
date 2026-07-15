@@ -16,7 +16,12 @@ import anyio
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
-from .approval import ApprovalGate, build_approval_server, build_can_use_tool
+from .approval import (
+    ApprovalGate,
+    build_approval_server,
+    build_can_use_tool,
+    load_approval_policy,
+)
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .history import (
@@ -85,14 +90,21 @@ def build_runner(
     # In-bundle PreToolUse guardrails declared in the manifest hooks field (#272),
     # translated into SDK HookMatcher callbacks. None when the bundle declares none.
     bundle_hooks = load_bundle_hooks(config.session.plugin_dir)
-    # The permission gate (#245): when the agent's config marks tools as
-    # approval-required, a can_use_tool callback replaces the hardcoded bypass
-    # and blocks those calls pending approval. The gate object is shared with
-    # the SessionRunner so a blocked call flips the turn's final to
-    # awaiting-approval. None (no configured tools) keeps the bypass posture.
+    # The permission gate (#245/#247): approval-required tools come from the
+    # union of the bundle manifest's approvalPolicy gates (versioned with the
+    # agent, each carrying its route name) and the AGENTOS_APPROVAL_REQUIRED_TOOLS
+    # env override (operator/per-agent config, no route). When either names a
+    # tool, a can_use_tool callback replaces the hardcoded bypass and blocks
+    # those calls pending approval; the gate object is shared with the
+    # SessionRunner so a blocked call flips the turn's final to
+    # awaiting-approval. Neither configured keeps the bypass posture.
+    policy_routes = load_approval_policy(config.session.plugin_dir)
+    gated_tools = frozenset(config.approval_required_tools or ()) | frozenset(
+        policy_routes
+    )
     approval_gate = (
-        ApprovalGate(required=frozenset(config.approval_required_tools))
-        if config.approval_required_tools
+        ApprovalGate(required=gated_tools, route_by_tool=policy_routes)
+        if gated_tools
         else None
     )
 

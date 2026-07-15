@@ -81,6 +81,7 @@ mod tests {
                 text: "done".to_string(),
                 status: SessionStatus::Done,
                 approval_summary: None,
+                approval_route: None,
             }
         );
     }

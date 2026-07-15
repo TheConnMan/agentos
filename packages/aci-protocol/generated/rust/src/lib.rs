@@ -141,6 +141,8 @@ pub enum OutboundEvent {
         status: SessionStatus,
         #[serde(default)]
         approval_summary: Option<String>,
+        #[serde(default)]
+        approval_route: Option<String>,
     },
     #[serde(rename = "error")]
     ErrorEvent {
@@ -172,6 +174,7 @@ mod tests {
             text: "hi".to_string(),
             status: SessionStatus::Done,
             approval_summary: None,
+            approval_route: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -185,6 +188,7 @@ mod tests {
             text: "requesting sign-off".to_string(),
             status: SessionStatus::AwaitingApproval,
             approval_summary: Some("Give ACME a 20% discount".to_string()),
+            approval_route: Some("managers".to_string()),
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();

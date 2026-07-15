@@ -7,7 +7,15 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent, AgentVersion, Approval, ApprovalStatus, Deployment, Environment
+from .models import (
+    Agent,
+    AgentVersion,
+    Approval,
+    ApprovalAuditEntry,
+    ApprovalStatus,
+    Deployment,
+    Environment,
+)
 from .schemas import AgentCreate, ApprovalCreate, DeploymentCreate, VersionCreate
 
 
@@ -42,6 +50,11 @@ async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
             else None
         ),
         approval_required_tools=data.approval_required_tools,
+        approval_routes=(
+            {name: b.model_dump() for name, b in data.approval_routes.items()}
+            if data.approval_routes is not None
+            else None
+        ),
     )
     session.add(agent)
     await session.commit()
@@ -109,6 +122,18 @@ async def update_agent_approval_tools(
     (stored as NULL, the no-gates posture)."""
 
     agent.approval_required_tools = tools or None
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
+async def update_agent_approval_routes(
+    session: AsyncSession, agent: Agent, routes: dict[str, Any]
+) -> Agent:
+    """Set the agent's approval route bindings (#247). An empty dict clears
+    them (stored as NULL: unbound routes fall back to the requesting channel)."""
+
+    agent.approval_routes = routes or None
     await session.commit()
     await session.refresh(agent)
     return agent
@@ -297,6 +322,8 @@ async def create_approval(session: AsyncSession, data: "ApprovalCreate") -> Appr
         reply_placeholder=data.reply_placeholder,
         reply_endpoint=data.reply_endpoint,
         dedupe_key=data.dedupe_key,
+        route=data.route,
+        card_channel=data.card_channel,
         expires_at=expires_at,
     )
     session.add(approval)
@@ -390,3 +417,44 @@ async def expire_approval(
     if claimed is None:
         return None
     return await session.get(Approval, approval_id)
+
+
+async def append_approval_audit(
+    session: AsyncSession,
+    *,
+    approval_id: uuid.UUID,
+    action: str,
+    actor: str,
+    actor_channel: str | None,
+    decision: str,
+    authorizer: str,
+    authorized: bool,
+    reason: str | None,
+) -> ApprovalAuditEntry:
+    """Append one audit row (#247). Append-only by design; never updated."""
+
+    entry = ApprovalAuditEntry(
+        approval_id=approval_id,
+        action=action,
+        actor=actor,
+        actor_channel=actor_channel,
+        decision=decision,
+        authorizer=authorizer,
+        authorized=authorized,
+        reason=reason,
+    )
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
+async def list_approval_audit(
+    session: AsyncSession, approval_id: uuid.UUID
+) -> list[ApprovalAuditEntry]:
+    result = await session.scalars(
+        select(ApprovalAuditEntry)
+        .where(ApprovalAuditEntry.approval_id == approval_id)
+        .order_by(ApprovalAuditEntry.created_at)
+    )
+    return list(result)

@@ -9,6 +9,7 @@ spawns the CLI or touches the network. ``aci-protocol`` is never mocked.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -53,21 +54,27 @@ def default_turn() -> list[Any]:
 # script raise an approval request (ADR-0010), so the awaiting-approval
 # lifecycle round-trips fully offline (CI, `agentos skill up --fake-model`, the
 # chart's sealed default pool). Everything after the marker on the same line is
-# the approval summary. Like all fake-model behavior: no model call, no network.
+# the approval summary; the routed form ``[fake:request-approval:managers]``
+# additionally names an approval route (#247). Like all fake-model behavior:
+# no model call, no network.
 APPROVAL_MARKER = "[fake:request-approval]"
+_APPROVAL_MARKER_RE = re.compile(r"\[fake:request-approval(?::([A-Za-z0-9_-]+))?\]")
 
 
-def approval_turn(summary: str) -> list[Any]:
+def approval_turn(summary: str, route: str | None = None) -> list[Any]:
     """A turn that calls the platform approval-request tool, then ends."""
 
     text = "This needs sign-off; requesting approval."
+    payload: dict[str, Any] = {"summary": summary}
+    if route is not None:
+        payload["route"] = route
     return [
         _assistant(TextBlock(text=text)),
         _assistant(
             ToolUseBlock(
                 id="t1",
                 name="mcp__agentos__request_approval",
-                input={"summary": summary},
+                input=payload,
             )
         ),
         _result(text=text, usage={"input_tokens": 20, "output_tokens": 8}),
@@ -107,9 +114,10 @@ class FakeModelSession:
         """
 
         last = self.queries[-1] if self.queries else ""
-        if APPROVAL_MARKER in last:
-            summary = last.split(APPROVAL_MARKER, 1)[1].strip() or "unspecified request"
-            return approval_turn(summary)
+        match = _APPROVAL_MARKER_RE.search(last)
+        if match:
+            summary = last[match.end() :].strip() or "unspecified request"
+            return approval_turn(summary, route=match.group(1))
         return default_turn()
 
     async def connect(self) -> None:

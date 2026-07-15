@@ -29,6 +29,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import aiohttp
 from aci_protocol import (
@@ -80,9 +81,11 @@ class TurnOutcome:
     text: str = ""
     status: SessionStatus | None = None
     steered: bool = False
-    # The approval summary off an awaiting-approval final (ADR-0010), persisted
-    # onto the durable record by the pause path. None on every other status.
+    # The approval summary and route off an awaiting-approval final (ADR-0010,
+    # #247), persisted onto the durable record by the pause path. None on
+    # every other status; route also None when the request named none.
     approval_summary: str | None = None
+    approval_route: str | None = None
 
 
 @dataclass
@@ -114,6 +117,7 @@ class _StreamAccumulator:
     status: SessionStatus | None = None
     final_text: str | None = None
     approval_summary: str | None = None
+    approval_route: str | None = None
 
     def rendered(self) -> str:
         return self.final_text if self.final_text is not None else "".join(self.text_parts)
@@ -272,6 +276,7 @@ class Kernel:
             agent_id: uuid.UUID | None = None
             nav: NavPack | None = None
             packs: BehaviorPacks | None = None
+            approval_routes: dict[str, Any] | None = None
             if self._binding is not None:
                 resolved = await self._binding.resolve(qevent.reply_handle.channel)
                 if resolved is None:
@@ -293,6 +298,9 @@ class Kernel:
                 # reuse: the nav pack is threaded to the final render, the same
                 # packs feed the shimmer below.
                 packs = self._binding.packs_for(resolved)
+                # getattr: binding doubles (tests, alternate resolvers) may not
+                # carry the routes attribute; absent means unbound (#247).
+                approval_routes = getattr(resolved, "approval_routes", None)
                 nav = packs.nav
                 # Personalize the shimmer: replace the dispatcher's generic status
                 # with this agent's sampled load line (+ tip). Best-effort and
@@ -311,7 +319,9 @@ class Kernel:
                     # A gate fired (ADR-0010): persist the durable record, then
                     # suspend the session until a human resolves it. The event
                     # is done -- the resolution arrives as its own queued turn.
-                    await self._pause_for_approval(qevent, outcome, agent_id)
+                    await self._pause_for_approval(
+                        qevent, outcome, agent_id, approval_routes
+                    )
                     await self._markers.mark_done(event_id)
                     return
 
@@ -585,7 +595,11 @@ class Kernel:
             return await asyncio.to_thread(self._substrate.resume, thread, env=boot_env)
 
     async def _pause_for_approval(
-        self, qevent: QueuedTurn, outcome: TurnOutcome, agent_id: uuid.UUID | None
+        self,
+        qevent: QueuedTurn,
+        outcome: TurnOutcome,
+        agent_id: uuid.UUID | None,
+        approval_routes: dict[str, Any] | None = None,
     ) -> None:
         """Persist the approval, suspend the session, and leave the pending notice.
 
@@ -594,10 +608,32 @@ class Kernel:
         can wake it. The converse crash (record created, suspend or notice
         lost) self-heals -- creation is idempotent on the event id, and the
         resume path cold-claims a fresh sandbox regardless (ADR-0003).
+
+        ``approval_routes`` is the agent's per-deployment route-binding map
+        (#247): when the request named a route bound to a channel, the card is
+        routed there and that channel's members become the approvers; a named
+        but unbound route logs a warning and falls back to the requesting
+        channel rather than dropping the request.
         """
 
         thread = qevent.conversation_id
         summary = outcome.approval_summary or outcome.text or "Approval requested"
+
+        # Resolve the manifest route (#247) to its workspace channel.
+        route = outcome.approval_route
+        card_channel = qevent.reply_handle.channel
+        if route:
+            binding = (approval_routes or {}).get(route)
+            bound = binding.get("channel") if isinstance(binding, dict) else None
+            if bound:
+                card_channel = str(bound)
+            else:
+                logger.warning(
+                    "approval route %r is not bound for agent %s; routing the "
+                    "card to the requesting channel",
+                    route,
+                    agent_id,
+                )
 
         if self._approvals is None:
             await self._escalate(
@@ -618,6 +654,8 @@ class Kernel:
                     reply_placeholder=qevent.reply_handle.placeholder,
                     reply_endpoint=qevent.reply_handle.endpoint,
                     dedupe_key=qevent.event_id,
+                    route=route,
+                    card_channel=card_channel,
                 )
             )
         except ApprovalBackendError as exc:
@@ -659,10 +697,12 @@ class Kernel:
         )
         try:
             await self._sink.post(
-                channel=qevent.reply_handle.channel,
+                channel=card_channel,
                 text=fallback,
                 blocks=card_blocks,
-                thread_ts=thread,
+                # In the requesting channel the card joins the thread; a
+                # route-bound channel has no such thread, so it posts top-level.
+                thread_ts=thread if card_channel == qevent.reply_handle.channel else None,
                 endpoint=qevent.reply_handle.endpoint,
             )
         except Exception as exc:  # noqa: BLE001 - the pause stands without the card
@@ -726,6 +766,7 @@ class Kernel:
             acc.status = frame.status
             acc.final_text = frame.text
             acc.approval_summary = frame.approval_summary
+            acc.approval_route = frame.approval_route
 
     async def _finish(self, acc: _StreamAccumulator, reply: _ThrottledReply) -> TurnOutcome:
         if acc.status in (SessionStatus.DONE, SessionStatus.IDLE_AWAITING_INPUT):
@@ -747,6 +788,7 @@ class Kernel:
                 text=acc.rendered(),
                 status=acc.status,
                 approval_summary=acc.approval_summary,
+                approval_route=acc.approval_route,
             )
         # classified-failure, or the stream ended with no final at all.
         return TurnOutcome(

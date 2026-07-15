@@ -236,3 +236,107 @@ def test_escalation_paths_post_no_card(make_harness) -> None:
             assert h.sink.posts == []
 
     asyncio.run(go())
+
+
+def _awaiting_routed_script(summary: str, route: str) -> list:
+    return [
+        TextDelta(text="Requesting sign-off"),
+        Final(
+            text="Requesting sign-off",
+            status=AWAITING,
+            approval_summary=summary,
+            approval_route=route,
+        ),
+    ]
+
+
+class RoutedBinding:
+    """A minimal binding stand-in: one channel -> one agent with route bindings."""
+
+    def __init__(self, routes: dict | None) -> None:
+        self.routes = routes
+        self.agent_id = uuid.uuid4()
+
+    async def resolve(self, channel: str):  # noqa: ANN201
+        from agentos_worker.binding import ResolvedDeployment
+
+        return ResolvedDeployment(
+            agent_id=self.agent_id,
+            version_id=uuid.uuid4(),
+            version_label="v1",
+            bundle_ref=None,
+            max_usd_per_day=None,
+            max_output_tokens_per_run=None,
+            approval_routes=self.routes,
+        )
+
+    def packs_for(self, resolved):  # noqa: ANN001, ANN201
+        from agentos_worker.behaviorpacks import BehaviorPacks
+
+        return BehaviorPacks.from_config(None)
+
+    def budget_for(self, resolved):  # noqa: ANN001, ANN201
+        from aci_protocol import Budget
+
+        return Budget(max_output_tokens_per_run=1000, max_usd_per_day=1.0)
+
+    def boot_env(self, resolved, thread_key):  # noqa: ANN001, ANN201
+        return {"AGENTOS_SESSION_ID": f"s-{thread_key}"}
+
+
+def test_routed_approval_cards_go_to_the_bound_channel(make_harness) -> None:
+    """#247: the manifest route resolves through the agent's bindings; the card
+    lands in the bound channel (top-level, no foreign thread) and the record
+    carries route + card_channel so the authorizer counts THAT channel."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        binding = RoutedBinding({"managers": {"channel": "C_MGRS"}})
+        async with make_harness(approvals=approvals, binding=binding) as h:
+            h.runner.default_script = _awaiting_routed_script(
+                "Discount for ACME", "managers"
+            )
+            await h.kernel.process_event(_qevent("discount?", thread="th-routed"))
+
+            req = approvals.requests[0]
+            assert req.route == "managers"
+            assert req.card_channel == "C_MGRS"
+            # Card posted to the bound channel, top-level (no thread there).
+            channel, _fallback, blocks, thread_ts = h.sink.posts[0]
+            assert channel == "C_MGRS"
+            assert thread_ts is None
+            assert blocks is not None
+
+    asyncio.run(go())
+
+
+def test_unbound_route_falls_back_to_requesting_channel(make_harness) -> None:
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        binding = RoutedBinding(None)  # agent has no bindings at all
+        async with make_harness(approvals=approvals, binding=binding) as h:
+            h.runner.default_script = _awaiting_routed_script("Anything", "managers")
+            await h.kernel.process_event(_qevent("gate", thread="th-unbound"))
+
+            req = approvals.requests[0]
+            assert req.route == "managers"
+            assert req.card_channel == "C1"  # fell back to the requesting channel
+            channel, _f, _b, thread_ts = h.sink.posts[0]
+            assert channel == "C1"
+            assert thread_ts == "th-unbound"  # same channel keeps the thread
+
+    asyncio.run(go())
+
+
+def test_routeless_approval_keeps_prior_behavior(make_harness) -> None:
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        async with make_harness(approvals=approvals) as h:
+            h.runner.default_script = _awaiting_script("Plain request")
+            await h.kernel.process_event(_qevent("gate", thread="th-plain"))
+
+            req = approvals.requests[0]
+            assert req.route is None
+            assert req.card_channel == "C1"
+
+    asyncio.run(go())
