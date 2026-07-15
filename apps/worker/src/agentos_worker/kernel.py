@@ -53,6 +53,7 @@ from .behaviorpacks import (
     sample_tip,
 )
 from .binding import BindingResolver
+from .blocks import approval_card
 from .config import WorkerConfig
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -648,6 +649,24 @@ class Kernel:
             text=f"{base}\n\n{notice}" if base else notice,
             endpoint=qevent.reply_handle.endpoint,
         )
+
+        # The Block Kit approval card (#246): Approve/Reject buttons routed to
+        # the approval's channel, in this thread; the dispatcher resolves a
+        # click through the API's server-side authorizer. Best-effort -- the
+        # record and the API resolve path stand with or without the card.
+        fallback, card_blocks = approval_card(
+            approval_id=created.id, summary=summary, requested_by=qevent.author
+        )
+        try:
+            await self._sink.post(
+                channel=qevent.reply_handle.channel,
+                text=fallback,
+                blocks=card_blocks,
+                thread_ts=thread,
+                endpoint=qevent.reply_handle.endpoint,
+            )
+        except Exception as exc:  # noqa: BLE001 - the pause stands without the card
+            logger.warning("approval card post failed for %s: %s", created.id, exc)
         logger.info(
             "thread %s suspended awaiting approval %s", thread, created.id
         )

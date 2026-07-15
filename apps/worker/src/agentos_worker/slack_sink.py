@@ -53,6 +53,22 @@ class SlackSink(Protocol):
         no-op when shimmering is off; best-effort so it never breaks a turn."""
         ...
 
+    async def post(
+        self,
+        *,
+        channel: str,
+        text: str,
+        blocks: list[dict[str, object]] | None = None,
+        thread_ts: str | None = None,
+        endpoint: str | None = None,
+    ) -> str | None:
+        """Post a NEW message (the approval card, #246), returning its ts.
+
+        Distinct from ``update``: the placeholder-edit reply model stays the
+        norm; posting is reserved for platform-owned messages like the
+        approval card. Raises on failure so the caller decides best-effort."""
+        ...
+
 
 class AsyncSlackSink:
     """A SlackSink backed by the Slack Web API (chat.update).
@@ -123,6 +139,38 @@ class AsyncSlackSink:
                 await client.chat_update(channel=channel, ts=ts, text=rendered_text)
         else:
             await client.chat_update(channel=channel, ts=ts, text=rendered_text)
+
+    async def post(
+        self,
+        *,
+        channel: str,
+        text: str,
+        blocks: list[dict[str, object]] | None = None,
+        thread_ts: str | None = None,
+        endpoint: str | None = None,
+    ) -> str | None:
+        # A rejected Block Kit payload falls back to text-only, mirroring
+        # ``update``: the card is the resolve UI, but a plain-text notice still
+        # beats losing the message (the API resolve path works regardless).
+        client = self._client_for(endpoint)
+        try:
+            if blocks is not None:
+                response = await client.chat_postMessage(
+                    channel=channel, text=text, blocks=blocks, thread_ts=thread_ts
+                )
+            else:
+                response = await client.chat_postMessage(
+                    channel=channel, text=text, thread_ts=thread_ts
+                )
+        except SlackApiError:
+            if blocks is None:
+                raise
+            logger.warning("chat_postMessage with blocks rejected; retrying text-only")
+            response = await client.chat_postMessage(
+                channel=channel, text=text, thread_ts=thread_ts
+            )
+        ts = response.get("ts")
+        return str(ts) if ts else None
 
     async def set_status(
         self, *, channel: str, thread_ts: str, status: str, endpoint: str | None = None

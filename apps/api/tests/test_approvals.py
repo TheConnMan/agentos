@@ -125,7 +125,12 @@ def test_resolve_once_and_enqueue_resume_turn(
 
     resolved = approvals_client.post(
         f"/approvals/{created['id']}/resolve",
-        json={"decision": "approved", "resolved_by": "U9", "note": "ship it"},
+        json={
+            "decision": "approved",
+            "resolved_by": "U9",
+            "note": "ship it",
+            "actor_channel": "C1",
+        },
         headers=auth_headers,
     )
     assert resolved.status_code == 200, resolved.text
@@ -151,7 +156,7 @@ def test_resolve_once_and_enqueue_resume_turn(
     # The loser of the claim race is told who resolved it.
     second = approvals_client.post(
         f"/approvals/{created['id']}/resolve",
-        json={"decision": "rejected", "resolved_by": "U2"},
+        json={"decision": "rejected", "resolved_by": "U2", "actor_channel": "C1"},
         headers=auth_headers,
     )
     assert second.status_code == 409
@@ -174,13 +179,15 @@ def test_concurrent_resolvers_yield_exactly_one_winner(
     def attempt(actor: str) -> int:
         response = approvals_client.post(
             f"/approvals/{created['id']}/resolve",
-            json={"decision": "approved", "resolved_by": actor},
+            json={"decision": "approved", "resolved_by": actor, "actor_channel": "C1"},
             headers=auth_headers,
         )
         return response.status_code
 
+    # Actors distinct from the record's author (U1), so none is blocked as
+    # self-approval and the race is purely over the pending claim.
     with ThreadPoolExecutor(max_workers=4) as pool:
-        codes = list(pool.map(attempt, [f"U{i}" for i in range(4)]))
+        codes = list(pool.map(attempt, [f"U_race_{i}" for i in range(4)]))
 
     assert sorted(codes) == [200, 409, 409, 409]
     assert len(valkey.xrange(runs_stream)) == 1
@@ -201,7 +208,7 @@ def test_expired_approval_cannot_be_resolved(
 
     resolved = approvals_client.post(
         f"/approvals/{created['id']}/resolve",
-        json={"decision": "approved", "resolved_by": "U9"},
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
         headers=auth_headers,
     )
     assert resolved.status_code == 410
@@ -216,7 +223,7 @@ def test_unknown_approval_is_404(
 ) -> None:
     missing = approvals_client.post(
         f"/approvals/{uuid.uuid4()}/resolve",
-        json={"decision": "approved", "resolved_by": "U9"},
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
         headers=auth_headers,
     )
     assert missing.status_code == 404
@@ -227,3 +234,61 @@ def test_requires_api_key(
 ) -> None:
     denied = approvals_client.post("/approvals", json=_payload())
     assert denied.status_code in (401, 403)
+
+
+def test_authorizer_blocks_non_member_and_self_approval(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """The server-side authorizer (#246): channel membership is proven by the
+    attempt's channel, self-approval is blocked unconditionally, and a denied
+    attempt neither resolves the record nor enqueues a resume turn."""
+
+    created = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+    resolve_url = f"/approvals/{created['id']}/resolve"
+
+    # Wrong channel: not an approver.
+    wrong_channel = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C_OTHER"},
+        headers=auth_headers,
+    )
+    assert wrong_channel.status_code == 403
+    assert "not an approver" in wrong_channel.json()["detail"]
+
+    # No channel evidence at all: not an approver.
+    no_channel = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9"},
+        headers=auth_headers,
+    )
+    assert no_channel.status_code == 403
+
+    # Self-approval: blocked even from the right channel (the record's author
+    # is U1, see _payload).
+    self_approval = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U1", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert self_approval.status_code == 403
+    assert "self-approval" in self_approval.json()["detail"]
+
+    # The record is still pending and nothing was enqueued.
+    record = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert record.json()["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+
+    # An authorized member still resolves it afterwards.
+    ok = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert ok.status_code == 200
+    assert len(valkey.xrange(runs_stream)) == 1

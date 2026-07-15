@@ -26,6 +26,14 @@ from aci_protocol import QueuedTurn, ReplyHandle
 from slack_bolt import App
 from slack_sdk.web import WebClient
 
+from .approval_actions import (
+    APPROVE_ACTION_ID,
+    REJECT_ACTION_ID,
+    ApprovalResolveClient,
+    build_resolver,
+    is_approval_action,
+    process_approval_action,
+)
 from .config import DispatcherConfig
 from .queue import claim_event, enqueue
 
@@ -142,6 +150,11 @@ def process_action(
     actions = body.get("actions") or []
     if not actions:
         return None
+    # Approval-card buttons (#246) resolve through the API, never become a
+    # turn. Bolt runs every matching listener, so this catch-all sees the
+    # click too and must yield to the dedicated approval listener.
+    if is_approval_action(str(actions[0].get("action_id", ""))):
+        return None
     command = action_command(actions[0])
     if not command:
         return None
@@ -200,8 +213,13 @@ def register_handlers(
     config: DispatcherConfig,
     clock: Clock = _utc_now_iso,
     logger: logging.Logger | None = None,
+    resolver: ApprovalResolveClient | None = None,
 ) -> None:
-    """Wire the app_mention, (direct-message) message, and block-action listeners."""
+    """Wire the app_mention, (direct-message) message, block-action, and
+    approval-card listeners. ``resolver`` (the approvals API client) is
+    injectable for tests; None builds the production client from config."""
+
+    approval_resolver = resolver if resolver is not None else build_resolver(config)
 
     @app.event("app_mention")
     def _on_app_mention(body: dict[str, Any], event: dict[str, Any]) -> None:
@@ -229,8 +247,34 @@ def register_handlers(
             logger=logger,
         )
 
-    # Any Block Kit button click (a reply's action) becomes a turn. The catch-all
-    # matches every action_id; ack first (Bolt's 3s budget), then normalize+enqueue.
+    # Approval-card clicks (#246): resolve through the API (which enforces the
+    # authorizer server-side) and render the verdict; never enqueue a turn.
+    @app.action(APPROVE_ACTION_ID)
+    def _on_approve(ack: Callable[..., None], body: dict[str, Any]) -> None:
+        ack()
+        process_approval_action(
+            body=body,
+            decision="approved",
+            web_client=web_client,
+            resolver=approval_resolver,
+            logger=logger,
+        )
+
+    @app.action(REJECT_ACTION_ID)
+    def _on_reject(ack: Callable[..., None], body: dict[str, Any]) -> None:
+        ack()
+        process_approval_action(
+            body=body,
+            decision="rejected",
+            web_client=web_client,
+            resolver=approval_resolver,
+            logger=logger,
+        )
+
+    # Any other Block Kit button click (a reply's action) becomes a turn. The
+    # catch-all matches every action_id (including the approval ids above --
+    # Bolt runs all matching listeners -- so process_action skips those); ack
+    # first (Bolt's 3s budget), then normalize+enqueue.
     @app.action(re.compile(r".+"))
     def _on_action(ack: Callable[..., None], body: dict[str, Any]) -> None:
         ack()

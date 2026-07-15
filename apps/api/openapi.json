@@ -415,8 +415,19 @@
         "type": "object"
       },
       "ApprovalResolve": {
-        "description": "One resolution attempt. Exactly one attempt wins (compare-and-set);\nthe identity here is caller-asserted for now -- the server-side authorizer\n(channel membership, self-approval block) lands with #246.",
+        "description": "One resolution attempt. Exactly one attempt wins (compare-and-set), and\nthe server-side authorizer (#246) decides first whether this actor may\nresolve at all: self-approval is blocked, and channel membership is proven\nby ``actor_channel`` -- the channel the resolution attempt was made from\n(the card click's channel, relayed by the dispatcher; asserted explicitly\nby API-key operators).",
         "properties": {
+          "actor_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Channel"
+          },
           "decision": {
             "enum": [
               "approved",
@@ -4090,7 +4101,7 @@
     },
     "/approvals/{approval_id}/resolve": {
       "post": {
-        "description": "Claim the resolution (resolve-once) and wake the suspended session.\n\nExactly one resolver wins the conditional UPDATE; a loser gets 409 naming\nwho resolved it, and a past-SLA record flips to expired and returns 410.\nThe winner's response is sent only after the resume turn is enqueued.",
+        "description": "Claim the resolution (resolve-once) and wake the suspended session.\n\nThe authorizer runs first, server-side (#246): self-approval is blocked\nand channel membership is checked against the attempt's channel; a denied\nactor gets 403 with the reason. Then exactly one authorized resolver wins\nthe conditional UPDATE; a loser gets 409 naming who resolved it, and a\npast-SLA record flips to expired and returns 410. The winner's response is\nsent only after the resume turn is enqueued.",
         "operationId": "resolve_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {

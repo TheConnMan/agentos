@@ -51,6 +51,7 @@ def build_app(
     clock: Clock | None = None,
     authorize: Callable[..., Any] | None = None,
     logger: logging.Logger | None = None,
+    resolver: Any | None = None,
 ) -> App:
     """Build a Bolt App with the dispatcher's handlers registered."""
     signing = config.slack_signing_secret or _SOCKET_MODE_SIGNING_PLACEHOLDER
@@ -76,6 +77,10 @@ def build_app(
     }
     if clock is not None:
         register_kwargs["clock"] = clock
+    if resolver is not None:
+        # The approvals API client (#246), injectable so tests keep the
+        # click-to-resolve path offline.
+        register_kwargs["resolver"] = resolver
     register_handlers(app, **register_kwargs)
     return app
 
