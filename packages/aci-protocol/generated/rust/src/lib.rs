@@ -171,6 +171,20 @@ mod tests {
             version: PROTOCOL_VERSION.to_string(),
             text: "hi".to_string(),
             status: SessionStatus::Done,
+            approval_summary: None,
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(event, decoded);
+    }
+
+    #[test]
+    fn awaiting_approval_final_roundtrips() {
+        let event = OutboundEvent::Final {
+            version: PROTOCOL_VERSION.to_string(),
+            text: "requesting sign-off".to_string(),
+            status: SessionStatus::AwaitingApproval,
+            approval_summary: Some("Give ACME a 20% discount".to_string()),
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
