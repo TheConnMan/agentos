@@ -1,7 +1,7 @@
 # 9. Per-agent secrets and connector credentials
 
 Date: 2026-07-09
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -44,6 +44,55 @@ per-agent egress allowlist.
   allowlist** entry; the default-deny posture is preserved.
 - OAuth for remote MCP servers (dynamic client registration, token refresh) is
   **explicitly out of scope** here and deferred until a concrete need exists.
+
+## Concrete build (accepted 2026-07-15, issue #429)
+
+The decision above is realized across the parity ladder as follows. The unblocking
+trigger was #429: an authed-MCP bundle (`examples/github-issues`) that runs at the
+`skill` tier fails at `local`/`cluster` with `Bad credentials` because the worker
+never delivers the connector secret to the sandbox it spawns.
+
+**Policy — the bundle declares its needs.** The plugin-format manifest gains an
+optional `secrets: [NAME, …]` field: the versioned, evaluable list of named
+secrets the bundle requires. It carries **no values**. (`packages/plugin-format`.)
+
+**skill tier (already shipped).** The CLI forwards the value by name into the
+runner container with `agentos skill up --secret NAME`, resolving it from the
+process env or the host secret vault (`cli/src/secrets.rs`). No platform involved.
+
+**local tier — values on the agent record.** `agentos local deploy --secret NAME`
+resolves each value from the host vault and sends it to the platform API, which
+stores it in a nullable `secrets` JSONB column on the agent row (mirroring
+`behavior_packs`). The worker, resolving a deployment, reads that column and
+injects the `name→value` pairs **by value** into the sandbox boot env
+(`binding.boot_env`); the docker substrate forwards them as `-e KEY=VALUE`. The
+by-value argv exposure is accepted for the local dev substrate. This is the
+minimum that restores parity for authed-MCP bundles.
+
+**cluster tier — per-agent K8s Secret, never on the CR.** The agent's `secrets`
+column carries **names only** at this tier; values live in a per-agent Kubernetes
+Secret (`<release>-agent-<id>-connector-secrets`), written by
+`agentos cluster deploy --secret` via `helm upgrade` using the higher-sensitivity
+`-f` values-file path (not the argv-masked `--set` the Slack connect verb uses).
+Delivery is by **`secretKeyRef`** into the sandbox, through a per-agent
+SandboxTemplate/warm pool — the mechanism the chart already uses for the model
+credential (`charts/agentos/templates/agent-sandbox.yaml`). The `SandboxClaim`
+env schema is **value-only (no `secretKeyRef`)**, so connector secret values are
+**kept off the claim CR entirely** and supplied only via the template's
+`secretKeyRef`. Binding or rotating requires a pod rollout (`secretKeyRef` env
+resolves once at pod start), the same `kubectl rollout restart` + `rollout status`
+pattern `cluster comms --slack` uses. The pool-per-authed-agent cost is accepted;
+on-demand (non-pooled) claims are the future alternative if a CRD `secretRef`
+lands.
+
+**Egress stays co-managed (cluster).** A per-agent secret is inert without a
+per-agent egress allowlist entry: per-agent pod label + a per-agent
+`allow-egress` NetworkPolicy `podSelector`, so one agent's connector host is not
+opened for all. Default-deny and the cloud-metadata-IP carve-out are preserved.
+
+**Staging.** Landed as sequential PRs: (1) the plugin-format policy field; (2) the
+local tier (API column + worker forwarding + `local deploy --secret`); (3) the
+cluster per-agent Secret + `secretKeyRef` + per-agent egress.
 
 ## Alternatives considered and rejected
 
