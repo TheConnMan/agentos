@@ -419,6 +419,84 @@ async def expire_approval(
     return await session.get(Approval, approval_id)
 
 
+async def mark_approval_resumed(session: AsyncSession, approval_id: uuid.UUID) -> None:
+    """Record that the resume turn made it onto the stream (#411).
+
+    Conditional UPDATE guarded on ``resumed_at IS NULL``, so a second call (a
+    reconciler racing the inline path, another replica) matches zero rows and is
+    a no-op. Mirrors the conditional-UPDATE style of ``claim_approval_resolution``.
+    """
+
+    await session.execute(
+        update(Approval)
+        .where(Approval.id == approval_id, Approval.resumed_at.is_(None))
+        .values(resumed_at=func.now())
+    )
+    await session.commit()
+
+
+# The statuses an owed-wake row can carry: a resolution that must still reach its
+# suspended session. ``expired``/``pending`` are never resumed. Shared by the
+# reconciler's candidate finder and its per-row claim so the two never desync.
+_RESUMABLE_STATUSES = (ApprovalStatus.approved, ApprovalStatus.rejected)
+
+
+async def claim_resume_row(
+    session: AsyncSession, approval_id: uuid.UUID
+) -> Approval | None:
+    """Atomically claim one owed-wake row for this reconcile pass (#411).
+
+    ``SELECT ... FOR UPDATE SKIP LOCKED`` locks the row for the caller's
+    transaction, or returns None if another replica already holds it OR it is
+    already resumed (or no longer resolved). This is the per-row claim that keeps
+    two API replicas' overlapping reconcile passes from both enqueuing the same
+    resume turn -- the worker's done-marker is written only post-terminal, so it
+    cannot dedupe a concurrent re-run; the row claim must. The caller owns the
+    transaction (this does NOT commit); marking ``resumed_at`` on the returned
+    ORM object and committing releases the lock.
+    """
+
+    approval: Approval | None = await session.scalar(
+        select(Approval)
+        .where(
+            Approval.id == approval_id,
+            Approval.resumed_at.is_(None),
+            Approval.status.in_(_RESUMABLE_STATUSES),
+        )
+        .with_for_update(skip_locked=True)
+    )
+    return approval
+
+
+async def list_resolved_unresumed(
+    session: AsyncSession, *, resolved_before: datetime, limit: int
+) -> list[uuid.UUID]:
+    """The reconciler's work-list: ids of resolved approvals whose wake is owed.
+
+    ``expired`` is deliberately excluded -- an expired record has ``resolved_at``
+    set but never had a resume turn enqueued, so it must never be woken.
+    ``resolved_before`` is naive UTC, matching the DateTime columns.
+
+    Returns ids only (the unlocked candidate finder): each id is then claimed
+    atomically by ``claim_resume_row`` in its own short transaction, which
+    re-reads the row under lock, so the reconciler never holds a row lock across
+    the Valkey enqueue of the batch and never needs the full row here.
+    """
+
+    result = await session.scalars(
+        select(Approval.id)
+        .where(
+            Approval.status.in_(_RESUMABLE_STATUSES),
+            Approval.resolved_at.is_not(None),
+            Approval.resumed_at.is_(None),
+            Approval.resolved_at <= resolved_before,
+        )
+        .order_by(Approval.resolved_at)
+        .limit(limit)
+    )
+    return list(result)
+
+
 async def append_approval_audit(
     session: AsyncSession,
     *,

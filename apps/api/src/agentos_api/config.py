@@ -81,6 +81,27 @@ class Settings(BaseSettings):
     # Must match the worker's AGENTOS_STREAM (its consumer side).
     runs_stream: str = "agentos:runs"
 
+    # Resume reconciler (#411): the backstop that re-enqueues resume turns for
+    # resolved approvals whose inline enqueue failed. enabled is the off-switch
+    # for tests/deploys; batch_limit caps one pass's work-list.
+    #
+    # grace is LOAD-BEARING, not approximate. It MUST exceed the worker's maximum
+    # single-turn processing time (runner_total_timeout_s, default 600s in the
+    # worker) so the reconciler never re-enqueues while an inline-delivered resume
+    # turn is still live: the cross-thread turn lock would steer a duplicate into
+    # that live turn and it could re-run the approved action. The worker's
+    # done-marker only dedupes a re-enqueue once the turn has reached terminal, so
+    # the grace has to outlast the turn. Kept at 900s to stay above the 600s worker
+    # max with margin (analogous to the migration's 24h done-marker /
+    # idempotency_ttl_s coupling). Residual: worker retry loops (max_attempts,
+    # backoff) can extend total processing past a single turn, so a fully airtight
+    # guarantee needs a worker-side in-flight lease (follow-up); 900s covers the
+    # common single-attempt case with margin.
+    resume_reconciler_enabled: bool = True
+    resume_reconciler_interval_seconds: int = 30
+    resume_reconciler_grace_seconds: int = 900
+    resume_reconciler_batch_limit: int = 100
+
     # Observability (OB1). kube_config_path points the runner-logs proxy at a
     # cluster; when unset the API tries in-cluster config, and if neither is
     # available the logs endpoint degrades to 503 rather than crashing.

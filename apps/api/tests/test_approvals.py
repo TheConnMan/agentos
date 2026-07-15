@@ -7,12 +7,14 @@ concurrency), SLA expiry (410), and the resume turn enqueued onto a
 test-isolated runs stream as a valid frozen-contract QueuedTurn.
 """
 
+import asyncio
 import json
 import os
 import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -20,7 +22,9 @@ import redis
 from aci_protocol import QueuedTurn
 from agentos_api.config import get_settings
 from agentos_api.main import create_app
+from agentos_api.models import Approval
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
 _VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
@@ -77,6 +81,170 @@ def _payload(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+def _read_resumed_at(approval_id: str) -> datetime | None:
+    """Read ``Approval.resumed_at`` straight from the DB (it is not exposed on
+    ``ApprovalOut``). A fresh engine keeps this safe under ``asyncio.run`` from
+    the sync test body -- the app's engine is bound to the TestClient's portal
+    loop and cannot be reused across event loops."""
+
+    async def _run() -> datetime | None:
+        engine = create_async_engine(get_settings().database_url)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessionmaker() as session:
+                approval = await session.get(Approval, uuid.UUID(approval_id))
+                return None if approval is None else approval.resumed_at
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_run())
+
+
+def test_resolve_endpoint_stays_200_when_enqueue_fails(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#411: a Valkey blip on the resume enqueue must not dead-end the resolve.
+
+    The resolution itself committed (CAS won, audit written), so the endpoint
+    returns 200 with the resolved record, leaves ``resumed_at`` NULL for the
+    reconciler to retry, and enqueues nothing. A retry still 409s (CAS intact) --
+    the owed wake belongs to the reconciler, never to a client retry (which used
+    to 500 then 409-forever).
+    """
+
+    created = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+
+    async def _boom(_turn: Any) -> str:
+        raise RuntimeError("valkey unreachable")
+
+    monkeypatch.setattr(approvals_client.app.state.resume_queue, "enqueue", _boom)
+
+    resolved = approvals_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "approved"
+
+    # No resume turn on the stream, and the record still owes its wake.
+    assert valkey.xrange(runs_stream) == []
+    assert _read_resumed_at(created["id"]) is None
+
+    # The CAS is untouched: a retry loses as a normal race, it does not re-enqueue.
+    retry = approvals_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U2", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert retry.status_code == 409
+    assert valkey.xrange(runs_stream) == []
+
+
+@pytest.fixture
+def reconciler_disabled_client(
+    _disposable_db: Any, runs_stream: str
+) -> Iterator[TestClient]:
+    """A TestClient built with the resume reconciler DISABLED, so a failed inline
+    enqueue has no backstop. ``raise_server_exceptions=False`` lets the resulting
+    500 be asserted as a response rather than re-raised into the test body."""
+
+    os.environ["RESUME_RECONCILER_ENABLED"] = "false"
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app(), raise_server_exceptions=False) as test_client:
+            yield test_client
+    finally:
+        os.environ.pop("RESUME_RECONCILER_ENABLED", None)
+        get_settings.cache_clear()
+
+
+def test_resolve_reraises_when_reconciler_disabled(
+    reconciler_disabled_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#411 hardening: returning 200 on a failed resume enqueue is only safe when a
+    reconciler will recover the owed wake. With ``resume_reconciler_enabled=false``
+    there is no backstop, so the endpoint must surface the enqueue failure (500)
+    rather than silently stranding the suspended session behind a 200.
+
+    The resolution CAS still committed (approved, audit written), leaving the record
+    resolved-but-unresumed with nothing on the stream -- exactly the state a
+    disabled deployment must not hide. (The default-enabled 200 path is pinned by
+    ``test_resolve_endpoint_stays_200_when_enqueue_fails``.)
+    """
+
+    created = reconciler_disabled_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+
+    async def _boom(_turn: Any) -> str:
+        raise RuntimeError("valkey unreachable")
+
+    monkeypatch.setattr(
+        reconciler_disabled_client.app.state.resume_queue, "enqueue", _boom
+    )
+
+    resolved = reconciler_disabled_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert resolved.status_code == 500, resolved.text
+
+    # The CAS committed -- the record is resolved -- but its wake is unrecoverably
+    # owed (no reconciler) and nothing reached the stream.
+    record = reconciler_disabled_client.get(
+        f"/approvals/{created['id']}", headers=auth_headers
+    )
+    assert record.json()["status"] == "approved"
+    assert _read_resumed_at(created["id"]) is None
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_happy_path_resolve_marks_resumed(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """#411: the normal successful resolve now records the wake as delivered by
+    setting ``resumed_at``, so the reconciler's work-list excludes it. This adds
+    to the resolve-once coverage without weakening the existing assertions."""
+
+    created = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+
+    resolved = approvals_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert resolved.status_code == 200, resolved.text
+
+    # The resume turn is on the stream (the existing #244 contract) ...
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.event_id == f"approval-{created['id']}-resolved"
+
+    # ... and the record is now marked resumed (the new #411 contract).
+    assert _read_resumed_at(created["id"]) is not None
 
 
 def test_create_get_list_round_trip(
