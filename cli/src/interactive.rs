@@ -406,6 +406,11 @@ fn secret_name_choices() -> Vec<SelectChoice<SecretNameChoice>> {
             value: SecretNameChoice::Name("AGENTOS_CREDENTIALS".to_string()),
         },
         SelectChoice {
+            label: "OPENAI_API_KEY".to_string(),
+            description: "OpenAI API key for model or MCP workflows".to_string(),
+            value: SecretNameChoice::Name("OPENAI_API_KEY".to_string()),
+        },
+        SelectChoice {
             label: "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
             description: "GitHub token for MCP examples or bundles".to_string(),
             value: SecretNameChoice::Name("GITHUB_PERSONAL_ACCESS_TOKEN".to_string()),
@@ -1535,6 +1540,9 @@ mod tests {
         assert!(choices
             .iter()
             .any(|choice| choice.value == SecretNameChoice::Custom));
+        assert!(choices
+            .iter()
+            .any(|choice| matches!(&choice.value, SecretNameChoice::Name(name) if name == "OPENAI_API_KEY")));
         assert!(choices.iter().any(
             |choice| matches!(&choice.value, SecretNameChoice::Name(name) if name == "GITHUB_PERSONAL_ACCESS_TOKEN")
         ));
