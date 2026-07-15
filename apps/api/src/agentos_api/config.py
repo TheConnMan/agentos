@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # Must match the worker's AGENTOS_STREAM (its consumer side).
     runs_stream: str = "agentos:runs"
 
+    # How often the expiry sweeper scans for lapsed pending approvals (#412) and
+    # resumes their stranded sessions. Values <= 0 disable the sweeper (the
+    # operator kill lever and the fully-inert-app escape hatch for tests).
+    approval_sweep_interval_s: float = 30.0
+
     # Resume reconciler (#411): the backstop that re-enqueues resume turns for
     # resolved approvals whose inline enqueue failed. enabled is the off-switch
     # for tests/deploys; batch_limit caps one pass's work-list.

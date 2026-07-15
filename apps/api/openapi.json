@@ -4342,7 +4342,7 @@
     },
     "/approvals/{approval_id}/resolve": {
       "post": {
-        "description": "Claim the resolution (resolve-once) and wake the suspended session.\n\nThe authorizer runs first, server-side (#246): self-approval is blocked\nand channel membership is checked against the attempt's channel; a denied\nactor gets 403 with the reason. Then exactly one authorized resolver wins\nthe conditional UPDATE; a loser gets 409 naming who resolved it, and a\npast-SLA record flips to expired and returns 410. The winner's response is\nsent only after the resume turn is enqueued.",
+        "description": "Claim the resolution (resolve-once) and wake the suspended session.\n\nThe authorizer runs first, server-side (#246): self-approval is blocked\nand channel membership is checked against the attempt's channel; a denied\nactor gets 403 with the reason. Then exactly one authorized resolver wins\nthe conditional UPDATE; a loser gets 409 naming who resolved it, and a\npast-SLA record flips to expired and returns 410 while still enqueuing the\nexpiry resume turn so the suspended session wakes down its timeout branch.\nThe winner's response is sent only after the resume turn is enqueued.",
         "operationId": "resolve_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {

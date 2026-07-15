@@ -12,18 +12,23 @@ import json
 import os
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 import redis
+import redis.asyncio as aioredis
 from aci_protocol import QueuedTurn
+from agentos_api import crud
 from agentos_api.config import get_settings
 from agentos_api.main import create_app
 from agentos_api.models import Approval
+from agentos_api.resumequeue import ResumeQueue
 from agentos_api.sandbox_token import mint
+from agentos_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -362,15 +367,16 @@ def test_concurrent_resolvers_yield_exactly_one_winner(
     assert len(valkey.xrange(runs_stream)) == 1
 
 
-def test_expired_approval_cannot_be_resolved(
+def test_expired_approval_resolve_returns_410_and_resumes(
     approvals_client: TestClient,
     auth_headers: dict[str, str],
     clean_db: None,
     valkey: redis.Redis,
     runs_stream: str,
 ) -> None:
+    payload = _payload(expires_in_seconds=1)
     created = approvals_client.post(
-        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+        "/approvals", json=payload, headers=auth_headers
     ).json()
     assert created["expires_at"] is not None
     time.sleep(1.1)
@@ -383,8 +389,22 @@ def test_expired_approval_cannot_be_resolved(
     assert resolved.status_code == 410
     got = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
     assert got.json()["status"] == "expired"
-    # No resume turn for an expired record.
-    assert valkey.xrange(runs_stream) == []
+
+    # #412: a resolver landing after the SLA lapsed (but before the next
+    # sweep) must not strand the session. The late resolve still gets 410
+    # and the record still flips to expired, but it now enqueues the same
+    # deterministic expiry resume turn the sweeper would have produced, so
+    # the conversation resumes down its timeout branch instead of hanging.
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.event_id == f"approval-{created['id']}-resolved"
+    assert turn.conversation_id == payload["conversation_id"]
+    assert turn.author == "system"
+    assert turn.reply_handle.channel == "C1"
+    assert turn.reply_handle.placeholder == "p-1"
+    assert "expired" in turn.text
+    assert payload["summary"] in turn.text
 
 
 def test_unknown_approval_is_404(
@@ -605,3 +625,428 @@ def test_audit_log_records_attempts_with_authorizer_snapshots(
         f"/approvals/{uuid.uuid4()}/audit", headers=auth_headers
     )
     assert missing.status_code == 404
+
+
+# --- expiry sweeper (#412) ----------------------------------------------------
+#
+# These tests exercise the periodic sweeper that flips lapsed pending approvals
+# to `expired` and enqueues a platform-authored resume turn, so the suspended
+# session resumes down its timeout branch instead of stranding. Real Postgres +
+# real Valkey, no mocks. Because `sweep_expired_approvals` is async and asyncpg
+# connections are loop-bound, each test creates records via the SYNC HTTP client
+# (they land in the disposable DB regardless of loop), then runs ONE
+# `asyncio.run` scenario that builds its OWN async engine + sessionmaker + redis
+# client + ResumeQueue against the same DB/stream, and asserts DB state via the
+# sync HTTP client and stream contents via the sync `valkey` fixture. Real sleeps
+# are avoided by creating records with `expires_in_seconds=1` and sweeping with
+# an explicit `now` two seconds in the future (naive UTC, which also pins the
+# timezone edge case).
+
+
+def _naive_utc(seconds_ahead: float = 0.0) -> datetime:
+    """Naive-UTC clock matching the sweeper's `now`/`expires_at` comparison."""
+
+    return datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=seconds_ahead)
+
+
+@asynccontextmanager
+async def _sweeper_stack(
+    stream: str,
+) -> AsyncIterator[tuple[async_sessionmaker[Any], ResumeQueue, aioredis.Redis]]:
+    """A self-owned async engine + sessionmaker + resume queue on the test's DB
+    and isolated runs stream, disposed on exit. Built inside the running loop so
+    the asyncpg/redis pools bind to it, never to the TestClient's lifespan loop."""
+
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async_client = aioredis.from_url(settings.valkey_dsn())
+    queue = ResumeQueue(async_client, stream=stream)
+    try:
+        yield sessionmaker, queue, async_client
+    finally:
+        await async_client.aclose()
+        await engine.dispose()
+
+
+def test_sweeper_expires_lapsed_pending_and_enqueues_resume_turn(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    payload = _payload(
+        expires_in_seconds=1, reply_endpoint="http://localhost:9999/api/"
+    )
+    created = approvals_client.post(
+        "/approvals", json=payload, headers=auth_headers
+    ).json()
+    assert created["expires_at"] is not None
+
+    now = _naive_utc(2)
+
+    async def _scenario() -> int:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            async with sessionmaker() as session:
+                return await sweep_expired_approvals(session, queue, now=now)
+
+    flipped = asyncio.run(_scenario())
+    assert flipped == 1
+
+    # DB state: flipped to expired by the platform, no human resolver recorded.
+    got = approvals_client.get(
+        f"/approvals/{created['id']}", headers=auth_headers
+    ).json()
+    assert got["status"] == "expired"
+    assert got["resolved_by"] is None
+    assert got["resolved_at"] is not None
+
+    # Exactly one resume turn, a valid frozen QueuedTurn addressed back to the
+    # requesting thread's placeholder and conveying the expiry.
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.event_id == f"approval-{created['id']}-resolved"
+    assert turn.conversation_id == payload["conversation_id"]
+    assert turn.author == "system"
+    assert turn.reply_handle.channel == "C1"
+    assert turn.reply_handle.placeholder == "p-1"
+    assert turn.reply_handle.endpoint == "http://localhost:9999/api/"
+    assert "expired" in turn.text
+    assert payload["summary"] in turn.text
+
+    # The autonomous flip is audited consistently with #247.
+    audit = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    )
+    assert audit.status_code == 200
+    entries_audit = audit.json()
+    assert len(entries_audit) == 1
+    row = entries_audit[0]
+    assert row["action"] == "expired"
+    assert row["actor"] == "system"
+    assert row["authorizer"] == "ExpirySweeper"
+    assert row["authorized"] is True
+    assert row["decision"] == ""
+
+
+def test_sweeper_ignores_unexpired_and_unbounded_records(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    future = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=3600), headers=auth_headers
+    ).json()
+    unbounded = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+    assert unbounded["expires_at"] is None
+
+    now = _naive_utc()
+
+    async def _scenario() -> int:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            async with sessionmaker() as session:
+                return await sweep_expired_approvals(session, queue, now=now)
+
+    flipped = asyncio.run(_scenario())
+    assert flipped == 0
+
+    for record in (future, unbounded):
+        got = approvals_client.get(
+            f"/approvals/{record['id']}", headers=auth_headers
+        ).json()
+        assert got["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_sweeper_second_pass_is_a_no_op(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    created = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+    ).json()
+
+    now = _naive_utc(2)
+
+    async def _scenario() -> tuple[int, int]:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            async with sessionmaker() as session:
+                first = await sweep_expired_approvals(session, queue, now=now)
+            async with sessionmaker() as session:
+                second = await sweep_expired_approvals(session, queue, now=now)
+            return first, second
+
+    first, second = asyncio.run(_scenario())
+    assert first == 1
+    assert second == 0
+
+    # No double-flip, no second turn, no second audit row.
+    assert len(valkey.xrange(runs_stream)) == 1
+    audit = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    ).json()
+    assert [e["action"] for e in audit] == ["expired"]
+
+
+def test_sweeper_skips_already_resolved_records(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    created = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+    ).json()
+
+    # Resolve it via the normal path BEFORE the SLA lapses (approver from C1).
+    resolved = approvals_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert resolved.status_code == 200
+    assert len(valkey.xrange(runs_stream)) == 1  # the resolve turn
+
+    now = _naive_utc(2)
+
+    async def _scenario() -> int:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            async with sessionmaker() as session:
+                return await sweep_expired_approvals(session, queue, now=now)
+
+    flipped = asyncio.run(_scenario())
+    assert flipped == 0
+
+    got = approvals_client.get(
+        f"/approvals/{created['id']}", headers=auth_headers
+    ).json()
+    assert got["status"] == "approved"
+
+    # Exactly the one resolve turn, authored by the human resolver; no expiry
+    # turn was appended.
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.author == "U9"
+
+
+# --- fault injection (#412 hardening) -----------------------------------------
+#
+# Two defects an independent review surfaced, each pinned by driving a
+# Valkey enqueue failure at the exact seam that used to be unguarded:
+#   A. the resolve path 500s instead of 410 when the expiry resume enqueue fails;
+#   B. the sweeper must isolate a per-record enqueue failure so the batch
+#      continues (one poisoned record cannot strand the rest).
+
+
+def test_resolve_path_expiry_returns_410_even_if_enqueue_fails(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late resolver on a lapsed approval must still get 410 when enqueuing the
+    expiry resume turn fails (a Valkey blip).
+
+    The flip to ``expired`` already committed (``expire_approval`` commits before
+    the enqueue), so the resolve path owes the caller a clean 410 conveying the
+    SLA outcome -- not a 500 that buries it behind an infra error. This pins the
+    #412 regression where the unguarded ``resume_queue.enqueue`` on the expiry
+    branch turns the 410 into an uncaught 500.
+    """
+
+    payload = _payload(expires_in_seconds=1)
+    created = approvals_client.post(
+        "/approvals", json=payload, headers=auth_headers
+    ).json()
+    assert created["expires_at"] is not None
+    time.sleep(1.1)
+
+    async def _boom(*a: Any, **k: Any) -> str:
+        raise RuntimeError("valkey down")
+
+    # The resolve endpoint reads request.app.state.resume_queue; make its enqueue
+    # fail so the expiry branch's enqueue raises.
+    monkeypatch.setattr(approvals_client.app.state.resume_queue, "enqueue", _boom)
+
+    # Observe the real 500 the error middleware returns in production, rather
+    # than letting TestClient (raise_server_exceptions=True) re-raise it -- the
+    # regression being pinned is precisely "500 leaks out where 410 is owed".
+    monkeypatch.setattr(
+        approvals_client._transport, "raise_server_exceptions", False
+    )
+
+    resolved = approvals_client.post(
+        f"/approvals/{created['id']}/resolve",
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    # RED today: the unguarded enqueue raises, so the endpoint 500s (or the
+    # RuntimeError propagates) instead of returning the 410 the SLA lapse owes.
+    assert resolved.status_code == 410, resolved.text
+
+    # The SLA flip still committed independently of the failed enqueue.
+    got = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
+    assert got.json()["status"] == "expired"
+
+    # The enqueue failed, so no resume turn reached the stream.
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_sweeper_isolates_a_failing_record(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Valkey enqueue failure on ONE lapsed record must not stop the sweeper
+    from flipping and resuming the others: the per-record try/except in
+    ``sweep_expired_approvals`` isolates the failure so the batch continues.
+
+    Ordering note (robust form): ``list_expired_pending_approvals`` orders by
+    ``expires_at``, so which of the two records the sweep processes first is not
+    asserted here. The flaky enqueue raises on its FIRST call regardless of which
+    record that is; the assertions only pin the isolation contract -- the sweep
+    flips BOTH records, returns 1 (exactly one enqueue succeeded), and lands
+    exactly one resume turn, belonging to whichever record was processed second.
+
+    This may already be GREEN: the per-record ``except`` exists today. Its job is
+    to lock the isolation contract so it cannot regress -- the accompanying #412
+    production fix also adds a ``session.rollback()`` in that ``except`` to guard
+    the rarer DB-commit-failure case, matching the convention in
+    routers/approvals.py and routers/agents.py.
+    """
+
+    first = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+    ).json()
+    second = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+    ).json()
+    assert first["expires_at"] is not None
+    assert second["expires_at"] is not None
+
+    ids = {first["id"], second["id"]}
+    # Map conversation_id -> record id so we can identify which record the single
+    # surviving turn belongs to, without assuming processing order.
+    conversation_to_id = {
+        first["conversation_id"]: first["id"],
+        second["conversation_id"]: second["id"],
+    }
+    now = _naive_utc(2)
+
+    async def _scenario() -> int:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, _client):
+            orig = queue.enqueue
+            calls = {"n": 0}
+
+            async def _flaky_enqueue(turn: QueuedTurn) -> str:
+                # Raise on the first record's enqueue (a Valkey blip), then let
+                # every later record enqueue for real.
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise RuntimeError("valkey down")
+                return await orig(turn)
+
+            monkeypatch.setattr(queue, "enqueue", _flaky_enqueue)
+            async with sessionmaker() as session:
+                return await sweep_expired_approvals(session, queue, now=now)
+
+    swept = asyncio.run(_scenario())
+    # One enqueue raised (record processed first), one succeeded (processed
+    # second): the poisoned record did not block the batch.
+    assert swept == 1
+
+    # Both flips committed -- expire_approval commits before the enqueue runs, so
+    # the record whose enqueue failed is still expired.
+    for record in (first, second):
+        got = approvals_client.get(
+            f"/approvals/{record['id']}", headers=auth_headers
+        ).json()
+        assert got["status"] == "expired"
+
+    # Exactly one resume turn on the stream, for whichever record was second.
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.conversation_id in conversation_to_id
+    resumed_id = conversation_to_id[turn.conversation_id]
+    assert resumed_id in ids
+    assert turn.event_id == f"approval-{resumed_id}-resolved"
+    assert turn.author == "system"
+
+
+def test_sweeper_disabled_when_interval_nonpositive(
+    _disposable_db: Any,
+) -> None:
+    prior = os.environ.get("APPROVAL_SWEEP_INTERVAL_S")
+    os.environ["APPROVAL_SWEEP_INTERVAL_S"] = "0"
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            # Disabled: no task started, and shutdown (the `with` exit) is
+            # unconditional-safe against the None state.
+            assert client.app.state.sweeper_task is None
+    finally:
+        if prior is None:
+            os.environ.pop("APPROVAL_SWEEP_INTERVAL_S", None)
+        else:
+            os.environ["APPROVAL_SWEEP_INTERVAL_S"] = prior
+        get_settings.cache_clear()
+
+
+def test_run_expiry_sweeper_loop_sweeps_and_stops(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    created = approvals_client.post(
+        "/approvals", json=_payload(expires_in_seconds=1), headers=auth_headers
+    ).json()
+    approval_id = uuid.UUID(created["id"])
+
+    async def _scenario() -> None:
+        async with _sweeper_stack(runs_stream) as (sessionmaker, queue, client):
+            stop = asyncio.Event()
+            task = asyncio.create_task(
+                run_expiry_sweeper(sessionmaker, queue, 0.05, stop)
+            )
+            try:
+                # Poll (bounded) until the loop observes the lapse and flips it.
+                deadline = asyncio.get_running_loop().time() + 5.0
+                status = created["status"]
+                while status != "expired":
+                    assert asyncio.get_running_loop().time() < deadline, (
+                        "sweeper loop never flipped the lapsed record"
+                    )
+                    await asyncio.sleep(0.1)
+                    async with sessionmaker() as session:
+                        record = await crud.get_approval(session, approval_id)
+                        assert record is not None
+                        status = record.status
+                # The loop also enqueued the expiry resume turn.
+                assert len(await client.xrange(runs_stream)) == 1
+            finally:
+                stop.set()
+                # Wait-first loop wakes immediately on stop; it must finish
+                # promptly, not hang.
+                await asyncio.wait_for(task, 2)
+            assert task.done()
+
+    asyncio.run(_scenario())

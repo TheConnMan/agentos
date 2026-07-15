@@ -26,7 +26,7 @@ from ..authorizer import Authorizer, ChannelMembershipAuthorizer
 from ..config import get_settings
 from ..deps import ResumeQueueDep, SessionDep
 from ..models import Approval, ApprovalStatus
-from ..resumequeue import build_resume_turn
+from ..resumequeue import build_expiry_resume_turn, build_resume_turn
 from ..schemas import ApprovalAuditOut, ApprovalCreate, ApprovalOut, ApprovalResolve
 
 logger = logging.getLogger(__name__)
@@ -130,8 +130,9 @@ async def resolve_approval(
     and channel membership is checked against the attempt's channel; a denied
     actor gets 403 with the reason. Then exactly one authorized resolver wins
     the conditional UPDATE; a loser gets 409 naming who resolved it, and a
-    past-SLA record flips to expired and returns 410. The winner's response is
-    sent only after the resume turn is enqueued.
+    past-SLA record flips to expired and returns 410 while still enqueuing the
+    expiry resume turn so the suspended session wakes down its timeout branch.
+    The winner's response is sent only after the resume turn is enqueued.
     """
 
     approval = await crud.get_approval(session, approval_id)
@@ -170,6 +171,26 @@ async def resolve_approval(
                 authorized=True,
                 reason=f"approval expired at {expired.expires_at}",
             )
+            # This resolver lost the SLA (it still gets 410), but the session is
+            # suspended and must be woken down its timeout branch. This resolver
+            # won the expiry CAS (expire_approval returned non-None), so it is
+            # the only writer that enqueues for this approval; a sweeper racing
+            # the same flip gets None back and skips it. The shared
+            # resume_event_id via build_expiry_resume_turn only guards against a
+            # redelivery of an already-finished turn re-running; it is the CAS,
+            # not the shared key, that keeps this wakeup single.
+            try:
+                await resume_queue.enqueue(build_expiry_resume_turn(expired))
+            except Exception:
+                # A queue blip must not turn the 410 into a 500; the flip is
+                # already committed, so log the possibly-lost wakeup and still
+                # report the expiry. (A durable outbox to guarantee delivery is
+                # tracked as follow-up.)
+                logger.exception(
+                    "failed to enqueue expiry resume turn for approval %s on the "
+                    "resolve path; session wakeup may be lost",
+                    approval_id,
+                )
             raise HTTPException(
                 status.HTTP_410_GONE,
                 f"approval expired at {expired.expires_at} and can no longer be resolved",

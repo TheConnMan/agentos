@@ -36,6 +36,7 @@ from .routers import (
     state,
 )
 from .storage import BundleStore
+from .sweeper import run_expiry_sweeper
 
 
 @asynccontextmanager
@@ -82,15 +83,44 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.resume_reconciler_enabled
         else None
     )
+    # The expiry sweeper (#412) flips lapsed pending approvals and resumes their
+    # stranded sessions. It shares this lifecycle's resources (sessionmaker,
+    # resume_queue); interval <= 0 disables it (no task started).
+    sweeper_stop: asyncio.Event | None = None
+    if settings.approval_sweep_interval_s > 0:
+        sweeper_stop = asyncio.Event()
+        app.state.sweeper_task = asyncio.create_task(
+            run_expiry_sweeper(
+                app.state.sessionmaker,
+                app.state.resume_queue,
+                settings.approval_sweep_interval_s,
+                sweeper_stop,
+            )
+        )
+    else:
+        app.state.sweeper_task = None
     try:
         yield
     finally:
+        # Both background loops enqueue via resume_queue (which uses the valkey
+        # client) and read via the sessionmaker, so both are stopped BEFORE
+        # valkey.aclose()/engine.dispose() below.
         task = getattr(app.state, "resume_reconciler_task", None)
         if task is not None:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
+                pass
+        # Stop the sweeper BEFORE closing valkey/engine so an in-flight pass does
+        # not race the closed clients. The wait-first loop wakes immediately on
+        # stop.set(); wait_for already cancels on timeout, so suppressing
+        # TimeoutError/CancelledError is the whole teardown.
+        if sweeper_stop is not None:
+            sweeper_stop.set()
+            try:
+                await asyncio.wait_for(app.state.sweeper_task, 5.0)
+            except (TimeoutError, asyncio.CancelledError):
                 pass
         await valkey.aclose()
         await http_client.aclose()

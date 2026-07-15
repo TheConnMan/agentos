@@ -25,8 +25,9 @@ in code now:
   (`apps/api/src/agentos_api/models.py`) with the resolve-once compare-and-set
   (`crud.claim_approval_resolution`, a conditional `UPDATE ... WHERE status='pending'`) behind
   `POST /approvals/{id}/resolve`; losers of the claim race get 409 naming who resolved it,
-  a past-SLA record flips to expired (410). Creation is idempotent on `dedupe_key` (the
-  triggering event id).
+  a past-SLA record flips to expired (410) and now also enqueues the expiry resume turn
+  (#412, below) so the late resolver's dead end no longer strands the session. Creation is
+  idempotent on `dedupe_key` (the triggering event id).
 - **The `awaiting-approval` status (landed, #244).** `SessionStatus.AWAITING_APPROVAL` plus
   the optional `Final.approval_summary` field
   (`packages/aci-protocol/src/aci_protocol/events.py`), regenerated across all three language
@@ -38,6 +39,22 @@ in code now:
   resolution enqueues a resume turn onto the ordinary runs stream
   (`apps/api/src/agentos_api/resumequeue.py`), and the kernel's claim path rehydrates the
   thread with its bound boot env (`substrate.resume(env=...)`).
+- **Expiry resume (landed, #412).** A prior gap: an approval whose SLA lapsed with no
+  resolver stayed `pending` forever, since the only expiry path lived inside the resolve
+  endpoint. A periodic sweeper in the API lifespan (`apps/api/src/agentos_api/sweeper.py`,
+  `run_expiry_sweeper` driving `sweep_expired_approvals`) now flips lapsed `pending` records
+  to `expired` through the same `crud.expire_approval` compare-and-set, appends an `expired`
+  audit row (`authorizer="ExpirySweeper"`), and enqueues a platform-authored (`author="system"`)
+  resume turn so the suspended session resumes down its timeout branch (ADR-0003). The
+  single-wakeup guarantee comes from the pending-guarded compare-and-set in
+  `crud.expire_approval`: only the flip winner (the sweeper or a racing resolver) enqueues.
+  Both paths also reuse the deterministic `resume_event_id(approval.id)`, but that shared key
+  only keeps a redelivery of an already-terminally-handled turn from re-running; it does not
+  collapse a duplicate landing while the resumed turn is still in flight. Cadence is `approval_sweep_interval_s` (env
+  `APPROVAL_SWEEP_INTERVAL_S`, Helm `api.approvalSweepIntervalSeconds`, default 30s; `<= 0`
+  disables). Known gap: a failure after the flip but before the audit/enqueue (a Valkey blip,
+  a pod shutdown mid-batch) can still drop that one wakeup, since the flipped record is no
+  longer re-selected; a durable outbox to close this is tracked as follow-up.
 - **The permission gate (landed, #245).** Per-agent config
   (`agents.approval_required_tools`, forwarded as `AGENTOS_APPROVAL_REQUIRED_TOOLS` by the
   worker binding) marks tools approval-required; the runner intercepts those calls
