@@ -375,6 +375,34 @@ pub async fn install(update: bool) -> Result<()> {
     Ok(())
 }
 
+/// `agentos update`: rebuild the CLI from this source checkout and reinstall it
+/// on PATH (`cargo install --path cli --force` -> ~/.cargo/bin), so a code change
+/// is picked up on the next `agentos` invocation without re-running the bootstrap
+/// script. Optionally rebuilds the local runner image too. Source-checkout only,
+/// like `install` -- a release binary has no source to rebuild from. Replacing the
+/// running binary is safe: the current process keeps running from the old inode
+/// and the next invocation is the freshly installed one.
+pub async fn update(image: bool) -> Result<()> {
+    let ui = crate::ui::ui();
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos update` \
+         from an agentos source checkout -- a release binary cannot rebuild itself.",
+    )?;
+    require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
+    run_step(
+        &root,
+        "cargo",
+        &["install", "--path", "cli", "--force"],
+        "cargo install (cli -> ~/.cargo/bin)",
+    )
+    .await?;
+    if image {
+        build("agentos-runner").await?;
+    }
+    ui.success("agentos updated. The new binary is live on your next `agentos` invocation.");
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EnvSeed {
     Preserved,

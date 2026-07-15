@@ -1909,6 +1909,26 @@
       "name": "install"
     },
     {
+      "about": "Rebuild this CLI from the source checkout and reinstall it on PATH (source checkout only)",
+      "args": [
+        {
+          "global": false,
+          "help": "Also rebuild the local runner image (for runner/ changes)",
+          "id": "image",
+          "long": "image",
+          "positional": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false
+        }
+      ],
+      "hidden": false,
+      "long_about": "Rebuild this CLI from the source checkout and reinstall it on PATH (source checkout only).\n\nThe fast per-change refresh: runs `cargo install --path cli --force` from the repo root so a code change to the CLI is live on the next `agentos` invocation, without re-running the bootstrap script. Pass `--image` to also rebuild the local runner image (for `runner/` changes). A release binary cannot rebuild itself and errors clearly.",
+      "name": "update"
+    },
+    {
       "about": "Open the interactive terminal interface",
       "hidden": false,
       "long_about": "Open the interactive terminal interface.\n\nA keyboard-driven terminal UI for humans: browse targets and actions, preview exact commands, fill required values, and run workflows without memorizing the full command surface.",

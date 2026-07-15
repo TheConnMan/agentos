@@ -114,6 +114,18 @@ enum Command {
         #[arg(long)]
         update: bool,
     },
+    /// Rebuild this CLI from the source checkout and reinstall it on PATH (source checkout only).
+    ///
+    /// The fast per-change refresh: runs `cargo install --path cli --force` from
+    /// the repo root so a code change to the CLI is live on the next `agentos`
+    /// invocation, without re-running the bootstrap script. Pass `--image` to
+    /// also rebuild the local runner image (for `runner/` changes). A release
+    /// binary cannot rebuild itself and errors clearly.
+    Update {
+        /// Also rebuild the local runner image (for runner/ changes).
+        #[arg(long)]
+        image: bool,
+    },
     /// Open the interactive terminal interface.
     ///
     /// A keyboard-driven terminal UI for humans: browse targets and actions,
@@ -924,6 +936,7 @@ async fn run(command: Option<Command>) -> Result<()> {
         }) => commands::init(name, dir, from_spec),
         Some(Command::Build { tag }) => commands::build(&tag).await,
         Some(Command::Install { update }) => commands::install(update).await,
+        Some(Command::Update { image }) => commands::update(image).await,
         Some(Command::Interactive) => agentos::interactive::run().await,
         Some(Command::Secrets { action }) => match action {
             SecretsAction::Set { name, from_env } => {
@@ -1577,6 +1590,21 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Install { update: true })
+        ));
+    }
+
+    #[test]
+    fn update_parses_with_and_without_image() {
+        let bare = Cli::try_parse_from(["agentos", "update"]).expect("update should parse");
+        assert!(matches!(
+            bare.command,
+            Some(Command::Update { image: false })
+        ));
+        let with_image =
+            Cli::try_parse_from(["agentos", "update", "--image"]).expect("update should parse");
+        assert!(matches!(
+            with_image.command,
+            Some(Command::Update { image: true })
         ));
     }
 
