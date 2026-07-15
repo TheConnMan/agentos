@@ -72,6 +72,41 @@ def test_parse_reply_extracts_a_complete_block() -> None:
     assert ("← Back", "home") in reply.buttons
 
 
+def test_parse_reply_maps_versioned_choice_contract_to_slack_actions() -> None:
+    reply = parse_reply(
+        "```agentos-reply\n"
+        '{"version":"1.0","text":"Which view?","interaction":'
+        '{"kind":"choice","id":"view","options":['
+        '{"label":"Open issues","value":"show open issues"}]}}\n'
+        "```"
+    )
+    assert reply is not None
+    assert reply.text == "Which view?"
+    assert reply.buttons == [("Open issues", "show open issues")]
+
+
+def test_parse_reply_maps_versioned_confirmation_to_two_actions() -> None:
+    reply = parse_reply(
+        "```agentos-reply\n"
+        '{"version":"1.0","text":"Deploy?","interaction":'
+        '{"kind":"confirm","id":"deploy","prompt":"Deploy?",'
+        '"confirm":{"label":"Deploy","value":"deploy"},'
+        '"cancel":{"label":"Cancel","value":"cancel"}}}\n'
+        "```"
+    )
+    assert reply is not None
+    assert reply.buttons == [("Deploy", "deploy"), ("Cancel", "cancel")]
+
+
+def test_versioned_reply_rejects_unknown_channel_native_fields() -> None:
+    assert (
+        parse_reply(
+            '```agentos-reply\n{"version":"1.0","text":"x","blocks":[]}\n```'
+        )
+        is None
+    )
+
+
 def test_parse_reply_none_without_a_block() -> None:
     assert parse_reply("just a normal answer") is None
 

@@ -1,7 +1,7 @@
 # 20. The message port: a rendering-free channel interface with capability negotiation
 
 Date: 2026-07-11
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -149,6 +149,6 @@ fallback, and a native escape hatch that is never load-bearing.
   single change. This ADR does not require the full pluggable channel registry up
   front; the interaction-primitive half is driven now by the approval interface
   (ADR-0010), and the rest lands as real channels arrive.
-- Open: the exact capability enum and the intent set (`Confirm` and `Choice` in
-  v1, `Form` later) are pinned when the port lands in `aci-protocol` / the channel
-  package. This ADR fixes the shape and the rules, not the final field list.
+- The exact v1 capability enum and `Choice` / `Confirm` intent fields are pinned
+  in `packages/channel-protocol` and documented in the channel-interaction
+  interface. `Form` remains deferred until an agent needs it.

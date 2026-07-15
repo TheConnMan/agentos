@@ -30,6 +30,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from channel_protocol import ChoiceIntent, ConfirmIntent, OutboundMessage
+from pydantic import ValidationError
+
 from .behaviorpacks import BehaviorPacks, NavPack, ensure_hub_button
 from .mrkdwn import to_mrkdwn
 
@@ -207,6 +210,27 @@ def _pairs(raw: Any) -> list[tuple[str, str]]:
     return out
 
 
+def _reply_from_message(message: OutboundMessage) -> Reply:
+    """Project the channel-neutral contract into this Slack renderer's inputs."""
+    buttons: list[tuple[str, str]] = []
+    if isinstance(message.interaction, ChoiceIntent):
+        buttons = [(option.label, option.value) for option in message.interaction.options]
+    elif isinstance(message.interaction, ConfirmIntent):
+        buttons = [
+            (message.interaction.confirm.label, message.interaction.confirm.value),
+            (message.interaction.cancel.label, message.interaction.cancel.value),
+        ]
+    return Reply(
+        text=message.text,
+        status=message.status,
+        header=message.header,
+        fields=[(item.label, item.value) for item in message.fields],
+        buttons=buttons,
+        links=[(item.label, item.url) for item in message.links],
+        footer=message.footer,
+    )
+
+
 def parse_reply(text: str) -> Reply | None:
     """A ``Reply`` if ``text`` contains a complete, valid ``agentos-reply`` block,
     else None. Defensive: any parse/shape error returns None so the caller falls
@@ -220,6 +244,13 @@ def parse_reply(text: str) -> Reply | None:
         return None
     if not isinstance(data, dict):
         return None
+    if "version" in data:
+        try:
+            return _reply_from_message(OutboundMessage.model_validate(data))
+        except ValidationError:
+            return None
+    # Migration-only compatibility for the original unversioned convention.
+    # New agents author the versioned channel-protocol shape above.
     status = data.get("status")
     header = data.get("header")
     footer = data.get("footer")

@@ -314,27 +314,24 @@ pub async fn build(tag: &str) -> Result<()> {
     Ok(())
 }
 
-/// `agentos install`: from-a-checkout dev bootstrap -- install deps and build
-/// the runner image, but start nothing. Each step is idempotent and streams its
-/// output; a missing tool prints a friendly pointer and stops. A release binary
-/// has no source tree to install, so this errors clearly outside a checkout.
-pub async fn install() -> Result<()> {
+/// `agentos install`: from-a-checkout dev bootstrap/update -- install deps and
+/// build the runner image, but start nothing. Each step is idempotent and
+/// streams its output; update mode reuses already-present heavyweight artifacts.
+/// A missing tool prints a friendly pointer and stops. A release binary has no
+/// source tree to install, so this errors clearly outside a checkout.
+pub async fn install(update: bool) -> Result<()> {
     let ui = crate::ui::ui();
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `agentos install` \
          from an agentos source checkout -- a release binary has nothing to install.",
     )?;
 
-    // 1. Seed .env from .env.example (idempotent: skip if .env already exists).
-    let env_path = root.join(".env");
-    let env_example = root.join(".env.example");
-    if env_path.exists() {
-        ui.note("=== .env already exists; leaving it untouched ===");
-    } else if env_example.exists() {
-        ui.note("=== cp .env.example .env ===");
-        std::fs::copy(&env_example, &env_path).context("failed to copy .env.example to .env")?;
-    } else {
-        ui.note("=== no .env.example to seed .env from; skipping ===");
+    // 1. Local config is user-owned. It is gitignored and only created once,
+    // so pulling newer AgentOS sources and rerunning install cannot replace it.
+    match seed_env_if_missing(&root)? {
+        EnvSeed::Preserved => ui.note("=== .env already exists; leaving it untouched ==="),
+        EnvSeed::Created => ui.note("=== seeded .env from .env.example ==="),
+        EnvSeed::NoTemplate => ui.note("=== no .env.example to seed .env from; skipping ==="),
     }
 
     // 2. uv sync (repo root).
@@ -358,11 +355,39 @@ pub async fn install() -> Result<()> {
     require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
     run_step(&root.join("cli"), "cargo", &["build"], "cargo build (cli)").await?;
 
-    // 5. Build the runner image via the existing `build` handler.
-    build("agentos-runner").await?;
+    // 5. Build the runner image via the existing `build` handler. Update mode
+    // keeps reruns quick when the image is already present locally.
+    let runner_image = "agentos-runner";
+    if update && docker_image_exists(runner_image).await? {
+        ui.note(&format!(
+            "=== runner image '{runner_image}' already exists; skipping rebuild for --update ==="
+        ));
+    } else {
+        build(runner_image).await?;
+    }
 
     ui.success("Setup complete. Start the stack with: agentos local up");
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnvSeed {
+    Preserved,
+    Created,
+    NoTemplate,
+}
+
+fn seed_env_if_missing(root: &Path) -> Result<EnvSeed> {
+    let env_path = root.join(".env");
+    if env_path.exists() {
+        return Ok(EnvSeed::Preserved);
+    }
+    let env_example = root.join(".env.example");
+    if !env_example.exists() {
+        return Ok(EnvSeed::NoTemplate);
+    }
+    std::fs::copy(&env_example, &env_path).context("failed to copy .env.example to .env")?;
+    Ok(EnvSeed::Created)
 }
 
 /// `agentos dev <script>`: run a repo dev script by relative path. Thin wrapper
@@ -415,6 +440,21 @@ async fn run_step(dir: &Path, bin: &str, args: &[&str], label: &str) -> Result<(
         bail!("{label} failed ({status})");
     }
     Ok(())
+}
+
+async fn docker_image_exists(tag: &str) -> Result<bool> {
+    require_tool(
+        "docker",
+        "Docker is not installed or not on PATH. Install Docker Desktop/Engine and retry.",
+    )?;
+    let status = tokio::process::Command::new("docker")
+        .args(["image", "inspect", tag])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .context("failed to invoke docker")?;
+    Ok(status.success())
 }
 
 /// Whether `bin` resolves on PATH.
@@ -471,6 +511,42 @@ fn merge_secret_env(mut passthrough: Vec<String>, secrets: &[String]) -> Vec<Str
         }
     }
     passthrough
+}
+
+fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
+    if std::env::var_os(name).is_some() {
+        return Ok(None);
+    }
+    if !crate::secrets::is_saved(name)? {
+        return Ok(None);
+    }
+    if let Some(value) = crate::secrets::get_value(name)? {
+        crate::ui::ui().note(&format!(
+            "{name}: loaded from AgentOS private storage for this run"
+        ));
+        return Ok(Some((name.to_string(), value)));
+    }
+    Ok(None)
+}
+
+fn stored_env_contains(env: &[(String, String)], name: &str) -> bool {
+    env.iter().any(|(stored_name, _)| stored_name == name)
+}
+
+fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
+    // Prefer an explicitly BYO AgentOS credential when saved, otherwise hydrate
+    // the SDK credential names in the same order `select_passthrough_env` uses.
+    if let Some(pair) = secret_store_env("AGENTOS_CREDENTIALS")? {
+        return Ok(vec![pair]);
+    }
+    let mut env = Vec::new();
+    if let Some(pair) = secret_store_env("CLAUDE_CODE_OAUTH_TOKEN")? {
+        env.push(pair);
+    }
+    if let Some(pair) = secret_store_env("ANTHROPIC_API_KEY")? {
+        env.push(pair);
+    }
+    Ok(env)
 }
 
 pub async fn start(opts: StartOpts) -> Result<()> {
@@ -560,14 +636,27 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // the ambient SDK token alongside a chosen BYO credential. See
     // select_passthrough_env.
     let suppress_credential = opts.local_model.is_some() || opts.fake_model;
-    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok();
-    // Warn (do not fail) on a `--secret NAME` that is not set in the caller's
-    // env, since the by-name forward silently no-ops for an unset var (docker.rs).
+    let mut docker_env = Vec::new();
+    if !suppress_credential {
+        docker_env.extend(load_model_credentials_from_secret_store()?);
+    }
+    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok().or_else(|| {
+        stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
+    });
+    // Hydrate `--secret NAME` from AgentOS private storage when it is not
+    // already present in the process env. The docker argv still forwards only
+    // the NAME (`-e NAME`); the value is supplied only to the Docker CLI child
+    // process so Docker can copy it into the runner container.
     for name in &opts.secret {
-        if std::env::var_os(name).is_none() {
-            crate::ui::ui().note(&format!(
-                "--secret {name}: not set in the environment; nothing will be forwarded for it"
-            ));
+        if std::env::var_os(name).is_none() && !stored_env_contains(&docker_env, name) {
+            match secret_store_env(name)? {
+                Some(pair) => docker_env.push(pair),
+                None => {
+                    crate::ui::ui().note(&format!(
+                        "--secret {name}: not set in the environment or AgentOS secret store; nothing will be forwarded for it"
+                    ));
+                }
+            }
         }
     }
     let passthrough_env = merge_secret_env(
@@ -589,6 +678,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         model_base_url: model_base_url.clone(),
         model,
         passthrough_env,
+        docker_env,
     };
 
     let ui = crate::ui::ui();
@@ -596,7 +686,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         "starting runner container '{}' from '{}'",
         opts.name, opts.image
     ));
-    let container_id = match docker::docker(&spec.run_args()).await {
+    let container_id = match docker::docker_with_env(&spec.run_args(), &spec.docker_env).await {
         Ok(id) => id,
         Err(err) => {
             if let Some(ollama) = &ollama_container {
@@ -1308,13 +1398,34 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_secret_env, resolve_cases_path, select_passthrough_env, validate_slack_channel,
+        merge_secret_env, resolve_cases_path, seed_env_if_missing, select_passthrough_env,
+        validate_slack_channel, EnvSeed,
     };
     use std::path::PathBuf;
 
     #[test]
     fn default_channel_passes_local_validation() {
         assert!(validate_slack_channel(crate::api::DEFAULT_SLACK_CHANNEL).is_ok());
+    }
+
+    #[test]
+    fn install_preserves_existing_local_config() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".env"), "USER_SETTING=keep-me\n").unwrap();
+        std::fs::write(
+            root.path().join(".env.example"),
+            "USER_SETTING=new-default\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            seed_env_if_missing(root.path()).unwrap(),
+            EnvSeed::Preserved
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(".env")).unwrap(),
+            "USER_SETTING=keep-me\n"
+        );
     }
 
     #[test]

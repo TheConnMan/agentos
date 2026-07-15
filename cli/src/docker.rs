@@ -31,6 +31,10 @@ pub struct StartSpec {
     /// Env vars forwarded from the caller's environment when set (model
     /// credentials for real-model runs; never baked into the args as values).
     pub passthrough_env: Vec<String>,
+    /// Env values supplied only to the Docker CLI process. Used for secrets
+    /// loaded from AgentOS private storage so they can be forwarded by `-e NAME`
+    /// without mutating the AgentOS process env or appearing in argv.
+    pub docker_env: Vec<(String, String)>,
 }
 
 /// Everything `docker run` needs for a one shot offline MCP load check.
@@ -110,7 +114,9 @@ impl StartSpec {
             args.push(format!("OTEL_EXPORTER_OTLP_ENDPOINT={endpoint}"));
         }
         for var in &self.passthrough_env {
-            if std::env::var_os(var).is_some() {
+            if std::env::var_os(var).is_some()
+                || self.docker_env.iter().any(|(name, _)| name == var)
+            {
                 args.push("-e".into());
                 args.push(var.clone());
             }
@@ -122,7 +128,13 @@ impl StartSpec {
 
 /// Run a docker subcommand, returning trimmed stdout; stderr on failure.
 pub async fn docker(args: &[String]) -> Result<String> {
-    let (status, stdout, stderr) = docker_capture(args).await?;
+    docker_with_env(args, &[]).await
+}
+
+/// Run a docker subcommand with extra environment values supplied only to the
+/// Docker CLI child process.
+pub async fn docker_with_env(args: &[String], env: &[(String, String)]) -> Result<String> {
+    let (status, stdout, stderr) = docker_capture_with_env(args, env).await?;
     if !status.success() {
         bail!(
             "docker {} failed ({}): {}",
@@ -140,8 +152,19 @@ pub async fn docker(args: &[String]) -> Result<String> {
 /// not turn an unsuccessful child exit into an error. Failure to invoke Docker
 /// remains an error.
 pub async fn docker_capture(args: &[String]) -> Result<(std::process::ExitStatus, String, String)> {
-    let output = Command::new("docker")
-        .args(args)
+    docker_capture_with_env(args, &[]).await
+}
+
+pub async fn docker_capture_with_env(
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<(std::process::ExitStatus, String, String)> {
+    let mut cmd = Command::new("docker");
+    cmd.args(args);
+    for (name, value) in env {
+        cmd.env(name, value);
+    }
+    let output = cmd
         .output()
         .await
         .context("failed to invoke docker; is Docker installed and on PATH?")?;
@@ -320,6 +343,7 @@ mod tests {
             model_base_url: None,
             model: None,
             passthrough_env: vec!["AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST".into()],
+            docker_env: vec![],
         }
     }
 
@@ -358,6 +382,16 @@ mod tests {
         let joined = s.run_args().join(" ");
         assert!(!joined.contains("AGENTOS_FAKE_MODEL"));
         assert!(!joined.contains("AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST"));
+    }
+
+    #[test]
+    fn docker_env_marks_passthrough_name_without_leaking_value() {
+        let mut s = spec();
+        s.passthrough_env = vec!["GITHUB_PERSONAL_ACCESS_TOKEN".into()];
+        s.docker_env = vec![("GITHUB_PERSONAL_ACCESS_TOKEN".into(), "ghp-secret".into())];
+        let joined = s.run_args().join(" ");
+        assert!(joined.contains("-e GITHUB_PERSONAL_ACCESS_TOKEN"));
+        assert!(!joined.contains("ghp-secret"));
     }
 
     #[test]

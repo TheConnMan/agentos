@@ -65,3 +65,5 @@ is built (#27) — the channel-neutral rename comes with the second real channel
 - **Epic(s):** #38 — channel-seam hardening / follow-up
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — Job 6 (Communication channel), grade C
 - **ADR(s):** none directly on this seam
+- **Interaction contract:** [Channel interaction](../channel-interaction/INTERFACE.md)
+  defines the semantic reply before this Slack adapter renders it.

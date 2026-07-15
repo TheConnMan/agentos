@@ -13,6 +13,7 @@ resolution-markers = [
 members = [
     "aci-protocol",
     "agentos-api",
+    "agentos-channel-protocol",
     "agentos-dispatcher",
     "agentos-runner",
     "agentos-worker",
@@ -73,6 +74,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "agentos-channel-protocol"
+version = "0.1.0"
+source = { editable = "packages/channel-protocol" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
+
+[[package]]
 name = "agentos-dispatcher"
 version = "0.0.0"
 source = { editable = "apps/dispatcher" }
@@ -124,6 +136,7 @@ version = "0.0.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "aci-protocol" },
+    { name = "agentos-channel-protocol" },
     { name = "agentos-dispatcher" },
     { name = "aiohttp" },
     { name = "asyncpg" },
@@ -140,6 +153,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "agentos-channel-protocol", editable = "packages/channel-protocol" },
     { name = "agentos-dispatcher", editable = "apps/dispatcher" },
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "asyncpg", specifier = ">=0.30" },
@@ -160,6 +174,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "aci-protocol" },
     { name = "agentos-api" },
+    { name = "agentos-channel-protocol" },
     { name = "agentos-dispatcher" },
     { name = "agentos-runner" },
     { name = "agentos-worker" },
@@ -180,6 +195,7 @@ dev = [
 requires-dist = [
     { name = "aci-protocol", editable = "packages/aci-protocol" },
     { name = "agentos-api", editable = "apps/api" },
+    { name = "agentos-channel-protocol", editable = "packages/channel-protocol" },
     { name = "agentos-dispatcher", editable = "apps/dispatcher" },
     { name = "agentos-runner", editable = "runner" },
     { name = "agentos-worker", editable = "apps/worker" },

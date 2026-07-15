@@ -399,6 +399,21 @@
           "default": null,
           "title": "Repository"
         },
+        "starterPrompts": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Starterprompts"
+        },
         "systemPrompt": {
           "anyOf": [
             {

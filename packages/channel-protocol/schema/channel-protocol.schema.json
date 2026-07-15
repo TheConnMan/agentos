@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "description": "A semantic response the user may select; adapters choose its widget.",
+      "properties": {
+        "label": {
+          "maxLength": 75,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "Action",
+      "type": "object"
+    },
+    "ChannelCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/ChannelCapability"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "version": {
+          "const": "1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "ChannelCapabilities",
+      "type": "object"
+    },
+    "ChannelCapability": {
+      "enum": [
+        "interactive-actions",
+        "live-steering",
+        "streaming",
+        "rich-cards",
+        "threading",
+        "file-attachments"
+      ],
+      "title": "ChannelCapability",
+      "type": "string"
+    },
+    "ChoiceIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_free_text": {
+          "default": true,
+          "title": "Allow Free Text",
+          "type": "boolean"
+        },
+        "id": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "choice",
+          "title": "Kind",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Options",
+          "type": "array"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "options"
+      ],
+      "title": "ChoiceIntent",
+      "type": "object"
+    },
+    "ConfirmIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_free_text": {
+          "default": false,
+          "title": "Allow Free Text",
+          "type": "boolean"
+        },
+        "cancel": {
+          "$ref": "#/$defs/Action"
+        },
+        "confirm": {
+          "$ref": "#/$defs/Action"
+        },
+        "id": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "confirm",
+          "title": "Kind",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "prompt",
+        "confirm",
+        "cancel"
+      ],
+      "title": "ConfirmIntent",
+      "type": "object"
+    },
+    "MessageField": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "MessageField",
+      "type": "object"
+    },
+    "MessageLink": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "url"
+      ],
+      "title": "MessageLink",
+      "type": "object"
+    },
+    "OutboundMessage": {
+      "additionalProperties": false,
+      "description": "One adapter-neutral reply with a mandatory complete text fallback.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/MessageField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "footer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Footer"
+        },
+        "header": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header"
+        },
+        "interaction": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "choice": "#/$defs/ChoiceIntent",
+                  "confirm": "#/$defs/ConfirmIntent"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/ChoiceIntent"
+                },
+                {
+                  "$ref": "#/$defs/ConfirmIntent"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interaction"
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/MessageLink"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "version": {
+          "const": "1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "text"
+      ],
+      "title": "OutboundMessage",
+      "type": "object"
+    }
+  },
+  "$id": "https://curie.tech/agentos/channel-protocol.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "messageVersion": "1.0",
+  "title": "AgentOS Channel Protocol v1.0"
+}

@@ -1884,9 +1884,23 @@ export const commandManifest = {
       "name": "build"
     },
     {
-      "about": "Bootstrap a dev checkout: install deps and build, start nothing (source checkout only)",
+      "about": "Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only)",
+      "args": [
+        {
+          "global": false,
+          "help": "Reuse already-present artifacts while refreshing dependencies and builds",
+          "id": "update",
+          "long": "update",
+          "positional": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false
+        }
+      ],
       "hidden": false,
-      "long_about": "Bootstrap a dev checkout: install deps and build, start nothing (source checkout only).\n\nFrom the repo root, runs (each idempotent, streaming output): copy `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in `apps/ui`, `cargo build` in `cli`, then builds the runner image. A release binary has no source tree to install and errors clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.",
+      "long_about": "Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).\n\nFrom the repo root, runs (each idempotent, streaming output): copy `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in `apps/ui`, `cargo build` in `cli`, then builds the runner image. With `--update`, already-present heavyweight artifacts like the runner image are reused. A release binary has no source tree to install and errors clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.",
       "name": "install"
     },
     {
@@ -1894,6 +1908,54 @@ export const commandManifest = {
       "hidden": false,
       "long_about": "Open the interactive terminal interface.\n\nA keyboard-driven terminal UI for humans: browse targets and actions, preview exact commands, fill required values, and run workflows without memorizing the full command surface.",
       "name": "interactive"
+    },
+    {
+      "about": "Store and manage local secrets in AgentOS private storage",
+      "hidden": false,
+      "name": "secrets",
+      "subcommands": [
+        {
+          "about": "Save a secret in AgentOS private storage. Prompts with hidden input by default",
+          "args": [
+            {
+              "global": false,
+              "help": "Environment-variable-style secret name, e.g. GITHUB_PERSONAL_ACCESS_TOKEN",
+              "id": "name",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Read the value from another environment variable instead of prompting",
+              "id": "from_env",
+              "long": "from-env",
+              "positional": false,
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "set"
+        },
+        {
+          "about": "List saved AgentOS secret names. Values are never printed",
+          "hidden": false,
+          "name": "list"
+        },
+        {
+          "about": "Remove a saved secret",
+          "args": [
+            {
+              "global": false,
+              "help": "Environment-variable-style secret name",
+              "id": "name",
+              "positional": true,
+              "required": true
+            }
+          ],
+          "hidden": false,
+          "name": "unset"
+        }
+      ]
     },
     {
       "about": "Run a repo dev script (contracts, chart-check, e2e) -- source checkout only",

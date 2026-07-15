@@ -1,5 +1,10 @@
 {
   "name": "weather",
   "description": "The weather agent plugin.",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "starterPrompts": [
+    "What can this weather agent help me with?",
+    "Give me a concise weather briefing for San Francisco.",
+    "How should I ask you to compare weather between two cities?"
+  ]
 }

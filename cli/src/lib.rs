@@ -7,6 +7,7 @@
 pub mod api;
 pub mod artifacts;
 pub mod bundle;
+pub mod channel;
 pub mod chat;
 pub mod commands;
 pub mod comms;
@@ -26,6 +27,7 @@ pub mod retired;
 pub mod runner;
 pub mod scaffold;
 pub mod schema;
+pub mod secrets;
 pub mod spec;
 pub mod state;
 pub mod ui;

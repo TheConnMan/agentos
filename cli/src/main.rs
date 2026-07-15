@@ -14,6 +14,7 @@ use agentos::comms::{self, CommsOpts, LocalCommsOpts};
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
 use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
+use agentos::secrets;
 use agentos::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
 use agentos::ui::{self, ColorFlag, Ui};
 use anyhow::Result;
@@ -100,14 +101,19 @@ enum Command {
         #[arg(long, default_value = "agentos-runner")]
         tag: String,
     },
-    /// Bootstrap a dev checkout: install deps and build, start nothing (source checkout only).
+    /// Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).
     ///
     /// From the repo root, runs (each idempotent, streaming output): copy
     /// `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in
-    /// `apps/ui`, `cargo build` in `cli`, then builds the runner image. A
-    /// release binary has no source tree to install and errors clearly; a
-    /// missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
-    Install,
+    /// `apps/ui`, `cargo build` in `cli`, then builds the runner image. With
+    /// `--update`, already-present heavyweight artifacts like the runner image
+    /// are reused. A release binary has no source tree to install and errors
+    /// clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
+    Install {
+        /// Reuse already-present artifacts while refreshing dependencies and builds.
+        #[arg(long)]
+        update: bool,
+    },
     /// Open the interactive terminal interface.
     ///
     /// A keyboard-driven terminal UI for humans: browse targets and actions,
@@ -115,6 +121,11 @@ enum Command {
     /// memorizing the full command surface.
     #[command(alias = "ui", alias = "tui")]
     Interactive,
+    /// Store and manage local secrets in AgentOS private storage.
+    Secrets {
+        #[command(subcommand)]
+        action: SecretsAction,
+    },
     /// Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.
     ///
     /// Thin wrappers over the repo's dev scripts so contributors get a unified
@@ -149,6 +160,25 @@ enum DevAction {
     ChartCheck,
     /// Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`).
     E2e,
+}
+
+#[derive(Subcommand)]
+enum SecretsAction {
+    /// Save a secret in AgentOS private storage. Prompts with hidden input by default.
+    Set {
+        /// Environment-variable-style secret name, e.g. GITHUB_PERSONAL_ACCESS_TOKEN.
+        name: String,
+        /// Read the value from another environment variable instead of prompting.
+        #[arg(long)]
+        from_env: Option<String>,
+    },
+    /// List saved AgentOS secret names. Values are never printed.
+    List,
+    /// Remove a saved secret.
+    Unset {
+        /// Environment-variable-style secret name.
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -881,8 +911,15 @@ async fn run(command: Option<Command>) -> Result<()> {
             from_spec,
         }) => commands::init(name, dir, from_spec),
         Some(Command::Build { tag }) => commands::build(&tag).await,
-        Some(Command::Install) => commands::install().await,
+        Some(Command::Install { update }) => commands::install(update).await,
         Some(Command::Interactive) => agentos::interactive::run().await,
+        Some(Command::Secrets { action }) => match action {
+            SecretsAction::Set { name, from_env } => {
+                secrets::set(secrets::SetSecretOpts { name, from_env })
+            }
+            SecretsAction::List => secrets::list(),
+            SecretsAction::Unset { name } => secrets::unset(secrets::UnsetSecretOpts { name }),
+        },
         Some(Command::Dev { action }) => match action {
             DevAction::Contracts => commands::dev_script("scripts/check-contracts.sh").await,
             DevAction::ChartCheck => {
@@ -1510,7 +1547,20 @@ mod tests {
     #[test]
     fn install_parses() {
         let cli = Cli::try_parse_from(["agentos", "install"]).expect("install should parse");
-        assert!(matches!(cli.command, Some(Command::Install)));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Install { update: false })
+        ));
+    }
+
+    #[test]
+    fn install_update_parses() {
+        let cli =
+            Cli::try_parse_from(["agentos", "install", "--update"]).expect("install should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Install { update: true })
+        ));
     }
 
     #[test]
@@ -1522,6 +1572,52 @@ mod tests {
         assert!(matches!(cli.command, Some(Command::Interactive)));
         let cli = Cli::try_parse_from(["agentos", "tui"]).expect("tui alias should parse");
         assert!(matches!(cli.command, Some(Command::Interactive)));
+    }
+
+    #[test]
+    fn secrets_subcommands_parse() {
+        let cli = Cli::try_parse_from(["agentos", "secrets", "set", "GITHUB_TOKEN"])
+            .expect("secrets set should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Secrets {
+                action: SecretsAction::Set { .. }
+            })
+        ));
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "secrets",
+            "set",
+            "GITHUB_TOKEN",
+            "--from-env",
+            "TMP_TOKEN",
+        ])
+        .expect("secrets set --from-env should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Secrets {
+                action: SecretsAction::Set {
+                    from_env: Some(_),
+                    ..
+                }
+            })
+        ));
+        let cli =
+            Cli::try_parse_from(["agentos", "secrets", "list"]).expect("secrets list should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Secrets {
+                action: SecretsAction::List
+            })
+        ));
+        let cli = Cli::try_parse_from(["agentos", "secrets", "unset", "GITHUB_TOKEN"])
+            .expect("secrets unset should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Secrets {
+                action: SecretsAction::Unset { .. }
+            })
+        ));
     }
 
     #[test]

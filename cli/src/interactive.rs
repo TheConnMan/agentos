@@ -3,16 +3,22 @@
 //! This is a ratatui/crossterm surface over the existing clap command grammar:
 //! it does not invent a second implementation path. The TUI helps a human pick
 //! a target and action, previews the exact `agentos ...` command, prompts for
-//! any required values, then suspends the alternate screen and runs that command
-//! as a normal child process.
+//! any required values, then keeps prompts, command output, and workflow results
+//! inside the alternate-screen interface.
 
-use std::collections::BTreeMap;
-use std::io::{self, IsTerminal, Write};
-use std::process::Command;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{self, BufRead, BufReader, IsTerminal};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -23,15 +29,60 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use crate::channel::{parse_terminal_message, TerminalAction, REPLY_FENCE};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SecretNameChoice {
+    Name(String),
+    Custom,
+}
+
+#[derive(Clone, Debug)]
+struct SelectChoice<T> {
+    label: String,
+    description: String,
+    value: T,
+}
 
 #[derive(Clone, Debug)]
 struct Recipe {
     target: &'static str,
     title: &'static str,
     description: &'static str,
+    kind: RecipeKind,
     args: Vec<ArgPart>,
     fields: Vec<Field>,
     notes: &'static [&'static str],
+}
+
+#[derive(Clone, Debug)]
+enum RecipeKind {
+    Command,
+    Tui(TuiAction),
+    Workflow(Workflow),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TuiAction {
+    SaveSecret,
+    ListSecrets,
+    RemoveSecret,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Workflow {
+    ExploreExamples,
+}
+
+#[derive(Clone, Debug)]
+struct ExampleChoice {
+    id: &'static str,
+    name: &'static str,
+    description: &'static str,
+    directory: &'static str,
+    secrets: &'static [&'static str],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,7 +134,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
         let Event::Key(key) = event::read()? else {
             continue;
         };
-        if app.handle_key(key)? {
+        if app.handle_key(key, terminal)? {
             break;
         }
     }
@@ -95,7 +146,7 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec!["all", "skill", "local", "cluster", "dev"],
+            targets: vec!["all", "skill", "secrets", "local", "cluster", "dev"],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -117,7 +168,11 @@ impl App {
             .and_then(|idx| self.recipes.get(*idx))
     }
 
-    fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+    fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<bool> {
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(true),
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(true),
@@ -125,7 +180,7 @@ impl App {
             (KeyCode::Up | KeyCode::Char('k'), _) => self.move_selection(-1),
             (KeyCode::Tab | KeyCode::Right, _) => self.next_target(),
             (KeyCode::BackTab | KeyCode::Left, _) => self.prev_target(),
-            (KeyCode::Enter, _) | (KeyCode::Char('r'), _) => self.run_selected()?,
+            (KeyCode::Enter, _) | (KeyCode::Char('r'), _) => self.run_selected(terminal)?,
             _ => {}
         }
         Ok(false)
@@ -154,16 +209,22 @@ impl App {
         self.selected = 0;
     }
 
-    fn run_selected(&mut self) -> Result<()> {
+    fn run_selected(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<()> {
         let Some(recipe) = self.selected_recipe().cloned() else {
             return Ok(());
         };
-        suspend_terminal()?;
-        let result = prompt_and_run(&recipe);
-        resume_terminal()?;
+        let result = match &recipe.kind {
+            RecipeKind::Tui(action) => run_tui_action(*action, terminal, self),
+            RecipeKind::Command | RecipeKind::Workflow(_) => {
+                run_recipe_in_tui(terminal, self, &recipe)
+            }
+        };
         self.message = match result {
-            Ok(()) => format!("Finished: {}", recipe.title),
-            Err(err) => format!("Command failed to start or complete: {err:#}"),
+            Ok(message) => message,
+            Err(err) => format!("Action failed: {err:#}"),
         };
         Ok(())
     }
@@ -177,7 +238,8 @@ struct TerminalSession {
 impl TerminalSession {
     fn enter() -> Result<Self> {
         enable_raw_mode().context("enabling terminal raw mode")?;
-        execute!(io::stdout(), EnterAlternateScreen).context("entering alternate screen")?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)
+            .context("entering alternate screen")?;
         let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::new(backend).context("creating terminal")?;
         terminal.clear().ok();
@@ -190,7 +252,8 @@ impl TerminalSession {
     fn leave(&mut self) -> Result<()> {
         if self.active {
             disable_raw_mode().ok();
-            execute!(io::stdout(), LeaveAlternateScreen).context("leaving alternate screen")?;
+            execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen)
+                .context("leaving alternate screen")?;
             self.active = false;
         }
         Ok(())
@@ -203,65 +266,1203 @@ impl Drop for TerminalSession {
     }
 }
 
-fn suspend_terminal() -> Result<()> {
-    disable_raw_mode().ok();
-    execute!(io::stdout(), LeaveAlternateScreen).context("leaving alternate screen")
-}
-
-fn resume_terminal() -> Result<()> {
-    print!("Press Enter to return to AgentOS interactive...");
-    io::stdout().flush().ok();
-    let mut line = String::new();
-    let _ = io::stdin().read_line(&mut line);
-    execute!(io::stdout(), EnterAlternateScreen).context("entering alternate screen")?;
-    enable_raw_mode().context("enabling terminal raw mode")
-}
-
-fn prompt_and_run(recipe: &Recipe) -> Result<()> {
-    println!("AgentOS interactive: {}", recipe.title);
-    println!("{}", recipe.description);
-    println!();
-
+fn prompt_recipe_fields(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    recipe: &Recipe,
+) -> Result<Option<BTreeMap<String, String>>> {
     let mut values = BTreeMap::new();
-    for field in &recipe.fields {
-        let value = prompt_field(field)?;
+    for (idx, field) in recipe.fields.iter().enumerate() {
+        let title = format!(
+            "{} · Step {} of {}",
+            recipe.title,
+            idx + 1,
+            recipe.fields.len()
+        );
+        let Some(value) = prompt_text(
+            terminal,
+            app,
+            &title,
+            field.label,
+            field.default,
+            false,
+            !field.required,
+        )?
+        else {
+            return Ok(None);
+        };
+        if field.required && value.is_empty() {
+            return Ok(None);
+        }
         values.insert(field.key.to_string(), value);
     }
-    let argv = build_argv(recipe, &values);
-    println!();
-    println!("$ {}", render_command(&argv));
-    println!();
-    let status = Command::new(std::env::current_exe().context("resolving current executable")?)
-        .args(&argv)
-        .status()
-        .context("running selected agentos command")?;
-    if !status.success() {
-        anyhow::bail!("selected command exited with {status}");
+    Ok(Some(values))
+}
+
+fn run_recipe_in_tui(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    recipe: &Recipe,
+) -> Result<String> {
+    let Some(values) = prompt_recipe_fields(terminal, app, recipe)? else {
+        return Ok(format!("Canceled: {}", recipe.title));
+    };
+    if matches!(recipe.kind, RecipeKind::Workflow(Workflow::ExploreExamples)) {
+        explore_examples(terminal, app, &values)?;
+        return Ok(format!("Finished: {}", recipe.title));
+    }
+    let mut view = RunView::new(recipe.title);
+    let run_result = match &recipe.kind {
+        RecipeKind::Command => {
+            let argv = build_argv(recipe, &values);
+            run_agentos_in_tui(terminal, app, &argv, Path::new("."), &mut view)
+        }
+        RecipeKind::Tui(_) => Ok(()),
+        RecipeKind::Workflow(_) => unreachable!("workflows run before the command view"),
+    };
+    if let Err(err) = &run_result {
+        view.push("");
+        view.push(format!("ERROR: {err:#}"));
+    }
+    show_run_view(terminal, app, &mut view)?;
+    run_result?;
+    Ok(format!("Finished: {}", recipe.title))
+}
+
+fn run_tui_action(
+    action: TuiAction,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+) -> Result<String> {
+    match action {
+        TuiAction::SaveSecret => {
+            let Some(choice) = prompt_select(
+                terminal,
+                app,
+                "Save Secret",
+                "Choose a secret name",
+                secret_name_choices()?,
+            )?
+            else {
+                return Ok("Save secret canceled.".to_string());
+            };
+            let name = match choice {
+                SecretNameChoice::Name(name) => name,
+                SecretNameChoice::Custom => {
+                    let Some(name) = prompt_text(
+                        terminal,
+                        app,
+                        "Save Secret",
+                        "Custom secret name",
+                        None,
+                        false,
+                        false,
+                    )?
+                    else {
+                        return Ok("Save secret canceled.".to_string());
+                    };
+                    name
+                }
+            };
+            crate::secrets::validate_name(&name)?;
+            let Some(value) = prompt_text(terminal, app, "Save Secret", &name, None, true, false)?
+            else {
+                return Ok("Save secret canceled.".to_string());
+            };
+            crate::secrets::save_value(&name, &value)?;
+            Ok(format!("Saved {name} in AgentOS private storage."))
+        }
+        TuiAction::ListSecrets => {
+            let count = crate::secrets::list_names()?.len();
+            Ok(match count {
+                0 => "No AgentOS secrets saved.".to_string(),
+                1 => "Showing 1 saved secret name.".to_string(),
+                n => format!("Showing {n} saved secret names."),
+            })
+        }
+        TuiAction::RemoveSecret => {
+            let Some(choice) = prompt_select(
+                terminal,
+                app,
+                "Remove Secret",
+                "Choose a saved secret",
+                saved_secret_choices()?,
+            )?
+            else {
+                return Ok("Remove secret canceled.".to_string());
+            };
+            let name = match choice {
+                SecretNameChoice::Name(name) => name,
+                SecretNameChoice::Custom => {
+                    let Some(name) = prompt_text(
+                        terminal,
+                        app,
+                        "Remove Secret",
+                        "Custom secret name",
+                        None,
+                        false,
+                        false,
+                    )?
+                    else {
+                        return Ok("Remove secret canceled.".to_string());
+                    };
+                    name
+                }
+            };
+            crate::secrets::validate_name(&name)?;
+            let Some(confirm) = prompt_text(
+                terminal,
+                app,
+                "Remove Secret",
+                &format!("Type {name} to confirm"),
+                None,
+                false,
+                false,
+            )?
+            else {
+                return Ok("Remove secret canceled.".to_string());
+            };
+            if confirm != name {
+                return Ok("Remove secret canceled.".to_string());
+            }
+            crate::secrets::remove_value(&name)?;
+            Ok(format!("Removed {name}."))
+        }
+    }
+}
+
+fn secret_name_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
+    let saved_names = crate::secrets::list_names()?.into_iter().collect();
+    Ok(secret_name_choices_for(&saved_names))
+}
+
+fn secret_name_choices_for(saved_names: &BTreeSet<String>) -> Vec<SelectChoice<SecretNameChoice>> {
+    let common = [
+        ("ANTHROPIC_API_KEY", "Anthropic API key for model calls"),
+        (
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Claude Code OAuth token for model calls",
+        ),
+        (
+            "AGENTOS_CREDENTIALS",
+            "Provider credential forwarded as AgentOS credentials",
+        ),
+        (
+            "OPENAI_API_KEY",
+            "OpenAI integrations (not AgentOS runner model auth)",
+        ),
+        (
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "GitHub token for MCP examples or bundles",
+        ),
+    ];
+    let mut choices = common
+        .into_iter()
+        .map(|(name, description)| {
+            let saved = saved_names.contains(name);
+            SelectChoice {
+                label: if saved {
+                    format!("{name} ✓")
+                } else {
+                    name.to_string()
+                },
+                description: if saved {
+                    format!("{description} (saved)")
+                } else {
+                    description.to_string()
+                },
+                value: SecretNameChoice::Name(name.to_string()),
+            }
+        })
+        .collect::<Vec<_>>();
+    choices.push(SelectChoice {
+        label: "Custom secret name".to_string(),
+        description: "Enter any env-style secret name".to_string(),
+        value: SecretNameChoice::Custom,
+    });
+    choices
+}
+
+fn saved_secret_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
+    let mut choices: Vec<SelectChoice<SecretNameChoice>> = crate::secrets::list_names()?
+        .into_iter()
+        .map(|name| SelectChoice {
+            label: name.clone(),
+            description: "Saved in AgentOS private storage".to_string(),
+            value: SecretNameChoice::Name(name),
+        })
+        .collect();
+    choices.push(SelectChoice {
+        label: "Custom secret name".to_string(),
+        description: "Remove a name not shown here".to_string(),
+        value: SecretNameChoice::Custom,
+    });
+    Ok(choices)
+}
+
+fn prompt_select<T: Clone>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    title: &str,
+    label: &str,
+    choices: Vec<SelectChoice<T>>,
+) -> Result<Option<T>> {
+    if choices.is_empty() {
+        return Ok(None);
+    }
+    let mut selected = 0usize;
+    loop {
+        terminal.draw(|frame| {
+            draw(frame, app);
+            draw_select_prompt(frame, title, label, &choices, selected);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => return Ok(None),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Enter, _) => return Ok(Some(choices[selected].value.clone())),
+            (KeyCode::Down | KeyCode::Char('j'), _) => {
+                selected = (selected + 1) % choices.len();
+            }
+            (KeyCode::Up | KeyCode::Char('k'), _) => {
+                selected = if selected == 0 {
+                    choices.len() - 1
+                } else {
+                    selected - 1
+                };
+            }
+            (KeyCode::Char(ch), _) if ch.is_ascii_digit() => {
+                if let Some(digit) = ch.to_digit(10) {
+                    let idx = digit as usize;
+                    if idx > 0 && idx <= choices.len() {
+                        selected = idx - 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn prompt_text(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    title: &str,
+    label: &str,
+    default: Option<&str>,
+    secret: bool,
+    allow_empty: bool,
+) -> Result<Option<String>> {
+    let mut value = String::new();
+    loop {
+        terminal.draw(|frame| {
+            draw(frame, app);
+            draw_prompt(frame, title, label, default, &value, secret, allow_empty);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => return Ok(None),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Enter, _) => {
+                if value.is_empty() {
+                    if let Some(default) = default {
+                        return Ok(Some(default.to_string()));
+                    }
+                    if allow_empty {
+                        return Ok(Some(String::new()));
+                    }
+                    continue;
+                }
+                return Ok(Some(value));
+            }
+            (KeyCode::Backspace, _) => {
+                value.pop();
+            }
+            (KeyCode::Char(ch), _) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                value.push(ch);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn explore_examples(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    _values: &BTreeMap<String, String>,
+) -> Result<()> {
+    let choices = example_choices()
+        .into_iter()
+        .map(|example| SelectChoice {
+            label: example.name.to_string(),
+            description: example.description.to_string(),
+            value: example,
+        })
+        .collect();
+    let Some(example) = prompt_select(
+        terminal,
+        app,
+        "Explore Examples",
+        "Choose an agent to run",
+        choices,
+    )?
+    else {
+        return Ok(());
+    };
+
+    crate::secrets::sync_secret_file()?;
+    ensure_model_credential_available(terminal, app)?;
+    for name in example.secrets {
+        ensure_secret_available(terminal, app, name)?;
+    }
+    let secret_env = example_secret_env(example.secrets)?;
+
+    let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
+        .context(
+        "could not find AgentOS repo root; run this workflow from the source checkout",
+    )?;
+    let example_dir = repo_root.join(example.directory);
+    if !example_dir.join(".claude-plugin/plugin.json").is_file() {
+        anyhow::bail!("missing example bundle at {}", example_dir.display());
+    }
+    let starter_prompts = starter_prompts(&example_dir)?;
+
+    let container_name = format!("agentos-example-{}", example.id);
+    let port = "7247";
+    let url = format!("http://localhost:{port}");
+    let mut setup = RunView::new(&format!("Starting {}", example.name));
+    let mut started = false;
+    let run_result = (|| -> Result<()> {
+        let mut argv = vec![
+            "skill".to_string(),
+            "up".to_string(),
+            "--plugin-dir".to_string(),
+            example_dir.display().to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--name".to_string(),
+            container_name.clone(),
+        ];
+        for name in example.secrets {
+            argv.push("--secret".to_string());
+            argv.push((*name).to_string());
+        }
+        run_agentos_in_tui_with_env(terminal, app, &argv, &repo_root, &mut setup, &secret_env)?;
+        started = true;
+        chat_with_runner(terminal, &repo_root, &url, example.name, &starter_prompts)
+    })();
+
+    if started {
+        let mut cleanup = RunView::new(&format!("Stopping {}", example.name));
+        if let Err(err) = run_agentos_in_tui(
+            terminal,
+            app,
+            &["skill".to_string(), "down".to_string()],
+            &example_dir,
+            &mut cleanup,
+        ) {
+            cleanup.push(format!("Cleanup warning: {err:#}"));
+            show_run_view(terminal, app, &mut cleanup)?;
+        }
+    }
+
+    if let Err(err) = run_result {
+        setup.push("");
+        setup.push(format!("ERROR: {err:#}"));
+        show_run_view(terminal, app, &mut setup)?;
+        return Err(err);
     }
     Ok(())
 }
 
-fn prompt_field(field: &Field) -> Result<String> {
+fn example_choices() -> Vec<ExampleChoice> {
+    vec![
+        ExampleChoice {
+            id: "github-issues",
+            name: "GitHub issues",
+            description:
+                "Explore live repositories and issues through authenticated GitHub MCP tools",
+            directory: "examples/github-issues",
+            secrets: &["GITHUB_PERSONAL_ACCESS_TOKEN"],
+        },
+        ExampleChoice {
+            id: "text-stats-engine",
+            name: "Text stats engine",
+            description: "Use an in-bundle MCP server to inspect and analyze text",
+            directory: "examples/text-stats-engine",
+            secrets: &[],
+        },
+        ExampleChoice {
+            id: "weather",
+            name: "Weather",
+            description: "Chat with the minimal weather agent bundle",
+            directory: "examples/weather",
+            secrets: &[],
+        },
+    ]
+}
+
+fn starter_prompts(example_dir: &Path) -> Result<Vec<String>> {
+    let path = example_dir.join(".claude-plugin/plugin.json");
+    let value: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .with_context(|| format!("reading example manifest {}", path.display()))?,
+    )
+    .with_context(|| format!("parsing example manifest {}", path.display()))?;
+    Ok(value
+        .get("starterPrompts")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .filter(|prompt| !prompt.trim().is_empty())
+        .take(10)
+        .collect())
+}
+
+fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {
+    let mut env = Vec::new();
+    if ![
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+    {
+        for name in [
+            "AGENTOS_CREDENTIALS",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ] {
+            if let Some(value) = crate::secrets::get_value(name)? {
+                env.push((name.to_string(), value));
+                break;
+            }
+        }
+    }
+    for name in extra_secrets {
+        if std::env::var_os(name).is_none() {
+            if let Some(value) = crate::secrets::get_value(name)? {
+                env.push(((*name).to_string(), value));
+            }
+        }
+    }
+    Ok(env)
+}
+
+fn ensure_secret_available(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    name: &str,
+) -> Result<()> {
+    if std::env::var_os(name).is_some() {
+        return Ok(());
+    }
+    if crate::secrets::is_saved(name)? {
+        return Ok(());
+    }
+    if crate::secrets::needs_vault_upgrade(name)? && crate::secrets::migrate_legacy_value(name)? {
+        return Ok(());
+    }
+    let Some(save) = prompt_select(
+        terminal,
+        app,
+        "Missing Credential",
+        &format!("{name} is required"),
+        vec![
+            SelectChoice {
+                label: "Save it now".to_string(),
+                description: "Store it in AgentOS private storage".to_string(),
+                value: true,
+            },
+            SelectChoice {
+                label: "Cancel workflow".to_string(),
+                description: "Return to AgentOS without running".to_string(),
+                value: false,
+            },
+        ],
+    )?
+    else {
+        anyhow::bail!("{name} is required for this workflow");
+    };
+    if !save {
+        anyhow::bail!("{name} is required for this workflow");
+    }
+    let Some(value) = prompt_text(terminal, app, "Save Secret", name, None, true, false)? else {
+        anyhow::bail!("{name} is required for this workflow");
+    };
+    crate::secrets::save_value(name, &value)
+}
+
+fn ensure_model_credential_available(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+) -> Result<()> {
+    const NAMES: &[&str] = &[
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ];
+    for name in NAMES {
+        if std::env::var_os(name).is_some() {
+            return Ok(());
+        }
+    }
+    for name in NAMES {
+        if crate::secrets::is_saved(name)? {
+            return Ok(());
+        }
+    }
+    let legacy_names = NAMES
+        .iter()
+        .filter_map(|name| {
+            crate::secrets::needs_vault_upgrade(name)
+                .ok()
+                .filter(|needed| *needed)
+                .map(|_| (*name).to_string())
+        })
+        .collect::<Vec<_>>();
+    if let Some(name) = legacy_names.first() {
+        if crate::secrets::migrate_legacy_value(name)? {
+            return Ok(());
+        }
+    }
+
+    let choices = NAMES
+        .iter()
+        .map(|name| SelectChoice {
+            label: (*name).to_string(),
+            description: "Supported by the AgentOS Claude SDK runner".to_string(),
+            value: (*name).to_string(),
+        })
+        .collect();
+    let Some(name) = prompt_select(
+        terminal,
+        app,
+        "Missing Model Credential",
+        "Choose a model credential to save",
+        choices,
+    )?
+    else {
+        anyhow::bail!("a supported model credential is required");
+    };
+    let Some(value) = prompt_text(
+        terminal,
+        app,
+        "Save Model Credential",
+        &name,
+        None,
+        true,
+        false,
+    )?
+    else {
+        anyhow::bail!("a supported model credential is required");
+    };
+    crate::secrets::save_value(&name, &value)
+}
+
+fn model_credential_status(
+    saved_names: &BTreeSet<String>,
+    legacy_names: &BTreeSet<String>,
+) -> &'static str {
+    for name in [
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ] {
+        if std::env::var_os(name).is_some() || saved_names.contains(name) {
+            return "available";
+        }
+        if legacy_names.contains(name) {
+            return "saved (upgrade needed)";
+        }
+    }
+    "missing"
+}
+
+fn secrets_status_lines() -> Vec<Line<'static>> {
+    let indexed_names = match crate::secrets::list_names() {
+        Ok(names) => names,
+        Err(err) => {
+            return vec![Line::from(format!(
+                "Unable to read saved credential names: {err:#}"
+            ))];
+        }
+    };
+    let saved_names = indexed_names
+        .iter()
+        .filter(|name| crate::secrets::is_saved(name).unwrap_or(false))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let legacy_names = indexed_names
+        .into_iter()
+        .filter(|name| !saved_names.contains(name))
+        .collect::<BTreeSet<_>>();
+    vec![Line::from(format!(
+        "Model credential: {}",
+        model_credential_status(&saved_names, &legacy_names)
+    ))]
+}
+
+fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
+    match workflow {
+        Workflow::ExploreExamples => {
+            lines.push(Line::from(Span::styled(
+                "Credential status",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.extend(secrets_status_lines());
+            lines.push(Line::from(""));
+        }
+    }
+}
+
+fn find_repo_root(mut dir: PathBuf) -> Option<PathBuf> {
     loop {
-        match field.default {
-            Some(default) => print!("{} [{default}]: ", field.label),
-            None => print!("{}: ", field.label),
+        if dir.join("runner/Dockerfile").is_file() && dir.join("examples/github-issues").is_dir() {
+            return Some(dir);
         }
-        io::stdout().flush().ok();
-        let mut line = String::new();
-        io::stdin()
-            .read_line(&mut line)
-            .context("reading interactive answer")?;
-        let trimmed = line.trim();
-        let value = if trimmed.is_empty() {
-            field.default.unwrap_or("").to_string()
-        } else {
-            trimmed.to_string()
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RunView {
+    title: String,
+    lines: Vec<String>,
+    scroll: u16,
+    follow: bool,
+    running: bool,
+}
+
+impl RunView {
+    fn new(title: &str) -> Self {
+        Self {
+            title: title.to_string(),
+            lines: Vec::new(),
+            scroll: 0,
+            follow: true,
+            running: true,
+        }
+    }
+
+    fn push(&mut self, line: impl Into<String>) {
+        self.lines.push(line.into());
+    }
+
+    fn follow_tail(&mut self, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+    }
+
+    fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
+        let (output_width, viewport) = run_view_dimensions(terminal_width, terminal_height);
+        wrap_output_lines(&self.lines, output_width)
+            .len()
+            .saturating_sub(viewport)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn scroll_up(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+        self.follow = false;
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        self.follow = false;
+        self.scroll = self
+            .scroll
+            .saturating_add(amount)
+            .min(self.max_scroll(terminal_width, terminal_height));
+    }
+}
+
+#[derive(Debug)]
+struct ChatView {
+    agent_name: String,
+    lines: Vec<String>,
+    input: String,
+    scroll: u16,
+    follow: bool,
+    thinking: bool,
+    actions: Vec<TerminalAction>,
+    action_idx: usize,
+    action_prompt: String,
+    allow_free_text: bool,
+    composing: bool,
+}
+
+impl ChatView {
+    fn new(agent_name: &str, suggestions: &[String]) -> Self {
+        Self {
+            agent_name: agent_name.to_string(),
+            lines: vec![
+                format!("{agent_name} is ready."),
+                "Send a message to interact with this example agent.".to_string(),
+                String::new(),
+            ],
+            input: String::new(),
+            scroll: 0,
+            follow: true,
+            thinking: false,
+            actions: suggestions
+                .iter()
+                .map(|value| TerminalAction {
+                    label: value.clone(),
+                    value: value.clone(),
+                })
+                .collect(),
+            action_idx: 0,
+            action_prompt: "Try a prompt".to_string(),
+            allow_free_text: true,
+            composing: false,
+        }
+    }
+
+    fn max_scroll(&self, terminal_width: u16, terminal_height: u16) -> u16 {
+        let (width, viewport) = chat_transcript_dimensions(self, terminal_width, terminal_height);
+        wrap_output_lines(&self.lines, width)
+            .len()
+            .saturating_sub(viewport)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn follow_tail(&mut self, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+    }
+
+    fn choice_count(&self) -> usize {
+        self.actions.len() + usize::from(self.allow_free_text)
+    }
+
+    fn free_text_selected(&self) -> bool {
+        self.allow_free_text && self.action_idx == self.actions.len()
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let count = self.choice_count();
+        if count > 0 {
+            self.action_idx =
+                ((self.action_idx as isize + delta).rem_euclid(count as isize)) as usize;
+        }
+    }
+
+    fn scroll_up(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        if self.follow {
+            self.scroll = self.max_scroll(terminal_width, terminal_height);
+        }
+        self.follow = false;
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: u16, terminal_width: u16, terminal_height: u16) {
+        self.follow = false;
+        self.scroll = self
+            .scroll
+            .saturating_add(amount)
+            .min(self.max_scroll(terminal_width, terminal_height));
+    }
+}
+
+fn chat_with_runner(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    cwd: &Path,
+    url: &str,
+    agent_name: &str,
+    suggestions: &[String],
+) -> Result<()> {
+    let mut chat = ChatView::new(agent_name, suggestions);
+    loop {
+        let Some(message) = read_chat_input(terminal, &mut chat)? else {
+            return Ok(());
         };
-        if !field.required || !value.is_empty() {
-            return Ok(value);
+        chat.lines.push("You".to_string());
+        chat.lines.push(message.clone());
+        chat.lines.push(String::new());
+        chat.lines.push("Agent".to_string());
+        chat.thinking = true;
+        chat.follow = true;
+        chat.actions.clear();
+        chat.action_idx = 0;
+        chat.action_prompt = "Responses".to_string();
+        chat.allow_free_text = true;
+        chat.composing = false;
+        let argv = [
+            "skill".to_string(),
+            "message".to_string(),
+            message,
+            "--url".to_string(),
+            url.to_string(),
+        ];
+        run_chat_turn(terminal, cwd, &argv, &mut chat)?;
+        chat.thinking = false;
+        chat.lines.push(String::new());
+    }
+}
+
+fn read_chat_input(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    chat: &mut ChatView,
+) -> Result<Option<String>> {
+    chat.input.clear();
+    loop {
+        let size = terminal.size()?;
+        chat.follow_tail(size.width, size.height);
+        terminal.draw(|frame| draw_chat_view(frame, chat))?;
+        let event = event::read()?;
+        if let Event::Mouse(mouse) = event {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => chat.scroll_up(3, size.width, size.height),
+                MouseEventKind::ScrollDown => chat.scroll_down(3, size.width, size.height),
+                _ => {}
+            }
+            continue;
         }
-        println!("{} is required.", field.label);
+        let Event::Key(key) = event else { continue };
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
+            (KeyCode::Esc, _) if chat.composing => chat.composing = false,
+            (KeyCode::Esc, _) => return Ok(None),
+            (KeyCode::Enter, _) if chat.composing => {
+                if !chat.input.trim().is_empty() {
+                    return Ok(Some(chat.input.trim().to_string()));
+                }
+            }
+            (KeyCode::Enter, _) => {
+                if chat.free_text_selected() {
+                    chat.composing = true;
+                } else if let Some(action) = chat.actions.get(chat.action_idx) {
+                    return Ok(Some(action.value.clone()));
+                }
+            }
+            (KeyCode::Backspace, _) if chat.composing => {
+                chat.input.pop();
+            }
+            (KeyCode::Up, _) if chat.composing => {
+                chat.scroll_up(1, size.width, size.height);
+            }
+            (KeyCode::Down, _) if chat.composing => {
+                chat.scroll_down(1, size.width, size.height);
+            }
+            (KeyCode::PageUp, _) => chat.scroll_up(10, size.width, size.height),
+            (KeyCode::PageDown, _) => chat.scroll_down(10, size.width, size.height),
+            (KeyCode::Home, _) if !chat.composing => {
+                chat.follow = false;
+                chat.scroll = 0;
+            }
+            (KeyCode::End, _) if !chat.composing => chat.follow = true,
+            (KeyCode::Down | KeyCode::Tab, _) if !chat.composing => {
+                chat.move_selection(1);
+            }
+            (KeyCode::Up | KeyCode::BackTab, _) if !chat.composing => {
+                chat.move_selection(-1);
+            }
+            (KeyCode::Char(ch), _)
+                if chat.composing && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                chat.input.push(ch);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn run_chat_turn(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    cwd: &Path,
+    argv: &[String],
+    chat: &mut ChatView,
+) -> Result<()> {
+    let mut child = Command::new(std::env::current_exe().context("resolving current executable")?)
+        .args(argv)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("sending message to the example agent")?;
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take().context("capturing agent response")?;
+    let stderr = child.stderr.take().context("capturing agent diagnostics")?;
+    let readers = [stdout_reader(stdout, tx.clone()), stderr_reader(stderr, tx)];
+    let mut canceled = false;
+    let mut envelope = Vec::new();
+
+    loop {
+        while let Ok(line) = rx.try_recv() {
+            consume_chat_line(chat, &mut envelope, line);
+        }
+        let size = terminal.size()?;
+        chat.follow_tail(size.width, size.height);
+        terminal.draw(|frame| draw_chat_view(frame, chat))?;
+        if event::poll(Duration::from_millis(50))? {
+            let input_event = event::read()?;
+            if let Event::Mouse(mouse) = input_event {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => chat.scroll_up(3, size.width, size.height),
+                    MouseEventKind::ScrollDown => chat.scroll_down(3, size.width, size.height),
+                    _ => {}
+                }
+            } else if let Event::Key(key) = input_event {
+                match (key.code, key.modifiers) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        child.kill().context("canceling agent response")?;
+                        canceled = true;
+                    }
+                    (KeyCode::Up, _) => chat.scroll_up(1, size.width, size.height),
+                    (KeyCode::Down, _) => chat.scroll_down(1, size.width, size.height),
+                    (KeyCode::PageUp, _) => chat.scroll_up(10, size.width, size.height),
+                    (KeyCode::PageDown, _) => chat.scroll_down(10, size.width, size.height),
+                    (KeyCode::End, _) => chat.follow = true,
+                    _ => {}
+                }
+            }
+        }
+        if let Some(status) = child.try_wait().context("waiting for agent response")? {
+            for reader in readers {
+                let _ = reader.join();
+            }
+            while let Ok(line) = rx.try_recv() {
+                consume_chat_line(chat, &mut envelope, line);
+            }
+            if canceled {
+                chat.lines.push("Response canceled.".to_string());
+                return Ok(());
+            }
+            if !status.success() {
+                anyhow::bail!("agent response exited with {status}");
+            }
+            return Ok(());
+        }
+    }
+}
+
+fn consume_chat_line(chat: &mut ChatView, envelope: &mut Vec<String>, line: String) {
+    if !envelope.is_empty() {
+        envelope.push(line);
+        if reply_envelope_complete(&envelope.join("\n")) {
+            let raw = envelope.join("\n");
+            if let Some(message) = parse_terminal_message(&raw) {
+                chat.lines.extend(message.lines);
+                chat.actions = message.actions;
+                chat.action_idx = 0;
+                chat.action_prompt = message
+                    .action_prompt
+                    .unwrap_or_else(|| "Choose a response".to_string());
+                chat.allow_free_text = message.allow_free_text;
+                chat.composing = false;
+            } else if let Some((fallback, _)) = raw.split_once(REPLY_FENCE) {
+                chat.lines.extend(
+                    fallback
+                        .trim()
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            envelope.clear();
+        }
+        return;
+    }
+    if line.contains(REPLY_FENCE) {
+        envelope.push(line);
+    } else if !is_internal_chat_status(&line) {
+        chat.lines.push(line);
+    }
+}
+
+fn reply_envelope_complete(text: &str) -> bool {
+    text.find(REPLY_FENCE)
+        .and_then(|start| text.get(start + REPLY_FENCE.len()..))
+        .is_some_and(|rest| rest.contains("```"))
+}
+
+fn is_internal_chat_status(line: &str) -> bool {
+    line.trim().starts_with("-- final (")
+}
+
+fn run_agentos_in_tui(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    argv: &[String],
+    cwd: &Path,
+    view: &mut RunView,
+) -> Result<()> {
+    run_agentos_in_tui_with_env(terminal, app, argv, cwd, view, &[])
+}
+
+fn run_agentos_in_tui_with_env(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    argv: &[String],
+    cwd: &Path,
+    view: &mut RunView,
+    command_env: &[(String, String)],
+) -> Result<()> {
+    view.push(format!("$ {}", render_command(argv)));
+    view.push("");
+    view.running = true;
+    let mut child = Command::new(std::env::current_exe().context("resolving current executable")?)
+        .args(argv)
+        .current_dir(cwd)
+        .envs(command_env.iter().cloned())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("running {}", render_command(argv)))?;
+
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take().context("capturing agentos stdout")?;
+    let stderr = child.stderr.take().context("capturing agentos stderr")?;
+    let readers = [stdout_reader(stdout, tx.clone()), stderr_reader(stderr, tx)];
+    let mut canceled = false;
+
+    let status_result = (|| -> Result<std::process::ExitStatus> {
+        loop {
+            while let Ok(line) = rx.try_recv() {
+                view.push(line);
+            }
+            let size = terminal.size()?;
+            view.follow_tail(size.width, size.height);
+            terminal.draw(|frame| {
+                draw(frame, app);
+                draw_run_view(frame, view);
+            })?;
+
+            if event::poll(Duration::from_millis(50))? {
+                if let Event::Key(key) = event::read()? {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            child.kill().context("canceling agentos command")?;
+                            canceled = true;
+                        }
+                        (KeyCode::Up | KeyCode::Char('k'), _) => {
+                            view.scroll_up(1, size.width, size.height);
+                        }
+                        (KeyCode::Down | KeyCode::Char('j'), _) => {
+                            view.scroll_down(1, size.width, size.height);
+                        }
+                        (KeyCode::End, _) => view.follow = true,
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(status) = child.try_wait().context("waiting for agentos command")? {
+                break Ok(status);
+            }
+        }
+    })();
+
+    if status_result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    for reader in readers {
+        let _ = reader.join();
+    }
+    while let Ok(line) = rx.try_recv() {
+        view.push(line);
+    }
+    view.running = false;
+    view.push("");
+    let status = status_result?;
+    if canceled {
+        view.push("Canceled by user.");
+        anyhow::bail!("{} was canceled", render_command(argv));
+    }
+    if !status.success() {
+        view.push(format!("Exited with {status}."));
+        anyhow::bail!("{} exited with {status}", render_command(argv));
+    }
+    view.push("Completed successfully.");
+    view.push("");
+    Ok(())
+}
+
+fn stdout_reader(
+    stdout: std::process::ChildStdout,
+    tx: mpsc::Sender<String>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || read_output(stdout, tx))
+}
+
+fn stderr_reader(
+    stderr: std::process::ChildStderr,
+    tx: mpsc::Sender<String>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || read_output(stderr, tx))
+}
+
+fn read_output(reader: impl io::Read, tx: mpsc::Sender<String>) {
+    for line in BufReader::new(reader).lines() {
+        match line {
+            Ok(line) => {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+            Err(err) => {
+                let _ = tx.send(format!("Unable to read command output: {err}"));
+                break;
+            }
+        }
+    }
+}
+
+fn show_run_view(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    view: &mut RunView,
+) -> Result<()> {
+    view.running = false;
+    loop {
+        let size = terminal.size()?;
+        view.follow_tail(size.width, size.height);
+        terminal.draw(|frame| {
+            draw(frame, app);
+            draw_run_view(frame, view);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        match (key.code, key.modifiers) {
+            (KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q'), _) => return Ok(()),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(()),
+            (KeyCode::Up | KeyCode::Char('k'), _) => {
+                view.scroll_up(1, size.width, size.height);
+            }
+            (KeyCode::Down | KeyCode::Char('j'), _) => {
+                view.scroll_down(1, size.width, size.height);
+            }
+            (KeyCode::PageUp, _) => {
+                view.scroll_up(10, size.width, size.height);
+            }
+            (KeyCode::PageDown, _) => {
+                view.scroll_down(10, size.width, size.height);
+            }
+            (KeyCode::Home, _) => {
+                view.follow = false;
+                view.scroll = 0;
+            }
+            (KeyCode::End, _) => view.follow = true,
+            _ => {}
+        }
     }
 }
 
@@ -414,26 +1615,86 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .map(|value| (field.key.to_string(), value.to_string()))
         })
         .collect();
-    let preview = build_argv(recipe, &values);
     let mut lines = vec![
         Line::from(Span::styled(recipe.title, Style::default().bold())),
         Line::from(""),
         Line::from(recipe.description),
         Line::from(""),
-        Line::from(Span::styled(
-            "Command preview",
-            Style::default().fg(Color::Yellow).bold(),
-        )),
-        Line::from(render_command(&preview)),
-        Line::from(""),
     ];
+    match &recipe.kind {
+        RecipeKind::Command => {
+            let preview = build_argv(recipe, &values);
+            lines.push(Line::from(Span::styled(
+                "Command preview",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from(render_command(&preview)));
+            lines.push(Line::from(""));
+        }
+        RecipeKind::Tui(TuiAction::SaveSecret) => {
+            lines.push(Line::from(Span::styled(
+                "TUI prompts",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("1. Choose a common secret name or Custom"));
+            lines.push(Line::from("2. Secret value, hidden while typing"));
+            lines.push(Line::from("3. Save to AgentOS private storage"));
+            lines.push(Line::from(""));
+        }
+        RecipeKind::Tui(TuiAction::ListSecrets) => {
+            lines.push(Line::from(Span::styled(
+                "Saved secrets",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            match crate::secrets::list_names() {
+                Ok(names) if names.is_empty() => {
+                    lines.push(Line::from("No AgentOS secrets saved."));
+                }
+                Ok(names) => {
+                    for name in names {
+                        lines.push(Line::from(format!("{name}  (value hidden)")));
+                    }
+                }
+                Err(err) => {
+                    lines.push(Line::from(format!("Unable to read secret index: {err:#}")));
+                }
+            }
+            lines.push(Line::from(""));
+        }
+        RecipeKind::Tui(TuiAction::RemoveSecret) => {
+            lines.push(Line::from(Span::styled(
+                "TUI prompts",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("1. Choose a saved secret name or Custom"));
+            lines.push(Line::from("2. Type the same name to confirm removal"));
+            lines.push(Line::from("3. Remove from AgentOS private storage"));
+            lines.push(Line::from(""));
+        }
+        RecipeKind::Workflow(Workflow::ExploreExamples) => {
+            lines.push(Line::from(Span::styled(
+                "Example browser",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("1. Choose an example agent"));
+            lines.push(Line::from("2. Start its runner and required tools"));
+            lines.push(Line::from("3. Chat for as many turns as needed"));
+            lines.push(Line::from("4. Stop the runner when you leave chat"));
+            lines.push(Line::from(""));
+            maybe_add_secret_status(&mut lines, Workflow::ExploreExamples);
+        }
+    }
     if !recipe.fields.is_empty() {
         lines.push(Line::from(Span::styled(
             "Prompts before run",
             Style::default().fg(Color::Yellow).bold(),
         )));
         for field in &recipe.fields {
-            let default = field.default.unwrap_or("required");
+            let default = field.default.unwrap_or(if field.required {
+                "required"
+            } else {
+                "optional"
+            });
             lines.push(Line::from(format!("{}: {default}", field.label)));
         }
         lines.push(Line::from(""));
@@ -475,12 +1736,362 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
+fn draw_run_view(frame: &mut Frame<'_>, view: &RunView) {
+    let frame_area = frame.area();
+    let area = Rect {
+        x: frame_area.x.saturating_add(2),
+        y: frame_area.y.saturating_add(1),
+        width: frame_area.width.saturating_sub(4).max(20),
+        height: frame_area.height.saturating_sub(2).max(7),
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(2)])
+        .split(area);
+    let status = if view.running { "running" } else { "finished" };
+    let output_width = chunks[0].width.saturating_sub(2).max(1) as usize;
+    let wrapped_lines = wrap_output_lines(&view.lines, output_width);
+    let lines = wrapped_lines
+        .iter()
+        .map(|line| Line::from(line.as_str()))
+        .collect::<Vec<_>>();
+    let viewport = chunks[0].height.saturating_sub(2) as usize;
+    let max_scroll = wrapped_lines
+        .len()
+        .saturating_sub(viewport)
+        .min(u16::MAX as usize) as u16;
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .scroll((view.scroll.min(max_scroll), 0))
+            .block(
+                Block::default()
+                    .title(format!("{} · {status}", view.title))
+                    .borders(Borders::ALL),
+            ),
+        chunks[0],
+    );
+    let help = if view.running {
+        "Up/Down scroll    End follow output    Ctrl-C cancel"
+    } else {
+        "Up/Down or PgUp/PgDn scroll    Home/End jump    Enter return"
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
+            .alignment(Alignment::Center),
+        chunks[1],
+    );
+}
+
+fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
+    let area = frame.area();
+    let (action_height, input_height) = chat_panel_heights(chat);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(action_height),
+            Constraint::Length(input_height),
+            Constraint::Length(2),
+        ])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("AgentOS", Style::default().fg(Color::Cyan).bold()),
+            Span::raw(format!("  {}", chat.agent_name)),
+            if chat.thinking {
+                Span::styled("  thinking...", Style::default().fg(Color::Yellow))
+            } else {
+                Span::raw("")
+            },
+        ]))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL)),
+        chunks[0],
+    );
+
+    let output_width = chunks[1].width.saturating_sub(2).max(1) as usize;
+    let wrapped = wrap_output_lines(&chat.lines, output_width);
+    let transcript = wrapped
+        .iter()
+        .map(|line| {
+            let style = match line.as_str() {
+                "You" => Style::default().fg(Color::Cyan).bold(),
+                "Agent" => Style::default().fg(Color::Green).bold(),
+                _ => Style::default(),
+            };
+            Line::from(Span::styled(line.as_str(), style))
+        })
+        .collect::<Vec<_>>();
+    let viewport = chunks[1].height.saturating_sub(2) as usize;
+    let max_scroll = wrapped
+        .len()
+        .saturating_sub(viewport)
+        .min(u16::MAX as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(Text::from(transcript))
+            .scroll((chat.scroll.min(max_scroll), 0))
+            .block(Block::default().title("Conversation").borders(Borders::ALL)),
+        chunks[1],
+    );
+
+    let actions = chat
+        .actions
+        .iter()
+        .map(|action| action.label.as_str())
+        .chain(chat.allow_free_text.then_some("Type a message..."))
+        .enumerate()
+        .map(|(idx, label)| {
+            let prefix = if idx == chat.action_idx { "> " } else { "  " };
+            ListItem::new(format!("{prefix}{}. {label}", idx + 1))
+        })
+        .collect::<Vec<_>>();
+    let mut action_state = ListState::default();
+    action_state.select((chat.choice_count() > 0).then_some(chat.action_idx));
+    if action_height > 0 {
+        frame.render_stateful_widget(
+            List::new(actions)
+                .block(
+                    Block::default()
+                        .title(chat.action_prompt.as_str())
+                        .borders(Borders::ALL),
+                )
+                .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)),
+            chunks[2],
+            &mut action_state,
+        );
+    }
+
+    let input_width = chunks[3].width.saturating_sub(4).max(1) as usize;
+    let shown_input = input_window(&chat.input, false, input_width);
+    if input_height > 0 {
+        frame.render_widget(
+            Paragraph::new(Span::raw(shown_input.as_str()))
+                .block(Block::default().title("Message").borders(Borders::ALL)),
+            chunks[3],
+        );
+        frame.set_cursor_position((
+            chunks[3].x + 1 + UnicodeWidthStr::width(shown_input.as_str()) as u16,
+            chunks[3].y + 1,
+        ));
+    }
+    let help = if chat.thinking {
+        "Up/Down or wheel scroll    PgUp/PgDn page    End latest    Ctrl-C cancel"
+    } else if chat.composing {
+        "Type message    Enter send    Up/Down or wheel scroll    Esc responses"
+    } else {
+        "Up/Down choose    Enter select    PgUp/PgDn or wheel scroll    Esc leave"
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(help, Style::default().fg(Color::Gray)))
+            .alignment(Alignment::Center),
+        chunks[4],
+    );
+}
+
+fn chat_panel_heights(chat: &ChatView) -> (u16, u16) {
+    if chat.thinking {
+        return (0, 0);
+    }
+    let choices = chat.choice_count().min(usize::from(u16::MAX)) as u16;
+    let action_height = if choices > 0 {
+        choices.saturating_add(2)
+    } else {
+        0
+    };
+    let input_height = if chat.composing { 3 } else { 0 };
+    (action_height, input_height)
+}
+
+fn chat_transcript_dimensions(
+    chat: &ChatView,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> (usize, usize) {
+    let (action_height, input_height) = chat_panel_heights(chat);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(action_height),
+            Constraint::Length(input_height),
+            Constraint::Length(2),
+        ])
+        .split(Rect::new(0, 0, terminal_width, terminal_height));
+    (
+        chunks[1].width.saturating_sub(2).max(1) as usize,
+        chunks[1].height.saturating_sub(2) as usize,
+    )
+}
+
+fn run_view_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
+    let area_width = terminal_width.saturating_sub(4).max(20);
+    let area_height = terminal_height.saturating_sub(2).max(7);
+    let body_height = area_height.saturating_sub(2);
+    (
+        area_width.saturating_sub(2).max(1) as usize,
+        body_height.saturating_sub(2) as usize,
+    )
+}
+
+fn wrap_output_lines(lines: &[String], max_width: usize) -> Vec<String> {
+    let mut wrapped = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            wrapped.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        let mut width = 0;
+        for ch in line.chars() {
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if !current.is_empty() && width + char_width > max_width {
+                wrapped.push(current);
+                current = String::new();
+                width = 0;
+            }
+            current.push(ch);
+            width += char_width;
+        }
+        wrapped.push(current);
+    }
+    wrapped
+}
+
+fn draw_prompt(
+    frame: &mut Frame<'_>,
+    title: &str,
+    label: &str,
+    default: Option<&str>,
+    value: &str,
+    secret: bool,
+    allow_empty: bool,
+) {
+    let area = centered_rect(64, 9, frame.area());
+    let input_width = area.width.saturating_sub(3) as usize;
+    let shown_value = input_window(value, secret, input_width);
+    let guidance = match default {
+        Some(default) => format!("Default: {default}"),
+        None if secret => "Input is hidden while typing".to_string(),
+        None if allow_empty => "Optional: press Enter to skip".to_string(),
+        None => "Type a value".to_string(),
+    };
+    let submit_help = if default.is_some() {
+        "Enter use default    Esc cancel"
+    } else if allow_empty {
+        "Enter accept or skip    Esc cancel"
+    } else {
+        "Enter accept    Esc cancel"
+    };
+    let body = Text::from(vec![
+        Line::from(Span::styled(label, Style::default().bold())),
+        Line::from(Span::styled(guidance, Style::default().fg(Color::Gray))),
+        Line::from(if shown_value.is_empty() {
+            Span::styled(" ", Style::default().fg(Color::Gray))
+        } else {
+            Span::raw(&shown_value)
+        }),
+        Line::from(""),
+        Line::from(Span::styled(submit_help, Style::default().fg(Color::Gray))),
+    ]);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title(title).borders(Borders::ALL)),
+        area,
+    );
+    frame.set_cursor_position((
+        area.x + 1 + UnicodeWidthStr::width(shown_value.as_str()) as u16,
+        area.y + 3,
+    ));
+}
+
+fn input_window(value: &str, secret: bool, max_width: usize) -> String {
+    if secret {
+        return "*".repeat(value.chars().count().min(max_width));
+    }
+
+    let mut width = 0;
+    let mut chars = Vec::new();
+    for ch in value.chars().rev() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > max_width {
+            break;
+        }
+        width += char_width;
+        chars.push(ch);
+    }
+    chars.into_iter().rev().collect()
+}
+
+fn draw_select_prompt<T>(
+    frame: &mut Frame<'_>,
+    title: &str,
+    label: &str,
+    choices: &[SelectChoice<T>],
+    selected: usize,
+) {
+    let height = (choices.len() as u16)
+        .saturating_mul(2)
+        .saturating_add(6)
+        .min(18);
+    let area = centered_rect(74, height, frame.area());
+    let mut lines = vec![
+        Line::from(label.to_string()),
+        Line::from(Span::styled(
+            "Up/Down move    Enter choose    Esc cancel",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+    ];
+    for (idx, choice) in choices.iter().enumerate() {
+        let focused = idx == selected;
+        let marker = if focused { ">" } else { " " };
+        let style = if focused {
+            Style::default().fg(Color::Black).bg(Color::Green)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {}. {}", idx + 1, choice.label),
+            style,
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("     {}", choice.description),
+            Style::default().fg(Color::Gray),
+        )));
+    }
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title(title).borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width.saturating_sub(2)).max(20);
+    let height = height.min(area.height.saturating_sub(2)).max(7);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
 fn recipes() -> Vec<Recipe> {
     vec![
         Recipe {
             target: "skill",
             title: "Start runner",
             description: "Boot the current plugin bundle in a local runner container.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("up"),
@@ -515,6 +2126,7 @@ fn recipes() -> Vec<Recipe> {
             target: "skill",
             title: "Send skill message",
             description: "Send a synthetic event to the local runner and stream the reply.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("message"),
@@ -532,6 +2144,7 @@ fn recipes() -> Vec<Recipe> {
             target: "skill",
             title: "Run skill eval",
             description: "Run evals/cases.json through the local runner.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("eval"),
@@ -549,9 +2162,53 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
+            target: "all",
+            title: "Explore examples",
+            description: "Choose an example agent, start it, and chat with it interactively.",
+            kind: RecipeKind::Workflow(Workflow::ExploreExamples),
+            args: vec![],
+            fields: vec![],
+            notes: &[
+                "Requires a saved or environment model credential: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
+                "Examples request any additional credentials they need after you choose one.",
+                "The runner stays up for a multi-turn conversation and stops when you leave chat.",
+            ],
+        },
+        Recipe {
+            target: "secrets",
+            title: "Save secret",
+            description: "Store a local secret in AgentOS private storage with hidden input.",
+            kind: RecipeKind::Tui(TuiAction::SaveSecret),
+            args: vec![],
+            fields: vec![],
+            notes: &[
+                "The value is prompted with hidden input and saved in a mode-0600 config file.",
+                "Choose a common env var or enter any env-style custom name.",
+            ],
+        },
+        Recipe {
+            target: "secrets",
+            title: "List saved secrets",
+            description: "List saved AgentOS secret names without printing values.",
+            kind: RecipeKind::Tui(TuiAction::ListSecrets),
+            args: vec![],
+            fields: vec![],
+            notes: &["Only names are listed; secret values stay in private storage."],
+        },
+        Recipe {
+            target: "secrets",
+            title: "Remove secret",
+            description: "Remove a saved secret from AgentOS private storage.",
+            kind: RecipeKind::Tui(TuiAction::RemoveSecret),
+            args: vec![],
+            fields: vec![],
+            notes: &[],
+        },
+        Recipe {
             target: "local",
             title: "Start local stack",
             description: "Bring up the compose stack for the local platform loop.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("local"), ArgPart::Literal("up")],
             fields: vec![],
             notes: &["Use the regular CLI for --minimal, --slack, or --local-model variants."],
@@ -560,6 +2217,7 @@ fn recipes() -> Vec<Recipe> {
             target: "local",
             title: "Send local message",
             description: "Drive the compose stack end to end with zero Slack contact.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("local"),
                 ArgPart::Literal("message"),
@@ -589,6 +2247,7 @@ fn recipes() -> Vec<Recipe> {
             target: "local",
             title: "Local status",
             description: "Show compose service status.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("local"), ArgPart::Literal("status")],
             fields: vec![],
             notes: &[],
@@ -597,6 +2256,7 @@ fn recipes() -> Vec<Recipe> {
             target: "cluster",
             title: "Cluster status",
             description: "Report release health and access URLs.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("cluster"),
                 ArgPart::Literal("status"),
@@ -629,6 +2289,7 @@ fn recipes() -> Vec<Recipe> {
             target: "cluster",
             title: "Send cluster message",
             description: "Drive a deployed release end to end with zero Slack contact.",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("cluster"),
                 ArgPart::Literal("message"),
@@ -658,6 +2319,7 @@ fn recipes() -> Vec<Recipe> {
             target: "dev",
             title: "Install checkout",
             description: "Bootstrap a dev checkout: deps, CLI build, runner image.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("install")],
             fields: vec![],
             notes: &["Starts nothing; run once after cloning."],
@@ -666,6 +2328,7 @@ fn recipes() -> Vec<Recipe> {
             target: "dev",
             title: "Check contracts",
             description: "Run the frozen contract drift checks.",
+            kind: RecipeKind::Command,
             args: vec![ArgPart::Literal("dev"), ArgPart::Literal("contracts")],
             fields: vec![],
             notes: &[],
@@ -683,6 +2346,7 @@ mod tests {
             target: "skill",
             title: "x",
             description: "x",
+            kind: RecipeKind::Command,
             args: vec![
                 ArgPart::Literal("skill"),
                 ArgPart::Literal("message"),
@@ -708,5 +2372,213 @@ mod tests {
     fn render_command_quotes_shell_specials() {
         let argv = vec!["skill".into(), "message".into(), "hello world".into()];
         assert_eq!(render_command(&argv), "agentos skill message 'hello world'");
+    }
+
+    #[test]
+    fn explore_examples_is_an_action_not_a_target_tab() {
+        let app = App::new();
+        assert!(!app.targets.contains(&"examples"));
+        assert!(app
+            .recipes
+            .iter()
+            .any(|recipe| recipe.title == "Explore examples"));
+        let examples = example_choices();
+        assert_eq!(examples.len(), 3);
+        assert!(examples.iter().all(|example| {
+            !example.id.is_empty()
+                && example
+                    .id
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        }));
+    }
+
+    #[test]
+    fn chat_hides_internal_final_status() {
+        assert!(is_internal_chat_status("-- final (done)"));
+        assert!(is_internal_chat_status("  -- final (failed)"));
+        assert!(!is_internal_chat_status("The final answer is done."));
+    }
+
+    #[test]
+    fn chat_appends_free_text_as_the_final_choice() {
+        let mut chat = ChatView::new("demo", &["First".to_string(), "Second".to_string()]);
+        assert_eq!(chat.choice_count(), 3);
+        assert_eq!(chat_panel_heights(&chat), (5, 0));
+        assert!(!chat.free_text_selected());
+
+        chat.move_selection(-1);
+        assert_eq!(chat.action_idx, 2);
+        assert!(chat.free_text_selected());
+        chat.composing = true;
+        assert_eq!(chat_panel_heights(&chat), (5, 3));
+
+        chat.allow_free_text = false;
+        chat.composing = false;
+        chat.action_idx = 0;
+        assert_eq!(chat.choice_count(), 2);
+        assert_eq!(chat_panel_heights(&chat), (4, 0));
+        assert!(!chat.free_text_selected());
+
+        chat.thinking = true;
+        assert_eq!(chat_panel_heights(&chat), (0, 0));
+    }
+
+    #[test]
+    fn chat_scroll_up_moves_immediately_from_following_tail() {
+        let mut chat = ChatView::new("demo", &[]);
+        chat.lines = (0..80).map(|index| format!("line {index}")).collect();
+        let max_scroll = chat.max_scroll(80, 24);
+        assert!(max_scroll > 0);
+
+        chat.follow = true;
+        chat.scroll = 0;
+        chat.scroll_up(1, 80, 24);
+
+        assert!(!chat.follow);
+        assert_eq!(chat.scroll, max_scroll - 1);
+    }
+
+    #[test]
+    fn chat_consumes_semantic_choices_without_printing_the_envelope() {
+        let mut chat = ChatView::new("demo", &[]);
+        let mut envelope = Vec::new();
+        consume_chat_line(&mut chat, &mut envelope, "```agentos-reply".to_string());
+        consume_chat_line(
+            &mut chat,
+            &mut envelope,
+            "{\"version\":\"1.0\",\"text\":\"Pick one\",\"interaction\":{\"kind\":\"choice\",\"id\":\"pick\",\"options\":[{\"label\":\"First\",\"value\":\"first-value\"}]}}".to_string(),
+        );
+        consume_chat_line(&mut chat, &mut envelope, "```".to_string());
+
+        assert!(envelope.is_empty());
+        assert!(chat.lines.iter().any(|line| line == "Pick one"));
+        assert!(!chat.lines.iter().any(|line| line.contains("agentos-reply")));
+        assert_eq!(chat.actions[0].label, "First");
+        assert_eq!(chat.actions[0].value, "first-value");
+        assert!(chat.allow_free_text);
+    }
+
+    #[test]
+    fn malformed_envelope_keeps_only_ordinary_text_fallback() {
+        let mut chat = ChatView::new("demo", &[]);
+        let mut envelope = Vec::new();
+        consume_chat_line(
+            &mut chat,
+            &mut envelope,
+            "Still useful\n```agentos-reply".to_string(),
+        );
+        consume_chat_line(&mut chat, &mut envelope, "{broken".to_string());
+        consume_chat_line(&mut chat, &mut envelope, "```".to_string());
+        assert!(chat.lines.iter().any(|line| line == "Still useful"));
+        assert!(!chat.lines.iter().any(|line| line.contains("{broken")));
+    }
+
+    #[test]
+    fn secret_actions_stay_inside_tui() {
+        let app = App::new();
+        for (title, action) in [
+            ("Save secret", TuiAction::SaveSecret),
+            ("List saved secrets", TuiAction::ListSecrets),
+            ("Remove secret", TuiAction::RemoveSecret),
+        ] {
+            let recipe = app
+                .recipes
+                .iter()
+                .find(|recipe| recipe.title == title)
+                .unwrap_or_else(|| panic!("{title} recipe exists"));
+            assert!(matches!(&recipe.kind, RecipeKind::Tui(actual) if *actual == action));
+            assert!(recipe.args.is_empty());
+        }
+    }
+
+    #[test]
+    fn secret_name_choices_include_custom_and_do_not_default_to_github() {
+        let choices = secret_name_choices_for(&BTreeSet::new());
+        assert!(matches!(
+            choices.first().map(|choice| &choice.value),
+            Some(SecretNameChoice::Name(name)) if name == "ANTHROPIC_API_KEY"
+        ));
+        assert!(choices
+            .iter()
+            .any(|choice| choice.value == SecretNameChoice::Custom));
+        assert!(choices
+            .iter()
+            .any(|choice| matches!(&choice.value, SecretNameChoice::Name(name) if name == "OPENAI_API_KEY")));
+        assert!(choices.iter().any(
+            |choice| matches!(&choice.value, SecretNameChoice::Name(name) if name == "GITHUB_PERSONAL_ACCESS_TOKEN")
+        ));
+    }
+
+    #[test]
+    fn secret_name_choices_mark_saved_common_keys() {
+        let saved = BTreeSet::from(["OPENAI_API_KEY".to_string()]);
+        let choices = secret_name_choices_for(&saved);
+        let openai = choices
+            .iter()
+            .find(|choice| {
+                matches!(&choice.value, SecretNameChoice::Name(name) if name == "OPENAI_API_KEY")
+            })
+            .expect("OpenAI choice exists");
+        let anthropic = choices
+            .iter()
+            .find(|choice| {
+                matches!(&choice.value, SecretNameChoice::Name(name) if name == "ANTHROPIC_API_KEY")
+            })
+            .expect("Anthropic choice exists");
+
+        assert_eq!(openai.label, "OPENAI_API_KEY ✓");
+        assert!(openai.description.ends_with("(saved)"));
+        assert_eq!(anthropic.label, "ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn input_window_keeps_the_caret_end_visible() {
+        assert_eq!(input_window("abcdefgh", false, 5), "defgh");
+        assert_eq!(input_window("ab界", false, 3), "b界");
+        assert_eq!(input_window("secret", true, 4), "****");
+    }
+
+    #[test]
+    fn command_output_wraps_without_losing_wide_characters() {
+        let lines = vec!["abcdef".to_string(), "ab界cd".to_string(), String::new()];
+        assert_eq!(
+            wrap_output_lines(&lines, 4),
+            vec!["abcd", "ef", "ab界", "cd", ""]
+        );
+    }
+
+    #[test]
+    fn model_status_uses_saved_names_without_secret_reads() {
+        let saved = BTreeSet::from([
+            "ANTHROPIC_API_KEY".to_string(),
+            "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+        ]);
+        let legacy = BTreeSet::new();
+        assert_eq!(model_credential_status(&saved, &legacy), "available");
+    }
+
+    #[test]
+    fn first_scroll_up_moves_off_the_output_tail() {
+        let mut view = RunView::new("test");
+        for idx in 0..30 {
+            view.push(format!("line {idx}"));
+        }
+        view.follow_tail(80, 24);
+        let bottom = view.scroll;
+
+        view.scroll_up(1, 80, 24);
+
+        assert!(!view.follow);
+        assert_eq!(view.scroll, bottom - 1);
+    }
+
+    #[test]
+    fn interactive_routes_do_not_restore_the_regular_terminal_mid_session() {
+        let source = include_str!("interactive.rs");
+        let old_suspend_path = ["suspend", "_terminal"].concat();
+        let old_line_prompt = ["prompt", "_field"].concat();
+        assert!(!source.contains(&old_suspend_path));
+        assert!(!source.contains(&old_line_prompt));
     }
 }
