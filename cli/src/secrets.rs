@@ -32,6 +32,8 @@ pub struct UnsetSecretOpts {
 struct SecretIndex {
     #[serde(default)]
     vault: bool,
+    #[serde(default)]
+    legacy_names: BTreeSet<String>,
     names: BTreeSet<String>,
 }
 
@@ -94,6 +96,29 @@ pub fn is_saved(name: &str) -> Result<bool> {
     Ok(index.vault && index.names.contains(name))
 }
 
+/// Whether a name belongs to the older one-Keychain-item-per-secret layout.
+/// This reads only the non-secret index and never opens Keychain.
+pub fn needs_vault_upgrade(name: &str) -> Result<bool> {
+    validate_name(name)?;
+    let index = read_index()?;
+    Ok(if index.vault {
+        index.legacy_names.contains(name)
+    } else {
+        index.names.contains(name)
+    })
+}
+
+/// Reconcile an older non-secret index with the consolidated vault. This opens
+/// exactly one credential-store item and never reads legacy per-secret items.
+pub fn sync_vault_index() -> Result<()> {
+    let vault = read_vault()?;
+    if vault.values.is_empty() {
+        return Ok(());
+    }
+    let index = reconcile_vault_names(read_index()?, vault.values.keys());
+    write_index(&index)
+}
+
 pub fn set_value(name: &str, value: &str) -> Result<()> {
     validate_name(name)?;
     let mut vault = read_vault()?;
@@ -132,11 +157,13 @@ pub fn remove_value(name: &str) -> Result<()> {
 
 pub fn list_names() -> Result<Vec<String>> {
     let index = read_index()?;
-    Ok(if index.vault {
-        index.names.into_iter().collect()
-    } else {
-        Vec::new()
-    })
+    Ok(index
+        .names
+        .into_iter()
+        .chain(index.legacy_names)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
@@ -220,22 +247,44 @@ fn delete_vault() -> Result<()> {
 }
 
 fn add_to_index(name: &str) -> Result<()> {
-    let mut index = read_index()?;
+    let index = mark_vault_saved(read_index()?, name);
+    write_index(&index)
+}
+
+fn mark_vault_saved(mut index: SecretIndex, name: &str) -> SecretIndex {
     if !index.vault {
         // Older releases indexed one Keychain item per secret. Do not read
         // those items during migration: macOS would authorize each one
         // separately. Re-saving through the TUI creates the single vault and
-        // replaces the stale index without exposing a multi-prompt workflow.
-        index.names.clear();
+        // marks each re-saved name as upgraded without exposing a multi-prompt
+        // workflow or hiding the names that still use the legacy layout.
+        index.legacy_names.append(&mut index.names);
         index.vault = true;
     }
+    index.legacy_names.remove(name);
     index.names.insert(name.to_string());
-    write_index(&index)
+    index
+}
+
+fn reconcile_vault_names<'a>(
+    mut index: SecretIndex,
+    vault_names: impl Iterator<Item = &'a String>,
+) -> SecretIndex {
+    if !index.vault {
+        index.legacy_names.append(&mut index.names);
+        index.vault = true;
+    }
+    for name in vault_names {
+        index.legacy_names.remove(name);
+        index.names.insert(name.clone());
+    }
+    index
 }
 
 fn remove_from_index(name: &str) -> Result<()> {
     let mut index = read_index()?;
     index.names.remove(name);
+    index.legacy_names.remove(name);
     write_index(&index)
 }
 
@@ -310,6 +359,49 @@ mod tests {
 
         assert!(!index.vault);
         assert_eq!(index.names.len(), 2);
+    }
+
+    #[test]
+    fn upgrading_one_legacy_name_preserves_every_other_name() {
+        let legacy: SecretIndex = serde_json::from_str(
+            r#"{"names":["ANTHROPIC_API_KEY","GITHUB_PERSONAL_ACCESS_TOKEN","OPENAI_API_KEY"]}"#,
+        )
+        .unwrap();
+
+        let upgraded = mark_vault_saved(legacy, "ANTHROPIC_API_KEY");
+
+        assert!(upgraded.vault);
+        assert_eq!(
+            upgraded.names,
+            BTreeSet::from(["ANTHROPIC_API_KEY".to_string()])
+        );
+        assert_eq!(
+            upgraded.legacy_names,
+            BTreeSet::from([
+                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+                "OPENAI_API_KEY".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn consolidated_vault_names_recover_a_stale_legacy_index() {
+        let legacy: SecretIndex = serde_json::from_str(
+            r#"{"names":["ANTHROPIC_API_KEY","GITHUB_PERSONAL_ACCESS_TOKEN","OPENAI_API_KEY"]}"#,
+        )
+        .unwrap();
+        let vault_names = [
+            "ANTHROPIC_API_KEY".to_string(),
+            "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+        ];
+
+        let recovered = reconcile_vault_names(legacy, vault_names.iter());
+
+        assert_eq!(recovered.names, BTreeSet::from(vault_names));
+        assert_eq!(
+            recovered.legacy_names,
+            BTreeSet::from(["OPENAI_API_KEY".to_string()])
+        );
     }
 
     #[test]

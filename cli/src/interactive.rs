@@ -132,7 +132,9 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec!["all", "skill", "secrets", "local", "cluster", "dev"],
+            targets: vec![
+                "all", "skill", "examples", "secrets", "local", "cluster", "dev",
+            ],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -579,8 +581,10 @@ fn run_github_agent_chat(
     app: &App,
     _values: &BTreeMap<String, String>,
 ) -> Result<()> {
+    crate::secrets::sync_vault_index()?;
     ensure_model_credential_available(terminal, app)?;
     ensure_secret_available(terminal, app, "GITHUB_PERSONAL_ACCESS_TOKEN")?;
+    let secret_env = github_chat_secret_env()?;
 
     let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
         .context(
@@ -600,7 +604,7 @@ fn run_github_agent_chat(
     let mut setup = RunView::new("Starting GitHub agent");
     let mut started = false;
     let run_result = (|| -> Result<()> {
-        run_agentos_in_tui(
+        run_agentos_in_tui_with_env(
             terminal,
             app,
             &[
@@ -617,6 +621,7 @@ fn run_github_agent_chat(
             ],
             &repo_root,
             &mut setup,
+            &secret_env,
         )?;
         started = true;
         chat_with_runner(terminal, &repo_root, &url)
@@ -645,6 +650,35 @@ fn run_github_agent_chat(
     Ok(())
 }
 
+fn github_chat_secret_env() -> Result<Vec<(String, String)>> {
+    let mut env = Vec::new();
+    if ![
+        "AGENTOS_CREDENTIALS",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+    {
+        for name in [
+            "AGENTOS_CREDENTIALS",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ] {
+            if let Some(value) = crate::secrets::get_value(name)? {
+                env.push((name.to_string(), value));
+                break;
+            }
+        }
+    }
+    if std::env::var_os("GITHUB_PERSONAL_ACCESS_TOKEN").is_none() {
+        if let Some(value) = crate::secrets::get_value("GITHUB_PERSONAL_ACCESS_TOKEN")? {
+            env.push(("GITHUB_PERSONAL_ACCESS_TOKEN".to_string(), value));
+        }
+    }
+    Ok(env)
+}
+
 fn ensure_secret_available(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
@@ -655,6 +689,21 @@ fn ensure_secret_available(
     }
     if crate::secrets::is_saved(name)? {
         return Ok(());
+    }
+    if crate::secrets::needs_vault_upgrade(name)? {
+        let Some(value) = prompt_text(
+            terminal,
+            app,
+            "Update Credential Storage",
+            &format!("Re-enter {name} to move it into the AgentOS vault"),
+            None,
+            true,
+            false,
+        )?
+        else {
+            anyhow::bail!("{name} is required for this workflow");
+        };
+        return crate::secrets::save_value(name, &value);
     }
     let Some(save) = prompt_select(
         terminal,
@@ -700,11 +749,34 @@ fn ensure_model_credential_available(
             return Ok(());
         }
     }
-    let saved_names = crate::secrets::list_names()?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    if NAMES.iter().any(|name| saved_names.contains(*name)) {
-        return Ok(());
+    for name in NAMES {
+        if crate::secrets::is_saved(name)? {
+            return Ok(());
+        }
+    }
+    let legacy_names = NAMES
+        .iter()
+        .filter_map(|name| {
+            crate::secrets::needs_vault_upgrade(name)
+                .ok()
+                .filter(|needed| *needed)
+                .map(|_| (*name).to_string())
+        })
+        .collect::<Vec<_>>();
+    if let Some(name) = legacy_names.first() {
+        let Some(value) = prompt_text(
+            terminal,
+            app,
+            "Update Credential Storage",
+            &format!("Re-enter {name} to move it into the AgentOS vault"),
+            None,
+            true,
+            false,
+        )?
+        else {
+            anyhow::bail!("a supported model credential is required");
+        };
+        return crate::secrets::save_value(name, &value);
     }
 
     let choices = NAMES
@@ -740,17 +812,26 @@ fn ensure_model_credential_available(
     crate::secrets::save_value(&name, &value)
 }
 
-fn secret_status(name: &str, saved_names: &BTreeSet<String>) -> &'static str {
+fn secret_status(
+    name: &str,
+    saved_names: &BTreeSet<String>,
+    legacy_names: &BTreeSet<String>,
+) -> &'static str {
     if std::env::var_os(name).is_some() {
         "env"
     } else if saved_names.contains(name) {
         "saved"
+    } else if legacy_names.contains(name) {
+        "saved (upgrade needed)"
     } else {
         "missing"
     }
 }
 
-fn model_credential_status(saved_names: &BTreeSet<String>) -> &'static str {
+fn model_credential_status(
+    saved_names: &BTreeSet<String>,
+    legacy_names: &BTreeSet<String>,
+) -> &'static str {
     for name in [
         "AGENTOS_CREDENTIALS",
         "ANTHROPIC_API_KEY",
@@ -759,27 +840,39 @@ fn model_credential_status(saved_names: &BTreeSet<String>) -> &'static str {
         if std::env::var_os(name).is_some() || saved_names.contains(name) {
             return "available";
         }
+        if legacy_names.contains(name) {
+            return "saved (upgrade needed)";
+        }
     }
     "missing"
 }
 
 fn secrets_status_lines() -> Vec<Line<'static>> {
-    let saved_names = match crate::secrets::list_names() {
-        Ok(names) => names.into_iter().collect::<BTreeSet<_>>(),
+    let indexed_names = match crate::secrets::list_names() {
+        Ok(names) => names,
         Err(err) => {
             return vec![Line::from(format!(
                 "Unable to read saved credential names: {err:#}"
             ))];
         }
     };
+    let saved_names = indexed_names
+        .iter()
+        .filter(|name| crate::secrets::is_saved(name).unwrap_or(false))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let legacy_names = indexed_names
+        .into_iter()
+        .filter(|name| !saved_names.contains(name))
+        .collect::<BTreeSet<_>>();
     vec![
         Line::from(format!(
             "Model credential: {}",
-            model_credential_status(&saved_names)
+            model_credential_status(&saved_names, &legacy_names)
         )),
         Line::from(format!(
             "GITHUB_PERSONAL_ACCESS_TOKEN: {}",
-            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved_names)
+            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved_names, &legacy_names)
         )),
     ]
 }
@@ -1049,12 +1142,24 @@ fn run_agentos_in_tui(
     cwd: &Path,
     view: &mut RunView,
 ) -> Result<()> {
+    run_agentos_in_tui_with_env(terminal, app, argv, cwd, view, &[])
+}
+
+fn run_agentos_in_tui_with_env(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    argv: &[String],
+    cwd: &Path,
+    view: &mut RunView,
+    command_env: &[(String, String)],
+) -> Result<()> {
     view.push(format!("$ {}", render_command(argv)));
     view.push("");
     view.running = true;
     let mut child = Command::new(std::env::current_exe().context("resolving current executable")?)
         .args(argv)
         .current_dir(cwd)
+        .envs(command_env.iter().cloned())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1846,7 +1951,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "skill",
+            target: "examples",
             title: "Chat with GitHub agent",
             description: "Start the GitHub MCP bundle and have a live conversation with the agent.",
             kind: RecipeKind::Workflow(Workflow::GithubAgentChat),
@@ -2059,13 +2164,13 @@ mod tests {
     }
 
     #[test]
-    fn skill_target_includes_github_agent_chat() {
+    fn examples_target_includes_github_agent_chat() {
         let app = App::new();
         let idx = app
             .targets
             .iter()
-            .position(|target| *target == "skill")
-            .expect("skill target exists");
+            .position(|target| *target == "examples")
+            .expect("examples target exists");
         let mut app = app;
         app.target_idx = idx;
         let titles: Vec<&str> = app
@@ -2156,12 +2261,13 @@ mod tests {
             "ANTHROPIC_API_KEY".to_string(),
             "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
         ]);
-        assert_eq!(model_credential_status(&saved), "available");
+        let legacy = BTreeSet::new();
+        assert_eq!(model_credential_status(&saved, &legacy), "available");
         assert_eq!(
-            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved),
+            secret_status("GITHUB_PERSONAL_ACCESS_TOKEN", &saved, &legacy),
             "saved"
         );
-        assert_eq!(secret_status("OPENAI_API_KEY", &saved), "missing");
+        assert_eq!(secret_status("OPENAI_API_KEY", &saved, &legacy), "missing");
     }
 
     #[test]

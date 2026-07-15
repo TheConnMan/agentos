@@ -127,9 +127,10 @@ history, command argv, `.env`, or AgentOS state files. On macOS this uses
 Keychain. AgentOS keeps a non-secret index of saved names under the user config
 directory only so `agentos secrets list` can show what it knows about; the
 secret values remain in the credential store. All values share one AgentOS vault
-item so macOS authorizes the workflow once. Old per-secret Keychain items are not
-opened automatically; re-save those names in the TUI once to move to the vault
-without triggering one authorization dialog per legacy item.
+item so macOS authorizes the workflow once. Legacy names remain visible. If an
+earlier run already populated the vault, AgentOS reconciles its index after one
+authorization; otherwise the TUI asks you to re-save only the credentials the
+workflow needs, without opening every legacy Keychain item.
 
 ```bash
 agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN
