@@ -83,6 +83,7 @@ SELECT a.id AS agent_id,
        a.behavior_packs AS behavior_packs,
        a.model AS model,
        a.approval_required_tools AS approval_required_tools,
+       a.approval_routes AS approval_routes,
        v.id AS version_id,
        v.version_label AS version_label,
        v.bundle_ref AS bundle_ref
@@ -112,6 +113,10 @@ class ResolvedDeployment(BaseModel):
     # The agent's permission gates (#245): tool names requiring human approval,
     # forwarded as AGENTOS_APPROVAL_REQUIRED_TOOLS at boot. None means no gates.
     approval_required_tools: list[str] | None = None
+    # The agent's approval route bindings (#247): manifest route name ->
+    # workspace binding ({"channel": "C..."}), resolved by the kernel when a
+    # raised approval names a route. None means no bindings.
+    approval_routes: dict[str, Any] | None = None
 
 
 class BindingResolver:
@@ -156,6 +161,9 @@ class BindingResolver:
         gates = data.get("approval_required_tools")
         if isinstance(gates, str):
             data["approval_required_tools"] = json.loads(gates)
+        routes = data.get("approval_routes")
+        if isinstance(routes, str):
+            data["approval_routes"] = json.loads(routes)
         return ResolvedDeployment.model_validate(data)
 
     async def repo_full_name(self, agent_id: uuid.UUID) -> str | None:

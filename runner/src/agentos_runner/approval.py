@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
@@ -42,6 +43,7 @@ from claude_agent_sdk.types import (
     PermissionResultDeny,
     ToolPermissionContext,
 )
+from plugin_format import ApprovalPolicy, PluginManifest
 
 # The server key under ClaudeAgentOptions.mcp_servers; the SDK prefixes tool
 # names as mcp__<server>__<tool>.
@@ -53,14 +55,33 @@ APPROVAL_TOOL_NAME = f"mcp__{APPROVAL_SERVER_NAME}__{_TOOL_NAME}"
 _TOOL_DESCRIPTION = (
     "Request human approval before proceeding. Call this when your"
     " instructions say a step needs sign-off (a discount, an invoice, a"
-    " remediation). Pass a one-line summary of exactly what needs approval."
-    " After calling it, end your turn and tell the user the request is"
-    " pending; the platform pauses the session and resumes it with the"
-    " decision once an authorized human resolves it."
+    " remediation). Pass a one-line summary of exactly what needs approval,"
+    " and, when your instructions name an approval route for this kind of"
+    " decision, pass it as route (the platform delivers the request to that"
+    " route's channel). After calling it, end your turn and tell the user the"
+    " request is pending; the platform pauses the session and resumes it with"
+    " the decision once an authorized human resolves it."
 )
 
+# Full JSON schema (not the shorthand type map) so ``route`` is optional: a
+# request without a route falls back to the requesting channel.
+_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "One line stating exactly what needs approval.",
+        },
+        "route": {
+            "type": "string",
+            "description": "Optional approval route name from your instructions.",
+        },
+    },
+    "required": ["summary"],
+}
 
-@tool(_TOOL_NAME, _TOOL_DESCRIPTION, {"summary": str})
+
+@tool(_TOOL_NAME, _TOOL_DESCRIPTION, _TOOL_SCHEMA)
 async def _request_approval(args: dict[str, Any]) -> dict[str, Any]:
     summary = str(args.get("summary") or "").strip()
     if not summary:
@@ -134,11 +155,15 @@ def summarize_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:
 class ApprovalGate:
     """Shared state between the ``can_use_tool`` callback and the session loop.
 
-    ``required`` is the per-agent set of approval-required tool names
-    (AGENTOS_APPROVAL_REQUIRED_TOOLS). ``pending_summary`` is set by the
-    callback when it blocks a call and consumed by the session at turn end to
-    flip the final to awaiting-approval; ``reset()`` clears it at each turn
-    start so one turn's block never leaks into the next.
+    ``required`` is the per-agent set of approval-required tool names: the
+    union of the bundle manifest's ``approvalPolicy`` gates (#247, versioned
+    with the agent) and the AGENTOS_APPROVAL_REQUIRED_TOOLS env override.
+    ``route_by_tool`` maps a manifest-gated tool to its declared route name,
+    so a blocked call carries the route the platform binds to a channel.
+    ``pending_summary``/``pending_route`` are set by the callback when it
+    blocks a call and consumed by the session at turn end to flip the final
+    to awaiting-approval; ``reset()`` clears them at each turn start so one
+    turn's block never leaks into the next.
 
     The first blocked call of a turn wins: a model that retries the denied
     tool (against the deny message's instruction) does not overwrite the
@@ -146,14 +171,18 @@ class ApprovalGate:
     """
 
     required: frozenset[str] = field(default_factory=frozenset)
+    route_by_tool: dict[str, str] = field(default_factory=dict)
     pending_summary: str | None = None
+    pending_route: str | None = None
 
     def reset(self) -> None:
         self.pending_summary = None
+        self.pending_route = None
 
     def block(self, tool_name: str, tool_input: dict[str, Any]) -> None:
         if self.pending_summary is None:
             self.pending_summary = summarize_tool_call(tool_name, tool_input)
+            self.pending_route = self.route_by_tool.get(tool_name)
 
 
 def build_can_use_tool(gate: ApprovalGate) -> CanUseTool:
@@ -177,3 +206,44 @@ def build_can_use_tool(gate: ApprovalGate) -> CanUseTool:
         return PermissionResultAllow()
 
     return can_use_tool
+
+
+# --- The manifest approval policy (#247): gates shipped in the bundle -----------
+
+_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
+
+
+def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
+    """The bundle manifest's ``approvalPolicy`` gates as ``{tool: route}``.
+
+    A gate's ``gate`` field names the tool the runner intercepts (the tool
+    class of the ADR-0010 permission gate); its ``route`` names the approval
+    route the platform binds to a channel per deployment. Declared in the
+    bundle so the policy is versioned and evaluable with the agent (#247);
+    validated at deploy by ``plugin_format.validate_bundle``. Best-effort,
+    mirroring the hooks/systemPrompt readers: no dir, no manifest, or no
+    policy yields {} and the authoritative parse gate stays load_plugins.
+    """
+
+    if not plugin_dir:
+        return {}
+    root = Path(plugin_dir)
+    manifest_path = next(
+        (root / loc for loc in _MANIFEST_LOCATIONS if (root / loc).is_file()), None
+    )
+    if manifest_path is None:
+        return {}
+    try:
+        manifest = PluginManifest.model_validate(
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+        )
+        if manifest.approvalPolicy is None:
+            return {}
+        policy = ApprovalPolicy.model_validate(manifest.approvalPolicy)
+    except (json.JSONDecodeError, ValueError, OSError):
+        return {}
+    return {
+        gate.gate.strip(): gate.route.strip()
+        for gate in policy.gates
+        if gate.gate and gate.gate.strip() and gate.route and gate.route.strip()
+    }

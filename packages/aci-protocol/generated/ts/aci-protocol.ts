@@ -17,6 +17,7 @@ export type Text = string;
 export type Ts = string;
 export type Type1 = "message" | "job" | "eval_case";
 export type User = string;
+export type ApprovalRoute = string | null;
 export type ApprovalSummary = string | null;
 /**
  * Terminal or awaiting status of a session, from the output contract.
@@ -126,13 +127,18 @@ export interface Event {
  * ``approval_summary`` accompanies an ``awaiting-approval`` status (ADR-0010):
  * the human-readable statement of what needs approval, captured from the
  * run's approval request so the platform can persist it on the durable
- * ``Approval`` record and show it to the approver. ``None`` on every other
- * status.
+ * ``Approval`` record and show it to the approver. ``approval_route`` names
+ * the approval route the request targets (#247): declared in the bundle
+ * manifest's ``approvalPolicy`` (versioned with the agent), bound to a
+ * workspace channel per deployment by the worker. Both ``None`` on every
+ * other status; ``approval_route`` also ``None`` when the request named no
+ * route (the platform falls back to the requesting channel).
  *
  * This interface was referenced by `ACIProtocolV010`'s JSON-Schema
  * via the `definition` "Final".
  */
 export interface Final {
+  approval_route?: ApprovalRoute;
   approval_summary?: ApprovalSummary;
   status?: SessionStatus;
   text: Text1;

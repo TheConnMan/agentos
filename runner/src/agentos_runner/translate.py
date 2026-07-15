@@ -49,6 +49,10 @@ class TurnState:
     # the ToolUseBlock so the session can end the turn awaiting-approval. None
     # when no approval was requested this turn.
     approval_summary: str | None = None
+    # The approval route the request named (#247): a manifest-declared route
+    # the platform binds to a channel per deployment. None routes to the
+    # requesting channel.
+    approval_route: str | None = None
     # Assistant text streamed during the turn, accumulated so a DONE result with
     # an empty ``result`` can still deliver the model's answer. Reasoning models
     # routed through OpenRouter (e.g. z-ai/glm-5.2) emit the answer as a TextBlock
@@ -116,13 +120,16 @@ def _translate_assistant(
             if gen is not None:
                 gen.tool_span(block.name)
             if block.name == APPROVAL_TOOL_NAME:
-                # A policy gate fired (ADR-0010). Capture the summary at the
-                # wire level so the real path (executed in-process tool) and
-                # the fake path (scripted ToolUseBlock) exercise one seam.
-                raw = block.input.get("summary") if isinstance(block.input, dict) else None
-                summary = str(raw or "").strip()
+                # A policy gate fired (ADR-0010). Capture the summary (and the
+                # optional route, #247) at the wire level so the real path
+                # (executed in-process tool) and the fake path (scripted
+                # ToolUseBlock) exercise one seam.
+                payload = block.input if isinstance(block.input, dict) else {}
+                summary = str(payload.get("summary") or "").strip()
                 if summary:
                     state.approval_summary = summary
+                    route = str(payload.get("route") or "").strip()
+                    state.approval_route = route or None
             if classifier.is_side_effecting(block.name) and not state.side_effect_emitted:
                 events.append(
                     SideEffectFlag(tool=block.name, detail="non-idempotent tool executed")

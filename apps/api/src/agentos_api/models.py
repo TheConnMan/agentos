@@ -72,6 +72,17 @@ class Agent(Base):
     approval_required_tools: Mapped[list[str] | None] = mapped_column(
         JSONB, default=None
     )
+    # Per-agent approval route bindings (#247, ADR-0010): the workspace half of
+    # the split policy. The bundle manifest declares gate points and route
+    # NAMES (versioned with the agent); this maps each declared name to
+    # workspace specifics, today a Slack channel: {"managers": {"channel":
+    # "C0123..."}}. The worker resolves a raised route through this map to
+    # decide where the approval card goes (and therefore who the
+    # channel-membership authorizer counts as approvers). NULL means no
+    # bindings; an unbound route falls back to the requesting channel.
+    approval_routes: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     versions: Mapped[list["AgentVersion"]] = relationship(
@@ -163,6 +174,12 @@ class Approval(Base):
     reply_channel: Mapped[str]
     reply_placeholder: Mapped[str]
     reply_endpoint: Mapped[str | None] = mapped_column(default=None)
+    # The approval route the request named (#247), and the channel the card
+    # was actually routed to after binding resolution. The authorizer proves
+    # channel membership against card_channel (falling back to reply_channel
+    # when NULL, the pre-route behavior).
+    route: Mapped[str | None] = mapped_column(default=None)
+    card_channel: Mapped[str | None] = mapped_column(default=None)
     # Idempotency: the triggering event id. A reclaimed/redelivered turn that
     # re-requests the same approval adopts the existing row instead of forking.
     dedupe_key: Mapped[str] = mapped_column(unique=True)
@@ -174,6 +191,38 @@ class Approval(Base):
     resolution_note: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class ApprovalAuditEntry(Base):
+    """The platform audit log for approvals (#247, ADR-0010).
+
+    One row per authorization-relevant event on an approval: a resolution that
+    won, a denied attempt, an expiry. Each row snapshots WHO acted, from where,
+    and the authorizer verdict that counted (or refused) them -- the answer to
+    "who resolved, and why they counted" that a black-box approval cannot give.
+    Append-only: rows are written by the resolve endpoint and never updated.
+    """
+
+    __tablename__ = "approval_audit_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    approval_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(f"{SCHEMA}.approvals.id", ondelete="CASCADE"), index=True
+    )
+    # What happened: resolved / denied / race_lost / expired.
+    action: Mapped[str]
+    actor: Mapped[str]
+    actor_channel: Mapped[str | None] = mapped_column(default=None)
+    # The decision the actor attempted (approved/rejected).
+    decision: Mapped[str]
+    # The authorizer snapshot: which implementation decided, its verdict, and
+    # its stated reason at the time of the attempt.
+    authorizer: Mapped[str]
+    authorized: Mapped[bool]
+    reason: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class WorkflowStateEntry(Base):

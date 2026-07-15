@@ -17,8 +17,9 @@ explicit user-list, platform-RBAC) behind that one server-side check.
 
 ## Current contract
 
-The durable base of the seam landed with #244; the authorizer port itself is still ahead
-(#246). What exists in code now:
+The durable base landed with #244, the gates with #245, the authorizer and cards with #246,
+and the policy/route/audit layer with #247 — the epic's full primitive is live. What exists
+in code now:
 
 - **The durable record + resolve-once semantics (landed, #244).** The `Approval` table
   (`apps/api/src/agentos_api/models.py`) with the resolve-once compare-and-set
@@ -46,8 +47,19 @@ The durable base of the seam landed with #244; the authorizer port itself is sti
   types share one record/suspend/resume lifecycle. An agent with no configured gates keeps
   the historical `bypassPermissions` posture verbatim (zero behavior change). Not yet built:
   a grant mechanism for the resumed turn (an approved tool call is still gated on retry
-  after resume; a one-shot allowance delivered at boot composes with #247's policy
-  evaluation).
+  after resume; a one-shot allowance delivered at boot remains open follow-up work).
+- **The policy/route/audit layer (landed, #247).** The bundle manifest's `approvalPolicy`
+  gates (schema + deploy validation from #273) are consumed at runner boot
+  (`load_approval_policy`): each `{gate, route}` pair adds the tool to the permission gate
+  and tags it with a route NAME, versioned with the agent. The policy-gate tool accepts an
+  optional `route` argument for skill-raised requests. Route names are bound to workspace
+  channels per agent (`agents.approval_routes`, deployment config, never in the bundle);
+  the worker resolves a raised route through the binding and posts the card into the bound
+  channel (`card_channel` on the record), whose members the authorizer then counts as the
+  approvers; an unbound route falls back to the requesting channel with a warning. Every
+  resolution attempt appends to the platform audit log (`approval_audit_entries`,
+  `GET /approvals/{id}/audit`): actor, channel evidence, decision, and the authorizer
+  snapshot -- who resolved, and why they counted (or were refused).
 
 ## Implementations today
 

@@ -136,6 +136,28 @@ def _validate_tool_names(value: list[str] | None) -> list[str] | None:
     return cleaned
 
 
+class ApprovalRouteBinding(BaseModel):
+    """One workspace binding for a manifest-declared approval route (#247):
+    the Slack channel whose members are that route's approvers (under the
+    channel-membership authorizer)."""
+
+    channel: str
+
+    _check_channel = field_validator("channel")(_validate_slack_channel_id)
+
+
+def _validate_route_names(
+    value: dict[str, ApprovalRouteBinding] | None,
+) -> dict[str, ApprovalRouteBinding] | None:
+    """Route names must be non-empty; they are matched verbatim against the
+    manifest's declared route names."""
+    if value is None:
+        return value
+    if any(not name.strip() for name in value):
+        raise ValueError("approval_routes keys must be non-empty route names")
+    return value
+
+
 class AgentCreate(BaseModel):
     name: str
     slack_channel: str
@@ -147,12 +169,19 @@ class AgentCreate(BaseModel):
     # Per-agent permission gates (#245): tool names requiring human approval.
     # None means no gates (the bypass posture).
     approval_required_tools: list[str] | None = None
+    # Per-agent approval route bindings (#247): manifest route name -> workspace
+    # channel. None means no bindings (unbound routes fall back to the
+    # requesting channel).
+    approval_routes: dict[str, ApprovalRouteBinding] | None = None
 
     _check_slack_channel = field_validator("slack_channel")(
         _validate_slack_channel_id
     )
     _check_approval_tools = field_validator("approval_required_tools")(
         _validate_tool_names
+    )
+    _check_approval_routes = field_validator("approval_routes")(
+        _validate_route_names
     )
 
 
@@ -168,12 +197,18 @@ class AgentUpdate(BaseModel):
     # New permission gates (#245). Omitted (None) leaves the current gates
     # unchanged; an explicit empty list clears them.
     approval_required_tools: list[str] | None = None
+    # New route bindings (#247). Omitted (None) leaves the current bindings
+    # unchanged; an explicit empty dict clears them.
+    approval_routes: dict[str, ApprovalRouteBinding] | None = None
 
     _check_slack_channel = field_validator("slack_channel")(
         _validate_slack_channel_id
     )
     _check_approval_tools = field_validator("approval_required_tools")(
         _validate_tool_names
+    )
+    _check_approval_routes = field_validator("approval_routes")(
+        _validate_route_names
     )
 
 
@@ -187,6 +222,7 @@ class AgentOut(BaseModel):
     behavior_packs: dict[str, Any] | None
     model: str | None
     approval_required_tools: list[str] | None
+    approval_routes: dict[str, Any] | None
     created_at: datetime
 
 
@@ -281,7 +317,10 @@ class DeploymentOut(BaseModel):
 class ApprovalCreate(BaseModel):
     """A durable approval request (#244), created by the worker when a run ends
     awaiting-approval. ``dedupe_key`` is the triggering event id, so a
-    redelivered turn adopts the existing record instead of forking a second one."""
+    redelivered turn adopts the existing record instead of forking a second one.
+    ``route``/``card_channel`` (#247) record the manifest route the request
+    named and the channel the worker routed the card to after binding
+    resolution; the authorizer proves membership against ``card_channel``."""
 
     agent_id: uuid.UUID | None = None
     conversation_id: str = Field(min_length=1)
@@ -291,6 +330,8 @@ class ApprovalCreate(BaseModel):
     reply_placeholder: str = Field(min_length=1)
     reply_endpoint: str | None = None
     dedupe_key: str = Field(min_length=1)
+    route: str | None = None
+    card_channel: str | None = None
     # Optional SLA: seconds from creation after which the record can only
     # expire, never be approved or rejected.
     expires_in_seconds: int | None = Field(default=None, gt=0)
@@ -322,12 +363,32 @@ class ApprovalOut(BaseModel):
     reply_placeholder: str
     reply_endpoint: str | None
     dedupe_key: str
+    route: str | None
+    card_channel: str | None
     status: str
     expires_at: datetime | None
     resolved_by: str | None
     resolution_note: str | None
     created_at: datetime
     resolved_at: datetime | None
+
+
+class ApprovalAuditOut(BaseModel):
+    """One audit entry (#247): who attempted what, and the authorizer snapshot
+    that counted (or refused) them."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    approval_id: uuid.UUID
+    action: str
+    actor: str
+    actor_channel: str | None
+    decision: str
+    authorizer: str
+    authorized: bool
+    reason: str | None
+    created_at: datetime
 
 
 class WebhookResult(BaseModel):

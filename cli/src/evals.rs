@@ -211,6 +211,7 @@ mod tests {
             text: text.into(),
             status,
             approval_summary: None,
+            approval_route: None,
         }
     }
 

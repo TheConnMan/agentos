@@ -97,6 +97,7 @@ def _apply_approval_override(final: Final, state: TurnState) -> Final:
             text=final.text,
             status=SessionStatus.AWAITING_APPROVAL,
             approval_summary=state.approval_summary,
+            approval_route=state.approval_route,
         )
     return final
 
@@ -452,6 +453,7 @@ class SessionRunner:
             and not state.approval_summary
         ):
             state.approval_summary = self._approval_gate.pending_summary
+            state.approval_route = self._approval_gate.pending_route
 
     def _budget_halt_lines(self) -> list[str]:
         """The error+final pair emitted whenever the output-token ceiling trips.

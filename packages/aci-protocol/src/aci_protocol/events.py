@@ -99,14 +99,19 @@ class Final(_OutboundBase):
     ``approval_summary`` accompanies an ``awaiting-approval`` status (ADR-0010):
     the human-readable statement of what needs approval, captured from the
     run's approval request so the platform can persist it on the durable
-    ``Approval`` record and show it to the approver. ``None`` on every other
-    status.
+    ``Approval`` record and show it to the approver. ``approval_route`` names
+    the approval route the request targets (#247): declared in the bundle
+    manifest's ``approvalPolicy`` (versioned with the agent), bound to a
+    workspace channel per deployment by the worker. Both ``None`` on every
+    other status; ``approval_route`` also ``None`` when the request named no
+    route (the platform falls back to the requesting channel).
     """
 
     type: Literal["final"] = "final"
     text: str
     status: SessionStatus = SessionStatus.DONE
     approval_summary: str | None = None
+    approval_route: str | None = None
 
 
 class ErrorEvent(_OutboundBase):

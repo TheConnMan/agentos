@@ -53,8 +53,10 @@ class ChannelMembershipAuthorizer:
     """First authorizer: the approval's channel members may resolve it.
 
     Membership evidence is the click channel (see the module docstring): an
-    attempt is allowed only when it comes from the same channel the approval
-    card was routed to, and never from the requester themselves.
+    attempt is allowed only when it comes from the channel the approval card
+    was routed to -- ``card_channel`` when a route binding placed the card
+    (#247), else the requesting channel -- and never from the requester
+    themselves.
     """
 
     def authorize(
@@ -65,7 +67,8 @@ class ChannelMembershipAuthorizer:
                 allowed=False,
                 reason="self-approval is blocked: the requester cannot resolve their own request",
             )
-        if actor_channel != approval.reply_channel:
+        approvers_channel = approval.card_channel or approval.reply_channel
+        if actor_channel != approvers_channel:
             return AuthzDecision(
                 allowed=False,
                 reason="you are not an approver: resolve this from the approval's channel",

@@ -34,6 +34,11 @@ class ApprovalRequest(BaseModel):
     reply_placeholder: str
     reply_endpoint: str | None = None
     dedupe_key: str
+    # The manifest route the request named and the channel the card was routed
+    # to after binding resolution (#247); the authorizer proves membership
+    # against card_channel.
+    route: str | None = None
+    card_channel: str | None = None
     expires_in_seconds: int | None = None
 
 

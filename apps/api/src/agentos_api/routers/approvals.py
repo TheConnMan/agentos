@@ -26,7 +26,7 @@ from ..authorizer import Authorizer, ChannelMembershipAuthorizer
 from ..deps import ResumeQueueDep, SessionDep
 from ..models import Approval, ApprovalStatus
 from ..resumequeue import build_resume_turn
-from ..schemas import ApprovalCreate, ApprovalOut, ApprovalResolve
+from ..schemas import ApprovalAuditOut, ApprovalCreate, ApprovalOut, ApprovalResolve
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,20 @@ async def get_approval(approval_id: uuid.UUID, session: SessionDep) -> ApprovalO
     return ApprovalOut.model_validate(approval)
 
 
+@router.get("/{approval_id}/audit", response_model=list[ApprovalAuditOut])
+async def get_approval_audit(
+    approval_id: uuid.UUID, session: SessionDep
+) -> list[ApprovalAuditOut]:
+    """The approval's audit trail (#247), oldest first: every resolution
+    attempt with the authorizer snapshot that counted or refused it."""
+
+    approval = await crud.get_approval(session, approval_id)
+    if approval is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
+    entries = await crud.list_approval_audit(session, approval_id)
+    return [ApprovalAuditOut.model_validate(e) for e in entries]
+
+
 @router.post("/{approval_id}/resolve", response_model=ApprovalOut)
 async def resolve_approval(
     approval_id: uuid.UUID,
@@ -123,8 +137,26 @@ async def resolve_approval(
     if approval is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
 
+    authorizer_name = type(_AUTHORIZER).__name__
     decision = _AUTHORIZER.authorize(approval, data.resolved_by, data.actor_channel)
+
+    async def _audit(action: str, *, authorized: bool, reason: str | None) -> None:
+        # The audit log (#247): every authorization-relevant event, with the
+        # authorizer snapshot that counted (or refused) the actor.
+        await crud.append_approval_audit(
+            session,
+            approval_id=approval_id,
+            action=action,
+            actor=data.resolved_by,
+            actor_channel=data.actor_channel,
+            decision=data.decision,
+            authorizer=authorizer_name,
+            authorized=authorized,
+            reason=reason,
+        )
+
     if not decision.allowed:
+        await _audit("denied", authorized=False, reason=decision.reason)
         raise HTTPException(status.HTTP_403_FORBIDDEN, decision.reason)
 
     if approval.status == ApprovalStatus.pending and _expired(approval):
@@ -132,6 +164,11 @@ async def resolve_approval(
         # None means a concurrent resolution won the CAS before the expiry did;
         # fall through to the claim below, which will lose and report the winner.
         if expired is not None:
+            await _audit(
+                "expired",
+                authorized=True,
+                reason=f"approval expired at {expired.expires_at}",
+            )
             raise HTTPException(
                 status.HTTP_410_GONE,
                 f"approval expired at {expired.expires_at} and can no longer be resolved",
@@ -153,10 +190,17 @@ async def resolve_approval(
                 status.HTTP_410_GONE,
                 "approval expired and can no longer be resolved",
             )
+        await _audit(
+            "race_lost",
+            authorized=True,
+            reason=f"already resolved by {current.resolved_by} ({current.status})",
+        )
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"already resolved by {current.resolved_by} ({current.status})",
         )
+
+    await _audit("resolved", authorized=True, reason=decision.reason or None)
 
     # Wake the suspended session: the resume turn rides the normal runs stream,
     # so the kernel's ordinary consume -> claim path rehydrates the thread

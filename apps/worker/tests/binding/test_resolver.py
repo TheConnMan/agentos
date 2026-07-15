@@ -40,6 +40,7 @@ async def _seed_agent(
     max_usd: float | None,
     max_tokens: int | None,
     approval_tools: list[str] | None = None,
+    approval_routes: dict | None = None,
 ) -> uuid.UUID:
     agent_id = uuid.uuid4()
     async with engine.begin() as conn:
@@ -47,9 +48,9 @@ async def _seed_agent(
             text(
                 f"INSERT INTO {_SCHEMA}.agents "
                 "(id, name, slack_channel, max_usd_per_day, max_output_tokens_per_run, "
-                "approval_required_tools) "
+                "approval_required_tools, approval_routes) "
                 "VALUES (:id, :name, :channel, :usd, :tokens, "
-                "CAST(:approval_tools AS jsonb))"
+                "CAST(:approval_tools AS jsonb), CAST(:approval_routes AS jsonb))"
             ),
             {
                 "id": agent_id,
@@ -59,6 +60,9 @@ async def _seed_agent(
                 "tokens": max_tokens,
                 "approval_tools": (
                     json.dumps(approval_tools) if approval_tools is not None else None
+                ),
+                "approval_routes": (
+                    json.dumps(approval_routes) if approval_routes is not None else None
                 ),
             },
         )
@@ -408,6 +412,43 @@ def test_resolves_approval_required_tools_into_boot_env() -> None:
                 ]
                 env = _resolver(engine).boot_env(resolved, "thread-1")
                 assert env[APPROVAL_REQUIRED_ENV] == "Bash,mcp__github__create_issue"
+            finally:
+                await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_resolves_approval_routes_from_the_agent_row() -> None:
+    # Route bindings (#247): the per-agent JSONB map survives the SQL resolve
+    # (decode included) so the kernel can route approval cards through it.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable at {_DB_URL}: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine,
+                channel=channel,
+                name=f"agent-{token}",
+                max_usd=None,
+                max_tokens=None,
+                approval_routes={"managers": {"channel": "C_MGRS"}},
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref=f"b/{token}.zip"
+            )
+            try:
+                resolved = await _resolver(engine).resolve(channel)
+                assert resolved is not None
+                assert resolved.approval_routes == {"managers": {"channel": "C_MGRS"}}
             finally:
                 await _cleanup(engine, [agent_id])
         finally:

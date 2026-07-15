@@ -292,3 +292,104 @@ def test_authorizer_blocks_non_member_and_self_approval(
     )
     assert ok.status_code == 200
     assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_route_bound_approval_authorizes_against_card_channel(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """#247: when a route binding placed the card in another channel, THAT
+    channel's members are the approvers; the requesting channel no longer is."""
+
+    created = approvals_client.post(
+        "/approvals",
+        json=_payload(route="managers", card_channel="C_MGRS"),
+        headers=auth_headers,
+    ).json()
+    assert created["route"] == "managers"
+    assert created["card_channel"] == "C_MGRS"
+    resolve_url = f"/approvals/{created['id']}/resolve"
+
+    # The requesting channel (C1) is NOT the approvers' channel anymore.
+    from_requesting = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert from_requesting.status_code == 403
+
+    # A member of the route-bound channel resolves it.
+    ok = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C_MGRS"},
+        headers=auth_headers,
+    )
+    assert ok.status_code == 200
+    assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_audit_log_records_attempts_with_authorizer_snapshots(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """The #247 acceptance read-back: denied and resolved attempts each leave
+    an append-only audit entry naming the actor, the channel evidence, and the
+    authorizer snapshot that counted (or refused) them."""
+
+    created = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+    resolve_url = f"/approvals/{created['id']}/resolve"
+
+    denied = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U_OUT", "actor_channel": "C_X"},
+        headers=auth_headers,
+    )
+    assert denied.status_code == 403
+    resolved = approvals_client.post(
+        resolve_url,
+        json={"decision": "approved", "resolved_by": "U9", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert resolved.status_code == 200
+    late = approvals_client.post(
+        resolve_url,
+        json={"decision": "rejected", "resolved_by": "U_LATE", "actor_channel": "C1"},
+        headers=auth_headers,
+    )
+    assert late.status_code == 409
+
+    audit = approvals_client.get(
+        f"/approvals/{created['id']}/audit", headers=auth_headers
+    )
+    assert audit.status_code == 200
+    entries = audit.json()
+    assert [e["action"] for e in entries] == ["denied", "resolved", "race_lost"]
+
+    denied_entry, resolved_entry, race_entry = entries
+    assert denied_entry["actor"] == "U_OUT"
+    assert denied_entry["actor_channel"] == "C_X"
+    assert denied_entry["authorized"] is False
+    assert denied_entry["authorizer"] == "ChannelMembershipAuthorizer"
+    assert "not an approver" in denied_entry["reason"]
+
+    assert resolved_entry["actor"] == "U9"
+    assert resolved_entry["authorized"] is True
+    assert resolved_entry["decision"] == "approved"
+    assert resolved_entry["authorizer"] == "ChannelMembershipAuthorizer"
+
+    assert race_entry["actor"] == "U_LATE"
+    assert "already resolved by U9" in race_entry["reason"]
+
+    # The audit endpoint 404s for an unknown approval.
+    missing = approvals_client.get(
+        f"/approvals/{uuid.uuid4()}/audit", headers=auth_headers
+    )
+    assert missing.status_code == 404
