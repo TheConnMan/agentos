@@ -34,6 +34,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
+from .approval import APPROVAL_TOOL_NAME
 from .otel import _GenerationSpan
 from .side_effects import SideEffectClassifier
 
@@ -44,6 +45,10 @@ class TurnState:
 
     side_effect_emitted: bool = False
     error_classification: str | None = None
+    # The summary passed to the approval-request tool (ADR-0010), captured off
+    # the ToolUseBlock so the session can end the turn awaiting-approval. None
+    # when no approval was requested this turn.
+    approval_summary: str | None = None
     # Assistant text streamed during the turn, accumulated so a DONE result with
     # an empty ``result`` can still deliver the model's answer. Reasoning models
     # routed through OpenRouter (e.g. z-ai/glm-5.2) emit the answer as a TextBlock
@@ -110,6 +115,14 @@ def _translate_assistant(
             events.append(ToolNote(text=f"running tool {block.name}", tool=block.name))
             if gen is not None:
                 gen.tool_span(block.name)
+            if block.name == APPROVAL_TOOL_NAME:
+                # A policy gate fired (ADR-0010). Capture the summary at the
+                # wire level so the real path (executed in-process tool) and
+                # the fake path (scripted ToolUseBlock) exercise one seam.
+                raw = block.input.get("summary") if isinstance(block.input, dict) else None
+                summary = str(raw or "").strip()
+                if summary:
+                    state.approval_summary = summary
             if classifier.is_side_effecting(block.name) and not state.side_effect_emitted:
                 events.append(
                     SideEffectFlag(tool=block.name, detail="non-idempotent tool executed")

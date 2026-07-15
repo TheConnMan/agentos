@@ -249,6 +249,54 @@ class DeploymentOut(BaseModel):
     deployed_at: datetime
 
 
+class ApprovalCreate(BaseModel):
+    """A durable approval request (#244), created by the worker when a run ends
+    awaiting-approval. ``dedupe_key`` is the triggering event id, so a
+    redelivered turn adopts the existing record instead of forking a second one."""
+
+    agent_id: uuid.UUID | None = None
+    conversation_id: str = Field(min_length=1)
+    author: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    reply_channel: str = Field(min_length=1)
+    reply_placeholder: str = Field(min_length=1)
+    reply_endpoint: str | None = None
+    dedupe_key: str = Field(min_length=1)
+    # Optional SLA: seconds from creation after which the record can only
+    # expire, never be approved or rejected.
+    expires_in_seconds: int | None = Field(default=None, gt=0)
+
+
+class ApprovalResolve(BaseModel):
+    """One resolution attempt. Exactly one attempt wins (compare-and-set);
+    the identity here is caller-asserted for now -- the server-side authorizer
+    (channel membership, self-approval block) lands with #246."""
+
+    decision: Literal["approved", "rejected"]
+    resolved_by: str = Field(min_length=1)
+    note: str | None = None
+
+
+class ApprovalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    agent_id: uuid.UUID | None
+    conversation_id: str
+    author: str
+    summary: str
+    reply_channel: str
+    reply_placeholder: str
+    reply_endpoint: str | None
+    dedupe_key: str
+    status: str
+    expires_at: datetime | None
+    resolved_by: str | None
+    resolution_note: str | None
+    created_at: datetime
+    resolved_at: datetime | None
+
+
 class WebhookResult(BaseModel):
     """The outcome of processing a GitHub webhook event."""
 

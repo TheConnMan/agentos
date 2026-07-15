@@ -18,8 +18,10 @@ from .github_checks import GitHubStatusReporter
 from .k8s import build_lazy_pod_lister, build_lazy_pod_log_reader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
+from .resumequeue import ResumeQueue
 from .routers import (
     agents,
+    approvals,
     bundles,
     config,
     control,
@@ -55,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
     app.state.eval_queue = EvalQueue(valkey)
+    app.state.resume_queue = ResumeQueue(valkey, stream=settings.runs_stream)
     app.state.github_reporter = GitHubStatusReporter(
         http_client,
         api_url=settings.github_api_url,
@@ -87,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router)
     app.include_router(state.router)
     app.include_router(memory.router)
+    app.include_router(approvals.router)
     return app
 
 

@@ -11,6 +11,7 @@ from .github_checks import GitHubStatusReporter
 from .k8s import PodLister, PodLogReader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
+from .resumequeue import ResumeQueue
 from .storage import ObjectStore
 
 
@@ -55,6 +56,11 @@ def get_github_reporter(request: Request) -> GitHubStatusReporter:
     return reporter
 
 
+def get_resume_queue(request: Request) -> ResumeQueue:
+    resume_queue: ResumeQueue = request.app.state.resume_queue
+    return resume_queue
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LangfuseDep = Annotated[LangfuseClient, Depends(get_langfuse)]
 StoreDep = Annotated[ObjectStore, Depends(get_store)]
@@ -63,3 +69,4 @@ PodListerDep = Annotated[PodLister, Depends(get_pod_lister)]
 KillSwitchDep = Annotated[KillSwitch, Depends(get_kill_switch)]
 EvalQueueDep = Annotated[EvalQueue, Depends(get_eval_queue)]
 GitHubReporterDep = Annotated[GitHubStatusReporter, Depends(get_github_reporter)]
+ResumeQueueDep = Annotated[ResumeQueue, Depends(get_resume_queue)]

@@ -25,6 +25,7 @@ from claude_agent_sdk import (
     SdkPluginConfig,
     TaskBudget,
 )
+from claude_agent_sdk.types import McpSdkServerConfig
 
 
 class ModelSession(Protocol):
@@ -62,6 +63,7 @@ def build_options(
     task_budget_hint: int | None = None,
     env: dict[str, str] | None = None,
     hooks: dict[str, list[HookMatcher]] | None = None,
+    mcp_servers: dict[str, McpSdkServerConfig] | None = None,
 ) -> ClaudeAgentOptions:
     """Assemble ClaudeAgentOptions for the session.
 
@@ -92,6 +94,8 @@ def build_options(
         # Empty/None means no bundle hooks; the SDK default applies. The event
         # keys are the SDK's HookEvent literals (we emit only "PreToolUse").
         hooks=cast("Any", hooks),
+        # In-process platform tools (the approval-request gate, ADR-0010).
+        mcp_servers=cast("Any", mcp_servers or {}),
     )
 
 

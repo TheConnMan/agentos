@@ -210,6 +210,7 @@ mod tests {
             version: PROTOCOL_VERSION.into(),
             text: text.into(),
             status,
+            approval_summary: None,
         }
     }
 

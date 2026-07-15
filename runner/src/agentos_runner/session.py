@@ -81,6 +81,25 @@ def _is_auth_rejection(message: object) -> bool:
     )
 
 
+def _apply_approval_override(final: Final, state: TurnState) -> Final:
+    """Flip a successful final to awaiting-approval when a gate fired (ADR-0010).
+
+    Only a DONE final is overridden: a failure, budget halt, or intentional
+    interrupt outranks a pending approval (the turn did not complete cleanly,
+    so suspending on it would strand a broken run behind a human decision).
+    The captured summary rides the final so the platform can persist it on the
+    durable Approval record.
+    """
+
+    if state.approval_summary and final.status is SessionStatus.DONE:
+        return Final(
+            text=final.text,
+            status=SessionStatus.AWAITING_APPROVAL,
+            approval_summary=state.approval_summary,
+        )
+    return final
+
+
 class SessionRunner:
     """Drives one model session, streaming ACI NDJSON for each inbound frame."""
 
@@ -374,7 +393,7 @@ class SessionRunner:
                         for line in self._budget_halt_lines():
                             yield line
                         return
-                    final = self._reclassify(outbound)
+                    final = _apply_approval_override(self._reclassify(outbound), state)
                     self._status = final.status
                     self._turn_open = False
                     # Capture the delivered reply so run_turn can persist the
@@ -400,9 +419,10 @@ class SessionRunner:
             if self._interrupt_requested
             else SessionStatus.DONE
         )
-        self._status = status
+        final = _apply_approval_override(Final(text="", status=status), state)
+        self._status = final.status
         self._turn_open = False
-        yield to_ndjson_line(Final(text="", status=status))
+        yield to_ndjson_line(final)
 
     def _budget_halt_lines(self) -> list[str]:
         """The error+final pair emitted whenever the output-token ceiling trips.

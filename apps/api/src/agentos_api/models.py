@@ -22,6 +22,17 @@ class Environment(enum.StrEnum):
     dev = "dev"
 
 
+class ApprovalStatus(enum.StrEnum):
+    """Lifecycle of a durable approval (ADR-0010). Stored as a plain string
+    column (like ``Deployment.status``) so the resolve-once compare-and-set is
+    a conditional UPDATE on the value, with these constants as the vocabulary."""
+
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    expired = "expired"
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -102,6 +113,59 @@ class Deployment(Base):
     commit_sha: Mapped[str | None] = mapped_column(default=None)
     status: Mapped[str] = mapped_column(server_default="active")
     deployed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class Approval(Base):
+    """A durable human-approval request (#244, ADR-0010).
+
+    Created by the worker when a run ends ``awaiting-approval``; the session is
+    suspended while this row is pending, so the record must carry everything a
+    later resume needs (the conversation key and the reply handle) -- the pause
+    survives full component restarts because nothing lives in memory.
+
+    Resolve-once claim semantics: resolution is a conditional UPDATE guarded on
+    ``status = 'pending'`` (compare-and-set), so exactly one resolver wins and
+    losers are told who resolved it. ``dedupe_key`` (the triggering event id)
+    makes record creation idempotent under the worker's at-least-once redelivery.
+    """
+
+    __tablename__ = "approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # Nullable: a run without a deployment binding (the generic/dev path) can
+    # still gate on a human decision.
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.agents.id", ondelete="CASCADE"),
+        index=True,
+        default=None,
+    )
+    # The thread key routing keeps one live session per (the worker's
+    # conversation_id); the resume turn is enqueued back onto it.
+    conversation_id: Mapped[str] = mapped_column(index=True)
+    # Who authored the turn that raised the request. #246 blocks self-approval
+    # against this field; recorded now so existing rows carry it.
+    author: Mapped[str]
+    # The human-readable statement of what needs approval, from the run's
+    # approval request (the ACI final's approval_summary).
+    summary: Mapped[str]
+    # The reply handle of the requesting turn, replayed onto the resume turn so
+    # the resumed run streams into the same placeholder message.
+    reply_channel: Mapped[str]
+    reply_placeholder: Mapped[str]
+    reply_endpoint: Mapped[str | None] = mapped_column(default=None)
+    # Idempotency: the triggering event id. A reclaimed/redelivered turn that
+    # re-requests the same approval adopts the existing row instead of forking.
+    dedupe_key: Mapped[str] = mapped_column(unique=True)
+    status: Mapped[str] = mapped_column(server_default=ApprovalStatus.pending, index=True)
+    # Optional SLA: past this instant the record can no longer be approved or
+    # rejected; a resolve attempt flips it to expired instead.
+    expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    resolved_by: Mapped[str | None] = mapped_column(default=None)
+    resolution_note: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(default=None)
 
 
 class WorkflowStateEntry(Base):

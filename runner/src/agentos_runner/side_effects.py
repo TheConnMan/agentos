@@ -20,6 +20,9 @@ from collections.abc import Iterable
 
 # Built-in Claude Code tools that only read state. Names match the SDK's tool
 # identifiers. Anything not listed here is treated as side-effecting.
+# The platform approval-request tool (ADR-0010) is explicitly allowlisted: it
+# executes no real-world action (it only marks the turn awaiting-approval), and
+# flagging it would block the no-retry rule for the very turns approvals pause.
 DEFAULT_IDEMPOTENT_TOOLS: frozenset[str] = frozenset(
     {
         "Read",
@@ -30,6 +33,7 @@ DEFAULT_IDEMPOTENT_TOOLS: frozenset[str] = frozenset(
         "WebFetch",
         "WebSearch",
         "TodoRead",
+        "mcp__agentos__request_approval",
     }
 )
 

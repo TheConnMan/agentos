@@ -131,8 +131,8 @@ async def _truncate() -> None:
         async with engine.begin() as conn:
             await conn.execute(
                 text(
-                    "TRUNCATE agentos.deployments, agentos.agent_versions, "
-                    "agentos.agents CASCADE"
+                    "TRUNCATE agentos.approvals, agentos.deployments, "
+                    "agentos.agent_versions, agentos.agents CASCADE"
                 )
             )
     finally:

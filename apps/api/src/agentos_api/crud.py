@@ -1,13 +1,14 @@
-"""Database access helpers for agents, versions, and deployments."""
+"""Database access helpers for agents, versions, deployments, and approvals."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent, AgentVersion, Deployment, Environment
-from .schemas import AgentCreate, DeploymentCreate, VersionCreate
+from .models import Agent, AgentVersion, Approval, ApprovalStatus, Deployment, Environment
+from .schemas import AgentCreate, ApprovalCreate, DeploymentCreate, VersionCreate
 
 
 async def get_version(
@@ -258,3 +259,121 @@ async def get_deployment(
     session: AsyncSession, deployment_id: uuid.UUID
 ) -> Deployment | None:
     return await session.get(Deployment, deployment_id)
+
+
+# -- approvals (#244, ADR-0010) -------------------------------------------------
+
+
+async def create_approval(session: AsyncSession, data: "ApprovalCreate") -> Approval:
+    """Insert a pending approval. Raises IntegrityError on a dedupe_key replay;
+    the router maps that to the existing record (idempotent creation)."""
+
+    expires_at = None
+    if data.expires_in_seconds is not None:
+        # Naive UTC, matching the DateTime columns (server_default func.now()
+        # stores naive timestamps in the session timezone, UTC in this stack).
+        expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(
+            seconds=data.expires_in_seconds
+        )
+    approval = Approval(
+        agent_id=data.agent_id,
+        conversation_id=data.conversation_id,
+        author=data.author,
+        summary=data.summary,
+        reply_channel=data.reply_channel,
+        reply_placeholder=data.reply_placeholder,
+        reply_endpoint=data.reply_endpoint,
+        dedupe_key=data.dedupe_key,
+        expires_at=expires_at,
+    )
+    session.add(approval)
+    await session.commit()
+    await session.refresh(approval)
+    return approval
+
+
+async def get_approval(session: AsyncSession, approval_id: uuid.UUID) -> Approval | None:
+    return await session.get(Approval, approval_id)
+
+
+async def get_approval_by_dedupe_key(
+    session: AsyncSession, dedupe_key: str
+) -> Approval | None:
+    result: Approval | None = await session.scalar(
+        select(Approval).where(Approval.dedupe_key == dedupe_key)
+    )
+    return result
+
+
+async def list_approvals(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    agent_id: uuid.UUID | None = None,
+    conversation_id: str | None = None,
+    limit: int = 50,
+) -> list[Approval]:
+    stmt = select(Approval).order_by(Approval.created_at.desc()).limit(limit)
+    if status is not None:
+        stmt = stmt.where(Approval.status == status)
+    if agent_id is not None:
+        stmt = stmt.where(Approval.agent_id == agent_id)
+    if conversation_id is not None:
+        stmt = stmt.where(Approval.conversation_id == conversation_id)
+    result = await session.scalars(stmt)
+    return list(result)
+
+
+async def claim_approval_resolution(
+    session: AsyncSession,
+    approval_id: uuid.UUID,
+    *,
+    decision: str,
+    resolved_by: str,
+    note: str | None,
+) -> Approval | None:
+    """The resolve-once compare-and-set: exactly one resolver wins.
+
+    A conditional UPDATE guarded on ``status = 'pending'`` claims the record;
+    concurrent attempts see zero rows updated and get None back (the router
+    tells them who won). This is the claim-race primitive of ADR-0010.
+    """
+
+    result = await session.execute(
+        update(Approval)
+        .where(Approval.id == approval_id, Approval.status == ApprovalStatus.pending)
+        .values(
+            status=decision,
+            resolved_by=resolved_by,
+            resolution_note=note,
+            resolved_at=func.now(),
+        )
+        .returning(Approval.id)
+    )
+    claimed = result.scalar_one_or_none()
+    await session.commit()
+    if claimed is None:
+        return None
+    approval = await session.get(Approval, approval_id)
+    if approval is not None:
+        await session.refresh(approval)
+    return approval
+
+
+async def expire_approval(
+    session: AsyncSession, approval_id: uuid.UUID
+) -> Approval | None:
+    """Flip a pending approval past its SLA to expired (same CAS guard, so an
+    in-flight resolution that already won is never overwritten)."""
+
+    result = await session.execute(
+        update(Approval)
+        .where(Approval.id == approval_id, Approval.status == ApprovalStatus.pending)
+        .values(status=ApprovalStatus.expired, resolved_at=func.now())
+        .returning(Approval.id)
+    )
+    claimed = result.scalar_one_or_none()
+    await session.commit()
+    if claimed is None:
+        return None
+    return await session.get(Approval, approval_id)

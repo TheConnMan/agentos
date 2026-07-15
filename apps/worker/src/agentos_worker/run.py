@@ -21,6 +21,7 @@ import redis
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from .approvals import ApprovalClient
 from .binding import BindingResolver
 from .bundle_store import BundleStore
 from .config import WorkerConfig
@@ -162,6 +163,9 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     )
     engine = create_async_engine(config.database_url, pool_pre_ping=True)
     binding = BindingResolver(engine, config)
+    # One API-lane HTTP client shared by the approval writer (#244) and the two
+    # eval-lane reporters below; httpx.AsyncClient is task-safe.
+    eval_http = httpx.AsyncClient(timeout=30.0)
     kernel = Kernel(
         substrate=substrate,
         runner=runner,
@@ -177,6 +181,9 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         markers=Markers(async_redis, config),
         config=config,
         binding=binding,
+        approvals=ApprovalClient(
+            api_base_url=config.api_base_url, api_key=config.api_key, client=eval_http
+        ),
     )
     killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
     kernel.attach_killswitch(killswitch)
@@ -194,7 +201,6 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         decode_responses=True,
         socket_timeout=config.valkey_socket_timeout_s,
     )
-    eval_http = httpx.AsyncClient(timeout=30.0)
     eval_consumer = EvalStreamConsumer(
         redis=eval_redis,
         config=config,

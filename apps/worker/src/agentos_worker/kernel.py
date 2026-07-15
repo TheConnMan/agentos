@@ -43,6 +43,7 @@ from aci_protocol import (
     ToolNote,
 )
 
+from .approvals import ApprovalBackendError, ApprovalCreator, ApprovalRequest
 from .behaviorpacks import (
     BehaviorPacks,
     NavPack,
@@ -78,6 +79,9 @@ class TurnOutcome:
     text: str = ""
     status: SessionStatus | None = None
     steered: bool = False
+    # The approval summary off an awaiting-approval final (ADR-0010), persisted
+    # onto the durable record by the pause path. None on every other status.
+    approval_summary: str | None = None
 
 
 @dataclass
@@ -108,6 +112,7 @@ class _StreamAccumulator:
     classification: str | None = None
     status: SessionStatus | None = None
     final_text: str | None = None
+    approval_summary: str | None = None
 
     def rendered(self) -> str:
         return self.final_text if self.final_text is not None else "".join(self.text_parts)
@@ -190,6 +195,7 @@ class Kernel:
         config: WorkerConfig,
         binding: BindingResolver | None = None,
         killswitch: KillSwitch | None = None,
+        approvals: ApprovalCreator | None = None,
     ) -> None:
         self._substrate = substrate
         self._runner = runner
@@ -202,6 +208,10 @@ class Kernel:
         # it resolves channel -> agent -> bundle/budget and gates killed agents.
         self._binding = binding
         self._killswitch = killswitch
+        # The approval-record backend (#244). When absent (unwired tests, a
+        # deployment without the API), an awaiting-approval run degrades to an
+        # escalation instead of suspending a session nothing could ever resume.
+        self._approvals = approvals
         # Which threads are running which agent, so a kill interrupts the agent's
         # live turns. Populated while a turn owner streams.
         self._active_by_agent: dict[uuid.UUID, set[str]] = {}
@@ -295,6 +305,14 @@ class Kernel:
                 outcome = await self._attempt(
                     qevent, release_order, boot_env, agent_id, nav, packs
                 )
+
+                if outcome.status is SessionStatus.AWAITING_APPROVAL:
+                    # A gate fired (ADR-0010): persist the durable record, then
+                    # suspend the session until a human resolves it. The event
+                    # is done -- the resolution arrives as its own queued turn.
+                    await self._pause_for_approval(qevent, outcome, agent_id)
+                    await self._markers.mark_done(event_id)
+                    return
 
                 if outcome.terminal_ok:
                     await self._markers.mark_done(event_id)
@@ -559,7 +577,80 @@ class Kernel:
         try:
             return await asyncio.to_thread(self._substrate.claim, thread, env=boot_env)
         except SuspendedThreadError:
-            return await asyncio.to_thread(self._substrate.resume, thread)
+            # Resume with the same bound boot env a fresh claim gets (bundle
+            # ref, budget, refs): a suspended pod was deleted (ADR-0003), so
+            # the replacement boots from env alone; without this it would come
+            # up generic, without the agent's bundle.
+            return await asyncio.to_thread(self._substrate.resume, thread, env=boot_env)
+
+    async def _pause_for_approval(
+        self, qevent: QueuedTurn, outcome: TurnOutcome, agent_id: uuid.UUID | None
+    ) -> None:
+        """Persist the approval, suspend the session, and leave the pending notice.
+
+        Ordering is deliberate: the durable record exists before the sandbox is
+        suspended, so there is never a suspended session without a record that
+        can wake it. The converse crash (record created, suspend or notice
+        lost) self-heals -- creation is idempotent on the event id, and the
+        resume path cold-claims a fresh sandbox regardless (ADR-0003).
+        """
+
+        thread = qevent.conversation_id
+        summary = outcome.approval_summary or outcome.text or "Approval requested"
+
+        if self._approvals is None:
+            await self._escalate(
+                qevent,
+                "The run requested an approval, but no approval backend is "
+                "configured on this worker; flagging for a human instead of pausing.",
+            )
+            return
+
+        try:
+            created = await self._approvals.create(
+                ApprovalRequest(
+                    agent_id=agent_id,
+                    conversation_id=thread,
+                    author=qevent.author,
+                    summary=summary,
+                    reply_channel=qevent.reply_handle.channel,
+                    reply_placeholder=qevent.reply_handle.placeholder,
+                    reply_endpoint=qevent.reply_handle.endpoint,
+                    dedupe_key=qevent.event_id,
+                )
+            )
+        except ApprovalBackendError as exc:
+            logger.warning("approval create failed for %s: %s", qevent.event_id, exc)
+            await self._escalate(
+                qevent,
+                "The run requested an approval, but the approval record could "
+                "not be created; flagging for a human instead of pausing.",
+            )
+            return
+
+        try:
+            await asyncio.to_thread(self._substrate.suspend, thread, history_ref=None)
+        except SandboxError as exc:
+            # Non-fatal: the record is durable and the resume path cold-claims a
+            # fresh sandbox either way; a still-live sandbox is just reaped when
+            # its route expires.
+            logger.warning("suspend failed for thread %s: %s", thread, exc)
+
+        base = outcome.text.strip()
+        notice = (
+            f"Awaiting approval ({created.id}): {summary}\n"
+            "The session is paused and will resume once an authorized member "
+            "resolves this request."
+        )
+        await self._sink.update(
+            channel=qevent.reply_handle.channel,
+            ts=qevent.reply_handle.placeholder,
+            text=f"{base}\n\n{notice}" if base else notice,
+            endpoint=qevent.reply_handle.endpoint,
+        )
+        logger.info(
+            "thread %s suspended awaiting approval %s", thread, created.id
+        )
 
     async def _consume(
         self, qevent: QueuedTurn, turn: TurnStream, nav: NavPack | None = None
@@ -615,6 +706,7 @@ class Kernel:
         elif isinstance(frame, Final):
             acc.status = frame.status
             acc.final_text = frame.text
+            acc.approval_summary = frame.approval_summary
 
     async def _finish(self, acc: _StreamAccumulator, reply: _ThrottledReply) -> TurnOutcome:
         if acc.status in (SessionStatus.DONE, SessionStatus.IDLE_AWAITING_INPUT):
@@ -625,6 +717,17 @@ class Kernel:
                 saw_side_effect=acc.saw_side_effect,
                 text=text,
                 status=acc.status,
+            )
+        if acc.status is SessionStatus.AWAITING_APPROVAL:
+            # Terminal for this turn, but the placeholder edit is deferred to
+            # _pause_for_approval so the pending notice can carry the created
+            # record's id (or the escalation, when no backend is wired).
+            return TurnOutcome(
+                terminal_ok=True,
+                saw_side_effect=acc.saw_side_effect,
+                text=acc.rendered(),
+                status=acc.status,
+                approval_summary=acc.approval_summary,
             )
         # classified-failure, or the stream ended with no final at all.
         return TurnOutcome(

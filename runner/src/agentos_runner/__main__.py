@@ -16,6 +16,7 @@ import anyio
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
+from .approval import build_approval_server
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .history import (
@@ -103,6 +104,10 @@ def build_runner(
             task_budget_hint=config.session.budget.task_budget_hint,
             env=sdk_env or {},
             hooks=bundle_hooks,
+            # Every session carries the in-process approval-request tool, so a
+            # skill can raise a policy gate (ADR-0010) without the bundle
+            # shipping its own MCP server for it.
+            mcp_servers={"agentos": build_approval_server()},
         )
         return ClaudeAgentSession(options)
 

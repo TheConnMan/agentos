@@ -343,6 +343,7 @@ async def kernel_harness(
     *,
     binding: object | None = None,
     with_killswitch: bool = False,
+    approvals: object | None = None,
     **config_overrides: object,
 ) -> AsyncIterator[Harness]:
     """Assemble a live kernel wired to a fake runner and real Valkey."""
@@ -385,6 +386,7 @@ async def kernel_harness(
         markers=Markers(async_redis, config),
         config=config,
         binding=binding,  # type: ignore[arg-type]
+        approvals=approvals,  # type: ignore[arg-type]
     )
     killswitch = None
     if with_killswitch:

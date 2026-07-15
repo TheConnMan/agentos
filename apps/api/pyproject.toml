@@ -18,6 +18,7 @@ dependencies = [
     "kubernetes>=31",
     "redis>=5.0",
     "plugin-format",
+    "aci-protocol",
 ]
 
 [build-system]

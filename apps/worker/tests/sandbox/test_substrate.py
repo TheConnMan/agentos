@@ -344,3 +344,32 @@ def test_claim_handle_carries_env_runner_token(
 
     assert handle.token == "tok-19"
     assert fake_k8s.claims[handle.claim_name].env[RUNNER_TOKEN_ENV] == "tok-19"
+
+
+def test_resume_merges_caller_boot_env(
+    substrate: SandboxSubstrate, fake_k8s: FakeSandboxClient
+) -> None:
+    # The approval resume path (#244): a suspended pod is gone (ADR-0003), so
+    # the replacement must boot with the same bound env a fresh claim gets
+    # (bundle ref, budget) or it comes up generic. Session identity and the
+    # recorded history ref are preserved on top of the caller env.
+    substrate.claim("T1")
+    substrate.suspend("T1", history_ref="h-42")
+
+    boot_env = {
+        "AGENTOS_BUNDLE_REF": "bundles/agent-v7.tgz",
+        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+        RUNNER_TOKEN_ENV: "tok-fresh",
+    }
+    resumed = substrate.resume("T1", env=boot_env)
+
+    env = fake_k8s.claims[resumed.claim_name].env
+    assert env["AGENTOS_BUNDLE_REF"] == "bundles/agent-v7.tgz"
+    assert env["AGENTOS_BUDGET"] == boot_env["AGENTOS_BUDGET"]
+    # A caller-minted token is kept (binding.boot_env mints one per claim).
+    assert env[RUNNER_TOKEN_ENV] == "tok-fresh"
+    # Session identity and the recorded history ref are preserved.
+    assert env[SESSION_ENV] == resumed.session_id
+    assert env[HISTORY_ENV] == "h-42"
+    # The caller's mapping is not mutated.
+    assert SESSION_ENV not in boot_env

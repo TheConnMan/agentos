@@ -35,6 +35,11 @@ class SessionStatus(StrEnum):
     DONE = "done"
     IDLE_AWAITING_INPUT = "idle-awaiting-input"
     CLASSIFIED_FAILURE = "classified-failure"
+    # The turn ended pending a human decision (ADR-0010, epic #22): the platform
+    # suspends the session on this status and resumes it when the durable
+    # approval record is resolved. Additive value; consumers that only handle
+    # the original three still parse every pre-existing payload.
+    AWAITING_APPROVAL = "awaiting-approval"
 
 
 # --- Inbound channel messages -------------------------------------------------
@@ -89,11 +94,19 @@ class ToolNote(_OutboundBase):
 
 
 class Final(_OutboundBase):
-    """The terminal response event, carrying the session status."""
+    """The terminal response event, carrying the session status.
+
+    ``approval_summary`` accompanies an ``awaiting-approval`` status (ADR-0010):
+    the human-readable statement of what needs approval, captured from the
+    run's approval request so the platform can persist it on the durable
+    ``Approval`` record and show it to the approver. ``None`` on every other
+    status.
+    """
 
     type: Literal["final"] = "final"
     text: str
     status: SessionStatus = SessionStatus.DONE
+    approval_summary: str | None = None
 
 
 class ErrorEvent(_OutboundBase):
