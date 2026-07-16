@@ -3,6 +3,7 @@ seam: Harness in-proc / ModelSession
 kind: CLEAN
 impls: 1 + fake
 grade: A-
+vision_row: Harness / runtime
 epics:
   - "#25"
 order: 2

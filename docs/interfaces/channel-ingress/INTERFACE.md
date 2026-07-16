@@ -3,6 +3,7 @@ seam: Channel / ingress (Slack)
 kind: SOFT
 impls: 1
 grade: C
+vision_row: Communication
 epics:
   - "#7"
   - "#19"

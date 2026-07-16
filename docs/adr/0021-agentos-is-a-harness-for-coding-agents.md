@@ -1,7 +1,17 @@
 # 21. AgentOS is a harness for coding agents: the CLI's primary user is Claude Code
 
 Date: 2026-07-11
-Status: Proposed
+Status: Accepted
+
+Status corrected from `Proposed` under
+[ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
+positioning is built and is asserted as settled in the repo `README.md`
+("AgentOS is a harness that runs the same immutable bundle..."). The agent-facing
+CLI contract ships: `cli/src/exit.rs` (the `ExitClass` 0/1/2/3 classes),
+`cli/src/guide.rs` (the `agentos guide` primer), and
+`cli/src/scaffold.rs` (which scaffolds a root `AGENTS.md` and an installable
+`.claude/skills/using-agentos/SKILL.md`). Later ADRs already extend it as a
+settled premise (e.g. 0038).
 
 ## Context
 

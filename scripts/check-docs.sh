@@ -9,9 +9,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-generated_docs=(docs/interfaces.md docs/interfaces)
+generated_docs=(docs/interfaces.md docs/interfaces docs/adr/README.md)
 
-echo "== regenerating the seam table and per-doc headers =="
+echo "== regenerating the seam table, the ADR index, and per-doc headers =="
 uv run python -m agentos_doclint --repo-root "$repo_root" --write
 
 echo "== checking for drift =="

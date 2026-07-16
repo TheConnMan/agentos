@@ -1,7 +1,15 @@
 # 38. An observability CLI helper for the agent-dev loop
 
 Date: 2026-07-16
-Status: Proposed
+Status: Accepted
+
+Status corrected from `Proposed` under
+[ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
+surface shipped. `cli/src/commands.rs` implements the `observability` verb over
+the `local_endpoints` helper in `cli/src/observability.rs`, dispatched from the
+`LocalAction::Observability` arm in `cli/src/main.rs`. The "ships no code" framing
+immediately below is left as written — it was true of the research ticket when the
+decision was taken, and the ADR records that moment, not today's tree.
 
 Proposes the agent-facing observability query surface for the CLI. Research and
 proposal only; it ships no code. Extends

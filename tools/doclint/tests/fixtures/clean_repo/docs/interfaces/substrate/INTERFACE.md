@@ -3,6 +3,7 @@ seam: Substrate
 kind: CLEAN
 impls: 2
 grade: A
+vision_row: Substrate
 epics:
   - "#86"
 order: 1

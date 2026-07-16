@@ -24,6 +24,10 @@ class SeamMeta:
     epics: list[str]
     order: int
     epic_note: str | None
+    # The swap-readiness row this seam's grade answers to. Optional at parse
+    # time because the eleven ungraded seams have no row; a *graded* seam
+    # without one is a lint finding, not a parse error (#541, AC A).
+    vision_row: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,7 @@ def parse_and_validate(text: str) -> tuple[SeamMeta | None, list[FieldError]]:
         return None, errors
 
     epic_note_raw = loaded.get("epic_note")
+    vision_row_raw = loaded.get("vision_row")
     meta = SeamMeta(
         seam=str(loaded["seam"]),
         kind=str(loaded["kind"]),
@@ -108,5 +113,6 @@ def parse_and_validate(text: str) -> tuple[SeamMeta | None, list[FieldError]]:
         epics=epics,
         order=order_value,
         epic_note=None if epic_note_raw is None else str(epic_note_raw),
+        vision_row=None if vision_row_raw is None else str(vision_row_raw),
     )
     return meta, []

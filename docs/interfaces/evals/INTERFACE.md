@@ -3,6 +3,7 @@ seam: Evals (case + scorer)
 kind: SOFT
 impls: 2 scorers (grader family + trajectory matcher)
 grade: B
+vision_row: Evals
 epics:
   - "#8"
   - "#26"

@@ -91,3 +91,56 @@ outbound message or its interaction intent.
 Starter prompts are bundle metadata (`starterPrompts`), not response actions and
 not hardcoded into the TUI. They disappear after the first turn unless the agent
 returns a new interaction.
+
+## Implementations today
+
+Two renderers consume the same `OutboundMessage`, and neither leaks its widgets
+back into the contract:
+
+1. **Slack (Block Kit)** — `apps/worker/src/agentos_worker/blocks.py`. The worker
+   parses the `agentos-reply` envelope out of the runner's final text
+   (`apps/worker/src/agentos_worker/blocks.py::parse_reply`), maps it onto the
+   internal `apps/worker/src/agentos_worker/blocks.py::Reply` shape
+   (`apps/worker/src/agentos_worker/blocks.py::_reply_from_message`), and renders
+   Block Kit sections/buttons via
+   `apps/worker/src/agentos_worker/blocks.py::to_blocks`. `apps/worker/src/agentos_worker/blocks.py::render`
+   is the fallback boundary: anything that is not a complete, valid envelope
+   degrades to plain text, so a half-streamed block never shows raw JSON. Slack's
+   3000-char section cap is absorbed here by
+   `apps/worker/src/agentos_worker/blocks.py::chunk`, not pushed onto the agent.
+2. **Terminal (TUI selector)** — `cli/src/channel.rs`. It parses the same fence
+   (`REPLY_FENCE`) into a `TerminalMessage` of plain lines plus actions, which the
+   TUI renders as a numbered selector per the TUI behavior above.
+
+The split is the point: Block Kit lives only in `blocks.py`, the numbered selector
+only in `channel.rs`, and the agent authors neither.
+
+## Known leakage
+
+- **The terminal renderer is a hand-written mirror, not generated.** The source of
+  truth is the Pydantic model in
+  `packages/channel-protocol/src/channel_protocol/models.py` with a committed JSON
+  Schema (`packages/channel-protocol/schema/channel-protocol.schema.json`), but
+  `channel-protocol` ships **no Rust binding**. `cli/src/channel.rs` re-declares the
+  wire shape by hand (`#[serde(deny_unknown_fields)]` on each struct). Nothing gates
+  that mirror against the schema the way ADR-0017 gates the ACI's tri-language
+  contract, so a field added in Python is not mechanically caught here — and
+  `deny_unknown_fields` means the mirror *rejects* the new field rather than
+  ignoring it. This is the seam's real drift risk, and it is why "2 renderers" does
+  not imply "2 generated adapters".
+- **The envelope is a text-channel workaround.** ACI has no native
+  semantic-message event, so the message rides inside the runner's final text as a
+  fenced block. Every adapter therefore carries fence-parsing and partial-envelope
+  suppression that a native event would delete. Named in "ACI envelope" above as
+  explicitly interim.
+- **Not separately graded** — this seam is the interaction half of ADR-0020 and is
+  not one of the six swap-readiness Jobs. The channel *ingress/egress* swap story is
+  graded, and graded `C`, on the [channel-ingress](../channel-ingress/INTERFACE.md)
+  seam. Read that grade as the honest one for "can we add a second channel"; this
+  file only covers the rendering-free message contract.
+
+## Cross-links
+
+- **ADR(s):** [ADR-0020](../../adr/0020-message-port-rendering-free-channel-interface.md) — the message port: a rendering-free channel interface with capability negotiation (this file is its interaction half); [ADR-0017](../../adr/0017-tri-language-contract-codegen.md) — the tri-language codegen pattern this seam's Rust mirror does **not** yet follow
+- **Sibling seams:** [channel-ingress](../channel-ingress/INTERFACE.md) — the graded (`C`) ingress/egress swap story; [aci-producer](../aci-producer/INTERFACE.md) — the frozen ACI the envelope currently tunnels through
+- **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — the interaction contract is not one of the six swap-readiness Jobs; not separately graded

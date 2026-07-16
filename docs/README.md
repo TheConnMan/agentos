@@ -15,7 +15,7 @@ git history (`git log -- docs/`).
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md): the as-built architecture reference
   (the deep "what talks to what," with file:line citations). Start here for
   detail.
-- [`diagrams/`](diagrams/): three focused, presentation-grade flow docs, each a
+- [`diagrams/`](diagrams/): four focused, presentation-grade flow docs, each a
   single clean diagram with narration. Start here to explain the system to
   someone:
   - [`diagrams/message-flow.md`](diagrams/message-flow.md): how a message comes
@@ -24,6 +24,8 @@ git history (`git log -- docs/`).
     sandbox pod is built.
   - [`diagrams/aci.md`](diagrams/aci.md): the agent container interface, the
     frozen contract between the worker and the agent in the box.
+  - [`diagrams/seams.md`](diagrams/seams.md): the seam overlay — where the black
+    lines are, i.e. every port you could cut and what is plugged into it today.
 - [`architecture.md`](architecture.md): a redirect stub pointing at the root
   `ARCHITECTURE.md` above.
 - [`architecture-vision.md`](architecture-vision.md): the forward-looking
@@ -31,6 +33,9 @@ git history (`git log -- docs/`).
   adopted component's swap seam lives.
 - [`interfaces.md`](interfaces.md): the swappable-seam catalog (INTERFACE.md per
   black line) with the swap-readiness grade table.
+- [`behavior-packs.md`](behavior-packs.md): per-agent, opt-in UX touches (load
+  lines, capability tips, greeting/help) applied around a turn — why packs are
+  declarative data rather than code, and what is wired today.
 - [`operations.md`](operations.md): running a cluster install, plus
   operator-facing findings from early installs.
 - [`design/multi-dev-shared-cluster.md`](design/multi-dev-shared-cluster.md): the

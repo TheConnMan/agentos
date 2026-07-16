@@ -28,17 +28,20 @@ flowchart TB
     end
 
     subgraph sandbox["Sandbox substrate (agent-sandbox controller)"]
-        Pool["SandboxWarmPool<br/>pre-warmed pods"]
+        Tmpl["SandboxTemplate<br/>the pod spec claims build from"]
+        Pool["SandboxWarmPool<br/>referenced by name; replicas 0 by default"]
         Pod["Runner pod<br/>(one per live thread)"]
-        Pool -- "bind on claim" --> Pod
+        Tmpl -- "cold-create on claim" --> Pod
     end
 
     UI --> API
     API --> PG
     API --> MinIO
     Disp --> Valkey
+    Disp -- "GET /health preflight" --> API
     Worker --> Valkey
     Worker -- "create SandboxClaim" --> Pod
+    Pool -. "referenced by warmPoolRef;<br/>pre-warms pods only at replicas > 0" .-> Tmpl
     Pod -- "bundle-fetch init" --> MinIO
     Worker --> OTel
     Pod --> OTel
@@ -54,26 +57,45 @@ Kubernetes feature turns it into a ready agent at claim time:
 ```mermaid
 flowchart LR
     Worker["Worker<br/>KubernetesSandboxClient"]
-    Claim["SandboxClaim CRD"]
-    Pool["SandboxWarmPool<br/>(pre-warmed, replicas>0)"]
+    Claim["SandboxClaim CRD<br/>spec.warmPoolRef.name"]
+    Pool["SandboxWarmPool<br/>must exist; replicas 0 by default"]
+    Tmpl["SandboxTemplate<br/>the runner pod spec"]
     Init["init: bundle-fetch<br/>pull skill from MinIO"]
     Runner["Runner container<br/>Claude Code + skill + credential"]
 
     Worker -- "1. claim(thread)" --> Claim
-    Claim -- "2. bind a warm pod" --> Pool
-    Pool -- "3. start pod" --> Init
-    Init -- "4. bundle in place" --> Runner
-    Worker -- "5. POST /v1/event" --> Runner
+    Claim -- "2. resolve pool by name" --> Pool
+    Pool -- "3. cold-create from template" --> Tmpl
+    Tmpl -- "4. start pod" --> Init
+    Init -- "5. bundle in place" --> Runner
+    Worker -- "6. POST /v1/event" --> Runner
 ```
 
-1. The worker's **`KubernetesSandboxClient`** creates a **`SandboxClaim`** CRD.
-2. The controller binds a pod from the **`SandboxWarmPool`** (pre-warmed so the
-   claim is fast; `replicas: 0` means every claim fails `WarmPoolNotFound`).
-3. The pod's **`bundle-fetch` init container** pulls the skill bundle for this
+1. The worker's **`KubernetesSandboxClient`** creates a **`SandboxClaim`** CRD
+   naming a pool in `spec.warmPoolRef.name`
+   ([`apps/worker/src/agentos_worker/sandbox/k8s.py`](../../apps/worker/src/agentos_worker/sandbox/k8s.py)).
+2. The controller **resolves that pool by name**. The `SandboxWarmPool` object
+   must exist: with it absent every claim fails `Ready=False`
+   `reason=WarmPoolNotFound` and the run times out. This is why the chart always
+   renders the pool whenever the substrate is deployed, **including at
+   `replicas: 0`**.
+3. `replicas: 0` is the shipped default and does **not** break claims. It means
+   no pre-warmed pods, so the claim **cold-creates a sandbox from the
+   `SandboxTemplate`** — the normal path.
+4. The pod's **`bundle-fetch` init container** pulls the skill bundle for this
    channel from MinIO before the runner starts. It is **fail-closed**: if a
    bundle ref is set but the archive cannot be fetched, the pod does not start.
-4. The runner comes up as a ready agent and the worker drives it over
+5. The runner comes up as a ready agent and the worker drives it over
    [the ACI](aci.md).
+
+**The warm pool is a dev/fake-model fast path only.** Raising `replicas` above 0
+is for a fake-model dev pool, where an unbound warm pod boots cleanly. It does
+not speed up a real claim, for two independent reasons the chart states at the
+pool block in
+[`agent-sandbox.yaml`](../../charts/agentos/templates/agent-sandbox.yaml): a
+real-model warm pod has **no bundle** and crash-loops, and a real claim
+**cold-creates anyway** because per-claim env injection cannot bind a pre-warmed
+pod (the `envVarsInjectionPolicy: Overrides` gotcha).
 
 Pods are **warm for ~1 hour** after their last turn (see [message
 flow](message-flow.md)); after that the claim is released and the next turn on
@@ -92,18 +114,43 @@ These are on by default, not opt-in (ADR-0006):
 - **AVX / ClickHouse preflight** that blocks install when the CPU cannot run the
   chosen ClickHouse image.
   [`preflight-avx.yaml`](../../charts/agentos/templates/preflight-avx.yaml)
-- **One chart-managed Secret** holding the model credential, backing-store
-  passwords, Langfuse keys, the API key, the GitHub webhook secret, and Slack
-  tokens. [`secrets.yaml`](../../charts/agentos/templates/secrets.yaml)
+- **Two Secrets, deliberately separate.** The chart-managed **platform** Secret
+  holds the model credential, backing-store passwords, Langfuse keys, the API
+  key, the GitHub webhook secret, and Slack tokens
+  ([`secrets.yaml`](../../charts/agentos/templates/secrets.yaml)). **Per-agent
+  connector secrets live in their own Secret**
+  ([`agent-connector-secrets.yaml`](../../charts/agentos/templates/agent-connector-secrets.yaml)),
+  injected per claim by
+  [`inject_connector_secrets`](../../apps/worker/src/agentos_worker/binding.py).
+  The split is the point: one agent's connector token is **not** readable by
+  every component in the release. A platform Secret mounted into the API,
+  worker, and dispatcher would make every agent's third-party credential
+  ambiently available to all of them; blast radius is one agent instead.
 
 ## The same worker runs without Kubernetes
 
-The worker talks to a `SandboxClient` interface, not to Kubernetes directly.
+The worker talks to a `SandboxClient` **port**, not to Kubernetes directly.
+Everything on this page sits behind that one line:
+
+```mermaid
+flowchart LR
+    Worker["Worker kernel<br/>routing · budgets · kill switch · resume"]
+    Port{{"SandboxClient port<br/>claim · exec · release"}}
+    K8s["KubernetesSandboxClient<br/>SandboxClaim CRD -> runner pod"]
+    Docker["DockerSandboxClient<br/>runner image as a local container"]
+
+    Worker --> Port
+    Port --> K8s
+    Port --> Docker
+```
+
 Swap `KubernetesSandboxClient` for `DockerSandboxClient` and the same worker runs
 the same runner image as a local Docker container — a full backend on a laptop,
 no cluster. Everything above that seam (routing, budgets, kill switch, resume)
 is identical. That substrate-agnosticism is the load-bearing design property;
-see [`ARCHITECTURE.md` §3](../../ARCHITECTURE.md).
+see [`ARCHITECTURE.md` §3](../../ARCHITECTURE.md). It is one of the seams
+catalogued in [the interface catalog](../interfaces.md) and drawn together in
+[the seam overlay](seams.md).
 
 ## Where this lives in the code
 

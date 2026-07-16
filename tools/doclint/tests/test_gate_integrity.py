@@ -14,6 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from agentos_doclint import main
+
 from .conftest import RunLint, write
 
 
@@ -92,6 +96,57 @@ def test_finding_line_is_true_physical_line_in_paragraph(
     assert code != 0
     assert "docs/lines.md:3:" in out
     assert "pkg/ghost/third.py" in out
+
+
+def test_deleted_adr_index_fails(clean_repo: Path, run_lint: RunLint) -> None:
+    # Defect 2: the gate verified what was written and never what was missing.
+    # A commit that deletes the ADR index used to sail through -- the check
+    # returned no finding for an absent file, and `scripts/check-docs.sh` diffs
+    # the working tree against the current commit, so the deletion was already
+    # "committed" by the time the gate looked. That is the same defect species
+    # this ticket exists to fix, and it is not cosmetic: the index's absence is
+    # the direct cause of the three number collisions renumbered here. With no
+    # list, "the next free number" is an `ls` against a possibly stale branch.
+    (clean_repo / "docs/adr/README.md").unlink()
+    code, out = run_lint(clean_repo)
+    assert code != 0
+    assert "docs/adr/README.md" in out
+    assert "missing" in out.lower()
+
+
+def test_deleted_root_doc_fails(clean_repo: Path, run_lint: RunLint) -> None:
+    # The same defect as the ADR index above, at the other required artifact this
+    # ticket adds to the gate. The root allowlist was walked with an `.is_file()`
+    # filter, so a commit deleting ARCHITECTURE.md -- the doc README.md and
+    # llms.txt point release readers at, and the reason #541 exists -- silently
+    # emptied the lint list for it: zero findings, exit 0. "The gate verifies
+    # what is written, never what is missing" is precisely the hole; an
+    # allowlisted root doc that does not resolve must be a finding, not an
+    # omission, or the widening is undone by a single `git rm`.
+    (clean_repo / "ARCHITECTURE.md").unlink()
+    code, out = run_lint(clean_repo)
+    assert code != 0
+    assert "ARCHITECTURE.md" in out
+    assert "missing" in out.lower()
+
+
+def test_write_mode_refuses_to_scaffold_a_deleted_adr_index(
+    clean_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The write half of the same hole: `--write` skipped the absent file too, so
+    # `scripts/check-docs.sh` (which runs --write, then diffs, then lints) had
+    # nothing to trip over at its first step. It now reports, and deliberately
+    # does NOT scaffold a replacement: a stub would silently discard the index's
+    # hand-written "claiming a number" prose, papering over the deletion at the
+    # one moment it should be loudest. The file must stay gone and the run must
+    # fail -- restoring it is a human decision.
+    index = clean_repo / "docs/adr/README.md"
+    index.unlink()
+    code = main(["--repo-root", str(clean_repo), "--write"])
+    out = capsys.readouterr().out
+    assert code != 0
+    assert "docs/adr/README.md" in out
+    assert not index.exists()
 
 
 def test_link_text_repo_path_to_real_file_passes(

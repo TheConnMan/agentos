@@ -2,7 +2,8 @@
 seam: Blob storage (S3/MinIO)
 kind: CLEAN
 impls: 1 backend (S3/MinIO) behind the ObjectStore port
-grade: A-
+grade: B+
+vision_row: Blob storage
 epics:
   - "#83"
 order: 9
@@ -13,7 +14,7 @@ order: 9
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
 
 <!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
-> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 backend (S3/MinIO) behind the ObjectStore port &nbsp;·&nbsp; **Swap-readiness grade:** A-
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 backend (S3/MinIO) behind the ObjectStore port &nbsp;·&nbsp; **Swap-readiness grade:** B+
 <!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.

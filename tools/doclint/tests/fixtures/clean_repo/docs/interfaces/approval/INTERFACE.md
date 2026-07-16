@@ -3,6 +3,7 @@ seam: Approval
 kind: SOFT
 impls: 1 + fake
 grade: B+
+vision_row: Approval
 epics:
   - "#430"
   - "ADR-0035"

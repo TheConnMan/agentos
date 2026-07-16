@@ -12,12 +12,12 @@ and the eval issues under it. Read
 [ADR-0021](0021-agentos-is-a-harness-for-coding-agents.md) first: evals are the
 contract the harness's parity promise is measured against.
 
-[ADR-0029](0029-llm-as-a-verifier-grader-and-progress-signal.md) extends this ADR
+[ADR-0042](0042-llm-as-a-verifier-grader-and-progress-signal.md) extends this ADR
 with the **semantic** grader (`GraderKind.verifier`) and supersedes one point of it:
 this ADR's rejection of an LLM judge inside the frozen enum. The two divide by case
 type — deterministic graders here assert what a trajectory makes checkable (a tool
-was called, a gate fired); ADR-0029's verifier judges correctness where no string
-match exists. ADR-0029 depends on the trajectory-forwarding decided here, so this
+was called, a gate fired); ADR-0042's verifier judges correctness where no string
+match exists. ADR-0042 depends on the trajectory-forwarding decided here, so this
 ADR's Phase 1 is its prerequisite. Everything else below stands.
 
 ## Context
@@ -230,9 +230,9 @@ one over a trajectory grader.
   ([#389](https://github.com/curie-eng/agentos/issues/389)).
 
   **Semantic grading is out of scope here and governed by
-  [ADR-0029](0029-llm-as-a-verifier-grader-and-progress-signal.md).** This ADR
+  [ADR-0042](0042-llm-as-a-verifier-grader-and-progress-signal.md).** This ADR
   originally rejected an LLM judge inside the frozen enum on reproducibility
-  grounds; ADR-0029 supersedes that specific rejection with a `GraderKind.verifier`
+  grounds; ADR-0042 supersedes that specific rejection with a `GraderKind.verifier`
   whose continuous scoring and `K` repeated evaluations answer the objection on the
   evidence (Kwok et al., arXiv:2607.05391). The division of labor is by **case
   type, not by preference**: deterministic graders assert the mechanical facts a
@@ -276,7 +276,7 @@ unit-tested but no runnable path reaches it.
 | Fake-model run cannot yield an agent-quality green | **not built** | #517 |
 | Scorer seam above the frozen port | **built** | #261 |
 | `TrajectoryScorer` (5 modes) | **built but inert** | #389 |
-| Semantic grader (`GraderKind.verifier`) | **not built** — see ADR-0029 | #478 |
+| Semantic grader (`GraderKind.verifier`) | **not built** — see ADR-0042 | #478 |
 | Trace promotion: input capture + anonymization | **built** | #259 |
 | Trace promotion: trajectory capture + curated assertion | **not built** | #26 |
 | Trace promotion: trace-id provenance as a field | **not built** (id convention only) | #26 |
@@ -336,12 +336,12 @@ Phases are sequenced by leverage-over-risk, not by which is most interesting.
 - **Add an `llm-judge` value to the frozen `GraderKind` enum now.** Originally
   rejected on the grounds that an LLM judge is non-deterministic and belongs above
   the frozen grader port as a named scorer, not inside the closed enum that
-  eval-as-CI's reproducibility depends on. **Superseded by ADR-0029 on this point.**
-  That rejection treated the judge's non-determinism as disqualifying; ADR-0029
+  eval-as-CI's reproducibility depends on. **Superseded by ADR-0042 on this point.**
+  That rejection treated the judge's non-determinism as disqualifying; ADR-0042
   shows it is a knob rather than a property — a continuous reward computed as the
   expectation over the scoring-token distribution, averaged over `K` repeated
   evaluations (variance `O(1/K)`) and `C` criteria, is reproducible enough to gate
-  on. The rest of this ADR is unaffected: ADR-0029 extends it and depends on the
+  on. The rest of this ADR is unaffected: ADR-0042 extends it and depends on the
   trajectory-forwarding decided in axis 2.
 - **Fix fake-model false-green with a tool-call grader.** Rejected on the facts: the
   fake emits a scripted `ToolUseBlock`, so it greens a tool-call grader exactly as it

@@ -3,6 +3,7 @@ seam: Relational DB (Postgres)
 kind: SOFT
 impls: "1"
 grade: A-
+vision_row: Relational DB
 epics:
   - "#84"
 order: 10
@@ -36,8 +37,8 @@ honoring the models/migrations verbatim:
 
 - **DSN + schema** (`apps/api/src/agentos_api/db.py::SCHEMA`, `apps/api/src/agentos_api/db.py::create_engine`): `SCHEMA = get_settings().db_schema` (default `"agentos"`, `apps/api/src/agentos_api/config.py::Settings`); the engine is built from `database_url` (env `DATABASE_URL`) via `create_async_engine(..., pool_pre_ping=True)`.
 - **Schema-scoped metadata** (`apps/api/src/agentos_api/db.py::Base`): `Base.metadata = MetaData(schema=SCHEMA)` — every table is qualified into the `agentos` schema.
-- **Models** (`apps/api/src/agentos_api/models.py`): `apps/api/src/agentos_api/models.py::Agent` (table `agents`), `apps/api/src/agentos_api/models.py::AgentVersion` (table `agent_versions`), `apps/api/src/agentos_api/models.py::Deployment` (table `deployments`), plus the `apps/api/src/agentos_api/models.py::Environment` StrEnum.
-- **Migrations**: 5 Alembic revisions in `apps/api/alembic/versions/` (`0001_initial` → `0005_behavior_packs`); the target DB must apply this chain.
+- **Models** (`apps/api/src/agentos_api/models.py`): `apps/api/src/agentos_api/models.py::Agent` (table `agents`), `apps/api/src/agentos_api/models.py::AgentVersion` (table `agent_versions`), `apps/api/src/agentos_api/models.py::Deployment` (table `deployments`), `apps/api/src/agentos_api/models.py::Approval` (table `approvals`), `apps/api/src/agentos_api/models.py::ApprovalAuditEntry` (table `approval_audit_entries`), and `apps/api/src/agentos_api/models.py::WorkflowStateEntry` (table `workflow_state_entries`), plus the `apps/api/src/agentos_api/models.py::Environment` and `apps/api/src/agentos_api/models.py::ApprovalStatus` StrEnums. The authoritative list is the set of `Base` subclasses in that module; read it there rather than trusting a count here.
+- **Migrations**: the target DB must apply the **whole Alembic chain in `apps/api/alembic/versions/`**, in revision order, ending at `alembic heads`. The chain grows with the product, so it is deliberately not enumerated here: `ls apps/api/alembic/versions/` is the list, and `alembic heads` is the tip a conforming DB must reach. A single head is the invariant — a fork means two branches each added a migration (rebase and merge the heads before swapping anything).
 
 ## Implementations today
 

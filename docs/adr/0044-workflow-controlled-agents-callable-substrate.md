@@ -1,4 +1,4 @@
-# 39. Workflow-controlled agents run on AgentOS as a callable substrate first, a unified plane only on demand
+# 44. Workflow-controlled agents run on AgentOS as a callable substrate first, a unified plane only on demand
 
 Date: 2026-07-16
 

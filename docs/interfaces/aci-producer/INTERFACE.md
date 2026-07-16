@@ -3,6 +3,7 @@ seam: ACI producer (frozen protocol)
 kind: CLEAN, frozen
 impls: 1 + reference
 grade: A-
+vision_row: Harness / runtime
 epics:
   - "#25"
   - "#47"
