@@ -1265,18 +1265,49 @@ pub struct AgentActionOpts {
     pub dry_run: bool,
 }
 
+/// Output of `<tier> kill <agent>`: the dry-run plan, or the resulting kill
+/// state. Owns its data (agent name) so `to_json` / `render` outlive the
+/// `ApiClient`. The json-vs-human choice is made once, in `Ui::emit` (#456).
+#[derive(Debug)]
+pub enum KillOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done { agent: String, killed: bool },
+}
+
+impl crate::ui::CliOutput for KillOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            KillOutput::DryRun(plan) => plan.to_json(),
+            KillOutput::Done { agent, killed } => {
+                serde_json::json!({"agent": agent, "killed": killed})
+            }
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            KillOutput::DryRun(plan) => plan.render(ui),
+            KillOutput::Done { agent, killed } => {
+                ui.payload(&format!("agent {agent} killed (killed={killed})"));
+                ui.note("Run `agentos cluster resume <agent>` to bring it back.");
+            }
+        }
+    }
+}
+
 /// `agentos cluster kill <agent> --yes`: flip the agent kill switch on
 /// (`POST /agents/{id}/kill`). Destructive (it stops the agent's runs), so it
-/// refuses without `--yes`, mirroring `cluster down`. `--dry-run` prints the
+/// refuses without `--yes`, mirroring `cluster down`. `--dry-run` returns the
 /// plan and makes no request.
-pub async fn kill(opts: AgentActionOpts, yes: bool) -> Result<()> {
+pub async fn kill(opts: AgentActionOpts, yes: bool) -> Result<KillOutput> {
     let ui = crate::ui::ui();
     if opts.dry_run {
-        ui.payload_plain(&format!(
-            "POST {}/agents/<id>/kill  (would resolve agent {:?} first)",
-            opts.api_url, opts.agent
-        ));
-        return Ok(());
+        return Ok(KillOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "POST {}/agents/<id>/kill  (would resolve agent {:?} first)",
+                opts.api_url, opts.agent
+            )],
+        }));
     }
     if !yes {
         return Err(crate::exit::CliError::usage(format!(
@@ -1300,25 +1331,52 @@ pub async fn kill(opts: AgentActionOpts, yes: bool) -> Result<()> {
             return Err(err);
         }
     };
-    ui.payload(&format!(
-        "agent {} killed (killed={})",
-        agent.name, state.killed
-    ));
-    ui.note("Run `agentos cluster resume <agent>` to bring it back.");
-    Ok(())
+    Ok(KillOutput::Done {
+        agent: agent.name,
+        killed: state.killed,
+    })
+}
+
+/// Output of `<tier> resume <agent>`: the dry-run plan, or the resulting kill
+/// state. Owns its data so it outlives the `ApiClient`.
+#[derive(Debug)]
+pub enum ResumeOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done { agent: String, killed: bool },
+}
+
+impl crate::ui::CliOutput for ResumeOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ResumeOutput::DryRun(plan) => plan.to_json(),
+            ResumeOutput::Done { agent, killed } => {
+                serde_json::json!({"agent": agent, "killed": killed})
+            }
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ResumeOutput::DryRun(plan) => plan.render(ui),
+            ResumeOutput::Done { agent, killed } => {
+                ui.payload(&format!("agent {agent} resumed (killed={killed})"));
+            }
+        }
+    }
 }
 
 /// `agentos cluster resume <agent>`: flip the agent kill switch off
 /// (`POST /agents/{id}/resume`). Non-destructive, so no `--yes` gate.
-/// `--dry-run` prints the plan and makes no request.
-pub async fn resume(opts: AgentActionOpts) -> Result<()> {
+/// `--dry-run` returns the plan and makes no request.
+pub async fn resume(opts: AgentActionOpts) -> Result<ResumeOutput> {
     let ui = crate::ui::ui();
     if opts.dry_run {
-        ui.payload_plain(&format!(
-            "POST {}/agents/<id>/resume  (would resolve agent {:?} first)",
-            opts.api_url, opts.agent
-        ));
-        return Ok(());
+        return Ok(ResumeOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "POST {}/agents/<id>/resume  (would resolve agent {:?} first)",
+                opts.api_url, opts.agent
+            )],
+        }));
     }
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
@@ -1334,26 +1392,65 @@ pub async fn resume(opts: AgentActionOpts) -> Result<()> {
             return Err(err);
         }
     };
-    ui.payload(&format!(
-        "agent {} resumed (killed={})",
-        agent.name, state.killed
-    ));
-    Ok(())
+    Ok(ResumeOutput::Done {
+        agent: agent.name,
+        killed: state.killed,
+    })
+}
+
+/// Output of `<tier> budget <agent>`: the dry-run plan, or the saved budget.
+/// `max_usd_per_day` is `None` when the platform default applies. Owns its data
+/// so it outlives the `ApiClient`.
+#[derive(Debug)]
+pub enum BudgetOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done {
+        agent: String,
+        max_usd_per_day: Option<f64>,
+    },
+}
+
+impl crate::ui::CliOutput for BudgetOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            BudgetOutput::DryRun(plan) => plan.to_json(),
+            BudgetOutput::Done {
+                agent,
+                max_usd_per_day,
+            } => serde_json::json!({"agent": agent, "max_usd_per_day": max_usd_per_day}),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            BudgetOutput::DryRun(plan) => plan.render(ui),
+            BudgetOutput::Done {
+                agent,
+                max_usd_per_day,
+            } => {
+                let usd = max_usd_per_day
+                    .map(|v| format!("${v}/day"))
+                    .unwrap_or_else(|| "platform default".to_string());
+                ui.payload(&format!("budget for {agent} set: max $/day {usd}"));
+            }
+        }
+    }
 }
 
 /// `agentos cluster budget <agent> --limit <n>`: set the agent budget
 /// (`PUT /agents/{id}/budget`). `--limit` sets the daily spend cap
 /// (`max_usd_per_day`, the primary `BudgetConfig` field the console surfaces as
 /// "Max $/day"); the per-run token cap is left at the platform default.
-/// `--dry-run` prints the plan and makes no request.
-pub async fn budget(opts: AgentActionOpts, limit: f64) -> Result<()> {
+/// `--dry-run` returns the plan and makes no request.
+pub async fn budget(opts: AgentActionOpts, limit: f64) -> Result<BudgetOutput> {
     let ui = crate::ui::ui();
     if opts.dry_run {
-        ui.payload_plain(&format!(
-            "PUT {}/agents/<id>/budget  {{\"max_usd_per_day\":{limit}}}  (would resolve agent {:?} first)",
-            opts.api_url, opts.agent
-        ));
-        return Ok(());
+        return Ok(BudgetOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "PUT {}/agents/<id>/budget  {{\"max_usd_per_day\":{limit}}}  (would resolve agent {:?} first)",
+                opts.api_url, opts.agent
+            )],
+        }));
     }
     if !limit.is_finite() || limit <= 0.0 {
         return Err(crate::exit::usage(format!(
@@ -1378,26 +1475,49 @@ pub async fn budget(opts: AgentActionOpts, limit: f64) -> Result<()> {
             return Err(err);
         }
     };
-    let usd = saved
-        .max_usd_per_day
-        .map(|v| format!("${v}/day"))
-        .unwrap_or_else(|| "platform default".to_string());
-    ui.payload(&format!("budget for {} set: max $/day {usd}", agent.name));
-    Ok(())
+    Ok(BudgetOutput::Done {
+        agent: agent.name,
+        max_usd_per_day: saved.max_usd_per_day,
+    })
+}
+
+/// Output of `<tier> delete <agent>`: the dry-run plan, or the deleted agent's
+/// name. Owns its data so it outlives the `ApiClient`.
+#[derive(Debug)]
+pub enum DeleteOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done { agent: String },
+}
+
+impl crate::ui::CliOutput for DeleteOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            DeleteOutput::DryRun(plan) => plan.to_json(),
+            DeleteOutput::Done { agent } => serde_json::json!({"agent": agent, "deleted": true}),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            DeleteOutput::DryRun(plan) => plan.render(ui),
+            DeleteOutput::Done { agent } => ui.payload(&format!("agent {agent} deleted")),
+        }
+    }
 }
 
 /// `agentos cluster delete <agent> --yes`: delete the agent
 /// (`DELETE /agents/{id}`). Destructive and irreversible, so it refuses without
-/// `--yes`, mirroring `cluster down`. `--dry-run` prints the plan and makes no
+/// `--yes`, mirroring `cluster down`. `--dry-run` returns the plan and makes no
 /// request.
-pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<()> {
+pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<DeleteOutput> {
     let ui = crate::ui::ui();
     if opts.dry_run {
-        ui.payload_plain(&format!(
-            "DELETE {}/agents/<id>  (would resolve agent {:?} first)",
-            opts.api_url, opts.agent
-        ));
-        return Ok(());
+        return Ok(DeleteOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "DELETE {}/agents/<id>  (would resolve agent {:?} first)",
+                opts.api_url, opts.agent
+            )],
+        }));
     }
     if !yes {
         return Err(crate::exit::CliError::usage(format!(
@@ -1418,79 +1538,215 @@ pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<()> {
             return Err(err);
         }
     }
-    ui.payload(&format!("agent {} deleted", agent.name));
-    Ok(())
+    Ok(DeleteOutput::Done { agent: agent.name })
+}
+
+/// Output of `<tier> versions <agent>`: the dry-run plan, the empty case, or the
+/// version list. Owns its data (agent name + cloned versions) so `to_json` /
+/// `render` outlive the `ApiClient`. The json-vs-human choice is made once, in
+/// `Ui::emit` (issue #456).
+pub enum VersionsOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Empty {
+        agent: String,
+    },
+    /// `versions` is held **newest-first**, normalized once by the `versions`
+    /// handler (the API returns them oldest-first). Both `to_json` and `render`
+    /// iterate it plainly, so any future constructor must preserve that order or
+    /// the two paths silently diverge.
+    List {
+        agent: String,
+        versions: Vec<crate::api::Version>,
+    },
+}
+
+impl crate::ui::CliOutput for VersionsOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            VersionsOutput::DryRun(plan) => plan.to_json(),
+            VersionsOutput::Empty { agent } => {
+                serde_json::json!({"agent": agent, "versions": []})
+            }
+            VersionsOutput::List { agent, versions } => {
+                let versions: Vec<serde_json::Value> = versions
+                    .iter()
+                    .map(|v| {
+                        serde_json::json!({
+                            "version_label": v.version_label,
+                            "commit_sha": v.commit_sha,
+                            "created_by": v.created_by,
+                            "created_at": v.created_at,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({"agent": agent, "versions": versions})
+            }
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            VersionsOutput::DryRun(plan) => plan.render(ui),
+            VersionsOutput::Empty { agent } => {
+                ui.payload(&format!("{agent} has no versions yet (deploy it first)"));
+            }
+            VersionsOutput::List { agent, versions } => {
+                ui.payload(&format!(
+                    "{agent} — {} version(s), newest first:",
+                    versions.len()
+                ));
+                for v in versions.iter() {
+                    let commit = v.commit_sha.as_deref().unwrap_or("-");
+                    let by = v.created_by.as_deref().unwrap_or("-");
+                    let at = v.created_at.as_deref().unwrap_or("-");
+                    ui.kv(
+                        &v.version_label,
+                        &format!("commit {commit}  by {by}  at {at}"),
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// `<tier> versions <agent>`: list the agent's immutable versions (newest first).
-pub async fn versions(opts: AgentActionOpts) -> Result<()> {
-    let ui = crate::ui::ui();
+pub async fn versions(opts: AgentActionOpts) -> Result<VersionsOutput> {
     if opts.dry_run {
-        ui.payload_plain(&format!(
-            "GET {}/agents/<id>/versions  (would resolve agent {:?} first)",
-            opts.api_url, opts.agent
-        ));
-        return Ok(());
+        return Ok(VersionsOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "GET {}/agents/<id>/versions  (would resolve agent {:?} first)",
+                opts.api_url, opts.agent
+            )],
+        }));
     }
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
     let versions = client.list_versions(&agent.id).await?;
     if versions.is_empty() {
-        ui.payload(&format!(
-            "{} has no versions yet (deploy it first)",
-            agent.name
-        ));
-        return Ok(());
+        return Ok(VersionsOutput::Empty { agent: agent.name });
     }
-    ui.payload(&format!(
-        "{} — {} version(s), newest first:",
-        agent.name,
-        versions.len()
-    ));
-    for v in versions.iter().rev() {
-        let commit = v.commit_sha.as_deref().unwrap_or("-");
-        let by = v.created_by.as_deref().unwrap_or("-");
-        let at = v.created_at.as_deref().unwrap_or("-");
-        ui.kv(
-            &v.version_label,
-            &format!("commit {commit}  by {by}  at {at}"),
-        );
+    // The API returns versions oldest-first; normalize to the documented
+    // newest-first order HERE, once, so the json and human paths cannot diverge.
+    Ok(VersionsOutput::List {
+        agent: agent.name,
+        versions: versions.into_iter().rev().collect(),
+    })
+}
+
+/// Output of `<tier> memory <agent>`: the dry-run plan, the empty case, or the
+/// learned-memory list. Owns its data so it outlives the `ApiClient`.
+pub enum MemoryOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Empty {
+        agent: String,
+    },
+    List {
+        agent: String,
+        entries: Vec<crate::api::MemoryEntry>,
+    },
+}
+
+impl crate::ui::CliOutput for MemoryOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            MemoryOutput::DryRun(plan) => plan.to_json(),
+            MemoryOutput::Empty { agent } => {
+                serde_json::json!({"agent": agent, "entries": []})
+            }
+            MemoryOutput::List { agent, entries } => {
+                let entries: Vec<serde_json::Value> = entries
+                    .iter()
+                    .map(|e| serde_json::json!({"index": e.index, "content": e.content}))
+                    .collect();
+                serde_json::json!({"agent": agent, "entries": entries})
+            }
+        }
     }
-    Ok(())
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            MemoryOutput::DryRun(plan) => plan.render(ui),
+            MemoryOutput::Empty { agent } => {
+                ui.payload(&format!("{agent} has no learned memory yet"));
+            }
+            MemoryOutput::List { agent, entries } => {
+                ui.payload(&format!("{agent} — {} memory entr(ies):", entries.len()));
+                for e in entries {
+                    ui.kv(&format!("#{}", e.index), &e.content);
+                }
+            }
+        }
+    }
 }
 
 /// `<tier> memory <agent>`: show what the agent has learned (its memory log).
-pub async fn memory(opts: AgentActionOpts) -> Result<()> {
-    let ui = crate::ui::ui();
+pub async fn memory(opts: AgentActionOpts) -> Result<MemoryOutput> {
     if opts.dry_run {
-        ui.payload_plain(&format!(
-            "GET {}/agents/<id>/memory  (would resolve agent {:?} first)",
-            opts.api_url, opts.agent
-        ));
-        return Ok(());
+        return Ok(MemoryOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "GET {}/agents/<id>/memory  (would resolve agent {:?} first)",
+                opts.api_url, opts.agent
+            )],
+        }));
     }
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
     let entries = client.list_memory(&agent.id).await?;
     if entries.is_empty() {
-        ui.payload(&format!("{} has no learned memory yet", agent.name));
-        return Ok(());
+        return Ok(MemoryOutput::Empty { agent: agent.name });
     }
-    ui.payload(&format!(
-        "{} — {} memory entr(ies):",
-        agent.name,
-        entries.len()
-    ));
-    for e in &entries {
-        ui.kv(&format!("#{}", e.index), &e.content);
+    Ok(MemoryOutput::List {
+        agent: agent.name,
+        entries,
+    })
+}
+
+/// Output of `<tier> approvals <agent>`: the dry-run plan, or the gate list
+/// (empty vec == "no tools gated"). Owns its data so it outlives the `ApiClient`.
+pub enum ApprovalsOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Gates {
+        agent: String,
+        gated_tools: Vec<String>,
+    },
+}
+
+impl crate::ui::CliOutput for ApprovalsOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ApprovalsOutput::DryRun(plan) => plan.to_json(),
+            ApprovalsOutput::Gates { agent, gated_tools } => {
+                serde_json::json!({"agent": agent, "gated_tools": gated_tools})
+            }
+        }
     }
-    Ok(())
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ApprovalsOutput::DryRun(plan) => plan.render(ui),
+            ApprovalsOutput::Gates { agent, gated_tools } => {
+                if gated_tools.is_empty() {
+                    ui.payload(&format!(
+                        "{agent}: no tools are gated (calls run without approval)"
+                    ));
+                } else {
+                    ui.payload(&format!("{agent} — {} gated tool(s):", gated_tools.len()));
+                    for tool in gated_tools {
+                        ui.kv("gated", tool);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// `<tier> approvals <agent> [--gate TOOL]... [--clear]`: view or set the tool
 /// names whose calls pause for human approval. No flags => show current gates.
-pub async fn approvals(opts: AgentActionOpts, gate: Vec<String>, clear: bool) -> Result<()> {
-    let ui = crate::ui::ui();
+pub async fn approvals(
+    opts: AgentActionOpts,
+    gate: Vec<String>,
+    clear: bool,
+) -> Result<ApprovalsOutput> {
     if clear && !gate.is_empty() {
         return Err(crate::exit::usage(
             "--clear cannot be combined with --gate (clear removes all gates)",
@@ -1506,12 +1762,14 @@ pub async fn approvals(opts: AgentActionOpts, gate: Vec<String>, clear: bool) ->
         } else {
             format!("GET {}/agents/<id> (show current gates)", opts.api_url)
         };
-        ui.payload_plain(&format!(
-            "{action}  (would resolve agent {:?} first)",
-            opts.agent
-        ));
-        return Ok(());
+        return Ok(ApprovalsOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "{action}  (would resolve agent {:?} first)",
+                opts.agent
+            )],
+        }));
     }
+    let ui = crate::ui::ui();
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
     let gates = if setting {
@@ -1530,25 +1788,43 @@ pub async fn approvals(opts: AgentActionOpts, gate: Vec<String>, clear: bool) ->
     } else {
         agent.approval_required_tools.clone().unwrap_or_default()
     };
-    if gates.is_empty() {
-        ui.payload(&format!(
-            "{}: no tools are gated (calls run without approval)",
-            agent.name
-        ));
-    } else {
-        ui.payload(&format!("{} — {} gated tool(s):", agent.name, gates.len()));
-        for tool in &gates {
-            ui.kv("gated", tool);
-        }
+    Ok(ApprovalsOutput::Gates {
+        agent: agent.name,
+        gated_tools: gates,
+    })
+}
+
+/// Output of `local observability`: the observability surfaces (name, url) to
+/// print. The browser-open side effect happens in the handler; this type only
+/// carries what `emit` renders.
+pub struct ObservabilityOutput {
+    pub surfaces: Vec<(String, String)>,
+}
+
+impl crate::ui::CliOutput for ObservabilityOutput {
+    fn to_json(&self) -> serde_json::Value {
+        let surfaces: Vec<serde_json::Value> = self
+            .surfaces
+            .iter()
+            .map(|(name, url)| serde_json::json!({"name": name, "url": url}))
+            .collect();
+        serde_json::json!({"surfaces": surfaces})
     }
-    Ok(())
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        for (name, url) in &self.surfaces {
+            ui.kv(name, url);
+        }
+        ui.payload("opened the local observability surfaces (start them with `agentos local up`)");
+    }
 }
 
 /// `local observability`: open (and print) the local platform's observability
 /// surfaces -- the AgentOS Console and the Langfuse UI. Best-effort browser open
-/// so it degrades to just the URLs on a headless host.
-pub async fn observability() -> Result<()> {
-    let ui = crate::ui::ui();
+/// so it degrades to just the URLs on a headless host. Under `--json` the
+/// consumer is a machine, so the browser-open side effect is skipped entirely
+/// (it would spawn tabs an agent never sees, and makes tests non-hermetic).
+pub async fn observability() -> Result<ObservabilityOutput> {
     let urls = [
         ("AgentOS Console", "http://localhost:28080/?api=1"),
         (
@@ -1561,19 +1837,22 @@ pub async fn observability() -> Result<()> {
     } else {
         "xdg-open"
     };
+    let open_browser = !crate::ui::ui().json();
+    let mut surfaces = Vec::with_capacity(urls.len());
     for (name, url) in urls {
-        ui.kv(name, url);
-        // Fire-and-forget: a missing opener (headless/CI) is not an error -- the
-        // URL is already printed above.
-        let _ = tokio::process::Command::new(opener)
-            .arg(url)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await;
+        if open_browser {
+            // Fire-and-forget: a missing opener (headless/CI) is not an error --
+            // the URL is printed by `render` either way.
+            let _ = tokio::process::Command::new(opener)
+                .arg(url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await;
+        }
+        surfaces.push((name.to_string(), url.to_string()));
     }
-    ui.payload("opened the local observability surfaces (start them with `agentos local up`)");
-    Ok(())
+    Ok(ObservabilityOutput { surfaces })
 }
 
 /// Reject a Slack channel value that is a `#name` rather than a channel ID.

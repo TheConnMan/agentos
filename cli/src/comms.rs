@@ -230,12 +230,13 @@ pub async fn comms(opts: CommsOpts) -> Result<()> {
     );
 
     if opts.common.dry_run {
-        for cmd in &cmds {
-            ui.payload_plain(&cmd.display());
-        }
-        for cmd in &rollout {
-            ui.payload_plain(&cmd.display());
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: cmds
+                .iter()
+                .chain(rollout.iter())
+                .map(|cmd| cmd.display())
+                .collect(),
+        });
         return Ok(());
     }
 
@@ -280,9 +281,9 @@ pub async fn local_comms(opts: LocalCommsOpts) -> Result<()> {
     };
 
     if opts.dry_run {
-        for cmd in &cmds {
-            ui.payload_plain(&cmd.display());
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: cmds.iter().map(|cmd| cmd.display()).collect(),
+        });
         return Ok(());
     }
 

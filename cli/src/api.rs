@@ -473,7 +473,9 @@ impl ApiClient {
             .context("decoding budget")
     }
 
-    /// List an agent's immutable versions, newest first: `GET /agents/{id}/versions`.
+    /// List an agent's immutable versions, ascending by `created_at` (oldest
+    /// first): `GET /agents/{id}/versions`. `commands::versions` reverses
+    /// this to newest-first before display/JSON output.
     pub async fn list_versions(&self, agent_id: &str) -> Result<Vec<Version>> {
         let resp = self
             .http

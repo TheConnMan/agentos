@@ -1229,9 +1229,9 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
         ));
     }
     if opts.common.dry_run {
-        for cmd in &cmds {
-            ui.payload_plain(&cmd.display());
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: cmds.iter().map(|cmd| cmd.display()).collect(),
+        });
         return Ok(());
     }
     require_on_path("helm")?;
@@ -1248,9 +1248,12 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
 pub async fn status(opts: CommonOpts) -> Result<()> {
     let ui = crate::ui::ui();
     if opts.dry_run {
-        for cmd in status_commands(&opts) {
-            ui.payload_plain(&cmd.display());
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: status_commands(&opts)
+                .iter()
+                .map(|cmd| cmd.display())
+                .collect(),
+        });
         return Ok(());
     }
     require_on_path("helm")?;
@@ -1324,9 +1327,9 @@ pub async fn down(opts: DownOpts) -> Result<()> {
     let ui = crate::ui::ui();
     let cmds = down_commands(&opts.common);
     if opts.common.dry_run {
-        for cmd in &cmds {
-            ui.payload_plain(&cmd.display());
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: cmds.iter().map(|cmd| cmd.display()).collect(),
+        });
         return Ok(());
     }
     ui.warn(&format!(

@@ -177,6 +177,19 @@ impl Ui {
         }
     }
 
+    /// The one success-path decision point (mirror of the centralized error emit
+    /// in `main.rs`): under `--json` emit the value's single JSON object to
+    /// stdout, otherwise render the human view. Handlers hand `emit` a
+    /// `CliOutput` and stop deciding how to render, so no verb can silently emit
+    /// empty stdout under `--json` (issue #456, ADR-0021).
+    pub fn emit(&self, out: &dyn CliOutput) {
+        if self.json {
+            self.emit_json(&out.to_json());
+        } else {
+            out.render(self);
+        }
+    }
+
     // -- styling helpers ---------------------------------------------------
 
     /// Wrap `s` in `style`'s ANSI codes when stdout color is on, else raw.
@@ -446,6 +459,43 @@ impl Ui {
             " ".repeat(pad + 1),
             self.paint_err(self.dim(), elapsed)
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CliOutput: the success-path emit contract
+// ---------------------------------------------------------------------------
+
+/// A command result that knows both how to serialize to one JSON object (for
+/// `--json`) and how to render itself for humans. `Ui::emit` picks between them,
+/// so the json-vs-human decision lives in exactly one place. Implement this for
+/// any verb's output rather than calling a stdout emitter directly.
+pub trait CliOutput {
+    /// The single JSON object emitted under `--json`.
+    fn to_json(&self) -> serde_json::Value;
+    /// The human render (stdout payload lines) when not under `--json`.
+    fn render(&self, ui: &Ui);
+}
+
+/// A generic `--dry-run` plan: the shell command lines a verb WOULD run. Its
+/// JSON is `{"dry_run":true,"plan":[lines]}`; its human render is the same lines
+/// verbatim (so operator dry-run output is byte-identical to before). The lines
+/// come straight from `OpsCommand::display()` (already credential-masked), so
+/// this type never re-derives argv or reads a raw secret.
+#[derive(Debug)]
+pub struct DryRunPlan {
+    pub lines: Vec<String>,
+}
+
+impl CliOutput for DryRunPlan {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "dry_run": true, "plan": self.lines })
+    }
+
+    fn render(&self, ui: &Ui) {
+        for line in &self.lines {
+            ui.payload_plain(line);
+        }
     }
 }
 

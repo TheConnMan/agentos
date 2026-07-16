@@ -1067,6 +1067,15 @@ async fn main() {
     }
 }
 
+/// Route a handler's structured output through the one success-path emit
+/// (`Ui::emit`), mirroring the centralized error emit in `main`. The read verbs
+/// return a `CliOutput` instead of touching stdout themselves, so the
+/// json-vs-human decision is made in exactly one place (issue #456).
+fn emit<T: agentos::ui::CliOutput>(out: T) -> Result<()> {
+    ui::ui().emit(&out);
+    Ok(())
+}
+
 /// Dispatch one parsed command. No subcommand opens the interactive terminal,
 /// matching `agentos interactive` / `agentos ui`. Returns the command's
 /// `Result`; `main`
@@ -1349,29 +1358,29 @@ async fn run(command: Option<Command>) -> Result<()> {
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::versions(AgentActionOpts {
                     api_url,
                     api_key,
                     agent,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
             LocalAction::Memory {
                 agent,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::memory(AgentActionOpts {
                     api_url,
                     api_key,
                     agent,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
             LocalAction::Approvals {
                 agent,
                 gate,
@@ -1379,7 +1388,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::approvals(
                     AgentActionOpts {
                         api_url,
@@ -1390,16 +1399,16 @@ async fn run(command: Option<Command>) -> Result<()> {
                     gate,
                     clear,
                 )
-                .await
-            }
-            LocalAction::Observability => commands::observability().await,
+                .await?,
+            ),
+            LocalAction::Observability => emit(commands::observability().await?),
             LocalAction::Budget {
                 agent,
                 limit,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::budget(
                     AgentActionOpts {
                         api_url,
@@ -1409,15 +1418,15 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     limit,
                 )
-                .await
-            }
+                .await?,
+            ),
             LocalAction::Kill {
                 agent,
                 api_url,
                 api_key,
                 yes,
                 dry_run,
-            } => {
+            } => emit(
                 commands::kill(
                     AgentActionOpts {
                         api_url,
@@ -1427,22 +1436,22 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     yes,
                 )
-                .await
-            }
+                .await?,
+            ),
             LocalAction::Resume {
                 agent,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::resume(AgentActionOpts {
                     api_url,
                     api_key,
                     agent,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
         },
         Some(Command::Cluster { action }) => match action {
             ClusterAction::Up {
@@ -1716,7 +1725,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 api_key,
                 yes,
                 dry_run,
-            } => {
+            } => emit(
                 commands::kill(
                     AgentActionOpts {
                         api_url,
@@ -1726,29 +1735,29 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     yes,
                 )
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Resume {
                 agent,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::resume(AgentActionOpts {
                     api_url,
                     api_key,
                     agent,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Budget {
                 agent,
                 limit,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::budget(
                     AgentActionOpts {
                         api_url,
@@ -1758,15 +1767,15 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     limit,
                 )
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Delete {
                 agent,
                 api_url,
                 api_key,
                 yes,
                 dry_run,
-            } => {
+            } => emit(
                 commands::delete(
                     AgentActionOpts {
                         api_url,
@@ -1776,36 +1785,36 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     yes,
                 )
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Versions {
                 agent,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::versions(AgentActionOpts {
                     api_url,
                     api_key,
                     agent,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Memory {
                 agent,
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::memory(AgentActionOpts {
                     api_url,
                     api_key,
                     agent,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Approvals {
                 agent,
                 gate,
@@ -1813,7 +1822,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 api_url,
                 api_key,
                 dry_run,
-            } => {
+            } => emit(
                 commands::approvals(
                     AgentActionOpts {
                         api_url,
@@ -1824,8 +1833,8 @@ async fn run(command: Option<Command>) -> Result<()> {
                     gate,
                     clear,
                 )
-                .await
-            }
+                .await?,
+            ),
         },
         Some(Command::Schema) => {
             use clap::CommandFactory;

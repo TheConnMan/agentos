@@ -12,6 +12,25 @@ release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full comm
 
 ## Load-bearing invariants
 
+- **Under `--json`, the agent-facing read and result verbs emit one JSON object
+  to stdout -- never empty stdout (issue #456).** That covers the read/query
+  verbs (`versions`, `memory`, `approvals`, `observability`), the lifecycle
+  result verbs (`kill`, `resume`, `budget`, `delete`), and every verb's
+  `--dry-run` plan. Silent empty-stdout-exit-0 is the worst failure mode for an
+  agent consumer: it looks like success but carries no data. The json-vs-human
+  decision lives in exactly one place, `Ui::emit` (the success-path mirror of
+  `main.rs`'s centralized error emit). A new or refactored verb returns a
+  `CliOutput` -- a typed output object (e.g. `VersionsOutput`, `KillOutput`), or
+  `DryRunPlan { lines }` for a `--dry-run` plan -- and routes it through
+  `Ui::emit`; handlers must not call the stdout emitters
+  (`payload`/`payload_plain`/`kv`) directly, since those suppress under `--json`.
+  Two tracked exceptions: the schema-gated ADR-0021 builders (`skill
+  status`/`skill eval`, `skill check`, `local message`/`cluster message`,
+  `secrets list`, the error path, `guide`) still inline their own `if json()`
+  branch, sanctioned and tracked for migration onto `Ui::emit` in #474; and the
+  operator verbs (`up`, `down`, `status`, `comms`), `deploy`, and `skill message`
+  have real-path success output that is not yet structured under `--json`,
+  tracked in #485.
 - **The command manifest is a committed artifact; regenerate it in the same
   change as any command-surface edit (console/CLI parity, epic #145).** Any
   change to a clap `Command`/subcommand or an `*Action` enum — a renamed verb,

@@ -183,6 +183,22 @@ just that unit tests pass.
   non-interactive (a `--yes`/`--force` path, never blocking on stdin), and errors
   as `{"error","fix"}` recovery instructions. Exit-code scheme: see
   `cli/README.md`.
+- **The agent-facing read and result verbs emit one JSON object to stdout under
+  `--json` -- never empty stdout (issue #456).** That covers the read/query verbs
+  (`versions`, `memory`, `approvals`, `observability`), the lifecycle result
+  verbs (`kill`, `resume`, `budget`, `delete`), and every verb's `--dry-run`
+  plan. Silent empty-stdout-exit-0 is the worst failure for an agent consumer: it
+  reads as success while carrying no data. To apply: a new or refactored verb
+  returns a `CliOutput` (a typed output object, or `DryRunPlan` for a `--dry-run`
+  plan) and routes it through `Ui::emit`, which is the single place the
+  json-vs-human decision is made -- handlers do not call stdout emitters
+  (`payload`/`kv`/`payload_plain`) directly. Two tracked exceptions: the
+  schema-gated ADR-0021 builders (`skill status`/`skill eval`, `skill check`,
+  `local message`/`cluster message`, `secrets list`, the error path, `guide`)
+  inline the same `if json` decision themselves, sanctioned and tracked for
+  migration onto `Ui::emit` in #474; and the operator verbs (`up`, `down`,
+  `status`, `comms`), `deploy`, and `skill message` have real-path success output
+  that is not yet structured under `--json`, tracked in #485.
 - **Console/CLI parity is a two-sided invariant (epic #145):** any CLI
   command-surface change regenerates the committed manifest (`cli/CLAUDE.md`),
   and every wired console action maps to a real command or an explicit
