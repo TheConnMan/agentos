@@ -45,6 +45,20 @@ with `name`/`description` required and `allowed_tools` aliased to the verbatim `
 `.mcp.json` file) where the validator enforces each server define `command` (stdio) or `url`
 (remote). A second consumer must accept exactly these shapes.
 
+The seam is bidirectional, and both directions are contracts. **Inbound**, leniency means any
+bundle written for Claude Code validates here unchanged. **Outbound**, an AgentOS bundle must
+validate unmodified as a Claude Code plugin — that direction is what makes the shape a
+distribution wedge rather than a lookalike. The gate that defends it is
+`scripts/check-plugin-compat.sh` (run it as `agentos dev plugin-compat`), which discovers every
+bundle under `examples/` and asserts `claude plugin validate` exits 0 for each. CI runs the same
+script from `.github/workflows/plugin-compat.yaml` on two triggers, because drift arrives from two
+directions: a path-filtered `pull_request` trigger catches our own drift when we touch the bundles
+or the format models, and a nightly `schedule` catches Claude Code changing the format under us,
+which no PR of ours would ever surface. The check is deliberately not `--strict`: strict mode
+promotes unknown-field warnings to errors, and the five AgentOS authoring extensions are
+unknown-to-Claude-Code by design, so warnings are the expected steady state and only a non-zero
+exit is a failure.
+
 ## Implementations today
 
 One: the `plugin_format` package. **Unlike `aci-protocol`, it is NOT tri-language with generated
@@ -59,7 +73,15 @@ Code keys still validate.
 
 ## Known leakage
 
-By intent, the entire format is Claude-Code-shaped — that is the wedge, not a leak. The `hooks`
+By intent, the entire format is Claude-Code-shaped — that is the wedge, not a leak. What the wedge
+costs is asymmetric fidelity: a bundle loaded by Claude Code **validates but degrades**. All five
+AgentOS authoring extensions — `systemPrompt`, `starterPrompts`, `secrets`, `triggers`,
+`approvalPolicy` — are unknown fields to Claude Code, which warns about each and then silently
+ignores it at load time. The manifest is accepted and the commands, agents, hooks, and MCP servers
+work; the agent's persona, its suggested openers, its secret declarations, its wake-up triggers,
+and its approval gates do not travel. That degradation is by design (there is nowhere in the Claude
+Code shape to put them), but it is silent from the operator's side, so it is documented here rather
+than discovered. The `hooks`
 field is no longer dead: as of #272 it is validated at deploy time (`HookMatcherConfig` /
 `HookDefinition` in `models.py`, enforced by `_validate_hooks` in `validate.py`) and its
 `PreToolUse` command hooks are consumed by the runner (`runner/src/agentos_runner/hooks.py`),

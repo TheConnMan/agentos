@@ -1,0 +1,48 @@
+name: Plugin compat
+
+# The bundle format is the Claude Code plugin shape verbatim, so outbound
+# compatibility (an AgentOS bundle validates unmodified as a Claude Code plugin)
+# is a contract we owe, not a claim we make. This gate defends it.
+#
+# Both triggers are deliberate, because there are two independent drift vectors:
+#   - pull_request (path-filtered): catches OUR drift, when we touch the example
+#     bundles, the plugin-format models, or this gate itself.
+#   - schedule (nightly): catches THEIR drift, when Claude Code changes the
+#     format under us with no PR of ours involved. No per-PR trigger can see
+#     this, since the cadence is external to the repo.
+# The job is a checkout plus one npm install, so running both is cheap.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "examples/**"
+      - "packages/plugin-format/**"
+      - ".github/workflows/plugin-compat.yaml"
+      - "scripts/check-plugin-compat.sh"
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-compat:
+    name: Bundles validate as Claude Code plugins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install the Claude Code CLI
+        run: npm install --global @anthropic-ai/claude-code
+      - name: Validate every examples/ bundle
+        run: bash scripts/check-plugin-compat.sh

@@ -2498,6 +2498,11 @@ export const commandManifest = {
           "about": "Lint the interface catalog docs (`bash scripts/check-docs.sh`)",
           "hidden": false,
           "name": "docs-lint"
+        },
+        {
+          "about": "Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`)",
+          "hidden": false,
+          "name": "plugin-compat"
         }
       ]
     },
