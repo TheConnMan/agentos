@@ -101,6 +101,116 @@ fn scaffolds_the_full_bundle_from_a_valid_spec() {
     assert!(gitignore.contains(".agentos/"), "{gitignore}");
 }
 
+/// A spec declaring `secrets` and `approvalPolicy` scaffolds a gated, authed
+/// bundle whose manifest carries both verbatim -- no hand-editing plugin.json
+/// (#549). The gate is a fully-namespaced live tool name for the `crm` connector.
+#[test]
+fn scaffolds_secrets_and_approval_policy_into_the_manifest() {
+    let body = r#"{
+      "name": "deal-desk",
+      "description": "Gated authed deal desk.",
+      "skills": [
+        { "name": "deal-desk", "description": "Do it.", "instructions": "Body.\n" }
+      ],
+      "connectors": { "crm": { "command": "crm-mcp", "args": ["--stdio"] } },
+      "secrets": ["CRM_API_TOKEN"],
+      "approvalPolicy": {
+        "gates": [
+          { "gate": "mcp__plugin_deal-desk_crm__create_deal", "route": "default" }
+        ]
+      },
+      "evals": [
+        { "id": "e1", "input": "hi", "grader": { "kind": "contains", "expected": "ok" } }
+      ]
+    }"#;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bundle");
+    let spec = parse(body).expect("gated authed spec parses");
+    scaffold_from_spec(&out, &spec).expect("scaffold succeeds");
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(".claude-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["secrets"], serde_json::json!(["CRM_API_TOKEN"]));
+    assert_eq!(
+        manifest["approvalPolicy"]["gates"][0]["gate"],
+        "mcp__plugin_deal-desk_crm__create_deal"
+    );
+    assert_eq!(manifest["approvalPolicy"]["gates"][0]["route"], "default");
+}
+
+/// A spec that declares neither omits both keys, so the default scaffold shape is
+/// unchanged (no empty `secrets: []` / `approvalPolicy` noise).
+#[test]
+fn omits_secrets_and_approval_policy_when_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bundle");
+    let spec = parse(valid_spec_json()).expect("valid spec parses");
+    scaffold_from_spec(&out, &spec).expect("scaffold succeeds");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(".claude-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        manifest.get("secrets").is_none(),
+        "no secrets key: {manifest}"
+    );
+    assert!(
+        manifest.get("approvalPolicy").is_none(),
+        "no approvalPolicy key: {manifest}"
+    );
+}
+
+#[test]
+fn rejects_a_secret_name_that_is_not_env_var_shaped() {
+    let body = r#"{
+      "name": "x", "description": "d",
+      "skills": [ { "name": "s", "description": "d", "instructions": "b\n" } ],
+      "secrets": ["lowercase-bad"],
+      "evals": [ { "id": "e", "input": "i", "grader": { "kind": "contains", "expected": "ok" } } ]
+    }"#;
+    let err = parse(body)
+        .expect_err("bad secret name must error")
+        .to_string();
+    assert!(err.contains("lowercase-bad"), "names the offender: {err}");
+}
+
+#[test]
+fn rejects_an_approval_gate_missing_its_route() {
+    let body = r#"{
+      "name": "x", "description": "d",
+      "skills": [ { "name": "s", "description": "d", "instructions": "b\n" } ],
+      "approvalPolicy": { "gates": [ { "gate": "Bash", "route": "" } ] },
+      "evals": [ { "id": "e", "input": "i", "grader": { "kind": "contains", "expected": "ok" } } ]
+    }"#;
+    let err = parse(body).expect_err("empty route must error").to_string();
+    assert!(
+        err.to_lowercase().contains("route"),
+        "mentions route: {err}"
+    );
+}
+
+/// An `mcp__` gate that is not fully namespaced for a declared connector silently
+/// fails to gate at runtime, so the spec rejects it up front (#549 / ADR-0010).
+#[test]
+fn rejects_a_mis_namespaced_mcp_approval_gate() {
+    let body = r#"{
+      "name": "deal-desk", "description": "d",
+      "skills": [ { "name": "s", "description": "d", "instructions": "b\n" } ],
+      "connectors": { "crm": { "command": "crm-mcp" } },
+      "approvalPolicy": { "gates": [ { "gate": "mcp__crm__create_deal", "route": "default" } ] },
+      "evals": [ { "id": "e", "input": "i", "grader": { "kind": "contains", "expected": "ok" } } ]
+    }"#;
+    let err = parse(body)
+        .expect_err("bare mcp gate must error")
+        .to_string();
+    assert!(
+        err.contains("mcp__plugin_deal-desk_crm__"),
+        "shows the expected namespaced shape: {err}"
+    );
+}
+
 /// Every skill in a multi-skill spec becomes its own SKILL.md carrying that
 /// skill's name, description, allowed-tools (only when present), and body.
 #[test]

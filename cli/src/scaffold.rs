@@ -200,12 +200,30 @@ fn render_skill_md(skill: &SkillSpec) -> String {
 /// already validated by `spec::parse`; this only lays down files, funneling
 /// through `write_bundle` for the identical collision refusal as `scaffold`.
 pub fn scaffold_from_spec(dir: &Path, spec: &AgentSpec) -> Result<Vec<PathBuf>> {
-    let manifest = serde_json::to_string_pretty(&serde_json::json!({
-        "name": spec.name,
-        "description": spec.description,
-        "version": "0.1.0",
-    }))
-    .expect("spec manifest serializes");
+    // Build the manifest incrementally so `secrets`/`approvalPolicy` are OMITTED
+    // when the spec declares none -- keeping the default scaffold byte-identical to
+    // the trivial case while letting a spec produce a gated, authed bundle without
+    // hand-editing plugin.json (#549).
+    let mut manifest_obj = serde_json::Map::new();
+    manifest_obj.insert("name".into(), serde_json::json!(spec.name));
+    manifest_obj.insert("description".into(), serde_json::json!(spec.description));
+    manifest_obj.insert("version".into(), serde_json::json!("0.1.0"));
+    if !spec.secrets.is_empty() {
+        manifest_obj.insert("secrets".into(), serde_json::json!(spec.secrets));
+    }
+    if let Some(policy) = &spec.approval_policy {
+        let gates: Vec<Value> = policy
+            .gates
+            .iter()
+            .map(|g| serde_json::json!({ "gate": g.gate, "route": g.route }))
+            .collect();
+        manifest_obj.insert(
+            "approvalPolicy".into(),
+            serde_json::json!({ "gates": gates }),
+        );
+    }
+    let manifest = serde_json::to_string_pretty(&Value::Object(manifest_obj))
+        .expect("spec manifest serializes");
 
     // `.mcp.json` carries the connectors verbatim under `mcpServers`; an empty
     // map yields `{"mcpServers": {}}`, matching the weather scaffold's seed.
