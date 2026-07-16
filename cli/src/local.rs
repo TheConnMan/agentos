@@ -233,7 +233,9 @@ pub async fn up(o: LocalOpts) -> Result<()> {
     let ui = crate::ui::ui();
     let cmd = up_command(&o);
     if o.dry_run {
-        ui.payload_plain(&cmd.display());
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: vec![cmd.display()],
+        });
         return Ok(());
     }
     require_on_path("docker")?;
@@ -276,7 +278,9 @@ pub async fn status(o: LocalOpts) -> Result<()> {
     let ui = crate::ui::ui();
     let cmd = status_command(&o);
     if o.dry_run {
-        ui.payload_plain(&cmd.display());
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: vec![cmd.display()],
+        });
         return Ok(());
     }
     require_on_path("docker")?;
@@ -305,11 +309,15 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
     let ui = crate::ui::ui();
     let cmd = down_command(&o);
     if o.common.dry_run {
-        ui.payload_plain(&cmd.display());
-        ui.payload_plain(&format!(
-            "docker rm -f $(docker ps -a --filter label={} -q)",
-            docker::SANDBOX_LABEL
-        ));
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: vec![
+                cmd.display(),
+                format!(
+                    "docker rm -f $(docker ps -a --filter label={} -q)",
+                    docker::SANDBOX_LABEL
+                ),
+            ],
+        });
         return Ok(());
     }
     if o.wipe {

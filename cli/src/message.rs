@@ -907,9 +907,9 @@ async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     let api_base = local_api_base(opts.api_url.as_deref());
 
     if opts.dry_run {
-        for line in eval_dry_run_lines(&opts, &suite.name, suite.cases.len()) {
-            ui.payload_plain(&line);
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: eval_dry_run_lines(&opts, &suite.name, suite.cases.len()),
+        });
         return Ok(());
     }
 
@@ -940,9 +940,9 @@ async fn eval_cluster(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     let ui = crate::ui::ui();
 
     if opts.dry_run {
-        for line in eval_dry_run_lines(&opts, &suite.name, suite.cases.len()) {
-            ui.payload_plain(&line);
-        }
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: eval_dry_run_lines(&opts, &suite.name, suite.cases.len()),
+        });
         return Ok(());
     }
 

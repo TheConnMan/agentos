@@ -463,23 +463,30 @@ original turn used a non-default value.
 The CLI's primary consumer is a coding agent (ADR-0021), so its output and
 control flow are machine-first.
 
-**`--json`** (global) switches the read/report commands `agentos skill status`
-and `agentos skill eval` to a single machine-readable JSON object on **stdout**;
-it also switches `agentos local message` and `agentos cluster message` to emit
-one structured line per terminal state on stdout: a completed turn emits
-`{"reply": ..., "thread": ..., "finalized": ...}` (the model's reply, which is
-null on a no-edit completion, plus the thread the turn ran under); a **timeout**
-emits `{"reply": null, "finalized": false, "timed_out": true}` before exiting 3
-(transient); and `--json --dry-run` emits a planned-action descriptor
-`{"dry_run": true, "target": "local"|"cluster", "stream": ..., "channel": ...,
-"reply_endpoint": ...}` (`channel` is null when it would be resolved from the sole
-deployed agent). The three shapes are the `oneOf` in `cli/schema/message.schema.json`.
-All human and
-log text (progress, notes, warnings) goes to **stderr**, so a plain
-`... --json | jq` yields clean data. On failure under `--json`, the error
-is emitted to stdout as `{"error": "<message>", "fix": "<hint>"|null}` instead of
-a prose message, so an agent can recover without parsing prose. `NO_COLOR`,
-`CLICOLOR`, and `--color=never` are honored on every command.
+**`--json`** (global) makes every agent-facing verb emit a single
+machine-readable JSON object on **stdout** instead of empty output: the
+read/query verbs (`versions`, `memory`, `approvals`, `observability`), the
+lifecycle result verbs (`kill`, `resume`, `budget`, `delete`), and every verb's
+`--dry-run` plan (uniform shape `{"dry_run": true, "plan": [<lines>]}`) all
+route through one centralized emitter. The `message` verbs keep their own,
+more specific shapes: `agentos local message` and `agentos cluster message`
+emit one structured line per terminal state on stdout -- a completed turn
+emits `{"reply": ..., "thread": ..., "finalized": ...}` (the model's reply,
+which is null on a no-edit completion, plus the thread the turn ran under); a
+**timeout** emits `{"reply": null, "finalized": false, "timed_out": true}`
+before exiting 3 (transient); and `--json --dry-run` emits a planned-action
+descriptor `{"dry_run": true, "target": "local"|"cluster", "stream": ...,
+"channel": ..., "reply_endpoint": ...}` (`channel` is null when it would be
+resolved from the sole deployed agent). The three shapes are the `oneOf` in
+`cli/schema/message.schema.json`. Two verbs lag this contract on their
+real-path success output: `agentos skill message`, and the operator verbs
+(`up`, `down`, `status`, `comms`) plus `deploy`, still print human text rather
+than JSON on success (tracked in #485). All human and log text (progress,
+notes, warnings) goes to **stderr**, so a plain `... --json | jq` yields clean
+data. On failure under `--json`, the error is emitted to stdout as
+`{"error": "<message>", "fix": "<hint>"|null}` instead of a prose message, so
+an agent can recover without parsing prose. `NO_COLOR`, `CLICOLOR`, and
+`--color=never` are honored on every command.
 
 **Semantic exit codes** let an agent branch on *why* a command failed without
 parsing output:
