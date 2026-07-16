@@ -347,6 +347,22 @@ pub fn message_timeout_json() -> serde_json::Value {
     })
 }
 
+/// The machine-readable object for a turn that ended **awaiting approval** (#529):
+/// the worker posted an approval card and parked, so the turn is not finalized
+/// (`finalized` false) and `awaiting_approval` marks the terminal state distinctly
+/// from a timeout. `reply` carries the card's placeholder text if one was seen.
+/// The persisted `Approval` holds THIS run's ephemeral CLI reply endpoint, so the
+/// resumed reply will strand once the command exits. Pure so it stays
+/// contract-testable against `cli/schema/message.schema.json`.
+pub fn message_awaiting_approval_json(thread: &str, reply: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "reply": reply,
+        "thread": thread,
+        "finalized": false,
+        "awaiting_approval": true,
+    })
+}
+
 /// The machine-readable descriptor for `local`/`cluster message --json --dry-run`
 /// (issue #354): what a real run would enqueue, without touching the network.
 /// `target` is `"local"` or `"cluster"`, `channel` is null when it would be
@@ -572,6 +588,19 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
+        Outcome::AwaitingApproval(reply) => {
+            step.done("awaiting approval");
+            if ui.json() {
+                ui.emit_json(&message_awaiting_approval_json(
+                    &thread_ts,
+                    reply.as_deref(),
+                ));
+            } else {
+                warn_approval_will_strand(ui);
+            }
+            persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
+            Ok(())
+        }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
             if ui.json() {
@@ -586,6 +615,25 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             std::process::exit(crate::exit::ExitClass::Transient.code());
         }
     }
+}
+
+/// The loud up-front warning a `local`/`cluster message` prints when its turn
+/// parked awaiting approval (#529): the reply stub is this process's throwaway
+/// endpoint, so the resumed reply -- delivered whenever a human approves -- has
+/// nowhere to land once the command exits (#505 dead-letters it rather than
+/// stalling the worker). Names the two ways to actually see a resumed reply.
+fn warn_approval_will_strand(ui: &crate::ui::Ui) {
+    ui.warn(
+        "this turn is awaiting human approval and will NOT deliver its reply here: the \
+         approval was persisted with this command's throwaway reply stub as its endpoint, and \
+         that stub dies when the command exits, so the resumed reply strands (it is \
+         dead-lettered, not lost silently).",
+    );
+    ui.note(
+        "to demo approvals end to end, drive the turn from a durable reply surface: connect a \
+         real Slack workspace (`agentos local comms --slack` / `agentos cluster comms --slack`) \
+         and mention the agent there, or resolve the approval and read the reply in Slack.",
+    );
 }
 
 /// The shared target noun message handler.
@@ -734,6 +782,19 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
+        Outcome::AwaitingApproval(reply) => {
+            step.done("awaiting approval");
+            if ui.json() {
+                ui.emit_json(&message_awaiting_approval_json(
+                    &thread_ts,
+                    reply.as_deref(),
+                ));
+            } else {
+                warn_approval_will_strand(ui);
+            }
+            persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
+            Ok(())
+        }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
             if ui.json() {
@@ -795,7 +856,9 @@ pub struct EvalOpts {
 pub fn reply_passes(case: &EvalCase, outcome: &Outcome) -> bool {
     match outcome {
         Outcome::Replied(reply) => case.grader.grade(reply),
-        Outcome::CompletedNoEdit | Outcome::TimedOut => false,
+        // A turn that parked awaiting approval never produced a graded reply, so
+        // it fails the case (the same as a no-edit completion or a timeout).
+        Outcome::CompletedNoEdit | Outcome::AwaitingApproval(_) | Outcome::TimedOut => false,
     }
 }
 
@@ -943,6 +1006,7 @@ async fn run_eval_turns(
         // the human summary; a non-Replied outcome has no gradeable text.
         let output = match &outcome {
             Outcome::Replied(reply) => reply.clone(),
+            Outcome::AwaitingApproval(reply) => reply.clone().unwrap_or_default(),
             Outcome::CompletedNoEdit | Outcome::TimedOut => String::new(),
         };
         results.push((
@@ -1541,6 +1605,12 @@ mod tests {
         // No reply text and no completion never pass, mirroring turn_passes.
         assert!(!reply_passes(&case, &Outcome::CompletedNoEdit));
         assert!(!reply_passes(&case, &Outcome::TimedOut));
+        // A turn parked awaiting approval produced no graded reply -> never passes,
+        // even if the card text happens to contain the expected token (#529).
+        assert!(!reply_passes(
+            &case,
+            &Outcome::AwaitingApproval(Some("pong pending approval".into()))
+        ));
     }
 
     #[test]
