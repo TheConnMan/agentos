@@ -1002,26 +1002,6 @@ export const commandManifest = {
               "required": true
             },
             {
-              "global": false,
-              "help": "Tool name to gate behind approval (repeatable). Omit to show current gates",
-              "id": "gate",
-              "long": "gate",
-              "positional": false,
-              "required": false
-            },
-            {
-              "global": false,
-              "help": "Clear all approval gates on the agent",
-              "id": "clear",
-              "long": "clear",
-              "positional": false,
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false
-            },
-            {
               "default_values": [
                 "http://localhost:28000"
               ],
@@ -1047,6 +1027,26 @@ export const commandManifest = {
               "global": false,
               "id": "dry_run",
               "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Tool name to gate behind approval (repeatable). Omit to show current gates",
+              "id": "gate",
+              "long": "gate",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Clear all approval gates on the agent",
+              "id": "clear",
+              "long": "clear",
               "positional": false,
               "possible_values": [
                 "true",
@@ -2302,26 +2302,6 @@ export const commandManifest = {
               "required": true
             },
             {
-              "global": false,
-              "help": "Tool name to gate behind approval (repeatable). Omit to show current gates",
-              "id": "gate",
-              "long": "gate",
-              "positional": false,
-              "required": false
-            },
-            {
-              "global": false,
-              "help": "Clear all approval gates on the agent",
-              "id": "clear",
-              "long": "clear",
-              "positional": false,
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false
-            },
-            {
               "default_values": [
                 "http://localhost:8000"
               ],
@@ -2347,6 +2327,26 @@ export const commandManifest = {
               "global": false,
               "id": "dry_run",
               "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Tool name to gate behind approval (repeatable). Omit to show current gates",
+              "id": "gate",
+              "long": "gate",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Clear all approval gates on the agent",
+              "id": "clear",
+              "long": "clear",
               "positional": false,
               "possible_values": [
                 "true",

@@ -18,7 +18,56 @@ use agentos::secrets;
 use agentos::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
 use agentos::ui::{self, ColorFlag, Ui};
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+
+/// Per-tier defaults for the flags shared by the agent-target verbs. The only
+/// thing that differs between `local` and `cluster` is where the platform API
+/// listens, so that is the single const each tier supplies.
+trait TierDefaults: Clone + Send + Sync + std::fmt::Debug + 'static {
+    const API_URL: &'static str;
+}
+
+#[derive(Clone, Debug)]
+struct LocalTier;
+
+impl TierDefaults for LocalTier {
+    const API_URL: &'static str = "http://localhost:28000";
+}
+
+#[derive(Clone, Debug)]
+struct ClusterTier;
+
+impl TierDefaults for ClusterTier {
+    const API_URL: &'static str = "http://localhost:8000";
+}
+
+/// The flags every agent-target verb (`versions`, `memory`, `approvals`) takes,
+/// flattened into both tiers so a flag added here cannot be added to one tier
+/// and forgotten on the other (issue #466).
+#[derive(Args, Debug, Clone)]
+struct AgentTarget<T: TierDefaults> {
+    /// Agent name or id.
+    agent: String,
+    #[arg(long, default_value = T::API_URL, env = "AGENTOS_API_URL")]
+    api_url: String,
+    #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+    api_key: String,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(skip)]
+    _tier: std::marker::PhantomData<T>,
+}
+
+impl<T: TierDefaults> From<AgentTarget<T>> for AgentActionOpts {
+    fn from(target: AgentTarget<T>) -> Self {
+        AgentActionOpts {
+            api_url: target.api_url,
+            api_key: target.api_key,
+            agent: target.agent,
+            dry_run: target.dry_run,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -512,54 +561,24 @@ enum LocalAction {
     },
     /// List an agent's immutable versions (`GET /agents/{id}/versions`).
     Versions {
-        /// Agent name or id.
-        agent: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
-        api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        target: AgentTarget<LocalTier>,
     },
     /// Show what an agent has learned (its memory log; `GET /agents/{id}/memory`).
     Memory {
-        /// Agent name or id.
-        agent: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
-        api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        target: AgentTarget<LocalTier>,
     },
     /// View or set the tools whose calls require human approval (`PATCH /agents/{id}`).
     Approvals {
-        /// Agent name or id.
-        agent: String,
+        #[command(flatten)]
+        target: AgentTarget<LocalTier>,
         /// Tool name to gate behind approval (repeatable). Omit to show current gates.
         #[arg(long = "gate", value_name = "TOOL")]
         gate: Vec<String>,
         /// Clear all approval gates on the agent.
         #[arg(long)]
         clear: bool,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
-        api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        dry_run: bool,
     },
     /// Open the local observability surfaces (AgentOS Console + Langfuse traces/cost).
     Observability,
@@ -976,42 +995,24 @@ enum ClusterAction {
     },
     /// List an agent's immutable versions (`GET /agents/{id}/versions`).
     Versions {
-        /// Agent name or id.
-        agent: String,
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        target: AgentTarget<ClusterTier>,
     },
     /// Show what an agent has learned (its memory log; `GET /agents/{id}/memory`).
     Memory {
-        /// Agent name or id.
-        agent: String,
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        target: AgentTarget<ClusterTier>,
     },
     /// View or set the tools whose calls require human approval (`PATCH /agents/{id}`).
     Approvals {
-        /// Agent name or id.
-        agent: String,
+        #[command(flatten)]
+        target: AgentTarget<ClusterTier>,
         /// Tool name to gate behind approval (repeatable). Omit to show current gates.
         #[arg(long = "gate", value_name = "TOOL")]
         gate: Vec<String>,
         /// Clear all approval gates on the agent.
         #[arg(long)]
         clear: bool,
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        dry_run: bool,
     },
 }
 
@@ -1356,54 +1357,13 @@ async fn run(command: Option<Command>) -> Result<()> {
                 })
                 .await
             }
-            LocalAction::Versions {
-                agent,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::versions(AgentActionOpts {
-                    api_url,
-                    api_key,
-                    agent,
-                    dry_run,
-                })
-                .await?,
-            ),
-            LocalAction::Memory {
-                agent,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::memory(AgentActionOpts {
-                    api_url,
-                    api_key,
-                    agent,
-                    dry_run,
-                })
-                .await?,
-            ),
+            LocalAction::Versions { target } => emit(commands::versions(target.into()).await?),
+            LocalAction::Memory { target } => emit(commands::memory(target.into()).await?),
             LocalAction::Approvals {
-                agent,
+                target,
                 gate,
                 clear,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::approvals(
-                    AgentActionOpts {
-                        api_url,
-                        api_key,
-                        agent,
-                        dry_run,
-                    },
-                    gate,
-                    clear,
-                )
-                .await?,
-            ),
+            } => emit(commands::approvals(target.into(), gate, clear).await?),
             LocalAction::Observability => emit(commands::observability().await?),
             LocalAction::Budget {
                 agent,
@@ -1790,54 +1750,13 @@ async fn run(command: Option<Command>) -> Result<()> {
                 )
                 .await?,
             ),
-            ClusterAction::Versions {
-                agent,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::versions(AgentActionOpts {
-                    api_url,
-                    api_key,
-                    agent,
-                    dry_run,
-                })
-                .await?,
-            ),
-            ClusterAction::Memory {
-                agent,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::memory(AgentActionOpts {
-                    api_url,
-                    api_key,
-                    agent,
-                    dry_run,
-                })
-                .await?,
-            ),
+            ClusterAction::Versions { target } => emit(commands::versions(target.into()).await?),
+            ClusterAction::Memory { target } => emit(commands::memory(target.into()).await?),
             ClusterAction::Approvals {
-                agent,
+                target,
                 gate,
                 clear,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::approvals(
-                    AgentActionOpts {
-                        api_url,
-                        api_key,
-                        agent,
-                        dry_run,
-                    },
-                    gate,
-                    clear,
-                )
-                .await?,
-            ),
+            } => emit(commands::approvals(target.into(), gate, clear).await?),
         },
         Some(Command::Schema) => {
             use clap::CommandFactory;
@@ -2290,10 +2209,12 @@ mod tests {
             Some(Command::Local {
                 action:
                     LocalAction::Approvals {
-                        agent, gate, clear, ..
+                        target,
+                        gate,
+                        clear,
                     },
             }) => {
-                assert_eq!(agent, "gh");
+                assert_eq!(target.agent, "gh");
                 assert_eq!(gate, vec!["Bash".to_string(), "mcp__x__y".to_string()]);
                 assert!(!clear);
             }
