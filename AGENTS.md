@@ -69,12 +69,16 @@ top-level CI workflow's `ui` job runs the full pnpm lint, vitest, build, and
 stackless Playwright suite; run `pnpm test`/`pnpm e2e` locally to match it.
 
 **Docs (interface catalog):** `agentos dev docs-lint` regenerates the seam index
-(`docs/interfaces.md`) and each `INTERFACE.md` header from the per-seam YAML
-front-matter, then checks that no doc under `docs/` (excluding `docs/adr/`) carries a
-line-number citation and that every cited path and Python symbol resolves. Run it after
-editing any interface-catalog doc and commit the regenerated files; CI runs the same
-check (`scripts/check-docs.sh`) in the `python` job. To exempt a genuinely illustrative
-example path, put `<!-- doclint:ignore-line -->` on that line (or the line before it).
+(`docs/interfaces.md`), each `INTERFACE.md` header, and the ADR index
+(`docs/adr/README.md`) from source, then checks that no doc under `docs/` (excluding
+`docs/adr/`, whose citations are immutable history) or the repo-root docs on its
+allowlist (currently `ARCHITECTURE.md`) carries a line-number citation, that every cited
+path and Python symbol resolves, that each graded seam's `grade:` agrees with the row its
+`vision_row:` names in `docs/architecture-vision.md`, and that no two ADRs under
+`docs/adr/` claim the same number prefix. Run it after editing any interface-catalog doc
+and commit the regenerated files; CI runs the same check (`scripts/check-docs.sh`) in the
+`python` job. To exempt a genuinely illustrative example path, put
+`<!-- doclint:ignore-line -->` on that line (or the line before it).
 
 Test discipline: test-first for behavior-bearing code; mock ONLY external
 services (Slack, Anthropic, GitHub); NEVER mock Postgres/Valkey/Langfuse -- run

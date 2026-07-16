@@ -11,7 +11,7 @@ import pytest
 
 from agentos_doclint import SOURCE_EXTENSIONS
 
-from .conftest import RunLint, write
+from .conftest import Regenerate, RunLint, write
 
 
 # --- Test 1: a cited path that does not exist ------------------------------
@@ -150,11 +150,16 @@ def test_prose_code_span_is_not_a_citation(clean_repo: Path, run_lint: RunLint) 
 # --- Test 10: docs/adr/ is excluded from the linted root -------------------
 
 
-def test_adr_directory_is_not_linted(clean_repo: Path, run_lint: RunLint) -> None:
+def test_adr_directory_is_not_linted(
+    clean_repo: Path, regenerate: Regenerate, run_lint: RunLint
+) -> None:
     write(
         clean_repo,
         "docs/adr/0099-historical.md",
         "Historical `queue.py:60` and `apps/gone/missing.py` stay untouched.\n",
     )
+    # The index earns a row for the new ADR; regenerate so this test stays on
+    # its own subject (ADR bodies are never citation-linted), not on drift.
+    regenerate(clean_repo)
     code, _ = run_lint(clean_repo)
     assert code == 0

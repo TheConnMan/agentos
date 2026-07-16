@@ -1,4 +1,4 @@
-# 38. The interface catalog is generated from declared front-matter and gated in CI
+# 43. The interface catalog is generated from declared front-matter and gated in CI
 
 Date: 2026-07-16
 

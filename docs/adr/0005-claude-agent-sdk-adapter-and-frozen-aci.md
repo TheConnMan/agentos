@@ -3,6 +3,11 @@
 Date: 2026-07-04
 Status: Accepted
 
+**Amended by [ADR-0036](0036-aci-semver-and-reader-policy.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+0036 amends the frozen-ACI posture below with semver, a reader-policy asymmetry,
+and a wire-lock gate. This ADR remains the record of the freeze itself.
+
 ## Context
 
 Everything inside the runtime boundary is "the harness"; everything outside is "the platform." For the platform to be harness-agnostic (and for the plugin format to be the distribution wedge), the seam between them must be an explicit, versioned contract — the ACI (Agent Container Interface). The MVP harness is Anthropic's claude-agent-sdk, whose streaming-input mode is what makes Claude-Code-style steering possible server-side. The open questions were whether the SDK can be driven as a long-lived server that accepts mid-run input and interrupt, and whether the plugin format loads natively.

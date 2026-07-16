@@ -3,6 +3,11 @@
 Date: 2026-07-09
 Status: Accepted
 
+**Superseded in part by [ADR-0039](0039-bounded-delivery-and-a-dead-letter-graveyard.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+0039 bounds the unbounded `XAUTOCLAIM` reclaim clause of the Decision below with a
+delivery cap and a dead-letter graveyard. Everything else in this ADR stands.
+
 Retroactive record of the worker's concurrency model, already built into main.
 The individual invariants each have an integration test under
 `apps/worker/tests/`; this ADR records why the model is shaped this way and what

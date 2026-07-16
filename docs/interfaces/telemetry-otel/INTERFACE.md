@@ -3,6 +3,7 @@ seam: Telemetry / OTEL
 kind: SOFT
 impls: 1
 grade: B+
+vision_row: Observability
 epics:
   - "#47"
 order: 7

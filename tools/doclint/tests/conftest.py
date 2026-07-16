@@ -26,6 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # Type of the run_lint callable: takes a repo root, returns (exit_code, output).
 RunLint = Callable[[Path], tuple[int, str]]
 
+# Type of the regenerate callable: takes a repo root, rewrites generated regions.
+Regenerate = Callable[[Path], None]
+
 
 @pytest.fixture
 def clean_repo(tmp_path: Path) -> Path:
@@ -47,6 +50,21 @@ def run_lint(capsys: pytest.CaptureFixture[str]) -> RunLint:
         code = main(["--repo-root", str(root)])
         captured = capsys.readouterr()
         return code, captured.out + captured.err
+
+    return _run
+
+
+@pytest.fixture
+def regenerate() -> Regenerate:
+    """Drive the CLI's ``--write`` pass over a repo, as a contributor does.
+
+    For tests that add a doc the generated regions index: adding an ADR without
+    regenerating the index IS drift, and the linter says so. Regenerating here
+    keeps such a test on its own subject rather than on index freshness.
+    """
+
+    def _run(root: Path) -> None:
+        main(["--repo-root", str(root), "--write"])
 
     return _run
 

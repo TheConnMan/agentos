@@ -3,6 +3,13 @@
 Date: 2026-07-04
 Status: Accepted
 
+**Superseded in part by [ADR-0013](0013-concurrency-and-delivery-model.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+the Decision below adopts "BullMQ + Valkey (queue)". 0013 rejected BullMQ and
+records the as-built queue as Valkey Streams via `redis-py`; BullMQ appears
+nowhere in the tree. Only that clause is dead — every other adopt/build/do-not-build
+boundary below stands, including the Valkey half of it.
+
 ## Context
 
 A small team cannot maintain a bespoke telemetry datastore, eval engine, queue, or agent runtime and still ship a product. The guiding principle from the on-prem research (`docs/reference/on-prem-architecture.md`, removed post-MVP; see git history) is to minimize what gets built and lean on license-clean open source for everything else.

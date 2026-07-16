@@ -40,8 +40,10 @@ include at least: `py rs ts tsx yaml yml json sh toml md`.
 
 ## Linted root
 
-`docs/` EXCLUDING `docs/adr/` (E2). ADR docs are never path/symbol/line
-checked.
+`docs/` EXCLUDING `docs/adr/` (E2), PLUS the repo-root docs named in an
+explicit allowlist (currently `ARCHITECTURE.md`). ADR docs are never
+path/symbol/line checked; a root doc named in the allowlist that does not
+resolve is a finding (deletion, not a skip).
 
 ## Expected message fragments (the reason the suite asserts)
 
@@ -54,12 +56,22 @@ checked.
 - Front-matter missing required field: contains the field name and `required`.
 - Invalid `kind`: contains `kind` and the offending value.
 - Syntax error in a cited `.py` file: names the file and contains `syntax`.
+- Missing/unknown `vision_row:` on a graded seam: names the seam and, for a
+  missing key, contains `vision_row`; for an unrecognized row, names the row.
+- Grade disagreement: names the seam and both the declared grade and the
+  vision-row's grade.
+- Duplicate ADR number prefix: names both (or all) colliding filenames.
+- Missing allowlisted root doc (e.g. `ARCHITECTURE.md`) or missing ADR index
+  (`docs/adr/README.md`): names the doc; neither is scaffolded back by
+  `--write`, only reported.
 
 ## Front-matter schema (per `INTERFACE.md`)
 
 Required: `seam`, `kind` (`CLEAN` / `SOFT` / `NONE`, optional `, qualifier`),
 `impls`, `grade`, `epics` (list of `"#N"` / `"ADR-XXXX"`), `order` (int).
-Optional: `epic_note`.
+Optional: `epic_note`, `vision_row` (required in practice for a graded seam --
+see the grade-agreement check above -- but not enforced as a front-matter
+field, since an ungraded seam has no row to name).
 
 ## Generated regions (marker-delimited)
 
@@ -68,3 +80,7 @@ Optional: `epic_note`.
   `| Seam | Kind | Impls | Grade | Epic(s) | INTERFACE.md |`.
 - Per-doc header blockquote: `<!-- BEGIN GENERATED: header ... -->` ...
   `<!-- END GENERATED: header -->`.
+- ADR index table (`docs/adr/README.md`):
+  `<!-- BEGIN GENERATED: adr-index ... -->` ... `<!-- END GENERATED: adr-index -->`.
+  A missing index is never scaffolded by `--write`; only an existing index's
+  region is rewritten.

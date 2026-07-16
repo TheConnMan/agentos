@@ -1,7 +1,16 @@
 # 18. Greeting/help pre-model short-circuit in the kernel
 
 Date: 2026-07-09
-Status: Proposed
+Status: Accepted
+
+Status corrected from `Proposed` under
+[ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
+short-circuit is wired. The Context below records that the matchers had "**zero
+live callers**"; they are now called from the kernel itself
+(`apps/worker/src/agentos_worker/kernel.py::Kernel._route_and_start`, which evaluates
+`match_greeting(packs, event.text) or match_help(packs, event.text)` under the
+route lock). The Context is left as written — it is the record of what was true
+when the decision was taken.
 
 ## Context
 

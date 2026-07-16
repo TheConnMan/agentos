@@ -1,4 +1,4 @@
-# 29. Adopt LLM-as-a-Verifier: a continuous-score semantic grader and a live progress signal
+# 42. Adopt LLM-as-a-Verifier: a continuous-score semantic grader and a live progress signal
 
 Date: 2026-07-14
 

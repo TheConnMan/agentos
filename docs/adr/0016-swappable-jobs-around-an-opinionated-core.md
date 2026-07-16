@@ -3,6 +3,15 @@
 Date: 2026-07-09
 Status: Accepted
 
+**Superseded in part by [ADR-0026](0026-extract-storage-port-defer-second-adapter.md)
+and [ADR-0027](0027-thin-broker-port-defer-second-broker.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+the Decision below says "We do not write adapter frameworks (`StorageInterface`,
+`ChannelAdapter`, a pluggable channel registry) ahead of a real second
+implementation." 0026 extracted an `ObjectStore` Protocol and 0027 a
+`StreamBroker` / `StreamPublisher` Protocol, each ahead of a second adapter and
+each arguing why. Only that clause is narrowed — the governing rule below stands.
+
 Retroactive record of the design discipline described as-built in
 [`docs/architecture-vision.md`](../architecture-vision.md). This is the governing
 principle for every future "should we abstract X?" question, so it needs to be a

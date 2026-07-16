@@ -91,14 +91,45 @@ the opt-in **bundled local model** (Ollama / Qwen3 demo mode) ride this seam.
 `AGENTOS_FAKE_MODEL` is set (a test-only knob that swaps in a scripted fake). A
 missing credential is fail-closed, not a silent downgrade to fake.
 
-## Why it is frozen
+## What actually holds the contract
 
-`packages/aci-protocol` is a **frozen interface** compiled against in Python,
-TypeScript, and Rust. The Pydantic models are the source of truth; the JSON
-Schema and generated TypeScript/Rust are derivatives, and a CI compat gate fails
-on drift. An unreviewed change in one language would silently break the others,
-so a task that needs the protocol to change **stops and escalates** rather than
-working around it (ADR-0005; see [`ARCHITECTURE.md` §9](../../ARCHITECTURE.md)).
+`packages/aci-protocol` is compiled against in Python, TypeScript, and Rust. The
+Pydantic models are the source of truth; the JSON Schema and generated
+TypeScript/Rust are derivatives. An unreviewed change in one language would
+silently break the others, so a task that needs the protocol to change **stops
+and escalates** rather than working around it (ADR-0005; see
+[`ARCHITECTURE.md` §9](../../ARCHITECTURE.md)).
+
+**"Frozen" does not mean the version never moves, and the schema-sync test is
+not what protects you.** ADR-0036 exists to say so: the committed compat test
+asserts `render_schema() == committed`, and because a model change is
+regenerated and committed together it **always goes green**. It pins artifact
+*sync*; it never pinned *compatibility*. Three things carry the contract
+instead:
+
+- **Semver, not a freeze.** `PROTOCOL_VERSION` is `0.2.0`
+  ([`packages/aci-protocol/src/aci_protocol/version.py`](../../packages/aci-protocol/src/aci_protocol/version.py)),
+  versioned independently of the AgentOS release. Under 0.x a consumer accepts
+  the same `major.minor`; only a new optional field is compatible (patch), and
+  every other change class bumps the minor.
+- **Strict producers, tolerant consumers.** Constructing an event with an
+  unknown field is an error, so producer mistakes are caught at the source; a
+  decoder reading the wire **ignores fields it does not model**, which is what
+  makes a minor bump mean something. Unknown *enum* values still reject rather
+  than degrade: `SessionStatus` is control-bearing, and silently mapping a
+  future `awaiting-approval`-like status onto `done` would finalize a turn that
+  is actually pending a human decision.
+- **The wire-lock gate**, the half that actually gates
+  ([`packages/aci-protocol/src/aci_protocol/wire_lock.py`](../../packages/aci-protocol/src/aci_protocol/wire_lock.py)).
+  A committed [`wire.lock`](../../packages/aci-protocol/schema/wire.lock) pins
+  `{protocol_version, wire_sha256}`, fingerprinting the wire shape **with the
+  version normalized out**. A wire change that ships without a bump fails the
+  build naming the bump to make; a version-only bump passes. CI runs it against
+  the base branch's lock.
+
+ADR-0036 **amends** ADR-0005's frozen posture rather than superseding it: the
+ACI is still a versioned contract that a task may not casually change; what
+changed is how that is expressed and enforced.
 
 Choosing the real Claude Code plugin shape for skills (rather than an invented
 format) is the distribution wedge: a skill authored for Claude Code runs here

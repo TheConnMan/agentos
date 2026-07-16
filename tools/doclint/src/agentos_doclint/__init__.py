@@ -31,10 +31,14 @@ from .citation import (
 from .finding import Finding
 from .frontmatter import SeamMeta, parse_and_validate
 from .generate import (
+    ADR_INDEX_REL,
     INDEX_REL,
     OrderTieError,
+    adr_number,
     extract_region,
+    iter_adr_docs,
     iter_seam_docs,
+    render_adr_table,
     render_header_block,
     render_index_table,
     render_table,
@@ -42,16 +46,30 @@ from .generate import (
     seam_link,
 )
 from .symbols import SymbolCache, SymbolSyntaxError, resolve_symbol
+from .vision import VISION_REL, read_swap_readiness
 
 __all__ = [
     "SOURCE_EXTENSIONS",
     "Finding",
     "lint",
     "main",
+    "render_adr_table",
     "render_index_table",
 ]
 
 _ADR_REL = "docs/adr"
+
+# Repo-root docs inside the linted root, named one by one (#541, AC A).
+#
+# Deliberately an allowlist, not ``repo_root.glob("*.md")``: AC A asks for "at
+# minimum ARCHITECTURE.md", and a glob would silently pull five unaudited root
+# docs into the gate. Adding a root doc is one entry here plus whatever
+# corrections that doc then needs -- a deliberate, separately-reviewed decision.
+_ROOT_DOCS = ("ARCHITECTURE.md",)
+
+# The sentinel eleven of the seventeen seams carry instead of a grade. They
+# have no swap-readiness row by design and stay out of the grade check.
+_UNGRADED = "not separately graded"
 
 
 def _git_top_level() -> Path:
@@ -123,20 +141,178 @@ def _check_generation(repo_root: Path) -> list[Finding]:
     seam_docs, findings = _collect_seam_rows(repo_root)
     rows: list[tuple[str, SeamMeta]] = []
 
+    vision_grades = read_swap_readiness(repo_root)
+
     for doc, rel, text, meta in seam_docs:
         rows.append((seam_link(doc, repo_root), meta))
         findings.extend(_check_header_region(rel, text, meta))
+        findings.extend(_check_grade(rel, meta, vision_grades))
 
     findings.extend(_check_index_region(repo_root, rows))
+
+    collisions = _check_adr_uniqueness(repo_root)
+    findings.extend(collisions)
+    # A collided dir cannot produce a meaningful index -- two rows would claim
+    # one number -- and reporting drift on top of the collision buries the one
+    # finding that has a remedy. Fix the numbers, then the index follows.
+    if not collisions:
+        findings.extend(_check_adr_index_region(repo_root))
     return findings
+
+
+def _adr_collisions(repo_root: Path) -> dict[str, list[str]]:
+    """Group ADR filenames by their number prefix, keeping only the collisions."""
+    by_number: dict[str, list[str]] = {}
+    for doc in iter_adr_docs(repo_root):
+        number = adr_number(doc)
+        if number is not None:
+            by_number.setdefault(number, []).append(doc.name)
+    return {number: names for number, names in by_number.items() if len(names) > 1}
+
+
+def _check_adr_uniqueness(repo_root: Path) -> list[Finding]:
+    """No two ADRs may claim the same number prefix (#541, AC A).
+
+    Reads **filenames**, deliberately: ``docs/adr/`` is excluded from the
+    citation walk because an Accepted ADR is immutable and its citations are
+    allowed to rot with the code they described. So this is the one check that
+    looks at a directory whose contents the linter otherwise refuses to read.
+
+    Both colliding names are reported. The whole remedy is deciding which file
+    moves, and "0029 is duplicated" does not tell you that.
+    """
+    findings: list[Finding] = []
+    for number, names in sorted(_adr_collisions(repo_root).items()):
+        findings.append(
+            Finding(
+                _ADR_REL,
+                number,
+                f"ADR number {number} is claimed by {len(names)} files: "
+                f"{', '.join(sorted(names))}; renumber all but one to the next "
+                "free number and update every inbound reference",
+            )
+        )
+    return findings
+
+
+def _missing_adr_index() -> Finding:
+    """The one message for an absent ADR index, shared by the check and write phases.
+
+    Deliberately NOT recreated during generation, in either mode. ``--write``
+    regenerates marker-delimited *regions inside* docs that exist; it has never
+    authored a doc from scratch, and a scaffold here would replace the index's
+    hand-written prose -- the "claiming a number" instructions that are the
+    whole reason the file exists -- with a stub, papering over the deletion at
+    exactly the moment it should be loudest. Deleting a required artifact is a
+    human decision; both modes refuse it and say so.
+    """
+    return Finding(
+        ADR_INDEX_REL,
+        "adr-index",
+        "the ADR index is missing; it is a required artifact -- without it the "
+        "next free ADR number is an `ls` against whatever branch you are on, "
+        "which is how numbers collide. Restore the file (its generated region "
+        "is rebuilt by `agentos dev docs-lint --write`)",
+    )
+
+
+def _missing_region_finding(rel: str, marker: str) -> Finding:
+    """The one message for an absent or unpaired generated marker block.
+
+    Six sites (three regions x check-and-write) built this verbatim. Only the
+    message is shared: what each caller *does* around it stays put, because the
+    surrounding semantics differ deliberately and are load-bearing -- the seam
+    table skips a missing index, the ADR index hard-fails on one, and the write
+    phase continues past a bad header rather than rewriting it.
+    """
+    return Finding(rel, marker, "generated marker block is missing or unpaired")
+
+
+def _missing_root_doc(name: str) -> Finding:
+    """The one message for an absent allowlisted repo-root doc.
+
+    Sibling of ``_missing_adr_index``: both name a required artifact whose
+    disappearance must be louder than its drift, never quietly dropped from the
+    lint list. Unlike the ADR index this doc has no generated region, so there
+    is nothing for ``--write`` to rebuild -- the remedy is entirely a restore.
+    """
+    return Finding(
+        name,
+        "root-doc",
+        f"{name} is missing; it is a required artifact -- README.md and llms.txt "
+        "point release readers at it, and it is on the linted-root allowlist, so "
+        "its absence silently empties the gate for it rather than failing. "
+        "Restore the file, or drop it from the allowlist deliberately",
+    )
+
+
+def _check_adr_index_region(repo_root: Path) -> list[Finding]:
+    index_path = repo_root / ADR_INDEX_REL
+    if not index_path.is_file():
+        return [_missing_adr_index()]
+    text = index_path.read_text(encoding="utf-8")
+    region = extract_region(text, "adr-index")
+    if region.missing:
+        return [_missing_region_finding(ADR_INDEX_REL, "adr-index")]
+    if region.content.strip() != render_adr_table(repo_root).strip():
+        return [Finding(ADR_INDEX_REL, "adr-index", "ADR index is out of date; regenerate")]
+    return []
+
+
+def _check_grade(rel: str, meta: SeamMeta, vision_grades: dict[str, str]) -> list[Finding]:
+    """A graded seam's ``grade:`` must equal its declared vision row's grade.
+
+    Both the missing-key and the unknown-row cases are findings, never skips: a
+    skip would leave the seam looking checked while its grade rots unguarded,
+    which is the exact defect this check exists to catch. A row shared by two
+    seams (``aci-producer`` and ``harness-modelsession`` both answer to
+    "Harness / runtime") is the authority for each of them independently,
+    because every seam is checked on its own here.
+    """
+    if meta.grade == _UNGRADED:
+        return []
+
+    if meta.vision_row is None:
+        return [
+            Finding(
+                rel,
+                "vision_row",
+                f"seam '{meta.seam}' declares grade '{meta.grade}' but no "
+                f"vision_row:; a graded seam must name the {VISION_REL} "
+                "swap-readiness row its grade answers to",
+            )
+        ]
+
+    if meta.vision_row not in vision_grades:
+        known = ", ".join(sorted(vision_grades)) or "none"
+        return [
+            Finding(
+                rel,
+                "vision_row",
+                f"seam '{meta.seam}' names swap-readiness row "
+                f"'{meta.vision_row}', which is not in {VISION_REL}; "
+                f"known rows: {known}",
+            )
+        ]
+
+    expected = vision_grades[meta.vision_row]
+    if meta.grade != expected:
+        return [
+            Finding(
+                rel,
+                "grade",
+                f"seam '{meta.seam}' says grade '{meta.grade}' but its named "
+                f"authority, the '{meta.vision_row}' row of {VISION_REL}, says "
+                f"'{expected}'",
+            )
+        ]
+    return []
 
 
 def _check_header_region(rel: str, text: str, meta: SeamMeta) -> list[Finding]:
     region = extract_region(text, "header")
     if region.missing:
-        return [
-            Finding(rel, "header", "generated header marker block is missing or unpaired")
-        ]
+        return [_missing_region_finding(rel, "header")]
     if region.content.strip() != render_header_block(meta).strip():
         return [Finding(rel, "header", "generated header block is out of date; regenerate")]
     return []
@@ -149,7 +325,7 @@ def _check_index_region(repo_root: Path, rows: list[tuple[str, SeamMeta]]) -> li
     text = index_path.read_text(encoding="utf-8")
     region = extract_region(text, "seam-table")
     if region.missing:
-        return [Finding(INDEX_REL, "seam-table", "generated marker block is missing or unpaired")]
+        return [_missing_region_finding(INDEX_REL, "seam-table")]
     expected, tie_finding = _render_table_or_finding(rows)
     if tie_finding is not None:
         return [tie_finding]
@@ -159,16 +335,10 @@ def _check_index_region(repo_root: Path, rows: list[tuple[str, SeamMeta]]) -> li
 
 
 def _check_docs(repo_root: Path, cache: SymbolCache) -> tuple[list[Finding], int]:
-    findings: list[Finding] = []
+    docs, findings = _linted_docs(repo_root)
     ignored = 0
-    docs_root = repo_root / "docs"
-    if not docs_root.is_dir():
-        return findings, ignored
-    adr_root = repo_root / _ADR_REL
 
-    for md in sorted(docs_root.rglob("*.md")):
-        if _is_under(md, adr_root):
-            continue
+    for md in docs:
         rel = md.relative_to(repo_root).as_posix()
         text = md.read_text(encoding="utf-8")
         doc_findings, doc_ignored = _lint_doc(repo_root, rel, text, cache)
@@ -176,6 +346,36 @@ def _check_docs(repo_root: Path, cache: SymbolCache) -> tuple[list[Finding], int
         ignored += doc_ignored
 
     return findings, ignored
+
+
+def _linted_docs(repo_root: Path) -> tuple[list[Path], list[Finding]]:
+    """Every doc inside the linted root, plus a finding per absent root doc.
+
+    ``docs/`` (minus ADRs) is a walk: whatever is there is what gets linted, and
+    an empty tree is a legitimate state. ``_ROOT_DOCS`` is the opposite -- a
+    named allowlist, so every entry is a *required* artifact and a name that
+    does not resolve is a deletion, not an absence. Filtering those out with
+    ``.is_file()`` is what let ``ARCHITECTURE.md`` be deleted for zero findings
+    and exit 0: the gate verified what was written and never what was missing,
+    which is the defect species #541 exists to close. It is reported here rather
+    than scaffolded, for the same reason as ``_missing_adr_index``: restoring a
+    required doc is a human decision.
+    """
+    docs_root = repo_root / "docs"
+    adr_root = repo_root / _ADR_REL
+
+    docs: list[Path] = []
+    if docs_root.is_dir():
+        docs.extend(md for md in sorted(docs_root.rglob("*.md")) if not _is_under(md, adr_root))
+
+    findings: list[Finding] = []
+    for name in _ROOT_DOCS:
+        md = repo_root / name
+        if md.is_file():
+            docs.append(md)
+        else:
+            findings.append(_missing_root_doc(name))
+    return docs, findings
 
 
 def _lint_doc(
@@ -290,9 +490,7 @@ def _write_generated(repo_root: Path) -> list[Finding]:
         rows.append((seam_link(doc, repo_root), meta))
         region = extract_region(text, "header")
         if region.missing:
-            findings.append(
-                Finding(rel, "header", "generated header marker block is missing or unpaired")
-            )
+            findings.append(_missing_region_finding(rel, "header"))
             continue
         rewritten = replace_region(text, "header", render_header_block(meta))
         if rewritten != text:
@@ -303,9 +501,7 @@ def _write_generated(repo_root: Path) -> list[Finding]:
         text = index_path.read_text(encoding="utf-8")
         region = extract_region(text, "seam-table")
         if region.missing:
-            findings.append(
-                Finding(INDEX_REL, "seam-table", "generated marker block is missing or unpaired")
-            )
+            findings.append(_missing_region_finding(INDEX_REL, "seam-table"))
         else:
             table, tie_finding = _render_table_or_finding(rows)
             if tie_finding is not None:
@@ -315,7 +511,33 @@ def _write_generated(repo_root: Path) -> list[Finding]:
                 if rewritten != text:
                     index_path.write_text(rewritten, encoding="utf-8")
 
+    findings.extend(_write_adr_index(repo_root))
     return findings
+
+
+def _write_adr_index(repo_root: Path) -> list[Finding]:
+    """Rewrite the ADR index in place; a collided dir is left untouched.
+
+    Regenerating over a collision would silently emit two rows claiming one
+    number, which is exactly the state the uniqueness check exists to surface.
+    An absent index is reported, never scaffolded -- see ``_missing_adr_index``.
+    """
+    index_path = repo_root / ADR_INDEX_REL
+    if not index_path.is_file():
+        return [_missing_adr_index()]
+
+    collisions = _check_adr_uniqueness(repo_root)
+    if collisions:
+        return collisions
+
+    text = index_path.read_text(encoding="utf-8")
+    region = extract_region(text, "adr-index")
+    if region.missing:
+        return [_missing_region_finding(ADR_INDEX_REL, "adr-index")]
+    rewritten = replace_region(text, "adr-index", render_adr_table(repo_root))
+    if rewritten != text:
+        index_path.write_text(rewritten, encoding="utf-8")
+    return []
 
 
 def main(argv: list[str]) -> int:

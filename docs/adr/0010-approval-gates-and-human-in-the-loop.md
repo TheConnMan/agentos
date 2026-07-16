@@ -1,7 +1,16 @@
 # 10. Approval gates and human-in-the-loop
 
 Date: 2026-07-09
-Status: Proposed
+Status: Accepted
+
+Status corrected from `Proposed` under
+[ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
+decision is built. The durable `Approval` record and its audit trail are in
+`apps/api/src/agentos_api/models.py::Approval` /
+`::ApprovalAuditEntry`, the resolve endpoint in
+`apps/api/src/agentos_api/routers/approvals.py::resolve_approval`, and the
+kernel's client in `apps/worker/src/agentos_worker/approvals.py::ApprovalRequest`.
+Three Accepted ADRs (0033, 0034, 0035) already build on this one.
 
 ## Context
 

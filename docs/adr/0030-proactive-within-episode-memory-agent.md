@@ -99,7 +99,7 @@ Per ADR-0001, evidence-driven. Proposed until a spike shows, on a real bundle
 driven through `local`/`cluster`: (1) the reminder actually lands as a steer at the
 next loop boundary via the existing ACI path with no harness modification; (2) an
 eval delta on a long-horizon case set attributable to the memory layer (graded by
-ADR-0022's trajectory graders or ADR-0029's verifier); and (3) a token and latency
+ADR-0022's trajectory graders or ADR-0042's verifier); and (3) a token and latency
 accounting for the second (memory-agent) model call, which the paper acknowledges
 but never benchmarks.
 

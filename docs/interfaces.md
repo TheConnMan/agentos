@@ -20,7 +20,7 @@ is documentation of where the code already draws the line, not a new abstraction
 | Model provider / credentials | SOFT | 2 prefix-routed (Anthropic, OpenRouter) + base-URL-selected provider-native endpoints (Zhipu, Moonshot, DeepSeek, Ollama) | not separately graded | #24, #46 | [Model provider / credentials](interfaces/model-provider/INTERFACE.md) |
 | Telemetry / OTEL | SOFT | 1 | B+ | #47 | [Telemetry / OTEL](interfaces/telemetry-otel/INTERFACE.md) |
 | Evals (case + scorer) | SOFT | 2 scorers (grader family + trajectory matcher) | B | #8, #26 | [Evals (case + scorer)](interfaces/evals/INTERFACE.md) |
-| Blob storage (S3/MinIO) | CLEAN | 1 backend (S3/MinIO) behind the ObjectStore port | A- | #83 | [Blob storage (S3/MinIO)](interfaces/blob-storage/INTERFACE.md) |
+| Blob storage (S3/MinIO) | CLEAN | 1 backend (S3/MinIO) behind the ObjectStore port | B+ | #83 | [Blob storage (S3/MinIO)](interfaces/blob-storage/INTERFACE.md) |
 | Relational DB (Postgres) | SOFT | 1 | A- | #84 | [Relational DB (Postgres)](interfaces/relational-db/INTERFACE.md) |
 | Queue / stream (Valkey) | CLEAN | 1 (redis-py) behind the broker port | not separately graded | #85, #7 | [Queue / stream (Valkey)](interfaces/queue-stream/INTERFACE.md) |
 | Bundle format | CLEAN, frozen | 1 | not separately graded | #30 | [Bundle format](interfaces/bundle-format/INTERFACE.md) |
@@ -29,6 +29,7 @@ is documentation of where the code already draws the line, not a new abstraction
 | Memory | CLEAN | 1 loader (StateApiMemoryStore) | not separately graded | #28 | [Memory](interfaces/memory/INTERFACE.md) |
 | Conversation history | CLEAN | 1 loader (StateApiTranscriptStore) | not separately graded | #20 | [Conversation history](interfaces/conversation-history/INTERFACE.md) |
 | Triggers | SOFT | 2 hardcoded (Slack, GH push) | not separately graded | #29 | [Triggers](interfaces/triggers/INTERFACE.md) |
+| CLI output (agent-facing `--json`) | CLEAN | 9 outputs behind one trait | not separately graded | #456 | [CLI output (agent-facing `--json`)](interfaces/cli-output/INTERFACE.md) |
 <!-- END GENERATED: seam-table -->
 
 ## Kind legend
@@ -53,6 +54,6 @@ graded here.
 | Harness / runtime | Frozen ACI protocol (`packages/aci-protocol`), tri-language, CI-guarded | claude-agent-sdk runner | A-: strongest seam in the system; docked for the plugin-format entanglement and SDK-shaped resume | Write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced |
 | Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for three vendor span attributes (`langfuse.trace.name`, `langfuse.session.id`, `langfuse.user.id`); read side spans several API modules plus routers | Map the three `langfuse.*` attributes to neutral names in the collector; rename the `/langfuse/*` API routes |
 | Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours; the case format converged into one frozen, drift-gated schema (#8, ADR-0019), leaving the `version:`/`suite:` tag convention as the unfrozen part | Freeze the tag convention into the schema, or record it as a deliberate soft contract |
-| Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; three hand-aligned client sites; no interface for non-S3 | None needed until a non-S3 demand exists; document the three client sites as one seam |
+| Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; three hand-aligned client sites; the `ObjectStore` port (`apps/api/src/agentos_api/storage.py::ObjectStore`) does name the contract, but the second, non-S3 adapter is deferred by decision until a real demand lands (#282) | None needed until a non-S3 demand exists; document the three client sites as one seam |
 | Relational DB | SQLAlchemy 2.0 + alembic | Postgres | A-: managed-Postgres swap is a DSN change; two Postgres-isms in models | Leave as is; note the `postgresql.UUID` and schema-scoped enum as the two things a non-Postgres target would touch |
 | Communication | `QueuedTurn` (channel-neutral, in `aci-protocol`) + `SlackSink` | Slack (Bolt + chat.update) | C: the ingress payload is now the channel-neutral `QueuedTurn` (#7), but egress still assumes Slack's edit-in-place `chat.update` reply shape; service swappable (CLI stub), egress protocol not | Route replies per turn (#19) and define a channel-neutral `ReplySink` post/update port so a second channel can coexist |
