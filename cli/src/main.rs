@@ -34,16 +34,10 @@ impl TierDefaults for LocalTier {
     const API_URL: &'static str = "http://localhost:28000";
 }
 
-#[derive(Clone, Debug)]
-struct ClusterTier;
-
-impl TierDefaults for ClusterTier {
-    const API_URL: &'static str = "http://localhost:8000";
-}
-
-/// The flags every agent-target verb (`versions`, `memory`, `approvals`) takes,
-/// flattened into both tiers so a flag added here cannot be added to one tier
-/// and forgotten on the other (issue #466).
+/// The flags a LOCAL agent-target verb (`versions`, `memory`, `approvals`) takes.
+/// The local tier correctly defaults to the compose stack on localhost; the
+/// cluster tier discovers its connection from the release instead (see
+/// [`ClusterAgentTarget`] / [`ClusterConn`], #524), so it no longer shares this.
 #[derive(Args, Debug, Clone)]
 struct AgentTarget<T: TierDefaults> {
     /// Agent name or id.
@@ -67,6 +61,65 @@ impl<T: TierDefaults> From<AgentTarget<T>> for AgentActionOpts {
             dry_run: target.dry_run,
         }
     }
+}
+
+/// The connection surface for a cluster governance verb (#524). Unlike the local
+/// tier (which correctly defaults to the compose stack on localhost), a real Helm
+/// release serves the API through its UI `/api` NodePort proxy and randomizes
+/// `api.apiKey` at `cluster up` — so BOTH default to `None` and are DISCOVERED
+/// from the release (mirroring how `cluster deploy` already discovers the URL),
+/// rather than defaulting to `http://localhost:8000` + the `agentos-dev-key`
+/// sentinel, which parse cleanly and then fail to connect / 401. An explicit
+/// `--api-url`/`--api-key` (or `AGENTOS_API_URL`/`AGENTOS_API_KEY`) still wins.
+#[derive(Args, Debug, Clone)]
+struct ClusterConn {
+    /// Platform API base URL. Omit to discover the release's UI `/api` proxy.
+    #[arg(long, env = "AGENTOS_API_URL")]
+    api_url: Option<String>,
+    /// Platform API key. Omit to read the release's `api.apiKey` from its Secret.
+    #[arg(long, env = "AGENTOS_API_KEY")]
+    api_key: Option<String>,
+    /// Kubernetes namespace of the release. Default: agentos.
+    #[arg(long, default_value = "agentos")]
+    namespace: String,
+    /// Helm release name. Default: agentos.
+    #[arg(long, default_value = "agentos")]
+    release: String,
+}
+
+/// An agent-target cluster verb (`versions`/`memory`/`approvals`): the agent plus
+/// the discoverable [`ClusterConn`] and a `--dry-run`. The cluster analogue of
+/// `AgentTarget<LocalTier>`, which keeps its localhost defaults for the local tier.
+#[derive(Args, Debug, Clone)]
+struct ClusterAgentTarget {
+    /// Agent name or id.
+    agent: String,
+    #[command(flatten)]
+    conn: ClusterConn,
+    #[arg(long)]
+    dry_run: bool,
+}
+
+/// Resolve a cluster verb's `(api_url, api_key)`: an explicit flag/env value wins;
+/// otherwise discover it from the release (UI `/api` proxy for the URL, the chart
+/// Secret for the key). Discovery failures are actionable errors naming the
+/// release (see `ops::discover_ui_api_url` / `ops::discover_api_key`).
+async fn resolve_cluster_conn(conn: ClusterConn) -> anyhow::Result<(String, String)> {
+    let ClusterConn {
+        api_url,
+        api_key,
+        namespace,
+        release,
+    } = conn;
+    let api_url = match api_url {
+        Some(url) => url,
+        None => ops::discover_ui_api_url(&namespace, &release).await?,
+    };
+    let api_key = match api_key {
+        Some(key) => key,
+        None => ops::discover_api_key(&namespace, &release).await?,
+    };
+    Ok((api_url, api_key))
 }
 
 #[derive(Parser)]
@@ -1020,12 +1073,8 @@ enum ClusterAction {
     Kill {
         /// Agent name or id to kill.
         agent: String,
-        /// Platform API base URL.
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
-        api_key: String,
+        #[command(flatten)]
+        conn: ClusterConn,
         /// Confirm this destructive action (required; it stops the agent's runs).
         #[arg(long)]
         yes: bool,
@@ -1037,12 +1086,8 @@ enum ClusterAction {
     Resume {
         /// Agent name or id to resume.
         agent: String,
-        /// Platform API base URL.
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
-        api_key: String,
+        #[command(flatten)]
+        conn: ClusterConn,
         /// Print what would be done and exit without making a request.
         #[arg(long)]
         dry_run: bool,
@@ -1054,12 +1099,8 @@ enum ClusterAction {
         /// Daily spend cap in USD (BudgetConfig.max_usd_per_day). Must be > 0.
         #[arg(long)]
         limit: f64,
-        /// Platform API base URL.
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
-        api_key: String,
+        #[command(flatten)]
+        conn: ClusterConn,
         /// Print what would be done and exit without making a request.
         #[arg(long)]
         dry_run: bool,
@@ -1068,12 +1109,8 @@ enum ClusterAction {
     Delete {
         /// Agent name or id to delete.
         agent: String,
-        /// Platform API base URL.
-        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
-        api_url: String,
-        /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
-        api_key: String,
+        #[command(flatten)]
+        conn: ClusterConn,
         /// Confirm this destructive action (required; it permanently deletes the agent).
         #[arg(long)]
         yes: bool,
@@ -1084,17 +1121,17 @@ enum ClusterAction {
     /// List an agent's immutable versions (`GET /agents/{id}/versions`).
     Versions {
         #[command(flatten)]
-        target: AgentTarget<ClusterTier>,
+        target: ClusterAgentTarget,
     },
     /// Show what an agent has learned (its memory log; `GET /agents/{id}/memory`).
     Memory {
         #[command(flatten)]
-        target: AgentTarget<ClusterTier>,
+        target: ClusterAgentTarget,
     },
     /// View or set the tools whose calls require human approval (`PATCH /agents/{id}`).
     Approvals {
         #[command(flatten)]
-        target: AgentTarget<ClusterTier>,
+        target: ClusterAgentTarget,
         /// Tool name to gate behind approval (repeatable). Omit to show current gates.
         #[arg(long = "gate", value_name = "TOOL")]
         gate: Vec<String>,
@@ -1847,79 +1884,139 @@ async fn run(command: Option<Command>) -> Result<()> {
             }
             ClusterAction::Kill {
                 agent,
-                api_url,
-                api_key,
+                conn,
                 yes,
                 dry_run,
-            } => emit(
-                commands::kill(
-                    AgentActionOpts {
+            } => {
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::kill(
+                        AgentActionOpts {
+                            api_url,
+                            api_key,
+                            agent,
+                            dry_run,
+                        },
+                        yes,
+                    )
+                    .await?,
+                )
+            }
+            ClusterAction::Resume {
+                agent,
+                conn,
+                dry_run,
+            } => {
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::resume(AgentActionOpts {
                         api_url,
                         api_key,
                         agent,
                         dry_run,
-                    },
-                    yes,
+                    })
+                    .await?,
                 )
-                .await?,
-            ),
-            ClusterAction::Resume {
-                agent,
-                api_url,
-                api_key,
-                dry_run,
-            } => emit(
-                commands::resume(AgentActionOpts {
-                    api_url,
-                    api_key,
-                    agent,
-                    dry_run,
-                })
-                .await?,
-            ),
+            }
             ClusterAction::Budget {
                 agent,
                 limit,
-                api_url,
-                api_key,
+                conn,
                 dry_run,
-            } => emit(
-                commands::budget(
-                    AgentActionOpts {
-                        api_url,
-                        api_key,
-                        agent,
-                        dry_run,
-                    },
-                    limit,
+            } => {
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::budget(
+                        AgentActionOpts {
+                            api_url,
+                            api_key,
+                            agent,
+                            dry_run,
+                        },
+                        limit,
+                    )
+                    .await?,
                 )
-                .await?,
-            ),
+            }
             ClusterAction::Delete {
                 agent,
-                api_url,
-                api_key,
+                conn,
                 yes,
                 dry_run,
-            } => emit(
-                commands::delete(
-                    AgentActionOpts {
+            } => {
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::delete(
+                        AgentActionOpts {
+                            api_url,
+                            api_key,
+                            agent,
+                            dry_run,
+                        },
+                        yes,
+                    )
+                    .await?,
+                )
+            }
+            ClusterAction::Versions { target } => {
+                let ClusterAgentTarget {
+                    agent,
+                    conn,
+                    dry_run,
+                } = target;
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::versions(AgentActionOpts {
                         api_url,
                         api_key,
                         agent,
                         dry_run,
-                    },
-                    yes,
+                    })
+                    .await?,
                 )
-                .await?,
-            ),
-            ClusterAction::Versions { target } => emit(commands::versions(target.into()).await?),
-            ClusterAction::Memory { target } => emit(commands::memory(target.into()).await?),
+            }
+            ClusterAction::Memory { target } => {
+                let ClusterAgentTarget {
+                    agent,
+                    conn,
+                    dry_run,
+                } = target;
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::memory(AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    })
+                    .await?,
+                )
+            }
             ClusterAction::Approvals {
                 target,
                 gate,
                 clear,
-            } => emit(commands::approvals(target.into(), gate, clear).await?),
+            } => {
+                let ClusterAgentTarget {
+                    agent,
+                    conn,
+                    dry_run,
+                } = target;
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::approvals(
+                        AgentActionOpts {
+                            api_url,
+                            api_key,
+                            agent,
+                            dry_run,
+                        },
+                        gate,
+                        clear,
+                    )
+                    .await?,
+                )
+            }
         },
         Some(Command::Schema) => {
             use clap::CommandFactory;
@@ -2321,6 +2418,56 @@ mod tests {
                 assert_eq!(app_token, "X");
             }
             _ => panic!("expected local comms command"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_cluster_conn_prefers_explicit_over_discovery() {
+        // #524: an explicit --api-url/--api-key (or env) wins and short-circuits
+        // discovery entirely -- no kubectl is shelled, so this resolves with no
+        // cluster. (The discovery branch is covered by ops::ui_api_url_from_parts
+        // unit tests + the actionable release-named errors.)
+        let conn = ClusterConn {
+            api_url: Some("https://api.example.test".into()),
+            api_key: Some("real-release-key".into()),
+            namespace: "agentos".into(),
+            release: "agentos".into(),
+        };
+        let (url, key) = resolve_cluster_conn(conn)
+            .await
+            .expect("explicit conn resolves");
+        assert_eq!(url, "https://api.example.test");
+        assert_eq!(key, "real-release-key");
+    }
+
+    #[test]
+    fn cluster_governance_verbs_take_namespace_and_release() {
+        // The discovery flags exist on a cluster governance verb so an omitted
+        // --api-url/--api-key can be resolved from the named release (#524).
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "versions",
+            "demo",
+            "--namespace",
+            "prod",
+            "--release",
+            "acme",
+        ])
+        .expect("cluster versions with --namespace/--release should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action: ClusterAction::Versions { target },
+            }) => {
+                assert_eq!(target.agent, "demo");
+                assert_eq!(target.conn.namespace, "prod");
+                assert_eq!(target.conn.release, "acme");
+                assert!(
+                    target.conn.api_url.is_none(),
+                    "omitted --api-url stays None for discovery"
+                );
+            }
+            _ => panic!("expected cluster versions"),
         }
     }
 

@@ -245,10 +245,18 @@ fn agent_target_verbs_keep_their_per_tier_api_url_default() {
             "local {verb} lost its api-url default\n{local}"
         );
 
+        // The cluster tier deliberately has NO localhost:8000 default (#524):
+        // --api-url is optional and discovered from the release when omitted, so
+        // the dev localhost default (which silently fails against a real release)
+        // is gone. Instead the cluster verb exposes --namespace/--release.
         let cluster = output_text(&run_help(&["cluster", verb]));
         assert!(
-            cluster.contains("[default: http://localhost:8000]"),
-            "cluster {verb} lost its api-url default\n{cluster}"
+            !cluster.contains("[default: http://localhost:8000]"),
+            "cluster {verb} must not carry the dev localhost:8000 api-url default\n{cluster}"
+        );
+        assert!(
+            cluster.contains("--namespace") && cluster.contains("--release"),
+            "cluster {verb} must expose --namespace/--release for release discovery\n{cluster}"
         );
     }
 }
@@ -258,12 +266,26 @@ fn agent_target_verbs_keep_their_per_tier_api_url_default() {
 /// test fails if the two tiers ever drift apart again (issue #466).
 #[test]
 fn agent_target_verbs_expose_the_same_flags_on_both_tiers() {
+    // The two tiers share the agent-facing flags (--agent/--api-url/--api-key/
+    // --dry-run) but DIVERGE intentionally on the cluster side (#524): cluster
+    // adds --namespace/--release to discover the release's connection. So the
+    // cluster flag set must be a strict superset of the local one, differing only
+    // by those two discovery flags -- a flag added to local can still never be
+    // silently dropped from cluster.
     for verb in ["versions", "memory", "approvals"] {
         let local = help_flags(&["local", verb]);
         let cluster = help_flags(&["cluster", verb]);
+        for flag in &local {
+            assert!(
+                cluster.contains(flag),
+                "cluster {verb} is missing the local flag {flag:?}\nlocal: {local:?}\ncluster: {cluster:?}"
+            );
+        }
+        let extra: Vec<_> = cluster.iter().filter(|f| !local.contains(*f)).collect();
         assert_eq!(
-            local, cluster,
-            "local {verb} and cluster {verb} expose different flags"
+            extra.len(),
+            2,
+            "cluster {verb} should add exactly --namespace/--release; got extras {extra:?}"
         );
     }
 }
