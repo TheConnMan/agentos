@@ -36,10 +36,21 @@ fn status_json_validates_against_status_schema() {
 #[test]
 fn eval_json_validates_against_eval_schema() {
     let schema = load_schema("eval.schema.json");
-    // Two cases, one pass one fail: (id, passed, seconds) rows plus the roll-up.
+    // Two cases, one pass one fail: (id, passed, seconds, output) rows plus the
+    // roll-up. The failing case carries a non-empty reply for diagnosis (#548).
     let results = vec![
-        ("case-pass".to_string(), true, 1.5_f64),
-        ("case-fail".to_string(), false, 0.25_f64),
+        (
+            "case-pass".to_string(),
+            true,
+            1.5_f64,
+            "the answer is 4".to_string(),
+        ),
+        (
+            "case-fail".to_string(),
+            false,
+            0.25_f64,
+            "i do not know".to_string(),
+        ),
     ];
     let value = eval_json(&results, 1, 2);
     let v = validator(&schema);
@@ -284,7 +295,7 @@ fn observability_schema_gate_has_teeth() {
 fn eval_schema_gate_has_teeth() {
     // negative control: proves the schema gate discriminates
     let schema = load_schema("eval.schema.json");
-    let results = vec![("only".to_string(), true, 1.0_f64)];
+    let results = vec![("only".to_string(), true, 1.0_f64, "ok".to_string())];
     let mut value = eval_json(&results, 1, 1);
     // Strip a required top-level key; a schema with real teeth must now reject.
     value

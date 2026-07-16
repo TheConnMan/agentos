@@ -17,7 +17,7 @@ use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
 use agentos::secrets;
 use agentos::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
 use agentos::ui::{self, ColorFlag, Ui};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 
 /// Per-tier defaults for the flags shared by the agent-target verbs. The only
@@ -402,10 +402,13 @@ enum LocalAction {
     /// Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.
     ///
     /// Model parity with `agentos skill up`: `local up` runs the real model when a
-    /// model credential is present in the shell (`ANTHROPIC_API_KEY`,
-    /// `CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`), and the offline fake
-    /// model otherwise. Set `AGENTOS_FAKE_MODEL=1` to force the fake even with a
-    /// credential; set `AGENTOS_FAKE_MODEL=0` (or provide a credential) to go live.
+    /// model credential is present in the shell, and the offline fake model
+    /// otherwise. Providers are first-class beyond Anthropic: an Anthropic key
+    /// (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`) OR the provider-agnostic
+    /// `AGENTOS_CREDENTIALS` (with `ANTHROPIC_BASE_URL` for an OpenAI-compatible
+    /// endpoint such as OpenRouter). Set `AGENTOS_FAKE_MODEL=1` to force the fake
+    /// even with a credential; set `AGENTOS_FAKE_MODEL=0` (or provide a
+    /// credential) to go live.
     Up {
         /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
         #[arg(short = 'f', long)]
@@ -999,11 +1002,14 @@ enum ClusterAction {
         /// Version label; defaults to <manifest version>-<unix time>.
         #[arg(long)]
         label: Option<String>,
-        // NOTE: `--secret` is intentionally NOT offered on `cluster deploy` yet.
-        // Per-agent connector secrets on the cluster tier need the per-agent K8s
-        // Secret + secretKeyRef delivery (#440); until that lands, the value-only
-        // SandboxClaim CR would persist a token in plaintext in etcd. `local
-        // deploy --secret` is supported. See ADR-0009.
+        /// Per-agent connector secrets are NOT yet delivered at the cluster tier
+        /// (#440): this flag is accepted only so it can be DECLINED with a reason
+        /// instead of erroring like a typo. Until per-agent K8s Secret +
+        /// secretKeyRef delivery lands, a value-only SandboxClaim CR would persist
+        /// the token in plaintext in etcd. Use `agentos local deploy --secret`
+        /// today. See ADR-0009.
+        #[arg(long = "secret")]
+        secret: Vec<String>,
     },
     // Agent-lifecycle verbs (kill/resume/budget/delete) speak the platform API
     // like `deploy` does. Design decision (#149): extend the existing `cluster`
@@ -1795,7 +1801,21 @@ async fn run(command: Option<Command>) -> Result<()> {
                 slack_channel,
                 env,
                 label,
+                secret,
             } => {
+                // Decline `--secret` at the cluster tier with a REASON, not a
+                // clap "unexpected argument" that reads like a typo (#551): the
+                // parity rule is every verb is either implemented or explicitly
+                // declined. Per-agent secret delivery to worker-spawned sandboxes
+                // is tracked in #440 (ADR-0009); `local deploy --secret` works today.
+                if !secret.is_empty() {
+                    bail!(
+                        "`cluster deploy --secret` is not supported at the cluster tier yet: \
+                         per-agent connector-secret delivery to worker-spawned sandboxes needs the \
+                         K8s Secret + secretKeyRef path tracked in #440 (ADR-0009). Deploy without \
+                         --secret, or use `agentos local deploy --secret` for a local end-to-end run."
+                    );
+                }
                 // An explicit --api-url / AGENTOS_API_URL is dialed as given;
                 // otherwise reach the platform API through the deployed release's
                 // UI `/api` NodePort proxy (never self-plumb a port-forward).
@@ -2610,6 +2630,38 @@ mod tests {
                 action: SkillAction::Versions
             })
         ));
+    }
+
+    #[test]
+    fn cluster_deploy_accepts_secret_so_it_can_decline_with_a_reason() {
+        // `--secret` must PARSE (not error like a typo) so the handler can decline
+        // it with an explicit #440 message (#551). The decline itself is a runtime
+        // bail; here we lock that the surface accepts the flag.
+        match Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "deploy",
+            "--secret",
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+        ])
+        .expect("cluster deploy --secret should parse (then be declined at runtime)")
+        .command
+        {
+            Some(Command::Cluster {
+                action: ClusterAction::Deploy { secret, .. },
+            }) => assert_eq!(secret, vec!["GITHUB_PERSONAL_ACCESS_TOKEN"]),
+            _ => panic!("expected cluster deploy"),
+        }
+        // Bare cluster deploy still parses with no secrets.
+        match Cli::try_parse_from(["agentos", "cluster", "deploy"])
+            .expect("bare cluster deploy should parse")
+            .command
+        {
+            Some(Command::Cluster {
+                action: ClusterAction::Deploy { secret, .. },
+            }) => assert!(secret.is_empty()),
+            _ => panic!("expected cluster deploy"),
+        }
     }
 
     #[test]

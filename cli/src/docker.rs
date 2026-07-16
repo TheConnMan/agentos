@@ -296,11 +296,30 @@ pub async fn reap_labeled(label: &str) -> Result<usize> {
     if ids.is_empty() {
         return Ok(0);
     }
-    let count = ids.len();
     let mut rm_args: Vec<String> = vec!["rm".into(), "-f".into()];
     rm_args.extend(ids);
-    docker(&rm_args).await?;
-    Ok(count)
+    // Count what `docker rm -f` ACTUALLY removed, not the candidate set: it echoes
+    // one removed id per stdout line, and a container that vanished between `ps`
+    // and `rm` (a race, or a concurrent teardown) is silently skipped there. The
+    // pre-removal `ids.len()` overreports in exactly that case, which trained a
+    // user to distrust the teardown count (#551). Best-effort: a partial failure
+    // still reports the number confirmed gone rather than aborting the teardown.
+    let removed = match docker(&rm_args).await {
+        Ok(out) => count_removed(&out),
+        Err(_) => 0,
+    };
+    Ok(removed)
+}
+
+/// The number of containers `docker rm -f` confirmed removed: it echoes one
+/// removed id per stdout line. Pure so the teardown-count fix (#551) is testable
+/// without a Docker daemon.
+fn count_removed(rm_stdout: &str) -> usize {
+    rm_stdout
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .count()
 }
 
 /// The label that worker-local stamps on every runner container it spawns.
@@ -327,6 +346,18 @@ pub async fn container_logs(name_or_id: &str, tail: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn count_removed_counts_actual_rm_output_not_the_candidate_set() {
+        // `docker rm -f` echoes one removed id per line; that is the truthful
+        // count. A container that vanished before rm simply is not echoed (#551).
+        assert_eq!(count_removed("abc123\ndef456\n"), 2);
+        // Trailing/blank lines and surrounding whitespace do not inflate it.
+        assert_eq!(count_removed("  abc123  \n\n"), 1);
+        // Nothing removed -> zero, not a phantom "removed 1".
+        assert_eq!(count_removed(""), 0);
+        assert_eq!(count_removed("\n   \n"), 0);
+    }
 
     fn spec() -> StartSpec {
         StartSpec {

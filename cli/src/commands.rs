@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, CheckSpec, StartSpec};
-use crate::evals::{load_suite, turn_passes, EvalSuite};
+use crate::evals::{graded_answer, load_suite, turn_passes, EvalSuite};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
 use crate::scaffold::{read_declared_secrets, read_manifest, scaffold, scaffold_from_spec};
@@ -911,17 +911,22 @@ pub fn status_json<T: serde::Serialize>(url: &str, status: &T) -> serde_json::Va
     serde_json::json!({ "url": url, "session": status })
 }
 
+/// One graded eval case: `(id, passed, seconds, output)`. `output` is the graded
+/// answer text (the reply `turn_passes`/`reply_passes` judged), carried so a red
+/// case is diagnosable from `--json` without a manual re-run (#548). Shared by the
+/// skill runner path and the local/cluster message path so both report the same
+/// shape through `report_eval`/`eval_json`.
+pub type EvalRow = (String, bool, f64, String);
+
 /// The `agentos skill eval --json` payload: the pass/fail roll-up plus one row
 /// per case. Pure so it stays unit/contract-testable against
 /// `cli/schema/eval.schema.json`.
-pub fn eval_json(
-    results: &[(String, bool, f64)],
-    passed: usize,
-    total: usize,
-) -> serde_json::Value {
+pub fn eval_json(results: &[EvalRow], passed: usize, total: usize) -> serde_json::Value {
     let cases: Vec<serde_json::Value> = results
         .iter()
-        .map(|(id, ok, seconds)| serde_json::json!({ "id": id, "passed": ok, "seconds": seconds }))
+        .map(|(id, ok, seconds, output)| {
+            serde_json::json!({ "id": id, "passed": ok, "seconds": seconds, "output": output })
+        })
         .collect();
     serde_json::json!({
         "total": total,
@@ -1081,7 +1086,7 @@ async fn run_suite_cases(
     client: &RunnerClient,
     suite: &EvalSuite,
     mut on_case: impl FnMut(usize),
-) -> Result<Vec<(String, bool, f64)>> {
+) -> Result<Vec<EvalRow>> {
     let mut results = Vec::with_capacity(suite.cases.len());
     for (i, case) in suite.cases.iter().enumerate() {
         let started = Instant::now();
@@ -1089,7 +1094,14 @@ async fn run_suite_cases(
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
-        results.push((case.id.clone(), turn_passes(case, &events), elapsed));
+        // Capture the graded answer -- the exact text `turn_passes` judged -- so a
+        // red case can be diagnosed from `--json` without a manual re-run (#548).
+        results.push((
+            case.id.clone(),
+            turn_passes(case, &events),
+            elapsed,
+            graded_answer(&events),
+        ));
         on_case(i);
     }
     Ok(results)
@@ -1193,7 +1205,7 @@ async fn eval_sweep(
         let run = run_suite_cases(&client, suite, |_| {}).await;
         let _ = docker::remove_container(&name).await;
         let results = run?;
-        let passed = results.iter().filter(|(_, ok, _)| *ok).count();
+        let passed = results.iter().filter(|(_, ok, _, _)| *ok).count();
         step.done(&format!("{passed}/{}", suite.cases.len()));
         rows.push((model.clone(), passed, suite.cases.len()));
     }
@@ -1249,10 +1261,10 @@ pub fn report_sweep(rows: &[(String, usize, usize)]) -> Result<()> {
 /// verdict is a diagnostic -> stderr. A failing run exits `Failure`. Shared so
 /// `local eval`/`cluster eval` print the same summary `skill eval` does (the
 /// per-tier parity gate), not a hand-mirrored one.
-pub fn report_eval(results: &[(String, bool, f64)]) -> Result<()> {
+pub fn report_eval(results: &[EvalRow]) -> Result<()> {
     let ui = crate::ui::ui();
     let total = results.len();
-    let passed = results.iter().filter(|(_, ok, _)| *ok).count();
+    let passed = results.iter().filter(|(_, ok, _, _)| *ok).count();
 
     if ui.json() {
         ui.emit_json(&eval_json(results, passed, total));
@@ -1264,7 +1276,7 @@ pub fn report_eval(results: &[(String, bool, f64)]) -> Result<()> {
 
     let rows: Vec<Vec<String>> = results
         .iter()
-        .map(|(name, ok, seconds)| {
+        .map(|(name, ok, seconds, _)| {
             let result = if *ok {
                 format!("{} pass", '\u{2713}')
             } else {
@@ -1277,6 +1289,17 @@ pub fn report_eval(results: &[(String, bool, f64)]) -> Result<()> {
     if passed == total {
         ui.success(&format!("{passed}/{total} passed"));
     } else {
+        // Surface WHAT each red case actually replied, so a human need not re-run
+        // by hand to see why it failed (#548). Empty means the turn never produced
+        // gradeable text (no `done`/reply) -- itself the diagnosis.
+        for (name, _, _, output) in results.iter().filter(|(_, ok, _, _)| !*ok) {
+            let shown = if output.is_empty() {
+                "<no reply text>".to_string()
+            } else {
+                output.clone()
+            };
+            ui.note(&format!("{name} replied: {shown}"));
+        }
         ui.warn(&format!(
             "{passed}/{total} passed; {} failed",
             total - passed
@@ -1839,6 +1862,7 @@ impl crate::ui::CliOutput for VersionsOutput {
                         serde_json::json!({
                             "version_label": v.version_label,
                             "commit_sha": v.commit_sha,
+                            "bundle_sha256": v.bundle_sha256,
                             "created_by": v.created_by,
                             "created_at": v.created_at,
                         })
@@ -1864,9 +1888,13 @@ impl crate::ui::CliOutput for VersionsOutput {
                     let commit = v.commit_sha.as_deref().unwrap_or("-");
                     let by = v.created_by.as_deref().unwrap_or("-");
                     let at = v.created_at.as_deref().unwrap_or("-");
+                    // Show the bundle hash consistently across tiers (#548): it is
+                    // the parity evidence, so a human-readable listing must carry it
+                    // too, not just `cluster deploy`'s printout.
+                    let sha = v.bundle_sha256.as_deref().unwrap_or("-");
                     ui.kv(
                         &v.version_label,
-                        &format!("commit {commit}  by {by}  at {at}"),
+                        &format!("sha256 {sha}  commit {commit}  by {by}  at {at}"),
                     );
                 }
             }

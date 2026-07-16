@@ -54,6 +54,12 @@ pub struct Version {
     // leaner response.
     #[serde(default)]
     pub commit_sha: Option<String>,
+    /// The bundle's content hash (`VersionOut.bundle_sha256`): the field that
+    /// proves parity — "the artifact running here is the one I tested" (#548).
+    /// `#[serde(default)]` keeps the deploy path (which reads only id/label)
+    /// tolerant of a leaner response.
+    #[serde(default)]
+    pub bundle_sha256: Option<String>,
     #[serde(default)]
     pub created_by: Option<String>,
     #[serde(default)]
