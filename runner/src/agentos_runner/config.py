@@ -37,6 +37,13 @@ class RunnerConfig:
     # boots the resume claim for a genuinely-approved permission-gate block;
     # None/empty means no grant and the ordinary deny-and-pause posture holds.
     approval_grant_tool: str | None
+    # Turn-end reconciliation marker (#544, Decision A2), authority-free. The
+    # worker injects AGENTOS_APPROVAL_RESUMED_KIND='policy' at resume boot to
+    # record that the approval being resumed from was a POLICY gate. Unlike
+    # AGENTOS_APPROVAL_GRANT_TOOL it confers NO authority -- it is a fact about
+    # the past, used only to emit an observe-only warning when a resumed policy
+    # turn takes no action. It must never influence can_use_tool.
+    approval_resumed_kind: str | None
     port: int
     runner_token: str | None
 
@@ -80,6 +87,10 @@ class RunnerConfig:
         )
         grant_raw = env.get("AGENTOS_APPROVAL_GRANT_TOOL")
         approval_grant_tool = grant_raw.strip() if grant_raw and grant_raw.strip() else None
+        resumed_raw = env.get("AGENTOS_APPROVAL_RESUMED_KIND")
+        approval_resumed_kind = (
+            resumed_raw.strip() if resumed_raw and resumed_raw.strip() else None
+        )
         return cls(
             session=session,
             model=env.get("AGENTOS_MODEL"),
@@ -89,6 +100,7 @@ class RunnerConfig:
             idempotent_tools=idempotent,
             approval_required_tools=approval_required,
             approval_grant_tool=approval_grant_tool,
+            approval_resumed_kind=approval_resumed_kind,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
             runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None,
         )

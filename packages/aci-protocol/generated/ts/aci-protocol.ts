@@ -17,6 +17,8 @@ export type Text = string;
 export type Ts = string;
 export type Type1 = "message" | "job" | "eval_case";
 export type User = string;
+export type ApprovalGateKind = string | null;
+export type ApprovalGrantedTool = string | null;
 export type ApprovalRoute = string | null;
 export type ApprovalSummary = string | null;
 /**
@@ -30,7 +32,7 @@ export type Text1 = string;
 export type Type2 = "final";
 export type Version1 = string;
 /**
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "InboundMessage".
  */
 export type InboundMessage = Event | Interrupt;
@@ -40,7 +42,7 @@ export type Endpoint = string | null;
 export type Headers = string | null;
 export type Protocol = string | null;
 /**
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "OutboundEvent".
  */
 export type OutboundEvent = TextDelta | ToolNote | Final | ErrorEvent | SideEffectFlag;
@@ -74,12 +76,12 @@ export type SessionId = string;
  * Wire tokens follow the section 0 spelling; ``classified failure`` in prose
  * becomes the token ``classified-failure`` on the wire.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "SessionStatus".
  */
 export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure" | "awaiting-approval";
 
-export interface ACIProtocolV020 {
+export interface ACIProtocolV021 {
   [k: string]: unknown;
 }
 /**
@@ -88,7 +90,7 @@ export interface ACIProtocolV020 {
  * ``task_budget_hint`` is the optional hint passed through to the model so it
  * self paces (section 6b); it is not a hard ceiling.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "Budget".
  */
 export interface Budget {
@@ -100,7 +102,7 @@ export interface Budget {
 /**
  * A classified failure surfaced to the platform.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "ErrorEvent".
  */
 export interface ErrorEvent {
@@ -113,7 +115,7 @@ export interface ErrorEvent {
 /**
  * An inbound event delivered into a live session (initial or follow-up).
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "Event".
  */
 export interface Event {
@@ -137,10 +139,23 @@ export interface Event {
  * other status; ``approval_route`` also ``None`` when the request named no
  * route (the platform falls back to the requesting channel).
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * ``approval_gate_kind`` records which gate produced the request (#544):
+ * ``'permission'`` when the runner's tool-permission gate denied a real tool
+ * call, ``'policy'`` when the model asked for a business-decision approval.
+ * It is the durable provenance the worker branches on instead of sniffing the
+ * summary prefix. ``approval_granted_tool`` carries the tool name the
+ * permission gate denied -- the trusted ``can_use_tool`` value the resume-turn
+ * grant is bound to -- and is only ever set for ``approval_gate_kind =
+ * 'permission'``; a policy gate never authorizes a tool, so it stays ``None``.
+ * Both ``None`` on every other status, and ``None`` from an older runner that
+ * predates these fields (the worker falls back to the prefix parse then).
+ *
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "Final".
  */
 export interface Final {
+  approval_gate_kind?: ApprovalGateKind;
+  approval_granted_tool?: ApprovalGrantedTool;
   approval_route?: ApprovalRoute;
   approval_summary?: ApprovalSummary;
   status?: SessionStatus;
@@ -152,7 +167,7 @@ export interface Final {
 /**
  * A hard stop delivered on the control channel, distinct from a steer.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "Interrupt".
  */
 export interface Interrupt {
@@ -167,7 +182,7 @@ export interface Interrupt {
  * fields the prototype used (endpoint, headers, protocol); any others pass
  * through as raw env vars untouched and are out of scope for this typed view.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "OtelConfig".
  */
 export interface OtelConfig {
@@ -179,7 +194,7 @@ export interface OtelConfig {
 /**
  * A streamed chunk of assistant text.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "TextDelta".
  */
 export interface TextDelta {
@@ -191,7 +206,7 @@ export interface TextDelta {
 /**
  * A human readable note about a tool call the harness is making.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "ToolNote".
  */
 export interface ToolNote {
@@ -207,7 +222,7 @@ export interface ToolNote {
  * Its presence gates the no-retry-after-side-effects rule (section 2b): a
  * failed run carrying this flag escalates to a human instead of retrying.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "SideEffectFlag".
  */
 export interface SideEffectFlag {
@@ -225,7 +240,7 @@ export interface SideEffectFlag {
  * stream-encoding helpers live with the producer (the dispatcher), not on this
  * frozen model, so the contract stays transport-agnostic.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "QueuedTurn".
  */
 export interface QueuedTurn {
@@ -254,7 +269,7 @@ export interface QueuedTurn {
  * (its ``slack_api_base_url``, i.e. real Slack), so a producer that does not set
  * it keeps the pre-#19 behavior.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "ReplyHandle".
  */
 export interface ReplyHandle {
@@ -270,7 +285,7 @@ export interface ReplyHandle {
  * section 0 describes these as per-tool secrets via K8s Secret refs, so the
  * contract carries the reference, not the secret material itself.
  *
- * This interface was referenced by `ACIProtocolV020`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV021`'s JSON-Schema
  * via the `definition` "SessionConfig".
  */
 export interface SessionConfig {

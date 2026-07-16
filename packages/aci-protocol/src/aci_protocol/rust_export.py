@@ -242,6 +242,8 @@ mod tests {
             status: SessionStatus::Done,
             approval_summary: None,
             approval_route: None,
+            approval_gate_kind: None,
+            approval_granted_tool: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -256,6 +258,8 @@ mod tests {
             status: SessionStatus::AwaitingApproval,
             approval_summary: Some("Give ACME a 20% discount".to_string()),
             approval_route: Some("managers".to_string()),
+            approval_gate_kind: Some("policy".to_string()),
+            approval_granted_tool: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();

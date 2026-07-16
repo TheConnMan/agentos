@@ -8,16 +8,20 @@ test-isolated runs stream as a valid frozen-contract QueuedTurn.
 """
 
 import asyncio
+import contextlib
 import json
 import os
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+import asyncpg
 import httpx
 import pytest
 import redis
@@ -34,8 +38,16 @@ from agentos_api.sandbox_token import mint
 from agentos_api.slack_approvers import SlackApproverSetSelector
 from agentos_api.slack_usergroups import SlackUserGroupClient
 from agentos_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
+from sqlalchemy import make_url, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+# The migration test (18) drives alembic directly against the disposable DB the
+# conftest provisions, so it needs the same script location conftest uses.
+ALEMBIC_DIR = Path(__file__).resolve().parents[1] / "alembic"
 
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
 _VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
@@ -92,6 +104,63 @@ def _payload(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+def _seed_raw_approval(approval_id: uuid.UUID, summary: str) -> None:
+    """Insert an approval with raw SQL, naming only the pre-#544 columns.
+
+    Used by the migration test to seed rows as they exist BEFORE the provenance
+    columns are added, so the backfill has something real to classify.
+    """
+
+    async def _run() -> None:
+        engine = create_async_engine(get_settings().database_url)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO agentos.approvals (id, conversation_id, author, "
+                        "summary, reply_channel, reply_placeholder, dedupe_key, status) "
+                        "VALUES (:id, :conv, :author, :summary, :ch, :ph, :dedupe, "
+                        "'pending')"
+                    ),
+                    {
+                        "id": approval_id,
+                        "conv": f"th-{approval_id.hex[:8]}",
+                        "author": "U1",
+                        "summary": summary,
+                        "ch": "C1",
+                        "ph": "p-1",
+                        "dedupe": uuid.uuid4().hex,
+                    },
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def _read_provenance(approval_id: uuid.UUID) -> tuple[str | None, str | None]:
+    """(gate_kind, granted_tool) straight from the row, post-migration."""
+
+    async def _run() -> tuple[str | None, str | None]:
+        engine = create_async_engine(get_settings().database_url)
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    text(
+                        "SELECT gate_kind, granted_tool FROM agentos.approvals "
+                        "WHERE id = :id"
+                    ),
+                    {"id": approval_id},
+                )
+                row = result.first()
+                assert row is not None, f"approval {approval_id} vanished"
+                return row[0], row[1]
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_run())
 
 
 def _read_resumed_at(approval_id: str) -> datetime | None:
@@ -534,6 +603,278 @@ def test_authorizer_blocks_non_member_and_self_approval(
     )
     assert ok.status_code == 200
     assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_bound_approver_is_accepted_and_requesting_channel_is_not(
+    approvals_client: TestClient,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+    runs_stream: str,
+) -> None:
+    """(16) The AC2 authority test: the direct inversion of the observed 403.
+
+    An agent lives in the requesting channel C_LOCALDEV and declares a
+    'deal-desk' route bound to C_BOUND, whose approvers are exactly [U_BOUND].
+    A policy-gate approval is created WITH the resolved route -- which is the
+    whole point of Decision B: the runner resolves the route against the
+    manifest and refuses rather than letting route=null reach the API, where
+    ADR-0034's channel-membership default (correct for genuinely generic
+    approvals) silently widens authority to whoever happens to be in the
+    requesting channel.
+
+    The observed failure had exactly this polarity, reversed: the bound approver
+    got a 403 and the requesting channel could resolve. Assert the inversion.
+    """
+
+    agent = approvals_client.post(
+        "/agents",
+        json={
+            "name": f"deal-desk-{uuid.uuid4().hex[:8]}",
+            "slack_channel": "C0LOCALDEV",
+            "approval_routes": {
+                "deal-desk": {
+                    "channel": "C0BOUND01",
+                    "approvers": {"users": ["U0BOUND01"]},
+                }
+            },
+        },
+        headers=auth_headers,
+    )
+    assert agent.status_code == 201, agent.text
+
+    created = approvals_client.post(
+        "/approvals",
+        json=_payload(
+            agent_id=agent.json()["id"],
+            author="U0AUTHOR1",
+            reply_channel="C0LOCALDEV",
+            route="deal-desk",
+            card_channel="C0BOUND01",
+            gate_kind="policy",
+        ),
+        headers=auth_headers,
+    ).json()
+    assert created["route"] == "deal-desk"
+    assert created["gate_kind"] == "policy"
+    resolve_url = f"/approvals/{created['id']}/resolve"
+
+    # A member of the REQUESTING channel who is not a bound approver: refused.
+    # This is the widening #544 is about -- today this is the path that succeeds.
+    requesting = approvals_client.post(
+        resolve_url,
+        json={
+            "decision": "approved",
+            "resolved_by": "U0LOCAL01",
+            "actor_channel": "C0LOCALDEV",
+        },
+        headers=auth_headers,
+    )
+    assert requesting.status_code == 403, (
+        "authority must never widen to the requesting channel when the manifest "
+        f"declared a route: {requesting.text}"
+    )
+    assert approvals_client.get(
+        f"/approvals/{created['id']}", headers=auth_headers
+    ).json()["status"] == "pending"
+    assert valkey.xrange(runs_stream) == []
+
+    # The BOUND approver, from the bound channel: accepted.
+    bound = approvals_client.post(
+        resolve_url,
+        json={
+            "decision": "approved",
+            "resolved_by": "U0BOUND01",
+            "actor_channel": "C0BOUND01",
+        },
+        headers=auth_headers,
+    )
+    assert bound.status_code == 200, (
+        f"the manifest's declared approver must be able to approve: {bound.text}"
+    )
+    assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_create_approval_persists_gate_kind_and_granted_tool(
+    approvals_client: TestClient, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    """(17) The provenance columns round-trip through real Postgres.
+
+    ``gate_kind`` answers "which path fired" (AC3 observability) and drives the
+    worker's refusal; ``granted_tool`` is what is actually handed out. Both are
+    written by the runner -- the only component that knows which tool
+    ``can_use_tool`` denied -- and carried by the worker verbatim.
+    """
+
+    permission = approvals_client.post(
+        "/approvals",
+        json=_payload(
+            summary='Tool call awaiting approval: Bash {"command": "deploy"}',
+            gate_kind="permission",
+            granted_tool="Bash",
+        ),
+        headers=auth_headers,
+    )
+    assert permission.status_code == 201, permission.text
+    body = permission.json()
+    assert body["gate_kind"] == "permission"
+    assert body["granted_tool"] == "Bash"
+    # Read back from the DB through GET, not from the create response.
+    got = approvals_client.get(f"/approvals/{body['id']}", headers=auth_headers).json()
+    assert got["gate_kind"] == "permission"
+    assert got["granted_tool"] == "Bash"
+
+    # A policy gate carries provenance but never authority (Decision A).
+    policy = approvals_client.post(
+        "/approvals",
+        json=_payload(summary="Give ACME a 20% discount", gate_kind="policy"),
+        headers=auth_headers,
+    ).json()
+    assert policy["gate_kind"] == "policy"
+    assert policy["granted_tool"] is None
+
+    # An old runner emits neither: both stay NULL, which is the rolling-deploy
+    # window the worker's prefix fallback covers (edge case 7).
+    legacy = approvals_client.post(
+        "/approvals", json=_payload(), headers=auth_headers
+    ).json()
+    assert legacy["gate_kind"] is None
+    assert legacy["granted_tool"] is None
+
+
+@contextlib.contextmanager
+def _isolated_migration_db() -> Iterator[None]:
+    """A throwaway database ALL to itself, for a test that downgrades/upgrades.
+
+    The session ``_disposable_db`` is shared across every test in this file, so
+    running ``alembic downgrade`` against it mid-suite disrupts siblings (the
+    sweeper tests seed rows and count them). apps/api/CLAUDE.md is explicit:
+    migrations are tested against a database of their own, never shared state.
+    This provisions one, points DATABASE_URL + alembic at it for the body, and
+    drops it after, restoring the session URL so no other test is perturbed.
+    """
+
+    base = make_url(get_settings().database_url)
+    run_db = f"agentos_test_mig_{secrets.token_hex(4)}"
+
+    async def _admin(sql: str) -> None:
+        conn = await asyncpg.connect(
+            user=base.username,
+            password=base.password,
+            host=base.host,
+            port=base.port,
+            database="postgres",
+        )
+        try:
+            await conn.execute(sql)
+        finally:
+            await conn.close()
+
+    saved_url = os.environ.get("DATABASE_URL")
+    asyncio.run(_admin(f'CREATE DATABASE "{run_db}"'))
+    try:
+        os.environ["DATABASE_URL"] = base.set(database=run_db).render_as_string(
+            hide_password=False
+        )
+        get_settings.cache_clear()
+        yield
+    finally:
+        if saved_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = saved_url
+        get_settings.cache_clear()
+        asyncio.run(_admin(f'DROP DATABASE IF EXISTS "{run_db}" WITH (FORCE)'))
+
+
+def test_backfill_classifies_existing_rows() -> None:
+    """(18) The migration backfills rows at rest, then round-trips.
+
+    A prefixed summary is a genuine permission-gate block (the runner is the
+    only writer of that reserved namespace), so it backfills to 'permission'
+    plus the tool name parsed out of it. Everything else backfills to 'policy'
+    with granted_tool NULL -- the safe direction: a pending policy approval
+    created before this change becomes the conservative "no grant" case, never
+    a surprise grant.
+
+    Runs on its own database (see ``_isolated_migration_db``) so the downgrade
+    never disturbs the shared session DB the other tests read.
+    """
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+
+    with _isolated_migration_db():
+        # Bring the fresh DB up to the full schema, then step back over the
+        # provenance columns to the state an existing deployment holds.
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "-1")
+        permission_id = uuid.uuid4()
+        policy_id = uuid.uuid4()
+        _seed_raw_approval(
+            permission_id, 'Tool call awaiting approval: Bash {"command": "deploy"}'
+        )
+        _seed_raw_approval(policy_id, "Give ACME a 20% discount")
+        command.upgrade(cfg, "head")
+
+        assert _read_provenance(permission_id) == ("permission", "Bash")
+        assert _read_provenance(policy_id) == ("policy", None)
+
+        # And the revision round-trips cleanly rather than only migrating forward.
+        command.downgrade(cfg, "-1")
+        command.upgrade(cfg, "head")
+
+
+def test_gate_kind_check_constraint_rejects_unknown_values() -> None:
+    """(#544) The DB-layer guard on the security-load-bearing gate_kind column.
+
+    ``gate_kind`` is trusted in a worker security branch (binding.py:
+    ``if gate_kind == "policy": return None``), so the migration pins the column
+    to the two literals the runner ever writes via ``ck_approvals_gate_kind``.
+    The two literals and NULL (the rolling-window / old-runner case) are
+    accepted; anything else is rejected by real Postgres. Runs on its own
+    database (see ``_isolated_migration_db``) so the schema is untouched shared
+    state.
+    """
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+
+    async def _insert(gate_kind: str | None) -> None:
+        engine = create_async_engine(get_settings().database_url)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO agentos.approvals (id, conversation_id, "
+                        "author, summary, reply_channel, reply_placeholder, "
+                        "dedupe_key, status, gate_kind) VALUES (:id, :conv, "
+                        ":author, :summary, :ch, :ph, :dedupe, 'pending', :gk)"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "conv": "th-ck",
+                        "author": "U1",
+                        "summary": "s",
+                        "ch": "C1",
+                        "ph": "p-1",
+                        "dedupe": uuid.uuid4().hex,
+                        "gk": gate_kind,
+                    },
+                )
+        finally:
+            await engine.dispose()
+
+    with _isolated_migration_db():
+        command.upgrade(cfg, "head")
+        # Accepted: the two literals plus NULL (NULL IN (...) is NULL, not
+        # FALSE, so the CHECK passes -- the old-runner / pre-backfill case).
+        asyncio.run(_insert("permission"))
+        asyncio.run(_insert("policy"))
+        asyncio.run(_insert(None))
+        # Rejected: anything outside the closed set trips ck_approvals_gate_kind.
+        with pytest.raises(IntegrityError):
+            asyncio.run(_insert("bogus"))
 
 
 def test_route_bound_approval_authorizes_against_card_channel(

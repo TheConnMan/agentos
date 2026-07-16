@@ -53,6 +53,14 @@ class TurnState:
     # the platform binds to a channel per deployment. None routes to the
     # requesting channel.
     approval_route: str | None = None
+    # Durable gate provenance (#544, Decision C). ``approval_gate_kind`` is
+    # 'policy' when the model asked for a business-decision approval and
+    # 'permission' when the runner's tool gate denied a real tool call (merged
+    # from the ApprovalGate in the session). ``approval_granted_tool`` is the
+    # trusted tool name a permission gate authorizes for the resume turn; a
+    # policy gate never carries one (Decision A), so it stays None here.
+    approval_gate_kind: str | None = None
+    approval_granted_tool: str | None = None
     # Assistant text streamed during the turn, accumulated so a DONE result with
     # an empty ``result`` can still deliver the model's answer. Reasoning models
     # routed through OpenRouter (e.g. z-ai/glm-5.2) emit the answer as a TextBlock
@@ -135,6 +143,11 @@ def _translate_assistant(
                     state.approval_summary = guard_reserved_summary(summary)
                     route = str(payload.get("route") or "").strip()
                     state.approval_route = route or None
+                    # A policy gate authorizes a business decision, never a tool
+                    # (#544, Decision A): stamp the provenance and leave
+                    # approval_granted_tool None so the worker can never mint a
+                    # bypass grant from a model-authored request (#430).
+                    state.approval_gate_kind = "policy"
             if classifier.is_side_effecting(block.name) and not state.side_effect_emitted:
                 events.append(
                     SideEffectFlag(tool=block.name, detail="non-idempotent tool executed")

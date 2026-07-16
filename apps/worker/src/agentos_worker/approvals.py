@@ -39,6 +39,12 @@ class ApprovalRequest(BaseModel):
     # against card_channel.
     route: str | None = None
     card_channel: str | None = None
+    # Gate provenance (#544, Decision C), carried verbatim from the run's final
+    # onto the durable record. ``gate_kind`` is 'permission' or 'policy';
+    # ``granted_tool`` is the denied tool name, only ever set for a permission
+    # gate. Field names match the API's ApprovalCreate schema (posted as-is).
+    gate_kind: str | None = None
+    granted_tool: str | None = None
     expires_in_seconds: int | None = None
 
 
