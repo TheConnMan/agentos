@@ -1352,6 +1352,9 @@ async fn run(command: Option<Command>) -> Result<()> {
                     env,
                     label,
                     secret,
+                    // `local deploy` offers `--secret`, so enforce the
+                    // declared-secrets policy gate (#464).
+                    secret_binding_supported: true,
                     connect_hint,
                 })
                 .await
@@ -1718,6 +1721,11 @@ async fn run(command: Option<Command>) -> Result<()> {
                     // Cluster connector-secret delivery is deferred to #440; no
                     // `--secret` flag on `cluster deploy` (see the note above).
                     secret: Vec::new(),
+                    // Secret binding is not wired on cluster until #440, so the
+                    // declared-secrets policy gate (#464) is skipped here: it
+                    // would otherwise hard-fail every secrets-declaring bundle
+                    // with a `--secret <NAME>` remediation this tier lacks.
+                    secret_binding_supported: false,
                     connect_hint,
                 })
                 .await

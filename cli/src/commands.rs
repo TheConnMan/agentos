@@ -18,7 +18,7 @@ use crate::docker::{self, CheckSpec, StartSpec};
 use crate::evals::{load_suite, turn_passes};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
-use crate::scaffold::{read_manifest, scaffold, scaffold_from_spec};
+use crate::scaffold::{read_declared_secrets, read_manifest, scaffold, scaffold_from_spec};
 use crate::state::{self, RunnerState};
 
 pub const DEFAULT_PORT: u16 = 7245; // the design canon's local bot port
@@ -1124,11 +1124,41 @@ pub struct DeployOpts {
     /// to the platform API, which stores it on the agent for the worker to
     /// forward into the sandbox. From `deploy --secret <NAME>`.
     pub secret: Vec<String>,
+    /// Whether this tier offers `--secret` binding, gating the declared-secrets
+    /// policy check (#464): true for tiers that can bind a declared secret
+    /// (local), false where secret delivery is not yet wired (cluster, until
+    /// #440 flips it). When false the gate is skipped -- otherwise every
+    /// secrets-declaring bundle would hard-fail with a `--secret <NAME>`
+    /// remediation that does not exist on that tier.
+    pub secret_binding_supported: bool,
     /// Actionable remediation line printed when the platform API connection
     /// fails (e.g. the kubectl port-forward command for cluster, or
     /// `agentos local up` for local). Naming the fix turns a raw
     /// "Connection refused" into something the operator can act on.
     pub connect_hint: String,
+}
+
+/// The declared connector-secret NAMES not present in the operator's bound
+/// `--secret` set (#464). A non-empty result is a deploy-time gap: the bundle
+/// expects a secret nothing will bind, which would surface at runtime as an
+/// auth failure (#429).
+///
+/// Only WELL-FORMED, bindable names count as a gap: a declared name is diffed
+/// only when it passes `crate::secrets::validate_name`, the same env-var-syntax
+/// check (`^[A-Z_][A-Z0-9_]*$`) used for `agentos secrets set`. Malformed or
+/// reserved names are the plugin-format validator's responsibility (server-side
+/// on upload); the gate excludes them so it never preempts that real validation
+/// error with a misleading "bind `--secret <NAME>`" message. The reserved-name
+/// list is deliberately NOT mirrored into Rust (drift risk) -- the regex filter
+/// is the intended scope.
+fn unbound_declared_secrets(declared: &[String], bound: &[String]) -> Vec<String> {
+    declared
+        .iter()
+        .filter(|name| {
+            crate::secrets::validate_name(name).is_ok() && !bound.iter().any(|b| b == *name)
+        })
+        .cloned()
+        .collect()
 }
 
 pub async fn deploy(opts: DeployOpts) -> Result<()> {
@@ -1141,6 +1171,32 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         .label
         .unwrap_or_else(|| format!("{manifest_version}-{}", unix_now()));
     let created_by = std::env::var("USER").unwrap_or_else(|_| "agentos-cli".to_string());
+
+    // Deploy-time secrets-policy gate (#464 / ADR-0009): every NAME the bundle's
+    // manifest `secrets` policy declares must be in the operator's bound
+    // `--secret` set, else deploy FAILS naming the gap. Decision is fail-loud per
+    // the ticket -- a missing binding otherwise surfaces later as a runtime auth
+    // failure (#429). This runs in the shared deploy() path, pre-network, so it
+    // covers BOTH `local deploy` and `cluster deploy`. It is gated on
+    // `secret_binding_supported` (AC2): cluster deploy cannot bind a `--secret`
+    // until #440 wires delivery, so enforcing there would hard-fail every
+    // secrets-declaring bundle with a remediation the tier cannot satisfy. It
+    // runs first, before the archive is even packed: the check is a pure
+    // name-set diff on `opts.secret` (the bound NAME set) and needs no packed
+    // bundle or resolved values, so a declared-but-unbound policy fails fast
+    // without doing any of that work.
+    if opts.secret_binding_supported {
+        let declared = read_declared_secrets(&plugin_dir)?;
+        let unbound = unbound_declared_secrets(&declared, &opts.secret);
+        if !unbound.is_empty() {
+            return Err(crate::exit::usage(format!(
+                "{plugin_name} declares connector secret(s) that were not bound on deploy: {}. \
+                 Bind each with `--secret <NAME>` (value read from the environment or from \
+                 `agentos secrets set <NAME>`).",
+                unbound.join(", ")
+            )));
+        }
+    }
 
     let ui = crate::ui::ui();
     if let Some(channel) = opts.slack_channel.as_deref() {
@@ -1911,7 +1967,23 @@ mod tests {
         merge_secret_env, resolve_cases_path, seed_env_if_missing, select_passthrough_env,
         validate_slack_channel, EnvSeed,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    /// Scaffold a bundle at `dir` under `name`, then overwrite its manifest's
+    /// `secrets` policy with `secrets`. Shared setup for tests exercising the
+    /// declared-secrets gate in `deploy()`.
+    fn scaffold_with_secrets(dir: &Path, name: &str, secrets: &[&str]) {
+        crate::scaffold::scaffold(dir, name).unwrap();
+        let manifest_path = dir.join(".claude-plugin/plugin.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["secrets"] = serde_json::json!(secrets);
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn default_channel_passes_local_validation() {
@@ -2144,6 +2216,7 @@ mod tests {
             env: super::DeployEnv::Dev,
             label: Some("v0".to_string()),
             secret: vec![],
+            secret_binding_supported: true,
             connect_hint: hint.to_string(),
         };
         let err = super::deploy(opts).await.unwrap_err();
@@ -2151,6 +2224,113 @@ mod tests {
         assert!(
             rendered.contains(hint),
             "hint missing from error: {rendered}"
+        );
+    }
+
+    #[test]
+    fn unbound_declared_secrets_diffs_declared_against_bound() {
+        // All declared names bound -> nothing unbound.
+        assert!(super::unbound_declared_secrets(
+            &["GH_TOKEN".to_string()],
+            &["GH_TOKEN".to_string()]
+        )
+        .is_empty());
+        // A declared name not in the bound set is returned.
+        assert_eq!(
+            super::unbound_declared_secrets(
+                &["GH_TOKEN".to_string(), "SLACK".to_string()],
+                &["GH_TOKEN".to_string()]
+            ),
+            vec!["SLACK".to_string()]
+        );
+        // Nothing declared -> nothing unbound (even with bound extras).
+        assert!(super::unbound_declared_secrets(&[], &["GH_TOKEN".to_string()]).is_empty());
+        // The #464 mismatch: declared the connector name, bound a different one.
+        assert_eq!(
+            super::unbound_declared_secrets(
+                &["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()],
+                &["GH_TOKEN".to_string()]
+            ),
+            vec!["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
+        );
+        // A MALFORMED declared name (not env-var syntax) is excluded from the
+        // gap: it is the plugin-format validator's job to reject it server-side,
+        // so the gate must not preempt that with a misleading `--secret` message.
+        assert!(super::unbound_declared_secrets(&["github-token".to_string()], &[]).is_empty());
+        // A well-formed unbound name alongside a malformed one: only the
+        // well-formed one is a gap.
+        assert_eq!(
+            super::unbound_declared_secrets(
+                &["github-token".to_string(), "GITHUB_TOKEN".to_string()],
+                &[]
+            ),
+            vec!["GITHUB_TOKEN".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn deploy_fails_when_declared_secret_is_not_bound() {
+        // AC3: a declared secret NAME with no matching --secret binding fails the
+        // deploy BEFORE any network attempt -- a true deploy-time error, not a
+        // runtime/connection failure.
+        let dir = tempfile::tempdir().unwrap();
+        // Declares a NAME we will bind under the wrong key.
+        scaffold_with_secrets(dir.path(), "test-agent", &["GITHUB_PERSONAL_ACCESS_TOKEN"]);
+
+        let opts = super::DeployOpts {
+            plugin_dir: dir.path().to_path_buf(),
+            api_url: "http://127.0.0.1:1".to_string(),
+            api_key: "k".to_string(),
+            slack_channel: None,
+            env: super::DeployEnv::Dev,
+            label: Some("v0".to_string()),
+            secret: vec!["GH_TOKEN".to_string()],
+            secret_binding_supported: true,
+            connect_hint: "UNREACHABLE-HINT-SENTINEL".to_string(),
+        };
+        let err = super::deploy(opts).await.unwrap_err();
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("GITHUB_PERSONAL_ACCESS_TOKEN"),
+            "error must name the missing secret: {rendered}"
+        );
+        assert!(
+            !rendered.contains("UNREACHABLE-HINT-SENTINEL"),
+            "gate must fire before any network attempt (no connect hint): {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn deploy_skips_secrets_gate_when_binding_unsupported() {
+        // AC2: the cluster tier cannot bind a `--secret` until #440, so the
+        // declared-secrets gate is SKIPPED there. A secrets-declaring bundle must
+        // NOT be preempted by the gate; deploy proceeds to the network and fails
+        // on the connect path instead (naming the connect hint, never the secret).
+        let dir = tempfile::tempdir().unwrap();
+        scaffold_with_secrets(dir.path(), "test-agent", &["GITHUB_PERSONAL_ACCESS_TOKEN"]);
+
+        let opts = super::DeployOpts {
+            plugin_dir: dir.path().to_path_buf(),
+            // port 1 is reserved/closed -> deterministic connection refused
+            api_url: "http://127.0.0.1:1".to_string(),
+            api_key: "k".to_string(),
+            slack_channel: None,
+            env: super::DeployEnv::Dev,
+            label: Some("v0".to_string()),
+            secret: vec![],
+            secret_binding_supported: false,
+            connect_hint: "UNREACHABLE-HINT-SENTINEL".to_string(),
+        };
+        let err = super::deploy(opts).await.unwrap_err();
+        let rendered = format!("{err:#}");
+        // The error is the network/connect path, not the secrets gate.
+        assert!(
+            rendered.contains("UNREACHABLE-HINT-SENTINEL"),
+            "gate should be skipped, so deploy reaches the network: {rendered}"
+        );
+        assert!(
+            !rendered.contains("GITHUB_PERSONAL_ACCESS_TOKEN"),
+            "the skipped gate must not name the declared secret: {rendered}"
         );
     }
 }

@@ -234,8 +234,13 @@ pub fn scaffold_from_spec(dir: &Path, spec: &AgentSpec) -> Result<Vec<PathBuf>> 
     write_bundle(dir, files)
 }
 
-/// Read the plugin name and version from a bundle's manifest.
-pub fn read_manifest(dir: &Path) -> Result<(String, String)> {
+/// Locate and parse a bundle's manifest JSON, trying
+/// `.claude-plugin/plugin.json` then `plugin.json`. Shared by `read_manifest`
+/// and `read_declared_secrets` so the path-resolution/read/parse steps (and
+/// their error messages) live in one place. Returns the resolved manifest path
+/// alongside the parsed value so callers can keep referencing it (e.g. `name`)
+/// in their own error messages.
+fn load_manifest_json(dir: &Path) -> Result<(std::path::PathBuf, serde_json::Value)> {
     let path = [".claude-plugin/plugin.json", "plugin.json"]
         .iter()
         .map(|rel| dir.join(rel))
@@ -245,6 +250,12 @@ pub fn read_manifest(dir: &Path) -> Result<(String, String)> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&body)
         .with_context(|| format!("{} is not valid JSON", path.display()))?;
+    Ok((path, value))
+}
+
+/// Read the plugin name and version from a bundle's manifest.
+pub fn read_manifest(dir: &Path) -> Result<(String, String)> {
+    let (path, value) = load_manifest_json(dir)?;
     let name = value
         .get("name")
         .and_then(|v| v.as_str())
@@ -256,6 +267,26 @@ pub fn read_manifest(dir: &Path) -> Result<(String, String)> {
         .unwrap_or("0.0.0")
         .to_string();
     Ok((name, version))
+}
+
+/// Read the bundle's declared connector-secret NAMES (#464 / ADR-0009).
+/// The manifest `secrets` policy lists NAMES only (never values). Returns an
+/// empty vec when the field is absent or null. Uses the same manifest-path
+/// resolution as `read_manifest`.
+pub fn read_declared_secrets(dir: &Path) -> Result<Vec<String>> {
+    let (_path, value) = load_manifest_json(dir)?;
+    // Missing/null -> no declared secrets. Non-string entries are ignored
+    // defensively; the plugin-format validator already rejects malformed names.
+    let names = value
+        .get("secrets")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(names)
 }
 
 #[cfg(test)]
@@ -425,5 +456,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(scaffold(dir.path(), "Bad_Name").is_err());
         assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn read_declared_secrets_absent_field_is_empty_and_present_array_is_the_names() {
+        // Absent `secrets` field -> empty (the scaffold seeds no secrets policy).
+        let dir = tempfile::tempdir().unwrap();
+        scaffold(dir.path(), "deal-desk").unwrap();
+        assert!(read_declared_secrets(dir.path()).unwrap().is_empty());
+
+        // Present array -> the declared NAMES, in order.
+        let manifest_path = dir.path().join(".claude-plugin/plugin.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["secrets"] =
+            serde_json::json!(["GITHUB_PERSONAL_ACCESS_TOKEN", "SLACK_APP_TOKEN"]);
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            read_declared_secrets(dir.path()).unwrap(),
+            vec![
+                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+                "SLACK_APP_TOKEN".to_string(),
+            ]
+        );
     }
 }
