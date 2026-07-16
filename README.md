@@ -208,6 +208,14 @@ agentos cluster up
 agentos local up
 ```
 
+> **macOS: "unidentified developer"?** The release binaries are not yet
+> notarized by Apple, so a copy downloaded through a browser is quarantined and
+> Gatekeeper blocks it on first launch. The `curl -L` command above avoids this
+> entirely (curl does not set the quarantine flag). If you already downloaded it
+> in a browser, clear the flag once with
+> `xattr -d com.apple.quarantine ./agentos-aarch64-apple-darwin`, or right-click
+> the binary in Finder and choose Open to approve it a single time.
+
 A release binary needs no repo checkout for `agentos cluster up` or `agentos local up`.
 It pulls the pinned chart release asset and the pinned `compose.release.yaml`
 matching the binary version, then caches them under `~/.cache/agentos/`. For
