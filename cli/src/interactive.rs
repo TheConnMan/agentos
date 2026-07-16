@@ -336,9 +336,7 @@ fn run_recipe_in_tui(
             Workflow::ExploreExamples => explore_examples(terminal, app, &values)?,
             Workflow::ParityLadder => parity_ladder(terminal, app)?,
             Workflow::DeployToSlack => deploy_to_slack(terminal, app, SlackTier::Local)?,
-            Workflow::DeployToSlackCluster => {
-                deploy_to_slack(terminal, app, SlackTier::Cluster)?
-            }
+            Workflow::DeployToSlackCluster => deploy_to_slack(terminal, app, SlackTier::Cluster)?,
         }
         return Ok(format!("Finished: {}", recipe.title));
     }
@@ -2025,7 +2023,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 "local"
             };
             lines.push(Line::from(Span::styled(
-                "Deploy to Slack",
+                "How to deploy to Slack",
                 Style::default().fg(Color::Yellow).bold(),
             )));
             lines.push(Line::from(
@@ -2695,7 +2693,7 @@ fn recipes() -> Vec<Recipe> {
         },
         Recipe {
             target: "local",
-            title: "Deploy to Slack",
+            title: "How to deploy to Slack",
             description: "Deploy an agent to the local platform and connect it to a real Slack workspace.",
             kind: RecipeKind::Workflow(Workflow::DeployToSlack),
             args: vec![],
@@ -2708,7 +2706,7 @@ fn recipes() -> Vec<Recipe> {
         },
         Recipe {
             target: "cluster",
-            title: "Deploy to Slack",
+            title: "How to deploy to Slack",
             description: "Deploy an agent to the deployed cluster release and connect it to a real Slack workspace.",
             kind: RecipeKind::Workflow(Workflow::DeployToSlackCluster),
             args: vec![],
@@ -2960,13 +2958,13 @@ mod tests {
         let app = App::new();
         // Local-tier Deploy to Slack under the `local` tab.
         assert!(app.recipes.iter().any(|recipe| {
-            recipe.title == "Deploy to Slack"
+            recipe.title == "How to deploy to Slack"
                 && recipe.target == "local"
                 && matches!(recipe.kind, RecipeKind::Workflow(Workflow::DeployToSlack))
         }));
         // Cluster-tier Deploy to Slack under the `cluster` tab.
         assert!(app.recipes.iter().any(|recipe| {
-            recipe.title == "Deploy to Slack"
+            recipe.title == "How to deploy to Slack"
                 && recipe.target == "cluster"
                 && matches!(
                     recipe.kind,
