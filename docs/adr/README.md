@@ -70,6 +70,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0038 | [An observability CLI helper for the agent-dev loop](0038-observability-cli-helper-for-the-agent-dev-loop.md) | Accepted |
 | 0039 | [Bounded delivery: a delivery cap and a dead-letter graveyard](0039-bounded-delivery-and-a-dead-letter-graveyard.md) | Accepted |
 | 0040 | [Adopt the Agent Client Protocol as an edge projection](0040-adopt-acp-as-an-edge-projection.md) | Proposed |
+| 0041 | [Every verb is answered at every tier](0041-every-verb-is-answered-at-every-tier.md) | Accepted |
 | 0042 | [Adopt LLM-as-a-Verifier: a continuous-score semantic grader and a live progress signal](0042-llm-as-a-verifier-grader-and-progress-signal.md) | Proposed |
 | 0043 | [The interface catalog is generated from declared front-matter and gated in CI](0043-generated-interface-catalog-and-doc-lint-gate.md) | Accepted |
 | 0044 | [Workflow-controlled agents run on AgentOS as a callable substrate first, a unified plane only on demand](0044-workflow-controlled-agents-callable-substrate.md) | Proposed |
