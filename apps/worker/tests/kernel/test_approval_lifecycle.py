@@ -40,13 +40,16 @@ def _qevent(
     thread: str = "th-appr",
     event_id: str | None = None,
     placeholder: str = "p-1",
+    endpoint: str | None = None,
 ) -> QueuedTurn:
     return QueuedTurn(
         event_id=event_id or uuid.uuid4().hex,
         conversation_id=thread,
         author="U1",
         text=text,
-        reply_handle=ReplyHandle(channel="C1", placeholder=placeholder),
+        reply_handle=ReplyHandle(
+            channel="C1", placeholder=placeholder, endpoint=endpoint
+        ),
         received_at="2026-07-14T00:00:00+00:00",
     )
 
@@ -297,7 +300,7 @@ def test_pause_posts_the_approval_card(make_harness) -> None:
             await h.kernel.process_event(ev)
 
             assert len(h.sink.posts) == 1
-            channel, fallback, blocks, thread_ts = h.sink.posts[0]
+            channel, fallback, blocks, thread_ts, _endpoint = h.sink.posts[0]
             assert channel == "C1"
             assert thread_ts == "th-card"
             assert "Give ACME a 20% discount" in fallback
@@ -368,7 +371,9 @@ class RoutedBinding:
 def test_routed_approval_cards_go_to_the_bound_channel(make_harness) -> None:
     """#247: the manifest route resolves through the agent's bindings; the card
     lands in the bound channel (top-level, no foreign thread) and the record
-    carries route + card_channel so the authorizer counts THAT channel."""
+    carries route + card_channel so the authorizer counts THAT channel. #451:
+    the triggering turn has no per-turn endpoint (a Slack-triggered turn), so
+    the card also rides the worker's default Slack transport (``None``)."""
 
     async def go() -> None:
         approvals = RecordingApprovals()
@@ -383,10 +388,11 @@ def test_routed_approval_cards_go_to_the_bound_channel(make_harness) -> None:
             assert req.route == "managers"
             assert req.card_channel == "C_MGRS"
             # Card posted to the bound channel, top-level (no thread there).
-            channel, _fallback, blocks, thread_ts = h.sink.posts[0]
+            channel, _fallback, blocks, thread_ts, endpoint = h.sink.posts[0]
             assert channel == "C_MGRS"
             assert thread_ts is None
             assert blocks is not None
+            assert endpoint is None
 
     asyncio.run(go())
 
@@ -402,7 +408,7 @@ def test_unbound_route_falls_back_to_requesting_channel(make_harness) -> None:
             req = approvals.requests[0]
             assert req.route == "managers"
             assert req.card_channel == "C1"  # fell back to the requesting channel
-            channel, _f, _b, thread_ts = h.sink.posts[0]
+            channel, _f, _b, thread_ts, _endpoint = h.sink.posts[0]
             assert channel == "C1"
             assert thread_ts == "th-unbound"  # same channel keeps the thread
 
@@ -419,5 +425,61 @@ def test_routeless_approval_keeps_prior_behavior(make_harness) -> None:
             req = approvals.requests[0]
             assert req.route is None
             assert req.card_channel == "C1"
+
+    asyncio.run(go())
+
+
+# --- Card transport follows the card's channel, not the trigger (#451) --------
+
+_CLI_STUB = "http://localhost:8155"
+
+
+def test_routed_card_ignores_the_triggering_turns_endpoint(make_harness) -> None:
+    """#451: the card's channel is policy (the manifest route binding), so its
+    transport must be too. A CLI-triggered turn carries a local stub endpoint;
+    delivering a route-bound card through it posts the card at the stub instead
+    of the real Slack workspace, so the bound channel never sees it. ``None``
+    means the worker's default Slack transport."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        binding = RoutedBinding({"managers": {"channel": "C_MGRS"}})
+        async with make_harness(approvals=approvals, binding=binding) as h:
+            h.runner.default_script = _awaiting_routed_script(
+                "Discount for ACME", "managers"
+            )
+            await h.kernel.process_event(
+                _qevent("discount?", thread="th-cli-routed", endpoint=_CLI_STUB)
+            )
+
+            channel, _f, _b, thread_ts, endpoint = h.sink.posts[0]
+            assert channel == "C_MGRS"
+            assert thread_ts is None
+            assert endpoint is None
+
+    asyncio.run(go())
+
+
+def test_card_routed_to_requesting_channel_keeps_the_trigger_endpoint(
+    make_harness,
+) -> None:
+    """The inverse of the routed case: when the route binds back to the channel
+    that asked, the card belongs to that conversation -- it threads under it and
+    rides the same transport the trigger arrived on, so a CLI-stub turn's card
+    stays at the stub."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        binding = RoutedBinding({"managers": {"channel": "C1"}})  # the requesting channel
+        async with make_harness(approvals=approvals, binding=binding) as h:
+            h.runner.default_script = _awaiting_routed_script("Ship it", "managers")
+            await h.kernel.process_event(
+                _qevent("ship?", thread="th-self-routed", endpoint=_CLI_STUB)
+            )
+
+            channel, _f, _b, thread_ts, endpoint = h.sink.posts[0]
+            assert channel == "C1"
+            assert thread_ts == "th-self-routed"
+            assert endpoint == _CLI_STUB
 
     asyncio.run(go())

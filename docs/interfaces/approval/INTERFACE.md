@@ -99,7 +99,13 @@ in code now:
   channels per agent (`agents.approval_routes`, deployment config, never in the bundle);
   the worker resolves a raised route through the binding and posts the card into the bound
   channel (`card_channel` on the record), whose members the authorizer then counts as the
-  approvers; an unbound route falls back to the requesting channel with a warning. Every
+  approvers; an unbound route falls back to the requesting channel with a warning. The
+  card's transport follows the same split (#451): a bound channel that differs from the
+  requesting channel is deployment policy, not part of the triggering conversation, so the
+  card posts top-level over the worker's default Slack transport rather than the trigger's
+  per-turn endpoint (this is what lets a non-Slack-triggered turn, e.g. CLI or API, still
+  deliver a real Slack card); the requesting-channel case (including the unbound fallback)
+  keeps the trigger's endpoint and threads under the conversation as before. Every
   resolution attempt appends to the platform audit log (`approval_audit_entries`,
   `GET /approvals/{id}/audit`): actor, channel evidence, decision, and the authorizer
   snapshot -- who resolved, and why they counted (or were refused).

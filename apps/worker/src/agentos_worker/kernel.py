@@ -714,10 +714,16 @@ class Kernel:
                 channel=card_channel,
                 text=fallback,
                 blocks=card_blocks,
-                # In the requesting channel the card joins the thread; a
-                # route-bound channel has no such thread, so it posts top-level.
+                # In the requesting channel the card joins the thread and rides
+                # the trigger's transport; a route-bound channel has no such
+                # thread and is policy, not a per-turn reply, so it posts
+                # top-level over the worker's default Slack transport.
                 thread_ts=thread if card_channel == qevent.reply_handle.channel else None,
-                endpoint=qevent.reply_handle.endpoint,
+                endpoint=(
+                    qevent.reply_handle.endpoint
+                    if card_channel == qevent.reply_handle.channel
+                    else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - the pause stands without the card
             logger.warning("approval card post failed for %s: %s", created.id, exc)
