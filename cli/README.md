@@ -91,7 +91,10 @@ same `agentos ...` subcommands documented here. It opens a full-screen TUI with
 target navigation, action selection, command previews, and guarded execution:
 when an action needs values (for example message text or a channel id), the TUI
 temporarily leaves the alternate screen, prompts for the values, runs the exact
-previewed command, then returns to the interface.
+previewed command, then returns to the interface. Some actions also require a
+tier (local or cluster); the TUI asks which tier before prompting for the
+other values, and the command preview shows `<local|cluster>` in the tier's
+position until that question is answered.
 
 ```bash
 agentos

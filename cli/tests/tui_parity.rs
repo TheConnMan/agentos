@@ -62,6 +62,45 @@ fn every_command_recipe_resolves_to_a_real_verb() {
     eprintln!("tui_parity: exercised {} command recipes", recipes.len());
 }
 
+/// The cluster tier must be REACHABLE from the TUI catalog, not just claimed
+/// by the Platform tab's tier explainer (#463). The catalog has to expand its
+/// tier-bearing recipes into cluster argv, and every one of those argvs has to
+/// resolve against the real grammar -- the same `<argv> --help` exec the
+/// catalog-wide gate uses, so a cluster verb that does not exist fails here.
+#[test]
+fn cluster_tier_recipes_are_expanded_and_resolve() {
+    let recipes = command_recipe_argvs();
+    let cluster: Vec<&(&str, Vec<String>)> = recipes
+        .iter()
+        .filter(|(_, argv)| argv.first().map(String::as_str) == Some("cluster"))
+        .collect();
+
+    assert!(
+        !cluster.is_empty(),
+        "no cluster argv in the TUI catalog: the cluster tier is unreachable"
+    );
+
+    // Governance, not just the pre-existing cluster status/message recipes:
+    // a tier-bearing platform recipe must actually reach the cluster tier.
+    assert!(
+        cluster
+            .iter()
+            .any(|(_, argv)| argv.get(1).map(String::as_str) == Some("versions")),
+        "no `cluster versions` argv: the platform governance recipes are still local-only"
+    );
+
+    for (title, argv) in &cluster {
+        let output = run_help(argv);
+        assert!(
+            output.status.success(),
+            "cluster recipe {title:?} does not resolve: argv {argv:?}\n{}",
+            output_text(&output)
+        );
+    }
+
+    eprintln!("tui_parity: exercised {} cluster recipes", cluster.len());
+}
+
 /// Negative control: proves the gate mechanism actually rejects drift rather
 /// than always passing regardless of argv.
 #[test]

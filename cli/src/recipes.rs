@@ -38,9 +38,28 @@ pub(crate) enum Workflow {
     DeployToSlack,
 }
 
+/// Which platform tier a tier-bearing recipe or workflow drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tier {
+    Local,
+    Cluster,
+}
+
+impl Tier {
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            Tier::Local => "local",
+            Tier::Cluster => "cluster",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ArgPart {
     Literal(&'static str),
+    /// The tier verb (`local` / `cluster`), resolved from `build_argv`'s
+    /// explicit `tier` argument.
+    Tier,
     Field(&'static str),
     OptionalFlag {
         flag: &'static str,
@@ -56,11 +75,22 @@ pub(crate) struct Field {
     pub(crate) required: bool,
 }
 
-pub(crate) fn build_argv(recipe: &Recipe, values: &BTreeMap<String, String>) -> Vec<String> {
+pub(crate) fn build_argv(
+    recipe: &Recipe,
+    tier: Option<Tier>,
+    values: &BTreeMap<String, String>,
+) -> Vec<String> {
     let mut argv = Vec::new();
     for part in &recipe.args {
         match part {
             ArgPart::Literal(value) => argv.push((*value).to_string()),
+            // `None` means no tier answered yet, which today is only the
+            // read-only detail-pane preview: render the placeholder so the argv
+            // is visibly non-executable rather than a plausible but wrong tier.
+            ArgPart::Tier => argv.push(match tier {
+                Some(tier) => tier.verb().to_string(),
+                None => "<local|cluster>".to_string(),
+            }),
             ArgPart::Field(field) => {
                 if let Some(value) = values.get(*field) {
                     if !value.is_empty() {
@@ -84,23 +114,32 @@ pub(crate) fn build_argv(recipe: &Recipe, values: &BTreeMap<String, String>) -> 
 /// Placeholder-filled argv for every `Command` recipe -- the seam the CLI/TUI
 /// recipe parity gate test consumes to compare the TUI surface against the clap
 /// grammar without exposing the whole `Recipe` type surface.
+///
+/// A tier-bearing recipe expands into one entry per tier, so the gate execs the
+/// cluster path too instead of only ever proving the local one.
 #[doc(hidden)]
 pub fn command_recipe_argvs() -> Vec<(&'static str, Vec<String>)> {
-    recipes()
+    let mut entries = Vec::new();
+    for recipe in recipes()
         .into_iter()
         .filter(|recipe| matches!(recipe.kind, RecipeKind::Command))
-        .map(|recipe| {
-            let mut values = BTreeMap::new();
-            for field in &recipe.fields {
-                values.insert(
-                    field.key.to_string(),
-                    field.default.unwrap_or("1").to_string(),
-                );
+    {
+        let mut values = BTreeMap::new();
+        for field in &recipe.fields {
+            values.insert(
+                field.key.to_string(),
+                field.default.unwrap_or("1").to_string(),
+            );
+        }
+        if recipe.args.contains(&ArgPart::Tier) {
+            for tier in [Tier::Local, Tier::Cluster] {
+                entries.push((recipe.title, build_argv(&recipe, Some(tier), &values)));
             }
-            let argv = build_argv(&recipe, &values);
-            (recipe.title, argv)
-        })
-        .collect()
+        } else {
+            entries.push((recipe.title, build_argv(&recipe, None, &values)));
+        }
+    }
+    entries
 }
 
 pub(crate) fn recipes() -> Vec<Recipe> {
@@ -131,6 +170,8 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             title: "Open observability (Console + Langfuse)",
             description: "Open the local AgentOS Console and Langfuse traces/cost UIs.",
             kind: RecipeKind::Command,
+            // Local-only on purpose: there is no `cluster observability` verb in
+            // the clap grammar yet (the cluster twin is tracked as issue #460).
             args: vec![ArgPart::Literal("local"), ArgPart::Literal("observability")],
             fields: vec![],
             notes: &["Start the platform first with `agentos local up`."],
@@ -141,7 +182,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             description: "Show an agent's immutable deployed versions (newest first).",
             kind: RecipeKind::Command,
             args: vec![
-                ArgPart::Literal("local"),
+                ArgPart::Tier,
                 ArgPart::Literal("versions"),
                 ArgPart::Field("agent"),
             ],
@@ -159,7 +200,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             description: "Set an agent's daily USD spend cap (enforced per run).",
             kind: RecipeKind::Command,
             args: vec![
-                ArgPart::Literal("local"),
+                ArgPart::Tier,
                 ArgPart::Literal("budget"),
                 ArgPart::Field("agent"),
                 ArgPart::Literal("--limit"),
@@ -187,7 +228,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             description: "Require human approval before an agent may call a named tool.",
             kind: RecipeKind::Command,
             args: vec![
-                ArgPart::Literal("local"),
+                ArgPart::Tier,
                 ArgPart::Literal("approvals"),
                 ArgPart::Field("agent"),
                 ArgPart::OptionalFlag {
@@ -217,7 +258,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             description: "Show what an agent has learned (its memory log).",
             kind: RecipeKind::Command,
             args: vec![
-                ArgPart::Literal("local"),
+                ArgPart::Tier,
                 ArgPart::Literal("memory"),
                 ArgPart::Field("agent"),
             ],
@@ -235,7 +276,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             description: "Stop an agent's runs (the kill switch).",
             kind: RecipeKind::Command,
             args: vec![
-                ArgPart::Literal("local"),
+                ArgPart::Tier,
                 ArgPart::Literal("kill"),
                 ArgPart::Field("agent"),
                 ArgPart::Literal("--yes"),
@@ -254,7 +295,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             description: "Bring a killed agent back online.",
             kind: RecipeKind::Command,
             args: vec![
-                ArgPart::Literal("local"),
+                ArgPart::Tier,
                 ArgPart::Literal("resume"),
                 ArgPart::Field("agent"),
             ],
@@ -533,6 +574,122 @@ pub(crate) fn recipes() -> Vec<Recipe> {
 mod tests {
     use super::*;
 
+    /// The platform governance recipes that must work on BOTH tiers (#463).
+    /// Observability is deliberately absent: see the local-only test below.
+    const TIERED_PLATFORM_RECIPES: [&str; 6] = [
+        "List versions",
+        "Set budget",
+        "Gate a tool (approvals)",
+        "Inspect memory",
+        "Kill an agent",
+        "Resume an agent",
+    ];
+
+    fn recipe_named(title: &str) -> Recipe {
+        recipes()
+            .into_iter()
+            .find(|recipe| recipe.title == title)
+            .unwrap_or_else(|| panic!("no such recipe: {title}"))
+    }
+
+    /// argv for a recipe at an explicit tier, with the given field values.
+    fn argv_at_tier(title: &str, tier: Tier, fields: &[(&str, &str)]) -> Vec<String> {
+        let recipe = recipe_named(title);
+        let mut values = BTreeMap::new();
+        for (key, value) in fields {
+            values.insert((*key).to_string(), (*value).to_string());
+        }
+        build_argv(&recipe, Some(tier), &values)
+    }
+
+    /// #463: every governance recipe carries a resolvable tier instead of a
+    /// hardcoded `local`, which is what made the cluster tier unreachable.
+    #[test]
+    fn platform_governance_recipes_are_tier_bearing_not_hardcoded_local() {
+        for title in TIERED_PLATFORM_RECIPES {
+            let recipe = recipe_named(title);
+            assert!(
+                recipe.args.contains(&ArgPart::Tier),
+                "recipe {title:?} must lead with ArgPart::Tier so it can run on cluster"
+            );
+            assert!(
+                !recipe.args.contains(&ArgPart::Literal("local")),
+                "recipe {title:?} still pins the `local` literal, so the cluster tier is unreachable"
+            );
+        }
+    }
+
+    /// The tier resolves out of `build_argv`'s explicit tier argument and
+    /// produces a real argv on both tiers -- reachability, not a title string.
+    #[test]
+    fn build_argv_resolves_the_tier_part_on_both_tiers() {
+        for (tier, verb) in [(Tier::Local, "local"), (Tier::Cluster, "cluster")] {
+            assert_eq!(
+                argv_at_tier("List versions", tier, &[("agent", "demo")]),
+                vec![verb, "versions", "demo"]
+            );
+            assert_eq!(
+                argv_at_tier("Kill an agent", tier, &[("agent", "demo")]),
+                vec![verb, "kill", "demo", "--yes"]
+            );
+            assert_eq!(
+                argv_at_tier("Set budget", tier, &[("agent", "demo"), ("limit", "5")]),
+                vec![verb, "budget", "demo", "--limit", "5"]
+            );
+        }
+    }
+
+    /// Observability is the ONE platform recipe that stays local-only: there is
+    /// no `cluster observability` verb in the clap grammar yet (tracked as
+    /// issue #460). Pinning it here keeps a future tier sweep from making the
+    /// Platform tab offer a verb that does not exist.
+    #[test]
+    fn observability_stays_local_only_until_cluster_gains_the_verb() {
+        let recipe = recipe_named("Open observability (Console + Langfuse)");
+        assert!(
+            !recipe.args.contains(&ArgPart::Tier),
+            "observability has no cluster verb (#460); it must not become tier-bearing"
+        );
+        assert_eq!(
+            build_argv(&recipe, None, &BTreeMap::new()),
+            vec!["local", "observability"]
+        );
+    }
+
+    /// The parity gate consumes `command_recipe_argvs`, so a tier-bearing
+    /// recipe has to expand into BOTH tier variants there. Otherwise the gate
+    /// only ever execs the local path and cluster drift ships unnoticed.
+    #[test]
+    fn command_recipe_argvs_expands_a_tiered_recipe_into_both_tiers() {
+        let argvs = command_recipe_argvs();
+        let versions: Vec<&Vec<String>> = argvs
+            .iter()
+            .filter(|(title, _)| *title == "List versions")
+            .map(|(_, argv)| argv)
+            .collect();
+
+        assert_eq!(
+            versions.len(),
+            2,
+            "expected one local and one cluster argv for List versions, got {versions:?}"
+        );
+        for tier in ["local", "cluster"] {
+            assert!(
+                versions
+                    .iter()
+                    .any(|argv| argv.first().map(String::as_str) == Some(tier)),
+                "no {tier} argv for List versions: {versions:?}"
+            );
+        }
+        for argv in &versions {
+            assert_eq!(
+                argv.get(1).map(String::as_str),
+                Some("versions"),
+                "expanded argv lost its verb: {argv:?}"
+            );
+        }
+    }
+
     #[test]
     fn build_argv_omits_empty_optional_flags() {
         let recipe = Recipe {
@@ -556,7 +713,7 @@ mod tests {
         values.insert("text".to_string(), "hello world".to_string());
         values.insert("channel".to_string(), String::new());
         assert_eq!(
-            build_argv(&recipe, &values),
+            build_argv(&recipe, None, &values),
             vec!["skill", "message", "hello world"]
         );
     }
