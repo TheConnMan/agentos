@@ -1532,6 +1532,44 @@ fn api_url_usage_err(msg: impl Into<String>) -> anyhow::Error {
         .into()
 }
 
+/// A usage error (exit 2) whose fix hint points the operator at `--api-key`,
+/// the escape hatch when the release's API key cannot be read from its Secret.
+fn api_key_usage_err(msg: impl Into<String>) -> anyhow::Error {
+    crate::exit::CliError::usage(msg)
+        .with_fix("pass --api-key")
+        .into()
+}
+
+/// Discover a Helm release's platform API key by reading it out of the chart
+/// Secret (`<release>-secrets`, data key `apiKey`), decoded server-side by
+/// kubectl's `base64decode` so the plaintext never lands in argv (#524). The
+/// governance verbs use this so they authenticate against a REAL release whose
+/// `api.apiKey` was randomized at `cluster up`, instead of silently sending the
+/// dev sentinel `agentos-dev-key` and 401-ing. An explicit `--api-key`/env still
+/// wins (the caller only reaches here when neither was supplied). The value is
+/// never printed — it flows straight into the `X-API-Key` header.
+pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> {
+    let cmd = OpsCommand::new(
+        "kubectl",
+        vec![
+            plain("-n"),
+            plain(namespace),
+            plain("get"),
+            plain("secret"),
+            plain(format!("{release}-secrets")),
+            plain("-o"),
+            plain("go-template={{ index .data \"apiKey\" | base64decode }}"),
+        ],
+    );
+    match run_capture(&cmd).await {
+        Ok((true, out, _)) if !out.trim().is_empty() => Ok(out.trim().to_string()),
+        _ => Err(api_key_usage_err(format!(
+            "could not read the API key from secret {release}-secrets in namespace {namespace}; \
+             pass --api-key or set AGENTOS_API_KEY to the release's api.apiKey"
+        ))),
+    }
+}
+
 /// Build the UI `/api` proxy base URL (`http://<host>:<ui-nodeport>/api`) from
 /// the UI service JSON and a resolved node host, or an actionable usage error.
 /// `cluster deploy` reaches the platform API through this proxy (the UI pod

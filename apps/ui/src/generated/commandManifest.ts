@@ -2151,26 +2151,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
-              "help": "Platform API base URL",
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key",
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
@@ -2213,26 +2229,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
-              "help": "Platform API base URL",
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key",
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
@@ -2271,26 +2303,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
-              "help": "Platform API base URL",
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key",
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
@@ -2321,26 +2369,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
-              "help": "Platform API base URL",
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key",
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
@@ -2383,24 +2447,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
@@ -2430,24 +2512,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
@@ -2477,24 +2577,42 @@ export const commandManifest = {
               "required": true
             },
             {
-              "default_values": [
-                "http://localhost:8000"
-              ],
               "env": "AGENTOS_API_URL",
               "global": false,
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
               "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
               "positional": false,
               "required": false
             },
