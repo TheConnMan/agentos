@@ -62,6 +62,7 @@ def test_enqueue_lands_with_exact_shape() -> None:
             "suite": "default",
             "bundle_ref": "bundles/x/y.tar.gz",
             "target_url": None,
+            "model": None,
             "requested_at": request.requested_at,
         }
     finally:

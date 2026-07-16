@@ -85,6 +85,7 @@ async def trigger_eval(
             suite=suite,
             bundle_ref=version.bundle_ref,
             target_url=body.target_url,
+            model=body.model,
             requested_at=now_iso(),
         )
     )
@@ -95,6 +96,7 @@ async def trigger_eval(
         sha=sha,
         suite=suite,
         bundle_ref=version.bundle_ref,
+        model=body.model,
     )
 
 

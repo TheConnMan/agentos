@@ -27,7 +27,7 @@ from typing import Any, cast
 
 import httpx
 import redis
-from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV
+from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV, MODEL_ENV
 from agentos_worker.bundle_store import BundleStore
 from agentos_worker.config import WorkerConfig
 from agentos_worker.eval import (
@@ -167,7 +167,12 @@ def _cfg(stream: str, group: str, **overrides: object) -> WorkerConfig:
 
 
 def _item(
-    *, suite: str, sha: str, bundle_ref: str | None, target_url: str | None
+    *,
+    suite: str,
+    sha: str,
+    bundle_ref: str | None,
+    target_url: str | None,
+    model: str | None = None,
 ) -> EvalWorkItem:
     return EvalWorkItem(
         agent_id=uuid.uuid4(),
@@ -176,6 +181,7 @@ def _item(
         suite=suite,
         bundle_ref=bundle_ref,
         target_url=target_url,
+        model=model,
         requested_at="2026-07-05T00:00:00+00:00",
     )
 
@@ -702,6 +708,54 @@ def test_eval_boot_env_mints_runner_token() -> None:
     item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.zip", target_url=None)
     env = consumer._boot_env(item)
     assert env.get(RUNNER_TOKEN_ENV), "_boot_env must mint a non-empty runner token"
+
+
+def test_eval_requested_model_boots_and_tags_that_model() -> None:
+    """#526: a work item's ``model`` is booted into the provisioned sandbox
+    (AGENTOS_MODEL wins over the worker default) AND becomes the run's model
+    dimension, so a sweep row is measured under, and labelled with, the model it
+    asked for -- never the worker default and never the unlabelled column."""
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(model="worker-default"),
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    item = _item(
+        suite="s", sha="deadbeef", bundle_ref="bundles/x.zip", target_url=None, model="claude-x"
+    )
+    env = consumer._boot_env(item)
+    assert env[MODEL_ENV] == "claude-x"  # requested model wins over worker default
+    assert consumer._eval_model(item) == "claude-x"  # ...and is the matrix label
+
+    # No requested model: the worker default is booted and tagged, as before.
+    default_item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.zip", target_url=None)
+    assert consumer._boot_env(default_item)[MODEL_ENV] == "worker-default"
+    assert consumer._eval_model(default_item) == "worker-default"
+
+
+def test_eval_requested_model_labels_even_a_target_url_run() -> None:
+    """A requested model is authoritative even on the ``target_url`` shortcut: the
+    caller asserts which model that runner is serving, so the run is labelled with
+    it rather than silently dropped into the matrix's unlabelled column (#526)."""
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(),
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    labelled = _item(
+        suite="s", sha="d", bundle_ref=None, target_url="http://runner", model="claude-y"
+    )
+    assert consumer._eval_model(labelled) == "claude-y"
+    unlabelled = _item(suite="s", sha="d", bundle_ref=None, target_url="http://runner")
+    assert consumer._eval_model(unlabelled) is None
 
 
 def test_eval_boot_env_drops_reserved_connector_secret() -> None:

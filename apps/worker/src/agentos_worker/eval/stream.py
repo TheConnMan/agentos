@@ -67,7 +67,15 @@ STREAM_PAYLOAD_FIELD = "payload"
 
 
 class EvalWorkItem(BaseModel):
-    """One eval request from the agentos:evals stream (the K1-API seam)."""
+    """One eval request from the agentos:evals stream (the K1-API seam).
+
+    ``model`` is the model this run should be evaluated under (#526): when set it
+    is booted into the provisioned eval sandbox (winning over the worker's default
+    ``config.model``) AND becomes the run's model dimension, so a caller can sweep
+    one suite across several models and read the comparison back off
+    ``GET /evals/matrix``. None keeps the legacy behaviour (the worker default),
+    and the ``target_url`` shortcut still evals whatever that runner already booted.
+    """
 
     agent_id: uuid.UUID
     version_id: uuid.UUID
@@ -75,6 +83,7 @@ class EvalWorkItem(BaseModel):
     suite: str
     bundle_ref: str | None = None
     target_url: str | None = None
+    model: str | None = None
     requested_at: str
 
     @classmethod
@@ -341,10 +350,15 @@ class EvalStreamConsumer(StreamConsumer):
         return handle.base_url, release_key, handle.token or None
 
     def _eval_model(self, item: EvalWorkItem) -> str | None:
-        """The model dimension for this run: the model the eval's runner is booted
-        with (``config.model``, the same value ``apply_model_env`` forwards as
-        ``AGENTOS_MODEL``). The dev/test ``target_url`` shortcut evals a runner we
-        did not boot, so its model is unknown and left unlabelled."""
+        """The model dimension for this run: the caller-requested ``item.model``
+        when set (#526, a sweep pins each run to a distinct model), else the model
+        the eval's runner is booted with (``config.model``, the same value
+        ``apply_model_env`` forwards as ``AGENTOS_MODEL``). A requested model is
+        always the label, so a sweep run is never silently unlabelled. The dev/test
+        ``target_url`` shortcut evals a runner we did not boot, so unless the caller
+        named a model its model is unknown and left unlabelled."""
+        if item.model is not None:
+            return item.model
         if item.target_url is not None:
             return None
         return self._config.model or None
@@ -372,7 +386,11 @@ class EvalStreamConsumer(StreamConsumer):
         # this write site hardened identically to binding.boot_env. The values are
         # resolved by the async caller (they need a DB lookup) and passed in.
         inject_connector_secrets(env, connector_secrets, agent_label=item.agent_id)
-        apply_model_env(env, self._config)
+        # A caller-requested model (#526) wins over the worker default so the
+        # provisioned sandbox actually runs the model this sweep row is measuring;
+        # _eval_model tags the same value, keeping the boot and the matrix label
+        # in lock-step. None falls back to config.model exactly as before.
+        apply_model_env(env, self._config, model_override=item.model)
         return env
 
     async def _report_failed(

@@ -1283,6 +1283,17 @@
             "title": "Agent Id",
             "type": "string"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "suite": {
             "anyOf": [
               {
@@ -1342,6 +1353,17 @@
               }
             ],
             "title": "Bundle Ref"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
           },
           "sha": {
             "title": "Sha",

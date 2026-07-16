@@ -63,6 +63,12 @@ def build_matrix(
 ) -> EvalMatrix:
     # Latest trace per (version, case) so a re-run supersedes an older result.
     latest: dict[tuple[str, str], dict[str, Any]] = {}
+    # The model dimension needs a model-aware key: a sweep runs the SAME suite +
+    # version under several models, so those traces share (version, case) and would
+    # collapse to one in `latest` -- the per-model rollup must keep the latest per
+    # (version, case, MODEL) instead, or a same-version sweep shows only one model
+    # (#526). The displayed grid stays (version, case): one cell, newest wins.
+    latest_by_model: dict[tuple[str, str, str | None], dict[str, Any]] = {}
     version_last_seen: dict[str, str] = {}
     for trace in traces:
         version = _version_of(trace)
@@ -73,6 +79,11 @@ def build_matrix(
         key = (version, case_id)
         if key not in latest or ts >= str(latest[key].get("timestamp") or ""):
             latest[key] = trace
+        model_key = (version, case_id, _model_of(trace))
+        if model_key not in latest_by_model or ts >= str(
+            latest_by_model[model_key].get("timestamp") or ""
+        ):
+            latest_by_model[model_key] = trace
         if ts >= version_last_seen.get(version, ""):
             version_last_seen[version] = ts
 
@@ -108,7 +119,7 @@ def build_matrix(
         )
         for case in cases
     ]
-    summaries = _model_summaries(latest, version_set)
+    summaries = _model_summaries(latest_by_model, version_set)
     return EvalMatrix(
         suite=suite,
         versions=versions,
@@ -120,23 +131,23 @@ def build_matrix(
 
 
 def _model_summaries(
-    latest: dict[tuple[str, str], dict[str, Any]],
+    latest_by_model: dict[tuple[str, str, str | None], dict[str, Any]],
     version_set: set[str],
 ) -> list[EvalModelSummary]:
-    """Roll the shown grid up per model: pass-rate + summed cost.
+    """Roll the shown versions up per model: pass-rate + summed cost.
 
-    Aggregates over exactly the cells that back the displayed grid (latest trace
-    per (version, case), scoped to the shown version columns), so the model
-    dimension and the version grid never disagree about a result. Cost sums only
+    Aggregates over the latest trace per (version, case, MODEL), scoped to the
+    shown version columns. Keying on the model (not just (version, case) like the
+    displayed grid) is what lets a same-version sweep across N models keep all N
+    rows instead of collapsing to whichever recorded last (#526). Cost sums only
     the cases that reported one; a model with no cost anywhere stays ``None``.
     """
     passed: dict[str | None, int] = {}
     total: dict[str | None, int] = {}
     cost: dict[str | None, float | None] = {}
-    for (version, _case), trace in latest.items():
+    for (version, _case, model), trace in latest_by_model.items():
         if version not in version_set:
             continue
-        model = _model_of(trace)
         meta_passed = (trace.get("metadata") or {}).get("passed")
         if meta_passed is None:
             continue

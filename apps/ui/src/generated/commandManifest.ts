@@ -886,6 +886,14 @@ export const commandManifest = {
             },
             {
               "global": false,
+              "help": "Evaluate under this model instead of the deployed one; repeat to sweep several models in one run (#526). A sweep triggers a platform eval per model and reports the per-model pass-rate from `GET /evals/matrix`",
+              "id": "model",
+              "long": "model",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
               "help": "Print the plan that a real run would produce, and exit",
               "id": "dry_run",
               "long": "dry-run",
@@ -2005,6 +2013,14 @@ export const commandManifest = {
               "help": "How long to wait for each case's reply. Default: 300 seconds",
               "id": "timeout_secs",
               "long": "timeout-secs",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Evaluate under this model instead of the deployed one; repeat to sweep several models in one run (#526). A sweep triggers a platform eval per model and reports the per-model pass-rate from `GET /evals/matrix`",
+              "id": "model",
+              "long": "model",
               "positional": false,
               "required": false
             },

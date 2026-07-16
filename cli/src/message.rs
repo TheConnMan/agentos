@@ -793,6 +793,11 @@ pub struct EvalOpts {
     pub local: bool,
     /// Local mode only: platform API base URL for the channel lookup.
     pub api_url: Option<String>,
+    /// Models to sweep (#526). Empty = the default parity-gate run (grade the
+    /// deployed model in-CLI). Non-empty switches to the platform eval plane: one
+    /// `POST /evals/trigger` per model, then poll `GET /evals/matrix` for the
+    /// per-model pass-rate so the run lands in the matrix sliced by model.
+    pub models: Vec<String>,
 }
 
 /// Grade one tier turn's reply with the SAME grader `skill eval` uses. A turn
@@ -814,6 +819,36 @@ pub fn reply_passes(case: &EvalCase, outcome: &Outcome) -> bool {
 /// rendering is unit-testable with no stack or cluster (mirrors `dry_run_lines`).
 pub fn eval_dry_run_lines(opts: &EvalOpts, suite_name: &str, case_count: usize) -> Vec<String> {
     let tier = if opts.local { "local" } else { "cluster" };
+    // A `--model` sweep (#526) is the platform eval plane, so its plan is the
+    // trigger-per-model + matrix-poll shape, not the message enqueue path.
+    if !opts.models.is_empty() {
+        let api_base = if opts.local {
+            local_api_base(opts.api_url.as_deref())
+        } else {
+            format!(
+                "http://localhost:{} (via api port-forward)",
+                opts.api_local_port
+            )
+        };
+        let mut lines = vec![format!(
+            "sweep {} model(s) over suite {suite_name:?} ({case_count} case(s)) on the {tier} \
+             platform eval plane",
+            opts.models.len()
+        )];
+        let target = match opts.channel.as_deref() {
+            Some(channel) => format!("channel {channel}"),
+            None => "the sole deployed agent".to_string(),
+        };
+        for model in &opts.models {
+            lines.push(format!(
+                "POST {api_base}/evals/trigger {{agent: {target}, suite: {suite_name:?}, model: {model:?}}}"
+            ));
+        }
+        lines.push(format!(
+            "then poll {api_base}/evals/matrix?suite={suite_name} for per-model pass-rate"
+        ));
+        return lines;
+    }
     let mut lines = vec![format!(
         "grade {case_count} case(s) from suite {suite_name:?} against the {tier} tier"
     )];
@@ -932,10 +967,157 @@ async fn run_eval_turns(
 /// `cluster` (issue #344, the per-tier parity gate).
 pub async fn eval(opts: EvalOpts) -> Result<()> {
     let suite = resolve_suite(opts.cases.clone())?;
+    // A `--model` sweep (#526) is the platform eval plane, not the in-CLI parity
+    // gate: it triggers a matrix-producing run per model and reads the comparison
+    // back off GET /evals/matrix. It is orthogonal to the tier's message path.
+    if !opts.models.is_empty() {
+        return eval_sweep(opts, suite).await;
+    }
     if opts.local {
         eval_local(opts, suite).await
     } else {
         eval_cluster(opts, suite).await
+    }
+}
+
+/// Poll interval and cap while waiting for triggered eval jobs to land in the
+/// matrix. The cap scales with model count because the eval consumer handles
+/// entries sequentially (`count=1`), so N models run one after another.
+const SWEEP_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Resolve the target agent's id for the trigger plane. Mirrors `select_channel`
+/// (explicit `--channel` matches an agent's `slack_channel`, else the sole
+/// deployed agent), but returns the agent id the trigger endpoint keys on.
+pub fn select_agent_id(agents: &[Agent], channel: Option<&str>) -> Result<String> {
+    if let Some(channel) = channel {
+        return agents
+            .iter()
+            .find(|a| a.slack_channel == channel)
+            .map(|a| a.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no deployed agent has slack_channel {channel:?}"));
+    }
+    match agents {
+        [] => bail!(
+            "no agents are deployed on the platform API; deploy one with `agentos local deploy` \
+             or `agentos cluster deploy`, or pass --channel <id>"
+        ),
+        [only] => Ok(only.id.clone()),
+        many => {
+            let listed = many
+                .iter()
+                .map(|a| format!("{} -> {}", a.name, a.slack_channel))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("multiple agents are deployed; pass --channel <id> to pick one ({listed})")
+        }
+    }
+}
+
+/// The `--model` sweep at the local/cluster tier: enqueue one platform eval per
+/// model against the agent's active dev version, then poll the matrix for the
+/// per-model pass-rate the recorder writes (#526). Unlike the skill sweep (which
+/// boots throwaway runners and grades in-CLI), this drives the platform eval
+/// plane so results are sliceable by model in `GET /evals/matrix`.
+async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: eval_dry_run_lines(&opts, &suite.name, suite.cases.len()),
+        });
+        return Ok(());
+    }
+
+    // The trigger + matrix reads go over the platform API. Local reaches it
+    // directly; cluster tunnels an api port-forward kept alive for the whole poll.
+    let (api, _api_pf) = if opts.local {
+        let base = local_api_base(opts.api_url.as_deref());
+        (ApiClient::new(&base, &opts.api_key)?, None)
+    } else {
+        require_on_path("kubectl")?;
+        let pf = start_port_forward(
+            &port_forward_command(
+                &opts.namespace,
+                &opts.release,
+                "api",
+                opts.api_local_port,
+                API_REMOTE_PORT,
+            ),
+            opts.api_local_port,
+            "api",
+        )
+        .await?;
+        let base = format!("http://localhost:{}", opts.api_local_port);
+        (ApiClient::new(&base, &opts.api_key)?, Some(pf))
+    };
+
+    let agents = api
+        .list_agents()
+        .await
+        .context("listing agents to resolve the eval target")?;
+    let agent_id = select_agent_id(&agents, opts.channel.as_deref())?;
+
+    ui.note(&format!(
+        "model sweep: {} model(s) x {} case(s) via the platform eval plane",
+        opts.models.len(),
+        suite.cases.len()
+    ));
+    let cl = ui.checklist();
+    for model in &opts.models {
+        let step = cl.step(&format!("enqueue {model}"));
+        let res = api
+            .trigger_eval(&agent_id, Some(&suite.name), Some(model))
+            .await
+            .with_context(|| format!("triggering eval for model {model}"))?;
+        step.done(&format!(
+            "{} @ {}",
+            res.stream_id,
+            &res.sha[..res.sha.len().min(8)]
+        ));
+    }
+
+    let want: std::collections::BTreeSet<&str> = opts.models.iter().map(String::as_str).collect();
+    let deadline = Instant::now() + SWEEP_POLL_INTERVAL * (opts.models.len() as u32 + 1) * 20;
+    ui.note("waiting for the eval jobs to land in the matrix (Ctrl-C to stop; jobs keep running)");
+    loop {
+        let matrix = api
+            .eval_matrix(&suite.name, 5)
+            .await
+            .context("reading the eval matrix")?;
+        let rows: Vec<(String, usize, usize)> = matrix
+            .model_summaries
+            .iter()
+            .filter_map(|s| {
+                let m = s.model.as_deref()?;
+                want.contains(m)
+                    .then(|| (m.to_string(), s.passed as usize, s.total as usize))
+            })
+            .filter(|(_, _, total)| *total > 0)
+            .collect();
+        let ready: std::collections::BTreeSet<&str> =
+            rows.iter().map(|(m, _, _)| m.as_str()).collect();
+        if want.iter().all(|m| ready.contains(m)) {
+            return crate::commands::report_sweep(&rows);
+        }
+        if Instant::now() >= deadline {
+            let missing = want
+                .iter()
+                .filter(|m| !ready.contains(**m))
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if rows.is_empty() {
+                bail!(
+                    "timed out waiting for eval results in the matrix; no requested model \
+                     landed (still pending: {missing}). Check the worker eval consumer is \
+                     running, or raise --timeout-secs."
+                );
+            }
+            ui.warn(&format!(
+                "timed out waiting on some models ({missing}); reporting what landed so far"
+            ));
+            return crate::commands::report_sweep(&rows);
+        }
+        tokio::time::sleep(SWEEP_POLL_INTERVAL).await;
     }
 }
 
@@ -1334,6 +1516,7 @@ mod tests {
             dry_run: true,
             local,
             api_url: None,
+            models: Vec::new(),
         }
     }
 
@@ -1431,5 +1614,88 @@ mod tests {
                 .any(|l| l.starts_with("stub advertised at http://")),
             "{lines:?}"
         );
+    }
+
+    fn sweep_opts(local: bool, channel: Option<&str>, models: &[&str]) -> EvalOpts {
+        let mut opts = eval_opts(local, channel);
+        opts.models = models.iter().map(|m| m.to_string()).collect();
+        opts
+    }
+
+    #[test]
+    fn model_sweep_dry_run_plans_a_trigger_per_model_and_a_matrix_poll() {
+        // A `--model` sweep prints the platform-eval-plane plan (one trigger per
+        // model + a matrix poll), NOT the message enqueue path (#526).
+        let lines = eval_dry_run_lines(
+            &sweep_opts(true, Some("C7"), &["opus", "sonnet"]),
+            "smoke",
+            2,
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("sweep 2 model(s) over suite \"smoke\"")),
+            "{lines:?}"
+        );
+        // One trigger line per model, naming the model and the explicit channel.
+        for model in ["opus", "sonnet"] {
+            assert!(
+                lines.iter().any(|l| l.contains("/evals/trigger")
+                    && l.contains(&format!("{model:?}"))
+                    && l.contains("channel C7")),
+                "a trigger line for {model}: {lines:?}"
+            );
+        }
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("/evals/matrix?suite=smoke")),
+            "a matrix poll line: {lines:?}"
+        );
+        // The sweep plan does NOT walk the synthetic-turn enqueue path.
+        assert!(
+            !lines.iter().any(|l| l.contains("synthetic QueuedTurn")),
+            "sweep is the eval plane, not the message path: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn cluster_model_sweep_dry_run_reaches_the_api_via_port_forward() {
+        let lines = eval_dry_run_lines(&sweep_opts(false, None, &["opus"]), "smoke", 1);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("api port-forward") && l.contains("/evals/trigger")),
+            "cluster sweep triggers through the api port-forward: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn select_agent_id_resolves_by_channel_then_falls_back_to_sole_agent() {
+        let agents = vec![
+            Agent {
+                id: "a1".into(),
+                name: "one".into(),
+                slack_channel: "C1".into(),
+                approval_required_tools: None,
+            },
+            Agent {
+                id: "a2".into(),
+                name: "two".into(),
+                slack_channel: "C2".into(),
+                approval_required_tools: None,
+            },
+        ];
+        // Explicit channel picks the matching agent's id.
+        assert_eq!(select_agent_id(&agents, Some("C2")).unwrap(), "a2");
+        // An unknown channel errors, naming the channel.
+        assert!(select_agent_id(&agents, Some("C9"))
+            .unwrap_err()
+            .to_string()
+            .contains("C9"));
+        // Many agents + no channel is ambiguous.
+        assert!(select_agent_id(&agents, None).is_err());
+        // A sole agent + no channel resolves without a flag.
+        assert_eq!(select_agent_id(&agents[..1], None).unwrap(), "a1");
     }
 }

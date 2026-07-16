@@ -23,7 +23,13 @@ STREAM_PAYLOAD_FIELD = "payload"
 
 
 class EvalJobRequest(BaseModel):
-    """One eval job: run ``suite`` against the version built from ``sha``."""
+    """One eval job: run ``suite`` against the version built from ``sha``.
+
+    ``model`` is the model the worker should boot the eval sandbox with and tag
+    the run's matrix cell by (#526); None keeps the worker default. Adding it is
+    the intended forward-compatible evolution of the single-``payload`` seam -- an
+    older consumer ignores the field, a newer one honours it.
+    """
 
     agent_id: uuid.UUID
     version_id: uuid.UUID
@@ -31,6 +37,7 @@ class EvalJobRequest(BaseModel):
     suite: str
     bundle_ref: str | None
     target_url: str | None = None
+    model: str | None = None
     requested_at: str
 
     def to_stream_fields(self) -> dict[str, str]:
