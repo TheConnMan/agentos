@@ -896,6 +896,333 @@ export const commandManifest = {
           ],
           "hidden": false,
           "name": "deploy"
+        },
+        {
+          "about": "List an agent's immutable versions (`GET /agents/{id}/versions`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "versions"
+        },
+        {
+          "about": "Show what an agent has learned (its memory log; `GET /agents/{id}/memory`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "memory"
+        },
+        {
+          "about": "View or set the tools whose calls require human approval (`PATCH /agents/{id}`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Tool name to gate behind approval (repeatable). Omit to show current gates",
+              "id": "gate",
+              "long": "gate",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Clear all approval gates on the agent",
+              "id": "clear",
+              "long": "clear",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "approvals"
+        },
+        {
+          "about": "Open the local observability surfaces (AgentOS Console + Langfuse traces/cost)",
+          "hidden": false,
+          "name": "observability"
+        },
+        {
+          "about": "Set an agent's daily budget (`PUT /agents/{id}/budget`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Daily spend cap in USD. Must be > 0",
+              "id": "limit",
+              "long": "limit",
+              "positional": false,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "budget"
+        },
+        {
+          "about": "Kill an agent (stop its runs; `POST /agents/{id}/kill`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Confirm the action",
+              "id": "yes",
+              "long": "yes",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "kill"
+        },
+        {
+          "about": "Resume a killed agent (`POST /agents/{id}/resume`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "resume"
         }
       ]
     },
@@ -1869,6 +2196,167 @@ export const commandManifest = {
           ],
           "hidden": false,
           "name": "delete"
+        },
+        {
+          "about": "List an agent's immutable versions (`GET /agents/{id}/versions`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:8000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "versions"
+        },
+        {
+          "about": "Show what an agent has learned (its memory log; `GET /agents/{id}/memory`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:8000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "memory"
+        },
+        {
+          "about": "View or set the tools whose calls require human approval (`PATCH /agents/{id}`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Tool name to gate behind approval (repeatable). Omit to show current gates",
+              "id": "gate",
+              "long": "gate",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Clear all approval gates on the agent",
+              "id": "clear",
+              "long": "clear",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "default_values": [
+                "http://localhost:8000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "approvals"
         }
       ]
     },
