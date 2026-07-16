@@ -473,6 +473,16 @@ api:
 dispatcher:
   deploy: true
   replicas: 1
+  # Platform API the dispatcher resolves Slack approval clicks against. Empty
+  # (the default) derives the in-chart API Service,
+  # http://<fullname>-api:<api.service.port>. Set it to a full base URL to point
+  # at an API this chart did not deploy; that BYO value renders verbatim and is
+  # required when api.deploy is false, where no in-chart Service exists to derive.
+  # Pair it with api.apiKey set to a key the BYO API accepts -- the chart Secret's
+  # own generated apiKey still resolves otherwise, and the boot preflight cannot
+  # catch the mismatch since /health is unauthenticated and proves reachability
+  # only, not that the key is right.
+  apiBaseUrl: ""
   image:
     repository: ghcr.io/curie-eng/agentos-dispatcher
     # Empty -> chart appVersion (immutable). Set to pin an explicit version tag.

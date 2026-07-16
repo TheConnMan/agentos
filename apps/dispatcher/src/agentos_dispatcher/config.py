@@ -23,6 +23,9 @@ Env mapping:
     AGENTOS_BACKOFF_INITIAL_SECONDS -> backoff_initial_seconds
     AGENTOS_BACKOFF_MAX_SECONDS     -> backoff_max_seconds
     AGENTOS_BACKOFF_MULTIPLIER      -> backoff_multiplier
+    AGENTOS_API_BASE_URL       -> api_base_url
+    AGENTOS_API_KEY            -> api_key
+    AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS -> api_preflight_timeout_s
     AGENTOS_HEARTBEAT_FILE             -> heartbeat_file
     AGENTOS_HEARTBEAT_INTERVAL_SECONDS -> heartbeat_interval_s
 """
@@ -124,6 +127,19 @@ class DispatcherConfig(BaseSettings):
         default="http://localhost:8000", validation_alias="AGENTOS_API_BASE_URL"
     )
     api_key: str = Field(default="agentos-dev-key", validation_alias="AGENTOS_API_KEY")
+    # Deadline for the boot-time gate on that wiring (see preflight.py). Long
+    # enough to absorb the API's own startup. Must be positive: the gate is the
+    # AC2 requirement, so a non-positive value is a config error at boot rather
+    # than a silent way to turn it off. Non-finite is rejected for the same
+    # reason: `inf` passes `gt=0` but hangs the boot gate forever, so the pod
+    # never exits, never crash-loops, and the operator never gets the signal the
+    # gate exists to produce.
+    api_preflight_timeout_s: float = Field(
+        default=30.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS",
+    )
 
     placeholder_text: str = Field(
         default="On it. Working on your request.",

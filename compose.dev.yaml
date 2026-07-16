@@ -470,6 +470,8 @@ services:
     depends_on:
       valkey:
         condition: service_healthy
+      agentos-api:
+        condition: service_healthy
     environment:
       VALKEY_HOST: valkey
       VALKEY_PORT: "6379"
@@ -477,6 +479,12 @@ services:
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      # In-network form, matching the UI's AGENTOS_API_TARGET above. The
+      # published host port is unreachable from this bridge-network container.
+      AGENTOS_API_BASE_URL: http://agentos-api:8000
+      # Mirrors agentos-api's API_KEY so resolve calls authenticate. Wired
+      # explicitly rather than relying on the two defaults happening to match.
+      AGENTOS_API_KEY: agentos-dev-key
     restart: unless-stopped
 
 volumes:

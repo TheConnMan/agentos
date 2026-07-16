@@ -37,6 +37,19 @@ App services:
 {{- else }}
   - dispatcher: NOT deployed (no Slack tokens set) -- see "Enable a real model and a Slack workspace" below
 {{- end }}
+{{- if and (include "agentos.dispatcher.enabled" .) (not .Values.api.deploy) (not .Values.dispatcher.apiBaseUrl) }}
+  - !! The dispatcher resolves Slack approval clicks against the platform API,
+       but api.deploy is false and dispatcher.apiBaseUrl is empty, so it is
+       pointed at an in-chart API Service this release does not deploy. Its boot
+       preflight will fail and the pod will CrashLoopBackOff by design, naming
+       the unreachable URL in its logs. Set dispatcher.apiBaseUrl to the base URL
+       of the API you run, and pair it with api.apiKey set to a key that API
+       accepts -- the preflight only checks the unauthenticated /health endpoint,
+       so a mismatched key still passes boot and 401s at click time instead:
+         helm upgrade {{ .Release.Name }} charts/agentos -n {{ .Release.Namespace }} --reuse-values \
+           --set dispatcher.apiBaseUrl=https://your-api.example \
+           --set api.apiKey=<key that API accepts>
+{{- end }}
 {{- if .Values.worker.deploy }}
   - worker ({{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }})
 {{- end }}

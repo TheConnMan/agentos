@@ -123,6 +123,15 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/connector-secrets-assertions.sh
 
+      # Prove the dispatcher is told where the platform API is and how to
+      # authenticate to it (issue #442). Unwired, it falls back to its code
+      # default http://localhost:8000 -- itself -- and every Slack Approve click
+      # dead-ends with only a warning.
+      - name: helm render assertions (dispatcher API wiring)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/dispatcher-api-wiring-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail

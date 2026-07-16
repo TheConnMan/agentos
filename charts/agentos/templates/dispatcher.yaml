@@ -54,6 +54,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "agentos.secretName" . }}
                   key: slackSigningSecret
+            {{- include "agentos.env.api" . | nindent 12 }}
             # Heartbeat file a background daemon thread in the dispatcher touches
             # each tick; the exec probes below read this same path so template and
             # app cannot drift.

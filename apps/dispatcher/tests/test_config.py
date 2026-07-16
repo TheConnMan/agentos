@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 from agentos_dispatcher.config import DispatcherConfig
+from pydantic import ValidationError
 
 
 def _clear_all_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,6 +154,91 @@ def test_overrides_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None
         assert type(actual) is type(expected), (
             f"{env_var} -> {field}: type {type(actual)} != {type(expected)}"
         )
+
+
+# --- Platform API wiring (#442) ---------------------------------------------
+#
+# #442 proposed changing api_base_url's default off localhost. It was rejected:
+# the default is correct for its only real audience (a dispatcher run bare on a
+# laptop against a local API), and every containerized context has a manifest
+# whose whole job is to declare the wiring. The obvious "fix"
+# (http://agentos-api:8000) hardcodes a compose service name into application
+# code -- wrong in the chart, wrong on a laptop, wrong for any BYO deployment.
+# The default also deliberately mirrors the worker's for the same seam (#246).
+# These lock that decision, and cover the setting the boot gate reads.
+
+
+def test_api_base_url_default_stays_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The code default is unchanged: the fix is manifest wiring, not a new default.
+
+    A dispatcher run bare on a laptop against a local API must keep working with
+    no env set at all.
+    """
+    _clear_all_config_env(monkeypatch)
+
+    assert DispatcherConfig().api_base_url == "http://localhost:8000"
+
+
+def test_api_preflight_timeout_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The boot gate's deadline defaults to 30s: long enough to absorb API startup."""
+    _clear_all_config_env(monkeypatch)
+
+    assert DispatcherConfig().api_preflight_timeout_s == 30.0
+
+
+def test_api_preflight_timeout_reads_its_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deadline is tunable via AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS, and float-coerced."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", "5.5")
+
+    config = DispatcherConfig()
+
+    assert config.api_preflight_timeout_s == 5.5
+    assert type(config.api_preflight_timeout_s) is float
+
+
+def test_api_preflight_timeout_ignores_bare_field_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new aliased field follows the house rule: alias only, no bare-name fallback."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("API_PREFLIGHT_TIMEOUT_S", "99.0")
+
+    assert DispatcherConfig().api_preflight_timeout_s == 30.0
+
+
+def test_api_preflight_timeout_rejects_non_positive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-positive deadline is a config error, not a way to switch the gate off.
+
+    The gate is the AC2 requirement, so `0` must fail loudly at boot rather than
+    silently skip the probe and hand the operator back the dead-ended Approve
+    button the gate exists to prevent.
+    """
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", "0")
+
+    with pytest.raises(ValidationError):
+        DispatcherConfig()
+
+
+@pytest.mark.parametrize("token", ["inf", "Infinity", "-inf", "nan"])
+def test_api_preflight_timeout_rejects_non_finite(
+    monkeypatch: pytest.MonkeyPatch, token: str
+) -> None:
+    """A non-finite deadline defeats the gate as thoroughly as switching it off.
+
+    `gt=0` catches `-inf` and `nan` on its own but passes `inf`, which makes the
+    boot probe wait forever: the pod never exits, so it never CrashLoopBackOffs,
+    so the operator never sees the misconfiguration. That is the exact silent
+    failure AC2 exists to eliminate, so the value is rejected at boot instead.
+    """
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", token)
+
+    with pytest.raises(ValidationError):
+        DispatcherConfig()
 
 
 # --- Per-service bool divergence (review #178) -------------------------------
