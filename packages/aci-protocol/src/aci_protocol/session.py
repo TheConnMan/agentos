@@ -17,26 +17,24 @@ Env mapping:
 
 from collections.abc import Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
-_STRICT = ConfigDict(extra="forbid")
+from .events import _AciModel
 
 
-class Budget(BaseModel):
+class Budget(_AciModel):
     """Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.
 
     ``task_budget_hint`` is the optional hint passed through to the model so it
     self paces (section 6b); it is not a hard ceiling.
     """
 
-    model_config = _STRICT
-
     max_output_tokens_per_run: int
     task_budget_hint: int | None = None
     max_usd_per_day: float
 
 
-class OtelConfig(BaseModel):
+class OtelConfig(_AciModel):
     """The OTEL_EXPORTER_OTLP_* subset the runner needs to export traces.
 
     Section 0 lists OTEL_EXPORTER_OTLP_* as a wildcard. We capture the standard
@@ -44,22 +42,18 @@ class OtelConfig(BaseModel):
     through as raw env vars untouched and are out of scope for this typed view.
     """
 
-    model_config = _STRICT
-
     endpoint: str | None = None
     headers: str | None = None
     protocol: str | None = None
 
 
-class SessionConfig(BaseModel):
+class SessionConfig(_AciModel):
     """The typed session setup contract.
 
     ``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);
     section 0 describes these as per-tool secrets via K8s Secret refs, so the
     contract carries the reference, not the secret material itself.
     """
-
-    model_config = _STRICT
 
     plugin_dir: str
     session_id: str

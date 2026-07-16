@@ -1,7 +1,6 @@
 {
   "$defs": {
     "Budget": {
-      "additionalProperties": false,
       "description": "Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.\n\n``task_budget_hint`` is the optional hint passed through to the model so it\nself paces (section 6b); it is not a hard ceiling.",
       "properties": {
         "max_output_tokens_per_run": {
@@ -33,7 +32,6 @@
       "type": "object"
     },
     "ErrorEvent": {
-      "additionalProperties": false,
       "description": "A classified failure surfaced to the platform.",
       "properties": {
         "classification": {
@@ -58,7 +56,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "title": "Version",
           "type": "string"
         }
@@ -72,7 +70,6 @@
       "type": "object"
     },
     "Event": {
-      "additionalProperties": false,
       "description": "An inbound event delivered into a live session (initial or follow-up).",
       "properties": {
         "kind": {
@@ -113,7 +110,6 @@
       "type": "object"
     },
     "Final": {
-      "additionalProperties": false,
       "description": "The terminal response event, carrying the session status.\n\n``approval_summary`` accompanies an ``awaiting-approval`` status (ADR-0010):\nthe human-readable statement of what needs approval, captured from the\nrun's approval request so the platform can persist it on the durable\n``Approval`` record and show it to the approver. ``approval_route`` names\nthe approval route the request targets (#247): declared in the bundle\nmanifest's ``approvalPolicy`` (versioned with the agent), bound to a\nworkspace channel per deployment by the worker. Both ``None`` on every\nother status; ``approval_route`` also ``None`` when the request named no\nroute (the platform falls back to the requesting channel).",
       "properties": {
         "approval_route": {
@@ -154,7 +150,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "title": "Version",
           "type": "string"
         }
@@ -186,7 +182,6 @@
       "title": "InboundMessage"
     },
     "Interrupt": {
-      "additionalProperties": false,
       "description": "A hard stop delivered on the control channel, distinct from a steer.",
       "properties": {
         "kind": {
@@ -207,7 +202,6 @@
       "type": "object"
     },
     "OtelConfig": {
-      "additionalProperties": false,
       "description": "The OTEL_EXPORTER_OTLP_* subset the runner needs to export traces.\n\nSection 0 lists OTEL_EXPORTER_OTLP_* as a wildcard. We capture the standard\nfields the prototype used (endpoint, headers, protocol); any others pass\nthrough as raw env vars untouched and are out of scope for this typed view.",
       "properties": {
         "endpoint": {
@@ -281,7 +275,6 @@
       "title": "OutboundEvent"
     },
     "QueuedTurn": {
-      "additionalProperties": false,
       "description": "A normalized inbound turn ready for the worker to route and run.\n\nThe channel-neutral promotion of the dispatcher's former ``QueuedSlackEvent``.\nThe Valkey Stream carries this model as a single ``payload`` JSON field; the\nstream-encoding helpers live with the producer (the dispatcher), not on this\nfrozen model, so the contract stays transport-agnostic.",
       "properties": {
         "author": {
@@ -320,7 +313,6 @@
       "type": "object"
     },
     "ReplyHandle": {
-      "additionalProperties": false,
       "description": "Channel-neutral coordinates for where a turn's reply is delivered.\n\nThe reply model is edit-in-place: the ingress adapter pre-posts a placeholder\nmessage and the worker edits it as the answer streams. For the Slack adapter\ntoday, ``channel`` is the Slack channel id (also the key the deployment\nbinding matches an agent on) and ``placeholder`` is the ts of the pre-posted\nplaceholder message.\n\n``endpoint`` is the per-turn reply target: the base URL of the channel API the\nworker delivers this turn's reply through. It routes the reply back to the\ningress that enqueued the turn instead of a worker-global setting, so two\ningress paths (a real Slack workspace and a no-Slack CLI stub) can coexist on\none worker (issue #19). ``None`` means \"use the worker's configured default\"\n(its ``slack_api_base_url``, i.e. real Slack), so a producer that does not set\nit keeps the pre-#19 behavior.",
       "properties": {
         "channel": {
@@ -352,7 +344,6 @@
       "type": "object"
     },
     "SessionConfig": {
-      "additionalProperties": false,
       "description": "The typed session setup contract.\n\n``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);\nsection 0 describes these as per-tool secrets via K8s Secret refs, so the\ncontract carries the reference, not the secret material itself.",
       "properties": {
         "budget": {
@@ -419,7 +410,6 @@
       "type": "string"
     },
     "SideEffectFlag": {
-      "additionalProperties": false,
       "description": "Marks that a non-idempotent tool call executed during the run.\n\nIts presence gates the no-retry-after-side-effects rule (section 2b): a\nfailed run carrying this flag escalates to a human instead of retrying.",
       "properties": {
         "detail": {
@@ -452,7 +442,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "title": "Version",
           "type": "string"
         }
@@ -465,7 +455,6 @@
       "type": "object"
     },
     "TextDelta": {
-      "additionalProperties": false,
       "description": "A streamed chunk of assistant text.",
       "properties": {
         "text": {
@@ -478,7 +467,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "title": "Version",
           "type": "string"
         }
@@ -492,7 +481,6 @@
       "type": "object"
     },
     "ToolNote": {
-      "additionalProperties": false,
       "description": "A human readable note about a tool call the harness is making.",
       "properties": {
         "text": {
@@ -517,7 +505,7 @@
           "type": "string"
         },
         "version": {
-          "const": "0.1.0",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
           "title": "Version",
           "type": "string"
         }
@@ -533,6 +521,6 @@
   },
   "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.1.0",
-  "title": "ACI Protocol v0.1.0"
+  "protocolVersion": "0.2.0",
+  "title": "ACI Protocol v0.2.0"
 }

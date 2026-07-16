@@ -18,6 +18,7 @@ from aci_protocol import (
     to_inbound_json,
     to_ndjson_line,
 )
+from pydantic import ValidationError
 
 
 def test_ndjson_line_has_trailing_newline() -> None:
@@ -66,3 +67,109 @@ def test_inbound_roundtrip() -> None:
         Interrupt(reason="stop"),
     ):
         assert parse_inbound(to_inbound_json(message)) == message
+
+
+# --- Reader policy: tolerant consumers, strict producers ----------------------
+
+
+def test_unknown_field_is_ignored_on_read() -> None:
+    # AC: consumers accept and ignore unknown fields they do not model. The
+    # decoder threads a reader context that loosens the strict model on read.
+    line = json.dumps(
+        {
+            "type": "final",
+            "version": PROTOCOL_VERSION,
+            "text": "x",
+            "status": "done",
+            "future_field": 1,
+        }
+    )
+    assert parse_ndjson_line(line) == Final(text="x")
+
+
+def test_unknown_field_is_rejected_on_construction() -> None:
+    # AC: producers reject unknown fields on construction. This is the guard that
+    # stops a lazy extra="ignore" from silently satisfying the reader-side test.
+    with pytest.raises(ValidationError):
+        Final(text="x", future_field=1)  # type: ignore[call-arg]
+
+
+def test_unknown_field_is_ignored_on_inbound_read() -> None:
+    # Edge 7: the reader context must reach parse_inbound as well as
+    # parse_ndjson_line, or the runner's inbound decode stays strict cross-process.
+    raw = json.dumps(
+        {
+            "kind": "event",
+            "type": "message",
+            "text": "hi",
+            "user": "U1",
+            "ts": "1.0",
+            "future_field": 1,
+        }
+    )
+    msg = parse_inbound(raw)
+    assert isinstance(msg, Event)
+    assert msg.text == "hi"
+
+
+# --- Version compatibility (semver, major.minor under 0.x) --------------------
+
+
+def test_compatible_patch_version_is_accepted() -> None:
+    # AC: a same-major-minor patch difference is not an error. Build speaks
+    # 0.2.0; a 0.2.7 line decodes fine.
+    line = json.dumps(
+        {"type": "final", "version": "0.2.7", "text": "x", "status": "done"}
+    )
+    decoded = parse_ndjson_line(line)
+    assert isinstance(decoded, Final)
+    assert decoded.text == "x"
+
+
+def test_incompatible_minor_is_rejected_naming_both_versions() -> None:
+    # AC: rejects an incompatible version with a message naming both versions.
+    # The assertion is on the message content, not just the exception type.
+    line = json.dumps(
+        {"type": "final", "version": "0.3.0", "text": "x", "status": "done"}
+    )
+    with pytest.raises(ProtocolVersionError) as excinfo:
+        parse_ndjson_line(line)
+    message = str(excinfo.value)
+    assert "0.3.0" in message
+    assert PROTOCOL_VERSION in message
+
+
+def test_incompatible_major_is_rejected() -> None:
+    line = json.dumps(
+        {"type": "final", "version": "1.0.0", "text": "x", "status": "done"}
+    )
+    with pytest.raises(ProtocolVersionError):
+        parse_ndjson_line(line)
+
+
+@pytest.mark.parametrize(
+    "bad_version",
+    [
+        "abc",
+        "",
+        "0.2",
+        "0.2.0-rc.1",
+        "0.2.0+build",
+        # ASCII semver refinements (change 3): no leading zeros, no trailing
+        # newline (the ``$`` anchor tolerates it in Python, ``fullmatch`` rejects
+        # it), and no Unicode digits (``[0-9]`` not ``\d``). The generated Rust
+        # parses ASCII-only, so accepting any of these would split the lanes.
+        "0.02.0",
+        "0.2.0\n",
+        "０.２.０",  # fullwidth digits for 0.2.0
+    ],
+)
+def test_malformed_version_is_rejected_via_the_decoder_contract(bad_version: str) -> None:
+    # Edge 5: a malformed version must reject through the decoder's own error
+    # contract (ProtocolVersionError), never escape as an IndexError/ValueError
+    # out of a bare .split(".").
+    line = json.dumps(
+        {"type": "final", "version": bad_version, "text": "x", "status": "done"}
+    )
+    with pytest.raises(ProtocolVersionError):
+        parse_ndjson_line(line)

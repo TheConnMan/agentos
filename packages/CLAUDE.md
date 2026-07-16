@@ -18,8 +18,35 @@ lanes proceed.
 
 ## When a change is genuinely approved
 
-1. Bump the relevant version constant (`aci_protocol.version.PROTOCOL_VERSION`
-   for the ACI; the plugin-format schema has no separate version today).
+1. Bump `aci_protocol.version.PROTOCOL_VERSION` to the class the change earns
+   (the plugin-format schema has no separate version today). The ACI is
+   versioned as **semver, independent of the AgentOS release**: the number
+   tracks the wire contract's compatibility, not the product's cadence.
+   **Backward compatibility is the default expectation.** A consumer accepts a
+   wire version with the same `major.minor` under 0.x (the same `major` after
+   1.0) and rejects anything else, loudly, naming both versions. Pick the bump
+   from the change class:
+
+   | Change class | 0.x today | Post-1.0 |
+   |---|---|---|
+   | New optional field (consumer ignores it) | patch | minor |
+   | New required field | minor (breaking) | major |
+   | New enum value | minor (breaking) | major |
+   | Field removal | minor (breaking) | major |
+   | Field rename | minor (breaking) | major |
+   | Type change | minor (breaking) | major |
+   | Doc/description only (no wire change) | none | none |
+
+   Only a **new optional field is compatible** while we are in 0.x: tolerant
+   consumers ignore it, so it is a patch and old consumers keep decoding. Every
+   other row breaks an old consumer, so under 0.x it bumps the **minor** (the
+   breaking axis before 1.0) and old consumers reject it at the version gate
+   with both versions named. A new **enum value** counts as breaking even though
+   it looks additive: `SessionStatus` is control-bearing, so an unknown value is
+   rejected, never degraded (see ADR-0036). When a change cannot be made
+   backward compatible, do not force it into a patch to keep the gate quiet:
+   bump the breaking class, and if two versions must coexist on the wire, ship
+   and name both explicitly rather than pretending one is compatible.
 2. Regenerate every committed artifact and check for drift:
    ```bash
    ./scripts/check-contracts.sh
@@ -42,12 +69,17 @@ lanes proceed.
 
 ## Model conventions specific to these packages
 
-- **`aci-protocol` is strict.** The wire contract rejects unknown fields
-  (`deny_unknown_fields` equivalent in both Python and generated Rust) and
-  rejects any `version` other than the exact `PROTOCOL_VERSION` (no
-  same-major looseness in the 0.x line). If you are tempted to loosen this
-  for a consumer's convenience, that is a version-policy change -- raise it in
-  an issue/PR first, do not quietly relax a model.
+- **`aci-protocol` is strict producers, tolerant consumers** (conservative in
+  what it sends, liberal in what it accepts). Constructing an event with an
+  unknown field is still an error -- that is where the value of strictness
+  lives, catching producer mistakes at the source. But a **consumer decoding
+  the wire ignores fields it does not model**, so a new optional field is
+  genuinely backward compatible and a minor bump means something. The version
+  gate is **compatibility-aware, not exact-match**: it accepts any wire version
+  that matches the build's `major.minor` under 0.x (`major` after 1.0) and
+  rejects across an incompatible boundary, naming both versions. Loosening the
+  gate further (accepting an incompatible version) is a version-policy change --
+  raise it in an issue/PR first, do not quietly relax a model.
 - **`plugin-format` is lenient by design.** Its models use `extra="allow"`
   because real Claude Code plugin bundles carry keys this MVP does not model;
   rejecting them would reject valid bundles. Do not add strict validation

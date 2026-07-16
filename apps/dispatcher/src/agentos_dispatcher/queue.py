@@ -24,7 +24,7 @@ does not require scanning the Stream.
 
 from typing import Any, Protocol, cast, runtime_checkable
 
-from aci_protocol import QueuedTurn
+from aci_protocol import QueuedTurn, parse_queued_turn
 
 from .config import DispatcherConfig
 
@@ -60,7 +60,7 @@ def to_stream_fields(turn: QueuedTurn) -> dict[str, str]:
 
 def from_stream_fields(fields: dict[str, str]) -> QueuedTurn:
     """Reconstruct a turn from a Stream entry's field map (the worker's entry point)."""
-    return QueuedTurn.model_validate_json(fields[STREAM_PAYLOAD_FIELD])
+    return parse_queued_turn(fields[STREAM_PAYLOAD_FIELD])
 
 
 def claim_event(redis_client: "StreamPublisher", config: "DispatcherConfig", event_id: str) -> bool:

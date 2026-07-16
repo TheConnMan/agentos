@@ -33,16 +33,20 @@ def test_final_defaults_to_done_status() -> None:
     assert Final(text="ok").status is SessionStatus.DONE
 
 
-def test_outbound_version_field_rejects_wrong_value() -> None:
-    # The version literal is enforced at the model level, not only by the NDJSON
-    # decoder, so a producer cannot construct an off-version event.
+def test_unknown_session_status_is_rejected() -> None:
+    # Decision 3: an unknown SessionStatus is a hard decode error, never
+    # degraded to a fallback. Status is control-bearing (awaiting-approval drives
+    # suspend-and-wait); silently defaulting a future value to "done" would
+    # finalize a turn that is actually pending a human decision.
     with pytest.raises(ValidationError):
-        Final(text="ok", version="9.9.9")  # type: ignore[arg-type]
-
-
-def test_protocol_version_literal_matches_constant() -> None:
-    # Guards the one duplicated literal in version.py against PROTOCOL_VERSION.
-    assert Final(text="ok").version == PROTOCOL_VERSION
+        _OUTBOUND.validate_python(
+            {
+                "type": "final",
+                "version": PROTOCOL_VERSION,
+                "text": "x",
+                "status": "invented-future-status",
+            }
+        )
 
 
 def test_outbound_union_discriminates_on_type() -> None:

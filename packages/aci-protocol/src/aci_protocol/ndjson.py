@@ -1,10 +1,19 @@
-"""NDJSON serialization for the outbound response stream.
+"""NDJSON serialization for the outbound response stream and the queued-turn payload.
 
 The response channel is newline-delimited JSON: one outbound event per line.
 These helpers are the single sanctioned encoder and decoder. The decoder
-enforces the protocol version: an event whose ``version`` is missing or does not
-match PROTOCOL_VERSION is rejected with ProtocolVersionError rather than being
-silently accepted, so a runner speaking a different version fails loudly.
+enforces protocol-version compatibility: an event whose ``version`` is missing,
+malformed, or not compatible with this build's PROTOCOL_VERSION is rejected with
+ProtocolVersionError (naming both versions) rather than being silently accepted,
+so a runner speaking an incompatible version fails loudly. Compatibility is same
+``major.minor`` under 0.x (see ``version.is_compatible``); a same-major-minor
+patch difference is accepted. The decoder threads a reader context so consumers
+tolerate unknown fields while producers stay strict on construction.
+
+This module also owns the sanctioned tolerant decode of the queued-turn payload
+(``parse_queued_turn``), which crosses the dispatcher->worker queue boundary and
+carries no ``version`` field, so it is a pure tolerant field decode with no
+version gate -- the same reader-context policy as the NDJSON decoders.
 """
 
 import json
@@ -14,6 +23,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from .events import (
+    _READER_CONTEXT_KEY,
     ErrorEvent,
     Final,
     InboundMessage,
@@ -22,7 +32,10 @@ from .events import (
     TextDelta,
     ToolNote,
 )
-from .version import PROTOCOL_VERSION
+from .turn import QueuedTurn
+from .version import PROTOCOL_VERSION, is_compatible
+
+_READER_CONTEXT = {_READER_CONTEXT_KEY: True}
 
 OutboundEventModel = TextDelta | ToolNote | Final | ErrorEvent | SideEffectFlag
 
@@ -31,7 +44,7 @@ _INBOUND_ADAPTER: TypeAdapter[Any] = TypeAdapter(InboundMessage)
 
 
 class ProtocolVersionError(ValueError):
-    """Raised when a decoded event declares an incompatible protocol version."""
+    """Raised when a decoded event declares an incompatible or malformed version."""
 
 
 def to_ndjson_line(event: OutboundEventModel) -> str:
@@ -49,20 +62,22 @@ def dump_ndjson(events: Iterable[OutboundEventModel]) -> str:
 def parse_ndjson_line(line: str) -> OutboundEventModel:
     """Decode one NDJSON line into a validated outbound event.
 
-    Raises ProtocolVersionError if the line omits ``version`` or declares a
-    version other than PROTOCOL_VERSION. Raises pydantic ValidationError for a
-    structurally invalid event.
+    Raises ProtocolVersionError if the line omits ``version``, carries a
+    malformed version, or declares a version incompatible with this build's
+    PROTOCOL_VERSION. Unknown extra fields are tolerated (the reader context
+    loosens the strict-on-construction models). Raises pydantic ValidationError
+    for a structurally invalid event.
     """
 
     raw = json.loads(line)
     if not isinstance(raw, dict):
         raise ProtocolVersionError(f"expected a JSON object per line, got {type(raw).__name__}")
-    version = raw.get("version")
-    if version != PROTOCOL_VERSION:
+    version: Any = raw.get("version")
+    if not is_compatible(version, PROTOCOL_VERSION):
         raise ProtocolVersionError(
             f"unsupported protocol version {version!r}; this build speaks {PROTOCOL_VERSION!r}"
         )
-    return _OUTBOUND_ADAPTER.validate_python(raw)
+    return _OUTBOUND_ADAPTER.validate_python(raw, context=_READER_CONTEXT)
 
 
 def parse_ndjson(text: str) -> list[OutboundEventModel]:
@@ -83,13 +98,27 @@ def parse_inbound(raw: str | dict[str, Any]) -> Any:
     """Decode an inbound channel message (event or interrupt) from JSON."""
 
     data = json.loads(raw) if isinstance(raw, str) else raw
-    return _INBOUND_ADAPTER.validate_python(data)
+    return _INBOUND_ADAPTER.validate_python(data, context=_READER_CONTEXT)
 
 
 def to_inbound_json(message: Any) -> str:
     """Encode an inbound channel message to a JSON string."""
 
     return _INBOUND_ADAPTER.dump_json(message).decode("utf-8")
+
+
+def parse_queued_turn(raw: str | bytes) -> QueuedTurn:
+    """Decode a queued-turn payload tolerantly (the sanctioned consumer decode).
+
+    This is the queue-boundary counterpart to the NDJSON decoders: it threads the
+    same reader context so an unknown field on the turn (or its nested reply
+    handle) is tolerated rather than rejected, matching the tolerant-consumer
+    policy. QueuedTurn carries no ``version`` field, so there is no version gate
+    here -- it is a pure tolerant field decode. Producers stay strict: they
+    construct the model directly, where an unknown field is still an error.
+    """
+
+    return QueuedTurn.model_validate_json(raw, context=_READER_CONTEXT)
 
 
 __all__ = [
@@ -102,4 +131,5 @@ __all__ = [
     "iter_ndjson",
     "parse_inbound",
     "to_inbound_json",
+    "parse_queued_turn",
 ]

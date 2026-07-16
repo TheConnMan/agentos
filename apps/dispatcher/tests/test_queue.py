@@ -1,5 +1,6 @@
 """Queue seam + dedupe against real Valkey."""
 
+import json
 from pathlib import Path
 
 import redis
@@ -38,6 +39,18 @@ def test_queued_turn_stream_fields_roundtrip() -> None:
     fields = to_stream_fields(event)
     # The worker (F1) consumes a single JSON payload field.
     assert set(fields) == {"payload"}
+    assert from_stream_fields(fields) == event
+
+
+def test_from_stream_fields_tolerates_unknown_payload_field() -> None:
+    # A payload written by a newer producer (image skew across the queue boundary)
+    # carries a field this build does not model. The consumer must decode it
+    # tolerantly rather than raising, so a mid-deploy skew does not drop turns.
+    event = _event()
+    payload = json.loads(event.model_dump_json())
+    payload["future_field"] = "from a newer image"
+    fields = {"payload": json.dumps(payload)}
+
     assert from_stream_fields(fields) == event
 
 
