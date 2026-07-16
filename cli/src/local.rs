@@ -79,6 +79,21 @@ pub fn resolve_model_mode(explicit_fake_model: Option<&str>, has_credential: boo
     }
 }
 
+/// The single injection step every worker-restarting command shares: flip
+/// compose's fake default to live when (and only when) a credential is present
+/// and fake is not explicitly pinned. `FakePinnedDespiteCredential` and
+/// `DefaultFake` return `None` so compose's `${AGENTOS_FAKE_MODEL:-1}` default
+/// stands. This is the one place that decision is made -- `up_command` and
+/// `local comms`'s connect/disconnect commands all call it instead of each
+/// re-deriving the pair inline, which is what let `local comms` drift out of
+/// parity with `local up` (issue #450).
+pub fn fake_model_env_override(mode: ModelMode) -> Option<(String, String)> {
+    match mode {
+        ModelMode::LiveFromCredential => Some(("AGENTOS_FAKE_MODEL".into(), "0".into())),
+        ModelMode::FakePinnedDespiteCredential | ModelMode::DefaultFake => None,
+    }
+}
+
 /// Snapshot the shell for the parity decision. An empty AGENTOS_FAKE_MODEL is
 /// treated as unset (matches compose's `${AGENTOS_FAKE_MODEL:-1}` and the
 /// empty-string-is-not-a-credential rule); a credential is any non-empty
@@ -164,13 +179,13 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
             // (which is what compose otherwise derives the project name from).
             ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
         ]
-    } else if o.model_mode == ModelMode::LiveFromCredential {
-        // A credential is present: flip compose's fake default to live, matching
-        // `skill up`. (FakePinnedDespiteCredential/DefaultFake inject nothing so
-        // compose's `${AGENTOS_FAKE_MODEL:-1}` default stands.)
-        vec![("AGENTOS_FAKE_MODEL".into(), "0".into())]
     } else {
-        Vec::new()
+        // Delegate to `fake_model_env_override`, which discriminates on
+        // `o.model_mode`: LiveFromCredential injects AGENTOS_FAKE_MODEL=0 so
+        // compose goes live, matching `skill up`. FakePinnedDespiteCredential
+        // and DefaultFake inject nothing, so compose's
+        // `${AGENTOS_FAKE_MODEL:-1}` default stands for those two modes.
+        fake_model_env_override(o.model_mode).into_iter().collect()
     };
     if !env.is_empty() {
         cmd = cmd.with_env(env);
@@ -474,6 +489,19 @@ mod tests {
                 "pin {pin:?} should stay live"
             );
         }
+    }
+
+    #[test]
+    fn fake_model_env_override_maps_all_three_modes() {
+        assert_eq!(
+            fake_model_env_override(ModelMode::LiveFromCredential),
+            Some(("AGENTOS_FAKE_MODEL".to_string(), "0".to_string()))
+        );
+        assert_eq!(
+            fake_model_env_override(ModelMode::FakePinnedDespiteCredential),
+            None
+        );
+        assert_eq!(fake_model_env_override(ModelMode::DefaultFake), None);
     }
 
     #[test]

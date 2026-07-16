@@ -4,6 +4,7 @@
 
 use anyhow::{bail, Result};
 
+use crate::local::{fake_model_env_override, ModelMode};
 use crate::ops::{plain, require_on_path, run_step, secret_set, CommonOpts, OpsCommand};
 
 /// The worker's Slack stub sink URL (compose default); restored on disconnect.
@@ -26,6 +27,11 @@ pub struct LocalCommsOpts {
     pub app_token: String,
     pub bot_token: String,
     pub disconnect: bool,
+    /// Model mode resolved from the shell (skill/`local up` parity, issue
+    /// #450): the worker-restarting commands below apply the same
+    /// `fake_model_env_override` as `up_command` so `local comms` never
+    /// silently downgrades a live stack back to the fake model.
+    pub model_mode: ModelMode,
 }
 
 pub fn connect_commands(opts: &CommsOpts) -> Vec<OpsCommand> {
@@ -67,6 +73,8 @@ pub fn disconnect_commands(opts: &CommsOpts) -> Vec<OpsCommand> {
 }
 
 pub fn local_connect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
+    let mut env = vec![("SLACK_API_BASE_URL".into(), String::new())];
+    env.extend(fake_model_env_override(o.model_mode));
     vec![OpsCommand::new(
         "docker",
         vec![
@@ -84,7 +92,7 @@ pub fn local_connect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
             plain("agentos-dispatcher"),
         ],
     )
-    .with_env(vec![("SLACK_API_BASE_URL".into(), String::new())])
+    .with_env(env)
     .with_secret_env(vec![
         ("SLACK_APP_TOKEN".into(), o.app_token.clone()),
         ("SLACK_BOT_TOKEN".into(), o.bot_token.clone()),
@@ -92,6 +100,11 @@ pub fn local_connect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
 }
 
 pub fn local_disconnect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
+    let mut worker_env = vec![
+        ("SLACK_API_BASE_URL".into(), LOCAL_SLACK_STUB_URL.into()),
+        ("SLACK_BOT_TOKEN".into(), LOCAL_SLACK_STUB_BOT_TOKEN.into()),
+    ];
+    worker_env.extend(fake_model_env_override(o.model_mode));
     vec![
         OpsCommand::new(
             "docker",
@@ -121,10 +134,7 @@ pub fn local_disconnect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
                 plain("agentos-worker"),
             ],
         )
-        .with_env(vec![
-            ("SLACK_API_BASE_URL".into(), LOCAL_SLACK_STUB_URL.into()),
-            ("SLACK_BOT_TOKEN".into(), LOCAL_SLACK_STUB_BOT_TOKEN.into()),
-        ]),
+        .with_env(worker_env),
     ]
 }
 
@@ -276,6 +286,11 @@ pub async fn local_comms(opts: LocalCommsOpts) -> Result<()> {
         return Ok(());
     }
 
+    if opts.model_mode == ModelMode::FakePinnedDespiteCredential {
+        ui.warn(
+            "Running the FAKE model despite a credential in your shell: AGENTOS_FAKE_MODEL is pinned on. Unset it or set AGENTOS_FAKE_MODEL=0 to go live.",
+        );
+    }
     require_on_path("docker")?;
     let cl = ui.checklist();
     let label = if opts.disconnect {
@@ -443,6 +458,25 @@ mod tests {
         assert!(!line.contains("xoxb-"), "{line}");
     }
 
+    fn local_comms_opts(disconnect: bool, mode: ModelMode) -> LocalCommsOpts {
+        LocalCommsOpts {
+            file: "compose.dev.yaml".into(),
+            dry_run: false,
+            app_token: if disconnect {
+                String::new()
+            } else {
+                "xapp-1".into()
+            },
+            bot_token: if disconnect {
+                String::new()
+            } else {
+                "xoxb-1".into()
+            },
+            disconnect,
+            model_mode: mode,
+        }
+    }
+
     #[test]
     fn local_connect_command_wires_dispatcher_and_unwires_stub() {
         let cmds = local_connect_commands(&LocalCommsOpts {
@@ -451,6 +485,7 @@ mod tests {
             app_token: "xapp-1-secretsecret".into(),
             bot_token: "xoxb-1-secretsecret".into(),
             disconnect: false,
+            model_mode: ModelMode::DefaultFake,
         });
         assert_eq!(cmds.len(), 1);
         let line = cmds[0].display();
@@ -466,13 +501,7 @@ mod tests {
 
     #[test]
     fn local_disconnect_commands_stop_dispatcher_and_restub_worker() {
-        let cmds = local_disconnect_commands(&LocalCommsOpts {
-            file: "compose.dev.yaml".into(),
-            dry_run: false,
-            app_token: String::new(),
-            bot_token: String::new(),
-            disconnect: true,
-        });
+        let cmds = local_disconnect_commands(&local_comms_opts(true, ModelMode::DefaultFake));
         assert_eq!(cmds.len(), 2);
         assert_eq!(
             cmds[0].display(),
@@ -489,5 +518,174 @@ mod tests {
             !second.contains("agentos-dispatcher"),
             "disconnect worker restart must not mention dispatcher: {second}"
         );
+    }
+
+    /// Issue #450: `local comms --slack` restarted the worker on compose's fake
+    /// default even when a real model credential was present in the shell. With
+    /// a credential (`LiveFromCredential`), connect must inject
+    /// `AGENTOS_FAKE_MODEL=0` exactly once, and the pre-existing
+    /// `SLACK_API_BASE_URL` clear must survive alongside it (env is REPLACED,
+    /// not appended, by `with_env`, so building the full vec once is load-bearing).
+    #[test]
+    fn local_connect_live_from_credential_injects_fake_zero_once() {
+        let cmds = local_connect_commands(&local_comms_opts(false, ModelMode::LiveFromCredential));
+        let cmd = &cmds[0];
+        assert_eq!(
+            cmd.env
+                .iter()
+                .filter(|(k, _)| k == "AGENTOS_FAKE_MODEL")
+                .count(),
+            1,
+            "exactly one AGENTOS_FAKE_MODEL; env={:?}",
+            cmd.env
+        );
+        assert!(cmd
+            .env
+            .contains(&("AGENTOS_FAKE_MODEL".to_string(), "0".to_string())));
+        assert!(
+            cmd.env
+                .contains(&("SLACK_API_BASE_URL".to_string(), String::new())),
+            "SLACK_API_BASE_URL clear must survive the env rebuild; env={:?}",
+            cmd.env
+        );
+    }
+
+    /// `DefaultFake` and `FakePinnedDespiteCredential` must inject no
+    /// `AGENTOS_FAKE_MODEL` at all, leaving compose's `${AGENTOS_FAKE_MODEL:-1}`
+    /// default (or the operator's pin) alone.
+    #[test]
+    fn local_connect_non_live_modes_inject_nothing() {
+        for mode in [
+            ModelMode::DefaultFake,
+            ModelMode::FakePinnedDespiteCredential,
+        ] {
+            let cmds = local_connect_commands(&local_comms_opts(false, mode));
+            assert!(
+                !cmds[0].env.iter().any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
+                "{mode:?} must not inject AGENTOS_FAKE_MODEL; env={:?}",
+                cmds[0].env
+            );
+        }
+    }
+
+    /// Same bug, same fix, on the worker-restarting leg of disconnect: it also
+    /// silently reverted to the fake model. The stub `SLACK_API_BASE_URL` /
+    /// `SLACK_BOT_TOKEN` entries must survive the env rebuild alongside the
+    /// injected override.
+    #[test]
+    fn local_disconnect_live_from_credential_injects_fake_zero_and_keeps_stub_env() {
+        let cmds =
+            local_disconnect_commands(&local_comms_opts(true, ModelMode::LiveFromCredential));
+        let worker_cmd = &cmds[1];
+        assert_eq!(
+            worker_cmd
+                .env
+                .iter()
+                .filter(|(k, _)| k == "AGENTOS_FAKE_MODEL")
+                .count(),
+            1,
+            "exactly one AGENTOS_FAKE_MODEL; env={:?}",
+            worker_cmd.env
+        );
+        assert!(worker_cmd
+            .env
+            .contains(&("AGENTOS_FAKE_MODEL".to_string(), "0".to_string())));
+        assert!(worker_cmd.env.contains(&(
+            "SLACK_API_BASE_URL".to_string(),
+            LOCAL_SLACK_STUB_URL.to_string(),
+        )));
+        assert!(worker_cmd.env.contains(&(
+            "SLACK_BOT_TOKEN".to_string(),
+            LOCAL_SLACK_STUB_BOT_TOKEN.to_string(),
+        )));
+    }
+
+    #[test]
+    fn local_disconnect_non_live_modes_inject_nothing() {
+        for mode in [
+            ModelMode::DefaultFake,
+            ModelMode::FakePinnedDespiteCredential,
+        ] {
+            let cmds = local_disconnect_commands(&local_comms_opts(true, mode));
+            let worker_cmd = &cmds[1];
+            assert!(
+                !worker_cmd
+                    .env
+                    .iter()
+                    .any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
+                "{mode:?} must not inject AGENTOS_FAKE_MODEL; env={:?}",
+                worker_cmd.env
+            );
+        }
+    }
+
+    /// Anti-drift guard (issue #450): `local up` and `local comms` connect must
+    /// agree on whether/how they inject `AGENTOS_FAKE_MODEL`, for every
+    /// `ModelMode`. Compares `up_command` (with `local_model: None`, since that
+    /// path is its own independent live route) against `local_connect_commands`.
+    #[test]
+    fn up_and_local_connect_agree_on_fake_model_override_for_every_mode() {
+        for mode in [
+            ModelMode::LiveFromCredential,
+            ModelMode::FakePinnedDespiteCredential,
+            ModelMode::DefaultFake,
+        ] {
+            let up_env = crate::local::up_command(&crate::local::LocalOpts {
+                file: "compose.dev.yaml".into(),
+                dry_run: false,
+                minimal: false,
+                local_model: None,
+                slack: false,
+                model_mode: mode,
+            })
+            .env;
+            let connect_env = local_connect_commands(&local_comms_opts(false, mode))[0]
+                .env
+                .clone();
+            let up_override: Option<&(String, String)> =
+                up_env.iter().find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+            let connect_override: Option<&(String, String)> =
+                connect_env.iter().find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+            assert_eq!(
+                up_override, connect_override,
+                "{mode:?}: up_command and local_connect_commands disagree on \
+                 AGENTOS_FAKE_MODEL; up={up_env:?} connect={connect_env:?}"
+            );
+        }
+    }
+
+    /// Same anti-drift guard (issue #450) for the DISCONNECT leg: `local up`
+    /// and `local comms --disconnect`'s worker-restarting command must agree
+    /// on whether/how they inject `AGENTOS_FAKE_MODEL`, for every `ModelMode`.
+    #[test]
+    fn up_and_local_disconnect_agree_on_fake_model_override_for_every_mode() {
+        for mode in [
+            ModelMode::LiveFromCredential,
+            ModelMode::FakePinnedDespiteCredential,
+            ModelMode::DefaultFake,
+        ] {
+            let up_env = crate::local::up_command(&crate::local::LocalOpts {
+                file: "compose.dev.yaml".into(),
+                dry_run: false,
+                minimal: false,
+                local_model: None,
+                slack: false,
+                model_mode: mode,
+            })
+            .env;
+            let disconnect_env = local_disconnect_commands(&local_comms_opts(true, mode))[1]
+                .env
+                .clone();
+            let up_override: Option<&(String, String)> =
+                up_env.iter().find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+            let disconnect_override: Option<&(String, String)> = disconnect_env
+                .iter()
+                .find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+            assert_eq!(
+                up_override, disconnect_override,
+                "{mode:?}: up_command and local_disconnect_commands disagree on \
+                 AGENTOS_FAKE_MODEL; up={up_env:?} disconnect={disconnect_env:?}"
+            );
+        }
     }
 }

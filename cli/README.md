@@ -436,14 +436,18 @@ suffix). `local message` composes with `--channel`, `--thread`, and
 `--timeout-secs` and rejects the cluster only flags (`--namespace`,
 `--release`, `--force-wire`, ...)
 with a clear error. The compose worker runs the fake model by default (a canned
-reply, no credentials); export a credential in your shell and `local up` goes
-live automatically for a real model.
+reply, no credentials); export a credential in your shell and `local up` or
+`local comms` goes live automatically for a real model. Set
+`AGENTOS_FAKE_MODEL=1` to force the fake model regardless of a credential
+being present.
 
 Use `agentos local comms --slack` when you want the same compose stack to talk
 to a real Slack workspace. Connect reads `SLACK_APP_TOKEN` and
 `SLACK_BOT_TOKEN`, masks them in printed commands, starts the dispatcher, and
-points the worker at real Slack. `--disconnect` stops the dispatcher and
-restores the local stub. `--dry-run` prints the compose command only.
+points the worker at real Slack, resolving the model the same way as `local up`
+(live when a credential is present, fake otherwise). `--disconnect` stops the
+dispatcher and restores the local stub. `--dry-run` prints the compose command
+only.
 
 Use `--continue` to reuse the last successful `local message` context from
 `.agentos/last-turn.json` in the current working directory, so only the new text

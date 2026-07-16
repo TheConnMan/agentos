@@ -1224,6 +1224,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     app_token,
                     bot_token,
                     disconnect,
+                    model_mode: local::model_mode_from_env(),
                 })
                 .await
             }
