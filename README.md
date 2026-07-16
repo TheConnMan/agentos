@@ -419,7 +419,7 @@ checkout needed.
 Use `--chart <path>` when developing the chart locally. The short version:
 
 - `agentos cluster up` runs `helm upgrade --install` of `charts/agentos`; it reads
-  `AGENTOS_MODEL_CREDENTIALS` to enable a real model (absent, the release
+  `AGENTOS_CREDENTIALS` (deprecated alias `AGENTOS_MODEL_CREDENTIALS`) to enable a real model (absent, the release
   installs sealed with canned replies), and `--no-expose` keeps the UI and
   Langfuse ClusterIP-only. The credential alone still leaves the runner sandbox
   sealed against default-deny egress, so a real model stays unreachable until you

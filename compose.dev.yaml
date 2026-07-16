@@ -427,7 +427,7 @@ services:
       - S3_ACCESS_KEY=minio
       - S3_SECRET_KEY=miniosecret
       - BUNDLE_BUCKET=agentos-bundles
-      - AGENTOS_API_BASE_URL=http://localhost:28000
+      - AGENTOS_API_URL=http://localhost:28000
       - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}
       # Fake model by default (no credential needed). `agentos local up` reaches
@@ -494,7 +494,7 @@ services:
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       # In-network form, matching the UI's AGENTOS_API_TARGET above. The
       # published host port is unreachable from this bridge-network container.
-      AGENTOS_API_BASE_URL: http://agentos-api:8000
+      AGENTOS_API_URL: http://agentos-api:8000
       # Mirrors agentos-api's API_KEY so resolve calls authenticate. Wired
       # explicitly rather than relying on the two defaults happening to match.
       AGENTOS_API_KEY: agentos-dev-key

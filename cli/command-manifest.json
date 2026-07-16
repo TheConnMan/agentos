@@ -1335,7 +1335,7 @@
       "name": "cluster",
       "subcommands": [
         {
-          "about": "Install or upgrade the AgentOS release via Helm (helm upgrade --install). By default it puts the UI and Langfuse on node ports for tailnet/LAN access; pass --no-expose to keep them ClusterIP-only. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) to install with the real model; without it the install is sealed (fake model, canned replies). A real model is still unreachable behind the fail-closed sandbox until you open its egress with --allow-egress-host <provider> (or --allow-web-egress <CIDR> for a raw range)",
+          "about": "Install or upgrade the AgentOS release via Helm (helm upgrade --install). By default it puts the UI and Langfuse on node ports for tailnet/LAN access; pass --no-expose to keep them ClusterIP-only. Set AGENTOS_CREDENTIALS (an Anthropic API key; AGENTOS_MODEL_CREDENTIALS is a deprecated alias) to install with the real model; without it the install is sealed (fake model, canned replies). A real model is still unreachable behind the fail-closed sandbox until you open its egress with --allow-egress-host <provider> (or --allow-web-egress <CIDR> for a raw range)",
           "args": [
             {
               "default_values": [
@@ -1381,7 +1381,7 @@
             },
             {
               "global": false,
-              "help": "Force the sealed fake-model install even when AGENTOS_MODEL_CREDENTIALS is set (dev/CI escape hatch); suppresses the fake-model warning",
+              "help": "Force the sealed fake-model install even when AGENTOS_CREDENTIALS is set (dev/CI escape hatch); suppresses the fake-model warning",
               "id": "fake_model",
               "long": "fake-model",
               "positional": false,

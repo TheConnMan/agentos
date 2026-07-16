@@ -76,4 +76,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0044 | [Workflow-controlled agents run on AgentOS as a callable substrate first, a unified plane only on demand](0044-workflow-controlled-agents-callable-substrate.md) | Proposed |
 | 0045 | [The status line is the mutable part of an immutable ADR](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md) | Accepted |
 | 0046 | [Converged approval gates: durable provenance, loud route resolution, and observe-only resume reconciliation](0046-converged-approval-gates-and-durable-provenance.md) | Accepted |
+| 0047 | [ADR-0047: Canonical env-var names for the API base URL and model credential](0047-canonical-env-var-names.md) | Accepted |
 <!-- END GENERATED: adr-index -->

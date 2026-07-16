@@ -6,7 +6,7 @@
 # back to its code default http://localhost:8000, which inside its own pod is the
 # dispatcher itself, and every Slack Approve click dead-ends with only a warning.
 #
-#   1. Default install renders AGENTOS_API_BASE_URL as the in-chart API Service
+#   1. Default install renders AGENTOS_API_URL as the in-chart API Service
 #      (http://<fullname>-api:<api.service.port>), asserted as a VALUE.
 #   2. The port tracks .Values.api.service.port and is not hardcoded.
 #   3. dispatcher.apiBaseUrl overrides verbatim (the BYO / api.deploy=false path).
@@ -109,23 +109,23 @@ env_has() { python3 "$ENV_PY" "$1" "$2" "$3" >/dev/null; }
 # This render is reused by assertion 4 below (identical arguments), so it is
 # deliberately kept in its own variable rather than re-rendered.
 default_manifest="$(render_dispatcher default "${TOKENS[@]}")"
-actual="$(env_value "$default_manifest" AGENTOS_API_BASE_URL)"
+actual="$(env_value "$default_manifest" AGENTOS_API_URL)"
 [ -n "$actual" ] \
-  || fail "default install: dispatcher has no AGENTOS_API_BASE_URL env value; it will fall back to http://localhost:8000 (itself) and Slack approval clicks will dead-end"
+  || fail "default install: dispatcher has no AGENTOS_API_URL env value; it will fall back to http://localhost:8000 (itself) and Slack approval clicks will dead-end"
 [ "$actual" = "http://agentos-api:8000" ] \
-  || fail "default install: AGENTOS_API_BASE_URL is '$actual', expected 'http://agentos-api:8000' (the in-chart API Service)"
+  || fail "default install: AGENTOS_API_URL is '$actual', expected 'http://agentos-api:8000' (the in-chart API Service)"
 
 # 2: the port comes from .Values.api.service.port, not a hardcoded 8000.
 manifest="$(render_dispatcher port --set api.service.port=9999 "${TOKENS[@]}")"
-actual="$(env_value "$manifest" AGENTOS_API_BASE_URL)"
+actual="$(env_value "$manifest" AGENTOS_API_URL)"
 [ "$actual" = "http://agentos-api:9999" ] \
-  || fail "api.service.port=9999: AGENTOS_API_BASE_URL is '$actual', expected 'http://agentos-api:9999' (the port is hardcoded in the template instead of read from .Values.api.service.port)"
+  || fail "api.service.port=9999: AGENTOS_API_URL is '$actual', expected 'http://agentos-api:9999' (the port is hardcoded in the template instead of read from .Values.api.service.port)"
 
 # 3: BYO override renders verbatim (the api.deploy=false answer).
 manifest="$(render_dispatcher byo --set dispatcher.apiBaseUrl=http://byo-api.example:8080 "${TOKENS[@]}")"
-actual="$(env_value "$manifest" AGENTOS_API_BASE_URL)"
+actual="$(env_value "$manifest" AGENTOS_API_URL)"
 [ "$actual" = "http://byo-api.example:8080" ] \
-  || fail "dispatcher.apiBaseUrl override: AGENTOS_API_BASE_URL is '$actual', expected the verbatim override 'http://byo-api.example:8080'"
+  || fail "dispatcher.apiBaseUrl override: AGENTOS_API_URL is '$actual', expected the verbatim override 'http://byo-api.example:8080'"
 
 # 4: the API key arrives by reference to the chart Secret, never inline. Reuses
 # assertion 1's default render -- the arguments are identical, so a second render

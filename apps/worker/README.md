@@ -127,7 +127,7 @@ Runtime rules (each has a provoking integration test in `tests/eval/test_stream.
 Config surface (read by `WorkerConfig`): `AGENTOS_EVAL_STREAM` /
 `AGENTOS_EVAL_CONSUMER_GROUP`; MinIO/S3 `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` /
 `S3_SECRET_KEY` / `S3_REGION` / `BUNDLE_BUCKET` (mirroring the API's env names); the
-platform API `AGENTOS_API_BASE_URL` / `AGENTOS_API_KEY` for `POST /evals/report`; and
+platform API `AGENTOS_API_URL` (deprecated alias `AGENTOS_API_BASE_URL`) / `AGENTOS_API_KEY` for `POST /evals/report`; and
 `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` for score recording.
 The consumer is wired into `python -m agentos_worker` alongside the runs consumer and
 the kill switch.

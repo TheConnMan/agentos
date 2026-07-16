@@ -757,7 +757,8 @@ enum ClusterAction {
     /// Install or upgrade the AgentOS release via Helm (helm upgrade --install).
     /// By default it puts the UI and Langfuse on node ports for tailnet/LAN
     /// access; pass --no-expose to keep them ClusterIP-only. Set
-    /// AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) to install with the real
+    /// AGENTOS_CREDENTIALS (an Anthropic API key; AGENTOS_MODEL_CREDENTIALS is a
+    /// deprecated alias) to install with the real
     /// model; without it the install is sealed (fake model, canned replies). A
     /// real model is still unreachable behind the fail-closed sandbox until you
     /// open its egress with --allow-egress-host <provider> (or --allow-web-egress
@@ -775,7 +776,7 @@ enum ClusterAction {
         /// Keep the UI and Langfuse services ClusterIP instead of NodePort.
         #[arg(long)]
         no_expose: bool,
-        /// Force the sealed fake-model install even when AGENTOS_MODEL_CREDENTIALS
+        /// Force the sealed fake-model install even when AGENTOS_CREDENTIALS
         /// is set (dev/CI escape hatch); suppresses the fake-model warning.
         #[arg(long)]
         fake_model: bool,
@@ -1601,10 +1602,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 let credentials = if local_model.is_some() {
                     None
                 } else {
-                    ops::resolve_up_credentials(
-                        fake_model,
-                        std::env::var("AGENTOS_MODEL_CREDENTIALS").ok(),
-                    )
+                    ops::resolve_up_credentials(fake_model, ops::model_credential_env())
                 };
                 ops::up(UpOpts {
                     common: CommonOpts {

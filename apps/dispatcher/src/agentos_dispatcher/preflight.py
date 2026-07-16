@@ -1,7 +1,7 @@
 """Boot-time gate on the platform API wiring (#442, AC2).
 
 The dispatcher resolves Slack approval clicks by calling the platform API. When
-``AGENTOS_API_BASE_URL`` points somewhere unreachable, the only symptom today is
+``AGENTOS_API_URL`` points somewhere unreachable, the only symptom today is
 a warning at click time and a dead-ended button: ``ApprovalResolveClient.resolve``
 catches the ``httpx.HTTPError`` and returns ``ResolveOutcome(status_code=0)``.
 This gate turns that silent misconfiguration into a loud boot failure naming the
@@ -125,5 +125,5 @@ def check_api_reachable(
     elapsed = time.monotonic() - start
     raise ApiUnreachableError(
         f"cannot reach the platform API at {logged_base} after {elapsed:.1f}s "
-        f"({attempt} attempts, last error: {last_error}); check AGENTOS_API_BASE_URL"
+        f"({attempt} attempts, last error: {last_error}); check AGENTOS_API_URL"
     )

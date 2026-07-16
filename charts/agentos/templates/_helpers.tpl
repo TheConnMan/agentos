@@ -238,7 +238,7 @@ ANTHROPIC_BASE_URL ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKE
 {{/* Platform-API connection env for the first-party services that CALL the API
      (today the dispatcher; the chart worker's identical gap is a tracked
      follow-up). Exists as a helper for the same reason agentos.env.postgres and
-     agentos.env.valkey do: AGENTOS_API_BASE_URL has now been forgotten three
+     agentos.env.valkey do: the API URL env has now been forgotten three
      times on new callers, while the store envs never recurred, because those had
      a helper to include and this did not. Wire a new API caller by including
      this rather than re-deriving the URL inline.
@@ -258,7 +258,7 @@ ANTHROPIC_BASE_URL ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKE
 # Service; a set value renders verbatim and is the BYO answer, and
 # the only correct one when api.deploy is false. The port comes from
 # api.service.port so the two sides cannot drift.
-- name: AGENTOS_API_BASE_URL
+- name: AGENTOS_API_URL
   value: {{ .Values.dispatcher.apiBaseUrl | default (printf "http://%s-api:%v" (include "agentos.fullname" .) .Values.api.service.port) | quote }}
 # The same chart Secret key api.yaml consumes as API_KEY, so the
 # caller and the API cannot drift apart. By reference only: an inline

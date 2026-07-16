@@ -339,7 +339,7 @@ def test_run_main_gates_before_connecting_slack(monkeypatch: pytest.MonkeyPatch)
         alias = field.validation_alias
         monkeypatch.delenv(alias if isinstance(alias, str) else name.upper(), raising=False)
     # Port 1 is reserved and never listening: a real, immediate connection refusal.
-    monkeypatch.setenv("AGENTOS_API_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("AGENTOS_API_URL", "http://127.0.0.1:1")
     monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", "0.2")
     monkeypatch.setenv("AGENTOS_BACKOFF_INITIAL_SECONDS", "0.01")
     monkeypatch.setenv("AGENTOS_BACKOFF_MAX_SECONDS", "0.02")

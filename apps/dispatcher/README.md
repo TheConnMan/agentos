@@ -76,13 +76,13 @@ Read from the environment by `DispatcherConfig()` (a `pydantic_settings.BaseSett
 | `AGENTOS_BACKOFF_INITIAL_SECONDS` | `1.0` | first reconnect backoff |
 | `AGENTOS_BACKOFF_MAX_SECONDS` | `30.0` | backoff cap |
 | `AGENTOS_BACKOFF_MULTIPLIER` | `2.0` | backoff growth factor |
-| `AGENTOS_API_BASE_URL` | `http://localhost:8000` | platform API used to resolve approval clicks (compose: `http://agentos-api:8000`) |
+| `AGENTOS_API_URL` | `http://localhost:8000` | platform API used to resolve approval clicks (compose: `http://agentos-api:8000`). `AGENTOS_API_BASE_URL` is a deprecated alias. |
 | `AGENTOS_API_KEY` | `agentos-dev-key` | shared API key sent as `X-API-Key` on the resolve call |
 | `AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS` | `30.0` | deadline for the boot gate below; must be positive |
 
 ### Boot gate on the platform API
 
-Before any Slack wiring, `main()` polls `GET {AGENTOS_API_BASE_URL}/health` until
+Before any Slack wiring, `main()` polls `GET {AGENTOS_API_URL}/health` until
 it answers 200 or `AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS` elapses, reusing the
 `AGENTOS_BACKOFF_*` tunables for the poll interval. On success it logs the
 resolved URL once at INFO. On the deadline it logs an error naming that URL and

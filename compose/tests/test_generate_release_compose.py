@@ -271,9 +271,9 @@ def test_dispatcher_api_base_url_is_in_network():
     """
     for label, doc in compose_docs():
         env = env_map(doc["services"]["agentos-dispatcher"])
-        assert env.get("AGENTOS_API_BASE_URL") == "http://agentos-api:8000", (
-            f"{label}: agentos-dispatcher AGENTOS_API_BASE_URL is "
-            f"{env.get('AGENTOS_API_BASE_URL')!r}; the dispatcher cannot reach the "
+        assert env.get("AGENTOS_API_URL") == "http://agentos-api:8000", (
+            f"{label}: agentos-dispatcher AGENTOS_API_URL is "
+            f"{env.get('AGENTOS_API_URL')!r}; the dispatcher cannot reach the "
             f"API and Slack approval clicks dead-end"
         )
 
@@ -323,7 +323,7 @@ def test_dispatcher_depends_on_api_healthy():
 def test_worker_api_base_url_stays_host_local():
     """Regression guard: the worker's localhost:28000 is CORRECT. Do not "fix" it.
 
-    #442 names the worker's `AGENTOS_API_BASE_URL=http://localhost:28000` as the
+    #442 names the worker's `AGENTOS_API_URL=http://localhost:28000` as the
     defect. It is not. The worker runs `network_mode: host`, so the published
     host port is exactly right for it, and rewriting this line to the in-network
     form breaks the worker. This test passes today and must keep passing.
@@ -335,9 +335,9 @@ def test_worker_api_base_url_stays_host_local():
             f"its localhost:28000 API URL has changed"
         )
         env = env_map(worker)
-        assert env.get("AGENTOS_API_BASE_URL") == "http://localhost:28000", (
-            f"{label}: agentos-worker AGENTOS_API_BASE_URL is "
-            f"{env.get('AGENTOS_API_BASE_URL')!r}, expected http://localhost:28000 "
+        assert env.get("AGENTOS_API_URL") == "http://localhost:28000", (
+            f"{label}: agentos-worker AGENTOS_API_URL is "
+            f"{env.get('AGENTOS_API_URL')!r}, expected http://localhost:28000 "
             f"(host-networked: the published port is the correct form here)"
         )
 
