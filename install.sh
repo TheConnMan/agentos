@@ -6,8 +6,8 @@
 # runs the single pre-binary step -- `cargo install`, which builds AND drops
 # `agentos` on PATH (~/.cargo/bin) -- and then hands off to `agentos install`
 # for the rest (uv sync, pnpm install, runner image). On an existing install it
-# only refreshes the CLI when the source tree is newer than the installed binary,
-# then runs `agentos install --update` so already-present artifacts are reused.
+# reuses already-present heavyweight artifacts (via `agentos install --update`)
+# but always rebuilds and reinstalls the CLI from this checkout.
 #
 #   git clone <repo> && cd agentos && ./install.sh
 #
@@ -21,24 +21,16 @@ cd "$(dirname "$0")"
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
 AGENTOS_BIN="$CARGO_BIN/agentos"
 
-cli_sources_newer_than_binary() {
-  [[ ! -x "$AGENTOS_BIN" ]] && return 0
-  find cli -path cli/target -prune -o -type f -newer "$AGENTOS_BIN" -print -quit | grep -q .
-}
-
+# Always (re)build and install the CLI from this checkout. A file-mtime heuristic
+# cannot tell whether the checked-out source matches the installed binary -- a
+# `git checkout`/branch switch changes content without reliably bumping mtimes,
+# so a stale binary (missing commands that exist in the source) would silently
+# survive. cargo's own caching keeps this to a few seconds when nothing changed;
+# --force just re-links and copies the binary into place.
 UPDATE_ARGS=()
-if [[ -x "$AGENTOS_BIN" ]]; then
-  UPDATE_ARGS=(--update)
-  if cli_sources_newer_than_binary; then
-    echo "==> updating agentos CLI (source is newer than $AGENTOS_BIN)"
-    cargo install --path cli --force
-  else
-    echo "==> agentos CLI is already current at $AGENTOS_BIN"
-  fi
-else
-  echo "==> cargo install --path cli (builds agentos and installs it to ~/.cargo/bin)"
-  cargo install --path cli --force
-fi
+[[ -x "$AGENTOS_BIN" ]] && UPDATE_ARGS=(--update)
+echo "==> cargo install --path cli --force (build agentos and install it to ~/.cargo/bin)"
+cargo install --path cli --force
 
 echo "==> agentos install ${UPDATE_ARGS[*]} (deps + runner image as needed)"
 "$AGENTOS_BIN" install "${UPDATE_ARGS[@]}"
