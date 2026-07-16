@@ -356,9 +356,19 @@ pub async fn install(update: bool) -> Result<()> {
     )
     .await?;
 
-    // 4. cargo build in cli.
+    // 4. cargo install the CLI onto PATH (~/.cargo/bin), not just `cargo build`
+    // into target/debug. `install` should make the CLI it builds LIVE -- like
+    // `npm i` reconciling to the manifest -- so re-running it after a code change
+    // refreshes what the user actually runs, instead of silently leaving a stale
+    // on-PATH binary. `agentos update` is the fast CLI-only subset of this.
     require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
-    run_step(&root.join("cli"), "cargo", &["build"], "cargo build (cli)").await?;
+    run_step(
+        &root,
+        "cargo",
+        &["install", "--path", "cli", "--force"],
+        "cargo install (cli -> ~/.cargo/bin)",
+    )
+    .await?;
 
     // 5. Build the runner image via the existing `build` handler. Update mode
     // keeps reruns quick when the image is already present locally.
