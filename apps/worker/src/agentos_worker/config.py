@@ -19,7 +19,7 @@ import os
 import socket
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import (
@@ -168,6 +168,68 @@ class WorkerConfig(BaseSettings):
         validation_alias="AGENTOS_CONSUMER_NAME",
     )
 
+    # Delivery cap + dead-letter graveyard (#505). ``max_delivery`` is the maximum
+    # number of times a stream entry may be DELIVERED to a handler before it is
+    # moved to the dead-letter stream and acked off the group. It is NOT
+    # ``max_attempts`` below: that governs the kernel's flag-clean per-turn retry
+    # *classification* (a completely different mechanism operating inside a single
+    # delivery). Conflating the two silently changes kernel retry behavior.
+    #
+    # The count is read from Valkey's pending-entries list, so it is durable: a
+    # restarted worker sees the accumulated count and still caps. The floor is 2
+    # because ``max_delivery=1`` would dead-letter every ordinary worker crash on
+    # its first reclaim, and values below 3 undermine ADR-0013 crash recovery
+    # (which relies on a reclaim actually retrying the entry).
+    #
+    # Leave headroom above what a HEALTHY turn can legitimately burn. A single
+    # delivery may span up to ``max_attempts * runner_total_timeout_s`` (~1800s
+    # at defaults, see the retry knobs below), which exceeds
+    # ``reclaim_min_idle_ms`` (900s), so another replica can reclaim a turn that
+    # is still working and bump its delivery count. A healthy long turn can
+    # therefore accrue roughly
+    # ``(max_attempts * runner_total_timeout_s) / reclaim_min_idle_ms`` (~2 at
+    # defaults) deliveries on its own. ``max_delivery`` must stay comfortably
+    # above that: at the ``ge=2`` floor a slow but healthy turn could be
+    # dead-lettered while it is still making progress.
+    max_delivery: int = Field(default=5, ge=2, validation_alias="AGENTOS_MAX_DELIVERY")
+    # Empty means "derive ``<stream>:dead``" at the use site; a static Field
+    # default cannot reference ``self.stream``. An explicit override equal to
+    # ``stream`` is rejected outright -- see ``_reject_self_targeting_graveyard``.
+    dead_letter_stream: str = Field(
+        default="", validation_alias="AGENTOS_DEAD_LETTER_STREAM"
+    )
+    # The graveyard is capped with an approximate MAXLEN on every XADD. The
+    # unparseable-poison path dead-letters per INBOUND entry, so a wire-format
+    # drift that makes entries unparseable en masse would otherwise grow the
+    # graveyard at full ingest rate -- on the same Valkey that holds the kernel's
+    # per-thread locks and side-effect markers, i.e. a platform-wide OOM. The
+    # trade is deliberate and lossy: under a flood the oldest dead-letter rows are
+    # evicted, so graveyard records are best-effort, not a durable audit log.
+    dead_letter_maxlen: int = Field(
+        default=10000, ge=1, validation_alias="AGENTOS_DEAD_LETTER_MAXLEN"
+    )
+
+    @model_validator(mode="after")
+    def _reject_self_targeting_graveyard(self) -> WorkerConfig:
+        """Fail at construction if the graveyard points back at the source stream.
+
+        ``_dead_letter`` XADDs the original payload to the dead-letter stream and
+        only then XACKs it. If that target IS the source stream, the payload is
+        re-queued to the very stream it was consumed from: a valid failure gets
+        re-consumed under a fresh entry id, and an unparseable one forms a hot
+        loop that re-creates the permanent stall the delivery cap exists to
+        prevent. Rejecting at config/startup means an operator learns at boot
+        rather than during an incident; the derived ``<stream>:dead`` default can
+        never collide, so only an explicit override trips this.
+        """
+        if self.dead_letter_stream and self.dead_letter_stream == self.stream:
+            raise ValueError(
+                "AGENTOS_DEAD_LETTER_STREAM must not equal AGENTOS_STREAM "
+                f"({self.stream!r}): dead-lettering onto the source stream "
+                "re-queues failures forever"
+            )
+        return self
+
     # Read loop
     read_count: int = 16
     read_block_ms: int = 5000
@@ -194,11 +256,20 @@ class WorkerConfig(BaseSettings):
     idempotency_ttl_s: int = 86400
 
     # Crash recovery: reclaim stream entries pending longer than this, and run
-    # the orphan-claim reaper, on this cadence. The idle threshold must exceed the
-    # longest legitimate in-flight time (a turn can stream up to
-    # runner_total_timeout_s, 600s) so the reaper never reclaims an entry a live
-    # turn is still processing; the consumer additionally skips its own in-flight
-    # entry ids as a second guard.
+    # the orphan-claim reaper, on this cadence.
+    #
+    # This window does NOT cover the longest legitimate in-flight time. One
+    # delivery is not one runner call: the kernel may retry a flag-clean failure
+    # up to max_attempts (3) times WITHIN a single delivery, each bounded by
+    # runner_total_timeout_s (600s), so a healthy delivery can legitimately span
+    # up to ~max_attempts * runner_total_timeout_s = ~1800s -- twice this 900s
+    # idle threshold. A long healthy turn can therefore be reclaimed by another
+    # replica and accrue delivery count (see max_delivery's headroom note above).
+    # The consumer skips its OWN in-flight entry ids, so this only bites across
+    # replicas; that cross-replica dup-dispatch is pre-existing and tracked
+    # separately. Raising this threshold past
+    # max_attempts * runner_total_timeout_s would close it at the cost of slower
+    # crash recovery.
     reclaim_min_idle_ms: int = 900000
     reclaim_interval_s: float = 30.0
 
@@ -281,3 +352,13 @@ class WorkerConfig(BaseSettings):
 
     def lock_key(self, thread_key: str) -> str:
         return f"{self.key_prefix}:lock:{thread_key}"
+
+    def dead_letter_stream_name(self) -> str:
+        """The graveyard stream: the explicit override, else derived ``<stream>:dead``.
+
+        ``dead_letter_stream``'s Field default cannot reference ``self.stream``,
+        so the derivation lives here rather than at the use site -- next to the
+        other derived names, and next to ``_reject_self_targeting_graveyard``,
+        which reasons about the same name.
+        """
+        return self.dead_letter_stream or f"{self.stream}:dead"

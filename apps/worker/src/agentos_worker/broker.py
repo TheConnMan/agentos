@@ -39,9 +39,12 @@ class StreamBroker(Protocol):
     """The consumer-side stream contract: group semantics + crash recovery.
 
     A second broker must honor: an ordered stream, consumer groups
-    (``xgroup_create`` / ``xreadgroup``), per-entry ack (``xack``), and
-    pending-entry reclaim for crash recovery (``xautoclaim``). Dedupe lives on the
-    producer side (``StreamPublisher``), beside the stream, not in these verbs.
+    (``xgroup_create`` / ``xreadgroup``), per-entry ack (``xack``), pending-entry
+    reclaim for crash recovery (``xautoclaim``), and — since the delivery cap
+    (#505) — inspection of the pending list's delivery counts
+    (``xpending_range``), entry lookup (``xrange``), and append (``xadd``) to move
+    an over-cap entry to the dead-letter stream. Dedupe lives on the producer side
+    (``StreamPublisher``), beside the stream, not in these verbs.
 
     The verbs are declared to return a bare ``Awaitable`` (not ``async def``) to
     match how ``redis.asyncio.Redis`` types them, so the real client structurally
@@ -80,4 +83,41 @@ class StreamBroker(Protocol):
         justid: bool = ...,
     ) -> Awaitable[Any]:
         """Reclaim entries pending past ``min_idle_time`` from a dead consumer."""
+        ...
+
+    def xpending_range(
+        self,
+        name: Any,
+        groupname: Any,
+        min: Any,
+        max: Any,
+        count: Any,
+        consumername: Any = ...,
+        idle: Any = ...,
+    ) -> Awaitable[Any]:
+        """Pending entries with their delivery counts — the delivery cap's input."""
+        ...
+
+    def xrange(
+        self, name: Any, min: Any = ..., max: Any = ..., count: Any = ...
+    ) -> Awaitable[Any]:
+        """Read entries by id range; fetches an over-cap entry's original fields."""
+        ...
+
+    def xadd(
+        self,
+        name: Any,
+        fields: Any,
+        id: Any = ...,
+        maxlen: Any = ...,
+        approximate: bool = ...,
+    ) -> Awaitable[Any]:
+        """Append an entry — the dead-letter stream's write verb.
+
+        ``maxlen``/``approximate`` are part of the contract, not an optimization:
+        the dead-letter write is bounded (#505) so a flood of unparseable entries
+        cannot grow the graveyard without limit on the same Valkey the kernel's
+        locks and markers live on. A second broker must honor a bounded append
+        (exact trimming is allowed; ``approximate`` only permits trimming late).
+        """
         ...

@@ -36,6 +36,41 @@ stop -- that is scope creep on the sacred module.
    still escalates on reclaim. Flag-clean failures retry by classification
    (`rate-limit`/`runner-error` transient, everything else escalates).
 
+## Delivery is bounded (ADR-0039, #505)
+
+The reclaim loop is **not** infinite. An entry already delivered `max_delivery`
+times (`AGENTOS_MAX_DELIVERY`, default 5, floor 2) is dead-lettered to
+`<stream>:dead` and acked off the group instead of re-dispatched. Unbounded
+reclaim let one permanently-failing entry starve the whole consumer group -- a
+silent total stall. Removing or bypassing the cap is that regression, not a
+simplification.
+
+- **The delivery count is read from the PEL every pass, never tracked in
+  process memory.** A process-local counter resets on restart, so a
+  crash-looping worker would retry poison forever -- the exact stall shape.
+- **Read the count with `XPENDING` *before* `XAUTOCLAIM`**, which bumps it on
+  claim; the pre-claim value is the budget already spent. Cap at `>=`. Keep the
+  `IDLE` filter equal to `XAUTOCLAIM`'s `min_idle_time`, and keep the
+  `_inflight_ids` skip ahead of the cap check.
+- **`XADD` before `XACK`, never the reverse.** A crash between them costs a
+  duplicate graveyard row; the reverse costs the entry.
+- **`max_delivery` is not `max_attempts`.** The latter is the kernel's
+  flag-clean retry *classification* inside one delivery. Do not conflate them.
+- **Transient failure is unchanged**: a mid-turn crash still reclaims, retries,
+  and acks. Only an exhausted budget dead-letters.
+- **The graveyard has no consumer group, but it IS bounded** by an approximate
+  `MAXLEN` (`AGENTOS_DEAD_LETTER_MAXLEN`, default 10000) on every `XADD`. The
+  unparseable path dead-letters per inbound entry, so an unbounded graveyard hands
+  a wire-DTO drift a full-ingest-rate OOM against the same Valkey that holds the
+  kernel's locks and markers. Rows are therefore **best-effort**: under a flood the
+  oldest are evicted. Do not treat the graveyard as a complete audit log, and do
+  not add a consumer group, a retention policy, or replay tooling as a passenger
+  on another change.
+- **A dead-letter stream equal to the source stream is rejected at config
+  validation.** `XADD` precedes `XACK`, so a self-targeting graveyard re-queues
+  failures onto the stream they came from and hot-loops. Do not soften that
+  validator into a warning.
+
 ## The sandbox substrate (`agentos_worker.sandbox`)
 
 - **The kernel talks in `thread_key` and `SandboxHandle` only.** Everything

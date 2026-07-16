@@ -182,11 +182,96 @@ Rules (detailed-architecture 2b), each with an integration test that provokes it
   a redelivered or reclaimed entry that already finished is skipped.
   `XAUTOCLAIM` reclaims entries a dead consumer took but never acked and
   reprocesses them; the markers make that safe.
+- **Bounded delivery + a dead-letter graveyard** (ADR-0039, #505). Reclaim is
+  capped, not infinite. An entry already delivered `max_delivery` times
+  (`AGENTOS_MAX_DELIVERY`, default 5, floor 2) and still failing is moved to a
+  dead-letter stream and acked off the group instead of re-dispatched, so it can
+  never be reclaimed again. Without the cap one permanently-failing entry -- for
+  example a turn whose reply endpoint died with the process that created it --
+  is reclaimed forever, starves the shared consumer group, and silently stalls
+  every later turn. **Transient failures are unaffected:** a worker that crashes
+  mid-turn still has its entry reclaimed, retried, and acked exactly as before;
+  only an exhausted delivery budget dead-letters.
+
+### The dead-letter graveyard
+
+The dead-letter stream is `AGENTOS_DEAD_LETTER_STREAM`, or `<stream>:dead`
+(`agentos:runs:dead`) when that is unset. Setting it **equal to** `AGENTOS_STREAM`
+is rejected at startup: the worker XADDs to the graveyard before it XACKs, so a
+self-targeting graveyard would re-queue every failure onto the stream it was
+consumed from and hot-loop on an unparseable one. The derived default can never
+collide, so only an explicit override trips this.
+
+The first `XADD` creates the stream; nothing pre-creates it. It is a sink, **not**
+a second processing lane: it has no consumer group, and nothing reads it
+automatically. Replay, if an operator wants it, is `XRANGE` plus a re-`XADD` onto
+the main stream.
+
+**The graveyard is bounded, and its rows are best-effort.** Every `XADD` passes an
+approximate `MAXLEN` of `AGENTOS_DEAD_LETTER_MAXLEN` (default `10000`, minimum
+`1`), so under a flood the oldest rows are evicted and those failures are lost.
+That loss is deliberate: the unparseable path dead-letters per **inbound** entry,
+so a wire-format drift would otherwise grow the graveyard at full ingest rate on
+the same Valkey that holds the kernel's per-thread locks and side-effect markers,
+i.e. a platform-wide OOM. Bounded record loss is traded against that. Do not treat
+the graveyard as a durable audit log. Because the trim is approximate (Valkey trims
+on node boundaries), the stream is bounded at *at least* the configured length, not
+exactly it. Below the cap it holds every dead-lettered entry, and its length reads
+the system's poison rate, saturating rather than growing once the bound is hit.
+
+Each graveyard row carries the original entry's fields verbatim plus namespaced
+failure metadata, so a human or a replay tool can inspect exactly what died and
+why:
+
+| Field | Meaning |
+|---|---|
+| `dl_original_id` | the entry's id on the source stream |
+| `dl_delivery_count` | deliveries made before it was given up on |
+| `dl_reason` | `max delivery exceeded`, or `unparseable` |
+| `dl_dead_lettered_at` | UTC ISO-8601 timestamp |
+
+The `dl_` prefix keeps the metadata namespaced, but the unparseable path stores
+an arbitrary, malformed field map verbatim, so an original field could itself be
+named `dl_something` and collide with one of the four keys above.
+`Consumer._dead_letter` escapes any original key already starting with `dl_`
+by doubling the prefix (`dl_reason` in the original becomes `dl_dl_reason` in
+the row) before writing the metadata last. The escape is injective: an escaped key
+always starts with `dl_dl_`, so it can never collide with the metadata, and
+un-escaping strips exactly one leading `dl_`. Nothing reads the graveyard
+today, so this costs nothing yet, but anything that later does (replay
+tooling, a dashboard, alerting) must strip one leading `dl_` to recover an
+original field whose name collided, or it will silently misread it.
+
+An entry that is pending while its message has been trimmed off the source
+stream produces a metadata-only row and is still acked. Every dead-letter
+emits a loud error log naming the entry, its delivery count, the reason, and
+the target stream.
+
+Two behaviors worth knowing before changing this path. The delivery count is read
+from Valkey's pending-entries list on every pass rather than tracked in worker
+memory, so a restarted or replacement worker still sees the accumulated count and
+still caps; a process-local counter would reset on restart and let a crash-looping
+worker retry poison forever. And the `XADD` to the graveyard happens before the
+`XACK`, so a crash between the two costs a duplicate graveyard row rather than a
+lost entry. Two replicas racing the same over-cap entry produce the same
+acceptable duplicate.
+
+**Unparseable entries take the same route** (`dl_reason="unparseable"`) instead of
+being silently acked away, so poison is observable rather than vanishing.
+
+**`AGENTOS_MAX_DELIVERY` is not `AGENTOS_MAX_ATTEMPTS`.** The delivery cap bounds
+how many times a stream entry may be handed to a handler; `max_attempts` governs
+the kernel's flag-clean per-turn retry classification *inside* a single delivery.
+The floor of 2 is enforced because `max_delivery=1` would dead-letter every
+ordinary worker crash on its first reclaim; values below 3 undermine the crash
+recovery of ADR-0013.
 
 Config surface (`WorkerConfig`): `VALKEY_*`, `SLACK_BOT_TOKEN`,
 `AGENTOS_STREAM` / `AGENTOS_CONSUMER_GROUP` / `AGENTOS_CONSUMER_NAME`,
-`AGENTOS_MAX_ATTEMPTS`, plus `AGENTOS_NAMESPACE` / `AGENTOS_WARM_POOL` /
-`AGENTOS_RUNNER_PORT` for the substrate. Run with `python -m agentos_worker`.
+`AGENTOS_MAX_ATTEMPTS`, `AGENTOS_MAX_DELIVERY` / `AGENTOS_DEAD_LETTER_STREAM` /
+`AGENTOS_DEAD_LETTER_MAXLEN` (approximate graveyard cap, default `10000`, minimum
+`1`), plus `AGENTOS_NAMESPACE` / `AGENTOS_WARM_POOL` / `AGENTOS_RUNNER_PORT` for
+the substrate. Run with `python -m agentos_worker`.
 
 Tests: `uv run pytest apps/worker/tests/kernel -q` runs against the real Valkey
 from `compose.dev.yaml`, the real sandbox substrate with a fake Kubernetes client whose

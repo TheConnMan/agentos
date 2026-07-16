@@ -24,7 +24,8 @@ worker (consumer): a named stream carrying a frozen one-field payload. As of #28
 ADR-0027 the stream verbs are drawn behind a thin **broker port** at the two non-sacred
 seams — a `StreamPublisher` `Protocol` on the producer (`apps/dispatcher/src/agentos_dispatcher/queue.py::StreamPublisher`:
 `xadd` + the `SET NX EX` dedupe-claim) and a `StreamBroker` `Protocol` on the consumer
-transport (`apps/worker/src/agentos_worker/broker.py::StreamBroker`: `xgroup_create`/`xreadgroup`/`xack`/`xautoclaim`).
+transport (`apps/worker/src/agentos_worker/broker.py::StreamBroker`:
+`xgroup_create`/`xreadgroup`/`xack`/`xautoclaim`/`xpending_range`/`xrange`/`xadd`).
 The routing, consumer-group concurrency, dedupe, and reclaim rules stay opinionated
 **core**. `redis.Redis` / `redis.asyncio.Redis` structurally satisfy the ports, so
 redis-py is the one backing today with no adapter; a redis-compatible backend (Valkey,
@@ -52,6 +53,19 @@ A second broker must honor the stream key, the payload encoding, and the Stream 
   `apps/worker/src/agentos_worker/consumer.py::Consumer._handle`, and acknowledges with `xack`
   (`apps/worker/src/agentos_worker/consumer.py::Consumer._ack`). The group is
   `"agentos-workers"` (`WorkerConfig.consumer_group`, `apps/worker/src/agentos_worker/config.py::WorkerConfig`).
+- **Delivery cap and dead-letter graveyard** (#505, ADR-0039) — an entry already
+  delivered `WorkerConfig.max_delivery` times (default 5, floor 2) is dead-lettered
+  instead of reclaimed again. `Consumer._dead_letter_over_cap`
+  (`apps/worker/src/agentos_worker/consumer.py::Consumer._dead_letter_over_cap`) reads
+  the pending list's delivery counts with `xpending_range` before the reclaim's
+  `xautoclaim` bumps them; an over-cap entry's original fields are fetched with
+  `xrange` in `Consumer._dead_letter_over_cap_entry`
+  (`apps/worker/src/agentos_worker/consumer.py::Consumer._dead_letter_over_cap_entry`)
+  and moved with `xadd` in `Consumer._dead_letter`
+  (`apps/worker/src/agentos_worker/consumer.py::Consumer._dead_letter`), then acked off
+  the group. The target stream is `WorkerConfig.dead_letter_stream`
+  (`apps/worker/src/agentos_worker/config.py::WorkerConfig`), defaulting to
+  `"<stream>:dead"`.
 
 Idempotency lives beside the stream, not in it: `claim_event` does a
 `SET <dedupe_key> 1 NX EX <ttl>` before `XADD` (`apps/dispatcher/src/agentos_dispatcher/queue.py::claim_event`).
@@ -60,7 +74,8 @@ Idempotency lives beside the stream, not in it: `claim_event` does a
 
 One, redis-py against Valkey. The dispatcher `XADD`s
 (`apps/dispatcher/src/agentos_dispatcher/queue.py::enqueue`); the worker runs
-a consumer group with `XREADGROUP`/`XACK` and crash-recovery `XAUTOCLAIM`
+a consumer group with `XREADGROUP`/`XACK`, crash-recovery `XAUTOCLAIM`, and the
+delivery-cap dead-letter path's `XPENDING`/`XRANGE`/`XADD`
 (`apps/worker/src/agentos_worker/consumer.py`). A second, sibling stream
 `"agentos:evals"` uses the same one-field `payload` convention
 (`apps/worker/src/agentos_worker/eval/stream.py`), reinforcing the wire shape as the
@@ -76,7 +91,8 @@ is not touched:
 - **Producer** — `StreamPublisher` (`apps/dispatcher/src/agentos_dispatcher/queue.py::StreamPublisher`): `xadd` and the
   `SET NX EX` dedupe-claim. `enqueue`/`claim_event` type against it.
 - **Consumer transport** — `StreamBroker` (`apps/worker/src/agentos_worker/broker.py::StreamBroker`):
-  `xgroup_create`/`xreadgroup`/`xack`/`xautoclaim`. The non-sacred `StreamConsumer`
+  `xgroup_create`/`xreadgroup`/`xack`/`xautoclaim`, plus — since the bounded-delivery
+  dead-letter path (#505, ADR-0039) — `xpending_range`/`xrange`/`xadd`. The non-sacred `StreamConsumer`
   base (`apps/worker/src/agentos_worker/stream_consumer.py`) holds a `StreamBroker`; the sacred `consumer.py` subclass
   inherits it unchanged (its `XAUTOCLAIM` reclaim now targets the port by inheritance).
 
@@ -112,4 +128,4 @@ The verbs return a bare `Awaitable`/value matching redis-py's own typing, so
 - **Epic(s):** #85 — vision: make the broker itself swappable behind the stream contract
 - **Epic(s):** #7 — payload promotion into `packages/aci-protocol` (overlaps the channel seam, landed)
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — opinionated core (`agentos:runs` stream), not one of the six swap jobs
-- **ADR(s):** [ADR-0027](../../adr/0027-thin-broker-port-defer-second-broker.md) — the broker port at the non-sacred seams; [ADR-0007](../../adr/0007-adopt-not-build-boundaries.md) — adopt-not-build (Valkey adopted; second broker deferred)
+- **ADR(s):** [ADR-0027](../../adr/0027-thin-broker-port-defer-second-broker.md) — the broker port at the non-sacred seams; [ADR-0007](../../adr/0007-adopt-not-build-boundaries.md) — adopt-not-build (Valkey adopted; second broker deferred); [ADR-0039](../../adr/0039-bounded-delivery-and-a-dead-letter-graveyard.md) — the delivery cap and dead-letter graveyard that added `xpending_range`/`xrange`/`xadd` to the port
