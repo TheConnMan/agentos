@@ -11,6 +11,23 @@ cd "$repo_root"
 
 generated_docs=(docs/interfaces.md docs/interfaces docs/adr/README.md)
 
+# ADR numbers must be unique (#521). Two branches each adding "the next ADR
+# number" merge clean in git -- git sees two unrelated new files, not a conflict
+# -- yet collide in the tree, making "ADR-00NN" ambiguous in every citation and
+# breaking the supersession chain. Only a live check catches it, so gate it here.
+echo "== checking ADR numbers are unique =="
+dupes="$(
+  for f in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+    basename "$f" | grep -oE '^[0-9]{4}'
+  done | sort | uniq -d
+)"
+if [ -n "$dupes" ]; then
+  echo "ERROR: duplicate ADR number(s) in docs/adr/:" >&2
+  echo "$dupes" | sed 's/^/  /' >&2
+  echo "Renumber the newer colliding ADR and fix inbound citations (#521)." >&2
+  exit 1
+fi
+
 echo "== regenerating the seam table, the ADR index, and per-doc headers =="
 uv run python -m agentos_doclint --repo-root "$repo_root" --write
 
