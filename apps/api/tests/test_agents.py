@@ -416,3 +416,19 @@ def test_agent_non_env_var_secret_name_is_422(
         headers=auth_headers,
     )
     assert bad.status_code == 422, bad.text
+
+
+def test_agent_reserved_secret_name_is_422(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # AGENTOS_* names are reserved platform boot-env keys; rejected on write.
+    bad = client.post(
+        "/agents",
+        json={
+            "name": "reserved-secret-agent",
+            "slack_channel": "C000000S03",
+            "secrets": {"AGENTOS_BUDGET": "x"},
+        },
+        headers=auth_headers,
+    )
+    assert bad.status_code == 422, bad.text

@@ -371,6 +371,16 @@ def _validate_secrets(manifest: PluginManifest, c: _Collector) -> None:
                 "(uppercase letters, digits, underscore; not starting with a digit)",
                 loc,
             )
+        elif name.startswith("AGENTOS_"):
+            # AGENTOS_* names are the platform's reserved sandbox boot-env keys;
+            # a connector secret must not declare one (it would clobber or be
+            # dropped by the worker binding at delivery time).
+            c.error(
+                "secrets.name_reserved",
+                f"secret name {name!r} is reserved: AGENTOS_* names are platform "
+                "boot-env keys and cannot be used for a connector secret",
+                loc,
+            )
 
 
 def _validate_scripts(root: Path, c: _Collector) -> None:
