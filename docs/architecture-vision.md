@@ -63,10 +63,13 @@ does not change. The runner's conformance suite
 format. `packages/plugin-format` is the Claude Code plugin shape verbatim (a
 deliberate distribution wedge), so a non-Claude harness must interpret Claude
 Code plugin bundles or translate them into its own configuration; "implement
-the ACI server" understates that work. Resume also assumes SDK-like history
-rehydration: `AGENTOS_HISTORY_REF` becomes the SDK `resume` session id
-(`adapter.py::build_options`); a harness without an equivalent must build its
-own history store.
+the ACI server" understates that work. Resume, by contrast, is harness-agnostic:
+the boot path passes `resume=None`, and `AGENTOS_HISTORY_REF` is a durable
+state-store URL for the thread's transcript that the runner loads and replays as a
+boot-time system-prompt preamble
+(`runner/src/agentos_runner/history.py::format_conversation_preamble`), not an
+SDK-native resume identifier (ADR-0029). A second harness rehydrates the same way
+by reusing that state-store contract.
 
 ### 2. Observability / OTel store (Langfuse today)
 
@@ -103,12 +106,12 @@ into the URL namespace even though the payloads are ours.
 **Port:** our own eval plane defines the schema; Langfuse is storage behind
 it. The write path is the `agentos:evals` Valkey stream carrying an
 `EvalWorkItem`, consumed by `apps/worker/src/agentos_worker/eval/stream.py`,
-with results shaped by our models (`eval/models.py`). The UI-facing read path
+with results shaped by our models (`apps/worker/src/agentos_worker/eval/models.py`). The UI-facing read path
 is our API's matrix endpoint (`apps/api/src/agentos_api/routers/evals.py`)
 returning our `EvalMatrix` schema, and the PR gate is our `/evals/report`
 endpoint turning a rollup into a GitHub commit status.
 
-**Current adapter:** `eval/recorder.py` posts one Langfuse trace plus an
+**Current adapter:** `apps/worker/src/agentos_worker/eval/recorder.py` posts one Langfuse trace plus an
 `eval_pass` score per case via the public ingestion API, tagged
 `version:<v>` / `suite:<s>`; the matrix endpoint reads the grid back by those
 tags through the same `LangfuseClient`.
@@ -122,9 +125,9 @@ convention, not a frozen contract.
 
 **Leakage:** the eval-case format is now converged and frozen
 ([issue #8](https://github.com/curie-eng/agentos/issues/8), ADR-0019): the CLI
-reads `evals/cases.json` as a suite object `{name, cases:[{id, input, grader}]}`
+reads the bundle's evals/cases.json as a suite object `{name, cases:[{id, input, grader}]}`
 (`cli/src/evals.rs`) and the platform's bundle loader validates the same shape
-(`eval/stream.py`), both building to one committed schema
+(`apps/worker/src/agentos_worker/eval/stream.py`), both building to one committed schema
 (`apps/worker/schema/eval-cases.schema.json`) kept honest by a drift gate.
 
 ### 4. Blob storage (MinIO today)
@@ -164,23 +167,26 @@ change, and that is the realistic swap. A different SQL engine is a small
 refactor, not a rewrite.
 
 **Leakage:** two Postgres-isms are in the models: the
-`sqlalchemy.dialects.postgresql.UUID` column type (`models.py`) and
-schema-qualified tables plus a schema-scoped native enum
-(`db.py::SCHEMA`, the `Environment` enum). Both have portable SQLAlchemy
-equivalents if a non-Postgres target ever materializes.
+`sqlalchemy.dialects.postgresql.UUID` column type
+(`apps/api/src/agentos_api/models.py`) and schema-qualified tables plus a
+schema-scoped native enum (`apps/api/src/agentos_api/db.py::SCHEMA`, the
+`Environment` enum). Both have portable SQLAlchemy equivalents if a
+non-Postgres target ever materializes.
 
 ### 6. Communication channel (Slack today)
 
-**Port:** this is the least clean seam, and saying so is the point. The
-ingress contract is `QueuedSlackEvent`
-(`apps/dispatcher/src/agentos_dispatcher/queue.py`), Slack-shaped by name and
-semantics: `slack_event_id` as the idempotency key, `thread_ts` as the
-conversation key, `placeholder_ts` encoding Slack's edit-in-place reply
-model. The egress contract is the worker's `SlackSink` protocol
+**Port:** the ingress half of this seam is now clean; the egress half is where
+it stays least clean. The ingress contract was promoted out of the dispatcher
+into the channel-neutral `QueuedTurn`
+(`packages/aci-protocol/src/aci_protocol/turn.py::QueuedTurn`, issue #7): a
+generic `event_id` idempotency key, a `conversation_id` conversation key, and a
+`ReplyHandle` (`packages/aci-protocol/src/aci_protocol/turn.py::ReplyHandle`)
+carrying the channel and placeholder, so the Slack-shaped field names are gone
+from the core contract. The egress contract is the worker's `SlackSink` protocol
 (`apps/worker/src/agentos_worker/slack_sink.py`), a single
 `update(channel, ts, text)` built on `chat.update`. The mrkdwn dialect is
 correctly confined to the sink (`mrkdwn.py`), but the kernel does assume the
-edit-a-placeholder reply shape.
+edit-a-placeholder reply shape, which is the remaining Slack coupling.
 
 **Current adapter:** `apps/dispatcher` (Bolt, Socket Mode) on ingress,
 `AsyncSlackSink` on egress.
@@ -188,21 +194,23 @@ edit-a-placeholder reply shape.
 **Evidence the channel is already semi-swappable:** `agentos local message` and
 `agentos cluster message` (`cli/src/chat.rs`, `cli/src/message.rs`) drive the entire
 deployed system with zero Slack contact by minting the exact
-`QueuedSlackEvent` wire payload (`cli/src/queue.rs`) and standing in as the
-Slack Web API. The Slack service swaps; the Slack protocol does not yet.
+`QueuedTurn` wire payload (`cli/src/queue.rs`) and standing in as the
+Slack Web API. The Slack service swaps; the ingress payload is already
+channel-neutral, and the remaining Slack coupling is the egress reply shape.
 
-**What a channel-neutral port looks like:** an ingress event of
-`{event_id, conversation_id, author, text, reply_handle, received_at}` and a
-`ReplySink` with post/update semantics per channel adapter. The reshaping
-cost is bounded: the queue payload (which
-[issue #7](https://github.com/curie-eng/agentos/issues/7) already wants promoted
-into `packages/aci-protocol`), the CLI's mirrored struct, the
-kernel's thread-lock and marker keys, and the channel-based deployment
-binding (`apps/worker/src/agentos_worker/binding.py`). Doing the promotion
-and the rename in one motion turns two contract debts into one change. A
-separate gap: the reply base URL is worker-global (`worker.slackApiBaseUrl`),
-so two ingress paths cannot coexist on one deployment until replies are
-routed per turn ([issue #19](https://github.com/curie-eng/agentos/issues/19)).
+**What a channel-neutral port looks like:** the ingress half already matches this
+target — `QueuedTurn` carries `{event_id, conversation_id, author, text,
+reply_handle, received_at}` ([issue #7](https://github.com/curie-eng/agentos/issues/7),
+landed). What remains is a `ReplySink` with post/update semantics per channel
+adapter. The remaining reshaping cost is bounded: the CLI's mirrored struct already
+tracks the promoted contract, while the kernel's thread-lock and marker keys and the
+channel-based deployment binding (`apps/worker/src/agentos_worker/binding.py`) still
+assume Slack. Reply routing, by contrast, already landed per turn
+([issue #19](https://github.com/curie-eng/agentos/issues/19)): a turn's
+`ReplyHandle.endpoint` (`packages/aci-protocol/src/aci_protocol/turn.py::ReplyHandle`)
+is the reply target, so a real Slack workspace and a no-Slack CLI stub can coexist on
+one deployment; the worker-global base URL (`worker.slackApiBaseUrl`) is now only the
+fallback used when a turn sets no endpoint.
 
 ADR-0020 fixes the target shape for this seam: a rendering-free port (required
 core plus queryable capabilities plus semantic interaction intents) rendered
@@ -256,7 +264,7 @@ flowchart TB
         PG["Postgres (today) or managed SQL"]
     end
 
-    Slack -- "QueuedSlackEvent" --> Dispatcher
+    Slack -- "QueuedTurn" --> Dispatcher
     CLIStub -- "same wire payload" --> Queue
     Runner -- "frozen ACI protocol" --> SDK
     Runner -- "OTLP HTTP" --> Collector
@@ -273,11 +281,11 @@ flowchart TB
 | Job | Port contract | Current adapter | Grade | Cheapest next step |
 |---|---|---|---|---|
 | Harness / runtime | Frozen ACI protocol (`packages/aci-protocol`), tri-language, CI-guarded | claude-agent-sdk runner | A-: strongest seam in the system; docked for the plugin-format entanglement and SDK-shaped resume | Write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced |
-| Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for one vendor span attribute; read side isolated in one module | Rename `langfuse.trace.name` to a neutral attribute mapped in the collector; rename the `/langfuse/*` API routes |
-| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours, but the case format is duplicated and the tag convention is unfrozen | Converge the two `cases.json` definitions into one frozen schema ([issue #8](https://github.com/curie-eng/agentos/issues/8)) |
+| Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for three vendor span attributes (`langfuse.trace.name`, `langfuse.session.id`, `langfuse.user.id`); read side spans several API modules plus routers | Map the three `langfuse.*` attributes to neutral names in the collector; rename the `/langfuse/*` API routes |
+| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours; the case format converged into one frozen, drift-gated schema (#8, ADR-0019), leaving the `version:`/`suite:` tag convention as the unfrozen part | Freeze the tag convention into the schema, or record it as a deliberate soft contract |
 | Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; three hand-aligned client sites; no interface for non-S3 | None needed until a non-S3 demand exists; document the three client sites as one seam |
 | Relational DB | SQLAlchemy 2.0 + alembic | Postgres | A-: managed-Postgres swap is a DSN change; two Postgres-isms in models | Leave as is; note the `postgresql.UUID` and schema-scoped enum as the two things a non-Postgres target would touch |
-| Communication | `QueuedSlackEvent` + `SlackSink` | Slack (Bolt + chat.update) | C: Slack-shaped names and edit-in-place semantics in the core's contract; service swappable (CLI stub), protocol not | Promote the queue payload into `aci-protocol` with channel-neutral field names in the same change |
+| Communication | `QueuedTurn` (channel-neutral, in `aci-protocol`) + `SlackSink` | Slack (Bolt + chat.update) | C: the ingress payload is now the channel-neutral `QueuedTurn` (#7), but egress still assumes Slack's edit-in-place `chat.update` reply shape; service swappable (CLI stub), egress protocol not | Route replies per turn (#19) and define a channel-neutral `ReplySink` post/update port so a second channel can coexist |
 
 ## What we deliberately do not abstract yet
 

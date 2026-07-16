@@ -140,7 +140,7 @@ The worker reaches Slack only through a base URL
 `agentos local message` path starts a local Slack Web API stub
 ([`cli/src/chat.rs`](cli/src/chat.rs)), prints the `SLACK_API_BASE_URL` to point
 the worker at it ([`cli/src/chat.rs:269`](cli/src/chat.rs)), enqueues a synthetic
-`QueuedSlackEvent` onto the very same `agentos:runs` stream the dispatcher uses,
+`QueuedTurn` onto the very same `agentos:runs` stream the dispatcher uses,
 and waits for the worker to finalize the turn by calling the stub's Slack API
 back. The worker cannot distinguish the stub from Slack: same queue payload, same
 `chat.update` call. This is what lets D1/F1/I1 and most of E1 be verified with no
@@ -167,7 +167,7 @@ sequenceDiagram
     D->>V: SET dedupe:<event_id> NX EX ttl
     Note over D: retried delivery finds the key set, is dropped (still acked, never re-posted)
     D->>U: post placeholder ("On it...")
-    D->>V: XADD agentos:runs {QueuedSlackEvent}
+    D->>V: XADD agentos:runs {QueuedTurn}
 
     W->>V: XREADGROUP (consumer group)
     W->>V: SET NX PX thread lock (routing CAS)
@@ -191,7 +191,7 @@ sequenceDiagram
 
 The pieces, cited:
 
-- **Dedupe + placeholder + enqueue** live in the dispatcher: dedupe SET NX at [`apps/dispatcher/src/agentos_dispatcher/queue.py:73`](apps/dispatcher/src/agentos_dispatcher/queue.py), placeholder post at [`apps/dispatcher/src/agentos_dispatcher/handlers.py:83`](apps/dispatcher/src/agentos_dispatcher/handlers.py), `XADD agentos:runs` at [`apps/dispatcher/src/agentos_dispatcher/queue.py:87`](apps/dispatcher/src/agentos_dispatcher/queue.py). Socket Mode handler at [`apps/dispatcher/src/agentos_dispatcher/app.py:99`](apps/dispatcher/src/agentos_dispatcher/app.py). The stream name and payload model (`QueuedSlackEvent`) are defined at [`apps/dispatcher/src/agentos_dispatcher/queue.py:48`](apps/dispatcher/src/agentos_dispatcher/queue.py) and [`config.py:46`](apps/dispatcher/src/agentos_dispatcher/config.py).
+- **Dedupe + placeholder + enqueue** live in the dispatcher: dedupe SET NX at [`apps/dispatcher/src/agentos_dispatcher/queue.py::claim_event`](apps/dispatcher/src/agentos_dispatcher/queue.py), placeholder post at [`apps/dispatcher/src/agentos_dispatcher/handlers.py:83`](apps/dispatcher/src/agentos_dispatcher/handlers.py), `XADD agentos:runs` at [`apps/dispatcher/src/agentos_dispatcher/queue.py::enqueue`](apps/dispatcher/src/agentos_dispatcher/queue.py). Socket Mode handler at [`apps/dispatcher/src/agentos_dispatcher/app.py:99`](apps/dispatcher/src/agentos_dispatcher/app.py). The stream name is configured on [`apps/dispatcher/src/agentos_dispatcher/config.py::DispatcherConfig`](apps/dispatcher/src/agentos_dispatcher/config.py) (default `agentos:runs`) and the payload model is the channel-neutral [`packages/aci-protocol/src/aci_protocol/turn.py::QueuedTurn`](packages/aci-protocol/src/aci_protocol/turn.py).
 - **The kernel** consumes at [`apps/worker/src/agentos_worker/consumer.py:104`](apps/worker/src/agentos_worker/consumer.py) and processes at [`kernel.py:169`](apps/worker/src/agentos_worker/kernel.py). It talks to the runner over `POST /v1/event`, `/v1/steer`, `/v1/interrupt` ([`apps/worker/src/agentos_worker/runner_client.py:76`](apps/worker/src/agentos_worker/runner_client.py)) — the same routes the runner serves at [`runner/src/agentos_runner/server.py:46`](runner/src/agentos_runner/server.py).
 - **Deployment binding**: a run resolves its agent, version, and `bundle_ref` by exact-match on `slack_channel` against the active deployment ([`apps/worker/src/agentos_worker/binding.py:49`](apps/worker/src/agentos_worker/binding.py)). This is how one worker serves many agents: the channel selects the bundle.
 

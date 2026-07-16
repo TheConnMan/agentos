@@ -1,7 +1,20 @@
+---
+seam: Memory
+kind: CLEAN
+impls: 1 loader (StateApiMemoryStore)
+grade: not separately graded
+epics:
+  - "#28"
+order: 15
+---
+
 # INTERFACE: Memory
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (`StateApiMemoryStore`) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (StateApiMemoryStore) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -19,7 +32,7 @@ class MemoryStore(Protocol):
 A `MemoryRecord` is `content: str` plus a `Provenance`
 (`learned_from_session_id`, `source_trace_ids`, `recorded_at`) — the
 entry→source-traces link. `SessionConfig.memory_ref`
-(`packages/aci-protocol/src/aci_protocol/session.py:68`, `AGENTOS_MEMORY_REF`) is
+(`packages/aci-protocol/src/aci_protocol/session.py::SessionConfig`, `AGENTOS_MEMORY_REF`) is
 resolved to a concrete `MemoryStore` at runner boot by `resolve_memory`. The
 frozen ACI field is unchanged; the state-API bearer is a runner-local knob
 (`AGENTOS_MEMORY_TOKEN`), not part of the frozen env.

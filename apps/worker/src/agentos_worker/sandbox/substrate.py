@@ -13,8 +13,11 @@ caller-supplied history ref on the route; ``resume()`` retires the suspended
 claim and creates a NEW claim whose per-claim env injects
 ``AGENTOS_HISTORY_REF`` (and the original ``AGENTOS_SESSION_ID``), so the
 replacement runner boots rehydrating from stored history rather than assuming
-process or cache warmth. The runner accepts the ref as an SDK resume id
-(runner/config.py); producing the ref (an SDK session id) is the caller's job.
+process or cache warmth. The runner resolves the ref to the thread's transcript
+namespace on the durable state store and replays the prior turns as a boot-time
+system-prompt preamble; the ref is a harness-agnostic state-store URL, not an SDK
+resume id (ADR-0029 superseded that framing). Producing the ref -- the thread's
+transcript key -- is the caller's job.
 """
 
 from __future__ import annotations

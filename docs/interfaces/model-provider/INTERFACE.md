@@ -1,7 +1,21 @@
+---
+seam: Model provider / credentials
+kind: SOFT
+impls: 2 prefix-routed (Anthropic, OpenRouter) + base-URL-selected provider-native endpoints (Zhipu, Moonshot, DeepSeek, Ollama)
+grade: not separately graded
+epics:
+  - "#24"
+  - "#46"
+order: 6
+---
+
 # INTERFACE: Model provider / credentials
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
 > **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 2 prefix-routed (Anthropic, OpenRouter) + base-URL-selected provider-native endpoints (Zhipu, Moonshot, DeepSeek, Ollama) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -19,21 +33,21 @@ the Anthropic wire format (kept even for OpenRouter, so prompt caching survives)
 Resolution lives in `runner/src/agentos_runner/sdk_auth.py`. A provider is defined by
 three things:
 
-- **Credential**, delivered as `AGENTOS_CREDENTIALS` (`sdk_auth.py:31`).
-  `resolve_model_credential` (`sdk_auth.py:82`) routes it by prefix
-  (`sdk_auth.py:94`): `sk-ant-oat...` → `CLAUDE_CODE_OAUTH_TOKEN`; other `sk-ant-...`
+- **Credential**, delivered as `AGENTOS_CREDENTIALS` (`runner/src/agentos_runner/sdk_auth.py::CREDENTIALS_ENV`).
+  `resolve_model_credential` (`runner/src/agentos_runner/sdk_auth.py::resolve_model_credential`) routes it by
+  prefix: `sk-ant-oat...` → `CLAUDE_CODE_OAUTH_TOKEN`; other `sk-ant-...`
   → `ANTHROPIC_API_KEY`; `sk-or-...` (OpenRouter) → base-URL override; a bare `sk-...`
-  raises `UnsupportedCredentialError` (`sdk_auth.py:47`, `:116`). An SDK credential
-  already in the env wins (`sdk_auth.py:89`).
+  raises `UnsupportedCredentialError` (`runner/src/agentos_runner/sdk_auth.py::UnsupportedCredentialError`). An SDK credential
+  already in the env wins.
 - **Base URL**, `ANTHROPIC_BASE_URL`, or its `AGENTOS_`-namespaced alias
   `AGENTOS_MODEL_BASE_URL` (the raw var wins when both are set).
-  `resolve_base_url_override` builds the override env when either is set, and
-  `resolve_sdk_env` is the entry point that decides override-vs-plain.
+  `resolve_base_url_override` (`runner/src/agentos_runner/sdk_auth.py::resolve_base_url_override`) builds the override env when either is set, and
+  `resolve_sdk_env` (`runner/src/agentos_runner/sdk_auth.py::resolve_sdk_env`) is the entry point that decides override-vs-plain.
 - **Model id**, `AGENTOS_MODEL`, read by `RunnerConfig.from_env`
-  (`runner/src/agentos_runner/config.py:62`).
+  (`runner/src/agentos_runner/config.py::RunnerConfig.from_env`).
 
 The override deliberately blanks `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_AUTH_TOKEN`
-to `""` (`sdk_auth.py:76`) so an inherited token cannot take precedence or leak to a
+to `""` (`runner/src/agentos_runner/sdk_auth.py::resolve_base_url_override`) so an inherited token cannot take precedence or leak to a
 third-party endpoint.
 
 ## Implementations today
@@ -69,9 +83,9 @@ gateway. A minimal config: `AGENTOS_MODEL_BASE_URL=https://api.deepseek.com/anth
 
 The gotcha the seam encodes rather than a bleed-through: base-URL override mode must
 carry a **non-empty** placeholder key, `NO_OP_API_KEY = "not-needed"`
-(`sdk_auth.py:44`). The bundled Claude CLI treats an empty `ANTHROPIC_API_KEY` as
+(`runner/src/agentos_runner/sdk_auth.py::NO_OP_API_KEY`). The bundled Claude CLI treats an empty `ANTHROPIC_API_KEY` as
 "not logged in" and refuses to dial the overridden endpoint (empirically verified
-2026-07-07, `sdk_auth.py:58`), so an empty string is not viable — a deliberately
+2026-07-07, `runner/src/agentos_runner/sdk_auth.py::resolve_base_url_override`), so an empty string is not viable — a deliberately
 non-`sk-` placeholder passes the auth gate without being mistakable for a credential.
 The credential value is never logged.
 

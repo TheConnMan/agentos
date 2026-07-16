@@ -1,9 +1,10 @@
 # CLAUDE.md - apps/worker
 
-The concurrency kernel plus the Agent Sandbox substrate. The eval runner is not
-yet built. Full behavior spec lives in `apps/worker/README.md`; this file is the
-enforceable-rule summary. Read `../../ARCHITECTURE.md`'s message-flow diagram
-before changing `kernel.py`.
+The concurrency kernel plus the Agent Sandbox substrate, and the F3 eval-stream
+runner (`agentos_worker.eval`), which runs eval suites off the `agentos:evals`
+stream against the frozen eval-case format (#8, ADR-0019). Full behavior spec
+lives in `apps/worker/README.md`; this file is the enforceable-rule summary. Read
+`../../ARCHITECTURE.md`'s message-flow diagram before changing `kernel.py`.
 
 ## The kernel is sacred: single owner, adversarial review
 

@@ -1,6 +1,22 @@
+---
+seam: Channel interaction message
+kind: CLEAN
+impls: 2 renderers (Slack, terminal)
+grade: not separately graded
+epics:
+  - "ADR-0020"
+order: 5
+---
+
 # INTERFACE: Channel interaction
 
-> Part of the AgentOS swappable-seam catalog. **Kind:** CLEAN. **Version:** 1.0.
+> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 2 renderers (Slack, terminal) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
+
+**Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
 ## The black line
 

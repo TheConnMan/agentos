@@ -25,6 +25,7 @@ members = [
     "apps/dispatcher",
     "apps/worker",
     "runner",
+    "tools/doclint",
 ]
 
 [tool.uv.sources]
@@ -35,9 +36,11 @@ agentos-api = { workspace = true }
 agentos-dispatcher = { workspace = true }
 agentos-worker = { workspace = true }
 agentos-runner = { workspace = true }
+agentos-doclint = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "agentos-doclint",
     "pytest>=8.3",
     "ruff>=0.15.21",
     "mypy>=2.2.0",
@@ -58,6 +61,7 @@ testpaths = [
     "runner/tests",
     "compose/tests",
     "examples/tests",
+    "tools/doclint/tests",
 ]
 
 [tool.ruff]
@@ -67,6 +71,13 @@ extend-exclude = ["prototypes"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The committed doclint test suite is frozen (issue #452) and groups its imports
+# with an extra blank line before the first section comment, which ruff's isort
+# would collapse. The implementation under tools/doclint/src stays fully linted,
+# I001 included; only the frozen tests are exempt from import-block formatting.
+"tools/doclint/tests/**" = ["I001"]
 
 [tool.mypy]
 python_version = "3.13"
@@ -81,6 +92,7 @@ mypy_path = [
     "apps/dispatcher/src",
     "apps/worker/src",
     "runner/src",
+    "tools/doclint/src",
 ]
 files = [
     "packages/aci-protocol/src",
@@ -90,6 +102,7 @@ files = [
     "apps/dispatcher/src",
     "apps/worker/src",
     "runner/src",
+    "tools/doclint/src",
 ]
 
 # The official kubernetes client ships no type stubs; keep its boundary typed

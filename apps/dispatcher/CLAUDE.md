@@ -11,11 +11,15 @@ summary.
   the worker (`apps/worker`). If you find yourself adding any
   decision about *how* a message gets answered, that decision belongs one
   layer up -- stop and move it, don't grow the dispatcher's scope.
-- **The dispatcher owns the `QueuedSlackEvent` shape.** It is defined in
-  `dispatcher.queue.QueuedSlackEvent` because the dispatcher is the producer.
-  Do not move this model into `packages/` unilaterally -- if it needs to
-  become a shared type, raise it in an issue/PR first rather than moving it
-  from a dispatcher change.
+- **The queued-turn shape is the frozen `QueuedTurn` contract in `packages/`.**
+  The dispatcher is the producer, but the payload it enqueues was promoted out
+  of the dispatcher into the channel-neutral `aci_protocol.QueuedTurn` (issue
+  #7). That shared contract is the Pydantic source of truth guarded by the
+  schema-compat gate, so the Python producer and the Rust/TS consumers compile
+  against one shape instead of a hand-mirrored dispatcher-local model. Do not
+  reintroduce a dispatcher-owned payload model. The producer-owns-the-shape
+  principle still governs any *new* dispatcher-only field: land a contract
+  change in `packages/aci-protocol` via an issue/PR first, exactly as #7 did.
 - **Idempotency key is the Slack event id, not the message content.** Dedupe
   is `SET <dedupe_prefix><event_id> 1 NX EX <ttl>` in Valkey -- O(1), TTL-bounded,
   no scan. Order is always claim -> post placeholder -> `XADD`, so a
@@ -23,7 +27,7 @@ summary.
   these three steps.
 - **The queue seam is one `payload` field, not a multi-field Stream entry.**
   Each Stream entry carries a single `payload` field holding the
-  `QueuedSlackEvent` JSON. This lets fields be added to the payload without
+  `QueuedTurn` JSON. This lets fields be added to the payload without
   reshaping the Stream schema itself -- do not add a second top-level Stream
   field for a new piece of data; put it inside the JSON payload.
 - **Reconnects are the supervisor's job, not the Slack client's.** The Bolt

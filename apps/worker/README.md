@@ -140,14 +140,14 @@ end-to-end (no `target_url`) that boots via the substrate and releases in a fina
 
 ## The concurrency kernel (`agentos_worker.kernel` + `agentos_worker.consumer`)
 
-The kernel closes the loop: it consumes `QueuedSlackEvent` entries the dispatcher
+The kernel closes the loop: it consumes `QueuedTurn` entries the dispatcher
 puts on the `agentos:runs` Valkey stream, routes each to a runner turn in a
 claimed sandbox, streams the NDJSON reply back into the Slack thread by editing
 the placeholder in place, and gets every failure mode right.
 
 ```
 XREADGROUP agentos:runs        Consumer (consumer group; XAUTOCLAIM reclaims a
-   -> QueuedSlackEvent            dead consumer's pending entries after an idle
+   -> QueuedTurn                  dead consumer's pending entries after an idle
    -> Kernel.process_event        timeout, then reprocesses them idempotently)
         -> SlackSink     chat.update placeholder to booting text (best effort)
         -> substrate.lookup/claim/resume   (sandbox substrate)
@@ -235,11 +235,14 @@ Contract notes the kernel must know:
   to `Suspended` (the pod is deleted) and records the caller-supplied history
   ref. `resume()` retires the old claim and creates a new one whose per-claim
   env injects `AGENTOS_HISTORY_REF` (+ the original `AGENTOS_SESSION_ID`); the
-  runner passes that ref to the SDK as its `resume` session id. Never assume
-  process or prompt-cache warmth across a suspend.
-- **Producing the history ref is the caller's job.** The frozen ACI `final`
-  frame does not carry the SDK session id today; if the kernel needs it surfaced from
-  the runner, that is a contract change to escalate, not to work around.
+  runner resolves that ref to the thread's transcript on the durable state store
+  and replays the prior turns as a boot-time system-prompt preamble (ADR-0029),
+  not an SDK-native resume id. Never assume process or prompt-cache warmth across
+  a suspend.
+- **Producing the history ref is the caller's job.** The ref is a deterministic
+  state-store URL (`.../state/transcript/<thread_key>`), so there is nothing to
+  capture off the ACI `final` frame and no frozen-contract change (ADR-0029); do
+  not reintroduce a frame-captured resume id.
 - **Reaping.** `release()` deletes the claim (the claim owns its sandbox and
   pod). Routes that expire in Valkey leave orphaned claims; `reap_orphans()`
   lists claims labeled `agentos.dev/managed-by=agentos-sandbox-substrate` and

@@ -1,7 +1,20 @@
+---
+seam: Relational DB (Postgres)
+kind: SOFT
+impls: "1"
+grade: A-
+epics:
+  - "#84"
+order: 10
+---
+
 # INTERFACE: Relational DB (Postgres)
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
 > **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 1 &nbsp;·&nbsp; **Swap-readiness grade:** A-
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -21,28 +34,29 @@ store is ever demanded.
 A second implementation must be a Postgres speaking the async `asyncpg` dialect and
 honoring the models/migrations verbatim:
 
-- **DSN + schema** (`apps/api/src/agentos_api/db.py:21,29`): `SCHEMA = get_settings().db_schema` (default `"agentos"`, `config.py:21`); the engine is built from `database_url` (env `DATABASE_URL`, `config.py:18`) via `create_async_engine(..., pool_pre_ping=True)`.
-- **Schema-scoped metadata** (`db.py:24-25`): `Base.metadata = MetaData(schema=SCHEMA)` — every table is qualified into the `agentos` schema.
-- **Models** (`apps/api/src/agentos_api/models.py`): `Agent` (`agents`, line 25), `AgentVersion` (`agent_versions`, line 58), `Deployment` (`deployments`, line 79), plus the `Environment` StrEnum (`models.py:20`).
+- **DSN + schema** (`apps/api/src/agentos_api/db.py::SCHEMA`, `apps/api/src/agentos_api/db.py::create_engine`): `SCHEMA = get_settings().db_schema` (default `"agentos"`, `apps/api/src/agentos_api/config.py::Settings`); the engine is built from `database_url` (env `DATABASE_URL`) via `create_async_engine(..., pool_pre_ping=True)`.
+- **Schema-scoped metadata** (`apps/api/src/agentos_api/db.py::Base`): `Base.metadata = MetaData(schema=SCHEMA)` — every table is qualified into the `agentos` schema.
+- **Models** (`apps/api/src/agentos_api/models.py`): `apps/api/src/agentos_api/models.py::Agent` (table `agents`), `apps/api/src/agentos_api/models.py::AgentVersion` (table `agent_versions`), `apps/api/src/agentos_api/models.py::Deployment` (table `deployments`), plus the `apps/api/src/agentos_api/models.py::Environment` StrEnum.
 - **Migrations**: 5 Alembic revisions in `apps/api/alembic/versions/` (`0001_initial` → `0005_behavior_packs`); the target DB must apply this chain.
 
 ## Implementations today
 
 One: the compose/dev Postgres, reached through the single SQLAlchemy async engine in
-`apps/api/src/agentos_api/db.py:28-33`. Tests point the same engine at the compose
+`apps/api/src/agentos_api/db.py::create_engine`. Tests point the same engine at the compose
 Postgres by overriding `database_url` (per the module docstring).
 
 ## Known leakage
 
 Two Postgres-isms make the "just change the DSN" story leak for a non-Postgres store:
 
-1. **`postgresql.UUID` column type** — `models.py:14` imports `UUID` from
-   `sqlalchemy.dialects.postgresql`, used as `UUID(as_uuid=True)` on every primary
-   and foreign key (e.g. `models.py:29, 62, 82`). This is a dialect-specific type.
+1. **`postgresql.UUID` column type** — `apps/api/src/agentos_api/models.py::UUID` is imported
+   from `sqlalchemy.dialects.postgresql` and used as `UUID(as_uuid=True)` on every primary
+   and foreign key (e.g. `apps/api/src/agentos_api/models.py::Agent`). This is a dialect-specific type.
 2. **Schema-qualified tables + a schema-scoped native enum** — foreign keys are
-   written as `f"{SCHEMA}.agents.id"` (`models.py:65, 88-89`) and the `environment`
+   written as `f"{SCHEMA}.agents.id"` (`apps/api/src/agentos_api/models.py::AgentVersion`,
+   `apps/api/src/agentos_api/models.py::Deployment`) and the `environment`
    column is a native Postgres `Enum(Environment, name="environment", schema=SCHEMA)`
-   (`models.py:91-92`), which materializes as a `CREATE TYPE` in the `agentos` schema.
+   (`apps/api/src/agentos_api/models.py::Deployment`), which materializes as a `CREATE TYPE` in the `agentos` schema.
 
 Both are cheap within the Postgres family (the A- grade) but would need rework for a
 different RDBMS — the marker that a real port should be extracted first.

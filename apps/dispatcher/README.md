@@ -13,24 +13,25 @@ run orchestration are the worker's job, not the dispatcher's.
 
 The dispatcher `XADD`s onto a Valkey Stream (`AGENTOS_STREAM`, default
 `agentos:runs`). Each entry carries one field, `payload`, holding the JSON of a
-`QueuedSlackEvent` (`dispatcher.queue.QueuedSlackEvent`):
+`QueuedTurn` (from `aci_protocol`). Its fields are channel-neutral; the
+parenthetical is what the Slack adapter maps onto each one:
 
 | field | meaning |
 |---|---|
-| `slack_event_id` | Slack's per-delivery event id; the idempotency key |
-| `thread_ts` | canonical thread key (root message ts of the thread) |
-| `channel` | Slack channel id |
-| `user` | Slack user id that authored the message |
+| `event_id` | idempotency key for the delivery (the Slack event id) |
+| `conversation_id` | canonical thread/conversation key (the thread ts) |
+| `author` | who authored the message (the Slack user id) |
 | `text` | message text |
-| `placeholder_ts` | ts of the placeholder reply already posted; the worker edits this message in place with the real response |
-| `received_at` | ISO-8601 UTC timestamp the dispatcher received it |
+| `reply_handle` | where the reply is delivered: a `ReplyHandle` of `channel`, `placeholder` (ts of the already-posted placeholder the worker edits in place), and an optional per-turn `endpoint` |
+| `received_at` | ISO-8601 UTC timestamp the adapter received it |
 
-The worker reconstructs it with `QueuedSlackEvent.from_stream_fields(fields)` (import from
-`agentos_dispatcher`, or mirror the model). The model is defined inside the
-dispatcher because the dispatcher is the producer and owns the shape; if it later
-deserves promotion into a shared package, the maintainers make that call (the
-dispatcher does not touch `packages/`). The single-`payload`-field encoding keeps
-the seam explicit and lets fields be added without reshaping the Stream schema.
+The worker reconstructs it with `from_stream_fields(fields)`, a module-level
+helper in `agentos_dispatcher.queue`. The model lives in the frozen `aci_protocol`
+package (promoted out of the dispatcher in issue #7) so the producer and the
+Rust/TS consumers share one schema-gated contract instead of a hand-mirrored copy;
+the dispatcher's queue module owns only the Stream transport of it. The
+single-`payload`-field encoding keeps the seam explicit and lets fields be added
+without reshaping the Stream schema.
 
 ## Dedupe (idempotency)
 

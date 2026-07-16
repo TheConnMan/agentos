@@ -39,6 +39,12 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy
+      # Regenerate the interface-catalog seam table and per-doc headers from
+      # each seam's front-matter, fail on drift, then lint every citation under
+      # docs/ (excluding docs/adr/). A cheap, cluster-free gate, so it runs
+      # right after ruff/mypy and before the dev stack boots.
+      - name: Interface catalog docs (generate + drift + citation lint)
+        run: bash scripts/check-docs.sh
       # Integration tests dial the real dev stack (Postgres 25432, Valkey 26379,
       # MinIO 29000, Langfuse 23000 + ClickHouse + OTel Collector). Boot it after
       # ruff/mypy so cheap failures stay fast. The first up starts the one-shot
