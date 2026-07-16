@@ -95,7 +95,11 @@ class ApprovalResolveClient:
                 resolved = body.get("resolved_by")
                 decided = body.get("status")
         except ValueError:
-            detail = response.text
+            # A non-JSON body (e.g. from an ingress/proxy/WAF intermediary)
+            # may carry an internal hostname or request id. Do not surface
+            # that raw text to the Slack clicker; fall back to empty so the
+            # caller's class-neutral fallback applies instead (#453 LOW-1).
+            detail = ""
         return ResolveOutcome(
             status_code=response.status_code,
             detail=detail,
@@ -171,7 +175,15 @@ def process_approval_action(
         return outcome
 
     if outcome.status_code == 403:
-        ephemeral = "You are not an approver for this request."
+        # Render the API's reason verbatim: it already knows which class of
+        # refusal this is (non-membership, self-approval, or could-not-verify)
+        # and words each one distinctly. When the detail is empty or missing,
+        # the dispatcher cannot know the class, so the fallback must stay
+        # class-neutral rather than guessing at a policy denial (#453 AC5).
+        ephemeral = (
+            outcome.detail.strip()
+            or "This click was refused and the platform gave no reason."
+        )
     elif outcome.status_code == 409:
         ephemeral = (
             f"Already resolved by {outcome.resolved_by}."

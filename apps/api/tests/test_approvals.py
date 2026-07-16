@@ -1712,6 +1712,7 @@ def test_group_binding_without_a_bot_token_denies_instead_of_channel_fallback(
     denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
     assert denied.status_code == 403, denied.text
     assert "could not verify" in denied.json()["detail"]
+    assert "not an approver" not in denied.json()["detail"]
 
     record = approvals_client.get(f"/approvals/{created['id']}", headers=auth_headers)
     assert record.json()["status"] == "pending"
@@ -1743,6 +1744,7 @@ def test_group_lookup_failure_denies_and_audits_the_failure(
     denied = _resolve(approvals_client, auth_headers, created["id"], _OTHER)
     assert denied.status_code == 403, denied.text
     assert "could not verify" in denied.json()["detail"]
+    assert "not an approver" not in denied.json()["detail"]
     assert calls != []
 
     entries = approvals_client.get(
