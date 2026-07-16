@@ -3,7 +3,7 @@
     {
       "grader": {
         "case_sensitive": false,
-        "expected": "",
+        "expected": "example",
         "kind": "contains"
       },
       "id": "example-smoke",

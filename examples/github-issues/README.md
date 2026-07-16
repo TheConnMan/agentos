@@ -79,13 +79,15 @@ up (`skill up --secret ...`), run:
 agentos skill eval
 ```
 
-The three cases are deliberately robust to changing issue data — they assert on
-things that do not churn: that the agent returns real issue numbers (`#\d+`),
-that it finds the stable `enhancement` label when grouping, and that it can read
-a specific **closed** historical issue (#7, whose title is about `aci-protocol`).
-If the repo is ever restructured so those anchors no longer hold, update the
-`expected` values here — a case that starts failing is the grader catching a real
-change, which is the point.
+The cases are written to be **falsifiable** (a broken agent fails them) and
+robust to changing issue data by anchoring on a **closed** issue whose facts do
+not churn (#7 — title about `aci-protocol`, state closed): one case reads its
+content, one reads its state. A third case asserts the agent returns real
+issue-number-shaped output (`#\d+`); its `note` field flags that a fake-model
+agent inventing a number would still pass, which only the tool-call grader
+(ADR-0022 Phase 1) fully closes. If the repo is ever restructured so an anchor no
+longer holds, update the `expected` here — a case that starts failing is the
+grader catching a real change, which is the point.
 
 ## Swapping in a different service
 
