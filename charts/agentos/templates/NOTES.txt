@@ -101,16 +101,16 @@ Kernel isolation (gVisor, security.gvisor.mode={{ $gvisorMode }}):
 
 Enable a real model and a Slack workspace:
   The dispatcher is not deployed (no Slack tokens set). If you also installed
-  without AGENTOS_MODEL_CREDENTIALS, the runner is in offline fake-model mode and
+  without AGENTOS_CREDENTIALS, the runner is in offline fake-model mode and
   replies are canned. The `agentos cluster up`/`cluster comms`/`cluster message`/`cluster status` verbs default to
   release/namespace {{ .Release.Name }}/{{ .Release.Namespace }} (add --dry-run to
   print the exact helm/kubectl command first); the Slack workspace is wired with
   `agentos cluster comms --slack`.
 
-  # 1. Enable the real model: set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key)
+  # 1. Enable the real model: set AGENTOS_CREDENTIALS (an Anthropic API key)
   #    and re-run `agentos cluster up` -- an idempotent helm upgrade that switches the fake
   #    model off and opens the fail-closed runner egress to the model provider.
-  AGENTOS_MODEL_CREDENTIALS=sk-ant-... \
+  AGENTOS_CREDENTIALS=sk-ant-... \
     agentos cluster up --namespace {{ .Release.Namespace }} --release {{ .Release.Name }}
 
   # 2. (optional) Exercise the deployed agent end to end with NO Slack workspace.

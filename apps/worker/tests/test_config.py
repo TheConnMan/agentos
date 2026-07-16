@@ -75,7 +75,7 @@ _WORKER_OVERRIDES: dict[str, tuple[str, str, object]] = {
     "S3_SECRET_KEY": ("s3_secret_key", "sk-sentinel", "sk-sentinel"),
     "S3_REGION": ("s3_region", "eu-west-9", "eu-west-9"),
     "BUNDLE_BUCKET": ("bundle_bucket", "sentinel-bundles", "sentinel-bundles"),
-    "AGENTOS_API_BASE_URL": (
+    "AGENTOS_API_URL": (
         "api_base_url",
         "http://api.local:3",
         "http://api.local:3",
@@ -129,6 +129,19 @@ def test_alias_wins_over_bare_field_name(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("AGENTOS_API_KEY", "intended")
 
     assert WorkerConfig().api_key == "intended"
+
+
+def test_api_url_accepts_the_deprecated_base_url_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#496: the platform API base URL is canonically AGENTOS_API_URL, but the
+    historical AGENTOS_API_BASE_URL still resolves for one release, and the
+    canonical name wins when both are set."""
+    monkeypatch.setenv("AGENTOS_API_BASE_URL", "http://deprecated:8000")
+    assert WorkerConfig().api_base_url == "http://deprecated:8000"
+
+    monkeypatch.setenv("AGENTOS_API_URL", "http://canonical:8000")
+    assert WorkerConfig().api_base_url == "http://canonical:8000"
 
 
 def test_field_name_kwargs_still_populate() -> None:

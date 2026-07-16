@@ -318,8 +318,8 @@ pub struct UpOpts {
     /// Whether `--fake-model` was passed (forces the sealed install and
     /// suppresses the fake-model warning even when the env credential is set).
     pub fake_model: bool,
-    /// The model credential to install with, resolved from
-    /// `AGENTOS_MODEL_CREDENTIALS`. `Some(non-empty)` enables the real model;
+    /// The model credential to install with, resolved from `AGENTOS_CREDENTIALS`
+    /// (or the deprecated `AGENTOS_MODEL_CREDENTIALS`). `Some(non-empty)` enables the real model;
     /// `None` installs sealed (fake model). A credential alone opens NO egress --
     /// the model stays unreachable behind the fail-closed sandbox until a
     /// provider (`allow_egress_host`) or a raw range (`allow_web_egress`) is
@@ -375,12 +375,38 @@ fn push_egress_rule(args: &mut Vec<CmdArg>, idx: usize, cidr: &str, port: u16) {
 
 /// Resolve the model credential `up` installs with. `--fake-model` forces the
 /// sealed install regardless of the environment; otherwise a non-empty
-/// `AGENTOS_MODEL_CREDENTIALS` value enables the real model.
+/// credential value enables the real model.
 pub fn resolve_up_credentials(fake_model: bool, env_value: Option<String>) -> Option<String> {
     if fake_model {
         return None;
     }
     env_value.filter(|v| !v.is_empty())
+}
+
+/// The operator's model credential from the shell for `cluster up`, canonically
+/// `AGENTOS_CREDENTIALS` -- the same name the runtime plane (runner/worker/chart)
+/// uses everywhere. The CLI's historical `AGENTOS_MODEL_CREDENTIALS` is accepted
+/// as a deprecated alias for one release, with a warning naming the replacement,
+/// so an operator who set the one name for `skill up` isn't met with a silent
+/// no-op at `cluster up` (#496). Returns None when neither is set non-empty.
+pub fn model_credential_env() -> Option<String> {
+    if let Some(value) = std::env::var("AGENTOS_CREDENTIALS")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        return Some(value);
+    }
+    if let Some(value) = std::env::var("AGENTOS_MODEL_CREDENTIALS")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        eprintln!(
+            "warning: AGENTOS_MODEL_CREDENTIALS is deprecated and will be removed in a future \
+             release; set AGENTOS_CREDENTIALS instead."
+        );
+        return Some(value);
+    }
+    None
 }
 
 /// The helm value key that pins the sandbox runner model in the chart.
@@ -697,7 +723,7 @@ pub fn model_egress_status_lines(
         lines.push((
             true,
             format!(
-                "no AGENTOS_MODEL_CREDENTIALS set; installing with the fake model{}",
+                "no AGENTOS_CREDENTIALS set; installing with the fake model{}",
                 if any_egress_opened {
                     ""
                 } else {
@@ -707,7 +733,7 @@ pub fn model_egress_status_lines(
         ));
         lines.push((
             false,
-            "Replies will be canned. Set AGENTOS_MODEL_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.".into(),
+            "Replies will be canned. Set AGENTOS_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.".into(),
         ));
     }
     lines

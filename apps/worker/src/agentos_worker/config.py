@@ -19,36 +19,21 @@ import os
 import socket
 from typing import Annotated
 
+from aci_protocol.service_config import (
+    API_KEY_ENV,
+    HEARTBEAT_FILE_ENV,
+    HEARTBEAT_INTERVAL_ENV,
+    SHIMMER_ENV,
+    STREAM_ENV,
+    AliasOnlyEnvSource,
+    api_url_validation_alias,
+    warn_if_deprecated_api_url_env,
+)
 from pydantic import BeforeValidator, Field, model_validator
-from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import (
-    EnvSettingsSource,
     PydanticBaseSettingsSource,
 )
-
-
-class _AliasOnlyEnvSource(EnvSettingsSource):
-    """Env source that reads an aliased field ONLY from its ``validation_alias``.
-
-    ``populate_by_name=True`` is set so tests can construct the config with
-    field-name kwargs (``WorkerConfig(fake_model=True)``). But in
-    pydantic-settings that same flag makes the default env source append the
-    bare uppercased field name as a fallback env key for every aliased field --
-    so ``api_key`` (alias ``AGENTOS_API_KEY``) would also silently read a stray
-    ``API_KEY``. That breaks the behavior-preserving contract of the refactor.
-    We drop the field-name fallback for aliased fields; non-aliased fields keep
-    reading their plain uppercased name, and kwarg population is untouched
-    (it runs through the init source, not here).
-    """
-
-    def _extract_field_info(
-        self, field: FieldInfo, field_name: str
-    ) -> list[tuple[str, str, bool]]:
-        infos = super()._extract_field_info(field, field_name)
-        if field.validation_alias is not None:
-            infos = [info for info in infos if info[0] != field_name]
-        return infos
 
 
 def _default_consumer_name() -> str:
@@ -90,9 +75,12 @@ class WorkerConfig(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """Swap the env source so aliased fields read only their alias."""
+        # Surface the AGENTOS_API_BASE_URL -> AGENTOS_API_URL rename (#496) at the
+        # single point every WorkerConfig load passes through.
+        warn_if_deprecated_api_url_env()
         return (
             init_settings,
-            _AliasOnlyEnvSource(settings_cls),
+            AliasOnlyEnvSource(settings_cls),
             dotenv_settings,
             file_secret_settings,
         )
@@ -141,7 +129,7 @@ class WorkerConfig(BaseSettings):
     # When true, clear the Slack assistant-thread status (the "shimmer" the
     # dispatcher set) once a turn ends -- editing the placeholder does not
     # auto-clear it. Off by default; pairs with the dispatcher's AGENTOS_SHIMMER.
-    shimmer: Bool = Field(default=False, validation_alias="AGENTOS_SHIMMER")
+    shimmer: Bool = Field(default=False, validation_alias=SHIMMER_ENV)
 
     # When true, suppress intermediate placeholder edits while streaming so the
     # placeholder gets exactly one chat.update (the final) -- rate-limit friendly
@@ -159,7 +147,7 @@ class WorkerConfig(BaseSettings):
     )
 
     # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
-    stream: str = Field(default="agentos:runs", validation_alias="AGENTOS_STREAM")
+    stream: str = Field(default="agentos:runs", validation_alias=STREAM_ENV)
     consumer_group: str = Field(
         default="agentos-workers", validation_alias="AGENTOS_CONSUMER_GROUP"
     )
@@ -306,9 +294,9 @@ class WorkerConfig(BaseSettings):
     # Platform API for POST /evals/report. Defaults match the API's dev stack
     # (README serves it on :8000; its shared dev key is agentos-dev-key).
     api_base_url: str = Field(
-        default="http://localhost:8000", validation_alias="AGENTOS_API_BASE_URL"
+        default="http://localhost:8000", validation_alias=api_url_validation_alias()
     )
-    api_key: str = Field(default="agentos-dev-key", validation_alias="AGENTOS_API_KEY")
+    api_key: str = Field(default="agentos-dev-key", validation_alias=API_KEY_ENV)
     report_max_attempts: int = 3
     report_backoff_base_s: float = Field(default=0.5, gt=0)
     # Langfuse for recording eval scores (the matrix reads them back by version).
@@ -320,10 +308,10 @@ class WorkerConfig(BaseSettings):
     # so an exec liveness probe can restart a pod whose event loop has wedged.
     heartbeat_file: str = Field(
         default="/tmp/agentos-worker.heartbeat",
-        validation_alias="AGENTOS_HEARTBEAT_FILE",
+        validation_alias=HEARTBEAT_FILE_ENV,
     )
     heartbeat_interval_s: float = Field(
-        default=10.0, validation_alias="AGENTOS_HEARTBEAT_INTERVAL_SECONDS"
+        default=10.0, validation_alias=HEARTBEAT_INTERVAL_ENV
     )
 
     key_prefix: str = "agentos:worker"

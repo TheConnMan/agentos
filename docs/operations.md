@@ -37,7 +37,7 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   artifacts with `-f <compose>`, `--chart <path-or-tgz>`, and `--image <ref>`.
   It installs into the `agentos` namespace, exposing the UI and Langfuse on node
   ports (pass `--no-expose` to keep them ClusterIP-only). It reads
-  `AGENTOS_MODEL_CREDENTIALS`: when the env var is set it switches the runner
+  `AGENTOS_CREDENTIALS` (deprecated alias `AGENTOS_MODEL_CREDENTIALS`): when the env var is set it switches the runner
   off the fake model and forwards the credential through the masked `--set`
   machinery (so `--dry-run` never prints it); when it is absent the release
   installs sealed (canned replies) and `up` warns that replies stay canned
