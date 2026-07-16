@@ -32,7 +32,7 @@ use ratatui::{Frame, Terminal};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::channel::{parse_terminal_message, TerminalAction, REPLY_FENCE};
-use crate::recipes::{build_argv, recipes, Recipe, RecipeKind, TuiAction, Workflow};
+use crate::recipes::{build_argv, recipes, ArgPart, Recipe, RecipeKind, Tier, TuiAction, Workflow};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SecretNameChoice {
@@ -47,22 +47,6 @@ struct SelectChoice<T> {
     value: T,
 }
 
-/// Which platform tier a Deploy-to-Slack workflow drives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SlackTier {
-    Local,
-    Cluster,
-}
-
-impl SlackTier {
-    fn verb(self) -> &'static str {
-        match self {
-            SlackTier::Local => "local",
-            SlackTier::Cluster => "cluster",
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct ExampleChoice {
     id: &'static str,
@@ -70,6 +54,14 @@ struct ExampleChoice {
     description: &'static str,
     directory: &'static str,
     secrets: &'static [&'static str],
+}
+
+/// What the recipe prompt collected: the answered tier (`None` when the recipe
+/// is not tier-bearing) and the answered field values.
+#[derive(Clone, Debug)]
+struct RecipeAnswers {
+    tier: Option<Tier>,
+    values: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -242,12 +234,50 @@ impl Drop for TerminalSession {
     }
 }
 
+/// The one tier prompt: which platform tier a tier-bearing recipe or workflow
+/// drives. Shared by the governance recipes and the Deploy-to-Slack workflow so
+/// the two surfaces cannot drift apart.
+fn prompt_tier(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    title: &str,
+) -> Result<Option<Tier>> {
+    prompt_select(
+        terminal,
+        app,
+        title,
+        "Which tier?",
+        vec![
+            SelectChoice {
+                label: "local (compose)".to_string(),
+                description: "The full platform on your machine via docker compose.".to_string(),
+                value: Tier::Local,
+            },
+            SelectChoice {
+                label: "cluster (Kubernetes)".to_string(),
+                description: "A deployed Helm release (must already be up); needs AGENTOS_API_URL and AGENTOS_API_KEY set for that release."
+                    .to_string(),
+                value: Tier::Cluster,
+            },
+        ],
+    )
+}
+
 fn prompt_recipe_fields(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
     recipe: &Recipe,
-) -> Result<Option<BTreeMap<String, String>>> {
+) -> Result<Option<RecipeAnswers>> {
     let mut values = BTreeMap::new();
+    // The tier leads the per-field prompts so the steps read in argv order. A
+    // recipe that is not tier-bearing answers no tier at all.
+    let mut chosen_tier = None;
+    if recipe.args.contains(&ArgPart::Tier) {
+        let Some(tier) = prompt_tier(terminal, app, recipe.title)? else {
+            return Ok(None);
+        };
+        chosen_tier = Some(tier);
+    }
     for (idx, field) in recipe.fields.iter().enumerate() {
         let title = format!(
             "{} · Step {} of {}",
@@ -272,7 +302,10 @@ fn prompt_recipe_fields(
         }
         values.insert(field.key.to_string(), value);
     }
-    Ok(Some(values))
+    Ok(Some(RecipeAnswers {
+        tier: chosen_tier,
+        values,
+    }))
 }
 
 fn run_recipe_in_tui(
@@ -280,7 +313,7 @@ fn run_recipe_in_tui(
     app: &App,
     recipe: &Recipe,
 ) -> Result<String> {
-    let Some(values) = prompt_recipe_fields(terminal, app, recipe)? else {
+    let Some(RecipeAnswers { tier, values }) = prompt_recipe_fields(terminal, app, recipe)? else {
         return Ok(format!("Canceled: {}", recipe.title));
     };
     if let RecipeKind::Workflow(workflow) = &recipe.kind {
@@ -294,7 +327,7 @@ fn run_recipe_in_tui(
     let mut view = RunView::new(recipe.title);
     let run_result = match &recipe.kind {
         RecipeKind::Command => {
-            let argv = build_argv(recipe, &values);
+            let argv = build_argv(recipe, tier, &values);
             run_agentos_in_tui(terminal, app, &argv, Path::new("."), &mut view)
         }
         RecipeKind::Tui(_) => Ok(()),
@@ -698,25 +731,7 @@ fn explore_examples(
 fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> Result<()> {
     // One recipe, both tiers: ask which platform to target rather than listing a
     // near-duplicate recipe per tier.
-    let Some(tier) = prompt_select(
-        terminal,
-        app,
-        "Deploy to Slack",
-        "Which tier to deploy to?",
-        vec![
-            SelectChoice {
-                label: "local (compose)".to_string(),
-                description: "The full platform on your machine via docker compose.".to_string(),
-                value: SlackTier::Local,
-            },
-            SelectChoice {
-                label: "cluster (Kubernetes)".to_string(),
-                description: "A deployed Helm release (must already be up).".to_string(),
-                value: SlackTier::Cluster,
-            },
-        ],
-    )?
-    else {
+    let Some(tier) = prompt_tier(terminal, app, "Deploy to Slack")? else {
         return Ok(());
     };
     let verb = tier.verb();
@@ -725,13 +740,13 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     //    tokens + the channel id. Pause until the operator has them.
     let mut intro = RunView::new("Deploy to Slack — create your Slack app");
     let flow = match tier {
-        SlackTier::Local => "compose stack: local up -> local deploy -> local comms --slack.",
-        SlackTier::Cluster => "deployed release: cluster deploy -> cluster comms --slack.",
+        Tier::Local => "compose stack: local up -> local deploy -> local comms --slack.",
+        Tier::Cluster => "deployed release: cluster deploy -> cluster comms --slack.",
     };
     intro.push(format!(
         "This connects an AgentOS agent to a real Slack workspace through the {flow}"
     ));
-    if tier == SlackTier::Cluster {
+    if tier == Tier::Cluster {
         intro.push("Requires an installed release (agentos cluster up) with a model credential.");
         intro.push("One Slack app = one Socket Mode owner: do not also run a local dispatcher");
         intro.push("on the same app token.");
@@ -760,7 +775,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     //    On the cluster tier the model credential is configured on the release at
     //    `cluster up` time (a chart Secret), so only the Slack tokens are gathered.
     crate::secrets::sync_secret_file()?;
-    if tier == SlackTier::Local {
+    if tier == Tier::Local {
         ensure_model_credential_available(terminal, app)?;
     }
     ensure_secret_available(terminal, app, "SLACK_APP_TOKEN")?;
@@ -794,7 +809,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     // Cluster targets a specific Helm release; prompt for its namespace/release
     // so the workflow works for a release not named the default `agentos` (the
     // API auto-discovery and `cluster comms` both key off these).
-    let (namespace, release) = if tier == SlackTier::Cluster {
+    let (namespace, release) = if tier == Tier::Cluster {
         let ns = prompt_text(
             terminal,
             app,
@@ -846,7 +861,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     let run_result = (|| -> Result<()> {
         // Local brings the compose platform up first (idempotent); the cluster
         // release is expected to already be installed.
-        if tier == SlackTier::Local {
+        if tier == Tier::Local {
             run_agentos_in_tui_with_env(
                 terminal,
                 app,
@@ -866,7 +881,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
             "--slack-channel".to_string(),
             channel.clone(),
         ];
-        if tier == SlackTier::Local {
+        if tier == Tier::Local {
             deploy_argv.push("--api-url".to_string());
             deploy_argv.push("http://localhost:28000".to_string());
         }
@@ -926,7 +941,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     done.push(format!(
         "Disconnect Slack:  agentos {verb} comms --slack --disconnect"
     ));
-    if tier == SlackTier::Local {
+    if tier == Tier::Local {
         done.push("Stop the stack:    agentos local down".to_string());
     }
     show_run_view(terminal, app, &mut done)?;
@@ -1884,7 +1899,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
     ];
     match &recipe.kind {
         RecipeKind::Command => {
-            let preview = build_argv(recipe, &values);
+            let preview = build_argv(recipe, None, &values);
             lines.push(Line::from(Span::styled(
                 "Command preview",
                 Style::default().fg(Color::Yellow).bold(),
