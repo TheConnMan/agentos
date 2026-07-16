@@ -1,7 +1,7 @@
 # 22. Eval completeness: run the same evals at every tier, grade what actually happened, and promote real traces into cases
 
 Date: 2026-07-13
-Status: Proposed
+Status: Accepted (2026-07-16)
 
 Gives the scattered eval work one decision spine. Extends
 [ADR-0004](0004-langfuse-observability-and-eval-backbone.md) (Langfuse as the
@@ -37,12 +37,16 @@ on the fake-model CI path the same suite greens without a single tool call
 even less. Closing the gap between what a green eval *appears* to prove and what it
 *actually* proves is the whole purpose of this ADR.
 
-**1. You cannot actually run the same evals at every tier.** The CLI exposes
-`skill eval` only (`cli/src/main.rs`, dispatched to `commands::eval`); there is no
+**1. You cannot actually run the same evals at every tier.** *(Status at acceptance:
+closed. `local eval` and `cluster eval` landed via
+[#344](https://github.com/curie-eng/agentos/issues/344) on 2026-07-13, hours after
+this ADR was drafted. The analysis below is the state that motivated the decision
+and is retained as the record; Phase 1's tier-parity half is done.)* The CLI exposed
+`skill eval` only (`cli/src/main.rs`, dispatched to `commands::eval`); there was no
 `local eval` or `cluster eval` verb. The platform runs suites as fanned-out Jobs
-per version, but a developer at the CLI can grade a bundle in the in-process runner
-and nowhere else. The "same evals everywhere" promise has one of its three rungs
-missing ([#344](https://github.com/curie-eng/agentos/issues/344)). The grading
+per version, but a developer at the CLI could grade a bundle in the in-process runner
+and nowhere else. The "same evals everywhere" promise had one of its three rungs
+missing. The grading
 *discipline* is already shared — the platform runner and the CLI both apply the
 `Done`-gate and classified-failure gate before grading
 (`apps/worker/src/agentos_worker/eval/runner.py`, mirrored by the CLI's
@@ -58,11 +62,17 @@ that string was ever **called**, or that it returned a **structured result**. Th
 is not hypothetical. In a cold-start dogfood (run 2, a "release-radar" agent on
 GLM-5.2), the agent had to *invent* a tamper-proof "proof token" that its engine
 emitted and then grep the final text for it — a pure workaround for the absence of
-a "a tool was called / a structured result is present" grader. Worse, the fake
-model greens every text grader without calling a single tool
-([#337](https://github.com/curie-eng/agentos/issues/337)), so a
-green-on-fake result is false confidence: it proves the harness plumbing, not the
-agent. The trajectory is *already on the ACI wire* — the runner emits a
+a "a tool was called / a structured result is present" grader.
+
+A green-on-fake result is likewise false confidence: it proves the harness
+plumbing, not the agent
+([#337](https://github.com/curie-eng/agentos/issues/337)). **Note (2026-07-16, at
+acceptance): #337 has since closed, and its fix changes this ADR's reasoning —
+see the correction in Phase 1 below.** The fake model's `default_turn` now emits a
+scripted `ToolUseBlock` (`runner/src/agentos_runner/fake.py`), so the fake does
+call a (scripted) tool. That fixes the MCP-tool-loading gap #337 was filed for, but
+it means a tool-call grader no longer distinguishes the fake from a real model.
+The trajectory is *already on the ACI wire* — the runner emits a
 `tool_note` (carrying the tool name) and a `side_effect_flag` for every tool use
 (`runner/src/agentos_runner/translate.py`) — but the eval runner discards those
 frames and forwards only `final.text` to the grader. We are grading a keyhole view
@@ -130,11 +140,13 @@ eval needs to protect, and the model — not the code — is what this ADR fixes
 
 - **Text matchers** (`exact | contains | regex`) — unchanged, still on final text.
 - **Tool-call assertion** — a named tool was invoked during the turn (e.g. the
-  bundle's deterministic engine ran). This directly closes the dogfood workaround
-  and the #337 fake-model false-green: a tool-call grader **fails on the fake
-  model**, which is the correct signal, because the fake never calls a tool. The
-  raw material already exists (`tool_note` carries the tool name); the eval runner
-  must capture those frames into the graded record instead of dropping them.
+  bundle's deterministic engine ran). This directly closes the dogfood workaround.
+  The raw material already exists (`tool_note` carries the tool name); the eval
+  runner must capture those frames into the graded record instead of dropping them.
+  It does **not**, on its own, close the green-on-fake false confidence: since
+  #337's fix the fake emits a scripted `ToolUseBlock`, so a tool-call grader can
+  green on the fake exactly as a text grader does. Fake-model false-green needs a
+  separate mechanism — see Phase 1.
 - **Structured-result assertion** — a tool returned a result matching a shape
   (present / non-empty / JSON-path predicate). This is what the dogfood's
   hand-rolled "proof token" was faking. It requires the tool result to reach the
@@ -221,7 +233,15 @@ trajectory grader.
   place to add a **model** dimension so the same suite grades across BYO models and
   the results compare side by side. This is an orthogonal axis to grading and
   **deferred**: it is a reporting/fan-out concern that composes cleanly with
-  everything above once tier-parity execution and the richer taxonomy exist. It also
+  everything above once tier-parity execution and the richer taxonomy exist.
+
+  *Status at acceptance (2026-07-16): #255 is closed, but its acceptance criterion
+  ("the eval matrix reports pass-rate + cost per model") is only half true. The model
+  dimension records and slices; the cost axis has no producer, so every per-model
+  `cost_usd` reads `None` ([#390](https://github.com/curie-eng/agentos/issues/390)),
+  and there is no way to select a model at eval time or sweep a suite across models
+  ([#526](https://github.com/curie-eng/agentos/issues/526)). The deferral stands, but
+  the matrix should be treated as unbuilt for planning purposes, not done.* It also
   connects to the cross-harness parity evals
   ([#313](https://github.com/curie-eng/agentos/issues/313)) and the harness eval
   delta ([#326](https://github.com/curie-eng/agentos/issues/326)), both of which are
@@ -234,11 +254,24 @@ reference. Phases are sequenced by leverage-over-risk, not by which is most
 interesting.
 
 - **Phase 1 — Tier parity + tool-call grader (the credibility floor).** Ship
-  `local eval` and `cluster eval` (#344) and the **tool-call assertion** grader
-  kind. Together these close the two failures the dogfood proved: evals that only
-  run at one tier, and green-on-fake false confidence (#337, because a tool-call
-  grader fails the fake model). Lowest new-contract surface — `tool_note` already
-  carries the signal. This is the phase that makes the parity claim true.
+  `local eval` and `cluster eval` (#344, **landed 2026-07-13**) and the **tool-call
+  assertion** grader kind (outstanding). Lowest new-contract surface — `tool_note`
+  already carries the signal. This is the phase that makes the parity claim true.
+
+  **Correction at acceptance (2026-07-16).** As drafted, this phase claimed to close
+  *two* failures: single-tier evals, and green-on-fake false confidence "because a
+  tool-call grader fails the fake model." The second half no longer holds. #337's fix
+  gave the fake's `default_turn` a scripted `ToolUseBlock`, so the fake now calls a
+  tool and a tool-call grader greens on it. The tool-call grader is still the right
+  Phase 1 work — it closes the dogfood proof-token workaround and raises every
+  grader's signal — but **fake-model false-green is now an open problem this ADR does
+  not solve.** Candidate mechanisms, to be decided in the phase that builds it:
+  refuse to record eval results from a fake-model run at all (the fake is a plumbing
+  fixture, not a subject under test); or an evidence check on the trajectory's
+  provenance rather than its shape (the family of
+  [#517](https://github.com/curie-eng/agentos/issues/517)). Whichever is chosen, the
+  constraint decided here is: **a fake-model run must not be able to produce a green
+  that reads as an agent-quality signal.**
 - **Phase 2 — Trace → eval promotion (the headline capability).** `agentos eval
   add-from-trace` capturing input + trajectory + a curated assertion, with trace-id
   provenance (epic #26, #266). Depends on Phase 1's tool-call/trajectory capture so
@@ -252,7 +285,21 @@ interesting.
   pluggable scorer seam (#261), and the BYO-model matrix dimension (#255, feeding
   #313 and #326). These make eval results *trustworthy over noise* and *comparable
   across models* — most valuable once there is a rich trajectory grader to run *k*
-  times and across models.
+  times and across models. At acceptance this phase carries the reachability debt
+  from the closed issues that shipped inert: wiring the scorer seam into a runnable
+  path (#389), a producer for the cost axis (#390), and eval-time model selection /
+  sweep (#526).
+
+**Cross-cutting: the cases themselves.** Every phase above improves the *harness*.
+None of them improves the *suites* the harness runs, and the committed examples are
+currently unfalsifiable — `examples/weather/evals/cases.json` passes on
+`contains: "weather"` for an input that contains the word "weather"
+([#527](https://github.com/curie-eng/agentos/issues/527)). Because `init` seeds new
+bundles from these examples, a vacuous case is not one bad file; it is the pattern
+every new agent inherits. The standard this ADR sets for a case is the same one it
+sets for a grader: **could a plausibly-broken agent pass it?** If yes, it is not an
+eval. Rewriting the seeds tracks alongside Phase 1, since the tool-call grader is
+what several of them need to become falsifiable.
 
 ## Alternatives considered
 
@@ -287,8 +334,12 @@ interesting.
   command a developer or coding agent can run, and a tier divergence is a real,
   reproducible environment-bug signal.
 - **A green eval starts meaning "the agent did the work," not "a string appeared."**
-  Tool-call and trajectory assertions make the fake-model path fail honestly (#337),
-  which removes a class of false confidence rather than papering over it.
+  Tool-call and trajectory assertions grade the run rather than its last sentence,
+  which removes a class of false confidence rather than papering over it. This does
+  *not* extend to the fake-model path: since #337's fix the fake calls a scripted
+  tool, so it greens a tool-call grader too. Keeping a fake-model green from reading
+  as an agent-quality signal is an open problem (Phase 1 correction), and until it is
+  closed, a green on the fake-model CI path proves plumbing only.
 - **New contract surface is incurred deliberately and in order.** Server-side
   grading and structured-result assertions touch the frozen ACI/eval contract; each
   is an escalate-first change (ADR-0005/0017), scoped to the phase that needs it, not
