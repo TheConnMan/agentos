@@ -87,18 +87,20 @@ def test_valid_regex_grader_constructs_and_grades() -> None:
 
 
 def test_committed_fixture_parses_and_grades(eval_cases_example_path: Path) -> None:
-    """The committed cross-language fixture loads as an EvalSuite and its single
-    smoke grader (contains "") grades any completed turn's text True, proving the
-    scaffold output is platform-loadable (the latent bug in issue #8)."""
+    """The committed cross-language fixture loads as an EvalSuite, proving the
+    scaffold output is platform-loadable (the latent bug in issue #8). Its smoke
+    grader now asserts the agent named itself (#527), so it is falsifiable: an
+    empty/off-topic turn fails, an introduction naming the agent passes."""
     suite = EvalSuite.model_validate_json(
         eval_cases_example_path.read_text(encoding="utf-8")
     )
     assert len(suite.cases) == 1
     grader = suite.cases[0].grader
     assert grader.kind == GraderKind.CONTAINS
-    assert grader.expected == ""
-    assert grader.grade("anything at all") is True
-    assert grader.grade("") is True
+    assert grader.expected == "example"
+    assert grader.grade("I am the example agent.") is True
+    assert grader.grade("literally anything") is False
+    assert grader.grade("") is False
 
 
 def test_old_array_form_is_rejected() -> None:
