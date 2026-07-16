@@ -150,6 +150,25 @@ fn process_help_top_level_lists_new_surface_and_hides_retired_verbs() {
     }
 }
 
+/// `agentos dev plugin-compat` is the operator-facing name of the outbound
+/// Claude-Code-compatibility gate (see the bundle-format seam doc). If the verb
+/// stops being reachable, the gate is still in CI but nobody can run it locally
+/// before pushing.
+#[test]
+fn process_dev_help_lists_the_plugin_compat_gate() {
+    let output = run_help(&["dev"]);
+    assert!(
+        output.status.success(),
+        "expected success for dev help\n{}",
+        output_text(&output)
+    );
+    let text = output_text(&output);
+    assert!(
+        help_lists_subcommand(&text, "plugin-compat"),
+        "missing plugin-compat\n{text}"
+    );
+}
+
 /// The checked-in manifest must equal what `agentos schema` emits from the live
 /// clap grammar. This is the generated-artifact + CI drift gate (mirroring the
 /// schema-export discipline for `packages/aci-protocol` / `packages/plugin-format`):

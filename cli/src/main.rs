@@ -225,6 +225,8 @@ enum DevAction {
     E2e,
     /// Lint the interface catalog docs (`bash scripts/check-docs.sh`).
     DocsLint,
+    /// Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`).
+    PluginCompat,
 }
 
 #[derive(Subcommand)]
@@ -1132,6 +1134,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
             DevAction::DocsLint => commands::dev_script("scripts/check-docs.sh").await,
+            DevAction::PluginCompat => commands::dev_script("scripts/check-plugin-compat.sh").await,
         },
         Some(Command::Skill { action }) => match action {
             SkillAction::Up {
