@@ -3,6 +3,5 @@
   "version": "0.1.0",
   "description": "A demo plugin bundle used as a plugin-format fixture.",
   "author": { "name": "CurieTech" },
-  "keywords": ["demo", "fixture"],
-  "mcpServers": ".mcp.json"
+  "keywords": ["demo", "fixture"]
 }

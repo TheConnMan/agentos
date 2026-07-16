@@ -81,8 +81,9 @@ if not result.valid:
 
 Error codes include `bundle.missing`, `manifest.missing`,
 `manifest.invalid_json`, `manifest.invalid`, `manifest.name_invalid`,
-`skill.frontmatter_missing`, `skill.frontmatter_invalid`, `mcp.invalid_json`,
-`mcp.server_incomplete`, `hooks.declared_missing`, `hooks.invalid_json`,
+`skill.frontmatter_missing`, `skill.frontmatter_invalid`,
+`skill.tools_confusable`, `mcp.invalid_json`, `mcp.server_incomplete`,
+`mcp.declared_pointer`, `hooks.declared_missing`, `hooks.invalid_json`,
 `hooks.invalid`, `hooks.command_missing`, `triggers.invalid`,
 `triggers.unknown_type`, `triggers.cron_missing_schedule`,
 `triggers.webhook_missing_path`, `approval_policy.invalid`,

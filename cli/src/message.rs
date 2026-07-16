@@ -55,6 +55,42 @@ pub const DEFAULT_VALKEY_PASSWORD: &str = "valkeypass";
 /// The chart's default platform API key (values.yaml `api.apiKey`).
 pub const DEFAULT_API_KEY: &str = "agentos-dev-key";
 
+/// clap `value_parser` for every `--api-key` / `$AGENTOS_API_KEY` declaration.
+///
+/// An empty-string credential is absent, not "explicitly supplied" (issue #540).
+/// clap reports an env var set to `""` as PRESENT, so without this an empty
+/// value reaches [`crate::state::apply_continue`] as a user-supplied key,
+/// defeats its sentinel comparison against [`DEFAULT_API_KEY`], and silently
+/// sends a blank key onward instead of falling back. Normalizing at the parser
+/// -- the one seam every `--api-key` declaration shares -- is what makes the
+/// rule hold on the `--continue` and non-`--continue` paths alike, rather than
+/// only where a sentinel happens to be compared.
+///
+/// An explicit `--api-key ""` must behave exactly as an omitted flag, which is
+/// why the env source is consulted HERE rather than left to clap: clap resolves
+/// an explicit flag ahead of `env`, so by the time the parser runs the env
+/// source is already out of the running. Without this, `--api-key ""` under a
+/// real `$AGENTOS_API_KEY` would send the well-known dev sentinel instead of the
+/// operator's key.
+///
+/// Mirrors the rule already settled in `ops.rs::resolve_up_credentials`,
+/// `local.rs::model_mode_from_env`, and `secrets.rs::save_value`.
+pub fn api_key_or_default(raw: &str) -> Result<String, String> {
+    Ok(resolve_api_key(raw, env::var("AGENTOS_API_KEY").ok()))
+}
+
+/// The pure core of [`api_key_or_default`], with the env source passed in so the
+/// resolution is unit-testable without mutating this process's environment.
+/// Same shape as `ops.rs::resolve_up_credentials`.
+fn resolve_api_key(raw: &str, env_value: Option<String>) -> String {
+    if !raw.is_empty() {
+        return raw.to_string();
+    }
+    env_value
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_API_KEY.to_string())
+}
+
 /// Local mode (`--local`): the compose Valkey's published host port
 /// (`compose.dev.yaml`), where the CLI enqueues and the compose worker consumes.
 pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 26379;
@@ -112,7 +148,9 @@ fn persist_and_hint(opts: &MessageOpts, verb: TurnVerb, channel: &str, thread_ts
         verb,
         channel,
         thread_ts,
-        env::var("AGENTOS_API_KEY").ok(),
+        // Empty is unset (#540): otherwise this records an `api_key_env` that
+        // resolves to nothing on the next `--continue`.
+        env::var("AGENTOS_API_KEY").ok().filter(|v| !v.is_empty()),
     );
 
     match env::current_dir().context("resolving the current working directory") {
@@ -1041,6 +1079,40 @@ mod tests {
             local: false,
             api_url: None,
         }
+    }
+
+    /// The full `--api-key` x `$AGENTOS_API_KEY` truth table. The load-bearing
+    /// row is `--api-key ""` under a real env key: an empty flag is an ABSENT
+    /// flag, so it must resolve to the env key, never to the dev sentinel.
+    #[test]
+    fn resolve_api_key_treats_an_empty_flag_exactly_as_an_omitted_one() {
+        let real = || Some("sk-real-from-env".to_string());
+
+        // Flag omitted: clap hands the parser its `default_value`, which must
+        // survive untouched whatever the env holds.
+        assert_eq!(resolve_api_key(DEFAULT_API_KEY, None), DEFAULT_API_KEY);
+        assert_eq!(
+            resolve_api_key(DEFAULT_API_KEY, Some(String::new())),
+            DEFAULT_API_KEY
+        );
+        assert_eq!(resolve_api_key(DEFAULT_API_KEY, real()), DEFAULT_API_KEY);
+
+        // Env-sourced (clap passes the env value through the parser): empty is
+        // absent and falls back to the sentinel, non-empty passes through.
+        assert_eq!(resolve_api_key("", Some(String::new())), DEFAULT_API_KEY);
+
+        // The bug: an explicitly empty flag must reconsider the env source,
+        // because clap already resolved the flag ahead of `env` and will not.
+        assert_eq!(resolve_api_key("", real()), "sk-real-from-env");
+        // ...and with no env source at all it lands on the sentinel.
+        assert_eq!(resolve_api_key("", None), DEFAULT_API_KEY);
+
+        // An explicit non-empty flag still wins over the env source, and a real
+        // credential survives byte-for-byte: normalize the empty case ONLY.
+        assert_eq!(resolve_api_key("sk-explicit", real()), "sk-explicit");
+        assert_eq!(resolve_api_key("sk-real-key-123", None), "sk-real-key-123");
+        // Including a key that happens to look like whitespace-padded input.
+        assert_eq!(resolve_api_key(" ", real()), " ");
     }
 
     #[test]

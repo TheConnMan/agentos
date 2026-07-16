@@ -140,6 +140,7 @@ def _validate_skills(root: Path, c: _Collector) -> None:
         frontmatter = _read_frontmatter(skill_file, rel, c)
         if frontmatter is None:
             continue
+        _check_tools_confusable(frontmatter, rel, c)
         try:
             SkillFrontmatter.model_validate(frontmatter)
         except ValidationError as exc:
@@ -147,12 +148,35 @@ def _validate_skills(root: Path, c: _Collector) -> None:
                 c.error("skill.frontmatter_invalid", issue, rel)
 
 
+# Keys an author reaches for instead of the verbatim Claude Code ``allowed-tools``.
+# ``tools`` is silently dropped by ``extra="allow"``; ``allowed_tools`` populates
+# the field via ``populate_by_name`` but will not survive a round-trip through
+# real Claude Code. Both are rejected, but only when ``allowed-tools`` is absent:
+# an author who already has the right key is not confused, whatever else the
+# frontmatter carries.
+_CONFUSABLE_TOOLS_KEYS = ("tools", "allowed_tools", "allowedTools")
+
+
+def _check_tools_confusable(frontmatter: dict[str, Any], rel: str, c: _Collector) -> None:
+    if "allowed-tools" in frontmatter:
+        return
+    for key in _CONFUSABLE_TOOLS_KEYS:
+        if key in frontmatter:
+            c.error(
+                "skill.tools_confusable",
+                f"skill frontmatter key {key!r} is not the Claude Code key: use "
+                "'allowed-tools'. As written the skill declares no tools.",
+                rel,
+            )
+            return
+
+
 def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> set[str] | None:
     """Validate every MCP declaration: the manifest field and root .mcp.json.
 
-    The manifest ``mcpServers`` may be an inline object or a path to a config
-    file; either form is a supported declaration that must be checked, not only
-    the conventional root ``.mcp.json``.
+    The manifest ``mcpServers`` must be an inline object. The path-string form
+    parses but the real loader ignores it, so the servers never register; it is
+    rejected outright rather than validating a file that never loads (#540).
 
     Returns the set of declared server names across every declaration it read, so
     the approval-policy check can compare a gate name against them. ``None`` means
@@ -162,7 +186,6 @@ def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> set[st
     set is a different fact: a declaration was read and named no servers.
     """
 
-    validated_files: set[Path] = set()
     declared = manifest.mcpServers
     servers: set[str] = set()
     unreadable = False
@@ -174,24 +197,20 @@ def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> set[st
         else:
             servers |= result
     elif isinstance(declared, str):
-        declared_path = root / declared
-        if declared_path.is_file():
-            result = _validate_mcp_file(declared_path, str(Path(declared)), c)
-            if result is None:
-                unreadable = True
-            else:
-                servers |= result
-            validated_files.add(declared_path.resolve())
-        else:
-            c.error(
-                "mcp.declared_missing",
-                f"manifest mcpServers path {declared!r} was not found",
-                "plugin.json",
-            )
-            unreadable = True
+        c.error(
+            "mcp.declared_pointer",
+            f"manifest mcpServers is the path {declared!r}, a form the loader "
+            "ignores: the servers never register. Declare them as an inline "
+            'object instead: "mcpServers": {"<name>": {"command": "..."}}.',
+            "plugin.json",
+        )
+        # An unreadable declaration, not an empty one: poison the set so the
+        # approval-gate cross-check stays silent instead of stacking a
+        # misleading "gate names an undeclared server" error on top of this.
+        unreadable = True
 
     root_mcp = root / ".mcp.json"
-    if root_mcp.is_file() and root_mcp.resolve() not in validated_files:
+    if root_mcp.is_file():
         result = _validate_mcp_file(root_mcp, ".mcp.json", c)
         if result is None:
             unreadable = True

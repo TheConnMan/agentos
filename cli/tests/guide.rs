@@ -138,7 +138,7 @@ fn guide_prints_primer_to_stdout() {
         "cluster",
         "eval",
         "parity",
-        "allowed-tools",
+        "secretKeyRef",
     ] {
         assert!(text.contains(needle), "primer missing `{needle}`\n{text}");
     }

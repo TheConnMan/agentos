@@ -104,7 +104,10 @@ and exits with the verdict code:
 
 The JSON shape (frozen contract) is `{check, version, plugin_dir, declared,
 registered, matches, verdict, reasons, hints}`; `reasons` is non-empty iff the
-verdict is not green, and the #336 string-pointer fingerprint surfaces in `hints`.
+verdict is not green. A manifest `mcpServers` string pointer is now rejected by
+`plugin_format` validation (step 1, `invalid_bundle`) before this check ever runs,
+so the #336 string-pointer hint fires only when `extract_declared`/`evaluate` are
+exercised directly (e.g. in tests), not through this entrypoint.
 The `agentos skill check` CLI verb wraps this as a one-shot container.
 
 ## Verify (from repo root)

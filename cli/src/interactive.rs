@@ -948,6 +948,16 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     Ok(())
 }
 
+/// Is `name` exported with a usable value?
+///
+/// An empty-string credential is absent, not supplied (issue #540): `var_os`
+/// alone reports `NAME=""` as present, which would report a credential as
+/// available and suppress the vault fallback while forwarding nothing usable.
+/// Mirrors `local.rs::model_mode_from_env` and `ops.rs::resolve_up_credentials`.
+fn env_credential_present(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| !value.is_empty())
+}
+
 /// The env forwarded into the deploy/comms children for the Slack deploy
 /// workflow: the first available model credential and the two Slack tokens, each
 /// pulled from the vault only when not already exported (an exported value is
@@ -960,7 +970,7 @@ fn slack_secret_env() -> Result<Vec<(String, String)>> {
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ] {
-        if std::env::var_os(name).is_some() {
+        if env_credential_present(name) {
             break;
         }
         if let Some(value) = crate::secrets::get_value(name)? {
@@ -1032,7 +1042,7 @@ fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {
         "CLAUDE_CODE_OAUTH_TOKEN",
     ]
     .iter()
-    .any(|name| std::env::var_os(name).is_some())
+    .any(|name| env_credential_present(name))
     {
         for name in [
             "AGENTOS_CREDENTIALS",
@@ -1109,7 +1119,7 @@ fn ensure_model_credential_available(
         "CLAUDE_CODE_OAUTH_TOKEN",
     ];
     for name in NAMES {
-        if std::env::var_os(name).is_some() {
+        if env_credential_present(name) {
             return Ok(());
         }
     }
@@ -1175,7 +1185,7 @@ fn model_credential_status(
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ] {
-        if std::env::var_os(name).is_some() || saved_names.contains(name) {
+        if env_credential_present(name) || saved_names.contains(name) {
             return "available";
         }
         if legacy_names.contains(name) {
