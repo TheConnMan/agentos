@@ -22,6 +22,7 @@ pub mod message;
 pub mod ndjson;
 pub mod ops;
 pub mod queue;
+pub mod recipes;
 pub mod render;
 pub mod retired;
 pub mod runner;
