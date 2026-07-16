@@ -2079,7 +2079,18 @@ pub async fn approvals(
             }
         }
     } else {
-        agent.approval_required_tools.clone().unwrap_or_default()
+        // Report what the runner actually arms (#546): the UNION of the platform's
+        // mutable `approval_required_tools` field (delivered as
+        // AGENTOS_APPROVAL_REQUIRED_TOOLS) AND the in-force deployed bundle
+        // manifest's `approvalPolicy` gates. Reading only the API field reported an
+        // empty set while a manifest gate was armed and blocking.
+        let mut gated = agent.approval_required_tools.clone().unwrap_or_default();
+        for name in deployed_manifest_gate_names(&client, &agent.id).await? {
+            if !gated.contains(&name) {
+                gated.push(name);
+            }
+        }
+        gated
     };
     Ok(ApprovalsOutput::Gates {
         agent: agent.name,
@@ -2346,16 +2357,23 @@ fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
         })?;
     let body = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
-    // A manifest the runner's pydantic parse would reject: same all-or-nothing
-    // outcome, surfaced rather than swallowed into a cheerful empty list.
+    parse_manifest_gates(&body, &manifest_path.display().to_string())
+}
+
+/// Parse the `approvalPolicy` gates out of a plugin-manifest JSON body, mirroring
+/// the runner's `load_approval_policy` two-tier semantics (a missing REQUIRED key
+/// disarms every gate → usage error; a present-but-empty gate/route is dropped,
+/// siblings survive). `source` labels the manifest in errors. Shared by the skill
+/// tier (manifest on local disk) and the local/cluster tiers (manifest pulled from
+/// the deployed bundle over the API, #546) so both read gates identically.
+fn parse_manifest_gates(body: &str, source: &str) -> Result<Vec<(String, String)>> {
     let invalid = |problem: &str| {
         crate::exit::usage(format!(
-            "invalid plugin manifest {}: {problem}. The runner rejects this manifest and arms ZERO approval gates, including any well-formed ones",
-            manifest_path.display()
+            "invalid plugin manifest {source}: {problem}. The runner rejects this manifest and arms ZERO approval gates, including any well-formed ones"
         ))
     };
     let manifest: ManifestApprovals =
-        serde_json::from_str(&body).map_err(|e| invalid(&format!("not valid JSON ({e})")))?;
+        serde_json::from_str(body).map_err(|e| invalid(&format!("not valid JSON ({e})")))?;
     if manifest.name.is_none() {
         return Err(invalid("missing the required `name` field"));
     }
@@ -2384,6 +2402,61 @@ fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
         }
     }
     Ok(gates)
+}
+
+/// The active deployment whose bundle is in force for an agent: prod outranks dev
+/// (mirroring `binding.py`), then most recent. `list_deployments` returns rows
+/// oldest-first, so "most recent" is the last match. `None` when the agent has no
+/// active deployment (nothing is running its bundle yet).
+fn select_in_force_deployment(
+    deployments: &[crate::api::Deployment],
+) -> Option<&crate::api::Deployment> {
+    let active: Vec<&crate::api::Deployment> = deployments
+        .iter()
+        .filter(|d| d.status == "active")
+        .collect();
+    active
+        .iter()
+        .rev()
+        .find(|d| d.environment == "prod")
+        .or_else(|| active.iter().rev().find(|d| d.environment == "dev"))
+        .or_else(|| active.last())
+        .copied()
+}
+
+/// The approval-gate tool names armed by the agent's in-force DEPLOYED bundle
+/// manifest (#546): resolve the active deployment → its version → the version's
+/// stored manifest → `approvalPolicy.gates[].gate`. This is the source the runner
+/// consults that the platform's mutable `approval_required_tools` field does NOT
+/// carry, so `local`/`cluster approvals` must union it in or it reports an empty
+/// gate set while the manifest gate is armed and blocking. Best-effort on the
+/// fetch (no deployment / no bundle / API hiccup → no manifest gates), but a
+/// deployed manifest that is actually invalid is surfaced (it disarms every gate).
+async fn deployed_manifest_gate_names(client: &ApiClient, agent_id: &str) -> Result<Vec<String>> {
+    let deployments = match client.list_deployments(agent_id).await {
+        Ok(d) => d,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let Some(version_id) =
+        select_in_force_deployment(&deployments).and_then(|d| d.version_id.clone())
+    else {
+        return Ok(Vec::new());
+    };
+    let files = match client.bundle_files(agent_id, &version_id).await {
+        Ok(f) => f,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let Some(manifest) = files
+        .iter()
+        .find(|f| MANIFEST_LOCATIONS.contains(&f.path.as_str()))
+    else {
+        return Ok(Vec::new());
+    };
+    let gates = parse_manifest_gates(
+        &manifest.content,
+        &format!("deployed bundle manifest ({})", manifest.path),
+    )?;
+    Ok(gates.into_iter().map(|(gate, _route)| gate).collect())
 }
 
 /// POSIX-shell-quote a value for safe interpolation into emitted shell text.
@@ -2551,8 +2624,8 @@ pub fn skill_memory_unavailable() -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_secret_env, resolve_cases_path, seed_env_if_missing, select_passthrough_env,
-        validate_slack_channel, EnvSeed,
+        merge_secret_env, parse_manifest_gates, resolve_cases_path, seed_env_if_missing,
+        select_in_force_deployment, select_passthrough_env, validate_slack_channel, EnvSeed,
     };
     use std::path::{Path, PathBuf};
 
@@ -2961,6 +3034,70 @@ mod tests {
 
     fn usage_class(err: &anyhow::Error) -> crate::exit::ExitClass {
         crate::exit::classify(err).0
+    }
+
+    fn deployment(env: &str, status: &str, version: &str, ts: &str) -> crate::api::Deployment {
+        crate::api::Deployment {
+            id: format!("dep-{version}"),
+            environment: env.into(),
+            status: status.into(),
+            version_id: Some(version.into()),
+            deployed_at: Some(ts.into()),
+        }
+    }
+
+    #[test]
+    fn select_in_force_deployment_prefers_prod_then_most_recent() {
+        // Oldest-first, mixed envs/statuses. prod outranks dev; among a rank the
+        // most recent (last) active row wins; inactive rows are ignored (#546).
+        let deps = vec![
+            deployment("dev", "active", "v1", "2026-07-01"),
+            deployment("prod", "superseded", "v2", "2026-07-02"),
+            deployment("prod", "active", "v3", "2026-07-03"),
+            deployment("dev", "active", "v4", "2026-07-04"),
+        ];
+        assert_eq!(
+            select_in_force_deployment(&deps).and_then(|d| d.version_id.clone()),
+            Some("v3".to_string()),
+            "active prod wins over a newer active dev"
+        );
+        // No prod: newest active dev.
+        let dev_only = vec![
+            deployment("dev", "active", "a", "2026-07-01"),
+            deployment("dev", "active", "b", "2026-07-05"),
+        ];
+        assert_eq!(
+            select_in_force_deployment(&dev_only).and_then(|d| d.version_id.clone()),
+            Some("b".to_string())
+        );
+        // No active deployment at all -> nothing in force.
+        let none = vec![deployment("dev", "superseded", "x", "2026-07-01")];
+        assert!(select_in_force_deployment(&none).is_none());
+        assert!(select_in_force_deployment(&[]).is_none());
+    }
+
+    #[test]
+    fn parse_manifest_gates_extracts_gate_route_pairs() {
+        // The shared parser (#546) recovers approvalPolicy gates from raw manifest
+        // text, the same shape `local`/`cluster approvals` union into the report.
+        let gates = parse_manifest_gates(
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"mcp__plugin_gh_github__create_issue","route":"eng"}]}}"#,
+            "test manifest",
+        )
+        .expect("valid manifest parses");
+        assert_eq!(
+            gates,
+            vec![(
+                "mcp__plugin_gh_github__create_issue".to_string(),
+                "eng".to_string()
+            )]
+        );
+        // A manifest missing the required `name` disarms every gate -> surfaced.
+        assert!(parse_manifest_gates(
+            r#"{"version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"}]}}"#,
+            "bad manifest",
+        )
+        .is_err());
     }
 
     #[tokio::test]

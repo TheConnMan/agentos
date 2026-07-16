@@ -86,6 +86,21 @@ pub struct Deployment {
     pub id: String,
     pub environment: String,
     pub status: String,
+    // Extra DeploymentOut fields used to resolve the in-force version for the
+    // `approvals` gate read (#546); `#[serde(default)]` keeps the deploy path
+    // (which reads only id/environment/status) tolerant of a leaner response.
+    #[serde(default)]
+    pub version_id: Option<String>,
+    #[serde(default)]
+    pub deployed_at: Option<String>,
+}
+
+/// One readable text file from a version's stored bundle (`BundleFile` in
+/// openapi.json), from `GET /agents/{id}/versions/{version_id}/files`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BundleFile {
+    pub path: String,
+    pub content: String,
 }
 
 /// The agent kill-switch state (`KillState` in openapi.json): the response of
@@ -616,6 +631,52 @@ impl ApiClient {
             .json()
             .await
             .context("decoding eval matrix")
+    }
+
+    /// List an agent's deployments, oldest first: `GET /deployments?agent_id={id}`.
+    /// Used to resolve the in-force version whose bundle manifest gates the
+    /// `approvals` read must union in (#546).
+    pub async fn list_deployments(&self, agent_id: &str) -> Result<Vec<Deployment>> {
+        let resp = self
+            .http
+            .get(format!("{}/deployments", self.base_url))
+            .query(&[("agent_id", agent_id)])
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("GET /deployments")?;
+        Self::expect_ok(resp, "listing deployments")
+            .await?
+            .json()
+            .await
+            .context("decoding deployment list")
+    }
+
+    /// Read a version's authored text files (skills, manifest, eval cases):
+    /// `GET /agents/{id}/versions/{version_id}/files`. The `approvals` read pulls
+    /// the deployed bundle's manifest from here to recover its `approvalPolicy`
+    /// gates (#546).
+    pub async fn bundle_files(&self, agent_id: &str, version_id: &str) -> Result<Vec<BundleFile>> {
+        #[derive(serde::Deserialize)]
+        struct BundleFiles {
+            files: Vec<BundleFile>,
+        }
+        let resp = self
+            .http
+            .get(format!(
+                "{}/agents/{agent_id}/versions/{version_id}/files",
+                self.base_url
+            ))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("GET /agents/{id}/versions/{version_id}/files")?;
+        let files: BundleFiles = Self::expect_ok(resp, "reading bundle files")
+            .await?
+            .json()
+            .await
+            .context("decoding bundle files")?;
+        Ok(files.files)
     }
 
     /// Delete the agent: `DELETE /agents/{id}` (204 No Content on success).
