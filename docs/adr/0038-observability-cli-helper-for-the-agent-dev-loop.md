@@ -1,4 +1,4 @@
-# 37. An observability CLI helper for the agent-dev loop
+# 38. An observability CLI helper for the agent-dev loop
 
 Date: 2026-07-16
 Status: Proposed
