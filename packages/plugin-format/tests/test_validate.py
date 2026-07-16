@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from plugin_format import validate_bundle
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -162,6 +163,31 @@ def test_reserved_agentos_secret_name_is_rejected(tmp_path: Path) -> None:
     # AGENTOS_* names are reserved platform boot-env keys.
     bundle = _bundle(tmp_path, '{"name": "demo", "secrets": ["AGENTOS_BUDGET"]}')
     assert "secrets.name_reserved" in _codes(bundle)
+
+
+# The four runner-owned credential keys are NOT AGENTOS_-prefixed, so the #445
+# prefix fence never saw them: a bundle could declare `ANTHROPIC_BASE_URL` and
+# silently redirect the model. #457 rejects them at the same deploy gate.
+_RESERVED_CREDENTIAL_KEYS = [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",
+]
+
+
+@pytest.mark.parametrize("name", _RESERVED_CREDENTIAL_KEYS)
+def test_reserved_credential_secret_name_is_rejected(tmp_path: Path, name: str) -> None:
+    bundle = _bundle(tmp_path, f'{{"name": "demo", "secrets": ["{name}"]}}')
+    assert "secrets.name_reserved" in _codes(bundle)
+
+
+def test_legitimate_connector_secret_name_is_not_reserved(tmp_path: Path) -> None:
+    # Negative control: a real connector token name still validates clean.
+    bundle = _bundle(
+        tmp_path, '{"name": "demo", "secrets": ["GITHUB_PERSONAL_ACCESS_TOKEN"]}'
+    )
+    assert "secrets.name_reserved" not in _codes(bundle)
 
 
 def test_malformed_secrets_shape_is_rejected(tmp_path: Path) -> None:

@@ -7,6 +7,8 @@ collision must surface as a caller conflict, not an opaque server error.
 
 from typing import Any
 
+import pytest
+
 
 def _create(client: Any, headers: dict[str, str], **fields: Any) -> Any:
     return client.post("/agents", json=fields, headers=headers)
@@ -432,3 +434,47 @@ def test_agent_reserved_secret_name_is_422(
         headers=auth_headers,
     )
     assert bad.status_code == 422, bad.text
+
+
+# The four runner-owned credential keys are NOT AGENTOS_-prefixed, so #445's
+# prefix fence never caught them; a connector secret named `ANTHROPIC_BASE_URL`
+# would silently redirect the model. #457 rejects them at the write seam too.
+_RESERVED_CREDENTIAL_KEYS = [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",
+]
+
+
+@pytest.mark.parametrize("name", _RESERVED_CREDENTIAL_KEYS)
+def test_agent_reserved_credential_secret_name_is_422(
+    client: Any, auth_headers: dict[str, str], clean_db: None, name: str
+) -> None:
+    bad = client.post(
+        "/agents",
+        json={
+            "name": "cred-secret-agent",
+            "slack_channel": "C000000S04",
+            "secrets": {name: "x"},
+        },
+        headers=auth_headers,
+    )
+    assert bad.status_code == 422, bad.text
+
+
+def test_agent_legitimate_secret_name_still_creates(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # Negative control: a real connector token name is unaffected by the fence.
+    ok = client.post(
+        "/agents",
+        json={
+            "name": "ok-secret-agent",
+            "slack_channel": "C000000S05",
+            "secrets": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x"},
+        },
+        headers=auth_headers,
+    )
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["secrets"] == ["GITHUB_PERSONAL_ACCESS_TOKEN"]

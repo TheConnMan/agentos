@@ -43,11 +43,11 @@ from redis.asyncio import Redis
 from ..binding import (
     BUDGET_ENV,
     BUNDLE_REF_ENV,
-    CONNECTOR_SECRET_KEYS_ENV,
     PLUGIN_DIR_ENV,
     RUNNER_TOKEN_ENV,
     SESSION_ID_ENV,
     apply_model_env,
+    inject_connector_secrets,
 )
 from ..bundle_store import BundleReader
 from ..config import WorkerConfig
@@ -366,16 +366,12 @@ class EvalStreamConsumer(StreamConsumer):
             env[BUNDLE_REF_ENV] = item.bundle_ref
         # Deliver the agent's connector secrets (#429) so an authed-MCP bundle
         # authenticates during eval exactly as it does on a bound run -- otherwise
-        # its tool calls fail auth and the eval measures the wrong thing. A
-        # reserved boot-env key is never overwritten. The values are resolved by
-        # the async caller (they need a DB lookup) and passed in.
-        injected_secret_keys: list[str] = []
-        for name, value in (connector_secrets or {}).items():
-            if name not in env:
-                env[name] = value
-                injected_secret_keys.append(name)
-        if injected_secret_keys:
-            env[CONNECTOR_SECRET_KEYS_ENV] = ",".join(sorted(injected_secret_keys))
+        # its tool calls fail auth and the eval measures the wrong thing. The
+        # shared helper drops reserved boot-env names (#457) so a secret named after
+        # a runner-owned env key or model credential can never clobber it, keeping
+        # this write site hardened identically to binding.boot_env. The values are
+        # resolved by the async caller (they need a DB lookup) and passed in.
+        inject_connector_secrets(env, connector_secrets, agent_label=item.agent_id)
         apply_model_env(env, self._config)
         return env
 

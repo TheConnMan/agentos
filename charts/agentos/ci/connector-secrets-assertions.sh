@@ -57,4 +57,36 @@ if printf '%s' "$default_render" | grep -q "connector-secrets"; then
   fail "a connector Secret rendered with no agentSandbox.connectorSecrets configured"
 fi
 
+# 4 (#457): a reserved boot-env name as the inner connector-secret key must fail
+# the render fail-closed. The four runner-owned credential keys are NOT
+# AGENTOS_-prefixed, so #445's prefix fence never saw them; plus one AGENTOS_*
+# key to prove the prefix rule is still enforced at the Helm seam. `helm
+# template` must exit non-zero and the error must name the reservation.
+assert_reserved_render_fails() {
+  local key="$1"
+  local out
+  if out="$(helm template agentos "$CHART" \
+    --set "agentSandbox.connectorSecrets.demo.${key}=x" 2>&1)"; then
+    fail "reserved connector-secret name '${key}' rendered instead of failing"
+  fi
+  printf '%s' "$out" | grep -qi "reserved" \
+    || fail "reserved '${key}' render failed but the error did not mention 'reserved': ${out}"
+}
+
+for key in \
+  ANTHROPIC_BASE_URL \
+  ANTHROPIC_API_KEY \
+  CLAUDE_CODE_OAUTH_TOKEN \
+  ANTHROPIC_AUTH_TOKEN \
+  AGENTOS_BUDGET; do
+  assert_reserved_render_fails "$key"
+done
+
+# Negative control: the legitimate GITHUB_PERSONAL_ACCESS_TOKEN render still
+# succeeds (proven above in assertion 1, re-asserted here as the paired control).
+if ! helm template agentos "$CHART" \
+  --set 'agentSandbox.connectorSecrets.demo.GITHUB_PERSONAL_ACCESS_TOKEN=ghp_ok' >/dev/null 2>&1; then
+  fail "legitimate connector-secret name GITHUB_PERSONAL_ACCESS_TOKEN failed to render"
+fi
+
 echo "OK: per-agent connector-secret render assertions passed"

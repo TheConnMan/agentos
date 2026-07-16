@@ -22,6 +22,7 @@ from .models import (
     SkillFrontmatter,
     TriggerDeclaration,
 )
+from .reserved_env import is_reserved_boot_env_name
 
 # The hooks field is a mapping of event name -> list of matcher entries. Reused
 # to validate both the inline object and a declared hooks file.
@@ -461,14 +462,16 @@ def _validate_secrets(manifest: PluginManifest, c: _Collector) -> None:
                 "(uppercase letters, digits, underscore; not starting with a digit)",
                 loc,
             )
-        elif name.startswith("AGENTOS_"):
-            # AGENTOS_* names are the platform's reserved sandbox boot-env keys;
-            # a connector secret must not declare one (it would clobber or be
-            # dropped by the worker binding at delivery time).
+        elif is_reserved_boot_env_name(name):
+            # Reserved sandbox boot-env / model-credential keys (#457, #445):
+            # the whole AGENTOS_* namespace plus the runner's non-prefixed
+            # credential keys (ANTHROPIC_BASE_URL etc). A connector secret must
+            # not declare one -- it would clobber or be dropped by the worker
+            # binding at delivery time, or silently redirect the model session.
             c.error(
                 "secrets.name_reserved",
-                f"secret name {name!r} is reserved: AGENTOS_* names are platform "
-                "boot-env keys and cannot be used for a connector secret",
+                f"secret name {name!r} is reserved: it is a platform boot-env or "
+                "model-credential key and cannot be used for a connector secret",
                 loc,
             )
 
