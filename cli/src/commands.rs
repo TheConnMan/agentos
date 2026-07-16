@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, CheckSpec, StartSpec};
-use crate::evals::{load_suite, turn_passes};
+use crate::evals::{load_suite, turn_passes, EvalSuite};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
 use crate::scaffold::{read_manifest, scaffold, scaffold_from_spec};
@@ -1008,30 +1008,210 @@ pub async fn send(
     Ok(())
 }
 
-pub async fn eval(cases_path: Option<PathBuf>, url: Option<String>) -> Result<()> {
+pub async fn eval(
+    cases_path: Option<PathBuf>,
+    url: Option<String>,
+    models: Vec<String>,
+    secrets: Vec<String>,
+    image: String,
+) -> Result<()> {
     let state_plugin_dir = state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
     let cases_path = resolve_cases_path(cases_path, Path::new("."), state_plugin_dir.as_deref())?;
     let suite = load_suite(&cases_path)?;
+
+    // Model selection (#526): with `--model`, boot a transient runner per model,
+    // run the suite against each, and report pass-rate per model -- the one
+    // command a "can we move to a cheaper model" decision needs, instead of a
+    // manual `skill up --model X` + `skill eval` loop per model. Without it, the
+    // default path drives the already-running runner (whatever model it booted).
+    if !models.is_empty() {
+        return eval_sweep(
+            &suite,
+            &models,
+            &secrets,
+            &image,
+            state_plugin_dir.as_deref(),
+        )
+        .await;
+    }
+
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let ui = crate::ui::ui();
+    let bar = ui.progress_bar(suite.cases.len() as u64, "running evals");
+    let results = run_suite_cases(&client, &suite, |_| bar.inc(1)).await?;
+    bar.finish();
 
-    let total = suite.cases.len();
-    // (id, passed, seconds) rows, rendered as one table once the run finishes.
-    let mut results: Vec<(String, bool, f64)> = Vec::with_capacity(total);
-    let bar = ui.progress_bar(total as u64, "running evals");
-    for case in &suite.cases {
+    report_eval(&results)
+}
+
+/// Run every case in `suite` against a runner, returning `(id, passed, seconds)`
+/// rows. `on_case` is called once per completed case (progress). Shared by the
+/// single-runner path and the per-model sweep so both grade identically.
+async fn run_suite_cases(
+    client: &RunnerClient,
+    suite: &EvalSuite,
+    mut on_case: impl FnMut(usize),
+) -> Result<Vec<(String, bool, f64)>> {
+    let mut results = Vec::with_capacity(suite.cases.len());
+    for (i, case) in suite.cases.iter().enumerate() {
         let started = Instant::now();
         let events = client
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
         results.push((case.id.clone(), turn_passes(case, &events), elapsed));
-        bar.inc(1);
+        on_case(i);
     }
-    bar.finish();
+    Ok(results)
+}
 
-    report_eval(&results)
+/// Boot a throwaway runner for one model on `port`, forwarding the model
+/// credential and any `--secret` from the env or the host vault exactly like
+/// `skill up` (never in argv). Returns its base URL; the caller removes the
+/// container when done. Does NOT touch `.agentos/runner.json`, so a sweep never
+/// clobbers a persistent `skill up` runner's recorded state.
+async fn boot_eval_runner(
+    plugin_dir: &Path,
+    image: &str,
+    port: u16,
+    name: &str,
+    model: &str,
+    secrets: &[String],
+) -> Result<String> {
+    // Real-model run: forward the model credential (env or vault) and the
+    // bundle's --secret connector secrets, mirroring `start`'s resolution.
+    let mut docker_env = load_model_credentials_from_secret_store()?;
+    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok().or_else(|| {
+        stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
+    });
+    for secret in secrets {
+        if std::env::var_os(secret).is_none() && !stored_env_contains(&docker_env, secret) {
+            if let Some(pair) = secret_store_env(secret)? {
+                docker_env.push(pair);
+            }
+        }
+    }
+    let passthrough_env = merge_secret_env(
+        select_passthrough_env(false, byo_credential.as_deref()),
+        secrets,
+    );
+    let spec = StartSpec {
+        image: image.to_string(),
+        container_name: name.to_string(),
+        host_port: port,
+        plugin_dir: plugin_dir.to_path_buf(),
+        session_id: format!("eval-{}", unix_now()),
+        sandbox_id: "local".into(),
+        budget_json: DEFAULT_BUDGET.to_string(),
+        fake_model: false,
+        network: None,
+        otel_endpoint: None,
+        model_base_url: None,
+        model: Some(model.to_string()),
+        passthrough_env,
+        docker_env,
+    };
+    docker::docker_with_env(&spec.run_args(), &spec.docker_env)
+        .await
+        .with_context(|| format!("booting eval runner for model {model}"))?;
+    let url = format!("http://localhost:{port}");
+    if let Err(err) = RunnerClient::new(&url)?
+        .wait_healthy(Duration::from_secs(60))
+        .await
+    {
+        let logs = docker::container_logs(name, 40).await;
+        let _ = docker::remove_container(name).await;
+        bail!("eval runner for model {model} failed to become healthy: {err}\n{logs}");
+    }
+    Ok(url)
+}
+
+/// Run the suite once per model in a fresh runner and report pass-rate per model.
+async fn eval_sweep(
+    suite: &EvalSuite,
+    models: &[String],
+    secrets: &[String],
+    image: &str,
+    state_plugin_dir: Option<&Path>,
+) -> Result<()> {
+    let ui = crate::ui::ui();
+    // Mount the recorded runner's bundle dir if one is known, else the cwd.
+    let plugin_dir = state_plugin_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .canonicalize()
+        .context("resolving the bundle directory for the model sweep")?;
+    ui.note(&format!(
+        "model sweep: {} model(s) x {} case(s)",
+        models.len(),
+        suite.cases.len()
+    ));
+    let cl = ui.checklist();
+    let mut rows: Vec<(String, usize, usize)> = Vec::with_capacity(models.len());
+    for (i, model) in models.iter().enumerate() {
+        let name = format!("agentos-eval-sweep-{i}");
+        let port = DEFAULT_PORT + 100 + i as u16;
+        let step = cl.step(&format!("model {model}"));
+        let url = match boot_eval_runner(&plugin_dir, image, port, &name, model, secrets).await {
+            Ok(url) => url,
+            Err(err) => {
+                step.fail("boot failed");
+                return Err(err);
+            }
+        };
+        let client = RunnerClient::new(&url)?;
+        let run = run_suite_cases(&client, suite, |_| {}).await;
+        let _ = docker::remove_container(&name).await;
+        let results = run?;
+        let passed = results.iter().filter(|(_, ok, _)| *ok).count();
+        step.done(&format!("{passed}/{}", suite.cases.len()));
+        rows.push((model.clone(), passed, suite.cases.len()));
+    }
+    report_sweep(&rows)
+}
+
+/// Render a model-sweep roll-up: pass-rate per model. Under `--json` the whole
+/// comparison is one payload; otherwise a table. A sweep is a comparison, not a
+/// gate, so it never exits non-zero on a model that scored below 100%.
+pub fn report_sweep(rows: &[(String, usize, usize)]) -> Result<()> {
+    let ui = crate::ui::ui();
+    if ui.json() {
+        let models: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(model, passed, total)| {
+                serde_json::json!({
+                    "model": model,
+                    "passed": passed,
+                    "total": total,
+                    "pass_rate": if *total > 0 { *passed as f64 / *total as f64 } else { 0.0 },
+                })
+            })
+            .collect();
+        ui.emit_json(&serde_json::json!({ "sweep": models }));
+        return Ok(());
+    }
+    let table: Vec<Vec<String>> = rows
+        .iter()
+        .map(|(model, passed, total)| {
+            let rate = if *total > 0 {
+                *passed as f64 / *total as f64 * 100.0
+            } else {
+                0.0
+            };
+            vec![
+                model.clone(),
+                format!("{passed}/{total}"),
+                format!("{rate:.0}%"),
+            ]
+        })
+        .collect();
+    ui.payload_plain(&crate::ui::table(
+        &["model", "passed", "pass rate"],
+        &table,
+        &[1, 2],
+    ));
+    Ok(())
 }
 
 /// Render a finished eval run identically for every tier (`skill`, `local`,
