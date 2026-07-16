@@ -88,6 +88,23 @@ docker compose -f compose.dev.yaml down      # stop, KEEP volumes (fast restart)
 docker compose -f compose.dev.yaml down -v   # stop and WIPE volumes (throwaway)
 ```
 
+**Clean up after yourself — this is not optional.** If you bring the local
+stack up, you MUST take it down when you are done. This box does not have the
+RAM to leave the full stack idling, and this keeps happening: stacks get left
+running across sessions and starve the machine. Before you end a session in
+which you ran `agentos local up` / `docker compose ... up`, run `agentos local
+down` (or `docker compose -f compose.dev.yaml down`) and confirm with
+`docker ps` that nothing agentos-related is still up. Also remove any stray
+`agentos-runner*` containers a run may have spawned. The thread that brought the
+stack up owns tearing it down — a blocked or crashed test agent never cleans up
+after itself, so do not assume someone else will.
+
+**Do stack testing from a worktree, not the main checkout.** If a local test
+requires code edits, make them in a git worktree cut from `origin/main` and land
+them as a PR — never edit `main` in place to make a local run work. Read-only
+runs against the current tree are fine; the moment you need to change code, cut a
+worktree.
+
 Add `--profile slack` through `agentos local up --slack` to start the optional dispatcher for real Slack.
 
 Host ports (non-default host ports to avoid local collisions):
