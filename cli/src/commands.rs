@@ -138,8 +138,14 @@ pub fn check_outcome(report: &CheckReport) -> std::result::Result<(), crate::exi
             fix: None,
             class: crate::exit::ExitClass::Failure,
         }
+        // A structurally bad bundle is `invalid_bundle` (the runner's `run_check`
+        // rejects it at step 1), so every remaining red cause is a runtime one:
+        // a declared server that never registered or failed to start, one that
+        // registered zero tools, one that needs a credential the offline check
+        // never forwards, or MCP init exceeding the deadline. The printed
+        // `reason:` lines say which, so point at them rather than guess.
         .with_fix(
-            "declare MCP servers as an inline object in .claude-plugin/plugin.json (or a bare .mcp.json); run agentos skill check again",
+            "read the printed reason(s): fix the server's command/args, forward its credential with agentos skill up --secret <NAME>, or raise --timeout if MCP init ran long",
         )),
         "invalid_bundle" => {
             // An invalid bundle is a deterministic input error (exit 2, Usage),
@@ -565,8 +571,18 @@ fn merge_secret_env(mut passthrough: Vec<String>, secrets: &[String]) -> Vec<Str
     passthrough
 }
 
+/// Is `name` exported with a usable value?
+///
+/// An empty-string credential is absent, not supplied (issue #540): `var_os`
+/// alone reports `NAME=""` as present, which would suppress the vault fallback
+/// and forward nothing usable. Mirrors `ops.rs::resolve_up_credentials` and
+/// `interactive.rs::env_credential_present`.
+fn env_credential_present(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| !value.is_empty())
+}
+
 fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
-    if std::env::var_os(name).is_some() {
+    if env_credential_present(name) {
         return Ok(None);
     }
     if !crate::secrets::is_saved(name)? {
@@ -692,15 +708,18 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     if !suppress_credential {
         docker_env.extend(load_model_credentials_from_secret_store()?);
     }
-    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok().or_else(|| {
-        stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
-    });
+    let byo_credential = std::env::var("AGENTOS_CREDENTIALS")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
+        });
     // Hydrate `--secret NAME` from AgentOS private storage when it is not
     // already present in the process env. The docker argv still forwards only
     // the NAME (`-e NAME`); the value is supplied only to the Docker CLI child
     // process so Docker can copy it into the runner container.
     for name in &opts.secret {
-        if std::env::var_os(name).is_none() && !stored_env_contains(&docker_env, name) {
+        if !env_credential_present(name) && !stored_env_contains(&docker_env, name) {
             match secret_store_env(name)? {
                 Some(pair) => docker_env.push(pair),
                 None => {

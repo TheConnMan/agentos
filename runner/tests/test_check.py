@@ -507,16 +507,16 @@ def test_run_check_green_bundle_registers_tools(
     assert result["reasons"] == []
 
 
-@pytest.mark.skipif(
-    not _CLAUDE_ON_PATH,
-    reason="requires the real `claude` CLI on PATH to spawn MCP servers",
-)
-def test_run_check_red_pointer_bundle_is_red(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_run_check_red_pointer_bundle_is_invalid_bundle() -> None:
+    # The `.mcp.json` string-pointer form is rejected statically by `load_plugins`
+    # at run_check's step 1, so this never reaches `red`: a genuinely malformed
+    # bundle is `invalid_bundle`. Detection is static -- no container boot and no
+    # MCP server spawn -- so this needs no real `claude` CLI and stays unskipped.
     result = anyio.run(run_check, str(_MCP_RED_POINTER))
-    assert result["verdict"] == "red", result
-    assert result["reasons"]
+    assert result["verdict"] == "invalid_bundle", result
+    assert result["reasons"], result
+    joined = " ".join(result["reasons"])
+    # Prove it was rejected for THIS reason (the pointer form), not some other
+    # bundle error: the stable diagnostic code plus the offending path.
+    assert "[mcp.declared_pointer]" in joined, joined
+    assert "config/mcp.json" in joined, joined

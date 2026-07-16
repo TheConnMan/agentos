@@ -183,20 +183,8 @@ pub fn primer() -> Primer {
         ],
         landmines: vec![
             Landmine {
-                title: "Skill frontmatter uses `allowed-tools`, not `tools`",
-                detail: "The wrong key parses but silently grants no tools.",
-            },
-            Landmine {
-                title: "MCP servers must be inline objects in .mcp.json",
-                detail: "A string-pointer declaration silently fails to load; use the bare inline object form. Run `agentos skill check` to catch this offline before deploy.",
-            },
-            Landmine {
                 title: "Fake vs live model is symmetric across skill and local",
                 detail: "`agentos skill up` and `agentos local up` both run the real model when a credential is present and the fake model otherwise; `agentos skill up --fake-model` or AGENTOS_FAKE_MODEL=1 forces the offline fake at either tier.",
-            },
-            Landmine {
-                title: "In-cluster sandboxes need dnsPolicy ClusterFirst",
-                detail: "Otherwise the bound bundle fetch cannot resolve the in-cluster object store.",
             },
             Landmine {
                 title: "A real model in-cluster needs its provider's egress opened",
@@ -210,19 +198,11 @@ pub fn primer() -> Primer {
                 title: "A real-model `cluster up` fails closed without a gVisor runtime",
                 detail: "On a cluster with no `runsc` RuntimeClass, the default `security.gvisor.mode=auto` renders a blocking enforcement preflight for a real (non-fake) model, so `agentos cluster up` fails closed instead of running runner pods on the host kernel. Install anyway with `agentos cluster up --set security.gvisor.mode=off` (no kernel isolation, knowingly), use `--fake-model` (the sealed path skips the preflight), or install runsc on the nodes. This is the security posture, not a bug.",
             },
-            Landmine {
-                title: "An empty-string API key is not \"unset\"",
-                detail: "It trips the CLI auth gate. Omit the flag or env entirely to fall back, rather than passing an empty value.",
-            },
         ],
         recovery: vec![
             Recovery {
                 symptom: "\"platform API ... unreachable\" on a local deploy or message",
                 fix: "The stack is down. Run `agentos local up`, then retry.",
-            },
-            Recovery {
-                symptom: "authentication_failed from a live model",
-                fix: "A real credential is empty or being overridden. Unset the empty one; set AGENTOS_MODEL_CREDENTIALS for `agentos cluster up`.",
             },
             Recovery {
                 symptom: "`agentos cluster up` hangs ~2 min then dies with `job agentos-preflight-gvisor failed: DeadlineExceeded`",

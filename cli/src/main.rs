@@ -50,7 +50,7 @@ struct AgentTarget<T: TierDefaults> {
     agent: String,
     #[arg(long, default_value = T::API_URL, env = "AGENTOS_API_URL")]
     api_url: String,
-    #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+    #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
     api_key: String,
     #[arg(long)]
     dry_run: bool,
@@ -515,7 +515,7 @@ enum LocalAction {
         #[arg(long)]
         api_url: Option<String>,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued event.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -556,7 +556,7 @@ enum LocalAction {
         #[arg(long)]
         api_url: Option<String>,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -584,7 +584,7 @@ enum LocalAction {
         )]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -647,7 +647,7 @@ enum LocalAction {
             env = "AGENTOS_API_URL"
         )]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         #[arg(long)]
         dry_run: bool,
@@ -662,7 +662,7 @@ enum LocalAction {
             env = "AGENTOS_API_URL"
         )]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Confirm the action.
         #[arg(long)]
@@ -680,7 +680,7 @@ enum LocalAction {
             env = "AGENTOS_API_URL"
         )]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         #[arg(long)]
         dry_run: bool,
@@ -878,7 +878,7 @@ enum ClusterAction {
         #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
         api_local_port: u16,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued event.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -940,7 +940,7 @@ enum ClusterAction {
         #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
         api_local_port: u16,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -973,7 +973,7 @@ enum ClusterAction {
         #[arg(long, default_value = "agentos")]
         release: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -1005,7 +1005,7 @@ enum ClusterAction {
         #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Confirm this destructive action (required; it stops the agent's runs).
         #[arg(long)]
@@ -1022,7 +1022,7 @@ enum ClusterAction {
         #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Print what would be done and exit without making a request.
         #[arg(long)]
@@ -1039,7 +1039,7 @@ enum ClusterAction {
         #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Print what would be done and exit without making a request.
         #[arg(long)]
@@ -1053,7 +1053,7 @@ enum ClusterAction {
         #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Confirm this destructive action (required; it permanently deletes the agent).
         #[arg(long)]
@@ -1370,7 +1370,11 @@ async fn run(command: Option<Command>) -> Result<()> {
                         api_key,
                     },
                     state,
-                    std::env::var("AGENTOS_API_KEY").ok(),
+                    // Empty is unset (#540), so the recorded-env bail below still
+                    // fires when $AGENTOS_API_KEY is exported blank.
+                    std::env::var("AGENTOS_API_KEY")
+                        .ok()
+                        .filter(|v| !v.is_empty()),
                 )?;
                 message::message(MessageOpts {
                     text,
@@ -1691,7 +1695,11 @@ async fn run(command: Option<Command>) -> Result<()> {
                         api_key,
                     },
                     state,
-                    std::env::var("AGENTOS_API_KEY").ok(),
+                    // Empty is unset (#540), so the recorded-env bail below still
+                    // fires when $AGENTOS_API_KEY is exported blank.
+                    std::env::var("AGENTOS_API_KEY")
+                        .ok()
+                        .filter(|v| !v.is_empty()),
                 )?;
                 let resolved_chart = artifacts::resolve_chart(
                     resolved.chart.as_deref(),

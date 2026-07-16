@@ -80,11 +80,11 @@ fn eval_cases(name: &str) -> String {
 
 /// The root `AGENTS.md`: the cross-agent auto-scanned standard carrying the
 /// non-discoverable operating rules (the authoring loop, eval-as-promotion-gate,
-/// verify-first, the top landmines) and a pointer to `agentos guide` for the
-/// full primer.
+/// verify-first) and a pointer to `agentos guide` for the full primer and the
+/// current landmine list.
 fn agents_md(name: &str) -> String {
     format!(
-        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` -- must be green before any deploy. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list. The most\n  common: skill frontmatter uses `allowed-tools`, not `tools` (the wrong key\n  parses but silently grants no tools).\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n"
+        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` -- must be green before any deploy. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list.\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n"
     )
 }
 
@@ -362,7 +362,11 @@ mod tests {
         let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
         assert!(agents.contains("agentos guide"));
         assert!(agents.contains("agentos skill eval"));
-        assert!(agents.contains("allowed-tools"));
+        // AGENTS.md defers the landmine list to `agentos guide` rather than
+        // naming any specific landmine: no drift gate covers this hand-written
+        // prose, so a copy here goes stale silently. The `allowed-tools`
+        // teaching lives in the correct-by-example scaffolded SKILL.md above.
+        assert!(!agents.contains("allowed-tools"));
 
         // The installable harness primer skill, discovered by Claude Code.
         let harness_skill =

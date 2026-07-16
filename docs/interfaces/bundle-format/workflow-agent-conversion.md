@@ -234,7 +234,9 @@ contract, and you have already met it.
   call. If the model is doing arithmetic or applying discount rules from prose,
   you've lost the determinism the workflow guaranteed.
 - **`tools:` instead of `allowed-tools:`.** The verbatim Claude Code field is
-  `allowed-tools`; the other name silently does nothing.
+  `allowed-tools`; `validate_bundle` hard-rejects `tools`/`allowed_tools`/`allowedTools`
+  when `allowed-tools` is absent (`skill.tools_confusable`), so this is caught at
+  validate time rather than silently granting no tools.
 - **Inlined credentials.** Reference env (`${VAR}`) in `.mcp.json`; never commit a
   token.
 <!-- doclint:ignore-line -->

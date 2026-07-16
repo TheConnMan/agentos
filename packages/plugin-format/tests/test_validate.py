@@ -5,6 +5,16 @@ from plugin_format import validate_bundle
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+# The bundle whose manifest carries the string-pointer mcpServers form the real
+# Claude Code loader silently ignores (#336). Owned by runner/, read-only here:
+# it exists to be rejected, and #540 makes plugin_format a second, static gate on
+# it so `agentos skill check` (which boots a container to observe it) is no longer
+# the only one.
+_RED_POINTER = Path(__file__).parents[3] / "runner" / "tests" / "fixtures" / "mcp_red_pointer"
+
+_POINTER_CODE = "mcp.declared_pointer"
+_CONFUSABLE_CODE = "skill.tools_confusable"
+
 
 def _codes(path: Path) -> set[str]:
     return {issue.code for issue in validate_bundle(path).errors}
@@ -48,6 +58,15 @@ def test_skill_missing_description_is_reported() -> None:
 
 def test_mcp_server_without_command_or_url_is_reported() -> None:
     assert "mcp.server_incomplete" in _codes(FIXTURES / "bad_mcp")
+
+
+def test_inline_object_mcp_declaration_stays_valid(tmp_path: Path) -> None:
+    # The fix the string-pointer error names. It must keep validating clean.
+    bundle = _bundle(
+        tmp_path, '{"name": "demo", "mcpServers": {"crm": {"command": "crm-server"}}}'
+    )
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
 
 
 def test_inline_manifest_mcp_server_is_validated() -> None:
@@ -357,9 +376,12 @@ def test_gate_resolved_across_both_inline_and_root_mcp_json(tmp_path: Path) -> N
     assert result.valid, result.errors
 
 
-def test_gate_for_string_pointer_mcp_declaration_is_resolved(tmp_path: Path) -> None:
-    # The manifest mcpServers field points at a config file rather than the
-    # conventional root .mcp.json.
+def test_string_pointer_mcp_declaration_does_not_add_a_gate_error(tmp_path: Path) -> None:
+    # Inverted from test_gate_for_string_pointer_mcp_declaration_is_resolved: the
+    # string-pointer form is now rejected outright, so the file it points at is
+    # never read and the declared-server set is unknowable. The gate cross-check
+    # must stay silent rather than telling the author their correctly-namespaced
+    # gate names a server they did not declare -- the wrong fix.
     bundle = _bundle(
         tmp_path,
         '{"name": "demo", "mcpServers": "config/servers.json", '
@@ -370,8 +392,9 @@ def test_gate_for_string_pointer_mcp_declaration_is_resolved(tmp_path: Path) -> 
         bundle, '{"mcpServers": {"crm": {"command": "crm-server"}}}', "config/servers.json"
     )
 
-    result = validate_bundle(bundle)
-    assert result.valid, result.errors
+    codes = _codes(bundle)
+    assert _POINTER_CODE in codes
+    assert _GATE_CODE not in codes
 
 
 def test_mcp_gate_rejected_when_bundle_declares_no_servers(tmp_path: Path) -> None:
@@ -422,8 +445,11 @@ def test_invalid_mcp_config_does_not_add_a_gate_error(tmp_path: Path) -> None:
     assert _GATE_CODE not in codes
 
 
-def test_declared_missing_mcp_path_does_not_add_a_gate_error(tmp_path: Path) -> None:
-    # A manifest mcpServers path that was not found is also unreadable.
+def test_missing_string_pointer_mcp_path_does_not_add_a_gate_error(tmp_path: Path) -> None:
+    # Re-pointed from test_declared_missing_mcp_path_does_not_add_a_gate_error:
+    # whether the pointed-at file exists no longer matters, because the form
+    # itself is the error. Either way the declaration is unreadable and the gate
+    # cross-check stays silent.
     bundle = _bundle(
         tmp_path,
         '{"name": "demo", "mcpServers": "config/servers.json", '
@@ -432,7 +458,7 @@ def test_declared_missing_mcp_path_does_not_add_a_gate_error(tmp_path: Path) -> 
     )
 
     codes = _codes(bundle)
-    assert "mcp.declared_missing" in codes
+    assert _POINTER_CODE in codes
     assert _GATE_CODE not in codes
 
 
@@ -538,3 +564,116 @@ def test_each_offending_gate_is_reported_at_its_own_location(tmp_path: Path) -> 
     assert len(locations) == 2, locations
     assert any("gates[0]" in loc for loc in locations)
     assert any("gates[1]" in loc for loc in locations)
+
+
+# --- the string-pointer mcpServers form is rejected at validate ---------------
+#
+# `"mcpServers": "config/mcp.json"` parses clean and the pointed-at file even
+# validates, but the real loader ignores the form entirely: the servers never
+# register. Validating the file it points at is validating something that never
+# loads. The form itself is the error (#540, ref #336).
+
+
+def test_string_pointer_mcp_declaration_is_rejected(tmp_path: Path) -> None:
+    # File present AND itself valid -- the case that validates clean today.
+    bundle = _bundle(tmp_path, '{"name": "demo", "mcpServers": "config/servers.json"}')
+    _write_mcp(
+        bundle, '{"mcpServers": {"crm": {"command": "crm-server"}}}', "config/servers.json"
+    )
+
+    result = validate_bundle(bundle)
+    assert not result.valid
+    messages = [i.message for i in result.errors if i.code == _POINTER_CODE]
+    assert len(messages) == 1, result.errors
+    # Actionable: it must name the inline-object fix, not just say "no".
+    assert "mcpServers" in messages[0]
+    assert "inline" in messages[0]
+
+
+def test_red_pointer_fixture_is_rejected_without_booting_a_container() -> None:
+    # The #336 fixture, caught statically from one JSON field.
+    result = validate_bundle(_RED_POINTER)
+    assert not result.valid
+    assert _POINTER_CODE in {i.code for i in result.errors}
+
+
+# --- the tools / allowed-tools confusable ------------------------------------
+#
+# `extra="allow"` lets `tools:` parse clean while allowed_tools stays None, so
+# the skill silently gets no tools. A targeted confusable check rejects it by
+# name. A blanket extra="forbid" is forbidden (packages/CLAUDE.md:83-88): real
+# Claude Code bundles carry keys this MVP does not model.
+
+_CONFUSABLE_KEYS = ["tools", "allowed_tools", "allowedTools"]
+
+
+def _write_skill(bundle: Path, frontmatter: str) -> Path:
+    """Write a skills/demo/SKILL.md carrying the given frontmatter body."""
+    skill = bundle / "skills" / "demo" / "SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text(
+        f"---\nname: demo\ndescription: A demo skill.\n{frontmatter}---\n\n# Demo\n",
+        encoding="utf-8",
+    )
+    return skill
+
+
+@pytest.mark.parametrize("key", _CONFUSABLE_KEYS)
+def test_confusable_tools_key_without_allowed_tools_is_rejected(
+    tmp_path: Path, key: str
+) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo"}')
+    _write_skill(bundle, f"{key}:\n  - Bash\n")
+
+    result = validate_bundle(bundle)
+    assert not result.valid
+    messages = [i.message for i in result.errors if i.code == _CONFUSABLE_CODE]
+    assert len(messages) == 1, result.errors
+    # It must name the offending key AND the correct one -- telling the author
+    # the right key is the entire point.
+    assert key in messages[0]
+    assert "allowed-tools" in messages[0]
+
+
+def test_correct_allowed_tools_key_validates_clean(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, '{"name": "demo"}')
+    _write_skill(bundle, "allowed-tools:\n  - Bash\n")
+
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
+
+
+def test_unknown_non_confusable_frontmatter_key_validates_clean(tmp_path: Path) -> None:
+    # The leniency guardrail (packages/CLAUDE.md:83-88). This test is what a
+    # blanket extra="forbid" would break, and it is why the check is targeted.
+    bundle = _bundle(tmp_path, '{"name": "demo"}')
+    _write_skill(bundle, "allowed-tools:\n  - Bash\nsome-future-claude-key: x\n")
+
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
+
+
+def test_unknown_key_without_allowed_tools_validates_clean(tmp_path: Path) -> None:
+    # Same leniency guardrail, but on the path where _check_tools_confusable
+    # actually runs its loop: no 'allowed-tools' key, so the early return above
+    # does not short-circuit before the unknown key is checked against the
+    # confusable allowlist. Proves the check is a targeted three-key allowlist,
+    # not a de-facto extra="forbid" over all unrecognized keys.
+    bundle = _bundle(tmp_path, '{"name": "demo"}')
+    _write_skill(bundle, "some-future-claude-key: x\n")
+
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
+
+
+@pytest.mark.parametrize("key", _CONFUSABLE_KEYS)
+def test_confusable_key_alongside_allowed_tools_validates_clean(
+    tmp_path: Path, key: str
+) -> None:
+    # An author who already has the right key is not confused, whatever else the
+    # bundle carries. Erroring here would reject real Claude Code bundles.
+    bundle = _bundle(tmp_path, '{"name": "demo"}')
+    _write_skill(bundle, f"allowed-tools:\n  - Bash\n{key}:\n  - Read\n")
+
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
