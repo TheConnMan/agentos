@@ -2,13 +2,14 @@
   "name": "weather",
   "cases": [
     {
-      "id": "weather-answers",
-      "input": "What's the weather in San Francisco?",
+      "id": "reports-a-temperature",
+      "input": "What's the weather in San Francisco today? Give the high in Fahrenheit.",
       "grader": {
-        "kind": "contains",
-        "expected": "weather",
+        "kind": "regex",
+        "expected": "\\d+\\s*°",
         "case_sensitive": false
-      }
+      },
+      "note": "Falsifiable: an agent that cannot fetch a matching forecast follows the SKILL rule and refuses ('I could not confirm a current forecast') with no temperature figure, which fails this grader -- unlike the old `contains: weather`, which the input itself guaranteed. LIMIT: a fake-model agent that INVENTS a plausible temperature still passes; proving the agent actually fetched a source needs the tool-call grader (ADR-0022 Phase 1)."
     }
   ]
 }

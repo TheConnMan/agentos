@@ -329,9 +329,11 @@ mod tests {
         let suite = load_suite(&path).unwrap();
         assert_eq!(suite.cases.len(), 1);
         let case = &suite.cases[0];
-        assert_eq!(case.id, "weather-answers");
-        assert_eq!(case.grader.kind, GraderKind::Contains);
-        assert_eq!(case.grader.expected, "weather");
+        // Falsifiable case (#527): a real answer must carry a temperature figure,
+        // and the loader ignores the documentation-only `note` key on the case.
+        assert_eq!(case.id, "reports-a-temperature");
+        assert_eq!(case.grader.kind, GraderKind::Regex);
+        assert_eq!(case.grader.expected, "\\d+\\s*°");
     }
 
     #[test]

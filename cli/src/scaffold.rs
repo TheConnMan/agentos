@@ -61,9 +61,15 @@ fn eval_cases(name: &str) -> String {
             {
                 "id": format!("{name}-smoke"),
                 "input": format!("In one short sentence, introduce yourself as the {name} agent."),
+                // Assert the agent NAMED itself, not `contains: ""` (which passed
+                // on any output, even an empty or errored turn). A broken agent
+                // that produces no reply -- or an off-topic one -- fails this,
+                // while a correct introduction contains the name the input asked
+                // for. Replace with a real domain grader as the first authoring
+                // step (see the scaffolded AGENTS.md).
                 "grader": {
                     "kind": "contains",
-                    "expected": "",
+                    "expected": name,
                     "case_sensitive": false,
                 },
             }
@@ -78,7 +84,7 @@ fn eval_cases(name: &str) -> String {
 /// full primer.
 fn agents_md(name: &str) -> String {
     format!(
-        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` -- must be green before any deploy. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list. The most\n  common: skill frontmatter uses `allowed-tools`, not `tools` (the wrong key\n  parses but silently grants no tools).\n- The scaffolded eval is a smoke test (passes on any completed turn).\n  Replace it with real graders as the first authoring step.\n"
+        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` -- must be green before any deploy. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list. The most\n  common: skill frontmatter uses `allowed-tools`, not `tools` (the wrong key\n  parses but silently grants no tools).\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n"
     )
 }
 
@@ -347,7 +353,9 @@ mod tests {
         assert_eq!(case_list.len(), 1);
         assert_eq!(case_list[0]["id"], "deal-desk-smoke");
         assert_eq!(case_list[0]["grader"]["kind"], "contains");
-        assert_eq!(case_list[0]["grader"]["expected"], "");
+        // The seed asserts the agent named itself, not `contains: ""` (#527):
+        // an empty/errored turn fails, so the starter case is not vacuously green.
+        assert_eq!(case_list[0]["grader"]["expected"], "deal-desk");
         assert_eq!(case_list[0]["grader"]["case_sensitive"], false);
 
         // AGENTS.md teaches the developer's coding agent the harness.
