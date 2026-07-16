@@ -138,8 +138,15 @@ stack runs on the baked defaults without one). Load-bearing facts:
 `packages/aci-protocol` (the ACI session protocol + NDJSON events) and
 `packages/plugin-format` (the Claude Code plugin shape, verbatim) are **frozen
 interfaces**. Every lane compiles against them across three languages (Pydantic
-source of truth -> committed JSON Schema -> generated TS + Rust), and the
-schema-compat CI test fails any non-backwards-compatible change.
+source of truth -> committed JSON Schema -> generated TS + Rust). Two CI gates
+guard the ACI, and neither infers backward compatibility on its own: the
+schema-compat test catches **artifact-sync drift** (a model change that was not
+regenerated into the committed schema/TS/Rust), and the **wire-lock gate**
+(`packages/aci-protocol/schema/wire.lock`) fails a wire change that did not bump
+`PROTOCOL_VERSION`, telling you which bump to make. Backward compatibility itself
+is a **policy** the semver table in `packages/CLAUDE.md` defines and a human
+applies per change class -- CI enforces that you version the change, not that the
+change is safe.
 
 If your task needs a change to either package: **stop, do not work around it, and
 open a GitHub issue or raise it in your PR** -- a contract change must land as

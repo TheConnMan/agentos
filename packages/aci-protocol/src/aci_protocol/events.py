@@ -14,15 +14,49 @@ outbound event carries a ``version`` equal to PROTOCOL_VERSION.
 """
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
-from .version import PROTOCOL_VERSION, ProtocolVersionLiteral
+from .version import PROTOCOL_VERSION, SEMVER_PATTERN
 
-# Wire contract: unknown keys are a hard error. Every lane compiles against these
-# exact shapes, so a stray field means a producer and consumer disagree.
-_STRICT = ConfigDict(extra="forbid")
+# Reader-context flag. The decoder passes ``context={_READER_CONTEXT_KEY: True}``
+# so a consumer decoding the wire tolerates unknown fields; direct construction
+# does not, so a producer building a model with a stray field is rejected. It
+# lives here (not in a new module) because every wire model shares it and the
+# tests import it from ``aci_protocol.events``.
+_READER_CONTEXT_KEY = "aci_reader"
+
+
+class _AciModel(BaseModel):
+    """Base for every ACI wire model: strict producers, tolerant consumers.
+
+    ``extra="ignore"`` drops unknown keys, but the before-validator rejects them
+    on construction UNLESS the caller passes the reader context flag. So a
+    producer that builds an event with a field the contract does not define is
+    caught at the source, while a consumer decoding a newer producer's payload
+    ignores fields it does not model. Pydantic propagates the validation context
+    into nested models, so a nested model (``ReplyHandle`` inside ``QueuedTurn``)
+    gets the same tolerant read without threading the flag by hand.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unknown_keys_on_construction(cls, data: Any, info: ValidationInfo) -> Any:
+        # Aliases are not used anywhere in aci-protocol, so comparing raw keys
+        # against ``model_fields`` is exact. If an alias is ever added here, this
+        # would need to compare against alias-aware keys instead.
+        if isinstance(data, dict) and not (info.context or {}).get(_READER_CONTEXT_KEY):
+            unknown = data.keys() - cls.model_fields.keys()
+            if unknown:
+                raise ValueError(
+                    f"unexpected field(s) {sorted(unknown)}; the ACI wire is strict on "
+                    "construction (a consumer decoding the wire tolerates them, a producer "
+                    "does not)"
+                )
+        return data
 
 
 class SessionStatus(StrEnum):
@@ -45,10 +79,8 @@ class SessionStatus(StrEnum):
 # --- Inbound channel messages -------------------------------------------------
 
 
-class Event(BaseModel):
+class Event(_AciModel):
     """An inbound event delivered into a live session (initial or follow-up)."""
-
-    model_config = _STRICT
 
     kind: Literal["event"] = "event"
     type: Literal["message", "job", "eval_case"]
@@ -57,10 +89,8 @@ class Event(BaseModel):
     ts: str
 
 
-class Interrupt(BaseModel):
+class Interrupt(_AciModel):
     """A hard stop delivered on the control channel, distinct from a steer."""
-
-    model_config = _STRICT
 
     kind: Literal["interrupt"] = "interrupt"
     reason: str
@@ -72,10 +102,12 @@ InboundMessage = Annotated[Event | Interrupt, Field(discriminator="kind")]
 # --- Outbound NDJSON response events ------------------------------------------
 
 
-class _OutboundBase(BaseModel):
-    model_config = _STRICT
-
-    version: ProtocolVersionLiteral = PROTOCOL_VERSION
+class _OutboundBase(_AciModel):
+    # ``version`` is a semver-constrained string (not a Literal const): the wire
+    # accepts any compatible version, so pinning it to one value would defeat the
+    # compatibility range. The NDJSON decoder enforces compatibility; the pattern
+    # here rejects a structurally malformed value on construction.
+    version: str = Field(default=PROTOCOL_VERSION, pattern=SEMVER_PATTERN)
 
 
 class TextDelta(_OutboundBase):

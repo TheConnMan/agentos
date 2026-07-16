@@ -25,12 +25,10 @@ single ``payload`` field holding this model's JSON) is a transport detail and
 stays outside this package, in the dispatcher's queue module.
 """
 
-from pydantic import BaseModel, ConfigDict
-
-_STRICT = ConfigDict(extra="forbid")
+from .events import _AciModel
 
 
-class ReplyHandle(BaseModel):
+class ReplyHandle(_AciModel):
     """Channel-neutral coordinates for where a turn's reply is delivered.
 
     The reply model is edit-in-place: the ingress adapter pre-posts a placeholder
@@ -48,14 +46,12 @@ class ReplyHandle(BaseModel):
     it keeps the pre-#19 behavior.
     """
 
-    model_config = _STRICT
-
     channel: str
     placeholder: str
     endpoint: str | None = None
 
 
-class QueuedTurn(BaseModel):
+class QueuedTurn(_AciModel):
     """A normalized inbound turn ready for the worker to route and run.
 
     The channel-neutral promotion of the dispatcher's former ``QueuedSlackEvent``.
@@ -63,8 +59,6 @@ class QueuedTurn(BaseModel):
     stream-encoding helpers live with the producer (the dispatcher), not on this
     frozen model, so the contract stays transport-agnostic.
     """
-
-    model_config = _STRICT
 
     event_id: str
     conversation_id: str

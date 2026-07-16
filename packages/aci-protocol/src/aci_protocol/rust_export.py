@@ -29,7 +29,7 @@ from .events import (
 )
 from .session import Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
-from .version import PROTOCOL_VERSION
+from .version import PROTOCOL_VERSION, WIRE_VERSION_FIELD
 
 _NONE = type(None)
 _SCALARS: dict[type, str] = {str: "String", int: "i64", float: "f64", bool: "bool"}
@@ -38,9 +38,6 @@ _SCALARS: dict[type, str] = {str: "String", int: "i64", float: "f64", bool: "boo
 # exists today; an unrecognized literal raises so the generator stays honest.
 _EVENT_TYPE_ARGS = get_args(Event.model_fields["type"].annotation)
 
-# Tagged enums cannot use deny_unknown_fields (serde does not support it with
-# internally tagged enums), so the wire-strictness of extra="forbid" is enforced
-# on the plain structs, which do carry deny_unknown_fields.
 _ENUM_DERIVES = "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]"
 _STRUCT_DERIVES = "#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]"
 
@@ -73,19 +70,6 @@ _RUST_KEYWORDS = {
 
 def _rust_field(name: str) -> str:
     return f"r#{name}" if name in _RUST_KEYWORDS else name
-
-
-def _is_wire_const(annotation: Any) -> bool:
-    """True for a single-valued string literal (the version const).
-
-    Such fields have a Python default but are mandatory on the wire, so Rust must
-    require them rather than defaulting them, matching the JSON Schema.
-    """
-
-    if get_origin(annotation) is Literal:
-        args = get_args(annotation)
-        return len(args) == 1 and isinstance(args[0], str)
-    return False
 
 
 def crate_dir() -> Path:
@@ -125,8 +109,9 @@ def _rust_bare_type(annotation: Any) -> str:
         if args == _EVENT_TYPE_ARGS:
             return "EventType"
         if len(args) == 1 and isinstance(args[0], str):
-            # A single-valued string literal (the version const) is a plain
-            # String on the Rust side; the NDJSON decoder enforces the value.
+            # A single-valued string literal maps to a plain Rust String. The
+            # version field is no longer a Literal, so this branch is a defensive
+            # fallback for any future single-valued literal field.
             return "String"
         raise TypeError(f"unexpected literal field {annotation!r}")
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -157,10 +142,14 @@ def _struct_fields(model: type[BaseModel], skip: set[str], public: bool) -> list
         if field_name in skip:
             continue
         rust = _rust_type(field.annotation)
-        if _is_wire_const(field.annotation):
-            # A wire constant (version) is mandatory and value-checked on decode,
-            # matching the NDJSON decoder's exact-match version policy.
-            out.append('    #[serde(deserialize_with = "require_protocol_version")]')
+        if field_name == WIRE_VERSION_FIELD:
+            # The version field is mandatory and compatibility-checked on decode,
+            # matching the NDJSON decoder. Detected by name (WIRE_VERSION_FIELD),
+            # not by type, so dropping the old Literal does not silently remove
+            # the guard and let #[serde(default)] make version optional.
+            out.append(
+                '    #[serde(deserialize_with = "require_compatible_protocol_version")]'
+            )
         elif not field.is_required():
             # Any other field with a Pydantic default is omittable on the wire,
             # so Rust accepts it missing too.
@@ -170,7 +159,11 @@ def _struct_fields(model: type[BaseModel], skip: set[str], public: bool) -> list
 
 
 def _struct(model: type[BaseModel]) -> str:
-    lines = [_STRUCT_DERIVES, "#[serde(deny_unknown_fields)]", f"pub struct {model.__name__} {{"]
+    # No deny_unknown_fields: the reader path is deliberately tolerant of unknown
+    # fields (strict producers, tolerant consumers). A Rust producer stays strict
+    # by construction -- a struct cannot serialize a field it does not have -- so
+    # dropping it only loosens the read path we mean to loosen.
+    lines = [_STRUCT_DERIVES, f"pub struct {model.__name__} {{"]
     lines.extend(_struct_fields(model, skip=set(), public=True))
     lines.append("}")
     return "\n".join(lines)
@@ -179,7 +172,7 @@ def _struct(model: type[BaseModel]) -> str:
 def _tagged_enum(name: str, tag: str, variants: tuple[type[BaseModel], ...]) -> str:
     lines = [
         _ENUM_DERIVES,
-        f'#[serde(tag = "{tag}", deny_unknown_fields)]',
+        f'#[serde(tag = "{tag}")]',
         f"pub enum {name} {{",
     ]
     for model in variants:
@@ -193,12 +186,42 @@ def _tagged_enum(name: str, tag: str, variants: tuple[type[BaseModel], ...]) -> 
     return "\n".join(lines)
 
 
-_VERSION_GUARD = """fn require_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+_VERSION_GUARD = """fn parse_semver(value: &str) -> Option<(u64, u64)> {
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?;
+    if patch.is_empty() || !patch.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor))
+}
+
+fn is_compatible_protocol_version(wire: &str) -> bool {
+    let (w_major, w_minor) = match parse_semver(wire) {
+        Some(parsed) => parsed,
+        None => return false,
+    };
+    let (b_major, b_minor) = match parse_semver(PROTOCOL_VERSION) {
+        Some(parsed) => parsed,
+        None => return false,
+    };
+    if b_major == 0 {
+        w_major == 0 && w_minor == b_minor
+    } else {
+        w_major == b_major
+    }
+}
+
+fn require_compatible_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
-    if value != PROTOCOL_VERSION {
+    if !is_compatible_protocol_version(&value) {
         return Err(serde::de::Error::custom(format!(
             "unsupported protocol version {value:?}; this build speaks {PROTOCOL_VERSION:?}"
         )));
@@ -253,15 +276,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_off_version_event() {
+    fn rejects_incompatible_version_event() {
         let raw = r#"{"type":"final","version":"9.9.9","text":"x","status":"done"}"#;
         assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
     }
 
     #[test]
-    fn rejects_unknown_fields() {
-        let raw = r#"{"type":"final","version":"0.1.0","text":"x","status":"done","extra":1}"#;
+    fn rejects_incompatible_minor() {
+        let raw = r#"{"type":"final","version":"0.3.0","text":"x","status":"done"}"#;
         assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
+    }
+
+    #[test]
+    fn accepts_compatible_patch() {
+        let raw = r#"{"type":"final","version":"0.2.7","text":"x","status":"done"}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_ok());
+    }
+
+    #[test]
+    fn accepts_unknown_fields() {
+        let raw = r#"{"type":"final","version":"0.2.0","text":"x","status":"done","extra":1}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_ok());
     }
 }
 """

@@ -55,11 +55,18 @@ Import everything from `aci_protocol`; do not hand-roll JSON.
 - `ErrorEvent` → `error` `{version, message, classification?}`
 - `SideEffectFlag` → `side_effect_flag` `{version, tool?, detail?}`
 
-**Version gate (strict).** Every outbound event's `version` must equal
-`PROTOCOL_VERSION` (currently `0.1.0`). The decoder raises `ProtocolVersionError`
-on a missing or mismatched version — this is deliberate and is one of the
-conformance checks. Because the models set `version` as a `const` literal, you get
-this for free by constructing the models rather than emitting raw dicts.
+**Version gate (strict producer, tolerant consumer).** Your producer emits its
+**exact build `PROTOCOL_VERSION`** (currently `0.2.0`) on every outbound event and
+constructs strictly -- an unknown field is an error at construction, catching your
+mistakes at the source. A **consumer** decoding the wire is tolerant the other way:
+it accepts any version compatible with its own build (`major.minor` match under
+0.x, `major` after 1.0) and ignores unknown fields it does not model, so a new
+optional field is backward compatible. The decoder raises `ProtocolVersionError`
+on a missing version or an **incompatible** one, with a message naming both
+versions -- a same-`major.minor` patch difference is not an error. Constructing the
+frozen models and calling `to_ndjson_line` gives you the right version and wire
+shape for free, so you never assemble version strings by hand. (Policy and
+rationale: ADR-0036.)
 
 ## Step 1 — model your turn as a producer
 
@@ -113,7 +120,7 @@ The suite runs five checks (the last only when you pass a producer):
 | --- | --- |
 | `outbound_roundtrip` | Every outbound event type survives encode→decode (library-level; always runs). |
 | `inbound_roundtrip` | Every inbound frame survives encode→decode (always runs). |
-| `reject_unknown_version` | A `9.9.9` line is rejected with `ProtocolVersionError`. |
+| `reject_unknown_version` | An **incompatible** `9.9.9` line is rejected with `ProtocolVersionError` naming both versions (a same-`major.minor` patch line is accepted). |
 | `reject_missing_version` | A version-less line is rejected. |
 | `producer_stream` | **Your** producer emits a well-formed stream for every inbound case. |
 
@@ -123,7 +130,8 @@ inbound cases** — `event:message`, `event:job`, `event:eval_case`, and
 
 1. the producer emits **at least one** event (no empty stream);
 2. the stream **ends in a `final`** event;
-3. **every** event carries `version == PROTOCOL_VERSION`.
+3. **every** event carries a `version` -- your producer's exact build
+   `PROTOCOL_VERSION`.
 
 A harness that handles ordinary messages but drops `interrupt` or a batch `job`
 will fail here — that is the point. A concrete failing example: a producer that

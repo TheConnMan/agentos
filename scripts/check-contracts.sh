@@ -10,6 +10,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 aci_schema="packages/aci-protocol/schema/aci-protocol.schema.json"
+aci_wire_lock="packages/aci-protocol/schema/wire.lock"
 channel_schema="packages/channel-protocol/schema/channel-protocol.schema.json"
 plugin_schema="packages/plugin-format/schema/plugin-format.schema.json"
 eval_schema="apps/worker/schema/eval-cases.schema.json"
@@ -25,9 +26,12 @@ uv run python -m agentos_worker.eval.schema_export
 echo "== regenerating Rust types =="
 uv run python -m aci_protocol.rust_export
 
+echo "== regenerating the ACI wire lock =="
+uv run python -m aci_protocol.wire_lock
+
 echo "== regenerating TypeScript types =="
 npx --yes json-schema-to-typescript@15 "$aci_schema" \
-  --unreachableDefinitions --no-additionalProperties=false -o "$ts_out"
+  --unreachableDefinitions -o "$ts_out"
 
 echo "== compiling generated Rust =="
 cargo check --manifest-path "$rust_crate/Cargo.toml"
@@ -37,7 +41,7 @@ npx --yes -p typescript@5 tsc --noEmit -p packages/aci-protocol/generated/ts/tsc
 
 echo "== checking for drift =="
 if ! git diff --exit-code -- \
-  "$aci_schema" "$channel_schema" "$plugin_schema" "$eval_schema" "$ts_out" "$rust_crate/src/lib.rs"; then
+  "$aci_schema" "$aci_wire_lock" "$channel_schema" "$plugin_schema" "$eval_schema" "$ts_out" "$rust_crate/src/lib.rs"; then
   echo "ERROR: committed contract artifacts drifted from the models." >&2
   echo "The files above were regenerated and differ. Review, then commit them." >&2
   exit 1

@@ -28,7 +28,7 @@ from .events import InboundMessage as InboundMessageUnion
 from .events import OutboundEvent as OutboundEventUnion
 from .session import Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
-from .version import PROTOCOL_VERSION
+from .version import PROTOCOL_VERSION, WIRE_VERSION_FIELD
 
 
 # RootModel envelopes so the committed schema and generated TypeScript expose the
@@ -69,15 +69,21 @@ def schema_path() -> Path:
     return Path(__file__).resolve().parents[2] / "schema" / "aci-protocol.schema.json"
 
 
-def _require_const_props(defs: dict[str, Any]) -> None:
-    """Make fixed wire tokens required and drop their misleading defaults.
+def _require_wire_mandatory_props(defs: dict[str, Any]) -> None:
+    """Make mandatory wire tokens required and drop their misleading defaults.
 
     The discriminator and version fields carry a Python default for ergonomic
     construction, which pydantic renders as non-required with a default. On the
     wire they are mandatory (the NDJSON decoder rejects a missing version, and
-    the union discriminator selects the variant), so any property with a
-    ``const`` is marked required and its default removed. This keeps the schema
-    and generated TypeScript consistent with the Python decoder for every lane.
+    the union discriminator selects the variant), so they are marked required and
+    their default removed.
+
+    The discriminator fields are detected by their ``const`` (a single-valued
+    Literal). The version field is no longer a Literal -- it is a semver-pattern
+    string -- so it is special-cased **by name** (WIRE_VERSION_FIELD). Keying off
+    the name rather than a ``const`` is deliberate: it is what keeps ``version``
+    required-with-a-pattern once the Literal is gone, instead of silently
+    becoming optional-with-a-default and lying to every consumer.
     """
 
     for schema in defs.values():
@@ -86,7 +92,9 @@ def _require_const_props(defs: dict[str, Any]) -> None:
             continue
         required = set(schema.get("required", []))
         for name, prop in props.items():
-            if isinstance(prop, dict) and "const" in prop:
+            if not isinstance(prop, dict):
+                continue
+            if "const" in prop or name == WIRE_VERSION_FIELD:
                 required.add(name)
                 prop.pop("default", None)
         if required:
@@ -101,7 +109,7 @@ def build_schema() -> dict[str, Any]:
         ref_template="#/$defs/{model}",
     )
     if isinstance(top.get("$defs"), dict):
-        _require_const_props(top["$defs"])
+        _require_wire_mandatory_props(top["$defs"])
     doc: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": SCHEMA_ID,

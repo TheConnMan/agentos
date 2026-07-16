@@ -35,7 +35,7 @@ from .ndjson import (
     to_inbound_json,
     to_ndjson_line,
 )
-from .version import PROTOCOL_VERSION
+from .version import PROTOCOL_VERSION, is_compatible
 
 # A producer maps an inbound message to the NDJSON lines a runner emits for it.
 Producer = Callable[[Event | Interrupt], Iterable[str]]
@@ -102,8 +102,39 @@ def _reject_unknown_version() -> str:
     try:
         parse_ndjson_line(bad)
     except ProtocolVersionError:
-        return "unknown version rejected with ProtocolVersionError"
+        return "incompatible version rejected with ProtocolVersionError"
     raise AssertionError("a 9.9.9 version line was accepted; it must be rejected")
+
+
+def _accept_compatible_patch_version() -> str:
+    # A same-major-minor patch difference is not an error: a consumer speaking
+    # PROTOCOL_VERSION accepts a producer one patch ahead.
+    major, minor, patch = (int(p) for p in PROTOCOL_VERSION.split("."))
+    ahead = f"{major}.{minor}.{patch + 1}"
+    if not is_compatible(ahead, PROTOCOL_VERSION):  # pragma: no cover - guards the sample
+        raise AssertionError(f"{ahead} should be compatible with {PROTOCOL_VERSION}")
+    line = json.dumps({"type": "final", "version": ahead, "text": "x", "status": "done"})
+    decoded = parse_ndjson_line(line)
+    if decoded.version != ahead:
+        raise AssertionError(f"a compatible {ahead} line did not round-trip its version")
+    return f"compatible patch version {ahead} accepted"
+
+
+def _tolerate_unknown_field() -> str:
+    # Consumers accept and ignore unknown fields they do not model.
+    line = json.dumps(
+        {
+            "type": "final",
+            "version": PROTOCOL_VERSION,
+            "text": "x",
+            "status": "done",
+            "future_field": 1,
+        }
+    )
+    decoded = parse_ndjson_line(line)
+    if not isinstance(decoded, Final) or decoded.text != "x":
+        raise AssertionError("an unknown field was not tolerated on read")
+    return "unknown field tolerated on read"
 
 
 def _reject_missing_version() -> str:
@@ -130,7 +161,7 @@ def _producer_stream(producer: Producer) -> str:
                 f"ended in {events[-1].type!r}"
             )
         for event in events:
-            if event.version != PROTOCOL_VERSION:
+            if not is_compatible(event.version, PROTOCOL_VERSION):
                 raise AssertionError(f"producer emitted version {event.version!r} for {label}")
     return f"producer streams for {len(_INBOUND_SAMPLES)} inbound cases are well formed"
 
@@ -148,6 +179,8 @@ def run_conformance(producer: Producer | None = None) -> ConformanceReport:
         _check("inbound_roundtrip", _roundtrip_inbound),
         _check("reject_unknown_version", _reject_unknown_version),
         _check("reject_missing_version", _reject_missing_version),
+        _check("accept_compatible_patch_version", _accept_compatible_patch_version),
+        _check("tolerate_unknown_field", _tolerate_unknown_field),
     ]
     if producer is not None:
         checks.append(_check("producer_stream", lambda: _producer_stream(producer)))

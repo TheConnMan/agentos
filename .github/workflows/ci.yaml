@@ -78,6 +78,17 @@ jobs:
       - name: Migrate the shared database
         working-directory: apps/api
         run: uv run alembic upgrade head
+      # The committed-lock test only proves the lock matches the current wire; it
+      # passes even if the lock was regenerated without a version bump. Compare
+      # against the BASE branch's lock so an unbumped wire change actually fails
+      # CI. The shallow checkout has no base ref, so fetch it depth=1; a missing
+      # or empty base lock (base predates the lock) skips cleanly (exit 0), and
+      # only a genuine unbumped wire change vs an existing base lock exits 1.
+      - name: ACI wire-lock base gate
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref || 'main' }}" || true
+          git show "origin/${{ github.base_ref || 'main' }}:packages/aci-protocol/schema/wire.lock" > /tmp/base-wire.lock 2>/dev/null || true
+          uv run python -m aci_protocol.wire_lock --check-base /tmp/base-wire.lock
       - name: Pytest
         run: uv run pytest -q
       - name: Dump dev stack logs on failure
@@ -135,7 +146,7 @@ jobs:
         run: |
           npx --yes json-schema-to-typescript@15.0.4 \
             packages/aci-protocol/schema/aci-protocol.schema.json \
-            --unreachableDefinitions --no-additionalProperties=false \
+            --unreachableDefinitions \
             -o packages/aci-protocol/generated/ts/aci-protocol.ts
           git diff --exit-code -- packages/aci-protocol/generated/ts/aci-protocol.ts
       - name: tsc --noEmit on generated ACI types

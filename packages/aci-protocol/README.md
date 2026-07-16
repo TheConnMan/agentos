@@ -12,18 +12,21 @@ models are the source of truth, and the committed JSON Schema, generated
 TypeScript, and generated Rust are derived from them. The runner, worker, CLI,
 and UI all depend on it, so it never changes from a dependent lane; a needed
 change stops the task and lands as its own reviewed change (see the
-frozen-interface rule below). The wire contract is strict: the decoder accepts
-only events whose `version` equals `PROTOCOL_VERSION` (currently `0.1.0`) and
-raises `ProtocolVersionError` on anything else, with `version` typed as a
-`const` literal so an off-version value is rejected at construction. The 0.x
-line has no same-major looseness, so any protocol change is a `PROTOCOL_VERSION`
-bump and a hard break signaled by `ProtocolVersionError`; a looser same-major
-policy is planned for 1.0, and the schema-compat gate
-(`tests/test_schema_compat.py`) fails on any drift.
+frozen-interface rule below). The wire contract is **strict producers, tolerant
+consumers**: constructing an event with an unknown field is an error, but a
+consumer decoding the wire ignores fields it does not model, so a new optional
+field is genuinely backward compatible. The version is **semver**: the decoder
+accepts any wire version compatible with this build's `PROTOCOL_VERSION` (same
+`major.minor` under 0.x, same `major` from 1.0 on) and raises
+`ProtocolVersionError` on an incompatible or malformed one, naming both
+versions. The `version` field is a semver-pattern string, not a `const`, so the
+compatibility range means something. Artifact sync is enforced by the
+schema-compat gate (`tests/test_schema_compat.py`); an unbumped wire change is
+caught by the wire-lock gate (`tests/test_wire_lock.py`).
 
-## Contract surface (v0.1.0)
+## Contract surface (v0.2.0)
 
-`PROTOCOL_VERSION = "0.1.0"` is embedded in the schema and in every outbound
+`PROTOCOL_VERSION = "0.2.0"` is embedded in the schema and in every outbound
 event.
 
 **Session setup** (`SessionConfig`, with `to_env()` / `from_env()`):
@@ -108,21 +111,23 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
   failure surfaces as an `error` event plus a `final` with
   `status=classified-failure`. Wire tokens use hyphens (`idle-awaiting-input`,
   `classified-failure`) as spelled in section 0.
-- **Version policy is exact match for the 0.x line.** The decoder accepts only
-  events whose `version` equals `PROTOCOL_VERSION` and rejects anything else
-  with `ProtocolVersionError`. The `version` field is typed as the literal
-  `"0.1.0"`, so the models reject an off-version value at construction and the
-  JSON Schema and TypeScript express it as a `const`, not just any string. This
-  is the "reject unknown versions gracefully" requirement; a looser same-major
-  policy can come with 1.0.
+- **Version policy is semver compatibility, not exact match.** The decoder
+  accepts any wire version compatible with `PROTOCOL_VERSION` (same `major.minor`
+  under 0.x, same `major` from 1.0 on) via `is_compatible`, and rejects an
+  incompatible or malformed one with `ProtocolVersionError` naming both versions.
+  The `version` field is a semver-pattern string (not a `const`), so the JSON
+  Schema and TypeScript express the range while still requiring the field. See
+  `packages/CLAUDE.md` for the change-class table and `docs/adr/0036-*` for the
+  rationale.
 - **Whole-frame union types are exported.** The committed schema and generated
   TypeScript include `InboundMessage` (`Event | Interrupt`) and `OutboundEvent`
   (the five response events) as discriminated unions, so a consumer can type a
   full channel frame, not only the concrete variants. The generated Rust models
-  these as internally-tagged enums that enforce the same strictness as Python:
-  `deny_unknown_fields` on both structs and the tagged enums rejects extra keys,
-  and the `version` field decodes through a guard that rejects any value other
-  than `PROTOCOL_VERSION`.
+  these as internally-tagged enums whose read path matches Python: extra unknown
+  keys are tolerated (no `deny_unknown_fields`, since a consumer ignores fields
+  it does not model, while a Rust producer stays strict by construction), and
+  the `version` field decodes through `require_compatible_protocol_version`,
+  which rejects any value not compatible with `PROTOCOL_VERSION`.
 
 ## What consumers need to know
 

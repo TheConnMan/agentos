@@ -11,8 +11,9 @@ The frozen, cross-process ACI (Agent Container Interface) protocol — the stron
 system. It makes the whole **harness** swappable: anything inside the sandbox that speaks this
 wire contract (session setup env + NDJSON event union + steer/interrupt endpoints) can replace the
 default claude-agent-sdk runner without the worker, CLI, or UI changing. What stays opinionated
-core is the protocol itself: the event shapes, the `AGENTOS_*` env contract, and the strict
-`version` gate. A second harness produces the same bytes; it does not get to redefine them.
+core is the protocol itself: the event shapes, the `AGENTOS_*` env contract, and the
+compatibility-checked `version` gate. A second harness produces the same bytes; it does not get to
+redefine them.
 
 ## Current contract
 
@@ -22,7 +23,8 @@ live turn (409 if none running), `POST /v1/interrupt` hard-stops it. It streams 
 NDJSON discriminated union `OutboundEvent` (`packages/aci-protocol/src/aci_protocol/events.py:119`):
 `TextDelta` (`text_delta`, :76), `ToolNote` (`tool_note`, :83), `Final` (`final` + `status`, :91),
 `ErrorEvent` (`error` + `classification`, :99), `SideEffectFlag` (`side_effect_flag`, :107). Every
-outbound event carries `version` equal to `PROTOCOL_VERSION` and inbound frames are the
+outbound event carries `version` equal to the producer's exact build `PROTOCOL_VERSION`; a consumer
+accepts any `major.minor`-compatible version under 0.x (`major` after 1.0). Inbound frames are the
 `InboundMessage` union `Event | Interrupt` on the `kind` tag
 (`packages/aci-protocol/src/aci_protocol/events.py:64`, `:43`, `:55`). Setup is read from the
 environment via `SessionConfig.from_env` (`packages/aci-protocol/src/aci_protocol/session.py:96`),
@@ -42,8 +44,9 @@ CI-guarded by `packages/aci-protocol/tests/test_schema_compat.py`.
 Plugin-format entanglement: the ACI server must interpret Claude Code plugin bundles mounted at
 `AGENTOS_PLUGIN_DIR` (see the [bundle-format seam](../bundle-format/INTERFACE.md)), so a genuinely
 foreign harness inherits that shape too — the A- is docked for exactly this and for the
-SDK-shaped resume. Otherwise the line is clean and frozen: unknown wire versions raise
-`ProtocolVersionError`, and `extra="forbid"` rejects stray keys at construction.
+SDK-shaped resume. Otherwise the line is clean and frozen: a producer constructs strictly (stray
+keys are rejected at construction), while a consumer tolerates unknown fields and rejects only an
+**incompatible** wire version, raising `ProtocolVersionError` naming both versions (see ADR-0036).
 
 ## Cross-links
 

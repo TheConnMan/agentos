@@ -6,14 +6,44 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.1.0";
+pub const PROTOCOL_VERSION: &str = "0.2.0";
 
-fn require_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn parse_semver(value: &str) -> Option<(u64, u64)> {
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?;
+    if patch.is_empty() || !patch.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor))
+}
+
+fn is_compatible_protocol_version(wire: &str) -> bool {
+    let (w_major, w_minor) = match parse_semver(wire) {
+        Some(parsed) => parsed,
+        None => return false,
+    };
+    let (b_major, b_minor) = match parse_semver(PROTOCOL_VERSION) {
+        Some(parsed) => parsed,
+        None => return false,
+    };
+    if b_major == 0 {
+        w_major == 0 && w_minor == b_minor
+    } else {
+        w_major == b_major
+    }
+}
+
+fn require_compatible_protocol_version<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
-    if value != PROTOCOL_VERSION {
+    if !is_compatible_protocol_version(&value) {
         return Err(serde::de::Error::custom(format!(
             "unsupported protocol version {value:?}; this build speaks {PROTOCOL_VERSION:?}"
         )));
@@ -45,7 +75,6 @@ pub enum EventType {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Budget {
     pub max_output_tokens_per_run: i64,
     #[serde(default)]
@@ -54,7 +83,6 @@ pub struct Budget {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct OtelConfig {
     #[serde(default)]
     pub endpoint: Option<String>,
@@ -65,7 +93,6 @@ pub struct OtelConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     pub plugin_dir: String,
     pub session_id: String,
@@ -80,7 +107,6 @@ pub struct SessionConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ReplyHandle {
     pub channel: String,
     pub placeholder: String,
@@ -89,7 +115,6 @@ pub struct ReplyHandle {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct QueuedTurn {
     pub event_id: String,
     pub conversation_id: String,
@@ -100,7 +125,7 @@ pub struct QueuedTurn {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", deny_unknown_fields)]
+#[serde(tag = "kind")]
 pub enum InboundMessage {
     #[serde(rename = "event")]
     Event {
@@ -116,17 +141,17 @@ pub enum InboundMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", deny_unknown_fields)]
+#[serde(tag = "type")]
 pub enum OutboundEvent {
     #[serde(rename = "text_delta")]
     TextDelta {
-        #[serde(deserialize_with = "require_protocol_version")]
+        #[serde(deserialize_with = "require_compatible_protocol_version")]
         version: String,
         text: String,
     },
     #[serde(rename = "tool_note")]
     ToolNote {
-        #[serde(deserialize_with = "require_protocol_version")]
+        #[serde(deserialize_with = "require_compatible_protocol_version")]
         version: String,
         text: String,
         #[serde(default)]
@@ -134,7 +159,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "final")]
     Final {
-        #[serde(deserialize_with = "require_protocol_version")]
+        #[serde(deserialize_with = "require_compatible_protocol_version")]
         version: String,
         text: String,
         #[serde(default)]
@@ -146,7 +171,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "error")]
     ErrorEvent {
-        #[serde(deserialize_with = "require_protocol_version")]
+        #[serde(deserialize_with = "require_compatible_protocol_version")]
         version: String,
         message: String,
         #[serde(default)]
@@ -154,7 +179,7 @@ pub enum OutboundEvent {
     },
     #[serde(rename = "side_effect_flag")]
     SideEffectFlag {
-        #[serde(deserialize_with = "require_protocol_version")]
+        #[serde(deserialize_with = "require_compatible_protocol_version")]
         version: String,
         #[serde(default)]
         tool: Option<String>,
@@ -209,14 +234,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_off_version_event() {
+    fn rejects_incompatible_version_event() {
         let raw = r#"{"type":"final","version":"9.9.9","text":"x","status":"done"}"#;
         assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
     }
 
     #[test]
-    fn rejects_unknown_fields() {
-        let raw = r#"{"type":"final","version":"0.1.0","text":"x","status":"done","extra":1}"#;
+    fn rejects_incompatible_minor() {
+        let raw = r#"{"type":"final","version":"0.3.0","text":"x","status":"done"}"#;
         assert!(serde_json::from_str::<OutboundEvent>(raw).is_err());
+    }
+
+    #[test]
+    fn accepts_compatible_patch() {
+        let raw = r#"{"type":"final","version":"0.2.7","text":"x","status":"done"}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_ok());
+    }
+
+    #[test]
+    fn accepts_unknown_fields() {
+        let raw = r#"{"type":"final","version":"0.2.0","text":"x","status":"done","extra":1}"#;
+        assert!(serde_json::from_str::<OutboundEvent>(raw).is_ok());
     }
 }

@@ -1,9 +1,12 @@
-"""The compat gate: committed schema and generated Rust must match the models.
+"""The artifact-sync gate: committed schema and generated Rust match the models.
 
-If a model changes without regenerating the committed artifacts, these tests
-fail, which is the drift detection the frozen contract relies on. Regenerate
-with ``scripts/check-contracts.sh`` (or the two module entry points) and commit
-the result, bumping PROTOCOL_VERSION per the frozen-interface rule.
+These tests check *artifact sync* only: if a model changes without regenerating
+the committed schema or Rust, they fail. Regenerate with
+``scripts/check-contracts.sh`` (or the two module entry points) and commit the
+result. They do not, and cannot, judge backward compatibility -- a model change
+regenerates both sides and stays green. Compatibility is a policy defined by the
+semver change-class table (packages/CLAUDE.md); an *unbumped* wire change is
+caught separately by the wire-lock gate in ``tests/test_wire_lock.py``.
 
 The generated TypeScript compiles under tsc in CI (it needs a Node toolchain, so
 it is not regenerated here); its input is the same committed schema this gate
