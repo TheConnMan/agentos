@@ -126,8 +126,13 @@ pub fn resolve_image(override_: Option<&str>, channel: Channel, version: &str) -
     }
 
     match channel {
-        Channel::Release => format!("ghcr.io/curie-eng/agentos-runner:{version}"),
-        Channel::Dev => "agentos-runner".to_string(),
+        Channel::Release => {
+            format!(
+                "ghcr.io/curie-eng/{}:{version}",
+                crate::docker::RUNNER_IMAGE
+            )
+        }
+        Channel::Dev => crate::docker::RUNNER_IMAGE.to_string(),
     }
 }
 

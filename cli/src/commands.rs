@@ -378,7 +378,7 @@ pub async fn install(update: bool) -> Result<()> {
 
     // 5. Build the runner image via the existing `build` handler. Update mode
     // keeps reruns quick when the image is already present locally.
-    let runner_image = "agentos-runner";
+    let runner_image = docker::RUNNER_IMAGE;
     if update && docker_image_exists(runner_image).await? {
         ui.note(&format!(
             "=== runner image '{runner_image}' already exists; skipping rebuild for --update ==="
@@ -422,7 +422,7 @@ pub async fn update(image: bool) -> Result<()> {
     )
     .await?;
     if image {
-        build("agentos-runner").await?;
+        build(docker::RUNNER_IMAGE).await?;
     }
     ui.success("agentos updated. The new binary is live on your next `agentos` invocation.");
     Ok(())

@@ -11,6 +11,7 @@ use agentos::commands::{
     self, AgentActionOpts, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT,
 };
 use agentos::comms::{self, CommsOpts, LocalCommsOpts};
+use agentos::docker;
 use agentos::local::{self, LocalDownOpts, LocalOpts};
 use agentos::message::{self, MessageOpts};
 use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
@@ -149,7 +150,7 @@ enum Command {
     /// repo checkout.
     Build {
         /// Image tag to build.
-        #[arg(long, default_value = "agentos-runner")]
+        #[arg(long, default_value = docker::RUNNER_IMAGE)]
         tag: String,
     },
     /// Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).
@@ -266,7 +267,7 @@ enum SkillAction {
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
         /// Container name.
-        #[arg(long, default_value = "agentos-runner-local")]
+        #[arg(long, default_value = docker::RUNNER_CONTAINER_LOCAL)]
         name: String,
         /// Use the runner's scripted fake model (offline; no credential).
         #[arg(long)]

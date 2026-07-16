@@ -325,6 +325,15 @@ fn count_removed(rm_stdout: &str) -> usize {
 /// The label that worker-local stamps on every runner container it spawns.
 pub const SANDBOX_LABEL: &str = "agentos.dev/managed-by=agentos-sandbox-substrate";
 
+/// The runner image's short name (the dev/local tag, and the base of the GHCR
+/// release ref). One definition (#497) instead of the literal scattered across
+/// the artifact resolver, the boot path, and the clap defaults.
+pub const RUNNER_IMAGE: &str = "agentos-runner";
+
+/// The fixed container name for the single local/skill runner (`skill up` /
+/// `local` boot it, `skill down` reaps it). One definition (#497).
+pub const RUNNER_CONTAINER_LOCAL: &str = "agentos-runner-local";
+
 /// The last log lines of a container, for boot-failure diagnostics.
 pub async fn container_logs(name_or_id: &str, tail: u32) -> String {
     let args: Vec<String> = vec![

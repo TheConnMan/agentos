@@ -192,21 +192,6 @@ pub fn port_forward_command(
     )
 }
 
-/// `kubectl config view --minify -o jsonpath={...server}`: the kubeconfig's
-/// current-context API server URL, used to pick the local egress IP.
-fn server_url_command() -> OpsCommand {
-    OpsCommand::new(
-        "kubectl",
-        vec![
-            plain("config"),
-            plain("view"),
-            plain("--minify"),
-            plain("-o"),
-            plain("jsonpath={.clusters[0].cluster.server}"),
-        ],
-    )
-}
-
 /// The `/api/` base URL the worker posts its placeholder edits to.
 fn advertised_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}/api/")
@@ -393,7 +378,7 @@ async fn resolve_advertise_host(listen_host: Option<&str>) -> Result<String> {
     if let Some(host) = listen_host {
         return Ok(host.to_string());
     }
-    let (ok, out, err) = run_capture(&server_url_command()).await?;
+    let (ok, out, err) = run_capture(&crate::ops::kubeconfig_host_cmd()).await?;
     if !ok {
         bail!(
             "could not read the kubeconfig API server to auto-detect a routable host ({}); \

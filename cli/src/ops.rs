@@ -271,7 +271,12 @@ pub fn mask_secret(value: &str) -> String {
 /// POSIX shell-quote a single token: leave it bare when it is composed only of
 /// safe characters, otherwise wrap in single quotes (so `--set` keys carrying
 /// `[0]` array indices print quoted, matching how they must be typed).
-fn shell_quote(s: &str) -> String {
+/// POSIX single-quote an argument for a copy-pasteable command line, leaving
+/// unambiguously-safe tokens bare. The one canonical implementation (#497): the
+/// TUI command echo (`interactive::render_command`) and the helm/kubectl argv
+/// printers both call this, so an empty argument renders as `''` everywhere
+/// rather than silently vanishing (the interactive copy's empty-`all()` bug).
+pub(crate) fn shell_quote(s: &str) -> String {
     fn is_safe(c: char) -> bool {
         c.is_ascii_alphanumeric()
             || matches!(c, '_' | '.' | '/' | ':' | '=' | '@' | ',' | '-' | '+')
@@ -995,7 +1000,10 @@ fn svc_cmd(o: &CommonOpts, suffix: &str) -> OpsCommand {
     )
 }
 
-fn kubeconfig_host_cmd() -> OpsCommand {
+/// `kubectl config view --minify -o jsonpath={...server}`: the current-context
+/// API-server URL. The one canonical builder (#497) shared by the ops egress-IP
+/// resolution and the message driver's advertise-host detection.
+pub(crate) fn kubeconfig_host_cmd() -> OpsCommand {
     OpsCommand::new(
         "kubectl",
         vec![
@@ -1336,7 +1344,12 @@ pub async fn down(opts: DownOpts) -> Result<()> {
         "this uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'",
         opts.common.release, opts.common.namespace
     ));
-    if !opts.yes && !confirm(&opts.common)? {
+    if !opts.yes
+        && !confirm(&format!(
+            "This uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'. Continue? [y/N] ",
+            opts.common.release, opts.common.namespace
+        ))?
+    {
         ui.note("aborted");
         return Ok(());
     }
@@ -1375,10 +1388,13 @@ pub async fn down(opts: DownOpts) -> Result<()> {
 }
 
 /// Read a y/N confirmation from stderr/stdin for `down` when `--yes` is absent.
-fn confirm(o: &CommonOpts) -> Result<bool> {
+/// Prompt on stderr for a y/N confirmation of a destructive action, returning
+/// whether the operator affirmed. The one canonical implementation (#497): every
+/// destructive verb passes its own fully-formed prompt (ending in `[y/N] `). A
+/// non-interactive session (piped/agent stdin) can never answer, so it refuses
+/// with the `--yes` remediation instead of blocking on a read that never returns.
+pub(crate) fn confirm(prompt: &str) -> Result<bool> {
     use std::io::{IsTerminal, Write};
-    // An agent (or any piped stdin) can never answer this prompt; refuse instead
-    // of blocking on a read that will never complete. `--yes` is the non-interactive path.
     if !std::io::stdin().is_terminal() {
         return Err(crate::exit::CliError::usage(
             "refusing to prompt for confirmation in a non-interactive session; re-run with --yes to proceed",
@@ -1386,10 +1402,7 @@ fn confirm(o: &CommonOpts) -> Result<bool> {
         .with_fix("pass --yes")
         .into());
     }
-    eprint!(
-        "This uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'. Continue? [y/N] ",
-        o.release, o.namespace
-    );
+    eprint!("{prompt}");
     std::io::stderr().flush().ok();
     let mut line = String::new();
     std::io::stdin()
