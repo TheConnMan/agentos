@@ -24,9 +24,20 @@ pub const DEFAULT_COMPOSE_FILE: &str = "compose.dev.yaml";
 /// (started under `--minimal`); the rest are `full`-only and are hidden under
 /// `--minimal` so `up` never advertises a URL for a service it did not start.
 const ENDPOINTS: &[(&str, &str, bool)] = &[
-    ("AgentOS API", "http://localhost:28000", true),
-    ("AgentOS Console", "http://localhost:28080/?api=1", false),
-    ("Langfuse UI", "http://localhost:23000", false),
+    // The three observability port literals live once, in `observability.rs`
+    // (#460); these rows reference them so the two cannot drift. Values are
+    // unchanged, so `endpoints_match_compose_file` stays green.
+    ("AgentOS API", crate::observability::LOCAL_API_URL, true),
+    (
+        "AgentOS Console",
+        crate::observability::LOCAL_CONSOLE_URL,
+        false,
+    ),
+    (
+        "Langfuse UI",
+        crate::observability::LOCAL_LANGFUSE_URL,
+        false,
+    ),
     ("Postgres", "localhost:25432", true),
     ("Valkey", "localhost:26379", true),
     ("ClickHouse HTTP", "localhost:28123", false),

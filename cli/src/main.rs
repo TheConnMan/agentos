@@ -580,8 +580,14 @@ enum LocalAction {
         #[arg(long)]
         clear: bool,
     },
-    /// Open the local observability surfaces (AgentOS Console + Langfuse traces/cost).
-    Observability,
+    /// Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
+    Observability {
+        /// Also open the browsable surfaces in a browser. Off by default: the URLs
+        /// are printed and nothing is opened unless --open is passed, and --json
+        /// never opens a browser.
+        #[arg(long)]
+        open: bool,
+    },
     /// Set an agent's daily budget (`PUT /agents/{id}/budget`).
     Budget {
         /// Agent name or id.
@@ -719,6 +725,23 @@ enum ClusterAction {
         /// Print the read-only commands that would run and exit.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Show the release's observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
+    Observability {
+        /// Kubernetes namespace.
+        #[arg(long, default_value = "agentos")]
+        namespace: String,
+        /// Helm release name.
+        #[arg(long, default_value = "agentos")]
+        release: String,
+        /// Print the read-only discovery commands that would run and exit.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also open the browsable surfaces in a browser. Off by default: the URLs
+        /// are printed and nothing is opened unless --open is passed, and --json
+        /// never opens a browser.
+        #[arg(long)]
+        open: bool,
     },
     /// Connect or disconnect the cluster release from a real Slack workspace.
     Comms {
@@ -1367,7 +1390,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 gate,
                 clear,
             } => emit(commands::approvals(target.into(), gate, clear).await?),
-            LocalAction::Observability => emit(commands::observability().await?),
+            LocalAction::Observability { open } => emit(commands::observability(open).await?),
             LocalAction::Budget {
                 agent,
                 limit,
@@ -1508,6 +1531,22 @@ async fn run(command: Option<Command>) -> Result<()> {
                 })
                 .await
             }
+            ClusterAction::Observability {
+                namespace,
+                release,
+                dry_run,
+                open,
+            } => emit(
+                ops::observability(
+                    CommonOpts {
+                        namespace,
+                        release,
+                        dry_run,
+                    },
+                    open,
+                )
+                .await?,
+            ),
             ClusterAction::Comms {
                 slack,
                 disconnect,
@@ -2192,12 +2231,96 @@ mod tests {
                 .expect("local observability")
                 .command,
             Some(Command::Local {
-                action: LocalAction::Observability
+                action: LocalAction::Observability { .. }
             })
         ));
         // local budget/kill/resume are the mirrored lifecycle verbs.
         assert!(Cli::try_parse_from(["agentos", "local", "budget", "gh", "--limit", "1"]).is_ok());
         assert!(Cli::try_parse_from(["agentos", "local", "kill", "gh", "--yes"]).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Observability twin (issue #460): the `--open` gate is agent-first, so it
+    // must default OFF on both tiers, and `--json` is the global flag from #456.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn local_observability_open_flag_defaults_off_and_parses() {
+        // Bare `local observability` must NOT open a browser (agent-first default).
+        match Cli::try_parse_from(["agentos", "local", "observability"])
+            .expect("local observability")
+            .command
+        {
+            Some(Command::Local {
+                action: LocalAction::Observability { open },
+            }) => assert!(!open, "--open must default to false"),
+            _ => panic!("expected local observability command"),
+        }
+        // `--open` is the explicit human opt-in.
+        match Cli::try_parse_from(["agentos", "local", "observability", "--open"])
+            .expect("local observability --open")
+            .command
+        {
+            Some(Command::Local {
+                action: LocalAction::Observability { open },
+            }) => assert!(open, "--open must parse to true"),
+            _ => panic!("expected local observability command"),
+        }
+    }
+
+    #[test]
+    fn cluster_observability_parses_with_namespace_release_defaults() {
+        match Cli::try_parse_from(["agentos", "cluster", "observability"])
+            .expect("cluster observability")
+            .command
+        {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Observability {
+                        namespace,
+                        release,
+                        dry_run,
+                        open,
+                    },
+            }) => {
+                assert_eq!(namespace, "agentos");
+                assert_eq!(release, "agentos");
+                assert!(!dry_run);
+                assert!(!open, "--open must default to false");
+            }
+            _ => panic!("expected cluster observability command"),
+        }
+    }
+
+    #[test]
+    fn cluster_observability_accepts_the_global_json_flag() {
+        // `--json` is a GLOBAL flag on `Cli` (issue #456), not a subcommand flag,
+        // so it parses onto the top-level struct while the subcommand still binds.
+        let cli = Cli::try_parse_from(["agentos", "cluster", "observability", "--json"])
+            .expect("cluster observability --json");
+        assert!(cli.json, "--json must set the global json flag");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Cluster {
+                action: ClusterAction::Observability { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn cluster_observability_parses_open_and_dry_run_together() {
+        match Cli::try_parse_from(["agentos", "cluster", "observability", "--open", "--dry-run"])
+            .expect("cluster observability --open --dry-run")
+            .command
+        {
+            Some(Command::Cluster {
+                action: ClusterAction::Observability { dry_run, open, .. },
+            }) => {
+                assert!(dry_run, "--dry-run must parse to true");
+                assert!(open, "--open must parse to true");
+            }
+            _ => panic!("expected cluster observability command"),
+        }
     }
 
     #[test]

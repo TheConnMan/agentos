@@ -1599,30 +1599,26 @@ async fn print_service_url(o: &CommonOpts, suffix: &str, label: &str, host: &str
         ui.kv(label, &format!("service {name} not found"));
         return;
     }
-    let suffix_path = if api { "/?api=1" } else { "" };
-    match parse_service(&out) {
-        Some((svc_type, node_port, _port)) if svc_type == "NodePort" => {
-            if let Some(np) = node_port {
-                ui.kv(label, &ui.url(&node_http_url(host, np, suffix_path)));
-            } else {
-                ui.kv(
-                    label,
-                    &format!("service {name} is NodePort but exposes no nodePort yet"),
-                );
-            }
-        }
-        Some((_, _, port)) => {
-            let local = if port == 0 { 8080 } else { port };
-            let target = ui.url(&format!("http://localhost:{local}{suffix_path}"));
-            ui.kv(
-                label,
-                &format!(
-                    "kubectl -n {} port-forward svc/{name} {local}:{port}  then {target}",
-                    o.namespace
-                ),
-            );
-        }
-        None => ui.kv(label, &format!("could not read service {name}")),
+    let suffix_path = api_suffix_path(api);
+    // Same discovery core as `cluster observability` (#460); this formatter owns
+    // the wording, so the status output stays byte-identical.
+    match resolve_service_endpoint(&out, host, api) {
+        ServiceEndpoint::NodePortUrl(url) => ui.kv(label, &ui.url(&url)),
+        ServiceEndpoint::UnassignedNodePort => ui.kv(
+            label,
+            &format!("service {name} is NodePort but exposes no nodePort yet"),
+        ),
+        ServiceEndpoint::PortForwardHint { local, port } => ui.kv(
+            label,
+            &port_forward_hint_with(
+                &o.namespace,
+                &name,
+                local,
+                port,
+                &ui.url(&format!("http://localhost:{local}{suffix_path}")),
+            ),
+        ),
+        ServiceEndpoint::Unreadable => ui.kv(label, &format!("could not read service {name}")),
     }
 }
 
@@ -1638,6 +1634,271 @@ fn parse_service(svc_json: &str) -> Option<(String, Option<u16>, u16)> {
         .map(|p| p as u16);
     let port = first_port.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
     Some((svc_type, node_port, port))
+}
+
+// ---------------------------------------------------------------------------
+// Observability twin (issue #460).
+// ---------------------------------------------------------------------------
+
+/// Structured result of resolving one service's access endpoint.
+///
+/// A pure, structured value rather than a pre-formatted string: the caller owns
+/// all formatting, because `cluster status`'s notes embed the service **name**
+/// and its ClusterIP hint embeds **namespace + name** plus a styled `ui.url(..)`
+/// mid-string. Pre-formatting that into a plain URL would break the PR#34
+/// "status output visually unchanged" prior intent.
+///
+/// The four variants map the exact `parse_service` match arms in
+/// `print_service_url`; the svc-fetch-failure / `!ok` "service not found" arms
+/// stay in the async wrapper, before any JSON exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceEndpoint {
+    /// NodePort-exposed: a fully built URL via `node_http_url(host, np, path)`.
+    NodePortUrl(String),
+    /// Type NodePort but no nodePort assigned yet.
+    UnassignedNodePort,
+    /// ClusterIP/other: reachable only via a port-forward.
+    /// `local = if port == 0 { 8080 } else { port }`.
+    PortForwardHint { local: u16, port: u16 },
+    /// `parse_service` returned None (malformed/unreadable JSON).
+    Unreadable,
+}
+
+/// The path suffix that selects the console's API-backed view.
+fn api_suffix_path(api: bool) -> &'static str {
+    if api {
+        "/?api=1"
+    } else {
+        ""
+    }
+}
+
+/// Pure discovery core shared by `cluster status` and `cluster observability`:
+/// map a service's JSON + a resolved node host to a structured endpoint.
+/// `api` appends the Console's `/?api=1` suffix path.
+fn resolve_service_endpoint(svc_json: &str, host: &str, api: bool) -> ServiceEndpoint {
+    let path = api_suffix_path(api);
+    match parse_service(svc_json) {
+        Some((svc_type, node_port, _)) if svc_type == "NodePort" => match node_port {
+            Some(np) => ServiceEndpoint::NodePortUrl(node_http_url(host, np, path)),
+            None => ServiceEndpoint::UnassignedNodePort,
+        },
+        Some((_, _, port)) => ServiceEndpoint::PortForwardHint {
+            local: if port == 0 { 8080 } else { port },
+            port,
+        },
+        None => ServiceEndpoint::Unreadable,
+    }
+}
+
+/// The port-forward hint wording. `target` is the already-rendered URL text --
+/// plain for machine payloads, styled for human output -- so the wording cannot
+/// drift between the two callers.
+fn port_forward_hint_with(ns: &str, name: &str, local: u16, port: u16, target: &str) -> String {
+    format!("kubectl -n {ns} port-forward svc/{name} {local}:{port}  then {target}")
+}
+
+/// Plain, machine-safe hint (no ANSI): used for the observability `Endpoint.note`
+/// that `--json` serializes.
+fn port_forward_hint(ns: &str, name: &str, local: u16, port: u16, path: &str) -> String {
+    port_forward_hint_with(
+        ns,
+        name,
+        local,
+        port,
+        &format!("http://localhost:{local}{path}"),
+    )
+}
+
+/// The platform API service's port (`{release}-api`, `api.service.port` in the
+/// chart). Owned here so the port-forward hint carries no bare literal.
+const API_SERVICE_PORT: u16 = 8000;
+
+/// Map the UI service JSON + node host to the cluster's **API base** endpoint:
+/// the UI `/api` proxy URL (the in-cluster way to reach the platform API, #360),
+/// which is never browsable. Degrades to a `note` endpoint on any error.
+///
+/// The notes are minted here rather than borrowed from `ui_api_url_from_parts`
+/// on purpose: that helper speaks `cluster deploy`'s error vocabulary, where
+/// `--api-url` is a real escape hatch. `cluster observability` has no such flag,
+/// so its rows must never name it. Instead the row reports the true condition
+/// (`ui` service missing) or hands back an actionable port-forward for the API
+/// service -- plain text, since `--json` serializes this note.
+fn api_base_endpoint(
+    o: &CommonOpts,
+    ui_svc_json: Option<&str>,
+    host: Option<&str>,
+) -> crate::observability::Endpoint {
+    let row = |url, note| crate::observability::Endpoint {
+        name: "AgentOS API".to_string(),
+        url,
+        note,
+        browsable: false,
+    };
+    let Some(ui_svc_json) = ui_svc_json else {
+        return row(None, Some(format!("service {}-ui not found", o.release)));
+    };
+    match ui_api_url_from_parts(ui_svc_json, host) {
+        Ok(url) => row(Some(url), None),
+        // Any other failure -- ClusterIP / `--no-expose` (a supported install
+        // mode), an unassigned nodePort, an unreadable service, or an
+        // unresolvable host -- still leaves a way in: port-forward the API
+        // service directly.
+        Err(_) => row(
+            None,
+            Some(port_forward_hint(
+                &o.namespace,
+                &format!("{}-api", o.release),
+                API_SERVICE_PORT,
+                API_SERVICE_PORT,
+                "",
+            )),
+        ),
+    }
+}
+
+/// Map one release service to an observability [`Endpoint`], degrading to a
+/// `note` row (never a hard failure, never a message smuggled into `url`) when
+/// the service is missing, unsettled, unreadable, or reachable only by a
+/// port-forward.
+fn service_surface(
+    o: &CommonOpts,
+    suffix: &str,
+    name: &str,
+    svc_json: Option<&str>,
+    host: Option<&str>,
+    api: bool,
+) -> crate::observability::Endpoint {
+    let svc_name = format!("{}-{}", o.release, suffix);
+    let degraded = |note: String| crate::observability::Endpoint {
+        name: name.to_string(),
+        url: None,
+        note: Some(note),
+        browsable: false,
+    };
+    let Some(svc_json) = svc_json else {
+        return degraded(format!("service {svc_name} not found"));
+    };
+    let Some(host) = host else {
+        return degraded(format!(
+            "could not determine a node host to reach service {svc_name}"
+        ));
+    };
+    match resolve_service_endpoint(svc_json, host, api) {
+        ServiceEndpoint::NodePortUrl(url) => crate::observability::Endpoint {
+            name: name.to_string(),
+            url: Some(url),
+            note: None,
+            browsable: true,
+        },
+        ServiceEndpoint::UnassignedNodePort => degraded(format!(
+            "service {svc_name} is NodePort but exposes no nodePort yet"
+        )),
+        ServiceEndpoint::PortForwardHint { local, port } => degraded(port_forward_hint(
+            &o.namespace,
+            &svc_name,
+            local,
+            port,
+            api_suffix_path(api),
+        )),
+        ServiceEndpoint::Unreadable => degraded(format!("could not read service {svc_name}")),
+    }
+}
+
+/// Fetch one release service's JSON, or None when kubectl cannot read it.
+async fn fetch_service(o: &CommonOpts, suffix: &str) -> Option<String> {
+    match run_capture(&svc_cmd(o, suffix)).await {
+        Ok((true, out, _)) => Some(out),
+        _ => None,
+    }
+}
+
+/// The cluster tier's three observability surfaces (payload parity with local):
+/// Console via the `ui` service, Langfuse via `langfuse-web`, and the API base
+/// via the UI `/api` proxy. Degrades per endpoint; never hard-fails.
+pub async fn cluster_observability_endpoints(
+    opts: &CommonOpts,
+) -> Vec<crate::observability::Endpoint> {
+    // Deliberately `resolve_node_host()` (Option -> a degraded note), NOT
+    // `cluster status`'s `discover_host()` (which fabricates `localhost` when
+    // neither the kubeconfig server URL nor a node InternalIP is readable).
+    // This twin's primary consumer is a coding agent reading `--json`
+    // (ADR-0021/0038), and a `localhost` URL that will not resolve is worse for
+    // it than an explicit note saying the host could not be determined. It also
+    // matches the `resolve_node_host()`+Option pattern #360 set for every
+    // URL-producing path (`discover_ui_api_url`) and the `api_base_endpoint`
+    // row. `cluster status` stays human-facing and keeps its display
+    // convenience.
+    let (host, ui_svc, langfuse_svc) = tokio::join!(
+        resolve_node_host(),
+        fetch_service(opts, "ui"),
+        fetch_service(opts, "langfuse-web"),
+    );
+    vec![
+        service_surface(
+            opts,
+            "ui",
+            "AgentOS Console",
+            ui_svc.as_deref(),
+            host.as_deref(),
+            true,
+        ),
+        service_surface(
+            opts,
+            "langfuse-web",
+            "Langfuse UI (traces / cost / evals)",
+            langfuse_svc.as_deref(),
+            host.as_deref(),
+            false,
+        ),
+        api_base_endpoint(opts, ui_svc.as_deref(), host.as_deref()),
+    ]
+}
+
+/// The read-only commands `agentos cluster observability` runs (and prints under
+/// `--dry-run`).
+///
+/// A superset of what actually runs, not a 1:1 trace: `resolve_node_host` only
+/// falls through to `nodes_cmd()` when `kubeconfig_host_cmd()` yields no host.
+pub fn observability_commands(o: &CommonOpts) -> Vec<OpsCommand> {
+    vec![
+        kubeconfig_host_cmd(),
+        nodes_cmd(),
+        svc_cmd(o, "ui"),
+        svc_cmd(o, "langfuse-web"),
+    ]
+}
+
+/// `cluster observability`: resolve the release's observability surfaces with
+/// the same discovery `cluster status` does, and return them for `emit`.
+///
+/// Agent-first: a browser is opened only when the human passes `--open`, and
+/// never under `--json`.
+pub async fn observability(
+    opts: CommonOpts,
+    open: bool,
+) -> Result<crate::observability::ObservabilityOutput> {
+    if opts.dry_run {
+        return Ok(crate::observability::ObservabilityOutput::DryRun(
+            crate::ui::DryRunPlan {
+                lines: observability_commands(&opts)
+                    .iter()
+                    .map(|cmd| cmd.display())
+                    .collect(),
+            },
+        ));
+    }
+    require_on_path("kubectl")?;
+    let surfaces = cluster_observability_endpoints(&opts).await;
+    let ui = crate::ui::ui();
+    crate::observability::open_endpoints(&surfaces, open, ui.json()).await;
+    // The cluster counterpart of the local tier's hint: stderr guidance, not
+    // payload, since resolving a service says nothing about whether the release
+    // is actually serving.
+    ui.note("start these surfaces with `agentos cluster up` if they are unreachable");
+    Ok(crate::observability::ObservabilityOutput::Surfaces(
+        surfaces,
+    ))
 }
 
 #[cfg(test)]
@@ -2773,6 +3034,328 @@ mod tests {
         let err =
             ui_api_url_from_parts("", Some("10.0.0.5")).expect_err("malformed JSON must error");
         assert!(err.to_string().contains("--api-url"), "{err}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Observability twin (issue #460): the pure discovery core that both
+    // `cluster status` and `cluster observability` build on. Only the kubectl
+    // boundary is mocked -- by feeding the service JSON strings kubectl returns.
+    // -----------------------------------------------------------------------
+
+    /// The NodePort service fixture kubectl returns for an exposed service.
+    const NODEPORT_SVC: &str =
+        r#"{"spec":{"type":"NodePort","ports":[{"port":80,"nodePort":31234}]}}"#;
+
+    /// The ClusterIP service fixture kubectl returns for a `--no-expose` install.
+    const CLUSTERIP_SVC: &str = r#"{"spec":{"type":"ClusterIP","ports":[{"port":3000}]}}"#;
+
+    #[test]
+    fn resolve_service_endpoint_nodeport_builds_the_node_url() {
+        // api=true appends the Console's `/?api=1` suffix path.
+        assert_eq!(
+            resolve_service_endpoint(NODEPORT_SVC, "10.0.0.5", true),
+            ServiceEndpoint::NodePortUrl("http://10.0.0.5:31234/?api=1".to_string())
+        );
+        // api=false yields the bare node URL -- no `?api=1`.
+        assert_eq!(
+            resolve_service_endpoint(NODEPORT_SVC, "10.0.0.5", false),
+            ServiceEndpoint::NodePortUrl("http://10.0.0.5:31234".to_string())
+        );
+        // An IPv6 host is bracketed so the authority stays valid (via node_http_url).
+        assert_eq!(
+            resolve_service_endpoint(NODEPORT_SVC, "::1", true),
+            ServiceEndpoint::NodePortUrl("http://[::1]:31234/?api=1".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_service_endpoint_clusterip_yields_a_port_forward_hint() {
+        // ClusterIP: not node-exposed, so the caller must port-forward. The local
+        // port mirrors the service port.
+        let clusterip = r#"{"spec":{"type":"ClusterIP","ports":[{"port":80}]}}"#;
+        assert_eq!(
+            resolve_service_endpoint(clusterip, "10.0.0.5", true),
+            ServiceEndpoint::PortForwardHint {
+                local: 80,
+                port: 80
+            }
+        );
+        // An absent port parses as 0, which falls back to local port 8080.
+        let no_port = r#"{"spec":{"type":"ClusterIP","ports":[{}]}}"#;
+        assert_eq!(
+            resolve_service_endpoint(no_port, "10.0.0.5", true),
+            ServiceEndpoint::PortForwardHint {
+                local: 8080,
+                port: 0
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_service_endpoint_boundary_variants_do_not_panic() {
+        // NodePort type but the nodePort is not assigned yet (release settling).
+        let unassigned = r#"{"spec":{"type":"NodePort","ports":[{"port":80}]}}"#;
+        assert_eq!(
+            resolve_service_endpoint(unassigned, "10.0.0.5", true),
+            ServiceEndpoint::UnassignedNodePort
+        );
+        // Malformed / empty JSON is unreadable, never a panic.
+        assert_eq!(
+            resolve_service_endpoint("", "10.0.0.5", true),
+            ServiceEndpoint::Unreadable
+        );
+        assert_eq!(
+            resolve_service_endpoint("{not json", "10.0.0.5", true),
+            ServiceEndpoint::Unreadable
+        );
+        // Well-formed JSON with no spec is also unreadable.
+        assert_eq!(
+            resolve_service_endpoint(r#"{"metadata":{"name":"ui"}}"#, "10.0.0.5", true),
+            ServiceEndpoint::Unreadable
+        );
+    }
+
+    #[test]
+    fn port_forward_hint_reproduces_the_status_hint_text() {
+        // The exact hint `cluster status` prints today for a ClusterIP service
+        // (PR#34 visual-parity guard): two spaces before `then`.
+        assert_eq!(
+            port_forward_hint("agentos", "agentos-ui", 80, 80, "/?api=1"),
+            "kubectl -n agentos port-forward svc/agentos-ui 80:80  then http://localhost:80/?api=1"
+        );
+        // The 0-port fallback surfaces local 8080 while still forwarding to 0.
+        assert_eq!(
+            port_forward_hint("agentos", "agentos-langfuse-web", 8080, 0, ""),
+            "kubectl -n agentos port-forward svc/agentos-langfuse-web 8080:0  then http://localhost:8080"
+        );
+    }
+
+    #[test]
+    fn api_base_endpoint_maps_ui_service_to_a_non_browsable_api_endpoint() {
+        // A NodePort ui service resolves to the UI /api proxy URL (#360) and is
+        // NEVER browsable -- it is an agent target, not a webapp.
+        let ep = api_base_endpoint(&common(), Some(NODEPORT_SVC), Some("10.0.0.5"));
+        assert_eq!(ep.name, "AgentOS API");
+        assert_eq!(ep.url.as_deref(), Some("http://10.0.0.5:31234/api"));
+        assert_eq!(ep.note, None);
+        assert!(!ep.browsable);
+    }
+
+    #[test]
+    fn api_base_endpoint_degrades_to_a_note_when_the_ui_service_is_unreadable() {
+        // Unreadable ui service: degrade to a note endpoint rather than failing
+        // the whole command, and never smuggle the message into `url`.
+        let ep = api_base_endpoint(&common(), Some(""), Some("10.0.0.5"));
+        assert_eq!(ep.name, "AgentOS API");
+        assert_eq!(ep.url, None, "a degraded endpoint must not carry a url");
+        assert!(
+            ep.note.is_some(),
+            "a degraded endpoint must explain itself in `note`"
+        );
+        assert!(!ep.browsable);
+    }
+
+    /// The API-base row must NEVER name `--api-url`: `cluster observability`
+    /// has no such flag (only --namespace/--release/--dry-run/--open), so the
+    /// hint inherited from `cluster deploy`'s error vocabulary is dead here.
+    fn assert_no_api_url_hint(ep: &crate::observability::Endpoint) {
+        let note = ep.note.as_deref().unwrap_or("");
+        assert!(
+            !note.contains("--api-url"),
+            "`cluster observability` has no --api-url flag; dead hint in: {note}"
+        );
+    }
+
+    #[test]
+    fn api_base_endpoint_reports_a_missing_ui_service_as_not_found() {
+        // Not "could not read" (the deploy-path wording): the true condition is
+        // not-found, and this row must agree with the `ui` row from
+        // `service_surface`.
+        let ep = api_base_endpoint(&common(), None, Some("10.0.0.5"));
+        assert_eq!(ep.url, None);
+        assert_eq!(ep.note.as_deref(), Some("service agentos-ui not found"));
+        assert!(!ep.browsable);
+        assert_no_api_url_hint(&ep);
+    }
+
+    #[test]
+    fn api_base_endpoint_hints_a_port_forward_for_a_clusterip_ui_service() {
+        // `--no-expose` is a supported install mode, so this is a real path,
+        // not an error: hand back an actionable port-forward for the API
+        // service instead of deploy's dead --api-url hint.
+        let ep = api_base_endpoint(&common(), Some(CLUSTERIP_SVC), Some("10.0.0.5"));
+        assert_eq!(ep.url, None);
+        assert_eq!(
+            ep.note.as_deref(),
+            Some("kubectl -n agentos port-forward svc/agentos-api 8000:8000  then http://localhost:8000")
+        );
+        assert!(!ep.browsable);
+        assert_no_api_url_hint(&ep);
+    }
+
+    #[test]
+    fn api_base_endpoint_notes_stay_plain_for_the_json_payload() {
+        // `Ui::emit_json` documents the payload as machine-consumed: no ANSI.
+        for ep in [
+            api_base_endpoint(&common(), None, Some("10.0.0.5")),
+            api_base_endpoint(&common(), Some(CLUSTERIP_SVC), Some("10.0.0.5")),
+            api_base_endpoint(&common(), Some(""), Some("10.0.0.5")),
+            api_base_endpoint(&common(), Some(NODEPORT_SVC), None),
+        ] {
+            let note = ep.note.as_deref().unwrap_or("");
+            assert!(
+                !note.contains('\u{1b}'),
+                "note must carry no ANSI: {note:?}"
+            );
+            assert_no_api_url_hint(&ep);
+        }
+    }
+
+    #[test]
+    fn api_base_endpoint_hints_a_port_forward_when_the_host_is_unresolvable() {
+        let ep = api_base_endpoint(&common(), Some(NODEPORT_SVC), None);
+        assert_eq!(ep.url, None);
+        assert_eq!(
+            ep.note.as_deref(),
+            Some("kubectl -n agentos port-forward svc/agentos-api 8000:8000  then http://localhost:8000")
+        );
+        assert!(!ep.browsable);
+        assert_no_api_url_hint(&ep);
+    }
+
+    // ---- service_surface: the whole cluster-tier ServiceEndpoint -> Endpoint
+    // mapper. It decides url-vs-note and owns `browsable`, the --open gate.
+
+    #[test]
+    fn service_surface_maps_a_nodeport_service_to_a_browsable_url_row() {
+        let ep = service_surface(
+            &common(),
+            "ui",
+            "AgentOS Console",
+            Some(NODEPORT_SVC),
+            Some("10.0.0.5"),
+            true,
+        );
+        assert_eq!(ep.name, "AgentOS Console");
+        assert_eq!(ep.url.as_deref(), Some("http://10.0.0.5:31234/?api=1"));
+        assert_eq!(ep.note, None);
+        assert!(ep.browsable, "a resolved NodePort URL is the --open target");
+    }
+
+    #[test]
+    fn service_surface_degrades_when_the_service_is_not_found() {
+        let ep = service_surface(
+            &common(),
+            "ui",
+            "AgentOS Console",
+            None,
+            Some("10.0.0.5"),
+            true,
+        );
+        assert_eq!(ep.url, None, "a degraded row must never carry a url");
+        assert_eq!(ep.note.as_deref(), Some("service agentos-ui not found"));
+        assert!(!ep.browsable, "--open must not fire on a degraded row");
+    }
+
+    #[test]
+    fn service_surface_degrades_when_the_node_host_is_unresolvable() {
+        // Pins the deliberate divergence from `cluster status`: this twin does
+        // NOT inherit `discover_host()`'s `localhost` fallback, so an
+        // unresolvable host is an explicit note, never a fabricated URL.
+        let ep = service_surface(
+            &common(),
+            "ui",
+            "AgentOS Console",
+            Some(NODEPORT_SVC),
+            None,
+            true,
+        );
+        assert_eq!(ep.url, None, "must not fabricate a localhost URL");
+        assert_eq!(
+            ep.note.as_deref(),
+            Some("could not determine a node host to reach service agentos-ui")
+        );
+        assert!(!ep.browsable);
+    }
+
+    #[test]
+    fn service_surface_degrades_an_unassigned_nodeport_to_a_note() {
+        let unassigned = r#"{"spec":{"type":"NodePort","ports":[{"port":80}]}}"#;
+        let ep = service_surface(
+            &common(),
+            "ui",
+            "AgentOS Console",
+            Some(unassigned),
+            Some("10.0.0.5"),
+            true,
+        );
+        assert_eq!(ep.url, None);
+        assert_eq!(
+            ep.note.as_deref(),
+            Some("service agentos-ui is NodePort but exposes no nodePort yet")
+        );
+        assert!(!ep.browsable);
+    }
+
+    #[test]
+    fn service_surface_maps_a_clusterip_service_to_a_plain_port_forward_note() {
+        let ep = service_surface(
+            &common(),
+            "langfuse-web",
+            "Langfuse UI",
+            Some(CLUSTERIP_SVC),
+            Some("10.0.0.5"),
+            false,
+        );
+        assert_eq!(ep.url, None);
+        let note = ep.note.as_deref().expect("a port-forward hint");
+        assert_eq!(
+            note,
+            "kubectl -n agentos port-forward svc/agentos-langfuse-web 3000:3000  then http://localhost:3000"
+        );
+        // Serialized into the --json payload, which is machine-consumed.
+        assert!(
+            !note.contains('\u{1b}'),
+            "note must carry no ANSI: {note:?}"
+        );
+        assert!(!ep.browsable, "a port-forward row is not a browser target");
+    }
+
+    #[test]
+    fn service_surface_degrades_an_unreadable_service_to_a_note() {
+        let ep = service_surface(
+            &common(),
+            "ui",
+            "AgentOS Console",
+            Some("{not json"),
+            Some("10.0.0.5"),
+            true,
+        );
+        assert_eq!(ep.url, None);
+        assert_eq!(
+            ep.note.as_deref(),
+            Some("could not read service agentos-ui")
+        );
+        assert!(!ep.browsable);
+    }
+
+    #[test]
+    fn observability_dry_run_plan_lists_the_read_only_lookups() {
+        let lines: Vec<String> = observability_commands(&common())
+            .iter()
+            .map(|c| c.display())
+            .collect();
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l.contains("get svc agentos-ui")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("get svc agentos-langfuse-web")),
+            "{lines:?}"
+        );
     }
 
     // -----------------------------------------------------------------------
