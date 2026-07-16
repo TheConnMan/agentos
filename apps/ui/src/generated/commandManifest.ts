@@ -622,6 +622,18 @@ export const commandManifest = {
               "required": false
             },
             {
+              "global": false,
+              "help": "The stack runs only the 7 core services (skip Langfuse/ClickHouse/OTel/UI). Must match how `local up` brought it up",
+              "id": "minimal",
+              "long": "minimal",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
               "default_values": [
                 ""
               ],

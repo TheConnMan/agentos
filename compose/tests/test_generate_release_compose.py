@@ -224,6 +224,34 @@ def env_map(spec):
     return out
 
 
+SHELL_DEFAULT_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?-(.*)\}$")
+
+
+def resolve_shell_default(value):
+    """Resolve compose's `${VAR:-default}` / `${VAR-default}` forms to the default
+    an operator gets with nothing exported in their shell.
+
+    `env_map` returns the raw literal from compose.dev.yaml, so a var written as
+    `${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}` comes back as
+    that literal string, not the resolved endpoint. The acceptance criterion
+    here is about what a plain `agentos local up` does with no shell overrides,
+    so the default inside the wrapper is the value under test, not the wrapper. A
+    plain literal (no `${...}` wrapper) passes through untouched.
+
+    Both forms appear on purpose and resolve identically for THIS helper's
+    question (nothing exported), so both are accepted: `:-` substitutes the
+    default when the var is unset OR empty, while `-` substitutes only when it is
+    UNSET. The endpoint uses the `-` form specifically so `agentos local up
+    --minimal` can suppress it with an explicit empty override; under `:-` an
+    empty value could never mean "no endpoint". Still intentionally narrow: no
+    `${VAR}`, `${VAR:?err}`, or nested forms.
+    """
+    if value is None:
+        return None
+    match = SHELL_DEFAULT_RE.match(value)
+    return match.group(1) if match else value
+
+
 def compose_docs():
     """The dev document and the generated release document, parsed and labelled."""
     generate = load_generate()
@@ -311,6 +339,55 @@ def test_worker_api_base_url_stays_host_local():
             f"{label}: agentos-worker AGENTOS_API_BASE_URL is "
             f"{env.get('AGENTOS_API_BASE_URL')!r}, expected http://localhost:28000 "
             f"(host-networked: the published port is the correct form here)"
+        )
+
+
+def collector_http_port():
+    """The port the shipped collector actually listens on for OTLP/HTTP.
+
+    Read from the collector's own config rather than hardcoded, so moving the
+    receiver port without repointing the worker fails here instead of shipping a
+    worker aimed at a closed port. The collector serves OTLP over both gRPC
+    (4317) and HTTP (4318); the worker's endpoint is an `http://` URL, so the
+    http receiver is the one it must match.
+    """
+    protocols = yaml.safe_load(OTEL_TEXT)["receivers"]["otlp"]["protocols"]
+    return protocols["http"]["endpoint"].rsplit(":", 1)[1]
+
+
+def test_worker_traces_to_shipped_collector_by_default():
+    """The worker exports traces to the collector this file ships, by default.
+
+    #545: `agentos local up` boots otel-collector + Langfuse, but the deployed
+    local tier exported ZERO traces because agentos-worker was never given
+    OTEL_EXPORTER_OTLP_ENDPOINT, and AGENTOS_DOCKER_NETWORK defaulted to empty
+    so spawned sandbox containers could not resolve otel-collector by name.
+    Both must default to values that work with no manual flags, matching the
+    documented manual recipe (README.md).
+
+    This pins the DEFAULT (full-profile) `agentos local up`. `--minimal` selects
+    the `core` profile, which starts no collector, and suppresses the endpoint by
+    exporting it empty -- see `up_minimal_suppresses_otel_endpoint` in
+    cli/src/local.rs, which is where the profile choice lives.
+    """
+    expected = f"http://otel-collector:{collector_http_port()}"
+    for label, doc in compose_docs():
+        assert "otel-collector" in doc["services"], (
+            f"{label}: otel-collector service not found in the compose document"
+        )
+        env = env_map(doc["services"]["agentos-worker"])
+        otel_endpoint = resolve_shell_default(env.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
+        assert otel_endpoint == expected, (
+            f"{label}: agentos-worker OTEL_EXPORTER_OTLP_ENDPOINT resolves to "
+            f"{otel_endpoint!r}, expected {expected!r} (the collector's own "
+            f"OTLP/HTTP receiver); traces from spawned sandbox containers have "
+            f"nowhere to go"
+        )
+        docker_network = resolve_shell_default(env.get("AGENTOS_DOCKER_NETWORK"))
+        assert docker_network == "agentos_default", (
+            f"{label}: agentos-worker AGENTOS_DOCKER_NETWORK resolves to "
+            f"{docker_network!r}, expected agentos_default so spawned sandbox "
+            f"containers can resolve otel-collector by name"
         )
 
 
