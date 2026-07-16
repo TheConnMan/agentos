@@ -508,6 +508,110 @@ enum LocalAction {
         #[arg(long = "secret", value_name = "NAME")]
         secret: Vec<String>,
     },
+    /// List an agent's immutable versions (`GET /agents/{id}/versions`).
+    Versions {
+        /// Agent name or id.
+        agent: String,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show what an agent has learned (its memory log; `GET /agents/{id}/memory`).
+    Memory {
+        /// Agent name or id.
+        agent: String,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// View or set the tools whose calls require human approval (`PATCH /agents/{id}`).
+    Approvals {
+        /// Agent name or id.
+        agent: String,
+        /// Tool name to gate behind approval (repeatable). Omit to show current gates.
+        #[arg(long = "gate", value_name = "TOOL")]
+        gate: Vec<String>,
+        /// Clear all approval gates on the agent.
+        #[arg(long)]
+        clear: bool,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Open the local observability surfaces (AgentOS Console + Langfuse traces/cost).
+    Observability,
+    /// Set an agent's daily budget (`PUT /agents/{id}/budget`).
+    Budget {
+        /// Agent name or id.
+        agent: String,
+        /// Daily spend cap in USD. Must be > 0.
+        #[arg(long)]
+        limit: f64,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Kill an agent (stop its runs; `POST /agents/{id}/kill`).
+    Kill {
+        /// Agent name or id.
+        agent: String,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        /// Confirm the action.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Resume a killed agent (`POST /agents/{id}/resume`).
+    Resume {
+        /// Agent name or id.
+        agent: String,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -868,6 +972,45 @@ enum ClusterAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// List an agent's immutable versions (`GET /agents/{id}/versions`).
+    Versions {
+        /// Agent name or id.
+        agent: String,
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show what an agent has learned (its memory log; `GET /agents/{id}/memory`).
+    Memory {
+        /// Agent name or id.
+        agent: String,
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// View or set the tools whose calls require human approval (`PATCH /agents/{id}`).
+    Approvals {
+        /// Agent name or id.
+        agent: String,
+        /// Tool name to gate behind approval (repeatable). Omit to show current gates.
+        #[arg(long = "gate", value_name = "TOOL")]
+        gate: Vec<String>,
+        /// Clear all approval gates on the agent.
+        #[arg(long)]
+        clear: bool,
+        #[arg(long, default_value = "http://localhost:8000", env = "AGENTOS_API_URL")]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY")]
+        api_key: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 async fn resolve_compose_file(file: Option<String>, dry_run: bool) -> Result<String> {
@@ -1197,6 +1340,105 @@ async fn run(command: Option<Command>) -> Result<()> {
                     label,
                     secret,
                     connect_hint,
+                })
+                .await
+            }
+            LocalAction::Versions {
+                agent,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::versions(AgentActionOpts {
+                    api_url,
+                    api_key,
+                    agent,
+                    dry_run,
+                })
+                .await
+            }
+            LocalAction::Memory {
+                agent,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::memory(AgentActionOpts {
+                    api_url,
+                    api_key,
+                    agent,
+                    dry_run,
+                })
+                .await
+            }
+            LocalAction::Approvals {
+                agent,
+                gate,
+                clear,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::approvals(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    gate,
+                    clear,
+                )
+                .await
+            }
+            LocalAction::Observability => commands::observability().await,
+            LocalAction::Budget {
+                agent,
+                limit,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::budget(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    limit,
+                )
+                .await
+            }
+            LocalAction::Kill {
+                agent,
+                api_url,
+                api_key,
+                yes,
+                dry_run,
+            } => {
+                commands::kill(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    yes,
+                )
+                .await
+            }
+            LocalAction::Resume {
+                agent,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::resume(AgentActionOpts {
+                    api_url,
+                    api_key,
+                    agent,
+                    dry_run,
                 })
                 .await
             }
@@ -1532,6 +1774,54 @@ async fn run(command: Option<Command>) -> Result<()> {
                         dry_run,
                     },
                     yes,
+                )
+                .await
+            }
+            ClusterAction::Versions {
+                agent,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::versions(AgentActionOpts {
+                    api_url,
+                    api_key,
+                    agent,
+                    dry_run,
+                })
+                .await
+            }
+            ClusterAction::Memory {
+                agent,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::memory(AgentActionOpts {
+                    api_url,
+                    api_key,
+                    agent,
+                    dry_run,
+                })
+                .await
+            }
+            ClusterAction::Approvals {
+                agent,
+                gate,
+                clear,
+                api_url,
+                api_key,
+                dry_run,
+            } => {
+                commands::approvals(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    gate,
+                    clear,
                 )
                 .await
             }
@@ -1928,6 +2218,68 @@ mod tests {
             }
             _ => panic!("expected cluster budget command"),
         }
+    }
+
+    #[test]
+    fn local_platform_verbs_parse() {
+        // The inspection/governance verbs mirrored onto the local tier.
+        assert!(matches!(
+            Cli::try_parse_from(["agentos", "local", "versions", "gh"])
+                .expect("local versions")
+                .command,
+            Some(Command::Local {
+                action: LocalAction::Versions { .. }
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["agentos", "local", "memory", "gh"])
+                .expect("local memory")
+                .command,
+            Some(Command::Local {
+                action: LocalAction::Memory { .. }
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["agentos", "local", "observability"])
+                .expect("local observability")
+                .command,
+            Some(Command::Local {
+                action: LocalAction::Observability
+            })
+        ));
+        // local budget/kill/resume are the mirrored lifecycle verbs.
+        assert!(Cli::try_parse_from(["agentos", "local", "budget", "gh", "--limit", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["agentos", "local", "kill", "gh", "--yes"]).is_ok());
+    }
+
+    #[test]
+    fn approvals_parses_repeatable_gate_and_clear() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "local",
+            "approvals",
+            "gh",
+            "--gate",
+            "Bash",
+            "--gate",
+            "mcp__x__y",
+        ])
+        .expect("local approvals should parse");
+        match cli.command {
+            Some(Command::Local {
+                action:
+                    LocalAction::Approvals {
+                        agent, gate, clear, ..
+                    },
+            }) => {
+                assert_eq!(agent, "gh");
+                assert_eq!(gate, vec!["Bash".to_string(), "mcp__x__y".to_string()]);
+                assert!(!clear);
+            }
+            _ => panic!("expected local approvals command"),
+        }
+        // --clear parses on both tiers.
+        assert!(Cli::try_parse_from(["agentos", "cluster", "approvals", "gh", "--clear"]).is_ok());
     }
 
     #[test]

@@ -1422,6 +1422,160 @@ pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<()> {
     Ok(())
 }
 
+/// `<tier> versions <agent>`: list the agent's immutable versions (newest first).
+pub async fn versions(opts: AgentActionOpts) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.payload_plain(&format!(
+            "GET {}/agents/<id>/versions  (would resolve agent {:?} first)",
+            opts.api_url, opts.agent
+        ));
+        return Ok(());
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let versions = client.list_versions(&agent.id).await?;
+    if versions.is_empty() {
+        ui.payload(&format!(
+            "{} has no versions yet (deploy it first)",
+            agent.name
+        ));
+        return Ok(());
+    }
+    ui.payload(&format!(
+        "{} — {} version(s), newest first:",
+        agent.name,
+        versions.len()
+    ));
+    for v in versions.iter().rev() {
+        let commit = v.commit_sha.as_deref().unwrap_or("-");
+        let by = v.created_by.as_deref().unwrap_or("-");
+        let at = v.created_at.as_deref().unwrap_or("-");
+        ui.kv(
+            &v.version_label,
+            &format!("commit {commit}  by {by}  at {at}"),
+        );
+    }
+    Ok(())
+}
+
+/// `<tier> memory <agent>`: show what the agent has learned (its memory log).
+pub async fn memory(opts: AgentActionOpts) -> Result<()> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        ui.payload_plain(&format!(
+            "GET {}/agents/<id>/memory  (would resolve agent {:?} first)",
+            opts.api_url, opts.agent
+        ));
+        return Ok(());
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let entries = client.list_memory(&agent.id).await?;
+    if entries.is_empty() {
+        ui.payload(&format!("{} has no learned memory yet", agent.name));
+        return Ok(());
+    }
+    ui.payload(&format!(
+        "{} — {} memory entr(ies):",
+        agent.name,
+        entries.len()
+    ));
+    for e in &entries {
+        ui.kv(&format!("#{}", e.index), &e.content);
+    }
+    Ok(())
+}
+
+/// `<tier> approvals <agent> [--gate TOOL]... [--clear]`: view or set the tool
+/// names whose calls pause for human approval. No flags => show current gates.
+pub async fn approvals(opts: AgentActionOpts, gate: Vec<String>, clear: bool) -> Result<()> {
+    let ui = crate::ui::ui();
+    if clear && !gate.is_empty() {
+        return Err(crate::exit::usage(
+            "--clear cannot be combined with --gate (clear removes all gates)",
+        ));
+    }
+    let setting = clear || !gate.is_empty();
+    if opts.dry_run {
+        let action = if setting {
+            format!(
+                "PATCH {}/agents/<id> approval_required_tools={:?}",
+                opts.api_url, gate
+            )
+        } else {
+            format!("GET {}/agents/<id> (show current gates)", opts.api_url)
+        };
+        ui.payload_plain(&format!(
+            "{action}  (would resolve agent {:?} first)",
+            opts.agent
+        ));
+        return Ok(());
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let gates = if setting {
+        let cl = ui.checklist();
+        let step = cl.step(&format!("updating approval gates for {}", agent.name));
+        match client.set_approval_tools(&agent.id, &gate).await {
+            Ok(updated) => {
+                step.done("updated");
+                updated.approval_required_tools.unwrap_or_default()
+            }
+            Err(err) => {
+                step.fail("failed");
+                return Err(err);
+            }
+        }
+    } else {
+        agent.approval_required_tools.clone().unwrap_or_default()
+    };
+    if gates.is_empty() {
+        ui.payload(&format!(
+            "{}: no tools are gated (calls run without approval)",
+            agent.name
+        ));
+    } else {
+        ui.payload(&format!("{} — {} gated tool(s):", agent.name, gates.len()));
+        for tool in &gates {
+            ui.kv("gated", tool);
+        }
+    }
+    Ok(())
+}
+
+/// `local observability`: open (and print) the local platform's observability
+/// surfaces -- the AgentOS Console and the Langfuse UI. Best-effort browser open
+/// so it degrades to just the URLs on a headless host.
+pub async fn observability() -> Result<()> {
+    let ui = crate::ui::ui();
+    let urls = [
+        ("AgentOS Console", "http://localhost:28080/?api=1"),
+        (
+            "Langfuse UI (traces / cost / evals)",
+            "http://localhost:23000",
+        ),
+    ];
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    for (name, url) in urls {
+        ui.kv(name, url);
+        // Fire-and-forget: a missing opener (headless/CI) is not an error -- the
+        // URL is already printed above.
+        let _ = tokio::process::Command::new(opener)
+            .arg(url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+    }
+    ui.payload("opened the local observability surfaces (start them with `agentos local up`)");
+    Ok(())
+}
+
 /// Reject a Slack channel value that is a `#name` rather than a channel ID.
 ///
 /// Real Slack events carry the channel **ID** (e.g. `C0123ABCD`), and the

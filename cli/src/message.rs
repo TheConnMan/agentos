@@ -1016,6 +1016,7 @@ mod tests {
             id: format!("id-{name}"),
             name: name.to_string(),
             slack_channel: channel.to_string(),
+            approval_required_tools: None,
         }
     }
 

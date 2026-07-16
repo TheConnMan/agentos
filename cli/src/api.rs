@@ -26,6 +26,10 @@ pub struct Agent {
     pub id: String,
     pub name: String,
     pub slack_channel: String,
+    /// Tool names gated behind human approval (#245). Present on `AgentOut`;
+    /// `#[serde(default)]` keeps older/leaner responses parsing to None.
+    #[serde(default)]
+    pub approval_required_tools: Option<Vec<String>>,
 }
 
 /// What a deploy did with the agent's Slack channel, for the summary printout.
@@ -45,6 +49,23 @@ pub enum ChannelOutcome {
 pub struct Version {
     pub id: String,
     pub version_label: String,
+    // Extra VersionOut fields for the `versions` listing verb; `#[serde(default)]`
+    // keeps the deploy path (which only reads id/version_label) tolerant of a
+    // leaner response.
+    #[serde(default)]
+    pub commit_sha: Option<String>,
+    #[serde(default)]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+/// One learned memory entry (`MemoryEntryOut`) for the `memory` listing verb.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryEntry {
+    pub index: u64,
+    pub content: String,
+    pub version: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -450,6 +471,57 @@ impl ApiClient {
             .json()
             .await
             .context("decoding budget")
+    }
+
+    /// List an agent's immutable versions, newest first: `GET /agents/{id}/versions`.
+    pub async fn list_versions(&self, agent_id: &str) -> Result<Vec<Version>> {
+        let resp = self
+            .http
+            .get(format!("{}/agents/{agent_id}/versions", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("GET /agents/{id}/versions")?;
+        Self::expect_ok(resp, "listing versions")
+            .await?
+            .json()
+            .await
+            .context("decoding version list")
+    }
+
+    /// List an agent's learned memory, oldest first: `GET /agents/{id}/memory`.
+    pub async fn list_memory(&self, agent_id: &str) -> Result<Vec<MemoryEntry>> {
+        let resp = self
+            .http
+            .get(format!("{}/agents/{agent_id}/memory", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("GET /agents/{id}/memory")?;
+        Self::expect_ok(resp, "listing memory")
+            .await?
+            .json()
+            .await
+            .context("decoding memory list")
+    }
+
+    /// Set the agent's approval-required tool gates: `PATCH /agents/{id}` with
+    /// `approval_required_tools` (an empty list clears them). Returns the updated
+    /// agent so the caller can echo the effective gates.
+    pub async fn set_approval_tools(&self, agent_id: &str, tools: &[String]) -> Result<Agent> {
+        let resp = self
+            .http
+            .patch(format!("{}/agents/{agent_id}", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&json!({ "approval_required_tools": tools }))
+            .send()
+            .await
+            .context("PATCH /agents/{id} (approval gates)")?;
+        Self::expect_ok(resp, "updating approval gates")
+            .await?
+            .json()
+            .await
+            .context("decoding updated agent")
     }
 
     /// Delete the agent: `DELETE /agents/{id}` (204 No Content on success).
