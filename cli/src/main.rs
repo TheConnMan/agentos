@@ -342,6 +342,19 @@ enum SkillAction {
         /// Runner base URL (defaults to the started runner, then localhost).
         #[arg(long)]
         url: Option<String>,
+        /// Run the suite against this model in a throwaway runner instead of the
+        /// already-running one. Repeatable: pass it N times to sweep N models and
+        /// report pass-rate per model (#526). Needs a model credential + Docker.
+        #[arg(long = "model", value_name = "MODEL")]
+        model: Vec<String>,
+        /// Forward a connector secret BY NAME into each sweep runner (as
+        /// `skill up --secret`), so an authed-MCP bundle can run under `--model`.
+        #[arg(long = "secret", value_name = "NAME")]
+        secret: Vec<String>,
+        /// Runner image for the sweep runners. Defaults to the same image
+        /// resolution as `skill up`.
+        #[arg(long)]
+        image: Option<String>,
     },
     /// Interview to generate a starter `evals/cases.json` (guided eval generation).
     EvalInit {
@@ -1192,7 +1205,20 @@ async fn run(command: Option<Command>) -> Result<()> {
                 event_type,
                 url,
             } => commands::send(&text, &user, event_type.into(), url).await,
-            SkillAction::Eval { cases, url } => commands::eval(cases, url).await,
+            SkillAction::Eval {
+                cases,
+                url,
+                model,
+                secret,
+                image,
+            } => {
+                let image = artifacts::resolve_image(
+                    image.as_deref(),
+                    artifacts::Channel::current(),
+                    artifacts::version(),
+                );
+                commands::eval(cases, url, model, secret, image).await
+            }
             SkillAction::EvalInit { out, force } => {
                 agentos::eval_init::run(agentos::eval_init::EvalInitOpts { out, force })
             }
@@ -1867,6 +1893,38 @@ mod tests {
             cli.command,
             Some(Command::Install { update: true })
         ));
+    }
+
+    #[test]
+    fn skill_eval_model_is_repeatable_for_a_sweep() {
+        // No --model -> drive the running runner (empty models vec).
+        match Cli::try_parse_from(["agentos", "skill", "eval"])
+            .expect("skill eval should parse")
+            .command
+        {
+            Some(Command::Skill {
+                action: SkillAction::Eval { model, .. },
+            }) => assert!(model.is_empty()),
+            _ => panic!("expected skill eval"),
+        }
+        // Repeated --model collects into the sweep list.
+        match Cli::try_parse_from([
+            "agentos",
+            "skill",
+            "eval",
+            "--model",
+            "claude-haiku-4-5",
+            "--model",
+            "claude-sonnet-5",
+        ])
+        .expect("skill eval sweep should parse")
+        .command
+        {
+            Some(Command::Skill {
+                action: SkillAction::Eval { model, .. },
+            }) => assert_eq!(model, vec!["claude-haiku-4-5", "claude-sonnet-5"]),
+            _ => panic!("expected skill eval sweep"),
+        }
     }
 
     #[test]

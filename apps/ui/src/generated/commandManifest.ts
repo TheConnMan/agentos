@@ -335,6 +335,30 @@ export const commandManifest = {
               "long": "url",
               "positional": false,
               "required": false
+            },
+            {
+              "global": false,
+              "help": "Run the suite against this model in a throwaway runner instead of the already-running one. Repeatable: pass it N times to sweep N models and report pass-rate per model (#526). Needs a model credential + Docker",
+              "id": "model",
+              "long": "model",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Forward a connector secret BY NAME into each sweep runner (as `skill up --secret`), so an authed-MCP bundle can run under `--model`",
+              "id": "secret",
+              "long": "secret",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Runner image for the sweep runners. Defaults to the same image resolution as `skill up`",
+              "id": "image",
+              "long": "image",
+              "positional": false,
+              "required": false
             }
           ],
           "hidden": false,
