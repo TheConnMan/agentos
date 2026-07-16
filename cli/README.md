@@ -201,6 +201,9 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 |---|---|
 | `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using AgentOS private storage when the env var is not exported. |
 | `agentos skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
+| `agentos skill approvals` | View the bundle's declared `approvalPolicy` gates, read straight from `.claude-plugin/plugin.json` (or `plugin.json`); no docker, no network. `--gate <TOOL>` (repeatable) or `--clear` mutate nothing -- they print the `AGENTOS_APPROVAL_REQUIRED_TOOLS=...` assignment to export, then re-run your original `skill up` invocation with `--secret AGENTOS_APPROVAL_REQUIRED_TOOLS` added, since the runner only resolves that env once at container boot. |
+| `agentos skill versions` | Not available at this tier (exit 4): `skill up` runs the bundle bytes on disk, so no deployed version is assigned. Use `agentos local versions <agent>` or `agentos cluster versions <agent>`. |
+| `agentos skill memory` | Not available at this tier (exit 4): this tier configures no memory namespace. Use `agentos local memory <agent>` or `agentos cluster memory <agent>`. |
 | `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
 | `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |
 | `agentos skill status` | Show the local runner's session status. |
@@ -502,6 +505,7 @@ parsing output:
 | 1    | failure   | A genuine runtime failure (well-formed request, operation did not succeed). Do not retry blindly. |
 | 2    | usage     | A deterministic input error (missing `--yes`, a malformed flag/value, no bundle). Retrying the same argv fails identically -- fix the input. |
 | 3    | transient | A retryable condition (the endpoint was unreachable or timed out). The same argv may succeed once the dependency is up. |
+| 4    | unsupported | The verb was understood, but the concept it inspects does not exist at this tier by construction (`agentos skill versions`, `agentos skill memory`). No input and no retry changes that -- the same argv never succeeds here; the `fix` hint names the tier that does answer it. |
 
 **Non-interactive by default.** Every mutating command has a non-interactive
 path (`--yes` on `cluster down`/`kill`/`delete` and `local down --wipe`); none

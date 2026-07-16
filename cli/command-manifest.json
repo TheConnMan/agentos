@@ -89,7 +89,7 @@
       "name": "init"
     },
     {
-      "about": "Work with a local runner session for a plugin bundle",
+      "about": "Work with a local runner session for a plugin bundle: `skill <up|down|status|message|eval|approvals>`. `versions` and `memory` are answered here too, reporting that this tier has neither",
       "hidden": false,
       "name": "skill",
       "subcommands": [
@@ -244,6 +244,54 @@
           ],
           "hidden": false,
           "name": "check"
+        },
+        {
+          "about": "View the bundle's declared approval gates, or print the env assignment that sets or clears the runner's override (nothing is mutated)",
+          "args": [
+            {
+              "default_values": [
+                "."
+              ],
+              "global": false,
+              "help": "Plugin bundle directory",
+              "id": "plugin_dir",
+              "long": "plugin-dir",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Tool name to gate. Repeatable. Omit (with no --clear) to view the bundle's declared gates",
+              "id": "gate",
+              "long": "gate",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Print the assignment that clears the env override",
+              "id": "clear",
+              "long": "clear",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "approvals"
+        },
+        {
+          "about": "Not available at this tier: `skill up` runs the bundle bytes on disk, so no deployed version is assigned; use `agentos local versions <agent>` or `agentos cluster versions <agent>` for a deployed agent",
+          "hidden": false,
+          "name": "versions"
+        },
+        {
+          "about": "Not available at this tier: this tier configures no memory namespace: `skill up` never sets a memory ref, and there is no platform here to own or address one; use `agentos local memory <agent>` or `agentos cluster memory <agent>` for a deployed agent",
+          "hidden": false,
+          "name": "memory"
         },
         {
           "about": "Stop and remove the local runner container",

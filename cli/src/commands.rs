@@ -2114,6 +2114,393 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
     (!sha.is_empty()).then_some(sha)
 }
 
+// --- skill tier parity (issue #459) -----------------------------------------
+
+/// The env var the runner reads for the operator's approval-gate override.
+const APPROVAL_TOOLS_ENV: &str = "AGENTOS_APPROVAL_REQUIRED_TOOLS";
+
+/// The manifest locations the runner's `load_approval_policy` probes, in order.
+const MANIFEST_LOCATIONS: [&str; 2] = [".claude-plugin/plugin.json", "plugin.json"];
+
+/// One `approvalPolicy.gates[]` entry: the tool the runner intercepts plus the
+/// approval route the platform binds per deployment. A local mirror of
+/// `plugin_format.models.ApprovalGate`, kept private here so `scaffold`'s
+/// `read_manifest` (used by `skill up`/`skill check`) keeps its narrow shape.
+///
+/// Both fields are `Option` to keep the runner's two tiers distinguishable: the
+/// pydantic model declares `gate: str` / `route: str` with no default, so a
+/// MISSING key fails validation and disarms the whole policy, whereas a key
+/// present but empty only drops its own gate. Collapsing the two (via
+/// `#[serde(default)]` on a `String`) would report the siblings of a key-missing
+/// gate as armed when the runner arms nothing.
+#[derive(Deserialize)]
+struct ApprovalGateDecl {
+    gate: Option<String>,
+    route: Option<String>,
+}
+
+/// The manifest `approvalPolicy` object; mirrors `plugin_format.models.ApprovalPolicy`.
+#[derive(Deserialize, Default)]
+struct ApprovalPolicyDecl {
+    #[serde(default)]
+    gates: Vec<ApprovalGateDecl>,
+}
+
+/// Just the slice of the plugin manifest this verb reads.
+///
+/// `name` is carried only to mirror `plugin_format.models.PluginManifest`, whose
+/// sole required field it is: without it `model_validate` raises and the runner
+/// arms zero gates, so a narrower struct that parsed happily would report gates
+/// the runner never arms.
+///
+/// KNOWN LIMITATION (ADR-0041): this validates only the approval-relevant subset
+/// of the manifest. The runner parses the WHOLE `PluginManifest`, so a manifest
+/// that is valid here but invalid in an unrelated modeled field (say `commands:
+/// 123`) makes `load_approval_policy` return `{}` -- the runner arms ZERO gates
+/// while this view still lists them. Closing that properly needs a shared or
+/// drift-gated manifest parser; hand-mirroring every `PluginManifest` field here
+/// would just add a second ungated mirror to drift.
+#[derive(Deserialize)]
+struct ManifestApprovals {
+    name: Option<String>,
+    #[serde(rename = "approvalPolicy")]
+    approval_policy: Option<ApprovalPolicyDecl>,
+}
+
+/// Output of `skill approvals`: the bundle's declared gates, or the env
+/// assignment a set/clear WOULD need (this tier boots the runner from env, so
+/// there is nothing to mutate; see ADR-0041).
+#[derive(Debug)]
+pub enum SkillApprovalsOutput {
+    Gates {
+        gates: Vec<(String, String)>,
+    },
+    Env {
+        env: String,
+        restart: String,
+        bundle_note: String,
+    },
+}
+
+impl crate::ui::CliOutput for SkillApprovalsOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            SkillApprovalsOutput::Gates { gates } => {
+                let gates: Vec<serde_json::Value> = gates
+                    .iter()
+                    .map(|(gate, route)| serde_json::json!({"gate": gate, "route": route}))
+                    .collect();
+                serde_json::json!({ "gates": gates })
+            }
+            SkillApprovalsOutput::Env {
+                env,
+                restart,
+                bundle_note,
+            } => serde_json::json!({
+                "env": env,
+                "restart": restart,
+                "bundle_note": bundle_note,
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            SkillApprovalsOutput::Gates { gates } => {
+                ui.payload(&gates_summary_line(gates));
+                for (gate, route) in gates {
+                    ui.kv(gate, route);
+                }
+            }
+            SkillApprovalsOutput::Env {
+                env,
+                restart,
+                bundle_note,
+            } => {
+                ui.payload(&human_env_line(env));
+                ui.kv("restart", restart);
+                ui.kv("bundle", bundle_note);
+            }
+        }
+    }
+}
+
+/// The human-rendered form of the `NAME=value` assignment `skill approvals`
+/// hands back.
+///
+/// The guidance tells the caller to export this, so the human line is read as
+/// shell text and the value must survive being pasted into one. A gate name is
+/// only rejected here for a comma or for being whitespace-only, so `--gate 'Foo
+/// Bar'` or `--gate '$(cmd)'` are accepted and would otherwise be word-split or
+/// command-substituted by the shell -- the runner would receive a different gate
+/// than the one printed, or the paste would execute shell text outright.
+/// Quoting the right-hand side is what keeps the printed line and the applied
+/// value the same string.
+///
+/// The `--json` `env` field deliberately does NOT get this treatment: a machine
+/// consumer wants the raw assignment, not a shell literal it would have to
+/// unquote.
+fn human_env_line(env: &str) -> String {
+    match env.split_once('=') {
+        Some((name, value)) => format!("{name}={}", shell_quote(value)),
+        // Not reachable from `skill_approvals` (it always formats `NAME=`), but
+        // echoing the input beats inventing an assignment that was never made.
+        None => env.to_string(),
+    }
+}
+
+/// The human summary line for `skill approvals`' gate view.
+///
+/// Scoped to what this command actually knows: it reads the bundle on disk and
+/// nothing else. The runner also unions in `AGENTOS_APPROVAL_REQUIRED_TOOLS`,
+/// resolved once at container boot and invisible from here, so neither branch may
+/// present the bundle's gates as the complete effective set. Saying "no gates
+/// declared, so calls run without approval" would be flatly false against a runner
+/// booted with that override set.
+fn gates_summary_line(gates: &[(String, String)]) -> String {
+    let unseen = "an AGENTOS_APPROVAL_REQUIRED_TOOLS override applied at container boot may gate more, and is not visible from the bundle";
+    if gates.is_empty() {
+        format!("the bundle declares no approval gates ({unseen})")
+    } else {
+        format!("{} bundle-declared gate(s) ({unseen}):", gates.len())
+    }
+}
+
+/// Read the bundle's declared approval gates as `(gate, route)` pairs.
+///
+/// The manifest is probed at `.claude-plugin/plugin.json` then `plugin.json`,
+/// mirroring the runner's `load_approval_policy`. That function's semantics are
+/// two-tier, and this mirrors both tiers because the difference decides whether a
+/// gate is armed at all:
+///
+/// 1. A REQUIRED key missing (the manifest's `name`, or a gate's `gate`/`route`)
+///    fails `model_validate`, which `load_approval_policy` catches by returning
+///    `{}` -- the runner arms ZERO gates, not merely the offending one. Reported
+///    here as a usage error naming the problem: the manifest is invalid input,
+///    deterministic and fixable by hand, and reporting an empty list instead
+///    would read as "no gates configured" -- a different lie.
+/// 2. A key PRESENT but empty/whitespace passes validation and is dropped by the
+///    final comprehension's trim filter, so only THAT gate is skipped and its
+///    well-formed siblings stay armed.
+///
+/// A manifest with no `approvalPolicy` at all is neither: it yields no gates and
+/// no error. A bundle with no manifest is a usage error (the plugin dir is
+/// simply wrong).
+fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
+    let manifest_path = MANIFEST_LOCATIONS
+        .iter()
+        .map(|loc| plugin_dir.join(loc))
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            crate::exit::usage(format!(
+                "no plugin manifest under {}: expected .claude-plugin/plugin.json or plugin.json",
+                plugin_dir.display()
+            ))
+        })?;
+    let body = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    // A manifest the runner's pydantic parse would reject: same all-or-nothing
+    // outcome, surfaced rather than swallowed into a cheerful empty list.
+    let invalid = |problem: &str| {
+        crate::exit::usage(format!(
+            "invalid plugin manifest {}: {problem}. The runner rejects this manifest and arms ZERO approval gates, including any well-formed ones",
+            manifest_path.display()
+        ))
+    };
+    let manifest: ManifestApprovals =
+        serde_json::from_str(&body).map_err(|e| invalid(&format!("not valid JSON ({e})")))?;
+    if manifest.name.is_none() {
+        return Err(invalid("missing the required `name` field"));
+    }
+    let mut gates = Vec::new();
+    for g in manifest.approval_policy.unwrap_or_default().gates {
+        let (gate, route) = match (&g.gate, &g.route) {
+            (None, _) => return Err(invalid("a gate in `approvalPolicy.gates` omits `gate`")),
+            (_, None) => return Err(invalid("a gate in `approvalPolicy.gates` omits `route`")),
+            (Some(gate), Some(route)) => (gate.trim(), route.trim()),
+        };
+        // Tier 2: present but empty. Valid to the runner, dropped by its trim
+        // filter, siblings unaffected.
+        if gate.is_empty() || route.is_empty() {
+            continue;
+        }
+        // The runner keys a dict by the trimmed gate name, so a repeated gate
+        // collapses to one entry: the first declaration fixes the position, the
+        // last one wins the route. Mirror both halves -- keeping the duplicate
+        // would report a gate the runner never arms plus a stale route.
+        match gates
+            .iter_mut()
+            .find(|(name, _): &&mut (String, String)| name == gate)
+        {
+            Some((_, existing_route)) => *existing_route = route.to_string(),
+            None => gates.push((gate.to_string(), route.to_string())),
+        }
+    }
+    Ok(gates)
+}
+
+/// POSIX-shell-quote a value for safe interpolation into emitted shell text.
+///
+/// Two callers, both emitting text a caller reads as shell: the bundle path named
+/// by the `restart` guidance, and the right-hand side of the human-rendered
+/// `NAME=value` assignment the guidance says to export. A value holding
+/// whitespace or shell metacharacters (`/tmp/my bundle`, `$(cmd)`) would
+/// otherwise be word-split or substituted, so what the shell sees differs from
+/// what we printed. Single-quoting is the one POSIX form that quotes every
+/// character literally; the only byte it cannot contain is
+/// `'` itself, which is escaped by closing the quote, emitting an escaped quote,
+/// and reopening (`'\''`). Done by hand rather than by pulling in a crate: the
+/// rule is four lines and a dependency here is not worth the supply-chain surface.
+///
+/// Not shared with `ops::shell_quote`, which is deliberately different: that one
+/// leaves shell-safe tokens bare because it renders helm `--set` argv for humans
+/// to read, where quoting every token is noise. This one always quotes, because
+/// these values are copied into a shell and an unquoted one is a silent
+/// mis-target rather than a visible mistake.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// `skill approvals [--plugin-dir DIR] [--gate TOOL]... [--clear]`: view the
+/// bundle's declared approval gates, or print the env assignment that sets or
+/// clears the runner's override.
+///
+/// Unlike the `local`/`cluster` tiers there is no platform record to PATCH: this
+/// tier's runner resolves `AGENTOS_APPROVAL_REQUIRED_TOOLS` once at container
+/// boot. So set/clear mutate nothing and instead hand back the assignment plus
+/// the two caveats that make it honest (issue #459).
+pub async fn skill_approvals(
+    plugin_dir: PathBuf,
+    gate: Vec<String>,
+    clear: bool,
+) -> Result<SkillApprovalsOutput> {
+    if clear && !gate.is_empty() {
+        return Err(crate::exit::usage(
+            "--clear cannot be combined with --gate (clear removes the env override)",
+        ));
+    }
+    for g in &gate {
+        if g.trim().is_empty() {
+            return Err(crate::exit::usage("--gate cannot be empty"));
+        }
+        if g.contains(',') {
+            return Err(crate::exit::usage(format!(
+                "--gate {g:?} cannot contain a comma: {APPROVAL_TOOLS_ENV} is comma-separated"
+            )));
+        }
+    }
+    if !clear && gate.is_empty() {
+        return Ok(SkillApprovalsOutput::Gates {
+            gates: read_bundle_gates(&plugin_dir)?,
+        });
+    }
+    // The set/clear path emits guidance that names this bundle and tells the
+    // caller to re-boot a runner for it, so it must be at least as sure the
+    // bundle exists as the view path is -- otherwise `--plugin-dir /does/not/exist`
+    // exits 0 with instructions that fail at `skill up`, which is the tier-parity
+    // lie this command exists to avoid (issue #459). Same resolution and same
+    // validation as the view path, deliberately reusing the one function so the
+    // two paths cannot diverge on what counts as a usable bundle. A manifest
+    // present and valid but declaring no `approvalPolicy` yields an empty list
+    // and no error: setting an override for a bundle that declares no gates is
+    // exactly the legitimate case, so only a missing, unreadable, or invalid
+    // manifest is rejected. The gates themselves are irrelevant here; the call is
+    // for its validation.
+    read_bundle_gates(&plugin_dir)?;
+    let tools: Vec<&str> = gate.iter().map(|g| g.trim()).collect();
+    Ok(SkillApprovalsOutput::Env {
+        env: format!("{APPROVAL_TOOLS_ENV}={}", tools.join(",")),
+        // This states the MECHANISM and the DELTA; it deliberately does not
+        // synthesize a command line to paste. `skill up` carries the runner's
+        // whole configuration in its flags (`StartOpts`: image, port, name,
+        // network, otel_endpoint, budget, model, local_model, fake_model, and
+        // repeatable secret), and `skill approvals` reads only the bundle on
+        // disk -- it has no idea which of those the caller passed. A synthesized
+        // `skill up --secret ...` would therefore re-boot the runner on DEFAULTS
+        // plus the approval var: a different model provider, a different image
+        // and port, and every other `--secret` connector credential silently
+        // dropped. Naming the caller's own invocation as the thing to re-run is
+        // the only form that stays true without knowing it.
+        //
+        // The clauses that remain are each verifiable:
+        // 1. `skill up` forwards an env var into the runner only when its NAME is
+        //    on the passthrough list, and the model-credential names are all that
+        //    list holds by default (`select_passthrough_env`). `--secret NAME`
+        //    appends to it (`merge_secret_env`), so a re-run without it arms
+        //    nothing.
+        // 2. `start` hard-errors when a runner is already recorded for the dir, so
+        //    an existing runner must be stopped first.
+        // 3. `stop` takes no args and hardcodes `Path::new(".")`, so `skill down`
+        //    can only act on the bundle in the CWD -- there is no `--plugin-dir`
+        //    for it. Naming the bundle dir (shell-quoted, since it is read as a
+        //    path in shell text) tells a caller working elsewhere which bundle
+        //    this output is about.
+        restart: format!(
+            "env resolves once at container boot, so nothing changes until the runner re-boots. This output is about the bundle at {}. To apply it: export the assignment above, then re-run your own original `agentos skill up` invocation for that bundle with `--secret {APPROVAL_TOOLS_ENV}` added -- a plain `agentos skill up` does not forward it. This command cannot see how that runner was started, so re-run your invocation rather than a fresh one, which would boot on defaults and drop your other flags. Stop an already-recorded runner first with `agentos skill down`, run from that bundle directory (it takes no --plugin-dir and acts on the bundle in the current directory).",
+            shell_quote(&plugin_dir.display().to_string())
+        ),
+        // The runner UNIONS the bundle's declared gates with this env override,
+        // so saying only "set/cleared" would lie by omission about what is armed.
+        bundle_note: if clear {
+            "clears only the env override; gates declared in the bundle manifest stay armed"
+                .to_string()
+        } else {
+            "adds to the gates declared in the bundle manifest; it cannot remove one".to_string()
+        },
+    })
+}
+
+// The reason/alternative for each tier-unavailable skill verb has TWO consumers:
+// the runtime `{error, fix}` payload built by `exit::unsupported` below, and the
+// clap `about` text in `main.rs` that flows into the committed
+// `command-manifest.json` (the discovery surface the UI parity mirror reads).
+// Nothing gates prose against prose, so they are single-sourced here: a stale
+// help string is the same class of lie as a stale runtime answer, just on the
+// discovery surface (issue #459, ADR-0041).
+
+/// Why `skill versions` cannot be answered at this tier.
+pub const VERSIONS_REASON: &str =
+    "`skill up` runs the bundle bytes on disk, so no deployed version is assigned";
+/// Where to run `versions` instead.
+pub const VERSIONS_ALT: &str =
+    "use `agentos local versions <agent>` or `agentos cluster versions <agent>` for a deployed agent";
+/// Why `skill memory` cannot be answered at this tier.
+pub const MEMORY_REASON: &str =
+    "this tier configures no memory namespace: `skill up` never sets a memory ref, and there is no platform here to own or address one";
+/// Where to run `memory` instead.
+pub const MEMORY_ALT: &str =
+    "use `agentos local memory <agent>` or `agentos cluster memory <agent>` for a deployed agent";
+
+/// `skill versions`: answered, but unavailable at this tier by construction.
+///
+/// A version exists only because the platform assigns a `bundle_sha256` and a
+/// `version_label` at deploy; `skill up` runs whatever bytes are on disk, so
+/// there is no release to inspect here (issue #459, ADR-0041).
+pub fn skill_versions_unavailable() -> anyhow::Error {
+    crate::exit::unsupported("versions", VERSIONS_REASON, VERSIONS_ALT)
+}
+
+/// `skill memory`: answered, but not a capability of this tier.
+///
+/// Memory is a namespace some *platform* provisions, addresses, and owns; the
+/// `local`/`cluster` tiers have one, and this tier has none. `skill up` never
+/// sets `AGENTOS_MEMORY_REF`, so the runner it boots resolves a
+/// `NullMemoryStore` and nothing is persisted.
+///
+/// Deliberately NOT phrased as "cannot exist by construction". `--secret` has no
+/// reserved-name fence (`merge_secret_env`), so an operator CAN hand-forward
+/// `--secret AGENTOS_MEMORY_REF --secret AGENTOS_MEMORY_TOKEN` and the runner's
+/// `resolve_memory` will dereference an `http(s)://` ref into a real
+/// `StateApiMemoryStore`. That escape hatch is an operator wiring a foreign
+/// tier's namespace through this one by hand -- not this tier growing the
+/// capability -- and this command could not report on it regardless: it has no
+/// way to read a running container's env. So the verb stays unavailable (exit 4)
+/// and the reason claims only what is true: the tier configures no namespace
+/// (issue #459, ADR-0041).
+pub fn skill_memory_unavailable() -> anyhow::Error {
+    crate::exit::unsupported("memory", MEMORY_REASON, MEMORY_ALT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2484,6 +2871,566 @@ mod tests {
         assert!(
             !rendered.contains("GITHUB_PERSONAL_ACCESS_TOKEN"),
             "the skipped gate must not name the declared secret: {rendered}"
+        );
+    }
+
+    // --- skill approvals (tier parity, issue #459) --------------------------
+
+    /// Write a plugin manifest at `rel` under `dir`, creating parent dirs.
+    fn write_manifest(dir: &std::path::Path, rel: &str, body: &str) {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, body).unwrap();
+    }
+
+    /// A minimal valid manifest, declaring no `approvalPolicy`.
+    ///
+    /// The set/clear path validates the bundle the same way the view path does,
+    /// so every env-path test needs a real bundle on disk. Declaring no gates is
+    /// the legitimate no-policy case, which that path must still accept.
+    const MINIMAL_MANIFEST: &str = r#"{"name":"x","version":"1"}"#;
+
+    /// Give `dir` the minimal valid bundle manifest the env path requires.
+    fn write_minimal_manifest(dir: &std::path::Path) {
+        write_manifest(dir, ".claude-plugin/plugin.json", MINIMAL_MANIFEST);
+    }
+
+    /// The gate names listed by a `skill approvals` view output's JSON.
+    fn gate_names(json: &serde_json::Value) -> Vec<String> {
+        json["gates"]
+            .as_array()
+            .expect("view JSON exposes a `gates` array")
+            .iter()
+            .map(|g| {
+                g["gate"]
+                    .as_str()
+                    .expect("gate name is a string")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn usage_class(err: &anyhow::Error) -> crate::exit::ExitClass {
+        crate::exit::classify(err).0
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_lists_bundle_gates() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"mcp__x__y","route":"eng"}]}}"#,
+        );
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap();
+        let names = gate_names(&out.to_json());
+        assert!(names.contains(&"Bash".to_string()), "{names:?}");
+        assert!(names.contains(&"mcp__x__y".to_string()), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_reads_fallback_plugin_json() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            "plugin.json",
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"}]}}"#,
+        );
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap();
+        assert_eq!(gate_names(&out.to_json()), vec!["Bash".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_empty_when_no_policy() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x","version":"1"}"#,
+        );
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap();
+        assert!(gate_names(&out.to_json()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_skips_incomplete_gate() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        // The second gate has an empty route: mirror the runner's leniency and
+        // skip it rather than erroring, while the well-formed gate still shows.
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"NoRoute","route":""}]}}"#,
+        );
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap();
+        assert_eq!(gate_names(&out.to_json()), vec!["Bash".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_duplicate_gate_collapses_to_last_route() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        // The runner keys a dict by trimmed gate name, so `Bash` declared twice
+        // arms ONCE with the LAST route. Reporting both would name a gate the
+        // runner never arms and a route it never fires.
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"stale"},{"gate":"Other","route":"ops"},{"gate":" Bash ","route":"eng"}]}}"#,
+        );
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap();
+        let json = out.to_json();
+        let gates = json["gates"].as_array().unwrap();
+        assert_eq!(
+            gates.len(),
+            2,
+            "a gate declared twice must collapse to one entry, as the runner's dict does: {gates:?}"
+        );
+        let bash: Vec<&serde_json::Value> = gates.iter().filter(|g| g["gate"] == "Bash").collect();
+        assert_eq!(bash.len(), 1, "exactly one Bash entry: {gates:?}");
+        assert_eq!(
+            bash[0]["route"], "eng",
+            "the LAST declaration must win the route, mirroring the runner's dict comprehension: {gates:?}"
+        );
+        // First declaration fixes position, as Python dict insertion order does.
+        assert_eq!(
+            gates[0]["gate"], "Bash",
+            "order must stay stable: {gates:?}"
+        );
+    }
+
+    #[test]
+    fn skill_approvals_render_never_claims_calls_are_ungated() {
+        // The bundle is not the effective policy: AGENTOS_APPROVAL_REQUIRED_TOOLS
+        // is resolved at container boot and cannot be seen from here, so neither
+        // branch may imply the listed gates are the complete set.
+        let empty = super::gates_summary_line(&[]);
+        assert!(
+            !empty.contains("without approval"),
+            "an empty bundle policy must not claim calls run without approval -- an env override may gate them: {empty}"
+        );
+        assert!(
+            empty.contains("AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            "the empty render must name the override it cannot see: {empty}"
+        );
+        let listed = super::gates_summary_line(&[("Bash".into(), "eng".into())]);
+        assert!(
+            listed.contains("AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            "the non-empty render must not imply the listed gates are the complete effective set: {listed}"
+        );
+    }
+
+    // --- tier 1: a REQUIRED key missing disarms the WHOLE policy in the runner.
+    // `plugin_format.models.ApprovalGate` declares `gate: str` / `route: str`
+    // with no default, so `model_validate` raises and `load_approval_policy`
+    // returns {} -- zero gates armed. Reporting the well-formed sibling as armed
+    // would claim a safety control the runner never arms.
+
+    #[tokio::test]
+    async fn skill_approvals_view_gate_missing_route_key_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"NoRoute"}]}}"#,
+        );
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+        // The sibling must not be reported as armed anywhere in the message.
+        assert!(
+            !format!("{err:#}").contains("Bash -> eng"),
+            "a key-missing gate disarms every gate: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_gate_missing_gate_key_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"route":"eng"}]}}"#,
+        );
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_manifest_without_name_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // `PluginManifest` requires `name`; without it the runner's parse raises
+        // and it arms zero gates, so listing `Bash` here would be a false report.
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"}]}}"#,
+        );
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_malformed_json_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x",,}"#,
+        );
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_view_without_manifest_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_set_emits_env_assignment() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_manifest(dir.path());
+        let out = super::skill_approvals(
+            dir.path().to_path_buf(),
+            vec!["A".into(), "B".into()],
+            false,
+        )
+        .await
+        .unwrap();
+        let json = out.to_json();
+        assert_eq!(
+            json["env"].as_str().unwrap(),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS=A,B"
+        );
+        let restart = json["restart"].as_str().unwrap();
+        assert!(
+            restart.contains("--secret AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            "the restart caveat must name the --secret forwarding that actually applies the env, not a bare `skill up` (which forwards only model credentials): {restart}"
+        );
+        assert!(
+            restart.contains("boot"),
+            "the restart caveat must still say the env resolves once at container boot: {restart}"
+        );
+        assert!(
+            restart.contains(&dir.path().display().to_string()),
+            "the restart caveat must carry the caller's --plugin-dir so the re-boot targets the bundle whose approvals were read, not whatever bundle happens to be in the CWD: {restart}"
+        );
+        assert!(
+            restart.contains("agentos skill down"),
+            "the restart caveat must name the stop-first step: `start` hard-errors when a runner is already recorded for the dir: {restart}"
+        );
+        let bundle_note = json["bundle_note"].as_str().unwrap();
+        assert!(
+            bundle_note.contains("adds to") && bundle_note.contains("cannot remove"),
+            "the set path's bundle note must state the add-only semantics (the runner unions the bundle gates with the override): {bundle_note}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_clear_emits_empty_env_assignment() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_manifest(dir.path());
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], true)
+            .await
+            .unwrap();
+        let json = out.to_json();
+        assert_eq!(
+            json["env"].as_str().unwrap(),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS="
+        );
+        let restart = json["restart"].as_str().unwrap();
+        assert!(
+            restart.contains("--secret AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            "the clear path's restart caveat must name the --secret forwarding too: a bare `skill up` never forwards the cleared assignment either: {restart}"
+        );
+        assert!(
+            restart.contains(&dir.path().display().to_string()),
+            "the clear path's restart caveat must carry the caller's --plugin-dir too, or the re-boot clears the override on the wrong bundle: {restart}"
+        );
+        assert!(
+            restart.contains("agentos skill down"),
+            "the clear path's restart caveat must name the stop-first step too: {restart}"
+        );
+        let bundle_note = json["bundle_note"].as_str().unwrap();
+        assert!(
+            bundle_note.contains("only the env override") && bundle_note.contains("stay armed"),
+            "the clear path's bundle note must state that it clears only the override and leaves the bundle-declared gates armed: {bundle_note}"
+        );
+    }
+
+    /// `skill approvals` reads only the bundle on disk, so it cannot know which
+    /// of `skill up`'s flags (image, port, name, network, otel-endpoint, budget,
+    /// model, local-model, fake-model, repeatable --secret) the caller passed.
+    /// A synthesized `skill up --secret ...` presented as the command to run is
+    /// therefore actively destructive: following it re-boots the runner on
+    /// defaults, switching model provider and dropping every other connector
+    /// `--secret`. The guidance must point at the caller's OWN invocation.
+    #[tokio::test]
+    async fn skill_approvals_restart_points_at_the_callers_own_up_invocation() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_manifest(dir.path());
+        for (gate, clear) in [(vec!["A".to_string()], false), (vec![], true)] {
+            let out = super::skill_approvals(dir.path().to_path_buf(), gate, clear)
+                .await
+                .unwrap();
+            let json = out.to_json();
+            let restart = json["restart"].as_str().unwrap();
+            assert!(
+                !restart.contains("`agentos skill up --secret"),
+                "the guidance must not synthesize a `skill up --secret ...` command line: this command cannot reconstruct the caller's original flags, so pasting it re-boots on defaults and drops their other --secret credentials (clear={clear}): {restart}"
+            );
+            assert!(
+                restart.contains("your own original `agentos skill up` invocation"),
+                "the guidance must direct the caller to re-run their own original invocation with the flag added (clear={clear}): {restart}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_restart_shell_quotes_a_bundle_path_with_a_space() {
+        use crate::ui::CliOutput;
+        // The guidance names the bundle dir inside shell-facing text, so a path
+        // the shell would split must travel quoted or it names a different dir.
+        let dir = tempfile::tempdir().unwrap();
+        let spaced = dir.path().join("my bundle");
+        std::fs::create_dir(&spaced).unwrap();
+        write_minimal_manifest(&spaced);
+        let out = super::skill_approvals(spaced.clone(), vec!["A".to_string()], false)
+            .await
+            .unwrap();
+        let json = out.to_json();
+        let restart = json["restart"].as_str().unwrap();
+        assert!(
+            restart.contains(&format!("'{}'", spaced.display())),
+            "a bundle path containing a space must be emitted single-quoted: {restart}"
+        );
+    }
+
+    /// The guidance says to export the assignment, so the human line is read as
+    /// shell text. `--gate` rejects only commas and whitespace-only names, so a
+    /// gate with a space reaches this line; unquoted, bash word-splits it and the
+    /// runner is handed a different gate than the one printed.
+    #[tokio::test]
+    async fn skill_approvals_human_render_shell_quotes_an_assignment_with_a_space() {
+        use crate::ui::CliOutput;
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_manifest(dir.path());
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec!["Foo Bar".into()], false)
+            .await
+            .unwrap();
+        // The --json field stays the raw assignment: a machine consumer wants the
+        // value, not a shell literal it would have to unquote.
+        assert_eq!(
+            out.to_json()["env"].as_str().unwrap(),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS=Foo Bar"
+        );
+        assert_eq!(
+            super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS=Foo Bar"),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS='Foo Bar'"
+        );
+        assert_eq!(
+            super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS=$(cmd)"),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS='$(cmd)'",
+            "shell syntax in a gate name must be quoted, not left to be substituted on paste"
+        );
+        // The cleared assignment still renders as an assignment to an empty value.
+        assert_eq!(
+            super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS="),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS=''"
+        );
+    }
+
+    #[test]
+    fn shell_quote_escapes_an_embedded_single_quote() {
+        // The one byte single-quoting cannot carry literally. Closing, escaping,
+        // and reopening is what keeps the rest of the path inside the quotes.
+        assert_eq!(super::shell_quote("/tmp/it's here"), r"'/tmp/it'\''s here'");
+        assert_eq!(super::shell_quote("/tmp/plain"), "'/tmp/plain'");
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_clear_with_gate_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec!["X".into()], true)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_comma_in_gate_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // A comma cannot round-trip through the CSV env encoding.
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec!["a,b".into()], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_whitespace_gate_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec!["  ".into()], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    // --- the set path must not be more credulous than the view path ----------
+    // Both emit an answer ABOUT a specific bundle. The view path errors when the
+    // bundle has no manifest; the set path emitted export-then-reboot guidance
+    // naming a directory it had never opened, so `--plugin-dir /does/not/exist`
+    // exited 0 and the guidance failed later at `skill up`.
+
+    #[tokio::test]
+    async fn skill_approvals_set_without_manifest_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec!["A".into()], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_clear_without_manifest_is_usage_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec![], true)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_set_with_valid_manifest_and_no_policy_succeeds() {
+        use crate::ui::CliOutput;
+        // Regression guard on the two-tier semantics: a manifest that parses but
+        // declares no `approvalPolicy` is the legitimate no-gates case, not an
+        // invalid bundle. Setting an env override for it must still work -- the
+        // validation may only reject a missing, unreadable, or invalid manifest.
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_manifest(dir.path());
+        let out = super::skill_approvals(dir.path().to_path_buf(), vec!["A".into()], false)
+            .await
+            .unwrap();
+        assert_eq!(
+            out.to_json()["env"].as_str().unwrap(),
+            "AGENTOS_APPROVAL_REQUIRED_TOOLS=A"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_approvals_set_with_invalid_manifest_is_usage_error() {
+        // The view path rejects a manifest the runner's parse would reject; the
+        // set path names the same bundle, so it must reject it identically.
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            ".claude-plugin/plugin.json",
+            r#"{"name":"x",,}"#,
+        );
+        let err = super::skill_approvals(dir.path().to_path_buf(), vec!["A".into()], false)
+            .await
+            .unwrap_err();
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    /// AC2: an unavailable verb must name the concept's absence AND point at the
+    /// tier that answers it. `main`'s human path renders `{err:#}` and discards
+    /// the fix, so both halves have to survive on the Display surface alone.
+    #[test]
+    fn skill_versions_unavailable_message_names_reason_and_alternative() {
+        let shown = format!("{:#}", super::skill_versions_unavailable());
+        assert!(
+            shown.contains(super::VERSIONS_REASON),
+            "the human message must carry the reason: {shown}"
+        );
+        assert!(
+            shown.contains(super::VERSIONS_ALT),
+            "the human message must carry the cross-tier redirect: {shown}"
+        );
+    }
+
+    #[test]
+    fn skill_memory_unavailable_message_names_reason_and_alternative() {
+        let shown = format!("{:#}", super::skill_memory_unavailable());
+        assert!(
+            shown.contains(super::MEMORY_REASON),
+            "the human message must carry the reason: {shown}"
+        );
+        assert!(
+            shown.contains(super::MEMORY_ALT),
+            "the human message must carry the cross-tier redirect: {shown}"
+        );
+    }
+
+    #[test]
+    fn skill_versions_unavailable_is_unsupported() {
+        let err = super::skill_versions_unavailable();
+        assert_eq!(
+            crate::exit::classify(&err).0,
+            crate::exit::ExitClass::Unsupported
+        );
+        let json = crate::exit::error_json(&err);
+        assert!(
+            json["error"].as_str().unwrap().contains("versions"),
+            "error names the concept: {}",
+            json["error"]
+        );
+        let fix = json["fix"].as_str().unwrap();
+        assert!(
+            fix.contains("cluster") || fix.contains("local"),
+            "fix names a cross-tier alternative: {fix}"
+        );
+    }
+
+    #[test]
+    fn skill_memory_unavailable_is_unsupported() {
+        let err = super::skill_memory_unavailable();
+        assert_eq!(
+            crate::exit::classify(&err).0,
+            crate::exit::ExitClass::Unsupported
+        );
+        let json = crate::exit::error_json(&err);
+        assert!(
+            json["error"].as_str().unwrap().contains("memory"),
+            "error names the concept: {}",
+            json["error"]
+        );
+        let fix = json["fix"].as_str().unwrap();
+        assert!(
+            fix.contains("cluster") || fix.contains("local"),
+            "fix names a cross-tier alternative: {fix}"
         );
     }
 }
