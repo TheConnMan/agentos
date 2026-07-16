@@ -56,8 +56,16 @@ Pydantic models mirroring the Claude Code shapes:
 - `ApprovalPolicy` / `ApprovalGate` (the manifest `approvalPolicy` field, #273):
   `{gates: [{gate, route}]}` — each gate names a pause point and the approval
   route that decides it; both are required. **Deploy-time validation** rejects a
-  malformed policy or a gate missing `gate`/`route`. Runtime approval routing is
-  a separate not-yet-built seam, so this is validation only today.
+  malformed policy or a gate missing `gate`/`route`. It also rejects a gate whose
+  (whitespace-stripped) name starts with `mcp__` but is not a live,
+  fully-namespaced tool name for a server the bundle declares
+  (`mcp__plugin_<bundle>_<server>__<tool>`, non-empty tool suffix) — the runner
+  matches gates by exact string equality, so a mis-namespaced `mcp__` gate
+  previously validated green but silently never armed (#453). Built-in gates
+  (no `mcp__` prefix, e.g. `Bash`) are unaffected. The error message names the
+  expected form; to arm a live tool name the bundle does not declare, use the
+  per-agent `AGENTOS_APPROVAL_REQUIRED_TOOLS` env knob instead. Runtime approval
+  routing is a separate not-yet-built seam, so this is validation only today.
 - `scripts/` is a directory convention (no manifest schema of its own).
 
 `validate_bundle(path) -> ValidationResult` is the entry point the bundle pipeline calls. It
@@ -78,7 +86,8 @@ Error codes include `bundle.missing`, `manifest.missing`,
 `hooks.invalid`, `hooks.command_missing`, `triggers.invalid`,
 `triggers.unknown_type`, `triggers.cron_missing_schedule`,
 `triggers.webhook_missing_path`, `approval_policy.invalid`,
-`approval_policy.incomplete`, `scripts.not_a_directory`.
+`approval_policy.incomplete`, `approval_policy.gate_not_namespaced`,
+`scripts.not_a_directory`.
 
 ## Frozen-interface rule
 

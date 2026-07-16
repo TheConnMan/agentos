@@ -78,10 +78,10 @@ def validate_bundle(path: str | Path) -> ValidationResult:
     manifest = _validate_manifest(root, c)
     if manifest is not None:
         _validate_skills(root, c)
-        _validate_mcp(root, manifest, c)
+        mcp_servers = _validate_mcp(root, manifest, c)
         _validate_hooks(root, manifest, c)
         _validate_triggers(manifest, c)
-        _validate_approval_policy(manifest, c)
+        _validate_approval_policy(manifest, mcp_servers, c)
         _validate_secrets(manifest, c)
         _validate_scripts(root, c)
 
@@ -146,23 +146,40 @@ def _validate_skills(root: Path, c: _Collector) -> None:
                 c.error("skill.frontmatter_invalid", issue, rel)
 
 
-def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> None:
+def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> set[str] | None:
     """Validate every MCP declaration: the manifest field and root .mcp.json.
 
     The manifest ``mcpServers`` may be an inline object or a path to a config
     file; either form is a supported declaration that must be checked, not only
     the conventional root ``.mcp.json``.
+
+    Returns the set of declared server names across every declaration it read, so
+    the approval-policy check can compare a gate name against them. ``None`` means
+    a declaration existed but could not be read (invalid JSON, a missing declared
+    path, or a config that failed to validate); it poisons the union, because a
+    single unreadable source makes the declared-server set unknowable. An empty
+    set is a different fact: a declaration was read and named no servers.
     """
 
     validated_files: set[Path] = set()
     declared = manifest.mcpServers
+    servers: set[str] = set()
+    unreadable = False
 
     if isinstance(declared, dict):
-        _validate_mcp_object(declared, "plugin.json (mcpServers)", c)
+        result = _validate_mcp_object(declared, "plugin.json (mcpServers)", c)
+        if result is None:
+            unreadable = True
+        else:
+            servers |= result
     elif isinstance(declared, str):
         declared_path = root / declared
         if declared_path.is_file():
-            _validate_mcp_file(declared_path, str(Path(declared)), c)
+            result = _validate_mcp_file(declared_path, str(Path(declared)), c)
+            if result is None:
+                unreadable = True
+            else:
+                servers |= result
             validated_files.add(declared_path.resolve())
         else:
             c.error(
@@ -170,22 +187,31 @@ def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> None:
                 f"manifest mcpServers path {declared!r} was not found",
                 "plugin.json",
             )
+            unreadable = True
 
     root_mcp = root / ".mcp.json"
     if root_mcp.is_file() and root_mcp.resolve() not in validated_files:
-        _validate_mcp_file(root_mcp, ".mcp.json", c)
+        result = _validate_mcp_file(root_mcp, ".mcp.json", c)
+        if result is None:
+            unreadable = True
+        else:
+            servers |= result
+
+    if unreadable:
+        return None
+    return servers
 
 
-def _validate_mcp_file(path: Path, location: str, c: _Collector) -> None:
+def _validate_mcp_file(path: Path, location: str, c: _Collector) -> set[str] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         c.error("mcp.invalid_json", f"{location} is not valid JSON: {exc}", location)
-        return
-    _validate_mcp_object(data, location, c)
+        return None
+    return _validate_mcp_object(data, location, c)
 
 
-def _validate_mcp_object(obj: object, location: str, c: _Collector) -> None:
+def _validate_mcp_object(obj: object, location: str, c: _Collector) -> set[str] | None:
     # Accept both a full config object ({"mcpServers": {...}}) and a bare servers
     # map ({name: server}), which is how the manifest carries an inline value.
     payload = obj if isinstance(obj, dict) and "mcpServers" in obj else {"mcpServers": obj}
@@ -194,7 +220,7 @@ def _validate_mcp_object(obj: object, location: str, c: _Collector) -> None:
     except ValidationError as exc:
         for issue in _explain(exc):
             c.error("mcp.invalid", issue, location)
-        return
+        return None
 
     for name, server in config.mcpServers.items():
         if server.command is None and server.url is None:
@@ -203,6 +229,8 @@ def _validate_mcp_object(obj: object, location: str, c: _Collector) -> None:
                 f"mcp server {name!r} must define either 'command' (stdio) or 'url' (remote)",
                 location,
             )
+
+    return set(config.mcpServers)
 
 
 def _validate_hooks(root: Path, manifest: PluginManifest, c: _Collector) -> None:
@@ -306,12 +334,23 @@ def _validate_triggers(manifest: PluginManifest, c: _Collector) -> None:
             )
 
 
-def _validate_approval_policy(manifest: PluginManifest, c: _Collector) -> None:
+def _validate_approval_policy(
+    manifest: PluginManifest, mcp_servers: set[str] | None, c: _Collector
+) -> None:
     """Validate the manifest ``approvalPolicy`` declaration (deploy-time, #273).
 
     Shape ``{gates: [{gate, route}]}``: each gate names a pause point and the
     route that decides. A malformed policy or a gate missing its ``gate``/``route``
     is rejected at deploy.
+
+    ``mcp_servers`` is the set of MCP server names the bundle declares (from
+    ``_validate_mcp``). A gate that carries the ``mcp__`` prefix must be a live,
+    fully-namespaced tool name (``mcp__plugin_<bundle>_<server>__<tool>``); the
+    runner matches a gate by exact string equality, so the natural
+    ``mcp__<server>__<tool>`` shape arms nothing and silently never fires. We
+    reject it here. ``None`` means the MCP declaration could not be read, so the
+    cross-check stays silent rather than stacking a misleading error on top of the
+    MCP error that already fired.
     """
 
     declared = manifest.approvalPolicy
@@ -332,6 +371,16 @@ def _validate_approval_policy(manifest: PluginManifest, c: _Collector) -> None:
             c.error("approval_policy.invalid", issue, "plugin.json (approvalPolicy)")
         return
 
+    # Construct the valid prefixes from what the bundle declares rather than
+    # parsing the gate to extract a server name: a bundle name cannot contain '_'
+    # (_NAME_RE) but a server key can, so parsing mcp__plugin_a_b_c__t is
+    # ambiguous. Constructing and testing startswith sidesteps that entirely.
+    expected_prefixes: set[str] | None = (
+        {f"mcp__plugin_{manifest.name}_{s}__" for s in mcp_servers}
+        if mcp_servers is not None
+        else None
+    )
+
     for i, gate in enumerate(policy.gates):
         loc = f"plugin.json (approvalPolicy.gates[{i}])"
         if not (gate.gate and gate.gate.strip()) or not (gate.route and gate.route.strip()):
@@ -340,6 +389,47 @@ def _validate_approval_policy(manifest: PluginManifest, c: _Collector) -> None:
                 "an approval gate must define a non-empty 'gate' and 'route'",
                 loc,
             )
+            continue
+
+        # A gate without the mcp__ prefix names a built-in tool (Bash, Write,
+        # PreToolUse); it is armed by raw name and never touched here. Evaluate
+        # the STRIPPED value: the runner strips the gate before matching
+        # (approval.py load_approval_policy), so a leading-space "mcp__..." that
+        # looks built-in on the raw string would arm a mis-namespaced tool at
+        # runtime and silently never fire (#453).
+        stripped_gate = gate.gate.strip()
+        if expected_prefixes is None or not stripped_gate.startswith("mcp__"):
+            continue
+
+        # A live tool name needs a non-empty tool suffix after the matched
+        # prefix; the bare "mcp__plugin_<bundle>_<server>__" arms nothing (#453).
+        if not any(
+            stripped_gate.startswith(prefix) and len(stripped_gate) > len(prefix)
+            for prefix in expected_prefixes
+        ):
+            c.error(
+                "approval_policy.gate_not_namespaced",
+                _gate_not_namespaced_message(stripped_gate, manifest.name, mcp_servers or set()),
+                loc,
+            )
+
+
+def _gate_not_namespaced_message(gate: str, bundle: str, mcp_servers: set[str]) -> str:
+    """Actionable message for a gate whose mcp__ name is not a live tool name."""
+
+    if mcp_servers:
+        declared = "Expected one of: " + ", ".join(
+            sorted(f"mcp__plugin_{bundle}_{s}__<tool>" for s in mcp_servers)
+        )
+    else:
+        declared = "This bundle declares no MCP servers"
+    return (
+        f"approval gate {gate!r} is not a live MCP tool name. A bundle-declared "
+        f"MCP tool's live name is mcp__plugin_{bundle}_<server>__<tool>. "
+        f"{declared}. A built-in tool gate (e.g. Bash) carries no mcp__ prefix. "
+        "To arm a live tool name this bundle does not declare, add it to the "
+        "per-agent AGENTOS_APPROVAL_REQUIRED_TOOLS env knob."
+    )
 
 
 _SECRET_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
