@@ -416,6 +416,9 @@ enum LocalAction {
         /// Clear Slack from the local stack instead of connecting it.
         #[arg(long)]
         disconnect: bool,
+        /// The stack runs only the 7 core services (skip Langfuse/ClickHouse/OTel/UI). Must match how `local up` brought it up.
+        #[arg(long)]
+        minimal: bool,
         /// Slack app token. Defaults from SLACK_APP_TOKEN.
         #[arg(
             long,
@@ -1250,6 +1253,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             LocalAction::Comms {
                 slack,
                 disconnect,
+                minimal,
                 app_token,
                 bot_token,
                 file,
@@ -1264,6 +1268,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     bot_token,
                     disconnect,
                     model_mode: local::model_mode_from_env(),
+                    minimal,
                 })
                 .await
             }

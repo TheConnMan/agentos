@@ -4,7 +4,7 @@
 
 use anyhow::{bail, Result};
 
-use crate::local::{fake_model_env_override, ModelMode};
+use crate::local::{fake_model_env_override, otel_endpoint_env_override, ModelMode};
 use crate::ops::{plain, require_on_path, run_step, secret_set, CommonOpts, OpsCommand};
 
 /// The worker's Slack stub sink URL (compose default); restored on disconnect.
@@ -32,6 +32,12 @@ pub struct LocalCommsOpts {
     /// `fake_model_env_override` as `up_command` so `local comms` never
     /// silently downgrades a live stack back to the fake model.
     pub model_mode: ModelMode,
+    /// Whether the stack was brought up with `local up --minimal` (the `core`
+    /// profile, no otel-collector). Same parity obligation as `model_mode`: the
+    /// worker-restarting commands below apply the same
+    /// `otel_endpoint_env_override` as `up_command` so `local comms` never
+    /// re-points a collector-less stack at a collector that is not running.
+    pub minimal: bool,
 }
 
 pub fn connect_commands(opts: &CommsOpts) -> Vec<OpsCommand> {
@@ -75,6 +81,7 @@ pub fn disconnect_commands(opts: &CommsOpts) -> Vec<OpsCommand> {
 pub fn local_connect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
     let mut env = vec![("SLACK_API_BASE_URL".into(), String::new())];
     env.extend(fake_model_env_override(o.model_mode));
+    env.extend(otel_endpoint_env_override(o.minimal));
     vec![OpsCommand::new(
         "docker",
         vec![
@@ -105,6 +112,7 @@ pub fn local_disconnect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
         ("SLACK_BOT_TOKEN".into(), LOCAL_SLACK_STUB_BOT_TOKEN.into()),
     ];
     worker_env.extend(fake_model_env_override(o.model_mode));
+    worker_env.extend(otel_endpoint_env_override(o.minimal));
     vec![
         OpsCommand::new(
             "docker",
@@ -460,6 +468,10 @@ mod tests {
     }
 
     fn local_comms_opts(disconnect: bool, mode: ModelMode) -> LocalCommsOpts {
+        local_comms_opts_with(disconnect, mode, false)
+    }
+
+    fn local_comms_opts_with(disconnect: bool, mode: ModelMode, minimal: bool) -> LocalCommsOpts {
         LocalCommsOpts {
             file: "compose.dev.yaml".into(),
             dry_run: false,
@@ -475,6 +487,7 @@ mod tests {
             },
             disconnect,
             model_mode: mode,
+            minimal,
         }
     }
 
@@ -487,6 +500,7 @@ mod tests {
             bot_token: "xoxb-1-secretsecret".into(),
             disconnect: false,
             model_mode: ModelMode::DefaultFake,
+            minimal: false,
         });
         assert_eq!(cmds.len(), 1);
         let line = cmds[0].display();
@@ -686,6 +700,80 @@ mod tests {
                 up_override, disconnect_override,
                 "{mode:?}: up_command and local_disconnect_commands disagree on \
                  AGENTOS_FAKE_MODEL; up={up_env:?} disconnect={disconnect_env:?}"
+            );
+        }
+    }
+
+    /// Anti-drift guard (issue #545): `local up` and `local comms` connect must
+    /// agree on whether/how they suppress `OTEL_EXPORTER_OTLP_ENDPOINT`, for
+    /// both `minimal` values. `local comms` recreates the worker, so a dropped
+    /// override here re-resolves compose's collector default onto a `core`-only
+    /// stack that never started one, and every span pays a synchronous DNS retry.
+    #[test]
+    fn up_and_local_connect_agree_on_otel_endpoint_override_for_every_minimal() {
+        for minimal in [false, true] {
+            let up_env = crate::local::up_command(&crate::local::LocalOpts {
+                file: "compose.dev.yaml".into(),
+                dry_run: false,
+                minimal,
+                local_model: None,
+                slack: false,
+                model_mode: ModelMode::DefaultFake,
+            })
+            .env;
+            let connect_env = local_connect_commands(&local_comms_opts_with(
+                false,
+                ModelMode::DefaultFake,
+                minimal,
+            ))[0]
+                .env
+                .clone();
+            let up_override: Option<&(String, String)> = up_env
+                .iter()
+                .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT");
+            let connect_override: Option<&(String, String)> = connect_env
+                .iter()
+                .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT");
+            assert_eq!(
+                up_override, connect_override,
+                "minimal={minimal}: up_command and local_connect_commands disagree on \
+                 OTEL_EXPORTER_OTLP_ENDPOINT; up={up_env:?} connect={connect_env:?}"
+            );
+        }
+    }
+
+    /// Same anti-drift guard (issue #545) for the DISCONNECT leg: its
+    /// worker-restarting command must agree with `local up` on
+    /// `OTEL_EXPORTER_OTLP_ENDPOINT`, for both `minimal` values.
+    #[test]
+    fn up_and_local_disconnect_agree_on_otel_endpoint_override_for_every_minimal() {
+        for minimal in [false, true] {
+            let up_env = crate::local::up_command(&crate::local::LocalOpts {
+                file: "compose.dev.yaml".into(),
+                dry_run: false,
+                minimal,
+                local_model: None,
+                slack: false,
+                model_mode: ModelMode::DefaultFake,
+            })
+            .env;
+            let disconnect_env = local_disconnect_commands(&local_comms_opts_with(
+                true,
+                ModelMode::DefaultFake,
+                minimal,
+            ))[1]
+                .env
+                .clone();
+            let up_override: Option<&(String, String)> = up_env
+                .iter()
+                .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT");
+            let disconnect_override: Option<&(String, String)> = disconnect_env
+                .iter()
+                .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT");
+            assert_eq!(
+                up_override, disconnect_override,
+                "minimal={minimal}: up_command and local_disconnect_commands disagree on \
+                 OTEL_EXPORTER_OTLP_ENDPOINT; up={up_env:?} disconnect={disconnect_env:?}"
             );
         }
     }

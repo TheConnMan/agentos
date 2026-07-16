@@ -105,6 +105,27 @@ pub fn fake_model_env_override(mode: ModelMode) -> Option<(String, String)> {
     }
 }
 
+/// The other injection step every worker-restarting command shares: suppress
+/// the OTel endpoint on a `core`-only stack. `otel-collector` is a `full`-profile
+/// service, so a `--minimal` stack has no collector to export to, and every span
+/// the runner emits would pay a synchronous DNS retry against a name that cannot
+/// resolve. An empty value (not an absent one) is what does it: compose writes
+/// the endpoint as `${OTEL_EXPORTER_OTLP_ENDPOINT-...}`, whose `-` (unset-only)
+/// form substitutes its default only when the var is UNSET, so exporting it
+/// empty resolves to empty and the runner exports nothing. `false` returns
+/// `None` so compose's shipped collector default stands. This is the one place
+/// that decision is made -- `up_command` and `local comms`'s connect/disconnect
+/// commands all call it instead of each re-deriving the pair inline, the same
+/// drift that let `local comms` fall out of parity with `local up` on the fake
+/// model (issue #450).
+pub fn otel_endpoint_env_override(minimal: bool) -> Option<(String, String)> {
+    if minimal {
+        Some(("OTEL_EXPORTER_OTLP_ENDPOINT".into(), String::new()))
+    } else {
+        None
+    }
+}
+
 /// Snapshot the shell for the parity decision. An empty AGENTOS_FAKE_MODEL is
 /// treated as unset (matches compose's `${AGENTOS_FAKE_MODEL:-1}` and the
 /// empty-string-is-not-a-credential rule); a credential is any non-empty
@@ -176,7 +197,7 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
     // credential-driven live injection are mutually exclusive: local-model
     // carries its own live env (AGENTOS_FAKE_MODEL=0 + the ollama routing), so
     // the parity injection only applies when no local model is requested.
-    let env: Vec<(String, String)> = if let Some(model) = &o.local_model {
+    let mut env: Vec<(String, String)> = if let Some(model) = &o.local_model {
         vec![
             ("AGENTOS_FAKE_MODEL".into(), "0".into()),
             (
@@ -198,6 +219,11 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
         // `${AGENTOS_FAKE_MODEL:-1}` default stands for those two modes.
         fake_model_env_override(o.model_mode).into_iter().collect()
     };
+    // Delegate to `otel_endpoint_env_override`, the single source of truth for
+    // the `core`-profile collector suppression. This sits AFTER the branch
+    // above, not inside it, because the `--local-model` arm does not fall
+    // through to the else: `--minimal --local-model` needs suppressing too.
+    env.extend(otel_endpoint_env_override(o.minimal));
     if !env.is_empty() {
         cmd = cmd.with_env(env);
     }
@@ -476,6 +502,64 @@ mod tests {
         )));
     }
 
+    /// `--minimal` starts the `core` profile, which has no otel-collector, so
+    /// `up` must hand compose an EMPTY endpoint. Compose's `${VAR-default}` form
+    /// substitutes only when the var is unset, so the empty value suppresses the
+    /// default instead of pointing every spawned runner at a host that never
+    /// resolves (each span then eats ~7s of synchronous export retry).
+    #[test]
+    fn up_minimal_suppresses_otel_endpoint() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.minimal = true;
+        let cmd = up_command(&o);
+        assert!(
+            cmd.env
+                .contains(&(String::from("OTEL_EXPORTER_OTLP_ENDPOINT"), String::new(),)),
+            "--minimal must pass an empty OTEL_EXPORTER_OTLP_ENDPOINT; env={:?}",
+            cmd.env
+        );
+    }
+
+    /// The `--local-model` arm of `up_command`'s env build does not fall through
+    /// to the else, so the suppression has to sit outside both arms. This is the
+    /// combination that regresses if it ever moves back inside one.
+    #[test]
+    fn up_minimal_suppresses_otel_endpoint_with_local_model() {
+        let mut o = opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b");
+        o.minimal = true;
+        let cmd = up_command(&o);
+        assert!(
+            cmd.env
+                .contains(&(String::from("OTEL_EXPORTER_OTLP_ENDPOINT"), String::new(),)),
+            "--minimal --local-model must pass an empty OTEL_EXPORTER_OTLP_ENDPOINT; env={:?}",
+            cmd.env
+        );
+        // The local-model wiring must survive the suppression.
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+    }
+
+    /// The default (full-profile) `up` starts otel-collector, so it must NOT
+    /// suppress: leaving the var unset is what lets compose's default resolve to
+    /// `http://otel-collector:4318`.
+    #[test]
+    fn up_default_does_not_suppress_otel_endpoint() {
+        for o in [
+            opts(DEFAULT_COMPOSE_FILE),
+            opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b"),
+        ] {
+            let cmd = up_command(&o);
+            assert!(
+                !cmd.env
+                    .iter()
+                    .any(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT"),
+                "a non-minimal up must leave compose's endpoint default alone; env={:?}",
+                cmd.env
+            );
+        }
+    }
+
     #[test]
     fn resolve_model_mode_truth_table() {
         // No credential -> DefaultFake regardless of any pin.
@@ -627,9 +711,11 @@ mod tests {
         let mut o = opts(DEFAULT_COMPOSE_FILE);
         o.minimal = true;
         let cmd = up_command(&o);
+        // The empty endpoint is `--minimal`'s collector suppression (the `core`
+        // profile starts no collector); `display` renders env before the program.
         assert_eq!(
             cmd.display(),
-            "docker compose --profile core -f compose.dev.yaml up -d --wait"
+            "OTEL_EXPORTER_OTLP_ENDPOINT= docker compose --profile core -f compose.dev.yaml up -d --wait"
         );
     }
 

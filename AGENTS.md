@@ -90,7 +90,7 @@ API + worker). Every backend integration test and UI E2E runs against `full`.
 
 ```bash
 docker compose --profile full -f compose.dev.yaml up -d   # full stack
-docker compose --profile core -f compose.dev.yaml up -d   # 7-service minimal stack (no Langfuse/ClickHouse/OTel/UI)
+OTEL_EXPORTER_OTLP_ENDPOINT= docker compose --profile core -f compose.dev.yaml up -d   # 7-service minimal stack (no Langfuse/ClickHouse/OTel/UI); blank endpoint avoids a DNS retry against the absent otel-collector
 docker compose -f compose.dev.yaml ps        # check health
 docker compose -f compose.dev.yaml down      # stop, KEEP volumes (fast restart)
 docker compose -f compose.dev.yaml down -v   # stop and WIPE volumes (throwaway)

@@ -6,7 +6,9 @@
 # (same components, same pinned versions).
 #
 # Bring up full:  docker compose --profile full -f compose.dev.yaml up -d
-# Bring up core:  docker compose --profile core -f compose.dev.yaml up -d
+# Bring up core:  OTEL_EXPORTER_OTLP_ENDPOINT= docker compose --profile core -f compose.dev.yaml up -d
+# otel-collector is full-profile only; a core-only stack must blank the endpoint
+# or every span pays a synchronous DNS retry against an absent collector.
 # core = postgres, valkey, minio, minio-init, agentos-migrate, agentos-api, agentos-worker
 # full = core + clickhouse, langfuse-web, langfuse-worker, otel-collector, agentos-ui
 # The CLI `agentos local up` wraps these compose profile invocations.
@@ -438,14 +440,25 @@ services:
       - ANTHROPIC_API_KEY
       - CLAUDE_CODE_OAUTH_TOKEN
       - AGENTOS_CREDENTIALS
-      # Local-model demo enablement:
-      # agentos local up --local-model
-      # AGENTOS_DOCKER_NETWORK=agentos_default puts spawned runner containers on
-      # the compose network so they resolve ollama by name, same as the
-      # otel-collector trace path.
+      # By default, the worker joins spawned sandbox containers to the compose
+      # network (AGENTOS_DOCKER_NETWORK=agentos_default) and points them at the
+      # shipped collector (OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318),
+      # so a plain `agentos local up` traces with no manual flags. The network
+      # join is also what lets --local-model resolve ollama by name. Both are
+      # overridable from the shell.
+      #
+      # The endpoint default is what a full-profile `local up` gets. It uses the
+      # `${VAR-default}` form (substitute only when UNSET), not `${VAR:-default}`
+      # (substitute when unset OR empty), so an explicit empty value means "no
+      # endpoint". That is what lets `agentos local up --minimal` suppress it:
+      # --minimal selects the `core` profile, which does not start otel-collector,
+      # and a runner pointed at a host that never resolves stalls on synchronous
+      # export retries per span. AGENTOS_DOCKER_NETWORK stays on `:-` because the
+      # network join is correct under `core` too.
       - AGENTOS_MODEL_BASE_URL=${AGENTOS_MODEL_BASE_URL:-}
       - AGENTOS_MODEL=${AGENTOS_MODEL:-}
-      - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-}
+      - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-agentos_default}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
     restart: unless-stopped
 
   # Optional real Slack ingress for local development.
