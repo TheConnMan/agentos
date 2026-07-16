@@ -194,6 +194,61 @@ fn dump_commands_alias_emits_same_manifest() {
     assert_eq!(schema.stdout, alias.stdout);
 }
 
+/// Collect every long flag (`--foo`) the command's help exposes.
+fn help_flags(args: &[&str]) -> std::collections::BTreeSet<String> {
+    let output = run_help(args);
+    assert!(
+        output.status.success(),
+        "expected success for {:?}\n{}",
+        args,
+        output_text(&output)
+    );
+    output_text(&output)
+        .split_whitespace()
+        .filter(|token| token.starts_with("--") && token.len() > 2)
+        .map(|token| token.trim_end_matches(',').to_string())
+        .collect()
+}
+
+/// The agent-target verbs share one `AgentTarget<T>` whose only per-tier
+/// difference is where the platform API listens. Lock both defaults so the
+/// shared struct cannot silently collapse them onto one port (issue #466).
+///
+/// Assert the full bracketed clap default string, not a bare port number:
+/// `8000` is a substring of `28000`, so a bare-port assertion for `cluster`
+/// would still pass even if `cluster` silently inherited `local`'s default.
+#[test]
+fn agent_target_verbs_keep_their_per_tier_api_url_default() {
+    for verb in ["versions", "memory", "approvals"] {
+        let local = output_text(&run_help(&["local", verb]));
+        assert!(
+            local.contains("[default: http://localhost:28000]"),
+            "local {verb} lost its api-url default\n{local}"
+        );
+
+        let cluster = output_text(&run_help(&["cluster", verb]));
+        assert!(
+            cluster.contains("[default: http://localhost:8000]"),
+            "cluster {verb} lost its api-url default\n{cluster}"
+        );
+    }
+}
+
+/// Tier parity gate: the shared `AgentTarget<T>` means a flag added to `local
+/// versions` is structurally impossible to forget on `cluster versions`. This
+/// test fails if the two tiers ever drift apart again (issue #466).
+#[test]
+fn agent_target_verbs_expose_the_same_flags_on_both_tiers() {
+    for verb in ["versions", "memory", "approvals"] {
+        let local = help_flags(&["local", verb]);
+        let cluster = help_flags(&["cluster", verb]);
+        assert_eq!(
+            local, cluster,
+            "local {verb} and cluster {verb} expose different flags"
+        );
+    }
+}
+
 fn to_argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|part| (*part).to_string()).collect()
 }
