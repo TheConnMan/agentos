@@ -2255,12 +2255,22 @@ mod tests {
     #[test]
     fn approvals_parses_repeatable_gate_and_clear() {
         let cli = Cli::try_parse_from([
-            "agentos", "local", "approvals", "gh", "--gate", "Bash", "--gate", "mcp__x__y",
+            "agentos",
+            "local",
+            "approvals",
+            "gh",
+            "--gate",
+            "Bash",
+            "--gate",
+            "mcp__x__y",
         ])
         .expect("local approvals should parse");
         match cli.command {
             Some(Command::Local {
-                action: LocalAction::Approvals { agent, gate, clear, .. },
+                action:
+                    LocalAction::Approvals {
+                        agent, gate, clear, ..
+                    },
             }) => {
                 assert_eq!(agent, "gh");
                 assert_eq!(gate, vec!["Bash".to_string(), "mcp__x__y".to_string()]);
