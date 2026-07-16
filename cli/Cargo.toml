@@ -1,6 +1,6 @@
 [package]
 name = "agentos"
-version = "0.4.0-rc.3"
+version = "0.4.0-rc.4"
 edition = "2021"
 description = "AgentOS CLI: init/start/send/eval a plugin against a local runner (task I1)"
 
