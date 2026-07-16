@@ -20,6 +20,7 @@ pub mod interactive;
 pub mod local;
 pub mod message;
 pub mod ndjson;
+pub mod observability;
 pub mod ops;
 pub mod queue;
 pub mod recipes;

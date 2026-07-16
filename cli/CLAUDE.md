@@ -6,8 +6,9 @@ and the platform API's committed `apps/api/openapi.json`) and orchestrates a
 local runner container via Docker. Three command families: `skill` drives a
 plugin against a local runner with `up`, `down`, `status`, `message`, and
 `eval`; `local` wraps the compose stack and local API with `up`, `down`,
-`status`, `comms`, `message`, and `deploy`; `cluster` wraps Helm and the deployed
-release with `up`, `status`, `down`, `comms`, `message`, and `deploy`. Full command reference in
+`status`, `comms`, `message`, `deploy`, and `observability`; `cluster` wraps
+Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
+`deploy`, and `observability`. Full command reference in
 `cli/README.md`.
 
 ## Load-bearing invariants

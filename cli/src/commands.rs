@@ -1850,65 +1850,28 @@ pub async fn approvals(
     })
 }
 
-/// Output of `local observability`: the observability surfaces (name, url) to
-/// print. The browser-open side effect happens in the handler; this type only
-/// carries what `emit` renders.
-pub struct ObservabilityOutput {
-    pub surfaces: Vec<(String, String)>,
-}
-
-impl crate::ui::CliOutput for ObservabilityOutput {
-    fn to_json(&self) -> serde_json::Value {
-        let surfaces: Vec<serde_json::Value> = self
-            .surfaces
-            .iter()
-            .map(|(name, url)| serde_json::json!({"name": name, "url": url}))
-            .collect();
-        serde_json::json!({"surfaces": surfaces})
-    }
-
-    fn render(&self, ui: &crate::ui::Ui) {
-        for (name, url) in &self.surfaces {
-            ui.kv(name, url);
-        }
-        ui.payload("opened the local observability surfaces (start them with `agentos local up`)");
-    }
-}
-
-/// `local observability`: open (and print) the local platform's observability
-/// surfaces -- the AgentOS Console and the Langfuse UI. Best-effort browser open
-/// so it degrades to just the URLs on a headless host. Under `--json` the
-/// consumer is a machine, so the browser-open side effect is skipped entirely
-/// (it would spawn tabs an agent never sees, and makes tests non-hermetic).
-pub async fn observability() -> Result<ObservabilityOutput> {
-    let urls = [
-        ("AgentOS Console", "http://localhost:28080/?api=1"),
-        (
-            "Langfuse UI (traces / cost / evals)",
-            "http://localhost:23000",
-        ),
-    ];
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    let open_browser = !crate::ui::ui().json();
-    let mut surfaces = Vec::with_capacity(urls.len());
-    for (name, url) in urls {
-        if open_browser {
-            // Fire-and-forget: a missing opener (headless/CI) is not an error --
-            // the URL is printed by `render` either way.
-            let _ = tokio::process::Command::new(opener)
-                .arg(url)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .await;
-        }
-        surfaces.push((name.to_string(), url.to_string()));
-    }
-    Ok(ObservabilityOutput { surfaces })
+/// `local observability`: print the local platform's observability surfaces --
+/// the AgentOS Console, the Langfuse UI, and the API base -- resolved through the
+/// shared tier-aware endpoint seam (`crate::observability`).
+///
+/// `ObservabilityOutput` moved to `crate::observability` (#460) so both tiers
+/// return one type; the hardcoded URL array that used to live here is replaced
+/// by `observability::local_endpoints()`, whose consts `local.rs::ENDPOINTS`
+/// also references (one source of truth for the port literals).
+///
+/// Agent-first: a browser is opened only when the human passes `--open`, and
+/// never under `--json` (gated by `observability::should_open`). A missing
+/// opener (headless/CI) is not an error -- the URLs are printed either way.
+pub async fn observability(open: bool) -> Result<crate::observability::ObservabilityOutput> {
+    let ui = crate::ui::ui();
+    let surfaces = crate::observability::local_endpoints();
+    crate::observability::open_endpoints(&surfaces, open, ui.json()).await;
+    // A hint, not payload: `observability` never checks whether the stack is
+    // up, so this is stderr guidance rather than a claim about what happened.
+    ui.note("start these surfaces with `agentos local up` if they are unreachable");
+    Ok(crate::observability::ObservabilityOutput::Surfaces(
+        surfaces,
+    ))
 }
 
 /// Reject a Slack channel value that is a `#name` rather than a channel ID.

@@ -159,9 +159,13 @@ fn every_dry_run_verb_emits_json_object() {
 #[test]
 fn observability_emits_json_object() {
     // AC1: `local observability` has no --dry-run, so the manifest walk misses
-    // it. It is network-free (prints two URLs + best-effort browser open; the
-    // opener failure is swallowed on a headless host, so xdg-open failing is
-    // fine and must not be fought). Today it emits empty stdout under --json.
+    // it. It is network-free and prints three URLs (Console, Langfuse, API
+    // base); nothing opens in a browser unless `--open` is passed, and `--json`
+    // never opens one regardless (see `should_open`). This is a canary: its
+    // assertions are intentionally left unmodified by #460 so a passing run
+    // proves the local `--json` shape stayed a strict superset of the shipped
+    // `{"surfaces":[{"name","url"}]}` contract (empty-stdout was already fixed
+    // by #456/PR#503, before this branch).
     let output = Command::new(bin())
         .args(["local", "observability", "--json"])
         .output()
@@ -477,9 +481,12 @@ fn cluster_comms_disconnect_dry_run_emits_plan_not_error() {
 
 use agentos::api::{MemoryEntry, Version};
 use agentos::commands::{
-    ApprovalsOutput, BudgetOutput, DeleteOutput, KillOutput, MemoryOutput, ObservabilityOutput,
-    ResumeOutput, VersionsOutput,
+    ApprovalsOutput, BudgetOutput, DeleteOutput, KillOutput, MemoryOutput, ResumeOutput,
+    VersionsOutput,
 };
+// `ObservabilityOutput` moved to the tier-aware `observability` seam (#460) so
+// both the local and cluster handlers return one type.
+use agentos::observability::{Endpoint, ObservabilityOutput};
 use agentos::ui::{CliOutput, DryRunPlan};
 use serde_json::json;
 
@@ -630,26 +637,102 @@ fn approvals_output_json_shape_is_pinned() {
     );
 }
 
+/// Deliberate, reviewed contract EVOLUTION (#460), not a weakened pin: the
+/// payload key `surfaces` and the row key `name` are unchanged, and this still
+/// asserts EXACT equality against a literal, so a dropped/renamed/added key
+/// fails exactly as before. What changed is that each row is now an additive
+/// SUPERSET -- `note` and `browsable` join `name`/`url`. Existing agents reading
+/// `surfaces[].name`/`.url` keep working.
+///
+/// Per the repo convention pinned by `kill_output_json_shape_is_pinned` ("the
+/// false case must emit `killed: false`, not omit the key"), all four keys are
+/// ALWAYS emitted with explicit nulls -- never conditionally omitted.
 #[test]
 fn observability_output_json_shape_is_pinned() {
     assert_eq!(
-        ObservabilityOutput {
-            surfaces: vec![
-                (
-                    "AgentOS Console".to_string(),
-                    "http://localhost:28080/?api=1".to_string()
-                ),
-                (
-                    "Langfuse UI".to_string(),
-                    "http://localhost:23000".to_string()
-                ),
-            ],
-        }
+        ObservabilityOutput::Surfaces(vec![
+            // Browsable row: url set, note explicitly null.
+            Endpoint {
+                name: "AgentOS Console".to_string(),
+                url: Some("http://localhost:28080/?api=1".to_string()),
+                note: None,
+                browsable: true,
+            },
+            Endpoint {
+                name: "Langfuse UI".to_string(),
+                url: Some("http://localhost:23000".to_string()),
+                note: None,
+                browsable: true,
+            },
+            // Non-browsable row WITH a url: the API base is an agent target,
+            // never opened in a browser.
+            Endpoint {
+                name: "AgentOS API".to_string(),
+                url: Some("http://localhost:28000".to_string()),
+                note: None,
+                browsable: false,
+            },
+            // Degraded row: url explicitly null, note carries the message --
+            // never smuggled into `url`.
+            Endpoint {
+                name: "Langfuse UI".to_string(),
+                url: None,
+                note: Some("service agentos-langfuse-web not found".to_string()),
+                browsable: false,
+            },
+        ])
         .to_json(),
         json!({
             "surfaces": [
-                {"name": "AgentOS Console", "url": "http://localhost:28080/?api=1"},
-                {"name": "Langfuse UI", "url": "http://localhost:23000"},
+                {"name": "AgentOS Console", "url": "http://localhost:28080/?api=1", "note": null, "browsable": true},
+                {"name": "Langfuse UI", "url": "http://localhost:23000", "note": null, "browsable": true},
+                {"name": "AgentOS API", "url": "http://localhost:28000", "note": null, "browsable": false},
+                {"name": "Langfuse UI", "url": null, "note": "service agentos-langfuse-web not found", "browsable": false},
+            ],
+        })
+    );
+}
+
+/// The cluster tier returns the SAME `ObservabilityOutput`, so its payload is
+/// pinned at the `to_json` level: `cluster observability` needs a real cluster,
+/// so there is no hermetic binary test for it the way `local` has
+/// `observability_emits_json_object`. This pins cross-tier payload parity --
+/// three surfaces, identical key set, degrading per endpoint rather than
+/// hard-failing when a service is missing.
+#[test]
+fn cluster_observability_output_json_shape_is_pinned() {
+    assert_eq!(
+        ObservabilityOutput::Surfaces(vec![
+            Endpoint {
+                name: "AgentOS Console".to_string(),
+                url: Some("http://10.0.0.5:31234/?api=1".to_string()),
+                note: None,
+                browsable: true,
+            },
+            // A ClusterIP service degrades to a port-forward hint, not a URL.
+            Endpoint {
+                name: "Langfuse UI".to_string(),
+                url: None,
+                note: Some(
+                    "kubectl -n agentos port-forward svc/agentos-langfuse-web 3000:3000  \
+                     then http://localhost:3000"
+                        .to_string()
+                ),
+                browsable: false,
+            },
+            Endpoint {
+                name: "AgentOS API".to_string(),
+                url: Some("http://10.0.0.5:31234/api".to_string()),
+                note: None,
+                browsable: false,
+            },
+        ])
+        .to_json(),
+        json!({
+            "surfaces": [
+                {"name": "AgentOS Console", "url": "http://10.0.0.5:31234/?api=1", "note": null, "browsable": true},
+                {"name": "Langfuse UI", "url": null, "note": "kubectl -n agentos port-forward svc/agentos-langfuse-web 3000:3000  then http://localhost:3000", "browsable": false},
+                {"name": "AgentOS API", "url": "http://10.0.0.5:31234/api", "note": null, "browsable": false},
             ],
         })
     );

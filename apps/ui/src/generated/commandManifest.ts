@@ -1059,7 +1059,21 @@ export const commandManifest = {
           "name": "approvals"
         },
         {
-          "about": "Open the local observability surfaces (AgentOS Console + Langfuse traces/cost)",
+          "about": "Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base)",
+          "args": [
+            {
+              "global": false,
+              "help": "Also open the browsable surfaces in a browser. Off by default: the URLs are printed and nothing is opened unless --open is passed, and --json never opens a browser",
+              "id": "open",
+              "long": "open",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
           "hidden": false,
           "name": "observability"
         },
@@ -1445,6 +1459,59 @@ export const commandManifest = {
           ],
           "hidden": false,
           "name": "status"
+        },
+        {
+          "about": "Show the release's observability surfaces (AgentOS Console + Langfuse traces/cost + API base)",
+          "args": [
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name",
+              "id": "release",
+              "long": "release",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Print the read-only discovery commands that would run and exit",
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Also open the browsable surfaces in a browser. Off by default: the URLs are printed and nothing is opened unless --open is passed, and --json never opens a browser",
+              "id": "open",
+              "long": "open",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "observability"
         },
         {
           "about": "Connect or disconnect the cluster release from a real Slack workspace",
