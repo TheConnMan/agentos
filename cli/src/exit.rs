@@ -2,7 +2,7 @@
 //! contract (ADR-0021 decision 1).
 //!
 //! An agent driving `agentos` needs to branch on *why* a command failed without
-//! parsing prose. The scheme is four stable exit classes:
+//! parsing prose. The scheme is five stable exit classes:
 //!
 //! - `0` Success: the command did what was asked.
 //! - `1` Failure: a genuine runtime failure (the request was well-formed but the
@@ -11,15 +11,19 @@
 //!   flag) -- retrying the same argv will fail identically, so fix the input.
 //! - `3` Transient: a retryable condition (the endpoint was unreachable or timed
 //!   out) -- the same argv may succeed once the dependency is up.
+//! - `4` Unsupported: the verb exists at this tier but the concept it inspects
+//!   does not exist here by construction (issue #459). No input and no retry
+//!   changes that; the fix is another tier, which the hint names.
 //!
 //! A command tags an input error by returning [`usage`] (or building a
-//! [`CliError`] directly); an unreachable dependency is detected structurally by
-//! walking the error chain for a `reqwest` connect/timeout error. Everything
-//! else is [`ExitClass::Failure`]. [`classify`] returns the class plus an
-//! optional one-line fix hint, and [`error_json`] renders the whole thing as the
-//! `--json` error payload.
+//! [`CliError`] directly) and a tier-absent concept by returning [`unsupported`];
+//! an unreachable dependency is detected structurally by walking the error chain
+//! for a `reqwest` connect/timeout error. Everything else is
+//! [`ExitClass::Failure`]. [`classify`] returns the class plus an optional
+//! one-line fix hint, and [`error_json`] renders the whole thing as the `--json`
+//! error payload.
 
-/// The four semantic exit classes. The `#[repr(i32)]` values are the process
+/// The five semantic exit classes. The `#[repr(i32)]` values are the process
 /// exit codes and are a stable contract agents branch on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
@@ -28,6 +32,7 @@ pub enum ExitClass {
     Failure = 1,
     Usage = 2,
     Transient = 3,
+    Unsupported = 4,
 }
 
 impl ExitClass {
@@ -66,6 +71,15 @@ impl CliError {
         }
     }
 
+    /// A concept that does not exist at this tier by construction (exit 4).
+    pub fn unsupported(msg: impl Into<String>) -> Self {
+        CliError {
+            message: msg.into(),
+            fix: None,
+            class: ExitClass::Unsupported,
+        }
+    }
+
     /// Attach an actionable fix hint (surfaced in the `--json` payload).
     pub fn with_fix(mut self, fix: impl Into<String>) -> Self {
         self.fix = Some(fix.into());
@@ -86,6 +100,36 @@ impl std::error::Error for CliError {}
 /// Build a usage error (exit 2) as an `anyhow::Error` ready to `return Err(..)`.
 pub fn usage(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::from(CliError::usage(msg))
+}
+
+/// Build an unsupported error (exit 4) as an `anyhow::Error` ready to
+/// `return Err(..)`: the verb was understood, but `concept` does not exist at
+/// this tier `reason`, and `alternative` names the tier that does have it.
+///
+/// This is the honest answer an agent gets instead of a fabricated empty result
+/// (issue #459: every verb is answered at every tier; a verb that lies is worse
+/// than one absent).
+///
+/// The message carries the concept's absence, the reason, AND the alternative,
+/// while the alternative ALSO rides in the fix. The redundancy is deliberate: the
+/// two consumers read different fields. A machine consumer branches on the
+/// ADR-0021 `{error, fix}` payload, where `fix` is the alternative alone and stays
+/// exactly the shape it was. A human consumer sees only `Display` (`main` renders
+/// `{err:#}` and discards the fix), so an alternative that lived only in `fix`
+/// would tell them why the verb cannot answer and never where it can -- half of
+/// AC2. Composing it into the message is the local fix; rendering `fix` for every
+/// command's human path is a shared-surface gap tracked separately.
+pub fn unsupported(
+    concept: impl std::fmt::Display,
+    reason: impl std::fmt::Display,
+    alternative: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow::Error::from(
+        CliError::unsupported(format!(
+            "{concept} is not available at this tier: {reason}; {alternative}"
+        ))
+        .with_fix(alternative.to_string()),
+    )
 }
 
 /// Build a transient error (exit 3) as an `anyhow::Error` ready to `return Err(..)`.
@@ -140,4 +184,75 @@ pub fn error_json(err: &anyhow::Error) -> serde_json::Value {
         "error": format!("{err:#}"),
         "fix": fix,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_class_code_is_four() {
+        assert_eq!(ExitClass::Unsupported.code(), 4);
+    }
+
+    #[test]
+    fn classify_unsupported_returns_class_and_alternative_fix() {
+        let err = unsupported(
+            "versions",
+            "the skill tier has no deployed release to inspect",
+            "use agentos cluster versions <agent>",
+        );
+        let (class, fix) = classify(&err);
+        assert_eq!(class, ExitClass::Unsupported);
+        let fix = fix.expect("an unsupported error carries the cross-tier fix");
+        assert!(
+            fix.contains("cluster versions"),
+            "fix must point at the alternative: {fix}"
+        );
+    }
+
+    #[test]
+    fn unsupported_message_carries_reason_and_alternative() {
+        // `main`'s non-json path renders `{err:#}` and drops the fix, so a human
+        // sees the Display surface alone. It must name BOTH why this tier cannot
+        // answer and the tier that can, or the redirect never reaches them.
+        let err = unsupported(
+            "versions",
+            "the skill tier has no deployed release to inspect",
+            "use agentos cluster versions <agent>",
+        );
+        let shown = format!("{err:#}");
+        assert!(
+            shown.contains("no deployed release to inspect"),
+            "the human message must carry the reason: {shown}"
+        );
+        assert!(
+            shown.contains("agentos cluster versions"),
+            "the human message must carry the cross-tier alternative, not only the fix field: {shown}"
+        );
+    }
+
+    #[test]
+    fn error_json_of_unsupported_has_only_error_and_fix_keys() {
+        let err = unsupported(
+            "versions",
+            "the skill tier has no deployed release to inspect",
+            "use agentos cluster versions <agent>",
+        );
+        let json = error_json(&err);
+        let obj = json.as_object().expect("error_json is an object");
+        assert_eq!(obj.len(), 2, "exactly error and fix: {obj:?}");
+        assert!(obj.contains_key("error"));
+        assert!(obj.contains_key("fix"));
+        assert!(
+            json["error"].as_str().unwrap().contains("versions"),
+            "error names the concept: {}",
+            json["error"]
+        );
+        assert!(
+            json["fix"].as_str().unwrap().contains("cluster versions"),
+            "fix names the alternative: {}",
+            json["fix"]
+        );
+    }
 }

@@ -1,5 +1,5 @@
-//! The `agentos` binary: `init`, `skill <up|down|status|message|eval>` for a
-//! local runner, `local <up|down|status|message|deploy>` for the compose stack,
+//! The `agentos` binary: `init`, `skill <up|down|status|message|eval|approvals>`
+//! for a local runner, `local <up|down|status|message|deploy>` for the compose stack,
 //! and `cluster <up|down|status|comms|message|deploy>` for Kubernetes and the
 //! platform API. Task I1; contracts are frozen in packages/aci-protocol and
 //! packages/plugin-format.
@@ -124,7 +124,9 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         from_spec: Option<PathBuf>,
     },
-    /// Work with a local runner session for a plugin bundle.
+    /// Work with a local runner session for a plugin bundle:
+    /// `skill <up|down|status|message|eval|approvals>`. `versions` and `memory`
+    /// are answered here too, reporting that this tier has neither.
     Skill {
         #[command(subcommand)]
         action: SkillAction,
@@ -309,6 +311,33 @@ enum SkillAction {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
+    /// View the bundle's declared approval gates, or print the env assignment
+    /// that sets or clears the runner's override (nothing is mutated).
+    Approvals {
+        /// Plugin bundle directory.
+        #[arg(long, default_value = ".")]
+        plugin_dir: PathBuf,
+        /// Tool name to gate. Repeatable. Omit (with no --clear) to view the
+        /// bundle's declared gates.
+        #[arg(long = "gate", value_name = "TOOL")]
+        gate: Vec<String>,
+        /// Print the assignment that clears the env override.
+        #[arg(long)]
+        clear: bool,
+    },
+    // The about text is composed from the same consts the runtime `{error, fix}`
+    // payload uses, so the discovery surface cannot drift from the answer
+    // (issue #459, ADR-0041).
+    #[command(about = format!(
+        "Not available at this tier: {}; {}",
+        commands::VERSIONS_REASON, commands::VERSIONS_ALT,
+    ))]
+    Versions,
+    #[command(about = format!(
+        "Not available at this tier: {}; {}",
+        commands::MEMORY_REASON, commands::MEMORY_ALT,
+    ))]
+    Memory,
     /// Stop and remove the local runner container.
     Down,
     /// Show the local runner's session status.
@@ -1182,6 +1211,15 @@ async fn run(command: Option<Command>) -> Result<()> {
                 );
                 commands::check(plugin_dir, image, timeout).await
             }
+            SkillAction::Approvals {
+                plugin_dir,
+                gate,
+                clear,
+            } => emit(commands::skill_approvals(plugin_dir, gate, clear).await?),
+            // Answered, not absent: the concept does not exist at this tier, so
+            // the verb reports why and exits 4 (issue #459, ADR-0041).
+            SkillAction::Versions => Err(commands::skill_versions_unavailable()),
+            SkillAction::Memory => Err(commands::skill_memory_unavailable()),
             SkillAction::Down => commands::stop().await,
             SkillAction::Status { url } => commands::status(url).await,
             SkillAction::Message {
@@ -2378,6 +2416,89 @@ mod tests {
             }
             _ => panic!("expected cluster delete command"),
         }
+    }
+
+    #[test]
+    fn skill_approvals_parses_plugin_dir_and_repeatable_gate() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "skill",
+            "approvals",
+            "--plugin-dir",
+            "/tmp/bundle",
+            "--gate",
+            "A",
+            "--gate",
+            "B",
+        ])
+        .expect("skill approvals should parse");
+        match cli.command {
+            Some(Command::Skill {
+                action:
+                    SkillAction::Approvals {
+                        plugin_dir,
+                        gate,
+                        clear,
+                        ..
+                    },
+            }) => {
+                assert_eq!(plugin_dir, std::path::PathBuf::from("/tmp/bundle"));
+                assert_eq!(gate, vec!["A".to_string(), "B".to_string()]);
+                assert!(!clear);
+            }
+            _ => panic!("expected skill approvals command"),
+        }
+    }
+
+    #[test]
+    fn skill_approvals_parses_clear() {
+        let cli = Cli::try_parse_from(["agentos", "skill", "approvals", "--clear"])
+            .expect("skill approvals --clear should parse");
+        match cli.command {
+            Some(Command::Skill {
+                action: SkillAction::Approvals { gate, clear, .. },
+            }) => {
+                assert!(clear);
+                assert!(gate.is_empty());
+            }
+            _ => panic!("expected skill approvals command"),
+        }
+    }
+
+    #[test]
+    fn skill_approvals_clear_and_gate_parse_ok_at_clap_layer() {
+        // The --clear + --gate conflict is a RUNTIME usage error (asserted in the
+        // commands.rs handler tests), not a clap parse error.
+        assert!(
+            Cli::try_parse_from(["agentos", "skill", "approvals", "--clear", "--gate", "X"])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn skill_versions_parses_as_a_known_verb() {
+        // The verb EXISTS at the skill tier (answered, not a clap unknown
+        // subcommand): parsing succeeds and the runtime reports unavailability.
+        assert!(matches!(
+            Cli::try_parse_from(["agentos", "skill", "versions"])
+                .expect("skill versions should parse")
+                .command,
+            Some(Command::Skill {
+                action: SkillAction::Versions
+            })
+        ));
+    }
+
+    #[test]
+    fn skill_memory_parses_as_a_known_verb() {
+        assert!(matches!(
+            Cli::try_parse_from(["agentos", "skill", "memory"])
+                .expect("skill memory should parse")
+                .command,
+            Some(Command::Skill {
+                action: SkillAction::Memory
+            })
+        ));
     }
 
     #[test]
