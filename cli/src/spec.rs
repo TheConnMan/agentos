@@ -27,9 +27,28 @@ pub struct SkillSpec {
     pub instructions: String,
 }
 
+/// One approval gate a spec declares: the fully-namespaced LIVE tool name and the
+/// route it escalates to. Mirrors `plugin_format.models.ApprovalGate`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalGateSpec {
+    pub gate: String,
+    pub route: String,
+}
+
+/// The `approvalPolicy` a spec declares. Mirrors `plugin_format.models.ApprovalPolicy`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalPolicySpec {
+    #[serde(default)]
+    pub gates: Vec<ApprovalGateSpec>,
+}
+
 /// The whole bundle an agent describes. `connectors` is the raw `.mcp.json`
 /// `mcpServers` map (server name -> server object) and is written through
-/// verbatim after validation.
+/// verbatim after validation. `secrets` (names only, ADR-0009) and
+/// `approval_policy` let a spec express a gated, authed agent without hand-editing
+/// the manifest afterwards (#549); both default to empty so existing specs parse.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSpec {
@@ -38,7 +57,52 @@ pub struct AgentSpec {
     pub skills: Vec<SkillSpec>,
     #[serde(default)]
     pub connectors: Map<String, Value>,
+    /// Connector-secret NAMES the bundle needs at launch (`--secret <NAME>`); no
+    /// values, per ADR-0009. Written to the manifest's `secrets` array.
+    #[serde(default)]
+    pub secrets: Vec<String>,
+    /// Approval gates to arm at runtime. Written to the manifest's `approvalPolicy`.
+    #[serde(default, rename = "approvalPolicy")]
+    pub approval_policy: Option<ApprovalPolicySpec>,
     pub evals: Vec<EvalCase>,
+}
+
+/// Reject an `mcp__`-prefixed approval gate that is not a fully-namespaced live
+/// tool name for one of this bundle's declared connectors. Non-`mcp__` gates
+/// (built-ins like `Bash`/`Write`) pass untouched. Mirrors the namespacing check
+/// in `plugin_format` `_validate_approval_policy`.
+fn validate_gate_namespacing(
+    bundle: &str,
+    connectors: &Map<String, Value>,
+    gate: &str,
+) -> Result<()> {
+    if !gate.starts_with("mcp__") {
+        return Ok(());
+    }
+    // Try each declared connector's live prefix; the gate must carry a non-empty
+    // tool suffix after it.
+    for server in connectors.keys() {
+        let prefix = format!("mcp__plugin_{bundle}_{server}__");
+        if let Some(tool) = gate.strip_prefix(&prefix) {
+            if tool.is_empty() {
+                bail!(
+                    "spec approvalPolicy gate {gate:?} names connector {server:?} but has no tool after the prefix; expected {prefix}<tool>"
+                );
+            }
+            return Ok(());
+        }
+    }
+    let expected: Vec<String> = connectors
+        .keys()
+        .map(|s| format!("mcp__plugin_{bundle}_{s}__<tool>"))
+        .collect();
+    let hint = if expected.is_empty() {
+        "the spec declares no connectors, so it can gate only built-in tools (e.g. Bash)"
+            .to_string()
+    } else {
+        format!("expected one of: {}", expected.join(", "))
+    };
+    bail!("spec approvalPolicy gate {gate:?} is not a fully-namespaced live tool name; {hint}")
 }
 
 /// Deserialize the spec JSON (strict) then validate it. Returns actionable
@@ -105,6 +169,33 @@ fn validate(spec: &AgentSpec) -> Result<()> {
         let defines = |key: &str| obj.and_then(|o| o.get(key)).is_some_and(|v| v.is_string());
         if !(defines("command") || defines("url")) {
             bail!("connector {name:?} must define either 'command' (stdio) or 'url' (remote)");
+        }
+    }
+
+    // Secret NAMES must look like env vars (#549); the same syntax gate `secrets
+    // set`/`--secret` apply. Reserved-name rejection is deliberately left to the
+    // deploy-time `validate_bundle` backstop (the Rust CLI does not mirror the
+    // reserved set -- drift risk -- exactly as `unbound_declared_secrets` does).
+    for name in &spec.secrets {
+        crate::secrets::validate_name(name)
+            .map_err(|e| anyhow!("spec secret name {name:?} is invalid: {e}"))?;
+    }
+
+    // Approval gates: mirror plugin_format `_validate_approval_policy`. Each gate
+    // needs a non-empty `gate` and `route`, and an `mcp__`-prefixed gate must be a
+    // fully-namespaced LIVE tool name `mcp__plugin_<bundle>_<server>__<tool>`
+    // (bundle = spec name, server = a declared connector). A bare `mcp__<server>__`
+    // or a prefix with no tool suffix silently fails to gate at runtime, so reject
+    // it now with a message that shows the expected shape.
+    if let Some(policy) = &spec.approval_policy {
+        for g in &policy.gates {
+            if g.gate.trim().is_empty() {
+                bail!("spec approvalPolicy gate has an empty 'gate'");
+            }
+            if g.route.trim().is_empty() {
+                bail!("spec approvalPolicy gate {:?} has an empty 'route'", g.gate);
+            }
+            validate_gate_namespacing(&spec.name, &spec.connectors, g.gate.trim())?;
         }
     }
 

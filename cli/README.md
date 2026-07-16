@@ -48,7 +48,13 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 The spec is a JSON object an agent writes after interviewing the human. `name`
 is the kebab-case bundle name; every `skills[].name` is kebab-case and unique;
 `connectors` (optional) is the raw `.mcp.json` `mcpServers` map (each server must
-define `command` or `url` as a string); `evals` reuses the frozen eval-case shape
+define `command` or `url` as a string); `secrets` (optional) is a list of
+connector-secret NAMES (env-var-shaped, no values, per ADR-0009) written to the
+manifest's `secrets`; `approvalPolicy` (optional) declares approval `gates`
+(`{gate, route}`) where an `mcp__` gate must be a fully-namespaced live tool name
+`mcp__plugin_<bundle>_<server>__<tool>` for a declared connector (a built-in like
+`Bash` needs no prefix) — so a spec can express a gated, authed agent without
+hand-editing `plugin.json`; `evals` reuses the frozen eval-case shape
 so the scaffolded `evals/cases.json` loads unchanged through `agentos skill eval`.
 An unknown TOP-LEVEL field is a hard error, so an authoring typo fails loud, but
 unknown keys INSIDE an eval case are ignored exactly as the platform's worker
@@ -69,6 +75,12 @@ with the platform grader, not an oversight.
   ],
   "connectors": {
     "crm": { "command": "crm-mcp", "args": ["--stdio"] }
+  },
+  "secrets": ["CRM_API_TOKEN"],
+  "approvalPolicy": {
+    "gates": [
+      { "gate": "mcp__plugin_deal-desk_crm__create_deal", "route": "default" }
+    ]
   },
   "evals": [
     {
