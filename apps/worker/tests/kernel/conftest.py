@@ -108,9 +108,11 @@ class FakeSink(SlackSink):
         self.status_sets: list[tuple[str, str, str]] = []
         self.status_clears: list[tuple[str, str]] = []
         # New messages posted by the kernel (the approval card, #246):
-        # (channel, text, blocks, thread_ts) per post.
+        # (channel, text, blocks, thread_ts, endpoint) per post. The endpoint is
+        # the transport the post is delivered through (#451): None means the
+        # worker's default Slack transport.
         self.posts: list[
-            tuple[str, str, list[dict[str, object]] | None, str | None]
+            tuple[str, str, list[dict[str, object]] | None, str | None, str | None]
         ] = []
 
     async def update(
@@ -145,7 +147,7 @@ class FakeSink(SlackSink):
         thread_ts: str | None = None,
         endpoint: str | None = None,
     ) -> str | None:
-        self.posts.append((channel, text, blocks, thread_ts))
+        self.posts.append((channel, text, blocks, thread_ts, endpoint))
         return f"posted-{len(self.posts)}"
 
     @property
