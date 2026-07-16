@@ -48,7 +48,7 @@ struct SelectChoice<T> {
 
 #[derive(Clone, Debug)]
 struct Recipe {
-    target: &'static str,
+    tabs: &'static [&'static str],
     title: &'static str,
     description: &'static str,
     kind: RecipeKind,
@@ -181,7 +181,9 @@ impl App {
         self.recipes
             .iter()
             .enumerate()
-            .filter_map(|(idx, recipe)| (target == "all" || recipe.target == target).then_some(idx))
+            .filter_map(|(idx, recipe)| {
+                (target == "all" || recipe.tabs.contains(&target)).then_some(idx)
+            })
             .collect()
     }
 
@@ -886,7 +888,8 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
             plugin_abs.display()
         );
     }
-    let repo_root = find_repo_root(cwd.clone()).unwrap_or(cwd);
+    let repo_root = find_repo_root(cwd)
+        .context("could not find AgentOS repo root; run this workflow from the source checkout")?;
 
     let mut view = RunView::new(&format!("Deploy to Slack — channel {channel}"));
     let run_result = (|| -> Result<()> {
@@ -1257,7 +1260,7 @@ fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
 
 fn find_repo_root(mut dir: PathBuf) -> Option<PathBuf> {
     loop {
-        if dir.join("runner/Dockerfile").is_file() && dir.join("examples/github-issues").is_dir() {
+        if dir.join("runner/Dockerfile").is_file() && dir.join("pyproject.toml").is_file() {
             return Some(dir);
         }
         if !dir.pop() {
@@ -2456,7 +2459,7 @@ fn recipes() -> Vec<Recipe> {
     vec![
         // --- Platform: the primary product functions, leading the TUI ---
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Parity ladder (what agentos is)",
             description: "One bundle + one eval suite across skill -> local -> cluster.",
             kind: RecipeKind::Workflow(Workflow::ParityLadder),
@@ -2467,7 +2470,7 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Run evals (parity gate)",
             description: "Grade the bundle's evals/cases.json against the running skill runner.",
             kind: RecipeKind::Command,
@@ -2476,7 +2479,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Requires a runner up (Start runner / skill up) with the bundle's evals/cases.json."],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Open observability (Console + Langfuse)",
             description: "Open the local AgentOS Console and Langfuse traces/cost UIs.",
             kind: RecipeKind::Command,
@@ -2485,7 +2488,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Start the platform first with `agentos local up`."],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "List versions",
             description: "Show an agent's immutable deployed versions (newest first).",
             kind: RecipeKind::Command,
@@ -2503,7 +2506,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Every deploy pins a new immutable version; a thread keeps the one it booted with."],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Set budget",
             description: "Set an agent's daily USD spend cap (enforced per run).",
             kind: RecipeKind::Command,
@@ -2531,7 +2534,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Gate a tool (approvals)",
             description: "Require human approval before an agent may call a named tool.",
             kind: RecipeKind::Command,
@@ -2561,7 +2564,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["e.g. gate mcp__plugin_github-issues_github__create_issue so a write pauses for approval."],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Inspect memory",
             description: "Show what an agent has learned (its memory log).",
             kind: RecipeKind::Command,
@@ -2579,7 +2582,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Kill an agent",
             description: "Stop an agent's runs (the kill switch).",
             kind: RecipeKind::Command,
@@ -2598,7 +2601,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Resume it later with the 'Resume an agent' action."],
         },
         Recipe {
-            target: "platform",
+            tabs: &["platform"],
             title: "Resume an agent",
             description: "Bring a killed agent back online.",
             kind: RecipeKind::Command,
@@ -2616,7 +2619,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "skill",
+            tabs: &["skill"],
             title: "Start runner",
             description: "Boot the current plugin bundle in a local runner container.",
             kind: RecipeKind::Command,
@@ -2651,7 +2654,7 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
-            target: "skill",
+            tabs: &["skill"],
             title: "Send skill message",
             description: "Send a synthetic event to the local runner and stream the reply.",
             kind: RecipeKind::Command,
@@ -2669,7 +2672,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Requires a running `agentos skill up` session."],
         },
         Recipe {
-            target: "skill",
+            tabs: &["skill"],
             title: "Run skill eval",
             description: "Run evals/cases.json through the local runner.",
             kind: RecipeKind::Command,
@@ -2690,7 +2693,8 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "all",
+            // Empty tabs = reachable only from the All tab (no tier tab lists it).
+            tabs: &[],
             title: "Explore examples",
             description: "Choose an example agent, start it, and chat with it interactively.",
             kind: RecipeKind::Workflow(Workflow::ExploreExamples),
@@ -2703,7 +2707,7 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
-            target: "all",
+            tabs: &["local", "cluster"],
             title: "How to deploy to Slack",
             description: "Deploy an agent to a platform tier and connect it to a real Slack workspace.",
             kind: RecipeKind::Workflow(Workflow::DeployToSlack),
@@ -2716,7 +2720,7 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
-            target: "secrets",
+            tabs: &["secrets"],
             title: "Save secret",
             description: "Store a local secret in AgentOS private storage with hidden input.",
             kind: RecipeKind::Tui(TuiAction::SaveSecret),
@@ -2728,7 +2732,7 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
-            target: "secrets",
+            tabs: &["secrets"],
             title: "List saved secrets",
             description: "List saved AgentOS secret names without printing values.",
             kind: RecipeKind::Tui(TuiAction::ListSecrets),
@@ -2737,7 +2741,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Only names are listed; secret values stay in private storage."],
         },
         Recipe {
-            target: "secrets",
+            tabs: &["secrets"],
             title: "Remove secret",
             description: "Remove a saved secret from AgentOS private storage.",
             kind: RecipeKind::Tui(TuiAction::RemoveSecret),
@@ -2746,7 +2750,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "local",
+            tabs: &["local"],
             title: "Start local stack",
             description: "Bring up the compose stack for the local platform loop.",
             kind: RecipeKind::Command,
@@ -2755,7 +2759,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Use the regular CLI for --minimal, --slack, or --local-model variants."],
         },
         Recipe {
-            target: "local",
+            tabs: &["local"],
             title: "Send local message",
             description: "Drive the compose stack end to end with zero Slack contact.",
             kind: RecipeKind::Command,
@@ -2785,7 +2789,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Requires `agentos local up` and a deployed local agent."],
         },
         Recipe {
-            target: "local",
+            tabs: &["local"],
             title: "Local status",
             description: "Show compose service status.",
             kind: RecipeKind::Command,
@@ -2794,7 +2798,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "cluster",
+            tabs: &["cluster"],
             title: "Cluster status",
             description: "Report release health and access URLs.",
             kind: RecipeKind::Command,
@@ -2827,7 +2831,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &[],
         },
         Recipe {
-            target: "cluster",
+            tabs: &["cluster"],
             title: "Send cluster message",
             description: "Drive a deployed release end to end with zero Slack contact.",
             kind: RecipeKind::Command,
@@ -2857,7 +2861,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Requires an installed release and a deployed agent."],
         },
         Recipe {
-            target: "dev",
+            tabs: &["dev"],
             title: "Install checkout",
             description: "Bootstrap a dev checkout: deps, CLI build, runner image.",
             kind: RecipeKind::Command,
@@ -2866,7 +2870,7 @@ fn recipes() -> Vec<Recipe> {
             notes: &["Starts nothing; run once after cloning."],
         },
         Recipe {
-            target: "dev",
+            tabs: &["dev"],
             title: "Check contracts",
             description: "Run the frozen contract drift checks.",
             kind: RecipeKind::Command,
@@ -2884,7 +2888,7 @@ mod tests {
     #[test]
     fn build_argv_omits_empty_optional_flags() {
         let recipe = Recipe {
-            target: "skill",
+            tabs: &["skill"],
             title: "x",
             description: "x",
             kind: RecipeKind::Command,
@@ -2928,7 +2932,7 @@ mod tests {
         let platform_titles: Vec<&str> = app
             .recipes
             .iter()
-            .filter(|r| r.target == "platform")
+            .filter(|r| r.tabs.contains(&"platform"))
             .map(|r| r.title)
             .collect();
         for expected in [
@@ -2948,7 +2952,24 @@ mod tests {
             );
         }
         // And they lead the recipe list (first recipe is on the platform tab).
-        assert_eq!(app.recipes.first().map(|r| r.target), Some("platform"));
+        assert!(
+            app.recipes.first().unwrap().tabs.contains(&"platform"),
+            "first recipe must be on the platform tab"
+        );
+    }
+
+    /// Titles visible when a given tab is selected (drives the real filter).
+    fn visible_titles_on(tab: &str) -> Vec<&'static str> {
+        let mut app = App::new();
+        app.target_idx = app
+            .targets
+            .iter()
+            .position(|t| *t == tab)
+            .unwrap_or_else(|| panic!("no such tab: {tab}"));
+        app.visible_indices()
+            .iter()
+            .map(|idx| app.recipes[*idx].title)
+            .collect()
     }
 
     #[test]
@@ -2966,11 +2987,19 @@ mod tests {
             1,
             "there should be exactly one Deploy-to-Slack recipe"
         );
-        assert_eq!(matches[0].target, "all");
         assert!(matches!(
             matches[0].kind,
             RecipeKind::Workflow(Workflow::DeployToSlack)
         ));
+        // Regression (#458): it must be REACHABLE from the operator tier tabs, not
+        // hidden on the All tab. Assert reachability through the real tab filter,
+        // never a field's string value.
+        for tab in ["local", "cluster"] {
+            assert!(
+                visible_titles_on(tab).contains(&"How to deploy to Slack"),
+                "Deploy-to-Slack must be reachable from the {tab} tab"
+            );
+        }
     }
 
     #[test]
@@ -3179,5 +3208,29 @@ mod tests {
         let old_line_prompt = ["prompt", "_field"].concat();
         assert!(!source.contains(&old_suspend_path));
         assert!(!source.contains(&old_line_prompt));
+    }
+
+    #[test]
+    fn find_repo_root_detects_stable_sentinel_and_fails_when_absent() {
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        // A repo root is runner/Dockerfile + pyproject.toml (stable markers), not
+        // a specific example directory (#458 fix 3).
+        fs::create_dir_all(root.path().join("runner")).unwrap();
+        fs::write(root.path().join("runner/Dockerfile"), b"FROM scratch\n").unwrap();
+        fs::write(root.path().join("pyproject.toml"), b"[project]\n").unwrap();
+        let nested = root.path().join("cli").join("src");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(
+            find_repo_root(nested),
+            Some(root.path().to_path_buf()),
+            "should walk up to the repo root"
+        );
+
+        // No sentinel: fail (None) rather than silently returning the start dir.
+        let bare = tempfile::tempdir().unwrap();
+        let bare_nested = bare.path().join("a").join("b");
+        fs::create_dir_all(&bare_nested).unwrap();
+        assert_eq!(find_repo_root(bare_nested), None);
     }
 }
