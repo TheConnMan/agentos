@@ -194,6 +194,126 @@ def test_cli_default_version_is_latest():
     assert all(tag == "latest" for tag in tags)
 
 
+# --- Dispatcher <-> API wiring (#442) ---------------------------------------
+#
+# The dispatcher resolves Slack approval clicks by calling the platform API. It
+# must therefore be told where the API is. Unwired, it falls back to its code
+# default http://localhost:8000, which inside its own bridge-network container
+# is the dispatcher itself, and every Approve click dead-ends.
+#
+# These assert the resolved VALUE, not the presence of a key: both "absent" and
+# "wired to the wrong host" must fail. They run against the dev document (the
+# source of truth) and the generated release document (the shipped asset), since
+# the generator copies env through untouched and a guard on only one of the two
+# leaves the other free to drift.
+
+
+def env_map(spec):
+    """Service `environment:` as a dict, normalizing compose's two forms.
+
+    The dispatcher and API use map form (`KEY: value`); the worker uses list
+    form (`- KEY=value`). Both are valid compose and both appear in this file.
+    """
+    env = spec.get("environment", {})
+    if isinstance(env, dict):
+        return {key: "" if value is None else str(value) for key, value in env.items()}
+    out = {}
+    for item in env:
+        key, sep, value = str(item).partition("=")
+        out[key] = value if sep else ""
+    return out
+
+
+def compose_docs():
+    """The dev document and the generated release document, parsed and labelled."""
+    generate = load_generate()
+    return [
+        ("compose.dev.yaml", yaml.safe_load(DEV_TEXT)),
+        ("compose.release.yaml", yaml.safe_load(generate(DEV_TEXT, OTEL_TEXT, version="9.9.9"))),
+    ]
+
+
+def test_dispatcher_api_base_url_is_in_network():
+    """The dispatcher points at the API by compose service name, not localhost.
+
+    `http://agentos-api:8000` is the in-network form the UI already uses
+    (`AGENTOS_API_TARGET`). The published host port (28000) is correct only for
+    the host-networked worker and is unreachable from the dispatcher's bridge
+    network.
+    """
+    for label, doc in compose_docs():
+        env = env_map(doc["services"]["agentos-dispatcher"])
+        assert env.get("AGENTOS_API_BASE_URL") == "http://agentos-api:8000", (
+            f"{label}: agentos-dispatcher AGENTOS_API_BASE_URL is "
+            f"{env.get('AGENTOS_API_BASE_URL')!r}; the dispatcher cannot reach the "
+            f"API and Slack approval clicks dead-end"
+        )
+
+
+def test_dispatcher_api_key_matches_the_api():
+    """The dispatcher authenticates with the key the API actually accepts.
+
+    Asserted as a relationship between the two services rather than against the
+    literal dev key, so rotating the key on one side without the other fails
+    here instead of at click time with a 401.
+    """
+    for label, doc in compose_docs():
+        dispatcher = env_map(doc["services"]["agentos-dispatcher"])
+        api = env_map(doc["services"]["agentos-api"])
+
+        assert "AGENTOS_API_KEY" in dispatcher, (
+            f"{label}: agentos-dispatcher has no AGENTOS_API_KEY; its auth to the "
+            f"API is an accident of two defaults agreeing"
+        )
+        assert dispatcher["AGENTOS_API_KEY"] == api["API_KEY"], (
+            f"{label}: agentos-dispatcher AGENTOS_API_KEY "
+            f"{dispatcher['AGENTOS_API_KEY']!r} != agentos-api API_KEY "
+            f"{api['API_KEY']!r}; approval resolve calls will be rejected"
+        )
+
+
+def test_dispatcher_depends_on_api_healthy():
+    """The dispatcher waits for the API to be healthy before it starts.
+
+    The API block already publishes a healthcheck (the UI depends on it the same
+    way), so this is the ordering guarantee that keeps the dispatcher's boot
+    preflight a backstop rather than a race.
+    """
+    for label, doc in compose_docs():
+        depends = doc["services"]["agentos-dispatcher"].get("depends_on", {})
+        assert isinstance(depends, dict), (
+            f"{label}: agentos-dispatcher depends_on is list form, which carries "
+            f"no condition; the API dependency needs service_healthy"
+        )
+        entry = depends.get("agentos-api")
+        assert isinstance(entry, dict) and entry.get("condition") == "service_healthy", (
+            f"{label}: agentos-dispatcher does not depend on agentos-api with "
+            f"condition service_healthy (got {entry!r})"
+        )
+
+
+def test_worker_api_base_url_stays_host_local():
+    """Regression guard: the worker's localhost:28000 is CORRECT. Do not "fix" it.
+
+    #442 names the worker's `AGENTOS_API_BASE_URL=http://localhost:28000` as the
+    defect. It is not. The worker runs `network_mode: host`, so the published
+    host port is exactly right for it, and rewriting this line to the in-network
+    form breaks the worker. This test passes today and must keep passing.
+    """
+    for label, doc in compose_docs():
+        worker = doc["services"]["agentos-worker"]
+        assert worker.get("network_mode") == "host", (
+            f"{label}: agentos-worker is no longer host-networked; the premise of "
+            f"its localhost:28000 API URL has changed"
+        )
+        env = env_map(worker)
+        assert env.get("AGENTOS_API_BASE_URL") == "http://localhost:28000", (
+            f"{label}: agentos-worker AGENTOS_API_BASE_URL is "
+            f"{env.get('AGENTOS_API_BASE_URL')!r}, expected http://localhost:28000 "
+            f"(host-networked: the published port is the correct form here)"
+        )
+
+
 def assert_init_containers_adopted(compose_text, label):
     """Assert every one-shot init container is adopted via
     `service_completed_successfully` in every profile combo `agentos local up`

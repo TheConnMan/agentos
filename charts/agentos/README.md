@@ -64,6 +64,31 @@ the containerd handler on every node first, or add `--set security.gvisor.mode=o
 (or `-f charts/agentos/values-e2e-nogvisor.yaml`) to run real code without kernel
 isolation knowingly.
 
+The dispatcher also needs to reach the platform API: a Slack Approve click is
+relayed to the API as an approval resolve. By default it is wired to the in-chart
+API Service (`http://<fullname>-api:<api.service.port>`, derived, so an overridden
+`api.service.port` tracks automatically) and authenticates with the chart Secret's
+`apiKey` by reference. Point it at an API this chart did not deploy with
+`dispatcher.apiBaseUrl`:
+
+```bash
+helm upgrade agentos charts/agentos -n agentos --reuse-values \
+  --set dispatcher.apiBaseUrl=https://your-api.example
+```
+
+| Value | Default | Meaning |
+| --- | --- | --- |
+| `dispatcher.apiBaseUrl` | `""` | Empty derives the in-chart API Service. A set value is used verbatim (BYO), and is **required** when `api.deploy: false`, where no in-chart Service exists to derive from. |
+
+Two limits worth knowing. With `api.deploy: false` and an empty
+`dispatcher.apiBaseUrl` the dispatcher is pointed at a Service that does not
+exist; its boot preflight fails and the pod CrashLoopBackOffs naming the
+unreachable URL. That is intentional (a loud boot failure beats a silent
+dead-end at click time) and the fix is to set `dispatcher.apiBaseUrl`. And
+because the API's `/health` is unauthenticated, that preflight proves only
+reachability, not that the key is right: a BYO API expecting a different key
+still passes boot and fails at click time. Match `apiKey` to the API you point at.
+
 **Cluster variants:**
 
 - **Cluster already runs the agent-sandbox controller** (cluster-scoped, one per

@@ -12,6 +12,7 @@ import signal
 from .app import SocketModeConnection, build_app, build_redis, build_web_client
 from .config import DispatcherConfig
 from .heartbeat import start_heartbeat
+from .preflight import ApiUnreachableError, check_api_reachable
 from .supervisor import BackoffPolicy, Supervisor
 
 
@@ -36,6 +37,14 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("agentos_dispatcher")
     config = DispatcherConfig()
+
+    # Gate on the platform API wiring before touching Slack: a dispatcher that
+    # cannot reach the API dead-ends every approval click (#442).
+    try:
+        check_api_reachable(config, logger=logger)
+    except ApiUnreachableError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
 
     supervisor = build_supervisor(config, logger=logger)
     hb_stop = start_heartbeat(config.heartbeat_file, config.heartbeat_interval_s)

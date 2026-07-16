@@ -75,6 +75,31 @@ Read from the environment by `DispatcherConfig()` (a `pydantic_settings.BaseSett
 | `AGENTOS_BACKOFF_INITIAL_SECONDS` | `1.0` | first reconnect backoff |
 | `AGENTOS_BACKOFF_MAX_SECONDS` | `30.0` | backoff cap |
 | `AGENTOS_BACKOFF_MULTIPLIER` | `2.0` | backoff growth factor |
+| `AGENTOS_API_BASE_URL` | `http://localhost:8000` | platform API used to resolve approval clicks (compose: `http://agentos-api:8000`) |
+| `AGENTOS_API_KEY` | `agentos-dev-key` | shared API key sent as `X-API-Key` on the resolve call |
+| `AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS` | `30.0` | deadline for the boot gate below; must be positive |
+
+### Boot gate on the platform API
+
+Before any Slack wiring, `main()` polls `GET {AGENTOS_API_BASE_URL}/health` until
+it answers 200 or `AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS` elapses, reusing the
+`AGENTOS_BACKOFF_*` tunables for the poll interval. On success it logs the
+resolved URL once at INFO. On the deadline it logs an error naming that URL and
+the time actually spent, and
+exits non-zero, so a misconfigured base URL is dead on arrival instead of
+dead-ending every Slack Approve click much later (the previous behavior was a
+single warning at click time). It retries rather than probing once so a
+slow-starting API does not fail a healthy stack; in Kubernetes the restart
+backoff is the outer retry loop and `CrashLoopBackOff` is the operator signal.
+
+The gate runs once at boot only. It is not a liveness monitor: an API restart
+later does not kill the dispatcher (the heartbeat probes own liveness, and the
+resolve call degrades per-call on its own). There is no off switch: the gate is
+the point, so a non-positive timeout is rejected as a config error at boot.
+
+**Known limit: the gate proves reachability, not credentials.** `/health` is
+unauthenticated, so a wrong `AGENTOS_API_KEY` still passes the gate and fails at
+click time. This check catches the base-URL class of misconfiguration only.
 
 The two Slack tokens are the only secrets. When a workspace exists they come from
 the app's install (App-Level Token with `connections:write` for `SLACK_APP_TOKEN`;

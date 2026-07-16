@@ -217,6 +217,42 @@ app.kubernetes.io/component: {{ .component }}
       key: valkeyPassword
 {{- end -}}
 
+{{/* Platform-API connection env for the first-party services that CALL the API
+     (today the dispatcher; the chart worker's identical gap is a tracked
+     follow-up). Exists as a helper for the same reason agentos.env.postgres and
+     agentos.env.valkey do: AGENTOS_API_BASE_URL has now been forgotten three
+     times on new callers, while the store envs never recurred, because those had
+     a helper to include and this did not. Wire a new API caller by including
+     this rather than re-deriving the URL inline.
+
+     The BYO override is .Values.dispatcher.apiBaseUrl. Note the deliberate
+     absence of a `required` call for the api.deploy=false case that the sibling
+     `X.host` helpers use: an empty override with api.deploy=false yields a
+     CrashLoopBackOff by design (documented in NOTES.txt and the README), not a
+     render-time failure. Include with `nindent 12` to land at a container's env
+     column. */}}
+{{- define "agentos.env.api" -}}
+# Where the platform API lives. The dispatcher POSTs an approval
+# resolve here when someone clicks Approve in Slack, so an unwired
+# value means the click dead-ends: the code default
+# http://localhost:8000 is, inside this pod, the dispatcher itself.
+# Empty dispatcher.apiBaseUrl (the default) derives the in-chart API
+# Service; a set value renders verbatim and is the BYO answer, and
+# the only correct one when api.deploy is false. The port comes from
+# api.service.port so the two sides cannot drift.
+- name: AGENTOS_API_BASE_URL
+  value: {{ .Values.dispatcher.apiBaseUrl | default (printf "http://%s-api:%v" (include "agentos.fullname" .) .Values.api.service.port) | quote }}
+# The same chart Secret key api.yaml consumes as API_KEY, so the
+# caller and the API cannot drift apart. By reference only: an inline
+# value would put the shared platform key into `helm get manifest`
+# output and into any rendered artifact CI uploads.
+- name: AGENTOS_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "agentos.secretName" . }}
+      key: apiKey
+{{- end -}}
+
 {{/* Heartbeat exec probes for the worker and dispatcher. Neither has an HTTP
      port, so an exec probe checks AGENTOS_HEARTBEAT_FILE freshness (< 30s)
      instead of hitting a port. Each Deployment sets its own heartbeat path via
