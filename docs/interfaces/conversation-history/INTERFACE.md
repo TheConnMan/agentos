@@ -1,7 +1,20 @@
+---
+seam: Conversation history
+kind: CLEAN
+impls: 1 loader (StateApiTranscriptStore)
+grade: not separately graded
+epics:
+  - "#20"
+order: 16
+---
+
 # INTERFACE: Conversation history
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (`StateApiTranscriptStore`) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (StateApiTranscriptStore) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 

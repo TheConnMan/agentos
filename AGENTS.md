@@ -68,6 +68,14 @@ The app is a real Vite + React + TS project -- see `apps/ui/CLAUDE.md`. The
 top-level CI workflow's `ui` job runs the full pnpm lint, vitest, build, and
 stackless Playwright suite; run `pnpm test`/`pnpm e2e` locally to match it.
 
+**Docs (interface catalog):** `agentos dev docs-lint` regenerates the seam index
+(`docs/interfaces.md`) and each `INTERFACE.md` header from the per-seam YAML
+front-matter, then checks that no doc under `docs/` (excluding `docs/adr/`) carries a
+line-number citation and that every cited path and Python symbol resolves. Run it after
+editing any interface-catalog doc and commit the regenerated files; CI runs the same
+check (`scripts/check-docs.sh`) in the `python` job. To exempt a genuinely illustrative
+example path, put `<!-- doclint:ignore-line -->` on that line (or the line before it).
+
 Test discipline: test-first for behavior-bearing code; mock ONLY external
 services (Slack, Anthropic, GitHub); NEVER mock Postgres/Valkey/Langfuse -- run
 integration tests against the dev stack below. A change that only makes tests

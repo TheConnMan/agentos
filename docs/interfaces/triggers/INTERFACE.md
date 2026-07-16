@@ -1,7 +1,20 @@
+---
+seam: Triggers
+kind: SOFT
+impls: 2 hardcoded (Slack, GH push)
+grade: not separately graded
+epics:
+  - "#29"
+order: 17
+---
+
 # INTERFACE: Triggers
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 2 &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 2 hardcoded (Slack, GH push) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -21,17 +34,33 @@ assert a port that does not exist.
 There is no cross-trigger contract to satisfy — a new trigger today means adding
 another hardcoded handler. The two that exist:
 
-- **Slack mention** — `apps/dispatcher/src/agentos_dispatcher/handlers.py:196`:
-  `@app.event("app_mention")` on the Slack Bolt app, which calls `process_event(...)`
-  to enqueue a run. (An adjacent `@app.event("message")` DM handler sits at
-  `handlers.py:208`, gated to `channel_type == "im"`.)
-- **GitHub push** — `apps/api/src/agentos_api/routers/github.py:20-21`:
+- **Slack mention** — `apps/dispatcher/src/agentos_dispatcher/handlers.py::process_event`:
+  the `@app.event("app_mention")` listener (wired in
+  `apps/dispatcher/src/agentos_dispatcher/handlers.py::register_handlers`) calls
+  `process_event(...)` to enqueue a run. (An adjacent `@app.event("message")` DM handler
+  in the same `register_handlers`, gated to `channel_type == "im"`, shares the path.)
+- **GitHub push** — `apps/api/src/agentos_api/routers/github.py::github_webhook`:
   `@router.post("/webhook")` verifies the HMAC signature, then branches on
-  `x_github_event`; a `"push"` event (`github.py:38`) is handed to `process_push(...)`,
+  `x_github_event`; a `"push"` event is handed to `process_push(...)`,
   everything else is `"ignored"`.
 
 The two share no abstraction: one is a Slack Bolt event listener, the other a FastAPI
 route with GitHub HMAC auth. They converge only downstream (both end up enqueuing work).
+
+**Two further wake paths the inventory omitted.** Beyond the two external triggers, two
+platform-internal paths also turn an event into a run on the same `agentos:runs` stream,
+and a truthful inventory names them:
+
+- **Slack block-action (button click)** —
+  `apps/dispatcher/src/agentos_dispatcher/handlers.py::process_action` normalizes a Block
+  Kit button click into a `QueuedTurn` (dedupe, in-thread placeholder, enqueue) so a click
+  is answered exactly as if the user had typed the button's command. Approval-card clicks
+  are excluded here and resolve through the API instead.
+- **Approval-resume** — resolving or expiring a durable approval enqueues a
+  platform-authored resume turn onto the runs stream via
+  `apps/api/src/agentos_api/resumequeue.py::ResumeQueue.enqueue`, so a suspended session
+  wakes down the identical consumer/kernel/claim path a Slack mention takes (see the
+  [approval seam](../approval/INTERFACE.md)).
 
 **Declaration vs. consumption (#273/#270).** The bundle manifest now carries deploy-time-validated
 `triggers` declarations (`cron` with a `schedule`, `webhook` with a `path`; `TriggerDeclaration` in
@@ -43,10 +72,14 @@ shape; it does not yet wire a live wake-up.
 
 ## Implementations today
 
-Two, both hardcoded, in two different processes:
+Two external triggers, both hardcoded, in two different processes:
 
-1. Slack `app_mention` in the dispatcher (`handlers.py:196`).
-2. GitHub `push` webhook in the API (`routers/github.py:20`).
+1. Slack `app_mention` in the dispatcher (`apps/dispatcher/src/agentos_dispatcher/handlers.py::process_event`).
+2. GitHub `push` webhook in the API (`apps/api/src/agentos_api/routers/github.py::github_webhook`).
+
+Plus two platform-internal wake paths that also enqueue a run: the Slack block-action
+handler (`apps/dispatcher/src/agentos_dispatcher/handlers.py::process_action`) and the
+approval-resume enqueue (`apps/api/src/agentos_api/resumequeue.py::ResumeQueue.enqueue`).
 
 ## Known leakage
 

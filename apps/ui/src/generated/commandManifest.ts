@@ -2493,6 +2493,11 @@ export const commandManifest = {
           "about": "Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`)",
           "hidden": false,
           "name": "e2e"
+        },
+        {
+          "about": "Lint the interface catalog docs (`bash scripts/check-docs.sh`)",
+          "hidden": false,
+          "name": "docs-lint"
         }
       ]
     },

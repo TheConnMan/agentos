@@ -174,6 +174,8 @@ enum DevAction {
     ChartCheck,
     /// Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`).
     E2e,
+    /// Lint the interface catalog docs (`bash scripts/check-docs.sh`).
+    DocsLint,
 }
 
 #[derive(Subcommand)]
@@ -1096,6 +1098,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 commands::dev_script("charts/agentos/ci/render-assertions.sh").await
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
+            DevAction::DocsLint => commands::dev_script("scripts/check-docs.sh").await,
         },
         Some(Command::Skill { action }) => match action {
             SkillAction::Up {
@@ -1981,6 +1984,14 @@ mod tests {
             cli.command,
             Some(Command::Dev {
                 action: DevAction::E2e
+            })
+        ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "docs-lint"])
+            .expect("dev docs-lint should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Dev {
+                action: DevAction::DocsLint
             })
         ));
     }

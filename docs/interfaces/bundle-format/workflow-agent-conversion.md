@@ -33,13 +33,13 @@ maps this cleanly — you do **not** turn the pipeline into a prompt.
 
 | Workflow agent piece | Bundle home | Why |
 | --- | --- | --- |
-| The agent's job + when to act + how to answer | `skills/deal-desk/SKILL.md` | The skill is the model-facing contract: trigger + procedure + hard rules. |
+| The agent's job + when to act + how to answer | skills/deal-desk/SKILL.md | The skill is the model-facing contract: trigger + procedure + hard rules. |
 | LLM edges (parse the ask, phrase the answer) | Prose steps in `SKILL.md` | These *are* the model's work; they live as instructions, not code. |
 | Deterministic pipeline (pricing rules, totals, thresholds) | An MCP tool server in `.mcp.json`, or a `scripts/` helper the skill calls | Keeps determinism out of the prompt; the model *calls* it, never re-derives it. |
 | External systems (pricing DB, CRM) | MCP servers in `.mcp.json` | Wire, don't inline; credentials come from env. |
-| One-time setup (build the pricing index) | `scripts/setup.sh` | Directory convention; no schema of its own. |
-| Regression cases | `evals/cases.json` | Feeds `agentos skill eval`. |
-| Name, version, description | `.claude-plugin/plugin.json` | The manifest; `name` is the only required field. |
+| One-time setup (build the pricing index) | scripts/setup.sh | Directory convention; no schema of its own. |
+| Regression cases | evals/cases.json | Feeds `agentos skill eval`. |
+| Name, version, description | .claude-plugin/plugin.json | The manifest; `name` is the only required field. |
 
 ## Step 0 — scaffold the skeleton
 
@@ -64,6 +64,7 @@ validator and the scaffolder enforce.
 
 ## Step 1 — the manifest
 
+<!-- doclint:ignore-line -->
 `.claude-plugin/plugin.json`. `name` is required; `version`, `description`, and the
 other Claude Code keys (`author`, `homepage`, `repository`, `license`, `keywords`,
 `commands`, `agents`, `hooks`, `mcpServers`) are optional and preserved if present.
@@ -81,6 +82,7 @@ carries over unchanged.
 
 ## Step 2 — write the skill (the LLM edges)
 
+<!-- doclint:ignore-line -->
 `skills/deal-desk/SKILL.md`. The frontmatter needs `name` and `description`;
 `allowed-tools` is optional but is how you scope what the model may call. Use the
 **real** field name `allowed-tools` (not `tools`).
@@ -159,7 +161,7 @@ Credentials come from env, never inlined. If your pipeline is a handful of pure
 functions rather than a service, the smallest MCP server that exposes `quote` as a
 tool is enough — the goal is that the model calls it, so the numbers never live in
 the prompt. One-time preparation (building the pricing index) goes in
-`scripts/setup.sh` (a directory convention with no schema of its own).
+`scripts/setup.sh` (a directory convention with no schema of its own). <!-- doclint:ignore-line -->
 
 ### Porting checklist for the pipeline
 - Every deterministic step → a tool (or an argument of one), never a prompt
@@ -208,7 +210,7 @@ compose services.
 ## Step 6 — pin behavior with eval cases
 
 Turn the workflow's known inputs/outputs into regression cases in
-`evals/cases.json` (a suite `{name, cases: [{id, input, grader}]}`), then:
+`evals/cases.json` (a suite `{name, cases: [{id, input, grader}]}`), then: <!-- doclint:ignore-line -->
 
 ```bash
 agentos skill eval          # defaults to evals/cases.json, runs through the runner
@@ -235,6 +237,7 @@ contract, and you have already met it.
   `allowed-tools`; the other name silently does nothing.
 - **Inlined credentials.** Reference env (`${VAR}`) in `.mcp.json`; never commit a
   token.
+<!-- doclint:ignore-line -->
 - **Manifest in the wrong place.** Canonical is `.claude-plugin/plugin.json`; a bare
   root `plugin.json` is accepted as a fallback but prefer the canonical location.
 

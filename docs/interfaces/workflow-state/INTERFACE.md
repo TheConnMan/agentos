@@ -1,38 +1,83 @@
+---
+seam: Workflow state store
+kind: SOFT
+impls: 1 (API state router)
+grade: not separately graded
+epics:
+  - "#23"
+  - "#248"
+order: 14
+---
 # INTERFACE: Workflow state store
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** NONE &nbsp;·&nbsp; **Implementations today:** 0 abstracted (a concrete `AffinityStore` exists) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 1 (API state router) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
 ## The black line
 
-There is no workflow-state port yet — only a concrete, single-purpose route store. Today's `AffinityStore` records exactly one thing: the `thread_key -> sandbox route` binding on Valkey, with atomic acquire and TTL expiry. A general workflow state store (durable get / compare-and-swap put / list / delete / append for agent run state, checkpoints, and history) is unbuilt. The intended line, when extracted, is a small typed port the kernel writes state through, with Valkey (or Postgres) behind it — but per "the second implementation teaches the interface," the port lands only when a real second consumer demands it.
+The durable workflow-state store is built. It shipped (#248, under epic #23) as the API
+state router: a scoped KV/document store on Postgres JSONB exposing exactly the five verbs
+this doc once said did not exist — get / put-with-CAS / list / delete / append. The swap
+axis here is the state backend, and it is a SOFT seam: the store is reached over the HTTP
+state API, not a typed in-process port, so a second backend is a persistence change behind
+that API rather than a `Protocol` swap. A separate concrete route store, `AffinityStore`,
+records one narrow thing (the `thread_key -> sandbox route` binding on Valkey, with atomic
+acquire and TTL expiry) and is not the general store. The typed in-process port the kernel
+would write arbitrary run state through (#23) is still unextracted, per "the second
+implementation teaches the interface."
 
 ## Current contract
 
-No port class exists. The concrete `AffinityStore` at `apps/worker/src/agentos_worker/sandbox/affinity.py:31` is what exists today, and its methods are the closest thing to a state contract:
+The state API is the store today. The five verbs live in
+`apps/api/src/agentos_api/routers/state.py`:
 
-- `get(thread_key) -> RouteRecord | None` (`affinity.py:42`)
-- `put_if_absent(thread_key, record, ttl_seconds) -> bool` — atomic acquire, the CAS-shaped primitive (`affinity.py:49`, `SET ... nx=True`)
-- `replace(thread_key, record, ttl_seconds) -> None` (`affinity.py:59`)
-- `touch(thread_key, ttl_seconds) -> bool` (`affinity.py:64`)
-- `delete_if_claim(thread_key, claim_name) -> bool` — guarded delete via a Lua `_DELETE_IF_CLAIM` script (`affinity.py:69`, script at `affinity.py:18`)
-- `live_claim_names(...) -> set[str]` (`affinity.py:74`)
-- `mark_suspended(thread_key, history_ref, ttl_seconds) -> RouteRecord` (`affinity.py:96`)
+- `get_state` (`apps/api/src/agentos_api/routers/state.py::get_state`)
+- `put_state` — put with compare-and-swap (`apps/api/src/agentos_api/routers/state.py::put_state`)
+- `list_state` (`apps/api/src/agentos_api/routers/state.py::list_state`)
+- `delete_state` (`apps/api/src/agentos_api/routers/state.py::delete_state`)
+- `append_state` (`apps/api/src/agentos_api/routers/state.py::append_state`)
 
-The stored value is a `RouteRecord` (`sandbox/types.py:54`) JSON-serialized. This is route affinity, not general workflow state — the get/put-CAS/list/delete/append surface epic #23 specifies does not exist here.
+Memory and Conversation history are the CLEAN loaders already built over this store
+(`StateApiMemoryStore`, `StateApiTranscriptStore`).
+
+The worker-side route store is separate. `AffinityStore` at
+`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore` records the
+`thread_key -> sandbox route` binding, and its methods are the closest thing to a
+route-state contract:
+
+- `get(thread_key) -> RouteRecord | None` (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.get`)
+- `put_if_absent(thread_key, record, ttl_seconds) -> bool` — atomic acquire, the CAS-shaped primitive (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.put_if_absent`, `SET ... nx=True`)
+- `replace(thread_key, record, ttl_seconds) -> None` (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.replace`)
+- `touch(thread_key, ttl_seconds) -> bool` (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.touch`)
+- `delete_if_claim(thread_key, claim_name) -> bool` — guarded delete via a Lua script (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.delete_if_claim`, script at `apps/worker/src/agentos_worker/sandbox/affinity.py::_DELETE_IF_CLAIM`)
+- `live_claim_names(...) -> set[str]` (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.live_claim_names`)
+- `mark_suspended(thread_key, history_ref, ttl_seconds) -> RouteRecord` (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore.mark_suspended`)
+
+The stored value is a `RouteRecord` (`apps/worker/src/agentos_worker/sandbox/types.py::RouteRecord`) JSON-serialized. This is route affinity, not general workflow state.
 
 ## Implementations today
 
-Zero abstracted implementations. One concrete class, `AffinityStore` (`affinity.py:31`), bound directly to `redis.Redis` and to the sandbox-routing use case.
+One general store (the API state router over Postgres JSONB) plus one narrow concrete
+route store: `AffinityStore` (`apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore`), bound directly to `redis.Redis` and to the sandbox-routing use case. Neither is abstracted behind a typed workflow-state port yet.
 
 ## Known leakage
 
-The port does not exist yet, so there is nothing to leak through — but the placement constraint the future store must honor is already visible: it is stateless-first. Per ADR-0003, a suspend/resume is a cold pod restart (the live process never survives), so resume rehydrates from a caller-supplied `history_ref` injected as `AGENTOS_HISTORY_REF` rather than assuming any in-process or cache warmth (`sandbox/substrate.py:99`–`139`). A future workflow-state port must not assume process affinity or cache continuity across a suspend; state that must survive has to be written durably, keyed by thread/session, and rehydratable from cold.
+The placement constraint the future in-process port must honor is already visible in two
+shapes. First, it is stateless-first: per ADR-0003 a suspend/resume is a cold pod restart
+(the live process never survives), so resume rehydrates from a caller-supplied `history_ref`
+injected as `AGENTOS_HISTORY_REF` rather than assuming any in-process or cache warmth
+(`apps/worker/src/agentos_worker/sandbox/substrate.py::SandboxSubstrate.resume`). Second,
+the route store leans on Valkey TTL-expiry as garbage collection: an idle route record
+simply expires, and the reaper protocol depends on that automatic expiry. A durable
+(non-TTL) backend for a future workflow-state port would have to add its own sweeper to
+reclaim abandoned state, because it cannot inherit Valkey's expiry-as-GC for free.
 
 ## Cross-links
 
-- **Epic(s):** #23 — full workflow state store API spec (get / put-CAS / list / delete / append); the extracted port lands with this epic, and its interface AC is the gold standard for this seam
+- **Epic(s):** #23 — full workflow state store API spec (get / put-CAS / list / delete / append); the store shipped as the API state router via #248, and the extracted in-process port lands under this epic
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — not one of the six graded jobs
 - **ADR(s):** [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) — stateless-first sessions; rehydrate on resume; no cross-hibernation cache assumption

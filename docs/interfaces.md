@@ -9,25 +9,27 @@ is documentation of where the code already draws the line, not a new abstraction
 
 ## The seams
 
+<!-- BEGIN GENERATED: seam-table (agentos dev docs-lint) -->
 | Seam | Kind | Impls | Grade | Epic(s) | INTERFACE.md |
 |---|---|---|---|---|---|
-| Substrate / SandboxClient | CLEAN | 2 (k8s, docker) | not separately graded | #86, #44 | [interfaces/substrate/INTERFACE.md](interfaces/substrate/INTERFACE.md) |
-| Harness in-proc / ModelSession | CLEAN | 1 + fake | A- | (folds into #25) | [interfaces/harness-modelsession/INTERFACE.md](interfaces/harness-modelsession/INTERFACE.md) |
-| ACI producer (frozen protocol) | CLEAN, frozen | 1 + reference | A- | #25, #47 | [interfaces/aci-producer/INTERFACE.md](interfaces/aci-producer/INTERFACE.md) |
-| Channel / ingress (Slack) | SOFT | 1 | C | #7, #19, #27, #38 | [interfaces/channel-ingress/INTERFACE.md](interfaces/channel-ingress/INTERFACE.md) |
-| Channel interaction message | CLEAN | 2 renderers (Slack, terminal) | not separately graded | ADR-0020 | [interfaces/channel-interaction/INTERFACE.md](interfaces/channel-interaction/INTERFACE.md) |
-| Model provider / credentials | SOFT | 1 (Anthropic) | not separately graded | #24, #46 | [interfaces/model-provider/INTERFACE.md](interfaces/model-provider/INTERFACE.md) |
-| Telemetry / OTEL | SOFT | 1 | B+ | #47 | [interfaces/telemetry-otel/INTERFACE.md](interfaces/telemetry-otel/INTERFACE.md) |
-| Evals (case + scorer) | SOFT | 1 grader family | B | #8, #26 | [interfaces/evals/INTERFACE.md](interfaces/evals/INTERFACE.md) |
-| Blob storage (S3/MinIO) | CLEAN | 1 backend behind the ObjectStore port | A- | #83 | [interfaces/blob-storage/INTERFACE.md](interfaces/blob-storage/INTERFACE.md) |
-| Relational DB (Postgres) | SOFT | 1 | A- | #84 | [interfaces/relational-db/INTERFACE.md](interfaces/relational-db/INTERFACE.md) |
-| Queue / stream (Valkey) | CLEAN | 1 (redis-py) behind the broker port | not separately graded | #85, #7 | [interfaces/queue-stream/INTERFACE.md](interfaces/queue-stream/INTERFACE.md) |
-| Bundle format | CLEAN, frozen | 1 | not separately graded | #30 | [interfaces/bundle-format/INTERFACE.md](interfaces/bundle-format/INTERFACE.md) |
-| Approval / authorizer | NONE | 0 | not separately graded | #22 | [interfaces/approval/INTERFACE.md](interfaces/approval/INTERFACE.md) |
-| Workflow state store | NONE | 0 (concrete AffinityStore) | not separately graded | #23 | [interfaces/workflow-state/INTERFACE.md](interfaces/workflow-state/INTERFACE.md) |
-| Memory | CLEAN | 1 loader (StateApiMemoryStore) | not separately graded | #28 | [interfaces/memory/INTERFACE.md](interfaces/memory/INTERFACE.md) |
-| Conversation history | CLEAN | 1 loader (StateApiTranscriptStore) | not separately graded | #20 | [interfaces/conversation-history/INTERFACE.md](interfaces/conversation-history/INTERFACE.md) |
-| Triggers | SOFT | 2 hardcoded (Slack, GH push) | not separately graded | #29 | [interfaces/triggers/INTERFACE.md](interfaces/triggers/INTERFACE.md) |
+| Substrate / SandboxClient | CLEAN | 2 (k8s, docker) | not separately graded | #86, #44 | [Substrate / SandboxClient](interfaces/substrate/INTERFACE.md) |
+| Harness in-proc / ModelSession | CLEAN | 1 + fake | A- | (folds into #25) | [Harness in-proc / ModelSession](interfaces/harness-modelsession/INTERFACE.md) |
+| ACI producer (frozen protocol) | CLEAN, frozen | 1 + reference | A- | #25, #47 | [ACI producer (frozen protocol)](interfaces/aci-producer/INTERFACE.md) |
+| Channel / ingress (Slack) | SOFT | 1 | C | #7, #19, #27, #38 | [Channel / ingress (Slack)](interfaces/channel-ingress/INTERFACE.md) |
+| Channel interaction message | CLEAN | 2 renderers (Slack, terminal) | not separately graded | ADR-0020 | [Channel interaction message](interfaces/channel-interaction/INTERFACE.md) |
+| Model provider / credentials | SOFT | 2 prefix-routed (Anthropic, OpenRouter) + base-URL-selected provider-native endpoints (Zhipu, Moonshot, DeepSeek, Ollama) | not separately graded | #24, #46 | [Model provider / credentials](interfaces/model-provider/INTERFACE.md) |
+| Telemetry / OTEL | SOFT | 1 | B+ | #47 | [Telemetry / OTEL](interfaces/telemetry-otel/INTERFACE.md) |
+| Evals (case + scorer) | SOFT | 2 scorers (grader family + trajectory matcher) | B | #8, #26 | [Evals (case + scorer)](interfaces/evals/INTERFACE.md) |
+| Blob storage (S3/MinIO) | CLEAN | 1 backend (S3/MinIO) behind the ObjectStore port | A- | #83 | [Blob storage (S3/MinIO)](interfaces/blob-storage/INTERFACE.md) |
+| Relational DB (Postgres) | SOFT | 1 | A- | #84 | [Relational DB (Postgres)](interfaces/relational-db/INTERFACE.md) |
+| Queue / stream (Valkey) | CLEAN | 1 (redis-py) behind the broker port | not separately graded | #85, #7 | [Queue / stream (Valkey)](interfaces/queue-stream/INTERFACE.md) |
+| Bundle format | CLEAN, frozen | 1 | not separately graded | #30 | [Bundle format](interfaces/bundle-format/INTERFACE.md) |
+| Approval / authorizer | CLEAN | 3 approver sets behind one authorizer (Slack channel, Slack user group, explicit user list) | not separately graded | #22 | [Approval / authorizer](interfaces/approval/INTERFACE.md) |
+| Workflow state store | SOFT | 1 (API state router) | not separately graded | #23, #248 | [Workflow state store](interfaces/workflow-state/INTERFACE.md) |
+| Memory | CLEAN | 1 loader (StateApiMemoryStore) | not separately graded | #28 | [Memory](interfaces/memory/INTERFACE.md) |
+| Conversation history | CLEAN | 1 loader (StateApiTranscriptStore) | not separately graded | #20 | [Conversation history](interfaces/conversation-history/INTERFACE.md) |
+| Triggers | SOFT | 2 hardcoded (Slack, GH push) | not separately graded | #29 | [Triggers](interfaces/triggers/INTERFACE.md) |
+<!-- END GENERATED: seam-table -->
 
 ## Kind legend
 
@@ -49,8 +51,8 @@ graded here.
 | Job | Port contract | Current adapter | Grade | Cheapest next step |
 |---|---|---|---|---|
 | Harness / runtime | Frozen ACI protocol (`packages/aci-protocol`), tri-language, CI-guarded | claude-agent-sdk runner | A-: strongest seam in the system; docked for the plugin-format entanglement and SDK-shaped resume | Write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced |
-| Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for one vendor span attribute; read side isolated in one module | Rename `langfuse.trace.name` to a neutral attribute mapped in the collector; rename the `/langfuse/*` API routes |
-| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours, but the case format is duplicated and the tag convention is unfrozen | Converge the two `cases.json` definitions into one frozen schema ([issue #8](https://github.com/curie-eng/agentos/issues/8)) |
+| Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for three vendor span attributes (`langfuse.trace.name`, `langfuse.session.id`, `langfuse.user.id`); read side spans several API modules plus routers | Map the three `langfuse.*` attributes to neutral names in the collector; rename the `/langfuse/*` API routes |
+| Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours; the case format converged into one frozen, drift-gated schema (#8, ADR-0019), leaving the `version:`/`suite:` tag convention as the unfrozen part | Freeze the tag convention into the schema, or record it as a deliberate soft contract |
 | Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; three hand-aligned client sites; no interface for non-S3 | None needed until a non-S3 demand exists; document the three client sites as one seam |
 | Relational DB | SQLAlchemy 2.0 + alembic | Postgres | A-: managed-Postgres swap is a DSN change; two Postgres-isms in models | Leave as is; note the `postgresql.UUID` and schema-scoped enum as the two things a non-Postgres target would touch |
-| Communication | `QueuedSlackEvent` + `SlackSink` | Slack (Bolt + chat.update) | C: Slack-shaped names and edit-in-place semantics in the core's contract; service swappable (CLI stub), protocol not | Promote the queue payload into `aci-protocol` with channel-neutral field names in the same change |
+| Communication | `QueuedTurn` (channel-neutral, in `aci-protocol`) + `SlackSink` | Slack (Bolt + chat.update) | C: the ingress payload is now the channel-neutral `QueuedTurn` (#7), but egress still assumes Slack's edit-in-place `chat.update` reply shape; service swappable (CLI stub), egress protocol not | Route replies per turn (#19) and define a channel-neutral `ReplySink` post/update port so a second channel can coexist |

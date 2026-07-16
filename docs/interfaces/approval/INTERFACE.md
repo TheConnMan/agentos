@@ -1,7 +1,20 @@
+---
+seam: Approval / authorizer
+kind: CLEAN
+impls: 3 approver sets behind one authorizer (Slack channel, Slack user group, explicit user list)
+grade: not separately graded
+epics:
+  - "#22"
+order: 13
+---
+
 # INTERFACE: Approval / authorizer
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 3 approver sets behind one authorizer (Slack channel, Slack user group, explicit user list) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -119,7 +132,7 @@ fully-namespaced name, not the bare tool name.
 
 For a bundle-declared MCP tool that live name is
 `mcp__plugin_<bundle>_<server>__<tool>`, where `<bundle>` is the
-`.claude-plugin/plugin.json` `name` and `<server>` is the `.mcp.json` server key,
+.claude-plugin/plugin.json `name` and `<server>` is the `.mcp.json` server key,
 for example `mcp__plugin_github-issues_github__create_issue`. The bare form
 `mcp__<server>__<tool>` (e.g. `mcp__github__create_issue`) does NOT match: a gate
 armed with it silently never intercepts the call, and a destructive tool runs
@@ -159,8 +172,11 @@ Slack feature.
   is never accepted from the caller: a dispatcher-asserted membership claim would be
   forgeable by any platform-key holder, so ADR-0034 rejected it. The only set that can come
   back undetermined.
-- **`ExplicitUsers`** (#420, `approvers.py`), a literal allowlist of user IDs. Pure, no I/O,
-  and the only set that owes Slack nothing.
+- **`ExplicitUsers`** (#420, `approvers.py`), a literal allowlist of user IDs. Pure, no I/O.
+  It owes Slack no *lookup*, but it can still only be **configured with Slack-validated user
+  IDs**: the binding schema rejects anything that is not a Slack `U`/`W`-prefixed ID
+  (`apps/api/src/agentos_api/schemas.py::_SLACK_USER_ID`), never a handle or a name, so even this
+  "Slack-free" set is expressed in Slack-shaped identifiers.
 
 Platform-RBAC remains the epic's fourth set and is not built.
 
@@ -291,8 +307,12 @@ One limit the audit trail must not be read as overstating (#420, ADR-0034): the 
 proves that the ASSERTED identity satisfied policy at click time; it does not prove who
 clicked. Identity is dispatcher-verified on the Slack path — the dispatcher populates the
 actor from Slack's authenticated interaction payload
-(`apps/dispatcher/src/agentos_dispatcher/approval_actions.py:146`) — and caller-asserted on
-the platform-API-key path, the named ADR-0033 residual tracked as a follow-up. Richer
+(`apps/dispatcher/src/agentos_dispatcher/approval_actions.py::process_approval_action`) — and
+caller-asserted on the platform-API-key path, the named ADR-0033 residual tracked as a follow-up.
+**The channel evidence is asserted on the same footing:** `actor_channel` on the platform-key
+path is caller-supplied and unvalidated too, so the residual is not identity-only — a
+platform-key caller asserts both *who* acted and *from which channel*, and the channel-membership
+set trusts that asserted channel exactly as the authorizer trusts the asserted actor. Richer
 evidence makes a forged resolution look MORE legitimate in the trail than today's thinner
 rows do, which is exactly why this limit is written down rather than left implicit. The
 membership authorizers narrow *who counts as an approver*; they do not change *how the

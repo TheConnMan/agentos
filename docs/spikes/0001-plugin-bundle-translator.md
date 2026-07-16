@@ -30,7 +30,7 @@ carry unmodeled keys the platform preserves.
 
 | Bundle element | Source location | Shape |
 |---|---|---|
-| Manifest | `.claude-plugin/plugin.json` (fallback: bare `plugin.json`) | `PluginManifest`: `name` required; optional `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `commands`, `agents`, `hooks`, `mcpServers` |
+| Manifest | .claude-plugin/plugin.json (fallback: bare `plugin.json`) | `PluginManifest`: `name` required; optional `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `commands`, `agents`, `hooks`, `mcpServers` |
 | Skills | `skills/**/SKILL.md` | YAML frontmatter (`name`, `description`, optional `allowed-tools`) + markdown body |
 | MCP servers | `.mcp.json` and/or manifest `mcpServers` (inline object or path) | `McpServer`: stdio (`command`,`args?`,`env?`) or remote (`type`,`url`,`headers?`) |
 | Scripts | `scripts/` | directory convention, no schema |

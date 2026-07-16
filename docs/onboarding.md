@@ -76,9 +76,9 @@ agentos skill down
 ```
 
 `agentos init` scaffolds a generic starter bundle: a Claude Code plugin
-(`.claude-plugin/plugin.json`, a starter `skills/<name>/SKILL.md`, `.mcp.json`,
-and an `evals/cases.json` smoke seed) plus a root `AGENTS.md` and
-`.claude/skills/using-agentos/SKILL.md`, the harness primer. The scaffolded eval
+(`.claude-plugin/plugin.json`, a starter `skills/<name>/SKILL.md`, `.mcp.json`, <!-- doclint:ignore-line -->
+and an `evals/cases.json` smoke seed) plus a root `AGENTS.md` and <!-- doclint:ignore-line -->
+`.claude/skills/using-agentos/SKILL.md`, the harness primer. The scaffolded eval <!-- doclint:ignore-line -->
 is a smoke test that passes out of the box; replace it with real graders as you
 build. `--fake-model` gives scripted replies with no
 Anthropic key, so this proves the loop offline. Drop `--fake-model` and export a
@@ -86,7 +86,7 @@ credential, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or
 `AGENTOS_CREDENTIALS`, for a real model.
 
 The reply streams to `stdout` as `NDJSON`. Abort a live turn with `Ctrl-C`.
-`agentos skill eval` runs the bundle's `evals/cases.json` the same way.
+`agentos skill eval` runs the bundle's `evals/cases.json` the same way. <!-- doclint:ignore-line -->
 
 ## Step 2: The Real Product Loop With `local`
 
@@ -120,7 +120,7 @@ agentos local message "what changed in the last deploy?"
   is optional then.
 - For multi turn work, `local message` prints a `continue this conversation:`
   line. Use `agentos local message --continue "follow up"` to reuse the last
-  turn's channel and thread from `.agentos/last-turn.json`. Send only the new
+  turn's channel and thread from `.agentos/last-turn.json`. Send only the new <!-- doclint:ignore-line -->
   text. `--continue` reads the API key again from `$AGENTOS_API_KEY` and does not
   replay transport flags like `--listen-port`, so pass those again if you used
   custom values.

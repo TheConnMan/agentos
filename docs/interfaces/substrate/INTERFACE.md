@@ -1,7 +1,19 @@
+---
+seam: Substrate / SandboxClient
+kind: CLEAN
+impls: 2 (k8s, docker)
+grade: not separately graded
+epics:
+  - "#86"
+  - "#44"
+order: 1
+---
 # INTERFACE: Substrate / SandboxClient
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 2 (Kubernetes, Docker) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded (core substrate)
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 2 (k8s, docker) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -11,27 +23,27 @@ The substrate is where a conversation thread claims, dials, suspends, and reaps 
 
 ## Current contract
 
-A second implementation must satisfy the `SandboxClient` `Protocol` at `apps/worker/src/agentos_worker/sandbox/k8s.py:50`, six methods:
+A second implementation must satisfy the `SandboxClient` `Protocol` at `apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient`, six methods:
 
-- `create_claim(name, *, pool, env=None, labels=None) -> None` (`k8s.py:53`)
-- `get_claim(name) -> ClaimView | None` (`k8s.py:62`)
-- `delete_claim(name) -> None` (`k8s.py:64`)
-- `list_claims(*, label_selector) -> list[ClaimView]` (`k8s.py:66`)
-- `get_sandbox(name) -> SandboxView | None` (`k8s.py:68`)
-- `set_sandbox_mode(name, mode: OperatingMode) -> None` (`k8s.py:70`)
+- `create_claim(name, *, pool, env=None, labels=None) -> None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.create_claim`)
+- `get_claim(name) -> ClaimView | None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.get_claim`)
+- `delete_claim(name) -> None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.delete_claim`)
+- `list_claims(*, label_selector) -> list[ClaimView]` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.list_claims`)
+- `get_sandbox(name) -> SandboxView | None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.get_sandbox`)
+- `set_sandbox_mode(name, mode: OperatingMode) -> None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.set_sandbox_mode`)
 
-The exchanged value types are `ClaimView` (`sandbox/types.py:110`: `name`, `ready`, `sandbox_name`, `labels`) and `SandboxView` (`sandbox/types.py:120`: `name`, `ready`, `service_fqdn`, `operating_mode`, `port`). `operating_mode` must report `"Running"` for a claim to be handed back (`substrate.py:75`), and `OperatingMode` is `Literal["Running", "Suspended"]` (`k8s.py:30`). The selector reads `AGENTOS_SANDBOX_SUBSTRATE` (default `"kubernetes"`, else `"docker"`) in `_sandbox_client()` at `apps/worker/src/agentos_worker/run.py:81` (branch at `run.py:98`).
+The exchanged value types are `ClaimView` (`apps/worker/src/agentos_worker/sandbox/types.py::ClaimView`: `name`, `ready`, `sandbox_name`, `labels`) and `SandboxView` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxView`: `name`, `ready`, `service_fqdn`, `operating_mode`, `port`). `operating_mode` must report `"Running"` for a claim to be handed back (`apps/worker/src/agentos_worker/sandbox/substrate.py::SandboxSubstrate.claim`), and `OperatingMode` is `Literal["Running", "Suspended"]` (`apps/worker/src/agentos_worker/sandbox/k8s.py::OperatingMode`). The selector reads `AGENTOS_SANDBOX_SUBSTRATE` (default `"kubernetes"`, else `"docker"`) in `_sandbox_client()` at `apps/worker/src/agentos_worker/run.py::_sandbox_client`, which branches on the value inside that same function.
 
 ## Implementations today
 
 Two, both under `apps/worker/src/agentos_worker/sandbox/`:
 
-- `KubernetesSandboxClient` (`k8s.py:101`) — drives agent-sandbox CRDs (`Sandbox` in `agents.x-k8s.io`, `SandboxClaim` in `extensions.agents.x-k8s.io`) via `CustomObjectsApi`.
-- `DockerSandboxClient` (`docker.py:94`) — boots runner containers on the local Docker daemon for middle mode (a laptop, no cluster).
+- `KubernetesSandboxClient` (`apps/worker/src/agentos_worker/sandbox/k8s.py::KubernetesSandboxClient`) — drives agent-sandbox CRDs (`Sandbox` in `agents.x-k8s.io`, `SandboxClaim` in `extensions.agents.x-k8s.io`) via `CustomObjectsApi`.
+- `DockerSandboxClient` (`apps/worker/src/agentos_worker/sandbox/docker.py::DockerSandboxClient`) — boots runner containers on the local Docker daemon for middle mode (a laptop, no cluster).
 
 ## Known leakage
 
-The `SandboxView.port` field (`types.py:134`) exists only because the Docker path publishes each runner on its own loopback host port, while the Kubernetes path uses one fleet-wide `runner_port`; `None` means "fall back to `SubstrateConfig.runner_port`". Credential handling also differs across the line: the k8s client strips `AGENTOS_CREDENTIALS` from per-claim env so it is never persisted in plaintext on the claim (`k8s.py:47`, `k8s.py:139`), relying on the chart Secret's `secretKeyRef`; the Docker client has no Secret and forwards exactly one model credential by name -- an explicit AGENTOS_CREDENTIALS alone (never an ambient CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY that would shadow it), and none at all for a fake-model or local base-URL-override run that resolves none. These are runtime-shaped asymmetries the `Protocol` does not fully hide.
+The `SandboxView.port` field (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxView`) exists only because the Docker path publishes each runner on its own loopback host port, while the Kubernetes path uses one fleet-wide `runner_port`; `None` means "fall back to `SubstrateConfig.runner_port`". Credential handling also differs across the line: the k8s client strips `AGENTOS_CREDENTIALS` (`apps/worker/src/agentos_worker/sandbox/k8s.py::CREDENTIALS_ENV`) from per-claim env so it is never persisted in plaintext on the claim (`apps/worker/src/agentos_worker/sandbox/k8s.py::KubernetesSandboxClient.create_claim`), relying on the chart Secret's `secretKeyRef`; the Docker client has no Secret and forwards exactly one model credential by name -- an explicit AGENTOS_CREDENTIALS alone (never an ambient CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY that would shadow it), and none at all for a fake-model or local base-URL-override run that resolves none. These are runtime-shaped asymmetries the `Protocol` does not fully hide.
 
 ## Cross-links
 

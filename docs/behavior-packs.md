@@ -42,7 +42,7 @@ The substrate, end to end, minus the kernel call sites:
   (migration `0005`), validated by `schemas.BehaviorPacksConfig`, accepted on
   `POST /agents`, and read/written via `GET|PUT /agents/{id}/behavior-packs`
   (mirrors the budget control endpoints). NULL reads as all-off.
-- **Logic** (`apps/worker/behaviorpacks.py`): `sample_load(packs, seed)`,
+- **Logic** (`apps/worker/src/agentos_worker/behaviorpacks.py::sample_load`): `sample_load(packs, seed)`,
   `sample_tip(packs, seed)`, `match_greeting(packs, text)`,
   `match_help(packs, text)`, plus the settings pack's `coerce_setting(setting,
   raw)` and `resolve_settings(packs, overrides)`. Pure stdlib, fully unit-tested.
@@ -53,7 +53,7 @@ The substrate, end to end, minus the kernel call sites:
   report") returns `None` and falls through to the model. `resolve_settings`
   layers a validated override over each declared default and ignores
   unknown/invalid keys, so a stale store can never break resolution.
-- **Binding** (`apps/worker/binding.py`, not the sacred kernel): the resolver
+- **Binding** (`apps/worker/src/agentos_worker/binding.py::BindingResolver`, not the sacred kernel): the resolver
   now selects `behavior_packs`, carries it on `ResolvedDeployment`, and exposes
   `BindingResolver.packs_for(resolved) -> BehaviorPacks`.
 
@@ -73,7 +73,7 @@ additive and touches neither the kernel nor a frozen contract.
 
 ### The kernel wiring for tips/greeting/help (needs F1 review)
 
-These touches fire from inside `apps/worker/kernel.py`, which is the F1 "sacred"
+These touches fire from inside `apps/worker/src/agentos_worker/kernel.py::Kernel`, which is the F1 "sacred"
 module: any change needs the escalated adversarial review (spec-vs-impl +
 side-effects-detective) per `apps/worker/CLAUDE.md`. The greeting short-circuit
 also brushes against kernel rule 3 ("the kernel never keyword-guesses intent"),
@@ -138,7 +138,7 @@ pack.
 | Greeting detection | **Pack** (`greeting`) | Data (phrases + reply), deterministic pre-model matcher. Shipped. |
 | Help / "what can you do" | **Pack** (`help`) | Same shape as greeting; the niceties battery's help half. Shipped. |
 | Runtime settings / knobs | **Pack** (`settings`, schema) | The editable-settings allowlist is declarative; shipped with platform-owned validation (`coerce_setting`/`resolve_settings`). The durable override store + edit UI are a deferred runtime. |
-| Kill switch / control | **Already native** | AgentOS has it: `apps/worker/killswitch.py` + `Kernel` kill gate + the `/agents/{id}/kill` control endpoint. A pack would duplicate it. |
+| Kill switch / control | **Already native** | AgentOS has it: `apps/worker/src/agentos_worker/killswitch.py::KillSwitch` + `Kernel` kill gate + the `/agents/{id}/kill` control endpoint. A pack would duplicate it. |
 | Activity log | **Already native (observability)** | Post-model observation is Langfuse tracing; the Slack "activity" ring buffer is stateful UI code, not declarative data. |
 | Logging setup | **Not per-agent** | Pure infra, identical for every agent; belongs to the platform, not a pack. |
 | Block Kit rendering | **Not applicable** | AgentOS streams text + `chat_update` mrkdwn; there is no structured `Reply` object to render. Would need a Block Kit reply model first. |

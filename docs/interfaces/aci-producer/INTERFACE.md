@@ -1,7 +1,21 @@
+---
+seam: ACI producer (frozen protocol)
+kind: CLEAN, frozen
+impls: 1 + reference
+grade: A-
+epics:
+  - "#25"
+  - "#47"
+order: 3
+---
+
 # INTERFACE: ACI producer (frozen protocol)
 
 > Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 + reference &nbsp;·&nbsp; **Swap-readiness grade:** A-
+
+<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> **Kind:** CLEAN, frozen &nbsp;·&nbsp; **Implementations today:** 1 + reference &nbsp;·&nbsp; **Swap-readiness grade:** A-
+<!-- END GENERATED: header -->
 
 **Kind legend:** CLEAN = a real `Protocol`/typed port class · SOFT = swap via env/URL/prefix/wire, no code interface · NONE = not built yet.
 
@@ -18,18 +32,23 @@ redefine them.
 ## Current contract
 
 A second implementation is an **ACI server** — an HTTP process that accepts the three endpoints
-(`docs/diagrams/aci.md:20`): `POST /v1/event` opens a turn, `POST /v1/steer` injects into the
+(`docs/diagrams/aci.md`): `POST /v1/event` opens a turn, `POST /v1/steer` injects into the
 live turn (409 if none running), `POST /v1/interrupt` hard-stops it. It streams the outbound
-NDJSON discriminated union `OutboundEvent` (`packages/aci-protocol/src/aci_protocol/events.py:119`):
-`TextDelta` (`text_delta`, :76), `ToolNote` (`tool_note`, :83), `Final` (`final` + `status`, :91),
-`ErrorEvent` (`error` + `classification`, :99), `SideEffectFlag` (`side_effect_flag`, :107). Every
+NDJSON discriminated union `OutboundEvent` (`packages/aci-protocol/src/aci_protocol/events.py::OutboundEvent`):
+`TextDelta` (`packages/aci-protocol/src/aci_protocol/events.py::TextDelta`, `text_delta`),
+`ToolNote` (`packages/aci-protocol/src/aci_protocol/events.py::ToolNote`, `tool_note`),
+`Final` (`packages/aci-protocol/src/aci_protocol/events.py::Final`, `final` + `status`),
+`ErrorEvent` (`packages/aci-protocol/src/aci_protocol/events.py::ErrorEvent`, `error` + `classification`),
+`SideEffectFlag` (`packages/aci-protocol/src/aci_protocol/events.py::SideEffectFlag`, `side_effect_flag`). Every
 outbound event carries `version` equal to the producer's exact build `PROTOCOL_VERSION`; a consumer
 accepts any `major.minor`-compatible version under 0.x (`major` after 1.0). Inbound frames are the
-`InboundMessage` union `Event | Interrupt` on the `kind` tag
-(`packages/aci-protocol/src/aci_protocol/events.py:64`, `:43`, `:55`). Setup is read from the
-environment via `SessionConfig.from_env` (`packages/aci-protocol/src/aci_protocol/session.py:96`),
-honoring the `AGENTOS_*` mapping in `to_env` (`:72`). Conformance is proven by
-`run_conformance(<your producer>)`, which must return `passed=True`.
+`InboundMessage` union (`packages/aci-protocol/src/aci_protocol/events.py::InboundMessage`) of
+`Event` (`packages/aci-protocol/src/aci_protocol/events.py::Event`) and
+`Interrupt` (`packages/aci-protocol/src/aci_protocol/events.py::Interrupt`) on the `kind` tag.
+Setup is read from the environment via `SessionConfig.from_env`
+(`packages/aci-protocol/src/aci_protocol/session.py::SessionConfig.from_env`), honoring the
+`AGENTOS_*` mapping in `to_env` (`packages/aci-protocol/src/aci_protocol/session.py::SessionConfig.to_env`).
+Conformance is proven by `run_conformance(<your producer>)`, which must return `passed=True`.
 
 ## Implementations today
 
