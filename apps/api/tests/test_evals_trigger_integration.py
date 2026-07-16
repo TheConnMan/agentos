@@ -141,6 +141,29 @@ def test_trigger_enqueues_for_active_dev_deployment(
     assert req.suite == get_settings().eval_default_suite
     assert req.bundle_ref == seeded["bundle_ref"]
     assert req.target_url is None
+    assert req.model is None  # no model requested -> worker default
+
+
+def test_trigger_threads_requested_model_onto_the_job(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    """#526: a requested model is echoed in the result AND carried on the enqueued
+    EvalJobRequest, so the worker boots+tags that model and a sweep's rows land in
+    the matrix's model column (one trigger per model)."""
+    agent = _create_agent(client, auth_headers, "trigger-model")
+    _seed(agent["id"])
+
+    resp = client.post(
+        "/evals/trigger",
+        json={"agent_id": agent["id"], "model": "claude-sweep-x"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model"] == "claude-sweep-x"
+
+    payload = _payload_for_stream_id(resp.json()["stream_id"])
+    assert payload is not None
+    assert EvalJobRequest.model_validate(payload).model == "claude-sweep-x"
 
 
 def test_trigger_requires_api_key(client: Any) -> None:

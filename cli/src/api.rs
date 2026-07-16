@@ -89,6 +89,42 @@ pub struct KillState {
     pub killed: bool,
 }
 
+/// The enqueued eval job's identity (`EvalTriggerResult` in openapi.json): the
+/// response of `POST /evals/trigger`. `sha` keys the run's matrix column and
+/// `model` echoes the requested model (#526) so a sweep can pair each job to the
+/// row it will produce.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalTriggerResult {
+    pub stream_id: String,
+    pub sha: String,
+    pub suite: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// One per-model rollup of the eval matrix (`EvalModelSummary` in openapi.json):
+/// pass-rate and summed cost for a suite run under one model (#255/#526). `model`
+/// is `None` for the matrix's unlabelled column (a run with no resolved model).
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalModelSummary {
+    #[serde(default)]
+    pub model: Option<String>,
+    pub passed: u64,
+    pub total: u64,
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
+}
+
+/// The eval matrix grid (`EvalMatrix` in openapi.json): `GET /evals/matrix`. The
+/// sweep reads only `model_summaries` (the model dimension); the version grid is
+/// carried but unused here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalMatrix {
+    pub suite: String,
+    #[serde(default)]
+    pub model_summaries: Vec<EvalModelSummary>,
+}
+
 /// The per-agent budget (`BudgetConfig` in openapi.json): the request and
 /// response body of `PUT /agents/{id}/budget`. Both fields are optional; an
 /// omitted field means "platform default" server-side, so we only serialize the
@@ -524,6 +560,56 @@ impl ApiClient {
             .json()
             .await
             .context("decoding updated agent")
+    }
+
+    /// Enqueue an on-demand platform eval run: `POST /evals/trigger`. With no
+    /// `version_id` the agent's active dev deployment is evaluated. `model` (#526)
+    /// pins the run's model dimension so a sweep posts one trigger per model and
+    /// reads the comparison back off the matrix. Returns the enqueued job identity.
+    pub async fn trigger_eval(
+        &self,
+        agent_id: &str,
+        suite: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<EvalTriggerResult> {
+        let mut body = json!({ "agent_id": agent_id });
+        if let Some(suite) = suite {
+            body["suite"] = json!(suite);
+        }
+        if let Some(model) = model {
+            body["model"] = json!(model);
+        }
+        let resp = self
+            .http
+            .post(format!("{}/evals/trigger", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("POST /evals/trigger")?;
+        Self::expect_ok(resp, "triggering the eval")
+            .await?
+            .json()
+            .await
+            .context("decoding eval trigger result")
+    }
+
+    /// Read the eval matrix for a suite: `GET /evals/matrix?suite=..&versions=..`.
+    /// The sweep polls this for the per-model pass-rate rollup the recorder writes.
+    pub async fn eval_matrix(&self, suite: &str, versions: u32) -> Result<EvalMatrix> {
+        let resp = self
+            .http
+            .get(format!("{}/evals/matrix", self.base_url))
+            .query(&[("suite", suite), ("versions", &versions.to_string())])
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("GET /evals/matrix")?;
+        Self::expect_ok(resp, "reading the eval matrix")
+            .await?
+            .json()
+            .await
+            .context("decoding eval matrix")
     }
 
     /// Delete the agent: `DELETE /agents/{id}` (204 No Content on success).

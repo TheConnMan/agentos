@@ -102,6 +102,31 @@ def test_model_dimension_rolls_up_pass_rate_and_cost_per_model() -> None:
     assert abs(summaries["sonnet"].cost_usd - 0.01) < 1e-9
 
 
+def test_same_version_sweep_keeps_every_model() -> None:
+    """A sweep (#526) runs the SAME suite + version across N models, so those
+    traces collide on (version, case) and would collapse to one in the grid dedup.
+    The per-model rollup keys on the model too, so all N models survive with their
+    own pass-rate -- the read surface a `local/cluster eval --model` sweep polls."""
+    traces = [
+        _mtrace("o1", "shaA", "c1", "2026-07-01T00:00:00Z", True, "opus", 0.02),
+        _mtrace("o2", "shaA", "c2", "2026-07-01T00:00:01Z", True, "opus", 0.01),
+        # sonnet ran the same version+cases slightly later (higher ts).
+        _mtrace("s1", "shaA", "c1", "2026-07-01T00:01:00Z", True, "sonnet", 0.006),
+        _mtrace("s2", "shaA", "c2", "2026-07-01T00:01:01Z", False, "sonnet", 0.004),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    # One version column, but BOTH models present in the rollup (not collapsed).
+    assert matrix.versions == ["shaA"]
+    summaries = {m.model: m for m in matrix.model_summaries}
+    assert set(summaries) == {"opus", "sonnet"}
+    assert summaries["opus"].passed == 2 and summaries["opus"].total == 2
+    assert summaries["sonnet"].passed == 1 and summaries["sonnet"].total == 2
+    # The displayed grid still shows one cell per (version, case): newest wins.
+    cell_models = {cell.model for row in matrix.rows for cell in row.cells}
+    assert cell_models == {"sonnet"}  # sonnet recorded last
+
+
 def test_cells_carry_model_and_unlabelled_runs_sort_last() -> None:
     traces = [
         _mtrace("m1", "shaA", "c1", "2026-07-01T00:00:00Z", True, "opus"),

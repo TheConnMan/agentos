@@ -570,6 +570,11 @@ enum LocalAction {
         /// How long to wait for each case's reply. Default: 300 seconds.
         #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
         timeout_secs: u64,
+        /// Evaluate under this model instead of the deployed one; repeat to sweep
+        /// several models in one run (#526). A sweep triggers a platform eval per
+        /// model and reports the per-model pass-rate from `GET /evals/matrix`.
+        #[arg(long = "model")]
+        model: Vec<String>,
         /// Print the plan that a real run would produce, and exit.
         #[arg(long)]
         dry_run: bool,
@@ -954,6 +959,11 @@ enum ClusterAction {
         /// How long to wait for each case's reply. Default: 300 seconds.
         #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
         timeout_secs: u64,
+        /// Evaluate under this model instead of the deployed one; repeat to sweep
+        /// several models in one run (#526). A sweep triggers a platform eval per
+        /// model and reports the per-model pass-rate from `GET /evals/matrix`.
+        #[arg(long = "model")]
+        model: Vec<String>,
         /// Print the kubectl commands, stub URL, and enqueue description that a
         /// real run would produce, and exit without executing anything.
         #[arg(long)]
@@ -1412,6 +1422,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 user,
                 stream,
                 timeout_secs,
+                model,
                 dry_run,
             } => {
                 message::eval(message::EvalOpts {
@@ -1431,6 +1442,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     dry_run,
                     local: true,
                     api_url,
+                    models: model,
                 })
                 .await
             }
@@ -1750,6 +1762,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 user,
                 stream,
                 timeout_secs,
+                model,
                 dry_run,
             } => {
                 message::eval(message::EvalOpts {
@@ -1769,6 +1782,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     dry_run,
                     local: false,
                     api_url: None,
+                    models: model,
                 })
                 .await
             }
@@ -1975,6 +1989,42 @@ mod tests {
                 action: SkillAction::Eval { model, .. },
             }) => assert_eq!(model, vec!["claude-haiku-4-5", "claude-sonnet-5"]),
             _ => panic!("expected skill eval sweep"),
+        }
+    }
+
+    #[test]
+    fn local_and_cluster_eval_model_are_repeatable_for_a_sweep() {
+        // local eval --model repeats into the sweep list (#526).
+        match Cli::try_parse_from([
+            "agentos", "local", "eval", "--model", "opus", "--model", "sonnet",
+        ])
+        .expect("local eval sweep should parse")
+        .command
+        {
+            Some(Command::Local {
+                action: LocalAction::Eval { model, .. },
+            }) => assert_eq!(model, vec!["opus", "sonnet"]),
+            _ => panic!("expected local eval sweep"),
+        }
+        // Bare local eval -> no models (the in-CLI parity gate).
+        match Cli::try_parse_from(["agentos", "local", "eval"])
+            .expect("local eval should parse")
+            .command
+        {
+            Some(Command::Local {
+                action: LocalAction::Eval { model, .. },
+            }) => assert!(model.is_empty()),
+            _ => panic!("expected local eval"),
+        }
+        // cluster eval --model likewise.
+        match Cli::try_parse_from(["agentos", "cluster", "eval", "--model", "opus"])
+            .expect("cluster eval sweep should parse")
+            .command
+        {
+            Some(Command::Cluster {
+                action: ClusterAction::Eval { model, .. },
+            }) => assert_eq!(model, vec!["opus"]),
+            _ => panic!("expected cluster eval sweep"),
         }
     }
 

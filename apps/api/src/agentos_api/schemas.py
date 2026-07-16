@@ -709,6 +709,10 @@ class EvalTriggerRequest(BaseModel):
     version_id: uuid.UUID | None = None
     suite: str | None = None
     target_url: str | None = None
+    # The model to evaluate under (#526): booted into the eval sandbox and used as
+    # the run's matrix model dimension. None uses the worker default. A sweep posts
+    # one trigger per model, then reads GET /evals/matrix sliced by model back.
+    model: str | None = None
 
 
 class EvalTriggerResult(BaseModel):
@@ -720,6 +724,9 @@ class EvalTriggerResult(BaseModel):
     sha: str
     suite: str
     bundle_ref: str | None
+    # Echoes the requested model (#526) so a sweep caller can key each enqueued
+    # job to the model it will land under in the matrix; None = worker default.
+    model: str | None = None
 
 
 class EvalReport(BaseModel):
