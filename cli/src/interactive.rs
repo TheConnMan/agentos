@@ -74,6 +74,7 @@ enum TuiAction {
 #[derive(Clone, Copy, Debug)]
 enum Workflow {
     ExploreExamples,
+    ParityLadder,
 }
 
 #[derive(Clone, Debug)]
@@ -146,7 +147,12 @@ impl App {
         let recipes = recipes();
         App {
             recipes,
-            targets: vec!["all", "skill", "secrets", "local", "cluster", "dev"],
+            // "platform" leads (it is the default landing tab, target_idx 0): the
+            // primary product functions -- parity/evals/observe/version/budget/
+            // approve/remember -- come before the per-tier operator verbs.
+            targets: vec![
+                "platform", "all", "skill", "secrets", "local", "cluster", "dev",
+            ],
             target_idx: 0,
             selected: 0,
             message: "Select an action. Enter runs it; q exits.".into(),
@@ -307,8 +313,11 @@ fn run_recipe_in_tui(
     let Some(values) = prompt_recipe_fields(terminal, app, recipe)? else {
         return Ok(format!("Canceled: {}", recipe.title));
     };
-    if matches!(recipe.kind, RecipeKind::Workflow(Workflow::ExploreExamples)) {
-        explore_examples(terminal, app, &values)?;
+    if let RecipeKind::Workflow(workflow) = &recipe.kind {
+        match workflow {
+            Workflow::ExploreExamples => explore_examples(terminal, app, &values)?,
+            Workflow::ParityLadder => parity_ladder(terminal, app)?,
+        }
         return Ok(format!("Finished: {}", recipe.title));
     }
     let mut view = RunView::new(recipe.title);
@@ -588,6 +597,37 @@ fn prompt_text(
             _ => {}
         }
     }
+}
+
+/// Print-only "parity ladder" explainer: the framing for the whole Platform tab
+/// -- what agentos is (one bundle + one eval suite across skill/local/cluster) and
+/// how to climb it. Mirrors the show_run_view pause used by the other workflows.
+fn parity_ladder(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> Result<()> {
+    let mut view = RunView::new("The parity ladder");
+    for line in [
+        "agentos runs ONE immutable bundle and ONE evals/cases.json identically",
+        "across three tiers, so 'works on my laptop' and 'works deployed' are the",
+        "same artifact -- not a hope.",
+        "",
+        "  skill    runner only, on your Docker. Fastest loop; no platform/queue.",
+        "           -> agentos skill up / skill message / skill eval",
+        "  local    the full platform via docker compose (API, queue, worker,",
+        "           sandbox, Langfuse). The real product loop, zero Slack/K8s.",
+        "           -> agentos local up / local deploy / local message",
+        "  cluster  the same platform on Kubernetes (a Helm release).",
+        "           -> agentos cluster deploy / cluster message",
+        "",
+        "Climb it: iterate at skill, promote to local, then cluster. Run the SAME",
+        "evals at each tier -- a tier-to-tier divergence is the harness catching a",
+        "deployment bug, not a flaky test.",
+        "",
+        "The other Platform actions (evals, observability, versions, budget,",
+        "approvals, memory) let you evaluate, observe, and govern a deployed agent.",
+    ] {
+        view.push(line);
+    }
+    show_run_view(terminal, app, &mut view)?;
+    Ok(())
 }
 
 fn explore_examples(
@@ -920,6 +960,8 @@ fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
             lines.extend(secrets_status_lines());
             lines.push(Line::from(""));
         }
+        // The parity-ladder explainer needs no credential status.
+        Workflow::ParityLadder => {}
     }
 }
 
@@ -1683,6 +1725,24 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             lines.push(Line::from(""));
             maybe_add_secret_status(&mut lines, Workflow::ExploreExamples);
         }
+        RecipeKind::Workflow(Workflow::ParityLadder) => {
+            lines.push(Line::from(Span::styled(
+                "The parity ladder",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            lines.push(Line::from("What agentos is: one immutable bundle + one"));
+            lines.push(Line::from(
+                "evals/cases.json, run identically across tiers.",
+            ));
+            lines.push(Line::from(
+                "skill (runner only) -> local (full platform) ->",
+            ));
+            lines.push(Line::from("cluster (Kubernetes). A tier-to-tier eval"));
+            lines.push(Line::from(
+                "divergence is the harness catching a deploy bug.",
+            ));
+            lines.push(Line::from(""));
+        }
     }
     if !recipe.fields.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -2087,6 +2147,167 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 
 fn recipes() -> Vec<Recipe> {
     vec![
+        // --- Platform: the primary product functions, leading the TUI ---
+        Recipe {
+            target: "platform",
+            title: "Parity ladder (what agentos is)",
+            description: "One bundle + one eval suite across skill -> local -> cluster.",
+            kind: RecipeKind::Workflow(Workflow::ParityLadder),
+            args: vec![],
+            fields: vec![],
+            notes: &[
+                "Read this first: the platform is about running the SAME artifact everywhere and evaluating/observing/governing it.",
+            ],
+        },
+        Recipe {
+            target: "platform",
+            title: "Run evals (parity gate)",
+            description: "Grade the bundle's evals/cases.json against the running skill runner.",
+            kind: RecipeKind::Command,
+            args: vec![ArgPart::Literal("skill"), ArgPart::Literal("eval")],
+            fields: vec![],
+            notes: &["Requires a runner up (Start runner / skill up) with the bundle's evals/cases.json."],
+        },
+        Recipe {
+            target: "platform",
+            title: "Open observability (Console + Langfuse)",
+            description: "Open the local AgentOS Console and Langfuse traces/cost UIs.",
+            kind: RecipeKind::Command,
+            args: vec![ArgPart::Literal("local"), ArgPart::Literal("observability")],
+            fields: vec![],
+            notes: &["Start the platform first with `agentos local up`."],
+        },
+        Recipe {
+            target: "platform",
+            title: "List versions",
+            description: "Show an agent's immutable deployed versions (newest first).",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("local"),
+                ArgPart::Literal("versions"),
+                ArgPart::Field("agent"),
+            ],
+            fields: vec![Field {
+                key: "agent",
+                label: "Agent name",
+                default: None,
+                required: true,
+            }],
+            notes: &["Every deploy pins a new immutable version; a thread keeps the one it booted with."],
+        },
+        Recipe {
+            target: "platform",
+            title: "Set budget",
+            description: "Set an agent's daily USD spend cap (enforced per run).",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("local"),
+                ArgPart::Literal("budget"),
+                ArgPart::Field("agent"),
+                ArgPart::Literal("--limit"),
+                ArgPart::Field("limit"),
+            ],
+            fields: vec![
+                Field {
+                    key: "agent",
+                    label: "Agent name",
+                    default: None,
+                    required: true,
+                },
+                Field {
+                    key: "limit",
+                    label: "Daily cap in USD (e.g. 5)",
+                    default: None,
+                    required: true,
+                },
+            ],
+            notes: &[],
+        },
+        Recipe {
+            target: "platform",
+            title: "Gate a tool (approvals)",
+            description: "Require human approval before an agent may call a named tool.",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("local"),
+                ArgPart::Literal("approvals"),
+                ArgPart::Field("agent"),
+                ArgPart::OptionalFlag {
+                    flag: "--gate",
+                    field: "tool",
+                },
+            ],
+            fields: vec![
+                Field {
+                    key: "agent",
+                    label: "Agent name",
+                    default: None,
+                    required: true,
+                },
+                Field {
+                    key: "tool",
+                    label: "Tool to gate (blank = show current gates)",
+                    default: None,
+                    required: false,
+                },
+            ],
+            notes: &["e.g. gate mcp__plugin_github-issues_github__create_issue so a write pauses for approval."],
+        },
+        Recipe {
+            target: "platform",
+            title: "Inspect memory",
+            description: "Show what an agent has learned (its memory log).",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("local"),
+                ArgPart::Literal("memory"),
+                ArgPart::Field("agent"),
+            ],
+            fields: vec![Field {
+                key: "agent",
+                label: "Agent name",
+                default: None,
+                required: true,
+            }],
+            notes: &[],
+        },
+        Recipe {
+            target: "platform",
+            title: "Kill an agent",
+            description: "Stop an agent's runs (the kill switch).",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("local"),
+                ArgPart::Literal("kill"),
+                ArgPart::Field("agent"),
+                ArgPart::Literal("--yes"),
+            ],
+            fields: vec![Field {
+                key: "agent",
+                label: "Agent name",
+                default: None,
+                required: true,
+            }],
+            notes: &["Resume it later with the 'Resume an agent' action."],
+        },
+        Recipe {
+            target: "platform",
+            title: "Resume an agent",
+            description: "Bring a killed agent back online.",
+            kind: RecipeKind::Command,
+            args: vec![
+                ArgPart::Literal("local"),
+                ArgPart::Literal("resume"),
+                ArgPart::Field("agent"),
+            ],
+            fields: vec![Field {
+                key: "agent",
+                label: "Agent name",
+                default: None,
+                required: true,
+            }],
+            notes: &[],
+        },
         Recipe {
             target: "skill",
             title: "Start runner",
@@ -2372,6 +2593,42 @@ mod tests {
     fn render_command_quotes_shell_specials() {
         let argv = vec!["skill".into(), "message".into(), "hello world".into()];
         assert_eq!(render_command(&argv), "agentos skill message 'hello world'");
+    }
+
+    #[test]
+    fn platform_tab_leads_and_carries_the_primary_functions() {
+        let app = App::new();
+        // "platform" is the first tab, so it is the default landing view.
+        assert_eq!(
+            app.targets.first().copied(),
+            Some("platform"),
+            "platform must lead the tabs"
+        );
+        // The primary functions are present under it.
+        let platform_titles: Vec<&str> = app
+            .recipes
+            .iter()
+            .filter(|r| r.target == "platform")
+            .map(|r| r.title)
+            .collect();
+        for expected in [
+            "Parity ladder (what agentos is)",
+            "Run evals (parity gate)",
+            "Open observability (Console + Langfuse)",
+            "List versions",
+            "Set budget",
+            "Gate a tool (approvals)",
+            "Inspect memory",
+            "Kill an agent",
+            "Resume an agent",
+        ] {
+            assert!(
+                platform_titles.contains(&expected),
+                "missing platform recipe: {expected}"
+            );
+        }
+        // And they lead the recipe list (first recipe is on the platform tab).
+        assert_eq!(app.recipes.first().map(|r| r.target), Some("platform"));
     }
 
     #[test]
