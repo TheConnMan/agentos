@@ -463,6 +463,32 @@ def test_agent_reserved_credential_secret_name_is_422(
     assert bad.status_code == 422, bad.text
 
 
+# #487: redirect/capture-capable env (proxy, extra CA, custom headers) is reserved
+# on the API write seam too, at the same 422 as the credential keys.
+_REDIRECT_CAPTURE_KEYS = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "ANTHROPIC_CUSTOM_HEADERS",
+]
+
+
+@pytest.mark.parametrize("name", _REDIRECT_CAPTURE_KEYS)
+def test_agent_reserved_redirect_capture_secret_name_is_422(
+    client: Any, auth_headers: dict[str, str], clean_db: None, name: str
+) -> None:
+    bad = client.post(
+        "/agents",
+        json={
+            "name": "redirect-secret-agent",
+            "slack_channel": "C000000S05",
+            "secrets": {name: "x"},
+        },
+        headers=auth_headers,
+    )
+    assert bad.status_code == 422, bad.text
+
+
 def test_agent_legitimate_secret_name_still_creates(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:

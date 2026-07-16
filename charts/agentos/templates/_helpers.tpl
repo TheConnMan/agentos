@@ -57,13 +57,14 @@ app.kubernetes.io/component: {{ .component }}
      define's body and fails CI if the two lists drift.
 
      IMPORTANT: the pin scans this body for env-name-shaped uppercase tokens, so
-     the body must contain EXACTLY these four keys and no other stray ones (this
-     comment lives OUTSIDE the define so it is never scanned). The whole
+     the body must contain EXACTLY these eight keys and no other stray ones (this
+     comment lives OUTSIDE the define so it is never scanned): the four runner
+     credential keys plus the four redirect/capture-capable keys (#487). The whole
      AGENTOS_ namespace is fenced separately by the hasPrefix rule in the
      connector-secret guard, so it is intentionally absent here. Emitted
      space-separated for consumption via `splitList " "`. */}}
 {{- define "agentos.reservedConnectorSecretNames" -}}
-ANTHROPIC_BASE_URL ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+ANTHROPIC_BASE_URL ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN HTTPS_PROXY HTTP_PROXY NODE_EXTRA_CA_CERTS ANTHROPIC_CUSTOM_HEADERS
 {{- end -}}
 
 {{/* ---- Backing-store hosts (in-cluster Service name, or BYO host) ---- */}}

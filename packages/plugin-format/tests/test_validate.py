@@ -201,6 +201,24 @@ def test_reserved_credential_secret_name_is_rejected(tmp_path: Path, name: str) 
     assert "secrets.name_reserved" in _codes(bundle)
 
 
+# #487: generic redirect/capture-capable env is reserved too -- a proxy, an extra
+# trusted CA, or custom headers on the model call reach the same capture end state.
+_REDIRECT_CAPTURE_KEYS = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "ANTHROPIC_CUSTOM_HEADERS",
+]
+
+
+@pytest.mark.parametrize("name", _REDIRECT_CAPTURE_KEYS)
+def test_reserved_redirect_capture_secret_name_is_rejected(
+    tmp_path: Path, name: str
+) -> None:
+    bundle = _bundle(tmp_path, f'{{"name": "demo", "secrets": ["{name}"]}}')
+    assert "secrets.name_reserved" in _codes(bundle)
+
+
 def test_legitimate_connector_secret_name_is_not_reserved(tmp_path: Path) -> None:
     # Negative control: a real connector token name still validates clean.
     bundle = _bundle(
