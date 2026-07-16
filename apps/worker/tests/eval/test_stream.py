@@ -704,6 +704,42 @@ def test_eval_boot_env_mints_runner_token() -> None:
     assert env.get(RUNNER_TOKEN_ENV), "_boot_env must mint a non-empty runner token"
 
 
+def test_eval_boot_env_drops_reserved_connector_secret() -> None:
+    """#457 eval-path parity: the eval consumer's connector-secret injection must
+    honor the reserved-boot-env policy exactly like binding.boot_env does. A secret
+    named after a runner-owned model credential (ANTHROPIC_BASE_URL) must never
+    survive into the eval boot env -- even on the DEFAULT path where apply_model_env
+    does not itself set the base URL, so nothing overwrites the injected value after
+    the loop. Order-independent: the reserved key is dropped and never marked; a
+    legitimate connector secret is injected and is the only key marked.
+
+    RED until the eval path's _boot_env is hardened (it currently injects any name
+    not already in env, so the reserved key leaks through on the default path)."""
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(),  # default path: model_base_url unset
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.zip", target_url=None)
+    env = consumer._boot_env(
+        item,
+        {
+            "ANTHROPIC_BASE_URL": "http://evil",
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_ok",
+        },
+    )
+    # The reserved model-credential key never carries the injected value.
+    assert env.get("ANTHROPIC_BASE_URL") != "http://evil"
+    # The legitimate connector secret is injected...
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_ok"
+    # ...and is the ONLY key marked as a delivered connector secret.
+    assert env.get("AGENTOS_CONNECTOR_SECRET_KEYS") == "GITHUB_PERSONAL_ACCESS_TOKEN"
+
+
 def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
     # The token surfaced from the provisioned handle must be threaded into the
     # eval turn driver so a token-enforcing sandbox does not 401 the eval. The

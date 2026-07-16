@@ -48,6 +48,24 @@ app.kubernetes.io/component: {{ .component }}
 {{- printf "%s-secrets" (include "agentos.fullname" .) -}}
 {{- end -}}
 
+{{/* ---- Reserved connector-secret boot-env names (#457, ADR-0009) ----
+     The non-AGENTOS_-prefixed runner credential keys a per-agent connector
+     secret must never declare, kept in list-parity with the Python source of
+     truth in packages/plugin-format (module reserved_env). This is the
+     unavoidable second copy -- Helm cannot import Python -- so the completeness
+     pin apps/worker/tests/binding/test_reserved_boot_env_pin.py parses THIS
+     define's body and fails CI if the two lists drift.
+
+     IMPORTANT: the pin scans this body for env-name-shaped uppercase tokens, so
+     the body must contain EXACTLY these four keys and no other stray ones (this
+     comment lives OUTSIDE the define so it is never scanned). The whole
+     AGENTOS_ namespace is fenced separately by the hasPrefix rule in the
+     connector-secret guard, so it is intentionally absent here. Emitted
+     space-separated for consumption via `splitList " "`. */}}
+{{- define "agentos.reservedConnectorSecretNames" -}}
+ANTHROPIC_BASE_URL ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+{{- end -}}
+
 {{/* ---- Backing-store hosts (in-cluster Service name, or BYO host) ---- */}}
 
 {{- define "agentos.postgres.host" -}}

@@ -19,6 +19,7 @@ from agentos_worker.binding import (
     APPROVAL_REQUIRED_ENV,
     BUDGET_ENV,
     BUNDLE_REF_ENV,
+    CONNECTOR_SECRET_KEYS_ENV,
     HISTORY_TOKEN_ENV,
     MEMORY_TOKEN_ENV,
     BindingResolver,
@@ -585,6 +586,63 @@ def test_resolves_connector_secrets_into_boot_env() -> None:
                 # secrets_for resolves the same map by agent_id (the eval lane).
                 by_id = await resolver.secrets_for(agent_id)
                 assert by_id == {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_seeded"}
+            finally:
+                await _cleanup(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_reserved_connector_secret_is_dropped_order_independently() -> None:
+    # #457 order-independence regression. A connector secret named
+    # ANTHROPIC_BASE_URL redirects the model credential. The old `if name not in
+    # env` guard did NOT stop it on the DEFAULT path (model_base_url unset),
+    # because apply_model_env sets ANTHROPIC_BASE_URL AFTER the injection loop,
+    # so the reserved name was absent from env at loop time and survived. The
+    # fix must filter by the reserved SET, not by env state. This test MUST run
+    # the default path (_resolver builds WorkerConfig with model_base_url unset)
+    # or the bug does not reproduce.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            try:
+                async with engine.connect():
+                    pass
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres not reachable at {_DB_URL}: {exc}")
+
+            token = uuid.uuid4().hex[:8]
+            channel = f"C-{token}"
+            agent_id = await _seed_agent(
+                engine,
+                channel=channel,
+                name=f"agent-{token}",
+                max_usd=None,
+                max_tokens=None,
+                secrets={
+                    "ANTHROPIC_BASE_URL": "http://evil",
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_ok",
+                },
+            )
+            await _seed_deployment(
+                engine, agent_id=agent_id, environment="prod", bundle_ref=f"b/{token}.zip"
+            )
+            try:
+                resolver = _resolver(engine)
+                resolved = await resolver.resolve(channel)
+                assert resolved is not None
+                env = resolver.boot_env(resolved, thread_key="t1")
+
+                # The injected reserved value must never land in the boot env.
+                assert env.get("ANTHROPIC_BASE_URL") != "http://evil"
+                # Negative control: the legitimate connector secret is delivered.
+                assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_ok"
+                # The dropped reserved key is excluded from the marker; only the
+                # legitimately injected key is listed.
+                keys = env[CONNECTOR_SECRET_KEYS_ENV].split(",")
+                assert keys == ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+                assert "ANTHROPIC_BASE_URL" not in keys
             finally:
                 await _cleanup(engine, [agent_id])
         finally:

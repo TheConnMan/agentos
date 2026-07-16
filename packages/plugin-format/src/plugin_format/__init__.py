@@ -19,12 +19,15 @@ from .models import (
     SkillFrontmatter,
     TriggerDeclaration,
 )
+from .reserved_env import RESERVED_BOOT_ENV, is_reserved_boot_env_name
 from .validate import ValidationIssue, ValidationResult, validate_bundle
 
 __version__ = "0.0.0"
 
 __all__ = [
     "__version__",
+    "RESERVED_BOOT_ENV",
+    "is_reserved_boot_env_name",
     "PluginManifest",
     "Author",
     "SkillFrontmatter",

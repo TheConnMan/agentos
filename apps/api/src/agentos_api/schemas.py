@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
+from plugin_format import is_reserved_boot_env_name
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -167,14 +168,16 @@ def _validate_secret_map(value: dict[str, str] | None) -> dict[str, str] | None:
                 f"secret name {name!r} must be an env-var-style name "
                 "(uppercase letters, digits, underscore; not starting with a digit)"
             )
-        if name.startswith("AGENTOS_"):
-            # AGENTOS_* names are the platform's reserved sandbox boot-env keys
-            # (budget/session/credential/etc.). A connector secret named that way
-            # would either clobber a boot var or be silently dropped by the worker
-            # binding's reserved-key guard, so reject it on write.
+        if is_reserved_boot_env_name(name):
+            # Reserved names are either AGENTOS_*-prefixed platform sandbox
+            # boot-env keys (budget/session/credential/etc.) or one of the
+            # fixed model-credential keys (ANTHROPIC_API_KEY, etc.). A
+            # connector secret named that way would either clobber a boot var
+            # or be silently dropped by the worker binding's reserved-key
+            # guard, so reject it on write.
             raise ValueError(
-                f"secret name {name!r} is reserved: AGENTOS_* names are platform "
-                "boot-env keys and cannot be used for a connector secret"
+                f"secret name {name!r} is reserved: it is a platform boot-env "
+                "or model-credential key and cannot be used for a connector secret"
             )
         if not secret:
             raise ValueError(f"secret {name!r} has an empty value")

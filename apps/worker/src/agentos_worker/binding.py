@@ -37,6 +37,7 @@ from typing import Any
 from urllib.parse import quote
 
 from aci_protocol import Budget
+from plugin_format import is_reserved_boot_env_name
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -366,17 +367,13 @@ class BindingResolver:
         # values the bundle's authed MCP servers read from the sandbox env, where
         # `.mcp.json` `${VAR}` expansion consumes them. Injected by value; the
         # docker substrate forwards them as `-e KEY=VALUE`, while the k8s
-        # substrate strips them off its plaintext claim CR by the marker below
-        # (their secretKeyRef delivery is #440). A reserved boot-env key is never
-        # overwritten, so a misnamed secret cannot clobber the ACI contract env or
-        # the model credential.
-        injected_secret_keys: list[str] = []
-        for name, value in (resolved.secrets or {}).items():
-            if name not in env:
-                env[name] = value
-                injected_secret_keys.append(name)
-        if injected_secret_keys:
-            env[CONNECTOR_SECRET_KEYS_ENV] = ",".join(sorted(injected_secret_keys))
+        # substrate strips them off its plaintext claim CR by the marker
+        # AGENTOS_CONNECTOR_SECRET_KEYS (their secretKeyRef delivery is #440).
+        # Reserved boot-env names are filtered out order-independently -- see the
+        # inject_connector_secrets docstring for the #457 rationale.
+        inject_connector_secrets(
+            env, resolved.secrets, agent_label=resolved.agent_id
+        )
         # The agent's pinned model (#254) overrides the worker default; None
         # falls back to config.model inside apply_model_env.
         apply_model_env(env, self._config, model_override=resolved.model)
@@ -407,3 +404,39 @@ def apply_model_env(
     model = model_override if model_override is not None else config.model
     if model:
         env[MODEL_ENV] = model
+
+
+def inject_connector_secrets(
+    env: dict[str, str],
+    secrets: dict[str, str] | None,
+    *,
+    agent_label: object,
+) -> None:
+    """Inject per-agent connector secrets, dropping reserved boot-env names
+    (order-independent, #457). Sets the AGENTOS_CONNECTOR_SECRET_KEYS marker
+    for the keys actually injected. Shared by the runs binding and the eval
+    consumer so both write sites stay hardened identically.
+
+    Every connector secret is filtered against the shared reserved-name policy
+    (``is_reserved_boot_env_name``) regardless of env ordering, so a secret named
+    after an ACI contract env key or a model credential (e.g. ``ANTHROPIC_BASE_URL``)
+    can never clobber it -- even on the default path where ``apply_model_env`` does
+    not itself set the base URL after the caller runs this. Drop-and-log rather than
+    raise (raising would crash a live claim); a dropped key never carries its value
+    and is kept out of the marker. The log names the key and ``agent_label`` only,
+    never the value.
+    """
+    injected_secret_keys: list[str] = []
+    for name, value in (secrets or {}).items():
+        if is_reserved_boot_env_name(name):
+            logger.warning(
+                "Dropping connector secret with reserved boot-env name %s "
+                "for agent %s (never injected, never marked)",
+                name,
+                agent_label,
+            )
+            continue
+        env[name] = value
+        injected_secret_keys.append(name)
+    if injected_secret_keys:
+        env[CONNECTOR_SECRET_KEYS_ENV] = ",".join(sorted(injected_secret_keys))
