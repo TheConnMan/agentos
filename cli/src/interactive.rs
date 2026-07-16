@@ -1779,20 +1779,9 @@ fn show_run_view(
 
 fn render_command(argv: &[String]) -> String {
     std::iter::once("agentos".to_string())
-        .chain(argv.iter().map(|arg| shell_quote(arg)))
+        .chain(argv.iter().map(|arg| crate::ops::shell_quote(arg)))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn shell_quote(arg: &str) -> String {
-    if arg
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || "-_./:=@".contains(c))
-    {
-        arg.to_string()
-    } else {
-        format!("'{}'", arg.replace('\'', "'\\''"))
-    }
 }
 
 fn draw(frame: &mut Frame<'_>, app: &App) {
@@ -2414,6 +2403,15 @@ mod tests {
     fn render_command_quotes_shell_specials() {
         let argv = vec!["skill".into(), "message".into(), "hello world".into()];
         assert_eq!(render_command(&argv), "agentos skill message 'hello world'");
+    }
+
+    #[test]
+    fn render_command_shows_an_empty_field_as_a_quoted_empty_string() {
+        // #497: the old interactive shell_quote let an empty arg vanish (vacuous
+        // all() over an empty iterator). The canonical ops::shell_quote renders it
+        // as '' so the copy-pasteable command keeps the empty positional visible.
+        let argv = vec!["skill".into(), "message".into(), "".into()];
+        assert_eq!(render_command(&argv), "agentos skill message ''");
     }
 
     #[test]

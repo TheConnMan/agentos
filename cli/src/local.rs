@@ -6,7 +6,7 @@
 //! (or the `--dry-run` printer) consumes it, so argv construction stays
 //! unit-testable with no Docker daemon.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::commands::OLLAMA_PORT;
 use crate::docker;
@@ -362,7 +362,12 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
             "this destroys all volumes for the '{}' dev stack (Postgres, ClickHouse, MinIO, Valkey data)",
             o.common.file
         ));
-        if !o.yes && !confirm_wipe(&o.common.file)? {
+        if !o.yes
+            && !crate::ops::confirm(&format!(
+                "This destroys all volumes for the '{}' dev stack (Postgres, ClickHouse, MinIO, Valkey data). Continue? [y/N] ",
+                o.common.file
+            ))?
+        {
             ui.note("aborted");
             return Ok(());
         }
@@ -386,29 +391,6 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
         ui.note("volumes kept (fast restart with `agentos local up`)");
     }
     Ok(())
-}
-
-/// Read a y/N confirmation from stderr/stdin before `--wipe` destroys volumes.
-fn confirm_wipe(file: &str) -> Result<bool> {
-    use std::io::{IsTerminal, Write};
-    // An agent (or any piped stdin) can never answer this prompt; refuse instead
-    // of blocking on a read that will never complete. `--yes` is the non-interactive path.
-    if !std::io::stdin().is_terminal() {
-        return Err(crate::exit::CliError::usage(
-            "refusing to prompt for confirmation in a non-interactive session; re-run with --yes to proceed",
-        )
-        .with_fix("pass --yes")
-        .into());
-    }
-    eprint!(
-        "This destroys all volumes for the '{file}' dev stack (Postgres, ClickHouse, MinIO, Valkey data). Continue? [y/N] "
-    );
-    std::io::stderr().flush().ok();
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .context("reading confirmation from stdin")?;
-    Ok(matches!(line.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
 #[cfg(test)]
