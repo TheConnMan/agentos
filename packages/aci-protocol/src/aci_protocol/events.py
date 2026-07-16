@@ -137,6 +137,17 @@ class Final(_OutboundBase):
     workspace channel per deployment by the worker. Both ``None`` on every
     other status; ``approval_route`` also ``None`` when the request named no
     route (the platform falls back to the requesting channel).
+
+    ``approval_gate_kind`` records which gate produced the request (#544):
+    ``'permission'`` when the runner's tool-permission gate denied a real tool
+    call, ``'policy'`` when the model asked for a business-decision approval.
+    It is the durable provenance the worker branches on instead of sniffing the
+    summary prefix. ``approval_granted_tool`` carries the tool name the
+    permission gate denied -- the trusted ``can_use_tool`` value the resume-turn
+    grant is bound to -- and is only ever set for ``approval_gate_kind =
+    'permission'``; a policy gate never authorizes a tool, so it stays ``None``.
+    Both ``None`` on every other status, and ``None`` from an older runner that
+    predates these fields (the worker falls back to the prefix parse then).
     """
 
     type: Literal["final"] = "final"
@@ -144,6 +155,8 @@ class Final(_OutboundBase):
     status: SessionStatus = SessionStatus.DONE
     approval_summary: str | None = None
     approval_route: str | None = None
+    approval_gate_kind: str | None = None
+    approval_granted_tool: str | None = None
 
 
 class ErrorEvent(_OutboundBase):

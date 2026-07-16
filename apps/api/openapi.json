@@ -463,6 +463,32 @@
             ],
             "title": "Expires In Seconds"
           },
+          "gate_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "permission",
+                  "policy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Kind"
+          },
+          "granted_tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted Tool"
+          },
           "reply_channel": {
             "minLength": 1,
             "title": "Reply Channel",
@@ -566,6 +592,28 @@
             ],
             "title": "Expires At"
           },
+          "gate_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Kind"
+          },
+          "granted_tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted Tool"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -656,6 +704,8 @@
           "dedupe_key",
           "route",
           "card_channel",
+          "gate_kind",
+          "granted_tool",
           "status",
           "expires_at",
           "resolved_by",

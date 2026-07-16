@@ -72,6 +72,16 @@ _AUTH_REJECTION_SDK_CODE = "authentication_failed"
 # it -- distinct from both a budget halt and a generic runner error.
 AUTH_REJECTED_CLASSIFICATION = "model-credential-rejected"
 
+# Classification tagging the OBSERVE-ONLY reconciliation warning (#544, Decision
+# A2): a resumed policy-gate turn that armed gates yet took no action -- the
+# model was approved and resumed but never re-called the gated tool. This is a
+# non-terminal warning frame (the final stays a clean terminal), stable so the
+# invisible "approved but never acted" case becomes queryable. It is NOT AC1
+# coverage: side_effect_emitted is a proxy for "some tool ran", not "the
+# approved action ran", so it false-alarms on a text-only decision and
+# false-passes on any incidental tool -- which is why A2 ships observe-only.
+APPROVAL_NOT_ACTED_CLASSIFICATION = "approval-not-acted"
+
 
 def _is_auth_rejection(message: object) -> bool:
     """True when an SDK message reports a provider credential rejection (401/403)."""
@@ -98,6 +108,8 @@ def _apply_approval_override(final: Final, state: TurnState) -> Final:
             status=SessionStatus.AWAITING_APPROVAL,
             approval_summary=state.approval_summary,
             approval_route=state.approval_route,
+            approval_gate_kind=state.approval_gate_kind,
+            approval_granted_tool=state.approval_granted_tool,
         )
     return final
 
@@ -118,6 +130,7 @@ class SessionRunner:
         memory_store: MemoryStore | None = None,
         history_store: TranscriptStore | None = None,
         approval_gate: ApprovalGate | None = None,
+        approval_resumed_kind: str | None = None,
     ) -> None:
         self._factory = session_factory
         self._ceiling = ceiling
@@ -139,6 +152,10 @@ class SessionRunner:
         # blocked approval-required call here, and the turn's final is flipped
         # to awaiting-approval on the same override the policy gate uses.
         self._approval_gate = approval_gate
+        # The authority-free resume marker (#544, Decision A2): 'policy' when
+        # this boot is resuming from a policy-gate approval. It confers no
+        # capability -- it only arms the observe-only turn-end reconciliation.
+        self._approval_resumed_kind = approval_resumed_kind
 
         self._session: ModelSession | None = None
         self._turn_lock = anyio.Lock()
@@ -406,6 +423,8 @@ class SessionRunner:
                         return
                     self._merge_gate_block(state)
                     final = _apply_approval_override(self._reclassify(outbound), state)
+                    for line in self._approval_not_acted_lines(state, final):
+                        yield line
                     self._status = final.status
                     self._turn_open = False
                     # Capture the delivered reply so run_turn can persist the
@@ -433,27 +452,91 @@ class SessionRunner:
         )
         self._merge_gate_block(state)
         final = _apply_approval_override(Final(text="", status=status), state)
+        for line in self._approval_not_acted_lines(state, final):
+            yield line
         self._status = final.status
         self._turn_open = False
         yield to_ndjson_line(final)
 
-    def _merge_gate_block(self, state: TurnState) -> None:
-        """Fold a permission-gate block (#245) into the turn state.
+    def _approval_not_acted_lines(self, state: TurnState, final: Final) -> list[str]:
+        """The OBSERVE-ONLY reconciliation warning (#544, Decision A2).
 
-        The can_use_tool callback records a blocked call on the shared gate;
-        merging it here (only when no policy-gate summary was already raised)
-        lets ``_apply_approval_override`` treat both trigger types identically,
-        so the awaiting-approval final and the platform lifecycle behind it
-        are one shared path.
+        Emits a single non-terminal warning frame -- never a non-clean final --
+        when a resumed POLICY turn armed gates yet took no action: the marker
+        says the boot is resuming from a policy gate, gates are armed, the turn
+        recorded no permission-gate block (no ``approval_summary``) and no
+        side-effecting tool (``side_effect_emitted`` False), and it ended on a
+        clean DONE final. That is the observed "approved, resumed, but the model
+        never re-called the gated tool" case (edge 11b: a budget halt or error
+        never reaches here, so only a clean turn end is reconciled).
+
+        The signal is deliberately weak (``side_effect_emitted`` is a proxy for
+        "some tool ran", not "the approved action ran"), so this is
+        instrumentation, not a control -- it warns and leaves the final clean.
         """
 
         if (
-            self._approval_gate is not None
-            and self._approval_gate.pending_summary
+            self._approval_resumed_kind == "policy"
+            and self._approval_gate is not None
+            and self._approval_gate.required
+            and final.status is SessionStatus.DONE
             and not state.approval_summary
+            and not state.side_effect_emitted
         ):
-            state.approval_summary = self._approval_gate.pending_summary
-            state.approval_route = self._approval_gate.pending_route
+            logger.warning(
+                "resumed policy approval not acted on session=%s: the approved "
+                "action was never taken this turn",
+                self._session_id,
+            )
+            return [
+                to_ndjson_line(
+                    ErrorEvent(
+                        message=(
+                            "resumed policy approval was not acted on this turn: "
+                            "the approved action was never taken"
+                        ),
+                        classification=APPROVAL_NOT_ACTED_CLASSIFICATION,
+                    )
+                )
+            ]
+        return []
+
+    def _merge_gate_block(self, state: TurnState) -> None:
+        """Fold the gate's recorded outcome (#245/#544) into the turn state.
+
+        Two reconciliations happen here at turn end:
+
+        - **Policy route (#544, Decision B):** the request_approval tool
+          validated the model's ``route`` against the manifest. A refusal means
+          no approval was created, so any summary translate.py captured off the
+          raw block is dropped; an acceptance carries the RESOLVED route (the
+          bound sole route or the named valid one) rather than the raw argument.
+        - **Permission block (#245):** the can_use_tool callback records a
+          blocked call on the shared gate; merging it here (only when no policy
+          summary already stands) lets ``_apply_approval_override`` treat both
+          trigger types identically, along with the durable provenance
+          (#544, Decision C) the worker branches on.
+        """
+
+        gate = self._approval_gate
+        if gate is None:
+            return
+
+        if gate.policy_requested:
+            if gate.policy_rejected:
+                # The route could not be resolved: no approval exists, so the
+                # turn must not end awaiting-approval on it.
+                state.approval_summary = None
+                state.approval_route = None
+                state.approval_gate_kind = None
+            else:
+                state.approval_route = gate.policy_route
+
+        if gate.pending_summary and not state.approval_summary:
+            state.approval_summary = gate.pending_summary
+            state.approval_route = gate.pending_route
+            state.approval_gate_kind = gate.pending_gate_kind
+            state.approval_granted_tool = gate.pending_granted_tool
 
     def _budget_halt_lines(self) -> list[str]:
         """The error+final pair emitted whenever the output-token ceiling trips.

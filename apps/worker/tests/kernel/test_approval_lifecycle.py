@@ -397,20 +397,33 @@ def test_routed_approval_cards_go_to_the_bound_channel(make_harness) -> None:
     asyncio.run(go())
 
 
-def test_unbound_route_falls_back_to_requesting_channel(make_harness) -> None:
+def test_unbound_route_escalates_instead_of_routing_to_the_requesting_channel(
+    make_harness,
+) -> None:
+    """(19, #544 Decision B / AC2) A named but UNBOUND route escalates loudly:
+    no approval is created and no card is posted, so authority never widens to
+    the requesting channel. This deliberately REVERSES #247's silent
+    channel-fallback (the behavior this test used to assert) -- the fallback was
+    the same silent widening from the other end.
+    """
+
     async def go() -> None:
         approvals = RecordingApprovals()
         binding = RoutedBinding(None)  # agent has no bindings at all
         async with make_harness(approvals=approvals, binding=binding) as h:
             h.runner.default_script = _awaiting_routed_script("Anything", "managers")
-            await h.kernel.process_event(_qevent("gate", thread="th-unbound"))
+            ev = _qevent("gate", thread="th-unbound")
+            await h.kernel.process_event(ev)
 
-            req = approvals.requests[0]
-            assert req.route == "managers"
-            assert req.card_channel == "C1"  # fell back to the requesting channel
-            channel, _f, _b, thread_ts, _endpoint = h.sink.posts[0]
-            assert channel == "C1"
-            assert thread_ts == "th-unbound"  # same channel keeps the thread
+            # No approval was created for the unresolvable route ...
+            assert approvals.requests == []
+            # ... and no card was posted anywhere (never widened to a channel).
+            assert h.sink.posts == []
+            # The human-visible escalation names the unbound route.
+            assert h.sink.last_text is not None
+            assert "managers" in h.sink.last_text
+            # The event is terminally handled (done), not left to retry.
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
 

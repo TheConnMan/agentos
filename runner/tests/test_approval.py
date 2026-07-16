@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import anyio
+import pytest
 from aci_protocol import Event, Final, SessionStatus
 from agentos_runner.adapter import build_options
 from agentos_runner.approval import (
@@ -20,6 +21,7 @@ from agentos_runner.approval import (
     build_approval_server,
     build_can_use_tool,
     guard_reserved_summary,
+    load_approval_policy,
     summarize_tool_call,
 )
 from agentos_runner.config import RunnerConfig
@@ -33,12 +35,14 @@ from agentos_runner.otel import RunTracer
 from agentos_runner.session import SessionRunner, _apply_approval_override
 from agentos_runner.side_effects import SideEffectClassifier
 from agentos_runner.translate import TurnState, translate_message
-from claude_agent_sdk import AssistantMessage, ToolUseBlock
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 from claude_agent_sdk.types import (
     PermissionResultAllow,
     PermissionResultDeny,
     ToolPermissionContext,
 )
+from mcp import types as mcp_types
+from plugin_format import validate_bundle
 
 
 def _event(text: str = "hello") -> Event:
@@ -671,5 +675,789 @@ def test_fake_routed_marker_names_the_route() -> None:
         # The un-routed marker still works, with no route.
         frames = await _drain(runner, f"{APPROVAL_MARKER} plain request")
         assert frames[-1]["approval_route"] is None
+
+    anyio.run(go)
+
+
+# --- #544: route resolution in the runner, and gate provenance -------------------
+#
+# Decision B: the policy-gate tool resolves ``route`` against the manifest INSIDE
+# the tool call and fails loud (is_error) when it cannot -- no approval is
+# created, so nothing silently widens to the requesting channel.
+# Decision A: a policy gate NEVER carries tool authority; only the permission
+# gate does, and only for the tool ``can_use_tool`` itself denied.
+
+# The unqualified tool name the MCP server registers (APPROVAL_TOOL_NAME is the
+# SDK's mcp__<server>__<tool> rendering of it). Derived, not hardcoded, so a
+# rename of either moves both.
+_BARE_TOOL_NAME = APPROVAL_TOOL_NAME.rsplit("__", 1)[-1]
+
+
+async def _call_request_approval(
+    server: object, **args: object
+) -> tuple[bool, str]:
+    """EXECUTE the in-process approval tool through the built MCP server.
+
+    Drives the real ``CallToolRequest`` path the SDK drives, so the assertions
+    below are over the tool's actual result -- not over ``_request_approval``'s
+    internals, which a refactor is free to rename. Returns (is_error, text).
+    """
+
+    handler = server["instance"].request_handlers[  # type: ignore[index]
+        mcp_types.CallToolRequest
+    ]
+    result = await handler(
+        mcp_types.CallToolRequest(
+            method="tools/call",
+            params=mcp_types.CallToolRequestParams(
+                name=_BARE_TOOL_NAME, arguments=dict(args)
+            ),
+        )
+    )
+    payload = result.model_dump()
+    text = " ".join(
+        str(block.get("text") or "") for block in (payload.get("content") or [])
+    )
+    return bool(payload.get("isError")), text
+
+
+def _executing_approval_callback(gate: ApprovalGate):
+    """A fake-SDK permission hook that also EXECUTES the approval tool.
+
+    The real SDK permission-checks a tool call and then executes it; the fake's
+    ``can_use_tool`` hook only does the former. Layering the in-process approval
+    server's execution on top gives the offline path the same ordering
+    production has -- turn start (gate.reset) -> model calls request_approval ->
+    the tool runs -> turn end -> final -- which is what lets these tests assert
+    the RESOLVED route on the final rather than the raw model argument.
+    """
+
+    inner = build_can_use_tool(gate)
+    server = build_approval_server(gate)
+
+    async def callback(
+        tool_name: str, tool_input: dict[str, object], context: ToolPermissionContext
+    ):
+        result = await inner(tool_name, tool_input, context)
+        if tool_name == APPROVAL_TOOL_NAME and isinstance(result, PermissionResultAllow):
+            await _call_request_approval(server, **tool_input)
+        return result
+
+    return callback
+
+
+async def _run_policy_turn(
+    gate: ApprovalGate, summary: str, route: str | None = None
+) -> list[dict[str, object]]:
+    """Drive one turn whose model calls request_approval, executing the tool."""
+
+    session = FakeModelSession(
+        lambda: approval_turn(summary, route=route),
+        can_use_tool=_executing_approval_callback(gate),
+    )
+    runner = SessionRunner(
+        session_factory=lambda: session,
+        ceiling=10_000,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="test",
+        session_id="s-1",
+        approval_gate=gate,
+    )
+    await runner.start()
+    return await _drain(runner, "please decide")
+
+
+def test_policy_gate_omitted_route_binds_the_sole_manifest_route() -> None:
+    """(1) One declared route and no ``route`` argument is not ambiguous: bind it.
+
+    The manifest is unambiguous, so there is nothing to guess and nothing to
+    refuse -- and the final must carry the RESOLVED route, not the absent
+    argument (which is what reaches the requesting channel today).
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"})
+        frames = await _run_policy_turn(gate, "Discount for ACME")
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_route"] == "managers"
+
+    anyio.run(go)
+
+
+def test_policy_gate_omitted_route_with_multiple_routes_is_an_error() -> None:
+    """(2) Two distinct routes and no argument IS ambiguous: refuse, loudly.
+
+    An is_error result reaches the model, names the valid routes, and lets it
+    retry within the same turn. No approval is created -- which is the whole
+    point: nothing can widen to the requesting channel because nothing exists.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(
+            required=frozenset({"Bash", "mcp__crm__send_contract"}),
+            route_by_tool={"Bash": "managers", "mcp__crm__send_contract": "legal"},
+        )
+        is_error, text = await _call_request_approval(
+            build_approval_server(gate), summary="Discount for ACME"
+        )
+        assert is_error, "an ambiguous route must not be resolved by guessing"
+        assert "managers" in text and "legal" in text, (
+            f"the error must name the valid routes so the model can retry: {text!r}"
+        )
+
+        # And no approval rides the final: the refused call created nothing.
+        frames = await _run_policy_turn(gate, "Discount for ACME")
+        final = frames[-1]
+        assert final["approval_summary"] is None
+        assert final["status"] == "done"
+
+    anyio.run(go)
+
+
+def test_policy_gate_unknown_route_is_an_error_naming_valid_routes() -> None:
+    """(3) A route the manifest does not declare is refused, and the arbitrary
+    string never reaches the final (today it flows straight through)."""
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"})
+        is_error, text = await _call_request_approval(
+            build_approval_server(gate), summary="Discount", route="not-a-route"
+        )
+        assert is_error
+        assert "managers" in text, f"the error must name the valid routes: {text!r}"
+
+        frames = await _run_policy_turn(gate, "Discount", route="not-a-route")
+        final = frames[-1]
+        assert final["approval_route"] != "not-a-route", (
+            "an unknown route must never reach the final as an arbitrary string"
+        )
+        assert final["approval_summary"] is None
+        assert final["status"] == "done"
+
+    anyio.run(go)
+
+
+def _write_bundle(tmp_path, route: str) -> str:
+    """A minimal deployable bundle declaring one gate with ``route``."""
+
+    root = tmp_path / f"bundle-{abs(hash(route))}"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "version": "0.1.0",
+                # A built-in tool name: the validator's mcp__ namespacing check
+                # does not apply, isolating ROUTE as the only variable.
+                "approvalPolicy": {"gates": [{"gate": "Bash", "route": route}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(root)
+
+
+# The adversarial table. Each row is (declared_route, validator_accepts_it).
+# Whitespace variants pass the validator's non-empty check because it evaluates
+# the STRIPPED value (validate.py, the #453 lesson); empty/blank do not.
+_ADVERSARIAL_ROUTES = [
+    ("deal-desk", True),
+    (" deal-desk", True),
+    ("deal-desk ", True),
+    ("\tdeal-desk", True),
+    ("", False),
+    ("   ", False),
+    ("Deal-Desk", True),
+    ("DEAL-DESK", True),
+]
+
+
+@pytest.mark.parametrize(("declared", "validator_accepts"), _ADVERSARIAL_ROUTES)
+def test_route_normalization_agrees_between_validator_and_runner(
+    tmp_path, declared: str, validator_accepts: bool
+) -> None:
+    """(3a) The EXECUTED adversarial probe: the deploy validator and the runtime
+    loader must normalize routes IDENTICALLY.
+
+    This runs BOTH sides -- ``plugin_format.validate_bundle`` and the runner's
+    own route resolution -- over the same manifest and asserts they agree. It is
+    executed, not reasoned about, on purpose: this exact seam has already
+    shipped two silent fail-opens (#453, a leading space and a bare mcp__
+    prefix), FOUR static reviewers missed both, and only an executed probe
+    caught them. A validator and a loader that disagree let a gate validate
+    green and arm NOTHING at runtime -- a security gate that is decoration.
+
+    The contract, both directions:
+      - validator ACCEPTS  -> the runner arms the gate, and the route it matches
+        on is the same normalized value the validator judged.
+      - validator REJECTS  -> the gate never reaches the runner at all.
+    """
+
+    bundle = _write_bundle(tmp_path, declared)
+    result = validate_bundle(bundle)
+    assert result.valid is validator_accepts, (
+        f"validator drifted for {declared!r}: valid={result.valid}, "
+        f"errors={[e.code for e in result.errors]}"
+    )
+
+    policy = load_approval_policy(bundle)
+
+    if not validator_accepts:
+        # A bundle the validator refuses never deploys, so the runner must never
+        # be holding an armed gate for it.
+        assert policy == {}, (
+            f"validator rejected {declared!r} but the runner still armed {policy!r} "
+            "-- a gate that validates red yet arms at runtime"
+        )
+        return
+
+    # The validator accepted it, so the runner MUST have armed it, keyed on the
+    # same normalization the validator evaluated (the stripped value).
+    assert policy == {"Bash": declared.strip()}, (
+        f"validator accepted {declared!r} but the runner loaded {policy!r} "
+        "-- normalization drift between the two sides"
+    )
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset(policy), route_by_tool=policy)
+        server = build_approval_server(gate)
+
+        # Anything the validator accepted, the runner must MATCH.
+        is_error, text = await _call_request_approval(
+            server, summary="Needs sign-off", route=declared.strip()
+        )
+        assert not is_error, (
+            f"validator accepted {declared!r} but the runner refused the "
+            f"normalized route {declared.strip()!r}: {text!r} -- this is the "
+            "fail-open shape: a gate that validates green and arms nothing"
+        )
+
+    anyio.run(go)
+
+
+def test_route_comparison_is_case_sensitive() -> None:
+    """(3a, cont.) Case variants must NOT match -- a decision, not an accident.
+
+    ``load_approval_policy`` and the agent's ``approval_routes`` binding map are
+    both exact-match dict lookups, so case-folding in the runner alone would let
+    it accept a route the binding map then misses -- reintroducing the unbound
+    route from the other side (Decision B).
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}), route_by_tool={"Bash": "deal-desk"})
+        server = build_approval_server(gate)
+
+        for variant in ("Deal-Desk", "DEAL-DESK"):
+            is_error, _ = await _call_request_approval(
+                server, summary="Needs sign-off", route=variant
+            )
+            assert is_error, (
+                f"{variant!r} matched the declared 'deal-desk': route comparison "
+                "must be case-sensitive"
+            )
+
+        # Positive control: the exact declared route resolves.
+        is_error, _ = await _call_request_approval(
+            server, summary="Needs sign-off", route="deal-desk"
+        )
+        assert not is_error
+
+    anyio.run(go)
+
+
+def test_policy_gate_with_no_manifest_routes_stays_generic() -> None:
+    """(4) A manifest declaring no routes has no authority to widen away FROM.
+
+    Accept, route=None, granted_tool=None. This is a generic approval and
+    ADR-0034's channel-membership default is correct for it -- pinning that #544
+    does not regress #420's zero-setup path.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset(), route_by_tool={})
+        is_error, _ = await _call_request_approval(
+            build_approval_server(gate), summary="Give ACME 20% off"
+        )
+        assert not is_error
+
+        frames = await _run_policy_turn(gate, "Give ACME 20% off")
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_summary"] == "Give ACME 20% off"
+        assert final["approval_route"] is None
+        assert final["approval_granted_tool"] is None
+
+    anyio.run(go)
+
+
+@pytest.mark.parametrize(
+    ("route_by_tool", "route_arg"),
+    [
+        pytest.param({}, None, id="zero-routes"),
+        pytest.param({"Bash": "managers"}, None, id="omitted-sole-route"),
+        pytest.param({"Bash": "managers"}, "managers", id="named-route-one-gate"),
+        pytest.param(
+            {"Bash": "managers", "Write": "managers"}, "managers", id="named-route-many-gates"
+        ),
+    ],
+)
+def test_policy_gate_never_carries_a_granted_tool(
+    route_by_tool: dict[str, str], route_arg: str | None
+) -> None:
+    """(5) The runner-side #430 regression: a policy gate NEVER mints authority.
+
+    Across EVERY route shape -- no routes, a sole route bound implicitly, a
+    named route resolving to one gate, a named route resolving to many -- the
+    final's ``approval_granted_tool`` is None and ``approval_gate_kind`` is
+    'policy'. One assertion, no exceptions, no heuristic to reason about.
+
+    This is Decision A stated as a test: a policy-gate card carries the model's
+    own free-text framing and can never show the tool's real ARGUMENTS, so a
+    grant derived from it would authorize a tool executing with arguments the
+    human never saw -- strictly weaker than the permission-gate baseline
+    ADR-0035 was built on. The route count must not influence authority at all.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset(route_by_tool), route_by_tool=route_by_tool)
+        frames = await _run_policy_turn(gate, "Give ACME 20% off", route=route_arg)
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_gate_kind"] == "policy"
+        assert final["approval_granted_tool"] is None, (
+            "a policy gate must never authorize a tool: the model's argument "
+            "would be selecting the bypass (#430)"
+        )
+
+    anyio.run(go)
+
+
+def test_permission_gate_grants_the_denied_tool_name() -> None:
+    """(8) The permission gate is the ONLY path that authorizes a tool, and the
+    tool name is the one ``can_use_tool`` itself denied -- a trusted, runner-held
+    value, never parsed out of the summary string."""
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        turns = {"n": 0}
+
+        def factory() -> list:
+            turns["n"] += 1
+            if turns["n"] == 1:
+                gate.block("Bash", {"command": "echo hi"})
+            return default_turn()
+
+        session = FakeModelSession(factory)
+        runner = SessionRunner(
+            session_factory=lambda: session,
+            ceiling=10_000,
+            tracer=RunTracer(None),
+            classifier=SideEffectClassifier(),
+            trace_name="test",
+            session_id="s-1",
+            approval_gate=gate,
+        )
+        await runner.start()
+        frames = await _drain(runner, "run echo hi")
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_gate_kind"] == "permission"
+        assert final["approval_granted_tool"] == "Bash"
+
+    anyio.run(go)
+
+
+def test_reset_clears_gate_kind_and_granted_tool() -> None:
+    """(10) A turn's provenance never leaks into the next, exactly as
+    pending_summary/pending_route already do not."""
+
+    gate = ApprovalGate(required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"})
+    gate.block("Bash", {"command": "x"})
+    assert gate.pending_gate_kind == "permission"
+    assert gate.pending_granted_tool == "Bash"
+
+    gate.reset()
+    assert gate.pending_gate_kind is None
+    assert gate.pending_granted_tool is None
+    # The existing fields still reset alongside them.
+    assert gate.pending_summary is None
+    assert gate.pending_route is None
+
+
+def test_grant_is_still_boot_turn_only() -> None:
+    """(11) ADR-0035's expiry semantic is UNCHANGED by the provenance columns:
+    the first reset (the boot turn) preserves an injected grant, later ones
+    expire it. #544 replaces the grant's mechanism, never its lifetime."""
+
+    gate = ApprovalGate(required=frozenset({"Bash"}), grant_tool="Bash")
+    gate.reset()  # boot turn: preserved
+    assert gate.grant_tool == "Bash"
+    gate.reset()  # a later turn: expired
+    assert gate.grant_tool is None
+
+
+# --- Decision A2: the turn-end reconciliation, OBSERVE-ONLY ---------------------
+#
+# These do NOT carry AC1. AC1 rests on Decision B's request-time refusal (tests
+# 2/3) and on the permission-gate second approval (test 8). A2 is instrumentation
+# that earns the false-alarm data a later enforce decision needs -- it warns, and
+# the final stays a clean terminal. See Section 0 follow-up 5.
+
+
+def _text_only_turn(text: str = "I have recorded the decision.") -> list:
+    """A turn that calls NO tool at all -- the primary legitimate shape of a
+    policy-gate resume (a text-only business decision)."""
+
+    return [
+        AssistantMessage(content=[TextBlock(text=text)], model="fake-model"),
+        ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=1,
+            is_error=False,
+            num_turns=1,
+            session_id="fake-session",
+            result=text,
+            usage={"input_tokens": 20, "output_tokens": 8},
+        ),
+    ]
+
+
+def _tool_turn(tool: str, tool_input: dict[str, object]) -> list:
+    """A turn that executes one tool, then ends cleanly."""
+
+    return [
+        AssistantMessage(
+            content=[ToolUseBlock(id="t1", name=tool, input=tool_input)], model="fake-model"
+        ),
+        ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=1,
+            is_error=False,
+            num_turns=1,
+            session_id="fake-session",
+            result="done",
+            usage={"input_tokens": 20, "output_tokens": 8},
+        ),
+    ]
+
+
+async def _run_resumed_turn(
+    gate: ApprovalGate | None,
+    script: list,
+    *,
+    resumed_kind: str | None = "policy",
+    can_use_tool=None,
+    ceiling: int = 10_000,
+) -> list[dict[str, object]]:
+    """Drive one boot turn with the authority-free resumed-kind marker set."""
+
+    session = FakeModelSession(lambda: list(script), can_use_tool=can_use_tool)
+    runner = SessionRunner(
+        session_factory=lambda: session,
+        ceiling=ceiling,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="test",
+        session_id="s-1",
+        approval_gate=gate,
+        approval_resumed_kind=resumed_kind,
+    )
+    await runner.start()
+    return await _drain(runner, "the approval was granted")
+
+
+def _warnings(frames: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The A2 reconciliation warning frames in a turn's stream.
+
+    The contract this pins: the observe-only reconciliation surfaces as a
+    distinct, queryable frame carrying a stable ``classification`` -- the same
+    module-constant shape session.py already uses for AUTH_REJECTED_CLASSIFICATION
+    and the budget halt. "Turns an invisible failure into a queryable one"
+    requires a stable identifier, so the implementer exports
+    ``APPROVAL_NOT_ACTED_CLASSIFICATION`` from session.py and tags the warning
+    frame with it. It must NOT be the terminal final (the final stays clean).
+    """
+
+    from agentos_runner.session import APPROVAL_NOT_ACTED_CLASSIFICATION
+
+    return [
+        f
+        for f in frames
+        if f["type"] != "final"
+        and f.get("classification") == APPROVAL_NOT_ACTED_CLASSIFICATION
+    ]
+
+
+def test_resumed_policy_turn_with_no_action_emits_a_warning_and_a_clean_final() -> None:
+    """(20) The observed real-world case: approved, resumed, and the model just
+    talked -- it never re-called the gated tool.
+
+    BOTH halves are load-bearing. The warning turns an invisible failure into a
+    queryable one. The CLEAN final pins observe-only: an implementer who
+    "helpfully" ships the enforcing version (a non-clean terminal status) fails
+    here, and rightly -- ``side_effect_emitted`` is far too weak a signal to
+    hard-fail on (see test 21a), and a day-one hard failure would recreate the
+    alert fatigue that killed the disclosure line in Decision A.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        frames = await _run_resumed_turn(gate, _text_only_turn())
+
+        assert len(_warnings(frames)) == 1, (
+            f"the unfulfilled approval must be made visible: {frames!r}"
+        )
+
+        final = frames[-1]
+        assert final["type"] == "final"
+        assert final["status"] == "done", (
+            "A2 is OBSERVE-ONLY: the final must stay a clean terminal. Promoting "
+            "it to a non-clean status is Section 0 follow-up 5, gated on "
+            "collected false-alarm data -- not on an implementer's confidence."
+        )
+
+    anyio.run(go)
+
+
+def test_resumed_policy_turn_does_not_warn_for_an_agent_with_no_gates() -> None:
+    """(21) The scope guard: an agent with no gates armed has no gated tool to
+    have failed to call, so a text-only resume is simply a text-only resume."""
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset())
+        frames = await _run_resumed_turn(gate, _text_only_turn())
+
+        assert _warnings(frames) == []
+        assert frames[-1]["status"] == "done"
+
+    anyio.run(go)
+
+
+def test_incidental_tool_use_suppresses_the_warning_KNOWN_LIMITATION() -> None:
+    """(21a) Pins A2's false PASS as known, accepted, and deliberate.
+
+    ``side_effect_emitted`` is a proxy for "SOME tool ran" -- NOT for "the
+    approved action ran". It comes from ``side_effects.py``'s deny-by-default
+    read-only allowlist, so any incidental non-allowlisted call (a scratch
+    ``Write``, an unrelated MCP call) flips it True and suppresses the warning
+    even though the approved action never executed. That is exactly what happens
+    below, and the check stays silent.
+
+    This blind spot is WHY A2 ships observe-only, and it is why A2 must not be
+    read as AC1 coverage: AC1 rests on Decision B's request-time refusal and on
+    the permission-gate second approval, both of which are real controls. A2 is
+    instrumentation earning the data for a later enforce decision.
+
+    Deliberate -- see Section 0 follow-up 5. Do NOT "fix" this by widening the
+    signal; that decision needs the data, not intuition.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        # A scratch Write: not the approved action, not allowlisted read-only.
+        frames = await _run_resumed_turn(
+            gate, _tool_turn("Write", {"file_path": "/tmp/scratch", "content": "x"})
+        )
+
+        assert any(f["type"] == "side_effect_flag" for f in frames), (
+            "precondition: the incidental tool must have flipped side_effect_emitted"
+        )
+        assert _warnings(frames) == [], (
+            "KNOWN LIMITATION: an incidental tool suppresses the warning even "
+            "though the approved action never ran"
+        )
+        assert frames[-1]["status"] == "done"
+
+    anyio.run(go)
+
+
+def test_resumed_policy_turn_that_exercised_the_gate_does_not_warn() -> None:
+    """(22) The two mechanisms must not double-report.
+
+    The model DID re-call the gated tool, the permission gate blocked it, and
+    the normal awaiting-approval path owns the final -- a second, argument-
+    bearing approval, which is the control that actually completes the action.
+    A2 has nothing to add, so it stays quiet.
+
+    Also pins edge case 11a explicitly rather than relying on it: the marker and
+    a real grant are mutually exclusive by construction (the marker is only
+    injected for gate_kind='policy'), so this gate carries no grant_tool.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        assert gate.grant_tool is None, (
+            "edge 11a: a resumed POLICY turn never carries a grant; the two boot "
+            "signals are mutually exclusive by construction"
+        )
+
+        frames = await _run_resumed_turn(
+            gate,
+            _tool_turn("Bash", {"command": "the approved action"}),
+            can_use_tool=build_can_use_tool(gate),
+        )
+
+        assert _warnings(frames) == []
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_gate_kind"] == "permission"
+
+    anyio.run(go)
+
+
+def test_resumed_policy_turn_with_a_side_effecting_tool_does_not_warn() -> None:
+    """(23) The approved action ran as an ungated tool: a side effect was
+    emitted, so the turn did something. Clean final, no warning."""
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        frames = await _run_resumed_turn(
+            gate, _tool_turn("mcp__crm__send_contract", {"account": "ACME"})
+        )
+
+        assert _warnings(frames) == []
+        assert frames[-1]["status"] == "done"
+
+    anyio.run(go)
+
+
+def test_resumed_kind_marker_grants_nothing() -> None:
+    """(24) The marker is a FACT about the past, not a capability.
+
+    ``AGENTOS_APPROVAL_RESUMED_KIND=policy`` says "the approval you are resuming
+    from was a policy gate". It confers no authority -- contrast
+    ``AGENTOS_APPROVAL_GRANT_TOOL``, which does. With the marker set and no
+    grant, a gated tool is still denied. This is what keeps #430 and #410 closed
+    while A2 gets its instrumentation.
+    """
+
+    base = {
+        "AGENTOS_PLUGIN_DIR": "/plugin",
+        "AGENTOS_SESSION_ID": "s",
+        "AGENTOS_SANDBOX_ID": "b",
+        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+    }
+    config = RunnerConfig.from_env({**base, "AGENTOS_APPROVAL_RESUMED_KIND": "policy"})
+    assert config.approval_resumed_kind == "policy"
+    assert config.approval_grant_tool is None, (
+        "the marker must not be mistaken for, or imply, a grant"
+    )
+    assert RunnerConfig.from_env(base).approval_resumed_kind is None
+
+    async def go() -> None:
+        # A gate built from that config: marker present, grant absent.
+        gate = ApprovalGate(
+            required=frozenset({"Bash"}), grant_tool=config.approval_grant_tool
+        )
+        callback = build_can_use_tool(gate)
+        gate.reset()  # the boot turn
+
+        result = await callback("Bash", {"command": "x"}, ToolPermissionContext())
+        assert isinstance(result, PermissionResultDeny), (
+            "the resumed-kind marker must never let a gated tool through"
+        )
+        assert gate.pending_summary is not None
+
+    anyio.run(go)
+
+
+def _request_approval_message(tool_id: str, summary: str, route: str) -> AssistantMessage:
+    """A scripted assistant message that calls request_approval with a route."""
+
+    return AssistantMessage(
+        content=[
+            ToolUseBlock(
+                id=tool_id,
+                name=APPROVAL_TOOL_NAME,
+                input={"summary": summary, "route": route},
+            )
+        ],
+        model="fake-model",
+    )
+
+
+def test_policy_route_retry_after_rejection_creates_the_approval() -> None:
+    """P1 (#544): a same-turn retry with a VALID route must not stay rejected.
+
+    The model calls request_approval twice in one turn: first with an unknown
+    route (the tool refuses with is_error, which is exactly what the error text
+    tells it to recover from), then with a valid route. Each invocation must
+    fully determine the per-request outcome, so the second call clears the
+    rejection the first recorded. Otherwise ``_merge_gate_block`` sees a sticky
+    ``policy_rejected`` and DROPS the approval the retry created -- the silent
+    no-op #544 exists to kill, reintroduced on the Decision-B recovery path.
+
+    Against the pre-fix code this fails: the final ends ``done`` with a null
+    summary. After the top-of-call reset it ends ``awaiting-approval`` carrying
+    the manifest-resolved route.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(
+            required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"}
+        )
+        script = [
+            _request_approval_message("t1", "Discount for ACME", "not-a-route"),
+            _request_approval_message("t2", "Discount for ACME", "managers"),
+            ResultMessage(
+                subtype="success",
+                duration_ms=1,
+                duration_api_ms=1,
+                is_error=False,
+                num_turns=1,
+                session_id="fake-session",
+                result="done",
+                usage={"input_tokens": 20, "output_tokens": 8},
+            ),
+        ]
+        frames = await _run_resumed_turn(
+            gate,
+            script,
+            resumed_kind=None,
+            can_use_tool=_executing_approval_callback(gate),
+        )
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval", (
+            "the valid retry must create the approval, not be dropped as rejected"
+        )
+        assert final["approval_summary"] == "Discount for ACME"
+        assert final["approval_route"] == "managers", (
+            "the final must carry the manifest-resolved route from the retry"
+        )
+
+    anyio.run(go)
+
+
+def test_resumed_policy_turn_that_halted_on_budget_does_not_warn() -> None:
+    """(11b) A resumed policy turn ending on a NON-clean final is not reconciled.
+
+    The A2 observe-only warning guards on ``final.status is SessionStatus.DONE``
+    (session.py). A budget halt returns before the reconciliation runs, so a
+    resumed policy turn that armed gates, took no action, and then tripped the
+    output-token ceiling emits the budget halt's classified-failure final and
+    NO ``approval-not-acted`` warning -- the turn did not end cleanly, so there
+    is nothing to reconcile.
+    """
+
+    async def go() -> None:
+        gate = ApprovalGate(required=frozenset({"Bash"}))
+        # ceiling=1 vs the text-only turn's 8 output tokens trips the halt.
+        frames = await _run_resumed_turn(gate, _text_only_turn(), ceiling=1)
+
+        assert frames[-1]["status"] == "classified-failure", (
+            "precondition: the budget ceiling must halt this turn non-cleanly"
+        )
+        assert _warnings(frames) == [], (
+            "a non-DONE terminal is not reconciled: no observe-only warning"
+        )
 
     anyio.run(go)

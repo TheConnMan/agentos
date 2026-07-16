@@ -146,7 +146,7 @@ def build_runner(
             # Every session carries the in-process approval-request tool, so a
             # skill can raise a policy gate (ADR-0010) without the bundle
             # shipping its own MCP server for it.
-            mcp_servers={"agentos": build_approval_server()},
+            mcp_servers={"agentos": build_approval_server(approval_gate)},
             can_use_tool=(
                 build_can_use_tool(approval_gate) if approval_gate is not None else None
             ),
@@ -169,6 +169,7 @@ def build_runner(
         memory_store=memory_store,
         history_store=history_store,
         approval_gate=approval_gate,
+        approval_resumed_kind=config.approval_resumed_kind,
     )
 
 

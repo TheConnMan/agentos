@@ -335,6 +335,8 @@ async def create_approval(session: AsyncSession, data: "ApprovalCreate") -> Appr
         dedupe_key=data.dedupe_key,
         route=data.route,
         card_channel=data.card_channel,
+        gate_kind=data.gate_kind,
+        granted_tool=data.granted_tool,
         expires_at=expires_at,
     )
     session.add(approval)

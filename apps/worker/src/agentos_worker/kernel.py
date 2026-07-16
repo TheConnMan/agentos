@@ -53,7 +53,7 @@ from .behaviorpacks import (
     sample_load,
     sample_tip,
 )
-from .binding import GRANT_TOOL_ENV, BindingResolver
+from .binding import GRANT_TOOL_ENV, RESUMED_KIND_ENV, BindingResolver
 from .blocks import approval_card
 from .config import WorkerConfig
 from .killswitch import KillSwitch
@@ -86,6 +86,11 @@ class TurnOutcome:
     # every other status; route also None when the request named none.
     approval_summary: str | None = None
     approval_route: str | None = None
+    # Gate provenance off the awaiting-approval final (#544, Decision C):
+    # 'permission'|'policy' and the denied tool name (permission gate only).
+    # Threaded onto the durable record. None from an older runner.
+    approval_gate_kind: str | None = None
+    approval_granted_tool: str | None = None
 
 
 @dataclass
@@ -118,6 +123,8 @@ class _StreamAccumulator:
     final_text: str | None = None
     approval_summary: str | None = None
     approval_route: str | None = None
+    approval_gate_kind: str | None = None
+    approval_granted_tool: str | None = None
 
     def rendered(self) -> str:
         return self.final_text if self.final_text is not None else "".join(self.text_parts)
@@ -308,6 +315,23 @@ class Kernel:
                 )
                 if grant_tool:
                     boot_env[GRANT_TOOL_ENV] = grant_tool
+                # Decision A2 marker (#544): an authority-free FACT carrying the
+                # resumed approval's gate kind (the actual gate_kind column value,
+                # e.g. 'policy' or 'permission'). After the approved-only gate in
+                # approval_resumed_kind, only a genuinely approved approval injects
+                # it at all. The runner's observe-only turn-end reconciliation acts
+                # only on 'policy' (warning if the approved business action never
+                # ran); a 'permission' marker is inert there. Grants nothing
+                # (contrast the grant above); getattr-tolerant of binding doubles
+                # that do not carry the method, like the grant.
+                resumed_kind_fn = getattr(self._binding, "approval_resumed_kind", None)
+                resumed_kind = (
+                    await resumed_kind_fn(qevent.event_id, resolved.agent_id)
+                    if resumed_kind_fn is not None
+                    else None
+                )
+                if resumed_kind:
+                    boot_env[RESUMED_KIND_ENV] = resumed_kind
                 # Resolve the agent's packs once here (a pure parse, no I/O) and
                 # reuse: the nav pack is threaded to the final render, the same
                 # packs feed the shimmer below.
@@ -625,15 +649,19 @@ class Kernel:
 
         ``approval_routes`` is the agent's per-deployment route-binding map
         (#247): when the request named a route bound to a channel, the card is
-        routed there and that channel's members become the approvers; a named
-        but unbound route logs a warning and falls back to the requesting
-        channel rather than dropping the request.
+        routed there and that channel's members become the approvers. A named
+        but UNBOUND route (declared in the manifest, not bound in this agent's
+        deployment config) is ESCALATED loudly rather than routed to the
+        requesting channel (#544, Decision B, reversing #247): silently widening
+        authority to whoever happens to be in the requesting channel is exactly
+        the failure AC2 closes. No approval is created in that case.
         """
 
         thread = qevent.conversation_id
         summary = outcome.approval_summary or outcome.text or "Approval requested"
 
-        # Resolve the manifest route (#247) to its workspace channel.
+        # Resolve the manifest route (#247) to its workspace channel. A named
+        # route that resolves to no binding escalates instead of widening (#544).
         route = outcome.approval_route
         card_channel = qevent.reply_handle.channel
         if route:
@@ -643,11 +671,18 @@ class Kernel:
                 card_channel = str(bound)
             else:
                 logger.warning(
-                    "approval route %r is not bound for agent %s; routing the "
-                    "card to the requesting channel",
+                    "approval route %r is not bound for agent %s; escalating "
+                    "rather than routing the card to the requesting channel",
                     route,
                     agent_id,
                 )
+                await self._escalate(
+                    qevent,
+                    f"The run requested approval via route {route!r}, but that "
+                    "route is not bound to a channel for this agent; flagging for "
+                    "a human instead of widening the request to this channel.",
+                )
+                return
 
         if self._approvals is None:
             await self._escalate(
@@ -670,6 +705,8 @@ class Kernel:
                     dedupe_key=qevent.event_id,
                     route=route,
                     card_channel=card_channel,
+                    gate_kind=outcome.approval_gate_kind,
+                    granted_tool=outcome.approval_granted_tool,
                 )
             )
         except ApprovalBackendError as exc:
@@ -787,6 +824,8 @@ class Kernel:
             acc.final_text = frame.text
             acc.approval_summary = frame.approval_summary
             acc.approval_route = frame.approval_route
+            acc.approval_gate_kind = frame.approval_gate_kind
+            acc.approval_granted_tool = frame.approval_granted_tool
 
     async def _finish(self, acc: _StreamAccumulator, reply: _ThrottledReply) -> TurnOutcome:
         if acc.status in (SessionStatus.DONE, SessionStatus.IDLE_AWAITING_INPUT):
@@ -809,6 +848,8 @@ class Kernel:
                 status=acc.status,
                 approval_summary=acc.approval_summary,
                 approval_route=acc.approval_route,
+                approval_gate_kind=acc.approval_gate_kind,
+                approval_granted_tool=acc.approval_granted_tool,
             )
         # classified-failure, or the stream ended with no final at all.
         return TurnOutcome(

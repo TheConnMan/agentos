@@ -81,38 +81,107 @@ _TOOL_SCHEMA = {
 }
 
 
-@tool(_TOOL_NAME, _TOOL_DESCRIPTION, _TOOL_SCHEMA)
-async def _request_approval(args: dict[str, Any]) -> dict[str, Any]:
-    summary = str(args.get("summary") or "").strip()
-    if not summary:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Rejected: pass a non-empty summary of what needs approval.",
-                }
-            ],
-            "is_error": True,
+def _approval_error(text: str) -> dict[str, Any]:
+    return {"content": [{"type": "text", "text": text}], "is_error": True}
+
+
+_APPROVAL_OK = {
+    "content": [
+        {
+            "type": "text",
+            "text": (
+                "Approval requested. The session will pause awaiting a human"
+                " decision; end your turn now and tell the user the request"
+                " is pending."
+            ),
         }
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": (
-                    "Approval requested. The session will pause awaiting a human"
-                    " decision; end your turn now and tell the user the request"
-                    " is pending."
-                ),
-            }
-        ]
-    }
+    ]
+}
 
 
-def build_approval_server() -> McpSdkServerConfig:
-    """The in-process MCP server carrying the approval-request tool."""
+def _distinct_routes(gate: ApprovalGate | None) -> list[str]:
+    """The distinct manifest routes the gate declares, normalized and sorted.
+
+    The route names are compared case-sensitively (Decision B): they are
+    operator-authored identifiers, and ``load_approval_policy`` plus the agent's
+    ``approval_routes`` binding map are both exact-match dict lookups, so
+    case-folding here alone would accept a route the binding map then misses.
+    """
+
+    if gate is None:
+        return []
+    return sorted({r for r in gate.route_by_tool.values() if r})
+
+
+def build_approval_server(gate: ApprovalGate | None = None) -> McpSdkServerConfig:
+    """The in-process MCP server carrying the approval-request tool.
+
+    Per-gate (#544, Decision B): the tool closes over ``gate`` so it can
+    validate the model-supplied ``route`` against the manifest routes the gate
+    declares, refusing with an ``is_error`` result -- which reaches the model
+    and names the valid routes so it can retry within the same turn -- when the
+    route is ambiguous (omitted with >1 declared) or unknown. A refused request
+    creates no approval, so nothing silently widens to the requesting channel.
+    ``gate`` is optional so a server with no manifest routes stays a generic
+    policy approval (ADR-0034's channel-membership default).
+
+    The route string is normalized identically to ``load_approval_policy`` (a
+    ``.strip()``) before comparison so a route that validates green at deploy
+    can never fail to match at runtime (#453, the validator/runtime split that
+    shipped two silent fail-opens).
+    """
+
+    declared = _distinct_routes(gate)
+
+    @tool(_TOOL_NAME, _TOOL_DESCRIPTION, _TOOL_SCHEMA)
+    async def request_approval(args: dict[str, Any]) -> dict[str, Any]:
+        if gate is not None:
+            # policy_requested is sticky-True: any call this turn means a policy
+            # gate was raised. The per-request outcome (rejected/route), though,
+            # must be fully determined by THIS call so the last call in the turn
+            # wins -- a retry with a valid route after an is_error refusal must
+            # clear the prior rejection, or _merge_gate_block drops the approval
+            # the retry created (#544, Decision B recovery path).
+            gate.policy_requested = True
+            gate.policy_rejected = False
+            gate.policy_route = None
+        summary = str(args.get("summary") or "").strip()
+        if not summary:
+            if gate is not None:
+                gate.policy_rejected = True
+            return _approval_error(
+                "Rejected: pass a non-empty summary of what needs approval."
+            )
+        raw_route = args.get("route")
+        route = str(raw_route).strip() if raw_route is not None else ""
+        if declared:
+            if not route:
+                if len(declared) == 1:
+                    # Unambiguous: the manifest declares exactly one route, so
+                    # bind it rather than guessing or refusing.
+                    if gate is not None:
+                        gate.policy_route = declared[0]
+                else:
+                    if gate is not None:
+                        gate.policy_rejected = True
+                    return _approval_error(
+                        "Rejected: this decision has more than one approval route;"
+                        f" pass route as one of: {', '.join(declared)}."
+                    )
+            elif route in declared:
+                if gate is not None:
+                    gate.policy_route = route
+            else:
+                if gate is not None:
+                    gate.policy_rejected = True
+                return _approval_error(
+                    f"Rejected: unknown approval route {route!r};"
+                    f" pass route as one of: {', '.join(declared)}."
+                )
+        return _APPROVAL_OK
 
     return create_sdk_mcp_server(
-        name=APPROVAL_SERVER_NAME, version="1.0.0", tools=[_request_approval]
+        name=APPROVAL_SERVER_NAME, version="1.0.0", tools=[request_approval]
     )
 
 
@@ -222,12 +291,34 @@ class ApprovalGate:
     route_by_tool: dict[str, str] = field(default_factory=dict)
     pending_summary: str | None = None
     pending_route: str | None = None
+    # Durable provenance (#544, Decision C), set by ``block()`` on a permission
+    # gate: ``pending_gate_kind='permission'`` and ``pending_granted_tool`` is
+    # the exact tool ``can_use_tool`` denied -- the trusted, runner-held value
+    # the resume-turn grant binds to, never parsed from a string and never
+    # model-supplied. A policy gate never sets these (it authorizes a business
+    # decision, never a tool); its provenance is stamped in translate.py.
+    pending_gate_kind: str | None = None
+    pending_granted_tool: str | None = None
+    # Policy-gate route reconciliation (#544, Decision B), set by the
+    # request_approval tool when the model calls it: whether a request was made
+    # this turn, whether it was refused (ambiguous/unknown route -> no approval
+    # is created), and the RESOLVED route an accepted request carries onto the
+    # final. The session reconciles these at turn end so the final carries the
+    # manifest-resolved route rather than the raw model argument.
+    policy_requested: bool = False
+    policy_rejected: bool = False
+    policy_route: str | None = None
     grant_tool: str | None = None
     _boot_turn_seen: bool = False
 
     def reset(self) -> None:
         self.pending_summary = None
         self.pending_route = None
+        self.pending_gate_kind = None
+        self.pending_granted_tool = None
+        self.policy_requested = False
+        self.policy_rejected = False
+        self.policy_route = None
         # Boot-turn-only grant: keep it on the first reset (the boot turn),
         # expire any unspent grant on the second and later resets so it never
         # leaks into a subsequent turn.
@@ -247,6 +338,11 @@ class ApprovalGate:
         if self.pending_summary is None:
             self.pending_summary = summarize_tool_call(tool_name, tool_input)
             self.pending_route = self.route_by_tool.get(tool_name)
+            # Provenance for the permission gate (#544, Decision C): the tool
+            # name here is the value ``can_use_tool`` itself denied -- the
+            # trusted grant target, never derived from the summary string.
+            self.pending_gate_kind = "permission"
+            self.pending_granted_tool = tool_name
 
 
 def build_can_use_tool(gate: ApprovalGate) -> CanUseTool:

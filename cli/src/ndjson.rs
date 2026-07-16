@@ -82,6 +82,8 @@ mod tests {
                 status: SessionStatus::Done,
                 approval_summary: None,
                 approval_route: None,
+                approval_gate_kind: None,
+                approval_granted_tool: None,
             }
         );
     }

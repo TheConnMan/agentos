@@ -44,7 +44,14 @@ in code now:
 - **The `awaiting-approval` status (landed, #244).** `SessionStatus.AWAITING_APPROVAL` plus
   the optional `Final.approval_summary` field
   (`packages/aci-protocol/src/aci_protocol/events.py`), regenerated across all three language
-  targets as a backward-compatible frozen-contract change (ADR-0010 authorized it).
+  targets as a backward-compatible frozen-contract change (ADR-0010 authorized it). Two
+  further optional `Final` fields carry structured, runner-authored gate provenance
+  (landed, #544, ADR-0046): `approval_gate_kind` (`'permission'` or `'policy'`) records which
+  trigger type produced the request, and `approval_granted_tool` names the tool a resume-boot
+  grant may release (or `None`, always `None` for a policy gate). Both are additive patch-bump
+  fields (ADR-0036) and are persisted as the `gate_kind`/`granted_tool` columns on the
+  `Approval` record (migration `0015_approval_gate_provenance`). They replace the old
+  summary-prefix sniff as the durable source of grant provenance — see the #430 bullet below.
 - **The lifecycle (landed, #244).** A skill raises a policy gate through the runner's
   in-process `mcp__agentos__request_approval` tool (`runner/src/agentos_runner/approval.py`);
   the turn ends `awaiting-approval`, the worker persists the record and suspends the sandbox
@@ -76,24 +83,36 @@ in code now:
   turn ends `awaiting-approval` on the same override the policy gate uses, so both trigger
   types share one record/suspend/resume lifecycle. An agent with no configured gates keeps
   the historical `bypassPermissions` posture verbatim (zero behavior change).
-- **The one-shot post-approval allowance (landed, #430, ADR-0035).** A prior gap: after an
+- **The one-shot post-approval allowance (landed, #430, ADR-0035; provenance converged, #544,
+  ADR-0046).** A prior gap: after an
   approval was granted and the session resumed, the resume turn re-called the gated tool
   and `can_use_tool` denied it again, because the approval-required set is rebuilt from
   durable config on every claim -- so a manifest `approvalPolicy`-gated tool (the
   unliftable, production-intended form) could never complete post-approval without an
   operator PATCH. Now, when the worker builds the boot env for a claim whose `event_id` is
   the deterministic resume id (`resumequeue.resume_event_id` -> `approval-<id>-resolved`)
-  AND that approval is `status='approved'` AND its `summary` is a permission-gate block
-  (the `summarize_tool_call` prefix), the worker injects `AGENTOS_APPROVAL_GRANT_TOOL=<tool>`
-  (`binding.approval_grant_tool`). The runner gate allows exactly one call to that tool on
+  AND that approval is `status='approved'`, the worker's `approval_grant_tool`
+  (`binding.approval_grant_tool`) decides grant eligibility from the **durable
+  `gate_kind`/`granted_tool` columns** rather than sniffing the summary (ADR-0046 supersedes
+  ADR-0035's summary-prefix discriminator): for a `gate_kind='permission'` row it injects
+  `AGENTOS_APPROVAL_GRANT_TOOL=<granted_tool>` (`GRANT_TOOL_ENV`, the exact tool name
+  `can_use_tool` denied, a trusted runner-authored value); for a `gate_kind='policy'` row it
+  **refuses outright** (a policy gate never mints a grant — the model's arguments can never
+  select which tool receives bypass authority, the #430 invariant now enforced by the column,
+  not the prefix); and only for a `gate_kind IS NULL` row (the rolling-deploy window where an
+  in-flight older runner image emitted no provenance) does it fall back to the OLD
+  `summarize_tool_call` summary-prefix parse, byte-identical to prior behavior. The runner gate
+  allows exactly one call to that tool on
   the boot turn (`ApprovalGate.consume_grant`), then re-denies; `reset()` expires an unspent
   grant on the next turn so an adopted warm-pod follow-up cannot inherit it. The grant is
   **tool-name-scoped** (a different gated tool, or a second call to the same one, still
   gates), **agent-bound** (delivered only when the approval's `agent_id` matches the
   agent resolved for the channel, so a rebound channel cannot cross-grant), **permission-gate
-  only** (the `summarize_tool_call` prefix is a RESERVED namespace: the runner guards
+  only** (enforced by the `gate_kind` column; for the NULL-fallback window the
+  `summarize_tool_call` prefix is still a RESERVED namespace, and the runner guards
   model-authored policy-gate summaries out of it via `guard_reserved_summary`, so a
-  policy-gate request cannot forge a permission-gate grant), and **server-side** --
+  policy-gate request cannot forge a permission-gate grant in that window either), and
+  **server-side** --
   derived by the worker from the durable record, never minted by the sandbox, so the
   ADR-0010/0033/0034 "enforced server-side, unspoofable from the sandbox" guarantee holds.
   The non-requester guarantee is upstream: the authorizer denies self-approval before the
@@ -102,17 +121,48 @@ in code now:
   first), `claim()` adopts it and the boot env is ignored, so the grant is lost and the
   action re-pauses (self-heals via re-approval). (2) *tool-name, not argument, scoping* --
   the granted tool may be invoked on the resume turn with different arguments than the
-  human saw; argument-binding needs runner-persisted structured provenance across the
-  frozen ACI contract (ADR-0035 follow-up).
-- **The policy/route/audit layer (landed, #247).** The bundle manifest's `approvalPolicy`
+  human saw. ADR-0035 named a durable structured-provenance follow-up for this; that
+  provenance has now LANDED as ADR-0046 (the `gate_kind`/`granted_tool` columns above), but it
+  discriminates *which* gate may grant rather than binding the granted *arguments*, so
+  argument-scoping remains open (deferred to #558's operator-gated grantability).
+- **Observe-only resume reconciliation (landed, #544, ADR-0046, Decision A2).** To make the
+  residual "approved, then the model never re-called the tool" case observable, the worker
+  injects an **authority-free** marker `AGENTOS_APPROVAL_RESUMED_KIND=policy` (`RESUMED_KIND_ENV`,
+  `binding.approval_resumed_kind`) at resume boot — a fact about the past that grants nothing,
+  set only for a `status='approved'` policy approval, contrast the authority-conferring
+  `GRANT_TOOL_ENV` above. At boot-turn end, if the marker is present, gates are armed, no
+  permission-gate block occurred, and no side-effecting tool ran, the runner emits a structured
+  warning frame (`APPROVAL_NOT_ACTED_CLASSIFICATION`) naming the approval id and **leaves the
+  final CLEAN** — no non-clean terminal status. It is instrumentation, not proof: its signal
+  (`side_effect_emitted`) is a documented weak proxy for "some tool ran", so it false-alarms on
+  the legitimate text-only decision and false-passes on an incidental non-allowlisted tool. A
+  signal this weak must not gate a terminal status, so it ships observe-only and earns data for
+  a later enforce decision (#559).
+- **The policy/route/audit layer (landed, #247; route resolution hardened, #544, ADR-0046).**
+  The bundle manifest's `approvalPolicy`
   gates (schema + deploy validation from #273) are consumed at runner boot
   (`load_approval_policy`): each `{gate, route}` pair adds the tool to the permission gate
   and tags it with a route NAME, versioned with the agent. The policy-gate tool accepts an
-  optional `route` argument for skill-raised requests. Route names are bound to workspace
+  optional `route` argument for skill-raised requests, and the runner now **validates that
+  route against the manifest's declared routes and fails loud** (#544, ADR-0046, Decision B):
+  `build_approval_server(gate)` is per-gate so the `request_approval` tool can see the
+  declared routes (`_distinct_routes`), and it binds an omitted route only when exactly one is
+  declared; an omitted-and-ambiguous route (>1 declared) or an unknown route returns an
+  `is_error` to the model naming the valid routes and creates NO approval, so the model can
+  retry in the same turn and nothing widens. Route comparison normalizes identically to the
+  manifest reader (`load_approval_policy` / `plugin_format.validate_bundle`: `.strip()`,
+  case-sensitive), pinned to agree by an executed test so a validator/loader divergence cannot
+  silently arm nothing. A manifest with zero declared routes yields a generic approval
+  (`route=None`), for which ADR-0034's channel-membership default is correct. Route names are
+  bound to workspace
   channels per agent (`agents.approval_routes`, deployment config, never in the bundle);
   the worker resolves a raised route through the binding and posts the card into the bound
   channel (`card_channel` on the record), whose members the authorizer then counts as the
-  approvers; an unbound route falls back to the requesting channel with a warning. The
+  approvers. **A named-but-unbound route now escalates loudly and creates no approval**
+  (#544, ADR-0046, AC2), reversing #247's earlier warn-and-route-to-requesting-channel
+  fallback — authority must never silently widen. This is distinct from the API's
+  `get_approval_route_binding` channel fallback (`apps/api/src/agentos_api/crud.py`), which is
+  for genuinely agent-less generic approvals (ADR-0034) and is UNCHANGED. The
   card's transport follows the same split (#451): a bound channel that differs from the
   requesting channel is deployment policy, not part of the triggering conversation, so the
   card posts top-level over the worker's default Slack transport rather than the trigger's

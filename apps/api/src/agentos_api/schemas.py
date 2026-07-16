@@ -499,6 +499,11 @@ class ApprovalCreate(BaseModel):
     dedupe_key: str = Field(min_length=1)
     route: str | None = None
     card_channel: str | None = None
+    # Durable gate provenance (#544, Decision C), written by the runner. Both
+    # optional: an older runner emits neither and the row's columns stay NULL
+    # (the rolling-deploy window the worker's prefix fallback covers).
+    gate_kind: Literal["permission", "policy"] | None = None
+    granted_tool: str | None = None
     # Optional SLA: seconds from creation after which the record can only
     # expire, never be approved or rejected.
     expires_in_seconds: int | None = Field(default=None, gt=0)
@@ -532,6 +537,10 @@ class ApprovalOut(BaseModel):
     dedupe_key: str
     route: str | None
     card_channel: str | None
+    # Gate provenance (#544): which gate fired, and the tool a permission-gate
+    # grant is bound to. Both NULL for a policy gate or a pre-#544 row.
+    gate_kind: str | None
+    granted_tool: str | None
     status: str
     expires_at: datetime | None
     resolved_by: str | None

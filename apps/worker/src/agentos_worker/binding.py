@@ -88,6 +88,11 @@ CONNECTOR_SECRET_KEYS_ENV = "AGENTOS_CONNECTOR_SECRET_KEYS"
 # #430 one-shot post-approval allowance (ADR-0035): a runner-local knob carrying
 # the single approved tool name the runner gate lets through once on a resume boot.
 GRANT_TOOL_ENV = "AGENTOS_APPROVAL_GRANT_TOOL"
+# #544 Decision A2 turn-end reconciliation marker: an authority-free FACT that
+# THIS resume boot is resuming a policy-gate approval. Unlike GRANT_TOOL_ENV it
+# confers nothing -- the runner reads it only to decide whether to emit an
+# observe-only warning when the approved business action never ran.
+RESUMED_KIND_ENV = "AGENTOS_APPROVAL_RESUMED_KIND"
 # the worker re-mints every turn; this only bounds a leaked-token window (ADR-0033)
 SANDBOX_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
@@ -240,9 +245,24 @@ class BindingResolver:
         ``approved`` PERMISSION-GATE approval, return the single approved tool
         name the runner gate should let through once; otherwise None. Derived
         server-side from the durable ``approvals`` row, so a compromised sandbox
-        cannot mint one. Permission-gate only: a policy-gate approval
-        (``request_approval``, a business decision) carries an arbitrary summary
-        without the permission-gate prefix and MUST NOT grant a tool bypass.
+        cannot mint one.
+
+        Provenance is a COLUMN, not a string prefix (#544, Decision C). The
+        runner writes ``gate_kind`` and ``granted_tool``; this method returns the
+        ``granted_tool`` column and does not re-derive it. Three cases on
+        ``gate_kind``:
+
+        * ``'policy'`` -- refuse OUTRIGHT, whatever ``granted_tool`` contains
+          (Decision C defence in depth): a policy gate authorizes a business
+          decision and never a tool, so even a corrupted or hand-edited row
+          cannot turn one into a grant. This is the seam #430/#410 were filed on.
+        * ``'permission'`` -- return the ``granted_tool`` column (the trusted
+          ``can_use_tool`` value the runner denied), never a parse of the summary.
+        * ``NULL`` -- the rolling-deploy window (edge case 7): a NEW worker met an
+          OLD pinned runner whose final carried no provenance. Fall back to the
+          legacy summary-prefix parse -- byte-identical to today's behavior, so a
+          no-op for old rows that cannot widen anything. Deleted once no old
+          runner can be live (follow-up 2).
 
         The grant is agent-bound: the row's ``agent_id`` MUST be non-NULL and
         equal ``agent_id`` (the agent currently resolved for this channel).
@@ -257,7 +277,7 @@ class BindingResolver:
         if approval_id is None:
             return None
         sql = text(
-            f"SELECT status, summary, agent_id "
+            f"SELECT status, summary, agent_id, gate_kind, granted_tool "
             f"FROM {self._config.db_schema}.approvals WHERE id = :id"
         )
         async with self._engine.connect() as conn:
@@ -269,14 +289,67 @@ class BindingResolver:
         if row["status"] != "approved":
             return None
         # Agent-bind the grant: never cross-authorize across a channel rebind.
+        # Evaluated BEFORE the provenance branch so a mismatch is refused by the
+        # agent-bind guard regardless of gate_kind (the load-bearing #430 order).
         row_agent_id = row["agent_id"]
         if row_agent_id is None or row_agent_id != agent_id:
             return None
+        gate_kind = row["gate_kind"]
+        if gate_kind == "policy":
+            # Refuse outright: a policy gate never grants a tool (Decision A/C).
+            return None
+        if gate_kind == "permission":
+            tool: str | None = row["granted_tool"]
+            return tool or None
+        # gate_kind IS NULL: the old-runner fallback, today's prefix parse.
         summary: str | None = row["summary"]
         if not summary or not summary.startswith(_PERMISSION_GATE_SUMMARY_PREFIX):
             return None
         tool = summary[len(_PERMISSION_GATE_SUMMARY_PREFIX):].split(" ", 1)[0]
         return tool or None
+
+    async def approval_resumed_kind(
+        self, event_id: str, agent_id: uuid.UUID
+    ) -> str | None:
+        """The gate provenance of the approval a resume turn is resuming (#544,
+        Decision A2), or None.
+
+        An authority-free FACT about the past for the runner's OBSERVE-ONLY
+        turn-end reconciliation -- unlike ``approval_grant_tool`` it confers
+        nothing, it only tells the runner "this boot is resuming a policy-gate
+        approval" so it can warn if the approved business action never ran. The
+        marker granting nothing is exactly why #430 and #410 stay closed.
+
+        Agent-bound identically to the grant so it never leaks across a channel
+        rebind, and NULL for a non-approval event, a non-``approved`` status
+        (rejected/expired/pending resume the same event id shape, but no approved
+        action was owed so no marker is due), an unknown or other-agent approval,
+        or an old-runner row whose provenance column is NULL.
+        """
+        approval_id = _parse_resume_event_id(event_id)
+        if approval_id is None:
+            return None
+        sql = text(
+            f"SELECT status, agent_id, gate_kind "
+            f"FROM {self._config.db_schema}.approvals WHERE id = :id"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": approval_id})
+            row = result.mappings().first()
+        if row is None:
+            return None
+        # Literal status compare: the worker must not import the API's
+        # ApprovalStatus. A rejected/expired/pending resume did nothing that was
+        # owed, so it must not inject a marker that provokes a false
+        # approval-not-acted warning.
+        if row["status"] != "approved":
+            return None
+        # Agent-bind guard stays after the status gate, mirroring the grant.
+        row_agent_id = row["agent_id"]
+        if row_agent_id is None or row_agent_id != agent_id:
+            return None
+        kind: str | None = row["gate_kind"]
+        return kind or None
 
     async def secrets_for(self, agent_id: uuid.UUID) -> dict[str, str] | None:
         """The agent's connector secrets (#429), for lanes that boot by agent_id

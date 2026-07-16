@@ -202,6 +202,17 @@ class Approval(Base):
     # Set once the resume turn is enqueued onto the runs stream (#411); NULL on a
     # resolved record means the wake is still owed (the reconciler's work-list).
     resumed_at: Mapped[datetime | None] = mapped_column(default=None)
+    # Durable gate provenance (#544, Decision C), written by the runner -- the
+    # only component that knows which tool ``can_use_tool`` denied. ``gate_kind``
+    # is ``'permission'`` when the tool-permission gate denied a real tool call,
+    # ``'policy'`` when the model asked for a business-decision approval; it is
+    # the column the worker branches on instead of sniffing the summary prefix.
+    # ``granted_tool`` is the tool name a resume-turn grant is bound to and is
+    # only ever set for ``gate_kind='permission'`` (a policy gate never authorizes
+    # a tool). Both NULL from an older runner that predates them, which is the
+    # rolling-deploy window the worker's prefix fallback covers.
+    gate_kind: Mapped[str | None] = mapped_column(default=None)
+    granted_tool: Mapped[str | None] = mapped_column(default=None)
 
 
 class ApprovalAuditEntry(Base):

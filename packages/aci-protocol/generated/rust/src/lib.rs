@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.0";
+pub const PROTOCOL_VERSION: &str = "0.2.1";
 
 fn parse_semver(value: &str) -> Option<(u64, u64)> {
     let mut parts = value.split('.');
@@ -168,6 +168,10 @@ pub enum OutboundEvent {
         approval_summary: Option<String>,
         #[serde(default)]
         approval_route: Option<String>,
+        #[serde(default)]
+        approval_gate_kind: Option<String>,
+        #[serde(default)]
+        approval_granted_tool: Option<String>,
     },
     #[serde(rename = "error")]
     ErrorEvent {
@@ -200,6 +204,8 @@ mod tests {
             status: SessionStatus::Done,
             approval_summary: None,
             approval_route: None,
+            approval_gate_kind: None,
+            approval_granted_tool: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -214,6 +220,8 @@ mod tests {
             status: SessionStatus::AwaitingApproval,
             approval_summary: Some("Give ACME a 20% discount".to_string()),
             approval_route: Some("managers".to_string()),
+            approval_gate_kind: Some("policy".to_string()),
+            approval_granted_tool: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
