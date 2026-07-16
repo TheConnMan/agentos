@@ -105,10 +105,12 @@ enum Command {
     ///
     /// From the repo root, runs (each idempotent, streaming output): copy
     /// `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in
-    /// `apps/ui`, `cargo build` in `cli`, then builds the runner image. With
-    /// `--update`, already-present heavyweight artifacts like the runner image
-    /// are reused. A release binary has no source tree to install and errors
-    /// clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
+    /// `apps/ui`, `cargo install --path cli` (builds AND puts `agentos` on PATH,
+    /// so re-running install refreshes the live CLI), then builds the runner
+    /// image. With `--update`, already-present heavyweight artifacts like the
+    /// runner image are reused. `agentos update` is the fast CLI-only subset. A
+    /// release binary has no source tree to install and errors clearly; a
+    /// missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
     #[command(alias = "i")]
     Install {
         /// Reuse already-present artifacts while refreshing dependencies and builds.
