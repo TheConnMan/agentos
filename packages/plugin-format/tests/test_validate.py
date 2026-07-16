@@ -158,6 +158,12 @@ def test_non_env_var_secret_name_is_rejected(tmp_path: Path) -> None:
     assert "secrets.name_invalid" in _codes(bundle)
 
 
+def test_reserved_agentos_secret_name_is_rejected(tmp_path: Path) -> None:
+    # AGENTOS_* names are reserved platform boot-env keys.
+    bundle = _bundle(tmp_path, '{"name": "demo", "secrets": ["AGENTOS_BUDGET"]}')
+    assert "secrets.name_reserved" in _codes(bundle)
+
+
 def test_malformed_secrets_shape_is_rejected(tmp_path: Path) -> None:
     # A non-list secrets value is rejected.
     bundle = _bundle(tmp_path, '{"name": "demo", "secrets": "nope"}')
