@@ -511,7 +511,7 @@ export const commandManifest = {
             }
           ],
           "hidden": false,
-          "long_about": "Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.\n\nModel parity with `agentos skill up`: `local up` runs the real model when a model credential is present in the shell (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`), and the offline fake model otherwise. Set `AGENTOS_FAKE_MODEL=1` to force the fake even with a credential; set `AGENTOS_FAKE_MODEL=0` (or provide a credential) to go live.",
+          "long_about": "Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.\n\nModel parity with `agentos skill up`: `local up` runs the real model when a model credential is present in the shell, and the offline fake model otherwise. Providers are first-class beyond Anthropic: an Anthropic key (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`) OR the provider-agnostic `AGENTOS_CREDENTIALS` (with `ANTHROPIC_BASE_URL` for an OpenAI-compatible endpoint such as OpenRouter). Set `AGENTOS_FAKE_MODEL=1` to force the fake even with a credential; set `AGENTOS_FAKE_MODEL=0` (or provide a credential) to go live.",
           "name": "up"
         },
         {
@@ -2109,6 +2109,14 @@ export const commandManifest = {
               "help": "Version label; defaults to <manifest version>-<unix time>",
               "id": "label",
               "long": "label",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Per-agent connector secrets are NOT yet delivered at the cluster tier (#440): this flag is accepted only so it can be DECLINED with a reason instead of erroring like a typo. Until per-agent K8s Secret + secretKeyRef delivery lands, a value-only SandboxClaim CR would persist the token in plaintext in etcd. Use `agentos local deploy --secret` today. See ADR-0009",
+              "id": "secret",
+              "long": "secret",
               "positional": false,
               "required": false
             }

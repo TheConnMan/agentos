@@ -23,7 +23,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "passed", "seconds"],
+        "required": ["id", "passed", "seconds", "output"],
         "properties": {
           "id": {
             "type": "string"
@@ -33,6 +33,10 @@
           },
           "seconds": {
             "type": "number"
+          },
+          "output": {
+            "type": "string",
+            "description": "The graded answer text (the reply judged). Empty when the turn produced no gradeable text. Carried so a failing case is diagnosable without a re-run (#548)."
           }
         }
       }

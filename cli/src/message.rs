@@ -882,19 +882,19 @@ fn resolve_suite(explicit: Option<PathBuf>) -> Result<EvalSuite> {
 /// The shared per-tier eval engine: enqueue one synthetic `QueuedTurn` per case
 /// through the already-stood-up stub + Valkey (the same enqueue+await path a
 /// single `message` walks), grade the captured reply, and collect
-/// `(id, passed, seconds)` rows for `report_eval`. Tier-agnostic: the caller
-/// binds the stub/connection for its tier, then hands them here.
+/// `(id, passed, seconds, output)` rows for `report_eval`. Tier-agnostic: the
+/// caller binds the stub/connection for its tier, then hands them here.
 async fn run_eval_turns(
     opts: &EvalOpts,
     channel: &str,
     suite: &EvalSuite,
     conn: &mut MultiplexedConnection,
     stub: &mut SlackStub,
-) -> Result<Vec<(String, bool, f64)>> {
+) -> Result<Vec<crate::commands::EvalRow>> {
     let ui = crate::ui::ui();
     let total = suite.cases.len();
     let bar = ui.progress_bar(total as u64, "running evals");
-    let mut results: Vec<(String, bool, f64)> = Vec::with_capacity(total);
+    let mut results: Vec<crate::commands::EvalRow> = Vec::with_capacity(total);
     for case in &suite.cases {
         // Each case is its own thread so turns never cross-talk on the stub.
         let (channel_id, thread_ts, placeholder_ts) = resolve_targets(Some(channel), None);
@@ -919,7 +919,18 @@ async fn run_eval_turns(
         )
         .await;
         let elapsed = started.elapsed().as_secs_f64();
-        results.push((case.id.clone(), reply_passes(case, &outcome), elapsed));
+        // Carry the reply text (#548) so a red case is diagnosable from --json /
+        // the human summary; a non-Replied outcome has no gradeable text.
+        let output = match &outcome {
+            Outcome::Replied(reply) => reply.clone(),
+            Outcome::CompletedNoEdit | Outcome::TimedOut => String::new(),
+        };
+        results.push((
+            case.id.clone(),
+            reply_passes(case, &outcome),
+            elapsed,
+            output,
+        ));
         bar.inc(1);
     }
     bar.finish();
