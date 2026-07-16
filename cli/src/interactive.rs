@@ -76,7 +76,6 @@ enum Workflow {
     ExploreExamples,
     ParityLadder,
     DeployToSlack,
-    DeployToSlackCluster,
 }
 
 /// Which platform tier a Deploy-to-Slack workflow drives.
@@ -335,8 +334,7 @@ fn run_recipe_in_tui(
         match workflow {
             Workflow::ExploreExamples => explore_examples(terminal, app, &values)?,
             Workflow::ParityLadder => parity_ladder(terminal, app)?,
-            Workflow::DeployToSlack => deploy_to_slack(terminal, app, SlackTier::Local)?,
-            Workflow::DeployToSlackCluster => deploy_to_slack(terminal, app, SlackTier::Cluster)?,
+            Workflow::DeployToSlack => deploy_to_slack(terminal, app)?,
         }
         return Ok(format!("Finished: {}", recipe.title));
     }
@@ -744,11 +742,30 @@ fn explore_examples(
 /// channel id into the secret vault, then run `<tier> deploy` -> `<tier> comms
 /// --slack` (local additionally brings the compose stack up first) inside the
 /// TUI. Mirrors `explore_examples`.
-fn deploy_to_slack(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &App,
-    tier: SlackTier,
-) -> Result<()> {
+fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> Result<()> {
+    // One recipe, both tiers: ask which platform to target rather than listing a
+    // near-duplicate recipe per tier.
+    let Some(tier) = prompt_select(
+        terminal,
+        app,
+        "Deploy to Slack",
+        "Which tier to deploy to?",
+        vec![
+            SelectChoice {
+                label: "local (compose)".to_string(),
+                description: "The full platform on your machine via docker compose.".to_string(),
+                value: SlackTier::Local,
+            },
+            SelectChoice {
+                label: "cluster (Kubernetes)".to_string(),
+                description: "A deployed Helm release (must already be up).".to_string(),
+                value: SlackTier::Cluster,
+            },
+        ],
+    )?
+    else {
+        return Ok(());
+    };
     let verb = tier.verb();
 
     // 1. The manual, browser-only part: create the Slack app and gather the two
@@ -1225,7 +1242,7 @@ fn secrets_status_lines() -> Vec<Line<'static>> {
 
 fn maybe_add_secret_status(lines: &mut Vec<Line<'static>>, workflow: Workflow) {
     match workflow {
-        Workflow::ExploreExamples | Workflow::DeployToSlack | Workflow::DeployToSlackCluster => {
+        Workflow::ExploreExamples | Workflow::DeployToSlack => {
             lines.push(Line::from(Span::styled(
                 "Credential status",
                 Style::default().fg(Color::Yellow).bold(),
@@ -2016,28 +2033,22 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ));
             lines.push(Line::from(""));
         }
-        RecipeKind::Workflow(wf @ (Workflow::DeployToSlack | Workflow::DeployToSlackCluster)) => {
-            let tier = if matches!(wf, Workflow::DeployToSlackCluster) {
-                "cluster"
-            } else {
-                "local"
-            };
+        RecipeKind::Workflow(Workflow::DeployToSlack) => {
             lines.push(Line::from(Span::styled(
                 "How to deploy to Slack",
                 Style::default().fg(Color::Yellow).bold(),
             )));
+            lines.push(Line::from("1. Choose the tier (local or cluster)"));
             lines.push(Line::from(
-                "1. Create a Slack app from the repo manifest (one time)",
+                "2. Create a Slack app from the repo manifest (one time)",
             ));
             lines.push(Line::from(
-                "2. Save your app + bot tokens and the channel ID",
+                "3. Save your app + bot tokens and the channel ID",
             ));
-            lines.push(Line::from(format!(
-                "3. {tier} deploy -> {tier} comms --slack"
-            )));
-            lines.push(Line::from("4. @mention the bot in Slack to test"));
+            lines.push(Line::from("4. <tier> deploy -> <tier> comms --slack"));
+            lines.push(Line::from("5. @mention the bot in Slack to test"));
             lines.push(Line::from(""));
-            maybe_add_secret_status(&mut lines, *wf);
+            maybe_add_secret_status(&mut lines, Workflow::DeployToSlack);
         }
     }
     if !recipe.fields.is_empty() {
@@ -2692,29 +2703,16 @@ fn recipes() -> Vec<Recipe> {
             ],
         },
         Recipe {
-            target: "local",
+            target: "all",
             title: "How to deploy to Slack",
-            description: "Deploy an agent to the local platform and connect it to a real Slack workspace.",
+            description: "Deploy an agent to a platform tier and connect it to a real Slack workspace.",
             kind: RecipeKind::Workflow(Workflow::DeployToSlack),
             args: vec![],
             fields: vec![],
             notes: &[
+                "Asks whether to target the local platform or a deployed cluster release first.",
                 "Creating the Slack app is a one-time manual step; the workflow gives you the manifest path and links.",
-                "Requires a model credential plus your Slack app-level (xapp-) and bot (xoxb-) tokens, saved when prompted.",
-                "Runs local up -> local deploy -> local comms --slack; then @mention the bot in your channel to test.",
-            ],
-        },
-        Recipe {
-            target: "cluster",
-            title: "How to deploy to Slack",
-            description: "Deploy an agent to the deployed cluster release and connect it to a real Slack workspace.",
-            kind: RecipeKind::Workflow(Workflow::DeployToSlackCluster),
-            args: vec![],
-            fields: vec![],
-            notes: &[
-                "Requires an installed release (agentos cluster up) with a model credential configured on the chart.",
-                "Creating the Slack app is a one-time manual step; the workflow gives you the manifest path and links.",
-                "Runs cluster deploy -> cluster comms --slack; one Slack app owns one Socket Mode dispatcher.",
+                "Requires your Slack app (xapp-) + bot (xoxb-) tokens, saved when prompted (plus a model credential for local).",
             ],
         },
         Recipe {
@@ -2954,24 +2952,25 @@ mod tests {
     }
 
     #[test]
-    fn deploy_to_slack_recipes_registered_for_both_tiers() {
+    fn deploy_to_slack_is_a_single_tier_prompting_recipe() {
         let app = App::new();
-        // Local-tier Deploy to Slack under the `local` tab.
-        assert!(app.recipes.iter().any(|recipe| {
-            recipe.title == "How to deploy to Slack"
-                && recipe.target == "local"
-                && matches!(recipe.kind, RecipeKind::Workflow(Workflow::DeployToSlack))
-        }));
-        // Cluster-tier Deploy to Slack under the `cluster` tab.
-        assert!(app.recipes.iter().any(|recipe| {
-            recipe.title == "How to deploy to Slack"
-                && recipe.target == "cluster"
-                && matches!(
-                    recipe.kind,
-                    RecipeKind::Workflow(Workflow::DeployToSlackCluster)
-                )
-        }));
-        assert!(app.targets.contains(&"local") && app.targets.contains(&"cluster"));
+        // Exactly ONE Deploy-to-Slack recipe (it asks local-vs-cluster at runtime
+        // instead of a near-duplicate recipe per tier).
+        let matches: Vec<&Recipe> = app
+            .recipes
+            .iter()
+            .filter(|r| r.title == "How to deploy to Slack")
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "there should be exactly one Deploy-to-Slack recipe"
+        );
+        assert_eq!(matches[0].target, "all");
+        assert!(matches!(
+            matches[0].kind,
+            RecipeKind::Workflow(Workflow::DeployToSlack)
+        ));
     }
 
     #[test]
