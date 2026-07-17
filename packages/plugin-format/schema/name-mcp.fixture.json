@@ -1,0 +1,18 @@
+{
+  "_comment": "Cross-language drift gate (#491) for the plugin-format name rule (^[a-z0-9]+(-[a-z0-9]+)*$) and the MCP connector-object rule (must define string command or url). Both the Python validator (packages/plugin-format) and the Rust CLI checks (cli/src/scaffold.rs::valid_name, cli/src/spec.rs) assert against this corpus, so a rule change on one side without the other fails a corpus test.",
+  "valid_names": ["a", "9", "x9", "deal-desk", "a-b-c1", "renewal-review"],
+  "invalid_names": ["", "-", "a-", "-x", "x-", "a--b", "-a-", "Deal-Desk", "deal_desk", "a b", "café"],
+  "valid_mcp": [
+    { "command": "crm-server" },
+    { "url": "https://mcp.example/api" },
+    { "command": "crm-server", "args": ["--stdio"] },
+    { "command": "c", "url": "https://x" }
+  ],
+  "invalid_mcp": [
+    {},
+    { "args": ["x"] },
+    { "command": 42 },
+    { "url": true },
+    { "command": null }
+  ]
+}

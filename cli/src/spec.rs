@@ -67,6 +67,21 @@ pub struct AgentSpec {
     pub evals: Vec<EvalCase>,
 }
 
+/// Whether an `.mcp.json` connector object is usable: it must define `command`
+/// (stdio) or `url` (remote), and any `command`/`url` present must be a string --
+/// mirroring `plugin_format` `_validate_mcp_object` + the `McpServer` string typing.
+/// The single accept decision the shared corpus (#491) tests against, so the CLI
+/// cannot silently drift from what the server-side `validate_bundle` accepts.
+pub(crate) fn mcp_object_valid(value: &Value) -> bool {
+    let obj = value.as_object();
+    let string_typed = ["command", "url"].iter().all(|key| {
+        obj.and_then(|o| o.get(*key))
+            .is_none_or(|field| field.is_null() || field.is_string())
+    });
+    let defines = |key: &str| obj.and_then(|o| o.get(key)).is_some_and(|v| v.is_string());
+    string_typed && (defines("command") || defines("url"))
+}
+
 /// Reject an `mcp__`-prefixed approval gate that is not a fully-namespaced live
 /// tool name for one of this bundle's declared connectors. Non-`mcp__` gates
 /// (built-ins like `Bash`/`Write`) pass untouched. Mirrors the namespacing check
@@ -158,6 +173,10 @@ fn validate(spec: &AgentSpec) -> Result<()> {
     // `validate_bundle` reject the emitted `.mcp.json` -- catch it now with a
     // message that names the offending field.
     for (name, value) in &spec.connectors {
+        if mcp_object_valid(value) {
+            continue;
+        }
+        // Rejected -- re-derive the specific reason for an actionable message.
         let obj = value.as_object();
         for key in ["command", "url"] {
             if let Some(field) = obj.and_then(|o| o.get(key)) {
@@ -166,10 +185,7 @@ fn validate(spec: &AgentSpec) -> Result<()> {
                 }
             }
         }
-        let defines = |key: &str| obj.and_then(|o| o.get(key)).is_some_and(|v| v.is_string());
-        if !(defines("command") || defines("url")) {
-            bail!("connector {name:?} must define either 'command' (stdio) or 'url' (remote)");
-        }
+        bail!("connector {name:?} must define either 'command' (stdio) or 'url' (remote)");
     }
 
     // Secret NAMES must look like env vars (#549); the same syntax gate `secrets
@@ -206,4 +222,44 @@ fn validate(spec: &AgentSpec) -> Result<()> {
     validate_suite(&spec.name, &spec.evals)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod corpus_tests {
+    use super::mcp_object_valid;
+    use crate::scaffold::valid_name;
+    use serde_json::Value;
+
+    // The shared cross-language corpus (#491): the SAME file the Python
+    // plugin-format test asserts against, so a name/mcp rule change on one side
+    // without the other fails a corpus test here or there.
+    const CORPUS: &str = include_str!("../../packages/plugin-format/schema/name-mcp.fixture.json");
+
+    fn corpus() -> Value {
+        serde_json::from_str(CORPUS).expect("corpus is valid JSON")
+    }
+
+    #[test]
+    fn valid_name_matches_the_shared_corpus() {
+        let c = corpus();
+        for n in c["valid_names"].as_array().unwrap() {
+            let n = n.as_str().unwrap();
+            assert!(valid_name(n), "corpus valid name rejected: {n:?}");
+        }
+        for n in c["invalid_names"].as_array().unwrap() {
+            let n = n.as_str().unwrap();
+            assert!(!valid_name(n), "corpus invalid name accepted: {n:?}");
+        }
+    }
+
+    #[test]
+    fn mcp_object_valid_matches_the_shared_corpus() {
+        let c = corpus();
+        for obj in c["valid_mcp"].as_array().unwrap() {
+            assert!(mcp_object_valid(obj), "corpus valid mcp rejected: {obj}");
+        }
+        for obj in c["invalid_mcp"].as_array().unwrap() {
+            assert!(!mcp_object_valid(obj), "corpus invalid mcp accepted: {obj}");
+        }
+    }
 }
