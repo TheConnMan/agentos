@@ -24,8 +24,12 @@ containers, so one container is simultaneously the "claim" and the "sandbox"
 (claim name == container name == sandbox name), and there is no bundle-fetch init
 pair -- the worker fetches the plugin bundle from MinIO and bind-mounts it. The
 host-process worker reaches each runner over a loopback-bound, Docker-assigned
-host port (``docker port <name> 8080``); the container additionally joins the
-compose network when one is configured, so it can reach the OTel collector by
+host port (``docker port <name> 8080``) -- but only when it can actually reach
+that host loopback. A worker running as a host-net *container* on Docker Desktop
+(macOS/Windows) shares the VM's netns and cannot, so when a network is
+configured the worker instead dials the runner on its shared-network container
+IP at the fixed container port (``_dial_endpoint``), which is reachable in every
+topology; the container joins that network anyway to reach the OTel collector by
 name. Readiness (the substrate's ``claim.ready`` gate) is the runner's own
 ``/healthz`` answering, so ``claim()`` never returns a handle to a not-yet-listening
 runner. Suspend maps to ``docker pause`` (the process freezes but keeps its port);
@@ -272,14 +276,15 @@ class DockerSandboxClient:
             operating_mode = "Running"
         else:
             return None
-        port = self._published_port(name)
+        endpoint = self._dial_endpoint(name)
         return SandboxView(
             name=name,
             ready=status == "running",
-            # Dial target is ready only once the host port is published.
-            service_fqdn=self._host if port is not None else None,
+            # Dial target is ready only once the runner is reachable: its
+            # shared-network container IP (preferred) or the published host port.
+            service_fqdn=endpoint[0] if endpoint is not None else None,
             operating_mode=operating_mode,
-            port=port,
+            port=endpoint[1] if endpoint is not None else None,
         )
 
     def set_sandbox_mode(self, name: str, mode: OperatingMode) -> None:
@@ -330,9 +335,7 @@ class DockerSandboxClient:
         return status, labels
 
     def _published_port(self, name: str) -> int | None:
-        out = self._docker(
-            ["port", name, f"{RUNNER_CONTAINER_PORT}/tcp"], check=False
-        )
+        out = self._docker(["port", name, f"{RUNNER_CONTAINER_PORT}/tcp"], check=False)
         for line in out.splitlines():
             line = line.strip()
             if not line:
@@ -343,11 +346,58 @@ class DockerSandboxClient:
                 return int(port)
         return None
 
-    def _healthz_ok(self, name: str) -> bool:
+    def _container_ip(self, name: str) -> str | None:
+        """The runner's IP on the configured docker network, or None.
+
+        A host-networked worker *container* on Docker Desktop (macOS/Windows)
+        shares the Docker VM's network namespace, where the runner's port
+        published on the *host* loopback is unreachable but its bridge-network
+        IP is. Dialing the container directly on the shared network is reachable
+        across all three worker topologies (a real host-process worker, a
+        native-Linux host-net worker, and a Docker Desktop host-net worker), so
+        it is preferred whenever a network is configured. Returns None when no
+        network is set or the address is not yet assigned.
+        """
+        if not self._network:
+            return None
+        out = self._docker(
+            ["inspect", "--format", "{{json .NetworkSettings.Networks}}", name],
+            check=False,
+        )
+        if not out.strip():
+            return None
+        try:
+            nets = json.loads(out)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(nets, dict) or not nets:
+            return None
+        entry = nets.get(self._network)
+        if not isinstance(entry, dict):
+            # Fall back to whatever single network the container joined.
+            entry = next(iter(nets.values()), None)
+        ip = entry.get("IPAddress") if isinstance(entry, dict) else None
+        return ip or None
+
+    def _dial_endpoint(self, name: str) -> tuple[str, int] | None:
+        """(host, port) the worker reaches the runner on, or None if not yet
+        dialable. Prefer the container's shared-network address (reachable from
+        a Docker Desktop VM netns); fall back to the Docker-assigned loopback
+        host port for a host-process worker with no shared network."""
+        ip = self._container_ip(name)
+        if ip is not None:
+            return ip, RUNNER_CONTAINER_PORT
         port = self._published_port(name)
         if port is None:
+            return None
+        return self._host, port
+
+    def _healthz_ok(self, name: str) -> bool:
+        endpoint = self._dial_endpoint(name)
+        if endpoint is None:
             return False
-        url = f"http://{self._host}:{port}/healthz"
+        host, port = endpoint
+        url = f"http://{host}:{port}/healthz"
         try:
             with urllib.request.urlopen(url, timeout=self._healthz_timeout_s) as resp:
                 return bool(200 <= resp.status < 300)

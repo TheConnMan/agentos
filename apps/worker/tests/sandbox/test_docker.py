@@ -13,7 +13,11 @@ import tarfile
 from pathlib import Path
 
 from agentos_worker.bundle_store import extract_bundle
-from agentos_worker.sandbox.docker import DockerError, DockerSandboxClient
+from agentos_worker.sandbox.docker import (
+    RUNNER_CONTAINER_PORT,
+    DockerError,
+    DockerSandboxClient,
+)
 
 
 class _FakeBundleStore:
@@ -134,9 +138,7 @@ def test_sdk_credential_forwarded_by_name_only() -> None:
 
 
 def test_sdk_credential_not_forwarded_when_absent() -> None:
-    client = _RecordingDocker(
-        image="agentos-runner", bundle_store=_FakeBundleStore(), environ={}
-    )
+    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore(), environ={})
     client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
     envs = _flag_values(client.calls[0], "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs
@@ -153,9 +155,7 @@ def test_agentos_credentials_forwarded_by_name_never_as_value() -> None:
     )
     # The worker also hands it in the boot env (from config.credentials); it must
     # still never be emitted as a -e KEY=value pair.
-    client.create_claim(
-        "t1", pool="pool", env={"AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"}
-    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"})
     argv = client.calls[0]
     envs = _flag_values(argv, "-e")
     assert "AGENTOS_CREDENTIALS" in envs  # forwarded by name
@@ -227,9 +227,7 @@ def test_no_credential_forwarded_under_fake_model() -> None:
             "AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER",
         },
     )
-    client.create_claim(
-        "t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1", "AGENTOS_BUDGET": "{}"}
-    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1", "AGENTOS_BUDGET": "{}"})
     envs = _flag_values(client.calls[0], "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token not forwarded
     assert "ANTHROPIC_API_KEY" not in envs
@@ -313,6 +311,56 @@ def test_get_sandbox_treats_dead_container_as_gone() -> None:
     for dead in ("exited", "dead", "created", "restarting"):
         client.outputs = {"inspect": f"{dead}\t{{}}", "port": ""}
         assert client.get_sandbox("t1") is None, dead
+
+
+class _NetworkAwareDocker(DockerSandboxClient):
+    """Fake that distinguishes the status inspect from the networks inspect (both
+    are ``docker inspect``, so keying on the subcommand alone is not enough)."""
+
+    def __init__(self, *, networks_json: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._networks_json = networks_json
+
+    def _docker(self, args: list[str], *, check: bool = True) -> str:
+        if args and args[0] == "inspect":
+            if any("NetworkSettings.Networks" in a for a in args):
+                return self._networks_json
+            return "running\t{}"
+        if args and args[0] == "port":
+            return "127.0.0.1:49173\n"
+        return ""
+
+
+def test_get_sandbox_dials_container_ip_on_shared_network() -> None:
+    # A host-net worker container on a Docker Desktop VM cannot reach the runner's
+    # host-loopback publish, but can reach its shared-network container IP. So the
+    # dial target is that IP at the fixed container port, not the host port.
+    client = _NetworkAwareDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        network="agentos_default",
+        networks_json='{"agentos_default": {"IPAddress": "172.20.0.11"}}',
+    )
+    view = client.get_sandbox("t1")
+    assert view is not None
+    assert view.service_fqdn == "172.20.0.11"
+    assert view.port == RUNNER_CONTAINER_PORT  # not the Docker-assigned host port
+    assert view.operating_mode == "Running"
+
+
+def test_get_sandbox_falls_back_to_published_port_without_network_ip() -> None:
+    # No shared-network IP yet (or no network): dial the Docker-assigned host
+    # loopback port, preserving the host-process worker path.
+    client = _NetworkAwareDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        network="agentos_default",
+        networks_json="{}",
+    )
+    view = client.get_sandbox("t1")
+    assert view is not None
+    assert view.service_fqdn == "127.0.0.1"
+    assert view.port == 49173
 
 
 def test_prepare_bundle_is_readable_by_nonroot_runner() -> None:
@@ -416,9 +464,7 @@ def test_ensure_image_is_best_effort_on_pull_failure(caplog) -> None:
         def _docker(self, args: list[str], *, check: bool = True) -> str:
             self.calls.append(args)
             if args[0] == "pull":
-                raise DockerError(
-                    "docker pull failed (1): SENTINEL_STDERR_LEAK"
-                )
+                raise DockerError("docker pull failed (1): SENTINEL_STDERR_LEAK")
             return ""  # inspect: absent
 
     client = _PullFailsDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
