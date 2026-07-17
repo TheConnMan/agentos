@@ -1,4 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubConsoleSession } from "./console-session";
+
+// #630: these specs drive an authenticated console; the login gate itself is
+// covered by console-login.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await stubConsoleSession(page);
+});
+
 
 // The cold-start loop (H2 backend-driven shell), stackless via route stubs:
 // empty DB -> onboarding -> create an agent -> it appears in the real Agents

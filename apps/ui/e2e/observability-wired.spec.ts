@@ -1,4 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubConsoleSession } from "./console-session";
+
+// #630: these specs drive an authenticated console; the login gate itself is
+// covered by console-login.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await stubConsoleSession(page);
+});
+
 
 // Wired Observability (OB1) in the stackless suite: the app runs in ?api=1 mode
 // but the observability API is stubbed with real-shaped responses via route

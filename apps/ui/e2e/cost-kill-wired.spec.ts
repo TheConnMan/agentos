@@ -1,4 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubConsoleSession } from "./console-session";
+
+// #630: these specs drive an authenticated console; the login gate itself is
+// covered by console-login.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await stubConsoleSession(page);
+});
+
 
 // Wired Cost view + kill switch (L1) in the stackless suite: the app runs in
 // ?api=1 mode with the L1 endpoints stubbed via route interception (mutable

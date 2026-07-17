@@ -49,7 +49,9 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("api client", () => {
-  it("sends the API key and returns the parsed agent", async () => {
+  // #630/ADR-0049: the console authenticates with the session cookie, so the
+  // create call carries no platform key and must let the cookie ride along.
+  it("creates an agent on the session cookie, with no API-key header", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(201, { id: "a1", name: "deal-desk", slack_channel: "#revenue-ops", created_at: "now" }),
     );
@@ -58,7 +60,8 @@ describe("api client", () => {
     expect(agent.id).toBe("a1");
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/agents");
-    expect((init.headers as Record<string, string>)["X-API-Key"]).toBeTruthy();
+    expect((init.headers as Record<string, string>)["X-API-Key"]).toBeUndefined();
+    expect(init.credentials).toBe("same-origin");
   });
 
   it("surfaces validator issues from a 422 as BundleValidationError", async () => {
@@ -202,7 +205,8 @@ describe("agent-detail client calls", () => {
     expect(url).toBe("/api/agents/a1");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({ slack_channel: "C9999ZZZZ" });
-    expect((init.headers as Record<string, string>)["X-API-Key"]).toBeTruthy();
+    expect((init.headers as Record<string, string>)["X-API-Key"]).toBeUndefined();
+    expect(init.credentials).toBe("same-origin");
   });
 
   it("activates a version by POSTing a deployment", async () => {
