@@ -86,12 +86,14 @@ asset was built by this repo's release workflow:
 ```bash
 gh attestation verify agentos-x86_64-unknown-linux-gnu \
   --repo curie-eng/agentos \
-  --signer-workflow curie-eng/agentos/.github/workflows/release.yaml
+  --signer-workflow curie-eng/agentos/.github/workflows/release.yaml \
+  --source-ref "refs/tags/$VERSION"
 ```
 
-Add `--source-ref "refs/tags/$VERSION"` to also pin it to a specific release, or
-`--format json` to read the full provenance statement, including the commit the
-build ran from.
+`--source-ref` is doing real work, so do not drop it: `--signer-workflow` alone
+accepts any artifact this workflow ever built, on any ref, so a file swapped in
+from another tag would still verify. Add `--format json` to read the full
+provenance statement, including the commit the build ran from.
 
 ## Verify the chart and the compose file
 
@@ -166,3 +168,9 @@ which is a reviewed edit rather than a side effect.
   copy; see the [README note](../README.md#quickstart). Verify it with cosign or
   `gh attestation verify` as above -- that is the real check regardless.
 - **Container images.** GHCR image signing, provenance, and SBOMs are issue #62.
+- **The SBOM generator's own supply chain.** `anchore/sbom-action` is pinned to a
+  commit SHA, but on Linux and macOS it fetches `install.sh` from the `anchore/syft`
+  `main` branch at run time, so the SBOM step still executes mutable upstream code
+  before the artifacts are signed. Pinning the action does not pin that. Replacing
+  it with a checksum-pinned syft binary would close the gap, at the cost of
+  hand-managing syft upgrades that Dependabot handles today.

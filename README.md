@@ -222,7 +222,9 @@ agentos local up
 > integrity URLs above 404 against them. Install a newer release.
 
 No cosign? `gh attestation verify $ASSET --repo curie-eng/agentos --signer-workflow
-curie-eng/agentos/.github/workflows/release.yaml` does both checks in one command.
+curie-eng/agentos/.github/workflows/release.yaml --source-ref "refs/tags/$VERSION"`
+does both checks in one command. Keep `--source-ref`: without it the check passes
+for any artifact this workflow ever built, including one from a different tag.
 Either way, see [`docs/release-verification.md`](docs/release-verification.md) for
 the full story: what each asset carries, how to verify the chart and compose file,
 and the per-asset SBOMs.

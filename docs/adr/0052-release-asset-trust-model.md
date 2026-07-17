@@ -106,6 +106,11 @@ and a verified chart is not a verified stack until #62 lands.
   up` / `local up` and does **not** verify them; that fetch is protected by HTTPS
   to GitHub, not by this signature. Closing that is follow-on work -- the trust
   material now exists for the CLI to check, which it did not before.
+- The SBOM generator is pinned by SHA but is not hermetic: `anchore/sbom-action`
+  fetches `anchore/syft`'s `main` install script at run time, so mutable upstream
+  code runs before signing. Accepted for now rather than hand-pinning a syft
+  binary, which trades a Dependabot-tracked dependency for one that rots silently;
+  revisit if the release path is ever treated as a hermetic build.
 - Apple signing and notarization remain deferred pending an Apple account
   decision. The macOS binary is covered by everything above; it is Gatekeeper,
   not verifiability, that is missing.
