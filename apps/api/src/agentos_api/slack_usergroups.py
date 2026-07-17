@@ -30,6 +30,7 @@ produced no member set must never be mistaken for a group with no members.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -60,12 +61,20 @@ class SlackUserGroupClient:
         token: str,
         ttl_s: float = 60.0,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        mono: Callable[[], float] = time.monotonic,
     ) -> None:
         self._http = http
         self._token = token
         self._ttl_s = ttl_s
+        # ``clock`` is the WALL clock, stamped onto the audit-facing ``fetched_at``
+        # ("when Slack answered"). ``mono`` is a MONOTONIC clock used ONLY to age
+        # the cache entry (#424): a wall clock can jump backward (NTP correction,
+        # manual set), which would make a fresh entry look ancient (premature
+        # refetch) or a stale one look fresh (never expires). TTL is a duration, so
+        # it must be measured against a clock that only moves forward.
         self._clock = clock
-        self._cache: dict[str, tuple[datetime, frozenset[str]]] = {}
+        self._mono = mono
+        self._cache: dict[str, tuple[datetime, float, frozenset[str]]] = {}
         # One in-flight fetch per group, not one global one: a slow lookup of
         # one group must not stall an unrelated group's approvals behind it. The
         # map holds only fetches that have not settled yet, so it is bounded by
@@ -116,7 +125,7 @@ class SlackUserGroupClient:
             # open the TTL window early and overstate the freshness of the
             # evidence the audit row records.
             fetched_at = self._clock()
-            self._cache[group_id] = (fetched_at, users)
+            self._cache[group_id] = (fetched_at, self._mono(), users)
             return fetched_at, users
         finally:
             # In the coroutine's own finally, not a done callback: this runs
@@ -137,8 +146,8 @@ class SlackUserGroupClient:
         entry = self._cache.get(group_id)
         if entry is None:
             return None
-        fetched_at, users = entry
-        age_s = (self._clock() - fetched_at).total_seconds()
+        fetched_at, mono_at, users = entry
+        age_s = self._mono() - mono_at
         if age_s >= self._ttl_s:
             return None
         return UserGroupMembership(

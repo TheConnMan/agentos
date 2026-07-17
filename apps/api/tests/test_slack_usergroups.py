@@ -31,12 +31,20 @@ class _Clock:
 
     def __init__(self) -> None:
         self.now = datetime(2026, 7, 15, 12, 0, 0, tzinfo=UTC)
+        # A monotonic reading that advances in lockstep with the wall clock, so a
+        # test that cranks the clock ages the cache (now monotonic-based, #424) by
+        # the same amount. Seeded off zero -- only deltas matter.
+        self._mono = 0.0
 
     def __call__(self) -> datetime:
         return self.now
 
+    def mono(self) -> float:
+        return self._mono
+
     def advance(self, seconds: float) -> None:
         self.now += timedelta(seconds=seconds)
+        self._mono += seconds
 
 
 def _client(
@@ -50,11 +58,13 @@ def _client(
         calls.append(request)
         return handler(request)
 
+    clock = clock or _Clock()
     return SlackUserGroupClient(
         httpx.AsyncClient(transport=httpx.MockTransport(_recording)),
         token=_TOKEN,
         ttl_s=ttl_s,
-        clock=clock or _Clock(),
+        clock=clock,
+        mono=clock.mono,
     )
 
 
@@ -72,11 +82,13 @@ def _async_client(
         calls.append(request)
         return await handler(request)
 
+    clock = clock or _Clock()
     return SlackUserGroupClient(
         httpx.AsyncClient(transport=httpx.MockTransport(_recording)),
         token=_TOKEN,
         ttl_s=ttl_s,
-        clock=clock or _Clock(),
+        clock=clock,
+        mono=clock.mono,
     )
 
 
