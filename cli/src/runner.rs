@@ -129,7 +129,6 @@ impl RunnerClient {
         }
         Ok(events)
     }
-
 }
 
 /// A Slack-style event timestamp: `<unix seconds>.<microseconds>`.
