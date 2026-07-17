@@ -339,6 +339,32 @@ mod tests {
     }
 
     #[test]
+    fn every_schema_grader_kind_deserializes() {
+        // The frozen eval-case schema owns the grader-kind vocabulary (#500).
+        // Every kind it enumerates must round-trip through the Rust loader, so a
+        // kind added to the schema but not to this crate's GraderKind enum fails
+        // here rather than silently rejecting a valid platform-authored case.
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../apps/worker/schema/eval-cases.schema.json"))
+                .expect("committed eval-cases schema is valid JSON");
+        let kinds = schema["$defs"]["GraderKind"]["enum"]
+            .as_array()
+            .expect("GraderKind enum is an array");
+        assert!(!kinds.is_empty(), "schema declares no grader kinds");
+        for kind in kinds {
+            let kind = kind.as_str().expect("grader kind is a string");
+            let body = format!(
+                r#"{{"name":"s","cases":[{{"id":"c","input":"i","grader":{{"kind":"{kind}","expected":"x"}}}}]}}"#
+            );
+            let (_dir, path) = write(&body);
+            let suite = load_suite(&path).unwrap_or_else(|e| {
+                panic!("schema grader kind {kind:?} was rejected by the Rust loader: {e}")
+            });
+            assert_eq!(suite.cases.len(), 1);
+        }
+    }
+
+    #[test]
     fn renders_design_canon_lines() {
         assert_eq!(case_line("approver", true, 1.24), "\u{2713} approver  1.2s");
         assert_eq!(case_line("crm", false, 0.9), "\u{2717} crm  0.9s");
