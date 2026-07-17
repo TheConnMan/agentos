@@ -132,9 +132,7 @@ def load_suite_from_bundle(data: bytes, suite_name: str) -> EvalSuite | None:
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp)
             safe_extract(data, dest)
-            cases = next(
-                (p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None
-            )
+            cases = next((p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None)
             if cases is None:
                 return None
             loaded = EvalSuite.model_validate_json(cases.read_text())
@@ -183,8 +181,7 @@ class EvalStreamConsumer(StreamConsumer):
         # keeps its position, so this only bounds the very first creation.
         cutoff_ms = int(
             (
-                datetime.now(UTC)
-                - timedelta(hours=self._config.eval_stream_max_age_hours)
+                datetime.now(UTC) - timedelta(hours=self._config.eval_stream_max_age_hours)
             ).timestamp()
             * 1000
         )
@@ -428,9 +425,7 @@ class EvalStreamConsumer(StreamConsumer):
             return None
         return load_suite_from_bundle(data, item.suite)
 
-    async def _acquire_target(
-        self, item: EvalJob
-    ) -> tuple[str | None, str | None, str | None]:
+    async def _acquire_target(self, item: EvalJob) -> tuple[str | None, str | None, str | None]:
         if item.target_url is not None:
             # dev/test shortcut: eval a given runner. Not a claim of ours, so no
             # token -- the driver omits the header (only-when-configured).
@@ -439,9 +434,7 @@ class EvalStreamConsumer(StreamConsumer):
         try:
             connector_secrets = await self._repo_lookup.secrets_for(item.agent_id)
             env = self._boot_env(item, connector_secrets)
-            handle = await asyncio.to_thread(
-                self._substrate.claim, release_key, env=env
-            )
+            handle = await asyncio.to_thread(self._substrate.claim, release_key, env=env)
         except SandboxError:
             logger.exception("could not provision a runner for eval %s", item.sha)
             return None, None, None
@@ -451,14 +444,29 @@ class EvalStreamConsumer(StreamConsumer):
         """The model dimension for this run: the caller-requested ``item.model``
         when set (#526, a sweep pins each run to a distinct model), else the model
         the eval's runner is booted with (``config.model``, the same value
-        ``apply_model_env`` forwards as ``AGENTOS_MODEL``). A requested model is
-        always the label, so a sweep run is never silently unlabelled. The dev/test
+        ``apply_model_env`` forwards as ``AGENTOS_MODEL``). The dev/test
         ``target_url`` shortcut evals a runner we did not boot, so unless the caller
-        named a model its model is unknown and left unlabelled."""
+        named a model its model is unknown and left unlabelled.
+
+        A fake-model install (the sealed default, or ``AGENTOS_FAKE_MODEL=1``) runs
+        the canned ``FakeModelSession`` regardless of the requested model, so a row
+        is left unlabelled rather than tagged with a model that was never called:
+        labelling it would fabricate a cross-model comparison the sweep never
+        performed (#606, ADR-0041's "an empty success is a lie"). The runner we did
+        not boot (``target_url``) is exempt -- our fake flag says nothing about what
+        it ran."""
+        if item.target_url is not None:
+            return item.model
+        if self._config.fake_model:
+            if item.model is not None:
+                logger.warning(
+                    "eval requested model %r but this install runs the fake model; "
+                    "recording the row unlabelled rather than as a model never called",
+                    item.model,
+                )
+            return None
         if item.model is not None:
             return item.model
-        if item.target_url is not None:
-            return None
         return self._config.model or None
 
     def _boot_env(
@@ -491,17 +499,13 @@ class EvalStreamConsumer(StreamConsumer):
         apply_model_env(env, self._config, model_override=item.model)
         return env
 
-    async def _report_failed(
-        self, item: EvalJob, repo: str | None, reason: str
-    ) -> EvalRunResult:
+    async def _report_failed(self, item: EvalJob, repo: str | None, reason: str) -> EvalRunResult:
         logger.error("eval %s @ %s failed: %s", item.suite, item.sha, reason)
         result = EvalRunResult(version=item.sha, suite=item.suite, results=[])
         await self._report(item, repo, result)
         return result
 
-    async def _report(
-        self, item: EvalJob, repo: str | None, result: EvalRunResult
-    ) -> None:
+    async def _report(self, item: EvalJob, repo: str | None, result: EvalRunResult) -> None:
         await self._reporter.report(
             EvalReport(
                 repo_full_name=repo or str(item.agent_id),
@@ -513,6 +517,4 @@ class EvalStreamConsumer(StreamConsumer):
         )
 
     async def _ack(self, entry_id: str) -> None:
-        await self._xack(
-            self._config.eval_stream, self._config.eval_consumer_group, entry_id
-        )
+        await self._xack(self._config.eval_stream, self._config.eval_consumer_group, entry_id)
