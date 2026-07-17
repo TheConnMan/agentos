@@ -2,7 +2,20 @@
 
 Date: 2026-07-14
 
-Status: Proposed
+Status: Accepted
+
+Accepted 2026-07-17 by decision. The semantic verifier (`GraderKind.verifier`) is
+adopted as the direction: it judges correctness where no string match exists,
+which is the case a coding-agent bundle most often needs and the one a
+deterministic grader structurally cannot cover. The **Validation gate** section
+below is unmet at acceptance and `GraderKind.verifier` is not in the tree, so this
+acceptance waives [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)'s
+rule that a status is promoted only on evidence the decision is built. The gate's
+substance still governs the implementing work
+([#478](https://github.com/curie-eng/agentos/issues/478)), in particular the
+unresolved model-plane question: continuous scoring needs scoring-token logprobs,
+which the [ADR-0005](0005-claude-agent-sdk-adapter-and-frozen-aci.md)
+claude-agent-sdk/Anthropic default does not expose.
 
 Extends [ADR-0019](0019-freeze-eval-case-format.md) (the frozen eval-case format
 and its `GraderKind` extension point), [ADR-0022](0022-eval-completeness-tier-parity-and-trace-promotion.md)
