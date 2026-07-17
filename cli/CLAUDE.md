@@ -25,13 +25,15 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   `DryRunPlan { lines }` for a `--dry-run` plan -- and routes it through
   `Ui::emit`; handlers must not call the stdout emitters
   (`payload`/`payload_plain`/`kv`) directly, since those suppress under `--json`.
-  Two tracked exceptions: the schema-gated ADR-0021 builders (`skill
-  status`/`skill eval`, `skill check`, `local message`/`cluster message`,
-  `secrets list`, the error path, `guide`) still inline their own `if json()`
-  branch, sanctioned and tracked for migration onto `Ui::emit` in #474; and the
-  operator verbs (`up`, `down`, `status`, `comms`), `deploy`, and `skill message`
-  have real-path success output that is not yet structured under `--json`,
-  tracked in #485.
+  The operator verbs (`up`, `down`, `status`, `comms`), `deploy`, and `skill
+  message` now return typed `CliOutput`s on their real-path success too (#485):
+  the operator/deploy verbs route through `Ui::emit`, and `skill message` buffers
+  the streamed reply into one `SkillMessageOutput` under `--json` (it still
+  streams live in the human path). One tracked exception remains: the
+  schema-gated ADR-0021 builders (`skill status`/`skill eval`, `skill check`,
+  `local message`/`cluster message`, `secrets list`, the error path, `guide`)
+  still inline their own `if json()` branch, sanctioned and tracked for migration
+  onto `Ui::emit` in #474.
 - **The command manifest is a committed artifact; regenerate it in the same
   change as any command-surface edit (console/CLI parity, epic #145).** Any
   change to a clap `Command`/subcommand or an `*Action` enum — a renamed verb,

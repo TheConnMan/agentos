@@ -1328,15 +1328,17 @@ async fn run(command: Option<Command>) -> Result<()> {
                 slack,
             } => {
                 let file = resolve_compose_file(file, dry_run).await?;
-                local::up(LocalOpts {
-                    file,
-                    dry_run,
-                    minimal,
-                    local_model,
-                    slack,
-                    model_mode: local::model_mode_from_env(),
-                })
-                .await
+                emit(
+                    local::up(LocalOpts {
+                        file,
+                        dry_run,
+                        minimal,
+                        local_model,
+                        slack,
+                        model_mode: local::model_mode_from_env(),
+                    })
+                    .await?,
+                )
             }
             LocalAction::Down {
                 file,
@@ -1345,31 +1347,35 @@ async fn run(command: Option<Command>) -> Result<()> {
                 dry_run,
             } => {
                 let file = resolve_compose_file(file, dry_run).await?;
-                local::down(LocalDownOpts {
-                    common: LocalOpts {
+                emit(
+                    local::down(LocalDownOpts {
+                        common: LocalOpts {
+                            file,
+                            dry_run,
+                            minimal: false,
+                            local_model: None,
+                            slack: false,
+                            model_mode: local::ModelMode::DefaultFake,
+                        },
+                        wipe,
+                        yes,
+                    })
+                    .await?,
+                )
+            }
+            LocalAction::Status { file, dry_run } => {
+                let file = resolve_compose_file(file, dry_run).await?;
+                emit(
+                    local::status(LocalOpts {
                         file,
                         dry_run,
                         minimal: false,
                         local_model: None,
                         slack: false,
                         model_mode: local::ModelMode::DefaultFake,
-                    },
-                    wipe,
-                    yes,
-                })
-                .await
-            }
-            LocalAction::Status { file, dry_run } => {
-                let file = resolve_compose_file(file, dry_run).await?;
-                local::status(LocalOpts {
-                    file,
-                    dry_run,
-                    minimal: false,
-                    local_model: None,
-                    slack: false,
-                    model_mode: local::ModelMode::DefaultFake,
-                })
-                .await
+                    })
+                    .await?,
+                )
             }
             LocalAction::Comms {
                 slack,
@@ -1382,16 +1388,18 @@ async fn run(command: Option<Command>) -> Result<()> {
             } => {
                 comms::require_provider(slack)?;
                 let resolved_file = resolve_compose_file(file, dry_run).await?;
-                comms::local_comms(LocalCommsOpts {
-                    file: resolved_file,
-                    dry_run,
-                    app_token,
-                    bot_token,
-                    disconnect,
-                    model_mode: local::model_mode_from_env(),
-                    minimal,
-                })
-                .await
+                emit(
+                    comms::local_comms(LocalCommsOpts {
+                        file: resolved_file,
+                        dry_run,
+                        app_token,
+                        bot_token,
+                        disconnect,
+                        model_mode: local::model_mode_from_env(),
+                        minimal,
+                    })
+                    .await?,
+                )
             }
             LocalAction::Message {
                 text,
@@ -1503,20 +1511,22 @@ async fn run(command: Option<Command>) -> Result<()> {
                 let connect_hint = format!(
                     "the platform API at {api_url} is unreachable. Start the local stack first with `agentos local up`, then re-run (or pass --api-url if your API is elsewhere)."
                 );
-                commands::deploy(DeployOpts {
-                    plugin_dir,
-                    api_url,
-                    api_key,
-                    slack_channel,
-                    env,
-                    label,
-                    secret,
-                    // `local deploy` offers `--secret`, so enforce the
-                    // declared-secrets policy gate (#464).
-                    secret_binding_supported: true,
-                    connect_hint,
-                })
-                .await
+                emit(
+                    commands::deploy(DeployOpts {
+                        plugin_dir,
+                        api_url,
+                        api_key,
+                        slack_channel,
+                        env,
+                        label,
+                        secret,
+                        // `local deploy` offers `--secret`, so enforce the
+                        // declared-secrets policy gate (#464).
+                        secret_binding_supported: true,
+                        connect_hint,
+                    })
+                    .await?,
+                )
             }
             LocalAction::Versions { target } => emit(commands::versions(target.into()).await?),
             LocalAction::Memory { target } => emit(commands::memory(target.into()).await?),
@@ -1604,43 +1614,45 @@ async fn run(command: Option<Command>) -> Result<()> {
                 } else {
                     ops::resolve_up_credentials(fake_model, ops::model_credential_env())
                 };
-                ops::up(UpOpts {
-                    common: CommonOpts {
-                        namespace,
-                        release,
-                        dry_run,
-                    },
-                    chart,
-                    no_expose,
-                    set,
-                    allow_egress_host,
-                    // Populated by ops::up (resolve named providers to host
-                    // routes on a live run); empty here so the pure builder and
-                    // --dry-run start clean.
-                    resolved_egress_cidrs: vec![],
-                    allow_web_egress,
-                    fake_model,
-                    credentials,
-                    local_model,
-                    // Default `agentSandbox.runner.model` from the shell
-                    // `AGENTOS_MODEL` (None when unset/empty) for cross-tier
-                    // parity with `local up` (#361).
-                    model: std::env::var("AGENTOS_MODEL")
-                        .ok()
-                        .filter(|s| !s.is_empty()),
-                    // Populated by ops::up (generate on fresh install / reuse on
-                    // upgrade); empty here so the pure builder starts clean.
-                    secrets: vec![],
-                    dev,
-                })
-                .await
+                emit(
+                    ops::up(UpOpts {
+                        common: CommonOpts {
+                            namespace,
+                            release,
+                            dry_run,
+                        },
+                        chart,
+                        no_expose,
+                        set,
+                        allow_egress_host,
+                        // Populated by ops::up (resolve named providers to host
+                        // routes on a live run); empty here so the pure builder and
+                        // --dry-run start clean.
+                        resolved_egress_cidrs: vec![],
+                        allow_web_egress,
+                        fake_model,
+                        credentials,
+                        local_model,
+                        // Default `agentSandbox.runner.model` from the shell
+                        // `AGENTOS_MODEL` (None when unset/empty) for cross-tier
+                        // parity with `local up` (#361).
+                        model: std::env::var("AGENTOS_MODEL")
+                            .ok()
+                            .filter(|s| !s.is_empty()),
+                        // Populated by ops::up (generate on fresh install / reuse on
+                        // upgrade); empty here so the pure builder starts clean.
+                        secrets: vec![],
+                        dev,
+                    })
+                    .await?,
+                )
             }
             ClusterAction::Down {
                 namespace,
                 release,
                 yes,
                 dry_run,
-            } => {
+            } => emit(
                 ops::down(DownOpts {
                     common: CommonOpts {
                         namespace,
@@ -1649,20 +1661,20 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     yes,
                 })
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Status {
                 namespace,
                 release,
                 dry_run,
-            } => {
+            } => emit(
                 ops::status(CommonOpts {
                     namespace,
                     release,
                     dry_run,
                 })
-                .await
-            }
+                .await?,
+            ),
             ClusterAction::Observability {
                 namespace,
                 release,
@@ -1698,18 +1710,20 @@ async fn run(command: Option<Command>) -> Result<()> {
                     std::path::Path::new("charts/agentos").is_dir(),
                 )?;
                 let chart = materialize_artifact(resolved, dry_run, "chart").await?;
-                comms::comms(CommsOpts {
-                    common: CommonOpts {
-                        namespace,
-                        release,
-                        dry_run,
-                    },
-                    chart,
-                    app_token,
-                    bot_token,
-                    disconnect,
-                })
-                .await
+                emit(
+                    comms::comms(CommsOpts {
+                        common: CommonOpts {
+                            namespace,
+                            release,
+                            dry_run,
+                        },
+                        chart,
+                        app_token,
+                        bot_token,
+                        disconnect,
+                    })
+                    .await?,
+                )
             }
             ClusterAction::Message {
                 text,
@@ -1862,24 +1876,26 @@ async fn run(command: Option<Command>) -> Result<()> {
                 let connect_hint = format!(
                     "the platform API at {api_url} is unreachable. `cluster deploy` reaches the API through the UI /api proxy (no port-forward); confirm the release is healthy with `agentos cluster status`, or pass --api-url to target the API directly."
                 );
-                commands::deploy(DeployOpts {
-                    plugin_dir,
-                    api_url,
-                    api_key,
-                    slack_channel,
-                    env,
-                    label,
-                    // Cluster connector-secret delivery is deferred to #440; no
-                    // `--secret` flag on `cluster deploy` (see the note above).
-                    secret: Vec::new(),
-                    // Secret binding is not wired on cluster until #440, so the
-                    // declared-secrets policy gate (#464) is skipped here: it
-                    // would otherwise hard-fail every secrets-declaring bundle
-                    // with a `--secret <NAME>` remediation this tier lacks.
-                    secret_binding_supported: false,
-                    connect_hint,
-                })
-                .await
+                emit(
+                    commands::deploy(DeployOpts {
+                        plugin_dir,
+                        api_url,
+                        api_key,
+                        slack_channel,
+                        env,
+                        label,
+                        // Cluster connector-secret delivery is deferred to #440; no
+                        // `--secret` flag on `cluster deploy` (see the note above).
+                        secret: Vec::new(),
+                        // Secret binding is not wired on cluster until #440, so the
+                        // declared-secrets policy gate (#464) is skipped here: it
+                        // would otherwise hard-fail every secrets-declaring bundle
+                        // with a `--secret <NAME>` remediation this tier lacks.
+                        secret_binding_supported: false,
+                        connect_hint,
+                    })
+                    .await?,
+                )
             }
             ClusterAction::Kill {
                 agent,
