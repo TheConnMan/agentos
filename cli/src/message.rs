@@ -1589,6 +1589,7 @@ mod tests {
                 expected: expected.into(),
                 case_sensitive: false,
             },
+            shared_history: false,
         }
     }
 

@@ -118,7 +118,12 @@ pub fn interview<R: BufRead, W: Write>(
         let input = ask_required(r, w, "  Prompt sent to the agent: ")?;
         let grader = ask_grader(r, w)?;
 
-        cases.push(EvalCase { id, input, grader });
+        cases.push(EvalCase {
+            id,
+            input,
+            grader,
+            shared_history: false,
+        });
 
         if !ask_yes_no(r, w, "\nAdd another case? [Y/n]: ", true)? {
             break;

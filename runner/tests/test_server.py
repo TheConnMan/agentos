@@ -90,6 +90,72 @@ def test_steer_takes_an_event_frame_and_conflicts_without_a_turn() -> None:
     anyio.run(go)
 
 
+def test_reset_endpoint_starts_a_fresh_session() -> None:
+    # The factory hands out a NEW fake each call, so a reset is observable: the
+    # runner's live session object changes identity after /v1/reset (#550).
+    sessions: list[FakeModelSession] = []
+
+    def factory() -> FakeModelSession:
+        fake = FakeModelSession()
+        sessions.append(fake)
+        return fake
+
+    runner = SessionRunner(
+        session_factory=factory,
+        ceiling=0,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="t",
+    )
+
+    async def go() -> None:
+        await runner.start()
+        first = runner._session  # noqa: SLF001 - identity check is the assertion
+        async with TestClient(TestServer(create_app(runner))) as client:
+            resp = await client.post("/v1/reset")
+            assert resp.status == 200
+            assert (await resp.json())["ok"] is True
+            # A fresh session replaced the original one; the old one was closed
+            # and the new one connected. (Asserted inside the client context: the
+            # app cleanup closes the live session on exit.)
+            second = runner._session  # noqa: SLF001
+            assert second is not first
+            assert first.connected is False
+            assert second is not None and second.connected is True
+            assert runner.status == SessionStatus.IDLE_AWAITING_INPUT
+
+    anyio.run(go)
+
+
+def test_reset_is_refused_while_a_turn_is_active() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner))) as client:
+            # Simulate a live turn: reset must 409 rather than tear the session
+            # down under an open /v1/event stream.
+            runner._turn_open = True  # noqa: SLF001
+            resp = await client.post("/v1/reset")
+            assert resp.status == 409
+
+    anyio.run(go)
+
+
+def test_reset_requires_auth_when_a_token_is_configured() -> None:
+    runner, _ = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        async with TestClient(TestServer(create_app(runner, token=_TOKEN))) as client:
+            unauth = await client.post("/v1/reset")
+            assert unauth.status == 401
+            ok = await client.post("/v1/reset", headers=_AUTH)
+            assert ok.status == 200
+
+    anyio.run(go)
+
+
 _TOKEN = "test-token-xyz"
 _AUTH = {"Authorization": f"Bearer {_TOKEN}"}
 _EVENT_FRAME = {"kind": "event", "type": "message", "text": "hi", "user": "U", "ts": "1"}

@@ -7,11 +7,17 @@ accumulated text deltas if no final arrives); the grader turns that into pass/fa
 A case whose turn errors is recorded as a failed case with the error, so one bad
 case never aborts the suite.
 
-Isolation note: cases are run sequentially against the given runner base_url, so
-they share that runner session. Strong per-case isolation (a fresh sandbox per
-case) is the Job-orchestration layer's choice (the API fans out eval Jobs per
-version @ sha); this runner executes whatever suite it is handed against one
-endpoint.
+Isolation note: cases run sequentially against one runner base_url, but each
+case runs in a *fresh conversation* by default (#550). Before a case the runner
+issues a ``reset`` (``POST /v1/reset``) that discards the runner's conversation,
+so a case can never answer from an earlier case's history instead of actually
+invoking its tools -- a false green for a side-effecting agent, and a silent
+order-dependence in the suite. A case that sets ``shared_history=True`` opts out
+of the reset and deliberately inherits the prior case's conversation (a
+multi-turn scenario expressed as ordered cases). Strong *sandbox* isolation (a
+fresh pod per case) remains the Job-orchestration layer's choice (the API fans
+out eval Jobs per version @ sha); the fresh-conversation reset is the per-case
+guarantee this in-process runner gives on one endpoint.
 """
 
 from __future__ import annotations
@@ -51,10 +57,45 @@ class EvalRunner:
         token: str | None = None,
         model: str | None = None,
     ) -> EvalRunResult:
-        results = [await self._run_case(case, base_url, token) for case in suite.cases]
+        results: list[EvalCaseResult] = []
+        for case in suite.cases:
+            # Fresh conversation by default (#550): reset the runner before a case
+            # so it cannot inherit an earlier case's history. A shared_history
+            # case skips the reset and deliberately chains onto what preceded it.
+            if not case.shared_history:
+                isolation_error = await self._isolate(base_url, token)
+                if isolation_error is not None:
+                    # Could not establish isolation: fail the case rather than run
+                    # it against a possibly-leaked conversation (a false green is
+                    # exactly what #550 removes). One bad reset never aborts the
+                    # suite, matching the per-case error handling in _run_case.
+                    results.append(
+                        EvalCaseResult(
+                            case_id=case.id,
+                            passed=False,
+                            output="",
+                            latency_ms=0.0,
+                            error=isolation_error,
+                        )
+                    )
+                    continue
+            results.append(await self._run_case(case, base_url, token))
         return EvalRunResult(
             version=version, suite=suite.name, results=results, model=model
         )
+
+    async def _isolate(self, base_url: str, token: str | None) -> str | None:
+        """Reset the runner's conversation; return an error string on failure.
+
+        None on success. A failed reset means the fresh-conversation guarantee
+        could not be established, so the caller fails the case instead of running
+        it against a leaked history.
+        """
+        try:
+            await self._runner.reset(base_url, token)
+        except (RunnerError, aiohttp.ClientError, TimeoutError) as exc:
+            return f"failed to reset conversation for isolation: {exc}"
+        return None
 
     async def _run_case(
         self, case: EvalCase, base_url: str, token: str | None = None

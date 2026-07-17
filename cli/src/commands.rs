@@ -1409,6 +1409,18 @@ async fn run_suite_cases(
 ) -> Result<Vec<EvalRow>> {
     let mut results = Vec::with_capacity(suite.cases.len());
     for (i, case) in suite.cases.iter().enumerate() {
+        // Fresh conversation by default (#550): reset the runner before a case so
+        // it cannot answer from an earlier case's history instead of actually
+        // invoking its tools. A shared_history case skips the reset and inherits
+        // the prior case's conversation on purpose (a multi-turn scenario).
+        if !case.shared_history {
+            client.reset().await.with_context(|| {
+                format!(
+                    "resetting the runner conversation before case {:?}",
+                    case.id
+                )
+            })?;
+        }
         let started = Instant::now();
         let events = client
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})

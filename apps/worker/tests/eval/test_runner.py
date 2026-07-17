@@ -107,6 +107,117 @@ def test_idle_awaiting_input_final_fails_even_if_text_matches(make_eval_harness)
     asyncio.run(go())
 
 
+def test_fresh_conversation_by_default_reds_a_case_that_only_passes_from_history(
+    make_eval_harness,
+) -> None:
+    """The #550 regression: a case that could only pass by inheriting a prior
+    case's history goes RED under the fresh-conversation default.
+
+    The recall case answers with the joined conversation so far. If it ran in the
+    seed case's conversation, its answer would contain the seed's secret and the
+    grader would pass -- the exact false green #550 removes. With the per-case
+    reset, the recall case starts fresh, its answer omits the secret, and it
+    fails. Ordering is no longer load-bearing."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"remember secret 42": "ok, noted"}
+            fake.recall_inputs = {"what is the secret?"}
+            suite = EvalSuite(
+                name="leak",
+                cases=[
+                    EvalCase(
+                        id="seed",
+                        input="remember secret 42",
+                        grader=Grader(kind=CONTAINS, expected="ok"),
+                    ),
+                    EvalCase(
+                        id="recall",
+                        input="what is the secret?",
+                        grader=Grader(kind=CONTAINS, expected="42"),
+                    ),
+                ],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+
+            by_id = {r.case_id: r for r in result.results}
+            assert by_id["seed"].passed is True
+            # The recall case CANNOT see the seed's history, so it goes red.
+            assert by_id["recall"].passed is False
+            assert by_id["recall"].output == ""  # no prior turn leaked in
+            assert result.summary() == "1/2 passed"
+            # The runner was reset before every fresh-conversation case.
+            assert fake.resets == 2
+
+    asyncio.run(go())
+
+
+def test_shared_history_opt_in_lets_a_case_inherit_prior_history(
+    make_eval_harness,
+) -> None:
+    """The opt-in half of #550: a case marked ``shared_history`` skips the reset
+    and deliberately inherits the prior case's conversation, so the same recall
+    case that fails in isolation now passes."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"remember secret 42": "ok, noted"}
+            fake.recall_inputs = {"what is the secret?"}
+            suite = EvalSuite(
+                name="chain",
+                cases=[
+                    EvalCase(
+                        id="seed",
+                        input="remember secret 42",
+                        grader=Grader(kind=CONTAINS, expected="ok"),
+                    ),
+                    EvalCase(
+                        id="recall",
+                        input="what is the secret?",
+                        grader=Grader(kind=CONTAINS, expected="42"),
+                        shared_history=True,
+                    ),
+                ],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+
+            by_id = {r.case_id: r for r in result.results}
+            assert by_id["seed"].passed is True
+            # recall inherited the seed turn, so its answer carries the secret.
+            assert by_id["recall"].passed is True
+            assert "remember secret 42" in by_id["recall"].output
+            assert result.summary() == "2/2 passed"
+            # Reset ran before the seed case but NOT before the shared_history one.
+            assert fake.resets == 1
+
+    asyncio.run(go())
+
+
+def test_a_failed_reset_fails_the_case_rather_than_leaking_history(
+    make_eval_harness,
+) -> None:
+    """If isolation cannot be established (the reset endpoint errors), the case is
+    failed with an error rather than run against a possibly-leaked conversation --
+    a false green is exactly what #550 removes."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "the answer is 4"}
+            fake.fail_reset = True  # the runner cannot establish isolation
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+
+            case = result.results[0]
+            assert case.passed is False
+            assert case.error is not None and "reset" in case.error
+            assert result.summary() == "0/1 passed"
+
+    asyncio.run(go())
+
+
 def test_all_passed_suite(make_eval_harness) -> None:
     async def go() -> None:
         async with make_eval_harness() as (base_url, fake, client):

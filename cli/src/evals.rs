@@ -74,6 +74,21 @@ pub struct EvalCase {
     pub id: String,
     pub input: String,
     pub grader: Grader,
+    /// Per-case isolation opt-out (#550). Each case runs in a *fresh
+    /// conversation* by default (`false`): `agentos skill eval` resets the runner
+    /// before the case so it cannot answer from an earlier case's history instead
+    /// of actually invoking its tools -- a false green for a side-effecting agent,
+    /// and a silent order-dependence in the suite. Set `true` to deliberately
+    /// chain a case onto the prior case's conversation (a multi-turn scenario as
+    /// ordered cases); the driver then skips the reset. On the first case it is a
+    /// no-op-with-caveat (no prior case to chain onto -- it only means "do not
+    /// reset first", inheriting any state the runner already held). Optional with
+    /// a `false`
+    /// default so it stays byte-compatible with the frozen eval-case schema
+    /// (`shared_history: false` is omitted on serialize, mirroring an authored
+    /// suite that never wrote the field).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_history: bool,
 }
 
 /// A named set of eval cases run together against one plugin version.
@@ -195,6 +210,7 @@ mod tests {
             id: "c".into(),
             input: "hi".into(),
             grader: g,
+            shared_history: false,
         }
     }
 
@@ -235,6 +251,29 @@ mod tests {
         assert_eq!(suite.cases[0].id, "a");
         assert_eq!(suite.cases[0].grader.kind, GraderKind::Contains);
         assert!(!suite.cases[0].grader.case_sensitive);
+    }
+
+    #[test]
+    fn shared_history_defaults_to_false_and_reads_true_when_set() {
+        // Omitted -> false (backward compatible with every authored suite).
+        let (_dir, path) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"contains","expected":"x"}}]}"#,
+        );
+        assert!(!load_suite(&path).unwrap().cases[0].shared_history);
+        // Present and true -> the case opts into the prior case's conversation.
+        let (_dir2, path2) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"contains","expected":"x"},"shared_history":true}]}"#,
+        );
+        assert!(load_suite(&path2).unwrap().cases[0].shared_history);
+    }
+
+    #[test]
+    fn a_false_shared_history_is_omitted_on_serialize() {
+        // Byte-compat with the frozen schema: a fresh-conversation case (the
+        // default) serializes exactly as a suite that never wrote the field, so
+        // the scaffold and spec-authored cases.json stay unchanged.
+        let json = serde_json::to_string(&case(grader(GraderKind::Contains, "x", false))).unwrap();
+        assert!(!json.contains("shared_history"), "got: {json}");
     }
 
     #[test]

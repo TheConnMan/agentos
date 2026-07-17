@@ -276,6 +276,36 @@ class SessionRunner:
             await self._session.close()
         self._tracer.shutdown()
 
+    async def reset(self) -> None:
+        """Discard the conversation and start a fresh model session (#550).
+
+        Eval isolation: the eval driver calls this between cases so each case
+        runs in a fresh conversation and cannot answer from an earlier case's
+        history instead of actually invoking its tools (a false green for a
+        side-effecting agent, and a silent order-dependence in the suite). Reset
+        tears down the current SDK session and reconnects a new one from the same
+        factory, so the next turn starts with no accumulated conversation; a
+        thread with a durable ``AGENTOS_HISTORY_REF`` still rehydrates its own
+        history preamble on reconnect (that is the thread's real history, not a
+        cross-case leak), while an eval runner (no history ref) comes up empty.
+
+        This is a deliberate, explicit control -- NOT per-turn session churn. The
+        one-long-lived-session-per-process invariant (prompt-cache affinity
+        across a thread's turns, ADR-0003) still holds for the message path,
+        which never calls reset. Held under the turn lock so it can never race a
+        live turn; the server refuses a reset while a turn is active (409) so the
+        lock is free the moment this runs.
+        """
+
+        async with self._turn_lock:
+            if self._session is not None:
+                await self._session.close()
+            self._session = self._factory()
+            await self._session.connect()
+            self._interrupt_requested = False
+            self._turn_open = False
+            self._status = SessionStatus.IDLE_AWAITING_INPUT
+
     async def steer(self, text: str) -> bool:
         """Inject a follow-up message into the live turn without consuming output.
 

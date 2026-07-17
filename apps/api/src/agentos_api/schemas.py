@@ -413,11 +413,17 @@ class GraderOut(BaseModel):
 class EvalCaseOut(BaseModel):
     """An eval case conforming to the frozen eval-case format (#8, ADR-0019):
     an input prompt plus the grader that judges the answer. Emitted by the
-    promote-a-trace-to-an-eval-case endpoint (#259)."""
+    promote-a-trace-to-an-eval-case endpoint (#259).
+
+    ``shared_history`` mirrors the worker's ``EvalCase`` field (#550, ADR-0051):
+    a promoted trace is a standalone case, so it emits the ``False`` default
+    (fresh conversation). Kept here to satisfy the schema field-parity gate; the
+    promote endpoint has no reason to mint a history-chained case."""
 
     id: str
     input: str
     grader: GraderOut
+    shared_history: bool = False
 
 
 class VersionCreate(BaseModel):
