@@ -16,6 +16,11 @@ import { ApiError } from "../api/client";
 export function ConsoleLogin({ onActivate }: { onActivate: (code: string) => Promise<void> }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // The server's remediation text, rendered as its own line. On a sealed install
+  // reached over a plaintext NodePort URL this is the port-forward instruction,
+  // and it is the operator's ONLY way in: dropping it would strand them on a
+  // bare reason with no next step.
+  const [fix, setFix] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -23,11 +28,13 @@ export function ConsoleLogin({ onActivate }: { onActivate: (code: string) => Pro
     if (!value || busy) return;
     setBusy(true);
     setError(null);
+    setFix(null);
     try {
       await onActivate(value);
       // On success the gate swaps this view out, so there is no state to reset.
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not reach the API.");
+      setFix(e instanceof ApiError ? e.fix : null);
       setBusy(false);
     }
   }
@@ -105,7 +112,7 @@ export function ConsoleLogin({ onActivate }: { onActivate: (code: string) => Pro
             autoFocus
             autoComplete="off"
             spellCheck={false}
-            placeholder="AAAA-BBBB-CCCC"
+            placeholder="Paste your login code"
             style={{
               width: "100%",
               background: C.input,
@@ -134,6 +141,21 @@ export function ConsoleLogin({ onActivate }: { onActivate: (code: string) => Pro
               }}
             >
               {error}
+              {fix ? (
+                <div
+                  data-testid="console-login-fix"
+                  style={{
+                    marginTop: 8,
+                    paddingTop: 8,
+                    borderTop: "1px solid rgba(229,77,46,.25)",
+                    color: C.muted,
+                    lineHeight: 1.6,
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {fix}
+                </div>
+              ) : null}
             </div>
           ) : null}
 

@@ -25,8 +25,10 @@ from ..auth import CONSOLE_SESSION_COOKIE, require_platform_key
 from ..config import get_settings
 from ..deps import SessionDep
 from ..schemas import (
+    ConsoleErrorOut,
     ConsoleLoginCodeMint,
     ConsoleLoginCodeOut,
+    ConsoleLoginRefusedOut,
     ConsoleRevokeOut,
     ConsoleSessionExchange,
     ConsoleSessionListItem,
@@ -89,7 +91,30 @@ async def mint_login_code(
     )
 
 
-@router.post("/session", response_model=ConsoleSessionOut)
+@router.post(
+    "/session",
+    response_model=ConsoleSessionOut,
+    # Both refusals are declared, not just the happy path (#630). They are the
+    # two outcomes a console MUST render -- one is an instruction to fix the
+    # URL, the other is "that code is no good" -- and an undeclared failure
+    # shape is one the UI has to guess at, which is how a wrong stub ships.
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "model": ConsoleErrorOut,
+            "description": (
+                "The origin is not a secure context, so a browser would drop "
+                "the Secure session cookie. The login code is NOT consumed."
+            ),
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": ConsoleLoginRefusedOut,
+            "description": (
+                "The login code is unknown, already spent, expired, or revoked. "
+                "Which one it was is deliberately not distinguished."
+            ),
+        },
+    },
+)
 async def exchange_login_code(
     data: ConsoleSessionExchange,
     session: SessionDep,
@@ -135,7 +160,10 @@ async def exchange_login_code(
         max_age=settings.console_session_ttl_seconds,
         httponly=True,  # page script cannot read the credential it authenticates with
         secure=True,
-        samesite="strict",  # the CSRF control (ADR-0049); the API runs no CORS
+        # Defense in depth, NOT the CSRF control: SameSite ignores the port, so
+        # this is same-site with every other localhost port. The control is the
+        # X-Console-Session header require_api_key demands (ADR-0049).
+        samesite="strict",
         path="/",
     )
     return ConsoleSessionOut(expires_at=expires_at)

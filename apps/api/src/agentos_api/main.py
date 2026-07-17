@@ -10,8 +10,10 @@ from contextlib import asynccontextmanager
 
 import httpx
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 
+from .auth import SESSION_STORE_DOWN_BODY, ConsoleSessionStoreUnavailable
 from .config import get_settings
 from .db import create_engine, create_sessionmaker
 from .evalqueue import EvalQueue
@@ -177,6 +179,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AgentOS API", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(ConsoleSessionStoreUnavailable)
+    async def _session_store_unavailable(
+        request: Request, exc: ConsoleSessionStoreUnavailable
+    ) -> JSONResponse:
+        """A console session could not be verified because its store is down
+        (#630, ADR-0049). A 503 with the CLI as the fix, never a 500 and never a
+        401: the operator's session is fine, the database is not."""
+
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=SESSION_STORE_DOWN_BODY,
+        )
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:

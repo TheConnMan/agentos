@@ -42,6 +42,14 @@ export interface ConsoleSession {
   expires_at: string | null;
 }
 
+// POST /console/session returns the established session's expiry and nothing
+// else: the token is the HttpOnly cookie, and there is no `authenticated` field
+// (apps/api ConsoleSessionOut). Kept distinct from ConsoleSession so a stub that
+// invents `authenticated` here fails to type-check.
+export interface ConsoleSessionOut {
+  expires_at: string;
+}
+
 function sessionApi<T>(name: string): T {
   const fn = (client as Record<string, unknown>)[name];
   if (typeof fn !== "function") {
@@ -51,14 +59,19 @@ function sessionApi<T>(name: string): T {
 }
 
 const getSession = (): Promise<ConsoleSession> => sessionApi<() => Promise<ConsoleSession>>("getSession")();
-const activateSession = (code: string): Promise<ConsoleSession> =>
-  sessionApi<(code: string) => Promise<ConsoleSession>>("activateSession")(code);
+const activateSession = (code: string): Promise<ConsoleSessionOut> =>
+  sessionApi<(code: string) => Promise<ConsoleSessionOut>>("activateSession")(code);
 const logout = (): Promise<void> => sessionApi<() => Promise<void>>("logout")();
 
 // Assembled at runtime so this file itself never contains the literal, which
 // would poison the source-scan test below.
 const DEV_KEY = ["agentos", "dev", "key"].join("-");
 const PLANTED = "supersecret";
+
+// A real login code is secrets.token_urlsafe(32): 43 base64url characters, no
+// dashes and no grouping. Fixtures use the real shape so nothing here certifies
+// a format the CLI cannot mint.
+const LOGIN_CODE = "hQ2m8LxF0vTnPzR6wKdYbJ7sGcAeUiOl3ZpXrNyMt4Q";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -172,6 +185,53 @@ describe("the client never carries the platform key (AC1, AC3)", () => {
   });
 });
 
+// The cookie is ambient authority: SameSite=Strict is a SITE control and ignores
+// the port, so http://localhost:8080 is same-site with every other localhost
+// port, and a body-less POST (e.g. /agents/{id}/kill) is a CORS-simple request
+// nothing preflights. The custom header cannot be set cross-origin without a
+// preflight this CORS-free API fails, so it is what makes the cookie unusable by
+// a forged cross-site request. apps/api rejects the cookie without it.
+describe("every call carries the console CSRF header (ADR-0049)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(200, {})));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  function consoleHeader(init: Init | undefined): string | undefined {
+    const entry = Object.entries(init?.headers ?? {}).find(
+      ([name]) => name.toLowerCase() === "x-console-session",
+    );
+    return entry?.[1];
+  }
+
+  it("sends X-Console-Session on every authenticated verb", async () => {
+    await exerciseClient();
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(6);
+    for (const [url, init] of fetchMock.mock.calls as [string, Init][]) {
+      expect(consoleHeader(init), `X-Console-Session on ${url}`).toBe("1");
+    }
+  });
+
+  it("sends X-Console-Session on the multipart bundle upload, which sets no Content-Type", async () => {
+    // uploadBundle replaces the JSON headers wholesale so fetch can pick the
+    // multipart boundary; the header must survive that.
+    await client.uploadBundle("a1", "v1", new Blob(["zip"]));
+    const [url, init] = fetchMock.mock.calls[0] as [string, Init];
+    expect(consoleHeader(init), `X-Console-Session on ${url}`).toBe("1");
+  });
+
+  it("sends X-Console-Session on the session endpoints themselves", async () => {
+    await getSession();
+    await logout();
+    expect(fetchMock.mock.calls.length).toBe(2);
+    for (const [url, init] of fetchMock.mock.calls as [string, Init][]) {
+      expect(consoleHeader(init), `X-Console-Session on ${url}`).toBe("1");
+    }
+  });
+});
+
 describe("the api module exposes no platform-key surface (AC1)", () => {
   it("exports no apiKey function from config", () => {
     expect(Object.keys(config)).not.toContain("apiKey");
@@ -213,36 +273,59 @@ describe("console session client (AC2)", () => {
     expect(session.expires_at).toBe("2026-07-18T00:00:00Z");
   });
 
-  it("GET /console/session reports an unauthenticated console rather than throwing on 401", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { detail: "no console session" }));
+  it("GET /console/session reports an unauthenticated console without throwing", async () => {
+    // The server answers anonymous with 200 authenticated=false, never a 401:
+    // not being logged in is the answer, not an error (apps/api console router).
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { authenticated: false, expires_at: null }));
     vi.stubGlobal("fetch", fetchMock);
     const session = await getSession();
     expect(session.authenticated).toBe(false);
+    expect(session.expires_at).toBeNull();
   });
 
-  it("POST /console/session sends the code in the body and returns the live session", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(jsonResponse(201, { authenticated: true, expires_at: "2026-07-18T00:00:00Z" }));
+  it("POST /console/session sends the code in the body and returns the session expiry", async () => {
+    // 200 with ConsoleSessionOut = {expires_at} only. There is no `authenticated`
+    // field to read: the cookie is the session, and the gate opens on this call
+    // resolving at all.
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { expires_at: "2026-07-18T00:00:00Z" }));
     vi.stubGlobal("fetch", fetchMock);
-    const session = await activateSession("AAAA-BBBB-CCCC");
+    const session = await activateSession(LOGIN_CODE);
     const [url, init] = fetchMock.mock.calls[0] as [string, Init];
     expect(url).toBe("/api/console/session");
     expect(init?.method).toBe("POST");
     expect(init?.credentials).toBe("same-origin");
-    expect(JSON.parse(String(init?.body))).toEqual({ code: "AAAA-BBBB-CCCC" });
-    expect(session.authenticated).toBe(true);
+    expect(JSON.parse(String(init?.body))).toEqual({ code: LOGIN_CODE });
+    expect(session.expires_at).toBe("2026-07-18T00:00:00Z");
   });
 
-  it("POST /console/session surfaces a rejected code as ApiError with the server's fix text", async () => {
+  it("POST /console/session surfaces a rejected code as ApiError carrying the server's reason", async () => {
+    // The server collapses unknown/spent/expired/revoked into one 401 {detail}.
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(jsonResponse(400, { detail: "login code is expired or already used" }));
+      .mockResolvedValue(jsonResponse(401, { detail: "invalid or expired login code" }));
     vi.stubGlobal("fetch", fetchMock);
-    const err = (await activateSession("STALE-CODE").catch((e: unknown) => e)) as ApiError;
+    const err = (await activateSession("stale-code").catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(401);
+    expect(err.message).toContain("invalid or expired login code");
+  });
+
+  it("POST /console/session surfaces the insecure-origin 400's fix, not just its reason", async () => {
+    // The exchange's only 400 is {error, fix} (apps/api console router), and the
+    // `fix` names the port-forward that is the operator's ONLY way in from a
+    // plaintext NodePort URL. Dropping it strands them on "Bad Request".
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(400, {
+        error: "refusing to establish a console session from a non-secure origin 'http://10.0.0.4:30080'",
+        fix: "Reach the console over a secure context and log in again: kubectl port-forward -n agentos svc/agentos-ui 8080:80 then open http://localhost:8080.",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const err = (await activateSession(LOGIN_CODE).catch((e: unknown) => e)) as ApiError;
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(400);
-    expect(err.message).toContain("expired");
+    expect(err.message).toContain("non-secure origin");
+    expect(err.fix).toContain("kubectl port-forward");
   });
 
   it("DELETE /console/session revokes the session and surfaces failures as ApiError", async () => {
@@ -270,18 +353,15 @@ describe("console session client (AC2)", () => {
     const localSet = vi.spyOn(Storage.prototype, "setItem");
     const push = vi.spyOn(window.history, "pushState");
     const replace = vi.spyOn(window.history, "replaceState");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse(201, { authenticated: true, expires_at: "2026-07-18T00:00:00Z" })),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { expires_at: "2026-07-18T00:00:00Z" })));
 
-    await activateSession("AAAA-BBBB-CCCC");
+    await activateSession(LOGIN_CODE);
 
     expect(localSet).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
-    expect(window.location.href).not.toContain("AAAA-BBBB-CCCC");
+    expect(window.location.href).not.toContain(LOGIN_CODE);
   });
 });

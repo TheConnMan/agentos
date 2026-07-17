@@ -31,8 +31,13 @@ async def require_state_access(
     x_api_key: Annotated[str | None, Header()] = None,
 ) -> None:
     """State-router auth (ADR-0033): the platform key (trusted callers) OR a
-    scoped ``state`` token bound to this path's ``agent_id`` (the sandbox). Every
-    other router keeps the platform-key-only ``require_api_key``."""
+    scoped ``state`` token bound to this path's ``agent_id`` (the sandbox).
+
+    Every other router keeps ``require_api_key``, which accepts the platform key
+    or a console session (ADR-0049) and never a scoped token. The two are
+    disjoint extensions of the same platform key on purpose: a scoped token must
+    not reach a resolve-capable route, and a console session must not reach a
+    sandbox's state namespace."""
 
     if verify_platform_key(x_api_key):
         return

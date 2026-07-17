@@ -95,10 +95,20 @@ export class BundleValidationError extends Error {
 /** Thrown for any other non-2xx response. */
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The server's remediation text, from the `{error, fix}` bodies the API sends
+   * on the failures it can tell the operator how to fix (the console exchange's
+   * insecure-origin 400, the session store being unreachable). null when the
+   * response carried no `fix`. Kept a distinct field rather than concatenated
+   * into `message` so a view can render the reason and the instruction as the
+   * two different things they are.
+   */
+  fix: string | null;
+  constructor(status: number, message: string, fix: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.fix = fix;
   }
 }
 
@@ -106,20 +116,71 @@ function url(path: string): string {
   return `${API_PREFIX}${path}`;
 }
 
+// The CSRF header the API requires alongside the session cookie (ADR-0049).
+// The cookie is ambient authority and SameSite=Strict does not close that: the
+// "site" a browser compares ignores the port, so http://localhost:8080 (the
+// port-forward login URL) is same-site with every other localhost port, and a
+// body-less POST like /agents/{id}/kill is a CORS-simple request that no
+// preflight guards. A custom header cannot be set cross-origin without a
+// preflight, which this CORS-free API answers with a rejection -- so carrying it
+// is what makes the cookie unusable by a forged cross-site request. apps/api
+// rejects the cookie without it, so every call must send it. Presence is the
+// check; the value is arbitrary.
+const CSRF_HEADERS = { "X-Console-Session": "1" };
+
 // Spread into every request init so the HttpOnly session cookie rides along.
 // The API is strictly same-origin (it runs no CORS middleware on purpose), so
 // "same-origin" is both the correct scope and the tightest one.
-const SAME_ORIGIN = { credentials: "same-origin" } as const;
+const SAME_ORIGIN = { credentials: "same-origin", headers: { ...CSRF_HEADERS } } as const;
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+// Callers that send a JSON body replace `headers` wholesale, so the CSRF header
+// is folded in here rather than lost. The multipart upload passes no headers at
+// all (fetch must pick the boundary), so it keeps SAME_ORIGIN's copy.
+const JSON_HEADERS = { ...CSRF_HEADERS, "Content-Type": "application/json" };
 
 async function jsonOrThrow<T>(resp: Response): Promise<T> {
   if (resp.ok) return (await resp.json()) as T;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
-function describeError(body: unknown): string | null {
+// The one place a non-2xx response becomes an ApiError, so every caller gets the
+// same treatment of both error shapes the API sends. statusText ("Bad Request")
+// stays the last resort: it names nothing the operator can act on, so it is used
+// only when the server sent no legible body at all.
+async function apiErrorFrom(resp: Response): Promise<ApiError> {
+  return apiError(resp.status, await resp.json().catch(() => null), resp.statusText);
+}
+
+// Body-based variant, for the one caller that must read the body itself (the
+// bundle 422 inspects it for validator issues before deciding what to throw).
+function apiError(status: number, body: unknown, statusText: string): ApiError {
+  const described = describeError(body);
+  return new ApiError(status, described?.message ?? statusText, described?.fix ?? null);
+}
+
+interface DescribedError {
+  message: string;
+  fix: string | null;
+}
+
+function describeError(body: unknown): DescribedError | null {
+  // The agent-facing {error, fix} shape (ADR-0021): a reason plus the operator's
+  // way out. The console exchange's only 400 is this shape, and its `fix` is the
+  // port-forward instruction that is the sole route in from a plaintext origin.
+  if (body && typeof body === "object" && "error" in body) {
+    const error = (body as { error: unknown }).error;
+    if (typeof error === "string") {
+      const fix = (body as { fix?: unknown }).fix;
+      return { message: error, fix: typeof fix === "string" ? fix : null };
+    }
+  }
+  const detailMessage = describeDetail(body);
+  return detailMessage === null ? null : { message: detailMessage, fix: null };
+}
+
+// FastAPI's {detail} shape, in its three flavors: a string, a nested {detail},
+// or a field-validation array.
+function describeDetail(body: unknown): string | null {
   if (body && typeof body === "object" && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;
@@ -140,21 +201,30 @@ function describeError(body: unknown): string | null {
 
 // ---- console session (#630 / ADR-0049) ----
 
-/** The console's own auth state, as the server sees it. */
+/** The console's own auth state, as the server sees it (ConsoleSessionStatus). */
 export interface ConsoleSession {
   authenticated: boolean;
   expires_at: string | null;
 }
 
 /**
- * Read the current console session. A 401 is the expected answer for a console
- * that has not logged in yet, so it resolves to an unauthenticated session
- * rather than throwing: being logged out is a state the gate renders, not an
- * error it has to recover from. Any other failure still throws ApiError.
+ * The established session (ConsoleSessionOut). The expiry is the whole body: the
+ * token is returned only as the HttpOnly cookie, and there is no `authenticated`
+ * field, because a response at all IS the authentication.
+ */
+export interface ConsoleSessionOut {
+  expires_at: string;
+}
+
+/**
+ * Read the current console session. This never 401s by design -- an anonymous
+ * caller is a 200 with authenticated=false, because not being logged in is the
+ * answer, not an error -- so there is no 401 branch here. A genuine failure
+ * (the session store being down, say) throws ApiError, which the gate treats as
+ * locked.
  */
 export async function getSession(): Promise<ConsoleSession> {
   const resp = await fetch(url("/console/session"), { ...SAME_ORIGIN });
-  if (resp.status === 401) return { authenticated: false, expires_at: null };
   return jsonOrThrow<ConsoleSession>(resp);
 }
 
@@ -163,24 +233,25 @@ export async function getSession(): Promise<ConsoleSession> {
  * login` for a session. The server consumes the code and returns the session as
  * an HttpOnly cookie, so the code is spent here and never stored: this module
  * keeps it only as the argument of this call. A rejected or expired code
- * surfaces as ApiError carrying the server's reason.
+ * surfaces as ApiError carrying the server's reason (401); an exchange refused
+ * for a non-secure origin surfaces as ApiError whose `fix` names the
+ * port-forward the operator needs (400).
  */
-export async function activateSession(code: string): Promise<ConsoleSession> {
+export async function activateSession(code: string): Promise<ConsoleSessionOut> {
   const resp = await fetch(url("/console/session"), {
     method: "POST",
     ...SAME_ORIGIN,
     headers: JSON_HEADERS,
     body: JSON.stringify({ code }),
   });
-  return jsonOrThrow<ConsoleSession>(resp);
+  return jsonOrThrow<ConsoleSessionOut>(resp);
 }
 
 /** Revoke the current session server-side (the row is marked, not deleted). */
 export async function logout(): Promise<void> {
   const resp = await fetch(url("/console/session"), { method: "DELETE", ...SAME_ORIGIN });
   if (resp.ok) return;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
 export async function createAgent(input: {
@@ -232,7 +303,7 @@ export async function uploadBundle(
   const body = await resp.json().catch(() => null);
   const issues = extractIssues(body);
   if (resp.status === 422 && issues) throw new BundleValidationError(issues);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw apiError(resp.status, body, resp.statusText);
 }
 
 // The bundle 422 body is { detail: { detail: "...", errors: [ {code,message,location} ] } }.
@@ -437,8 +508,7 @@ export async function updateAgent(
 export async function deleteAgent(agentId: string): Promise<void> {
   const resp = await fetch(url(`/agents/${agentId}`), { method: "DELETE", ...SAME_ORIGIN });
   if (resp.ok) return;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
 export async function getCost(agentId: string, range: { start?: string; end?: string } = {}): Promise<CostReport> {
@@ -601,8 +671,7 @@ export async function deleteMemory(
     },
   );
   if (resp.ok) return;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
 export async function killAgent(agentId: string): Promise<KillState> {

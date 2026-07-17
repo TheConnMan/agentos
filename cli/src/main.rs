@@ -1695,11 +1695,16 @@ async fn run(command: Option<Command>) -> Result<()> {
                 // The local console is always at a fixed localhost URL, so it
                 // needs no discovery -- the same reason `local observability`
                 // resolves from consts while the cluster twin shells kubectl.
+                // That URL is loopback, hence already a secure context, so the
+                // login exchange accepts it and there is no port-forward to name.
                 LocalConsoleAction::Login { target, label } => emit(
                     commands::console_login(
                         target.into(),
                         label,
-                        Some(agentos::observability::LOCAL_CONSOLE_URL.to_string()),
+                        ops::ConsoleAccess {
+                            url: Some(agentos::observability::LOCAL_CONSOLE_URL.to_string()),
+                            login: None,
+                        },
                     )
                     .await?,
                 ),
@@ -1862,10 +1867,10 @@ async fn run(command: Option<Command>) -> Result<()> {
                     // Skipped under --dry-run: the dry-run plan does not carry a
                     // console URL, so resolving one would be three kubectl calls
                     // whose only result is discarded.
-                    let console_url = if dry_run {
-                        None
+                    let access = if dry_run {
+                        ops::ConsoleAccess::default()
                     } else {
-                        ops::discover_console_url(&common).await
+                        ops::discover_console_access(&common).await
                     };
                     emit(
                         commands::console_login(
@@ -1875,7 +1880,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                                 dry_run,
                             },
                             label,
-                            console_url,
+                            access,
                         )
                         .await?,
                     )

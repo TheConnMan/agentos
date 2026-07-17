@@ -702,13 +702,18 @@ async def mint_console_login_code(
     The raw code is returned exactly once, to the CLI caller that minted it
     under the platform key; only its digest is stored, so nothing can hand it
     back later.
+
+    The expiry is computed DB-side (``func.now()``, not the API's clock) because
+    every liveness predicate below evaluates against ``func.now()``. Stamping on
+    one clock and judging on another makes the real lifetime the skew between
+    them, so a code or session can outlive its nominal TTL.
     """
 
     code = secrets.token_urlsafe(CONSOLE_TOKEN_BYTES)
     row = ConsoleSession(
         label=label,
         login_code_hash=_digest(code),
-        login_code_expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+        login_code_expires_at=func.now() + timedelta(seconds=ttl_seconds),
     )
     session.add(row)
     await session.commit()
@@ -727,10 +732,14 @@ async def exchange_console_login_code(
     ``consumed_at IS NULL`` guard is the compare-and-set (the same resolve-once
     idiom approvals use), so two concurrent exchanges of one code cannot both
     win and mint two sessions.
+
+    The session expiry is computed DB-side and read back from the RETURNING
+    clause, so the expiry reported to the caller is the same value
+    ``live_console_session`` will later judge against ``func.now()``. See
+    ``mint_console_login_code`` for why one clock must own the lifetime.
     """
 
     token = secrets.token_urlsafe(CONSOLE_TOKEN_BYTES)
-    expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
     result = await session.execute(
         update(ConsoleSession)
         .where(
@@ -742,13 +751,13 @@ async def exchange_console_login_code(
         .values(
             consumed_at=func.now(),
             session_token_hash=_digest(token),
-            session_expires_at=expires_at,
+            session_expires_at=func.now() + timedelta(seconds=ttl_seconds),
         )
-        .returning(ConsoleSession.id)
+        .returning(ConsoleSession.session_expires_at)
     )
-    consumed = result.scalar_one_or_none()
+    expires_at = result.scalar_one_or_none()
     await session.commit()
-    if consumed is None:
+    if expires_at is None:
         return None
     return token, expires_at
 

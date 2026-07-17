@@ -2725,15 +2725,22 @@ pub enum ConsoleLoginOutput {
         /// if we cannot name the URL, and failing the mint over a cosmetic
         /// lookup would throw away a live credential.
         console_url: Option<String>,
+        /// Set when `console_url`'s origin is one the login exchange refuses (a
+        /// plaintext NodePort console): the loopback path that can accept this
+        /// code. `None` when the console URL is already loginable.
+        login: Option<crate::ops::ConsoleLoginPath>,
     },
 }
 
 impl crate::ui::CliOutput for ConsoleLoginOutput {
-    /// `{"code","expires_at","session_id","console_url":<string|null>}`.
+    /// `{"code","expires_at","session_id","console_url":<string|null>,
+    /// "login":{"url","port_forward"}|null}`.
     ///
-    /// `console_url` is emitted with an explicit null rather than omitted when
-    /// unresolved, per the repo convention pinned by
-    /// `kill_output_json_shape_is_pinned`.
+    /// `console_url` and `login` are emitted with an explicit null rather than
+    /// omitted when unresolved / not needed, per the repo convention pinned by
+    /// `kill_output_json_shape_is_pinned`. `login` is structured data, not a
+    /// hint buried in prose: an agent under `--json` reads `login.url` as the
+    /// URL this code can be spent at (#630, ADR-0049).
     fn to_json(&self) -> serde_json::Value {
         match self {
             ConsoleLoginOutput::DryRun(plan) => plan.to_json(),
@@ -2742,11 +2749,16 @@ impl crate::ui::CliOutput for ConsoleLoginOutput {
                 expires_at,
                 session_id,
                 console_url,
+                login,
             } => serde_json::json!({
                 "code": code,
                 "expires_at": expires_at,
                 "session_id": session_id,
                 "console_url": console_url,
+                "login": login.as_ref().map(|l| serde_json::json!({
+                    "url": l.url,
+                    "port_forward": l.port_forward,
+                })),
             }),
         }
     }
@@ -2758,6 +2770,7 @@ impl crate::ui::CliOutput for ConsoleLoginOutput {
                 code,
                 expires_at,
                 console_url,
+                login,
                 ..
             } => {
                 ui.kv("login code", code);
@@ -2768,6 +2781,15 @@ impl crate::ui::CliOutput for ConsoleLoginOutput {
                         "could not resolve the console URL; find it with `agentos cluster status`",
                     ),
                 }
+                // The console URL above is a plaintext origin, so the exchange
+                // would refuse this code there. Name the URL it CAN be spent at,
+                // at the exact moment the operator is about to spend it.
+                if let Some(login) = login {
+                    ui.kv(
+                        "log in at",
+                        &format!("{}  then {}", login.port_forward, ui.url(&login.url)),
+                    );
+                }
                 ui.note("single use: open the console, paste the code, and it is spent");
             }
         }
@@ -2777,13 +2799,14 @@ impl crate::ui::CliOutput for ConsoleLoginOutput {
 /// `<tier> console login`: mint a single-use login code for the console
 /// (`POST /console/login-codes`, #630/ADR-0049).
 ///
-/// `console_url` is resolved by the caller because the tiers resolve it
-/// differently (a fixed localhost URL vs the release's `ui` service), which is
-/// the same split `observability` already draws between the two tiers.
+/// `access` is resolved by the caller because the tiers resolve it differently
+/// (a fixed loopback localhost URL, already a secure context, vs the release's
+/// `ui` service, which may be a plaintext NodePort the exchange refuses), which
+/// is the same split `observability` already draws between the two tiers.
 pub async fn console_login(
     opts: ConsoleOpts,
     label: Option<String>,
-    console_url: Option<String>,
+    access: crate::ops::ConsoleAccess,
 ) -> Result<ConsoleLoginOutput> {
     if opts.dry_run {
         return Ok(ConsoleLoginOutput::DryRun(crate::ui::DryRunPlan {
@@ -2796,7 +2819,8 @@ pub async fn console_login(
         code: minted.code,
         expires_at: minted.expires_at,
         session_id: minted.session_id,
-        console_url,
+        console_url: access.url,
+        login: access.login,
     })
 }
 
@@ -4425,12 +4449,17 @@ mod tests {
             expires_at: "2026-07-17T12:00:00Z".into(),
             session_id: "11111111-1111-1111-1111-111111111111".into(),
             console_url: None,
+            login: None,
         };
         let json = out.to_json();
         assert!(
             json.get("console_url")
                 .is_some_and(serde_json::Value::is_null),
             "an unresolved console_url must be an explicit null, not omitted: {json}"
+        );
+        assert!(
+            json.get("login").is_some_and(serde_json::Value::is_null),
+            "a console that needs no port-forward must say so with an explicit null: {json}"
         );
         assert_eq!(json["code"], "abc123");
         assert_eq!(json["expires_at"], "2026-07-17T12:00:00Z");
@@ -4447,7 +4476,9 @@ mod tests {
             api_key: "K".into(),
             dry_run: true,
         };
-        let login = super::console_login(opts(), None, None).await.unwrap();
+        let login = super::console_login(opts(), None, Default::default())
+            .await
+            .unwrap();
         assert_eq!(login.to_json()["dry_run"], true);
         assert_eq!(
             login.to_json()["plan"][0],
@@ -4472,12 +4503,40 @@ mod tests {
             expires_at: "2026-07-17T12:00:00Z".into(),
             session_id: "sid".into(),
             console_url: Some("http://localhost:28080/?api=1".into()),
+            login: None,
         };
         let json = out.to_json().to_string();
         assert!(json.contains("abc123"), "the code is the point of the verb");
         assert!(
             !json.contains("agentos-dev-key"),
             "the platform key must never reach the output"
+        );
+    }
+
+    /// A code minted against a plaintext NodePort console must name the loopback
+    /// URL it can actually be spent at, as DATA: an agent reading `--json` needs
+    /// `login.url`, not a sentence (#630, ADR-0049).
+    #[test]
+    fn console_login_carries_the_loginable_path_when_the_console_is_plaintext() {
+        use crate::ui::CliOutput;
+        let out = super::ConsoleLoginOutput::Minted {
+            code: "abc123".into(),
+            expires_at: "2026-07-17T12:00:00Z".into(),
+            session_id: "sid".into(),
+            console_url: Some("http://10.0.0.5:30080/?api=1".into()),
+            login: crate::ops::login_path_for(
+                "http://10.0.0.5:30080/?api=1",
+                "agentos",
+                "agentos-ui",
+                80,
+            ),
+        };
+        let json = out.to_json();
+        assert_eq!(json["console_url"], "http://10.0.0.5:30080/?api=1");
+        assert_eq!(json["login"]["url"], "http://localhost:8080/?api=1");
+        assert_eq!(
+            json["login"]["port_forward"],
+            "kubectl -n agentos port-forward svc/agentos-ui 8080:80"
         );
     }
 

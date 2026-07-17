@@ -19,7 +19,8 @@ import { fileURLToPath, URL as NodeURL } from "node:url";
 
 // Assembled at runtime so this spec file never contains the literal it scans for.
 const DEV_KEY = ["agentos", "dev", "key"].join("-");
-const LOGIN_CODE = "AAAA-BBBB-CCCC";
+// A real code is secrets.token_urlsafe(32): 43 base64url chars, no dashes.
+const LOGIN_CODE = "hQ2m8LxF0vTnPzR6wKdYbJ7sGcAeUiOl3ZpXrNyMt4Q";
 
 function json(status: number, body: unknown) {
   return { status, contentType: "application/json", body: JSON.stringify(body) };
@@ -50,10 +51,12 @@ async function stubSession(page: Page) {
       const body = JSON.parse(route.request().postData() ?? "{}");
       codesSeen.push(body.code);
       if (body.code !== LOGIN_CODE) {
-        return route.fulfill(json(400, { detail: "login code is expired or already used" }));
+        // The server collapses unknown/spent/expired/revoked into one 401 {detail}.
+        return route.fulfill(json(401, { detail: "invalid or expired login code" }));
       }
       state.authenticated = true;
-      return route.fulfill(json(201, { authenticated: true, expires_at: "2026-07-18T00:00:00Z" }));
+      // ConsoleSessionOut: the expiry is the whole body; the token is the cookie.
+      return route.fulfill(json(200, { expires_at: "2026-07-18T00:00:00Z" }));
     }
     if (method === "DELETE") {
       state.authenticated = false;
@@ -130,6 +133,36 @@ test("a rejected login code keeps the gate closed and shows the server's reason 
   await page.getByTestId("console-login-submit").click();
 
   await expect(page.getByTestId("console-login-error")).toContainText(/expired|already used/i);
+  await expect(page.getByTestId("console-login")).toBeVisible();
+  await expect(page.getByRole("navigation")).toHaveCount(0);
+});
+
+test("an insecure-origin refusal shows the operator the port-forward fix, not a bare error (AC2)", async ({
+  page,
+}) => {
+  // The one path a sealed install's first-run operator is most likely to hit:
+  // opening the plaintext NodePort URL. The exchange's only 400 is {error, fix},
+  // and the fix is the operator's sole way in. If the console renders just
+  // "Bad Request", they are stranded.
+  await page.route(/\/api\/agents(\?.*)?$/, (route) => route.fulfill(json(200, [])));
+  await page.route("**/api/config", (route) => route.fulfill(json(200, { org_name: "acme-corp" })));
+  await page.route("**/api/console/session", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill(
+        json(400, {
+          error: "refusing to establish a console session from a non-secure origin 'http://10.0.0.4:30080'",
+          fix: "Reach the console over a secure context and log in again: kubectl port-forward -n agentos svc/agentos-ui 8080:80 then open http://localhost:8080.",
+        }),
+      );
+    }
+    return route.fulfill(json(200, { authenticated: false, expires_at: null }));
+  });
+
+  await page.goto("/?api=1");
+  await logIn(page);
+
+  await expect(page.getByTestId("console-login-error")).toContainText("non-secure origin");
+  await expect(page.getByTestId("console-login-fix")).toContainText("kubectl port-forward");
   await expect(page.getByTestId("console-login")).toBeVisible();
   await expect(page.getByRole("navigation")).toHaveCount(0);
 });

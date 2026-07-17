@@ -68,11 +68,18 @@ credential it authenticates with.
 
 **One shared dependency still gates every router.** `require_api_key`
 (`apps/api/src/agentos_api/auth.py`) accepts the platform key **or** a live
-console session, in that order, and stays the single dependency every router
-depends on. The platform-key path is unchanged and hits no database, so the
-worker, runner, and CLI are untouched. This extends the shared dependency rather
-than adding a second auth scheme to a router, which is the boundary
-`apps/api/CLAUDE.md` draws.
+console session (cookie plus `X-Console-Session`, below), in that order, and
+stays the single dependency every router depends on. The platform-key path is
+unchanged and hits no database and requires no header, so the worker, runner, and
+CLI are untouched. This extends the shared dependency rather than adding a second
+auth scheme to a router, which is the boundary `apps/api/CLAUDE.md` draws.
+
+The order is also what keeps a database outage from taking the platform key down
+with it. A machine caller returns before the session store is ever read. A
+console caller whose read fails gets a `{error, fix}` **503** naming the CLI as
+the way in, not a 500 and not a 401 -- the kill switch and the pod-log proxy are
+what an operator reaches for when the system is already sick, and neither of them
+needed Postgres to authenticate before this ADR.
 
 **A session cannot mint or manage sessions.** The three operator routes
 (`POST /console/login-codes`, `GET /console/sessions`, `DELETE /console/sessions`)
@@ -84,19 +91,44 @@ name and would quietly defeat the fixed absolute lifetime this ADR chose. Sessio
 management is therefore reachable only from the CLI, which is where the platform
 key already lives.
 
-**TLS is enforced at exchange, fail-closed.** `POST /console/session` reads the
-`Origin` header and refuses with a `{error, fix}` 400 unless the origin is
-`https:` or a loopback host (`localhost`, `127.0.0.1`, `[::1]`), which browsers
-treat as a secure context and for which they honor `Secure` cookies. A plaintext
-NodePort origin is refused with the `kubectl port-forward` command as the fix.
-The cookie is therefore only ever established over a channel that protects it,
-and the failure is a legible instruction rather than a silently-unprotected
-session.
+**The exchange guards the browser's secure context, which is a footgun guard and
+not a transport proof.** `POST /console/session` reads the `Origin` header and
+refuses with a `{error, fix}` 400 unless the origin is `https:` or a loopback
+host (`localhost`, `127.0.0.1`, `[::1]`) -- the origins for which a browser
+considers itself a secure context and therefore honors a `Secure` cookie. A
+plaintext NodePort origin is refused with the `kubectl port-forward` command as
+the fix, instead of the browser silently discarding the cookie and the operator
+seeing an unexplained failed login.
 
-**`SameSite=Strict` is the CSRF control**, backed by an `Origin` equality check
-on the exchange. The API has no CORS middleware on purpose and the console is
-strictly same-origin (`apps/ui/CLAUDE.md`), so a cross-site page can neither read
-a response nor cause the cookie to ride along on a forged request.
+Be precise about what this is worth. The check reads scheme and hostname only;
+it is not an `Origin` equality check against an allowlist, so any `https://`
+origin passes. `Origin` is client-asserted and the transport itself is never
+inspected, so this does not enforce TLS and curl can forge the header freely.
+That costs nothing: a non-browser caller forging `Origin` obtains a session it
+could already have obtained with the same login code over the same channel. The
+gate exists for the one caller that cannot lie about its origin -- a browser --
+and its only job is to convert a silent drop into a legible instruction.
+
+**The CSRF control is the `X-Console-Session` request header, with
+`SameSite=Strict` as defense in depth.** `require_api_key` accepts the session
+cookie only when the request also carries `X-Console-Session`; the platform-key
+path never looks at it. The header is not settable on a cross-origin request
+without a CORS preflight, and the API deliberately runs no CORS middleware, so
+the preflight fails and the forged request never reaches a route. This is the
+OWASP custom-request-header defense, and it restores the structural CSRF
+immunity that `X-API-Key` had before the console's authority became a cookie.
+
+`SameSite=Strict` alone is **not** sufficient, and it is worth saying why rather
+than repeating the folklore. `SameSite` scopes to a *site*, and a site ignores
+the port. The login path this ADR prescribes is `http://localhost:8080` behind a
+port-forward, which is same-site with every other `localhost` port: any local dev
+server, any hostile package's dev server. Worse, the kill switch and resume take
+no request body, so a cross-origin auto-submitted
+`<form method="POST" action="/api/agents/<uuid>/kill">` is a CORS-*simple*
+request -- nothing preflights it, so an absent CORS middleware rejects nothing,
+and `SameSite=Strict` permits it because it is same-site. The custom header is
+what closes that; `SameSite=Strict` remains because it costs nothing and narrows
+the same class from a genuinely cross-site page.
 
 `agentos cluster status` keeps printing the plain console URL with no secret in
 it, and now names `agentos cluster console login` as the way to get in.
@@ -115,6 +147,12 @@ trade for a multi-user console, which is exactly what #151 exists to design.
 
 A console session costs one indexed database read per request. The platform-key
 path short-circuits before that read, so no machine caller pays it.
+
+Every console request must carry `X-Console-Session`, so the console's API client
+attaches it centrally (`apps/ui/src/api/client.ts`) exactly as it used to attach
+`X-API-Key`. Anything else that ever authenticates with the cookie has to do the
+same. A machine caller must NOT be made to send it: it is a browser-only defense,
+and requiring it of the CLI would buy nothing and break every existing caller.
 
 Sessions expire on a fixed absolute lifetime with no refresh. A long-lived
 console tab will be asked to log in again. Sliding expiry is deliberately not

@@ -876,6 +876,24 @@ class ConsoleSessionExchange(BaseModel):
     code: str
 
 
+class ConsoleErrorOut(BaseModel):
+    """A refusal the operator can act on: what happened and what fixes it.
+
+    The `{error, fix}` pair of ADR-0021, flat rather than nested under `detail`,
+    so the console can render the fix verbatim.
+    """
+
+    error: str
+    fix: str
+
+
+class ConsoleLoginRefusedOut(BaseModel):
+    """A refused login code. One message for unknown, spent, expired, and
+    revoked alike: which one it was is not the caller's to learn."""
+
+    detail: str
+
+
 class ConsoleSessionOut(BaseModel):
     """The established session's fixed absolute expiry. The token itself is
     returned only as the HttpOnly cookie, never in the body."""
