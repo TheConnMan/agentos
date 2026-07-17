@@ -1506,8 +1506,19 @@ def test_run_expiry_sweeper_loop_sweeps_and_stops(
                         record = await crud.get_approval(session, approval_id)
                         assert record is not None
                         status = record.status
-                # The loop also enqueued the expiry resume turn.
-                assert len(await client.xrange(runs_stream)) == 1
+                # The loop also enqueued the expiry resume turn -- but the flip
+                # commits (crud.expire_approval) BEFORE the enqueue runs, so the
+                # status poll above can win the race between them. Poll for the
+                # stream entry too rather than asserting it immediately, or the
+                # sweeper's flip-before-enqueue ordering flakes this under load.
+                entries = await client.xrange(runs_stream)
+                while len(entries) < 1:
+                    assert asyncio.get_running_loop().time() < deadline, (
+                        "sweeper flipped the record but never enqueued the resume turn"
+                    )
+                    await asyncio.sleep(0.05)
+                    entries = await client.xrange(runs_stream)
+                assert len(entries) == 1
             finally:
                 stop.set()
                 # Wait-first loop wakes immediately on stop; it must finish
