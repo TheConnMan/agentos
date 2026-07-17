@@ -1145,6 +1145,54 @@ export const commandManifest = {
                 "false"
               ],
               "required": false
+            },
+            {
+              "global": false,
+              "help": "List the agent's pending approval records instead of the gate config",
+              "id": "list",
+              "long": "list",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Resolve the approval with this id (approve by default; requires --as)",
+              "id": "resolve",
+              "long": "resolve",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "The actor resolving the approval (required with --resolve). The requester and approver may differ; the server blocks self-approval",
+              "id": "as_actor",
+              "long": "as",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Reject instead of approve (with --resolve)",
+              "id": "reject",
+              "long": "reject",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Optional note recorded with the resolution (with --resolve)",
+              "id": "note",
+              "long": "note",
+              "positional": false,
+              "required": false
             }
           ],
           "hidden": false,
@@ -2645,6 +2693,54 @@ export const commandManifest = {
                 "true",
                 "false"
               ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "List the agent's pending approval records instead of the gate config",
+              "id": "list",
+              "long": "list",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Resolve the approval with this id (approve by default; requires --as)",
+              "id": "resolve",
+              "long": "resolve",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "The actor resolving the approval (required with --resolve). The requester and approver may differ; the server blocks self-approval",
+              "id": "as_actor",
+              "long": "as",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Reject instead of approve (with --resolve)",
+              "id": "reject",
+              "long": "reject",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Optional note recorded with the resolution (with --resolve)",
+              "id": "note",
+              "long": "note",
+              "positional": false,
               "required": false
             }
           ],

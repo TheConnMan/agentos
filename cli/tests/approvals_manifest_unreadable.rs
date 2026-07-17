@@ -10,7 +10,7 @@
 
 mod support;
 
-use agentos::commands::{approvals, AgentActionOpts, ApprovalsOutput};
+use agentos::commands::{approvals, AgentActionOpts, ApprovalCmd, ApprovalsOutput};
 use agentos::ui::CliOutput;
 use support::{serve, MockServer, Response};
 
@@ -45,6 +45,7 @@ async fn read_gates(server: &MockServer) -> ApprovalsOutput {
         },
         vec![],
         false,
+        ApprovalCmd::default(),
     )
     .await
     .expect("approvals should report the failure, not propagate it")
@@ -59,6 +60,9 @@ fn gates(out: &ApprovalsOutput) -> (Vec<String>, Option<String>) {
             ..
         } => (gated_tools.clone(), manifest_unreadable.clone()),
         ApprovalsOutput::DryRun(_) => panic!("expected the gate view, not a dry-run plan"),
+        ApprovalsOutput::Pending { .. } | ApprovalsOutput::Resolved { .. } => {
+            panic!("expected the gate view, not a pending/resolved record")
+        }
     }
 }
 

@@ -32,6 +32,27 @@ pub struct Agent {
     pub approval_required_tools: Option<Vec<String>>,
 }
 
+/// One approval record, hand-mirroring the committed `ApprovalOut` (#506). Only
+/// the fields the CLI renders are modeled; serde ignores the rest of the payload.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApprovalRecord {
+    pub id: String,
+    pub author: String,
+    #[serde(default)]
+    pub route: Option<String>,
+    #[serde(default)]
+    pub gate_kind: Option<String>,
+    #[serde(default)]
+    pub granted_tool: Option<String>,
+    pub status: String,
+    pub conversation_id: String,
+    pub summary: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+}
+
 /// What a deploy did with the agent's Slack channel, for the summary printout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelOutcome {
@@ -562,6 +583,57 @@ impl ApiClient {
             .json()
             .await
             .context("decoding memory list")
+    }
+
+    /// The pending approval records for an agent: `GET /approvals?status_filter=
+    /// pending&agent_id=<id>`. Hand-mirrors the committed `ApprovalOut` shape
+    /// (only the fields the CLI renders; serde ignores the rest), the same way
+    /// `Agent`/`KillState` mirror `openapi.json` (#506).
+    pub async fn list_pending_approvals(&self, agent_id: &str) -> Result<Vec<ApprovalRecord>> {
+        let resp = self
+            .http
+            .get(format!("{}/approvals", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .query(&[("status_filter", "pending"), ("agent_id", agent_id)])
+            .send()
+            .await
+            .context("GET /approvals")?;
+        Self::expect_ok(resp, "listing pending approvals")
+            .await?
+            .json()
+            .await
+            .context("decoding approvals")
+    }
+
+    /// Resolve one approval as a chosen actor: `POST /approvals/{id}/resolve`.
+    /// The server owns the resolve-once CAS, the authorizer (self-approval block,
+    /// route approvers), and the resume-turn enqueue; `resolved_by` is the acting
+    /// actor (the `--as` flag), which is what makes requester != approver
+    /// expressible without hand-curling the API (#506).
+    pub async fn resolve_approval(
+        &self,
+        approval_id: &str,
+        decision: &str,
+        resolved_by: &str,
+        note: Option<&str>,
+    ) -> Result<ApprovalRecord> {
+        let mut body = json!({ "decision": decision, "resolved_by": resolved_by });
+        if let Some(note) = note {
+            body["note"] = json!(note);
+        }
+        let resp = self
+            .http
+            .post(format!("{}/approvals/{approval_id}/resolve", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("POST /approvals/{id}/resolve")?;
+        Self::expect_ok(resp, "resolving approval")
+            .await?
+            .json()
+            .await
+            .context("decoding resolved approval")
     }
 
     /// Set the agent's approval-required tool gates: `PATCH /agents/{id}` with
