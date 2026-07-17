@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # Outbound GitHub commit-status API for the eval PR check (K1).
     github_api_url: str = "https://api.github.com"
     github_token: str = ""
+    # Upper bound on the GitHub webhook request body, enforced before the body is
+    # fully buffered, parsed, or HMAC-authenticated (#633) so an unauthenticated
+    # oversized request cannot exhaust memory. GitHub caps webhook payloads at
+    # 25 MB and does not deliver anything larger, so a legitimately signed push
+    # is always under this bound. Keep any ingress/proxy body-size limit fronting
+    # the API aligned with (>=) this value so the two agree on what is rejected.
+    github_webhook_max_body_bytes: int = 25 * 1024 * 1024  # 25 MiB
     eval_check_context: str = "agentos/evals"
     # Suite name put on the fan-out request for a dev-push eval run (the plugin
     # bundle carries the suite itself; the consumer resolves it by this name).
