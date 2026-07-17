@@ -66,6 +66,8 @@ _REDIRECT_CAPTURE_KEYS = frozenset(
 _AGENTOS_BOOT_KEYS = frozenset(
     {
         "AGENTOS_MODEL_BASE_URL",
+        "AGENTOS_MODEL_API_BACKEND",
+        "AGENTOS_MODEL_ENV_KEY",
         "AGENTOS_CREDENTIALS",
         "AGENTOS_MODEL",
         "AGENTOS_FAKE_MODEL",

@@ -7,22 +7,38 @@ from __future__ import annotations
 
 import pytest
 from agentos_runner.sdk_auth import (
+    API_BACKEND_ENV,
     API_KEY_ENV,
     AUTH_TOKEN_ENV,
     BASE_URL_ENV,
     CREDENTIALS_ENV,
     DEEPSEEK_BASE_URL,
+    DEFAULT_API_BACKEND,
+    DEFAULT_CREDENTIAL_ENV_KEYS,
     MODEL_BASE_URL_ENV,
+    MODEL_ENV_KEY_ENV,
     MOONSHOT_BASE_URL,
     NO_OP_API_KEY,
     OAUTH_TOKEN_ENV,
     OPENROUTER_BASE_URL,
     PROVIDER_BASE_URLS,
     ZHIPU_BASE_URL,
+    ApiBackend,
+    InvalidEnvKeyError,
+    UnsupportedApiBackendError,
     UnsupportedCredentialError,
+    parse_env_keys,
+    resolve_credential,
+    resolve_credential_env_keys,
     resolve_model_credential,
     resolve_sdk_env,
 )
+
+# Custom credential env var NAMES used by the env_key tests. Hoisted to named
+# constants because the secrets pre-commit hook false-positives on inline
+# *_TOKEN / *_KEY literals; these are variable names, never values.
+ALT_TOKEN_KEY = "ANTHROPIC_AUTH_TOKEN_ALT"
+MY_CRED_KEY = "MY_CRED"
 
 
 def test_anthropic_api_key_maps_to_api_key_env() -> None:
@@ -255,3 +271,246 @@ def test_bare_sk_still_rejected_without_base_url() -> None:
     # is no provider endpoint to forward it to.
     with pytest.raises(UnsupportedCredentialError):
         resolve_sdk_env({CREDENTIALS_ENV: "sk-PLACEHOLDER"})
+
+
+# --- Explicit api_backend wire-protocol enum (#514). Today every endpoint is
+# assumed to speak the Anthropic Messages wire format; AGENTOS_MODEL_API_BACKEND
+# makes that assumption declarable, so an OpenAI-shaped endpoint fails loudly
+# instead of being silently mis-dialed.
+
+
+def test_api_backend_defaults_to_messages_when_unset() -> None:
+    # Unset must preserve today's behavior: everything is assumed Messages.
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    assert resolve_api_backend({}) is ApiBackend.MESSAGES
+    assert DEFAULT_API_BACKEND is ApiBackend.MESSAGES
+
+
+def test_api_backend_defaults_to_messages_when_empty_string() -> None:
+    # An empty env var is "not declared", not "declared as empty" -- the same
+    # empty-string trap the credential path guards against.
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    assert resolve_api_backend({API_BACKEND_ENV: ""}) is ApiBackend.MESSAGES
+
+
+def test_api_backend_explicit_messages() -> None:
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    assert resolve_api_backend({API_BACKEND_ENV: "messages"}) is ApiBackend.MESSAGES
+
+
+@pytest.mark.parametrize("raw", ["MESSAGES", " Messages "])
+def test_api_backend_parsing_is_case_insensitive_and_trims(raw: str) -> None:
+    # Config authors hand-write this value; casing and stray whitespace must not
+    # turn a valid backend into a hard failure.
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    assert resolve_api_backend({API_BACKEND_ENV: raw}) is ApiBackend.MESSAGES
+
+
+def test_api_backend_chat_completions() -> None:
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    assert resolve_api_backend({API_BACKEND_ENV: "chat_completions"}) is ApiBackend.CHAT_COMPLETIONS
+
+
+def test_api_backend_responses() -> None:
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    assert resolve_api_backend({API_BACKEND_ENV: "responses"}) is ApiBackend.RESPONSES
+
+
+@pytest.mark.parametrize("raw", ["grpc", "chat-completions"])
+def test_api_backend_unrecognized_value_raises(raw: str) -> None:
+    # "chat-completions" (hyphen) is the near-miss spelling of a real member; an
+    # unrecognized value must fail loudly rather than silently defaulting.
+    from agentos_runner.sdk_auth import resolve_api_backend
+
+    with pytest.raises(UnsupportedApiBackendError):
+        resolve_api_backend({API_BACKEND_ENV: raw})
+
+
+@pytest.mark.parametrize(
+    ("backend", "speaks"),
+    [
+        (ApiBackend.MESSAGES, True),
+        (ApiBackend.CHAT_COMPLETIONS, False),
+        (ApiBackend.RESPONSES, False),
+    ],
+)
+def test_speaks_anthropic_wire(backend: ApiBackend, speaks: bool) -> None:
+    # The deterministic branch point: only the Messages wire format is dialable
+    # by claude-agent-sdk.
+    assert backend.speaks_anthropic_wire is speaks
+
+
+def test_api_backend_members_have_expected_wire_values() -> None:
+    # The enum is a wire contract; its string values are what config authors put
+    # in AGENTOS_MODEL_API_BACKEND.
+    assert ApiBackend.MESSAGES == "messages"
+    assert ApiBackend.CHAT_COMPLETIONS == "chat_completions"
+    assert ApiBackend.RESPONSES == "responses"
+    assert API_BACKEND_ENV == "AGENTOS_MODEL_API_BACKEND"
+
+
+@pytest.mark.parametrize("backend", ["chat_completions", "responses"])
+def test_resolve_sdk_env_rejects_non_anthropic_backend_with_base_url(backend: str) -> None:
+    # With a base URL set (the override path). The runner speaks the Anthropic
+    # Messages wire format only; failing loudly beats silently mis-dialing.
+    env = {BASE_URL_ENV: ZHIPU_BASE_URL, API_BACKEND_ENV: backend}
+    with pytest.raises(UnsupportedApiBackendError):
+        resolve_sdk_env(env)
+
+
+@pytest.mark.parametrize("backend", ["chat_completions", "responses"])
+def test_resolve_sdk_env_rejects_non_anthropic_backend_with_plain_key(backend: str) -> None:
+    # Same rejection on the plain sk-ant- path with NO base URL. Paired with the
+    # test above, this proves the branch is on the backend itself, not a side
+    # effect of the base-URL override path.
+    env = {CREDENTIALS_ENV: "sk-ant-PLACEHOLDER", API_BACKEND_ENV: backend}
+    with pytest.raises(UnsupportedApiBackendError):
+        resolve_sdk_env(env)
+
+
+def test_resolve_sdk_env_explicit_messages_matches_default_plain_key() -> None:
+    # Regression net: declaring "messages" explicitly must behave EXACTLY as the
+    # undeclared default does today.
+    env = {CREDENTIALS_ENV: "sk-ant-PLACEHOLDER", API_BACKEND_ENV: "messages"}
+    assert resolve_sdk_env(env) is None
+    assert env[API_KEY_ENV] == "sk-ant-PLACEHOLDER"
+    assert BASE_URL_ENV not in env
+
+
+def test_resolve_sdk_env_explicit_messages_matches_default_override() -> None:
+    # Same regression net on the base-URL override path.
+    env = {BASE_URL_ENV: "http://ollama:11434", API_BACKEND_ENV: "messages"}
+    override = resolve_sdk_env(env)
+
+    assert override is not None
+    assert override[BASE_URL_ENV] == "http://ollama:11434"
+    assert override[API_KEY_ENV] == NO_OP_API_KEY
+    assert override[AUTH_TOKEN_ENV] == ""
+
+
+def test_openrouter_credential_survives_default_backend() -> None:
+    # CRITICAL regression guard: the base-URL gate must NOT drop an explicit
+    # sk-or- BYO credential. Under the default (Messages) backend the key must
+    # still reach OpenRouter's endpoint as the real key, never the placeholder.
+    env = {CREDENTIALS_ENV: "sk-or-PLACEHOLDER"}
+    assert resolve_sdk_env(env) is None
+    assert env[BASE_URL_ENV] == OPENROUTER_BASE_URL
+    assert env[API_KEY_ENV] == "sk-or-PLACEHOLDER"
+    assert env[API_KEY_ENV] != NO_OP_API_KEY
+
+
+def test_openrouter_credential_survives_explicit_messages_backend() -> None:
+    # The same guard with the backend declared explicitly.
+    env = {CREDENTIALS_ENV: "sk-or-PLACEHOLDER", API_BACKEND_ENV: "messages"}
+    assert resolve_sdk_env(env) is None
+    assert env[BASE_URL_ENV] == OPENROUTER_BASE_URL
+    assert env[API_KEY_ENV] == "sk-or-PLACEHOLDER"
+    assert env[API_KEY_ENV] != NO_OP_API_KEY
+
+
+# --- env_key as string-or-array (#514). AGENTOS_MODEL_ENV_KEY declares which env
+# var(s) carry the credential, so a config author is not forced onto the single
+# hardcoded AGENTOS_CREDENTIALS name.
+
+
+def test_parse_env_keys_bare_string_is_one_element_tuple() -> None:
+    assert parse_env_keys("A") == ("A",)
+
+
+def test_parse_env_keys_json_array_preserves_order() -> None:
+    assert parse_env_keys('["A","B"]') == ("A", "B")
+
+
+def test_parse_env_keys_drops_blank_array_entries() -> None:
+    # Hand-written config picks up stray empty entries; they carry no meaning.
+    assert parse_env_keys('["A","","  ","B"]') == ("A", "B")
+
+
+def test_parse_env_keys_bare_string_that_is_not_json_falls_back() -> None:
+    # "MY_KEY" is not valid JSON. The JSON attempt must fall back to the
+    # bare-string form rather than raising.
+    assert parse_env_keys(MY_CRED_KEY) == (MY_CRED_KEY,)
+
+
+@pytest.mark.parametrize("raw", ['[1,2]', '{"a":1}', "[]", '["", "  "]', "5"])
+def test_parse_env_keys_invalid_raises(raw: str) -> None:
+    # Valid JSON of the wrong shape (non-string array members, a mapping, a bare
+    # number) and arrays that reduce to nothing are all config errors.
+    with pytest.raises(InvalidEnvKeyError):
+        parse_env_keys(raw)
+
+
+def test_resolve_credential_env_keys_defaults_when_unset() -> None:
+    assert resolve_credential_env_keys({}) == DEFAULT_CREDENTIAL_ENV_KEYS
+    assert DEFAULT_CREDENTIAL_ENV_KEYS == (CREDENTIALS_ENV,)
+    assert MODEL_ENV_KEY_ENV == "AGENTOS_MODEL_ENV_KEY"
+
+
+def test_resolve_credential_env_keys_defaults_when_empty_string() -> None:
+    assert resolve_credential_env_keys({MODEL_ENV_KEY_ENV: ""}) == DEFAULT_CREDENTIAL_ENV_KEYS
+
+
+def test_resolve_credential_skips_unset_key_and_takes_next() -> None:
+    env = {
+        MODEL_ENV_KEY_ENV: f'["{ALT_TOKEN_KEY}","{MY_CRED_KEY}"]',
+        MY_CRED_KEY: "sk-ant-PLACEHOLDER",
+    }
+    assert resolve_credential(env) == "sk-ant-PLACEHOLDER"
+
+
+def test_resolve_credential_skips_empty_key_and_takes_next() -> None:
+    # THE key assertion (the #229 empty-string gotcha, made explicit): a key that
+    # is present but empty must be SKIPPED, not win. An empty credential silently
+    # beating a real one downstream is exactly the failure this guards.
+    env = {
+        MODEL_ENV_KEY_ENV: f'["{ALT_TOKEN_KEY}","{MY_CRED_KEY}"]',
+        ALT_TOKEN_KEY: "",
+        MY_CRED_KEY: "sk-ant-PLACEHOLDER",
+    }
+    assert resolve_credential(env) == "sk-ant-PLACEHOLDER"
+
+
+def test_resolve_credential_first_set_key_wins_on_order() -> None:
+    env = {
+        MODEL_ENV_KEY_ENV: f'["{ALT_TOKEN_KEY}","{MY_CRED_KEY}"]',
+        ALT_TOKEN_KEY: "sk-ant-FIRST-PLACEHOLDER",
+        MY_CRED_KEY: "sk-ant-SECOND-PLACEHOLDER",
+    }
+    assert resolve_credential(env) == "sk-ant-FIRST-PLACEHOLDER"
+
+
+def test_resolve_credential_returns_empty_when_no_key_matches() -> None:
+    env = {MODEL_ENV_KEY_ENV: f'["{ALT_TOKEN_KEY}","{MY_CRED_KEY}"]'}
+    assert resolve_credential(env) == ""
+
+
+def test_resolve_credential_defaults_to_agentos_credentials() -> None:
+    # Byte-identical-to-today guard: with no AGENTOS_MODEL_ENV_KEY declared, the
+    # credential still comes from AGENTOS_CREDENTIALS.
+    assert resolve_credential({CREDENTIALS_ENV: "sk-ant-PLACEHOLDER"}) == "sk-ant-PLACEHOLDER"
+
+
+def test_resolve_sdk_env_sources_credential_from_custom_env_key_array() -> None:
+    # End-to-end: the two features compose. A credential sourced from a custom
+    # env_key array routes to ANTHROPIC_API_KEY exactly as it would from
+    # AGENTOS_CREDENTIALS.
+    env = {
+        MODEL_ENV_KEY_ENV: f'["{ALT_TOKEN_KEY}","{MY_CRED_KEY}"]',
+        MY_CRED_KEY: "sk-ant-PLACEHOLDER",
+    }
+    assert resolve_sdk_env(env) is None
+    assert env[API_KEY_ENV] == "sk-ant-PLACEHOLDER"
+    assert BASE_URL_ENV not in env
+
+
+def test_resolve_sdk_env_default_env_key_path_unchanged() -> None:
+    # Byte-identical-to-today guard on the full resolution path.
+    env = {CREDENTIALS_ENV: "sk-ant-PLACEHOLDER"}
+    assert resolve_sdk_env(env) is None
+    assert env[API_KEY_ENV] == "sk-ant-PLACEHOLDER"
