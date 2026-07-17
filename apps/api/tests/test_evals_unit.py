@@ -146,3 +146,137 @@ def test_cells_carry_model_and_unlabelled_runs_sort_last() -> None:
         "opus": None,
         None: None,
     }
+
+
+def _otrace(
+    tid: str,
+    version: str,
+    case: str,
+    ts: str,
+    outcome: str,
+    model: str | None = None,
+    passed: Any = ...,
+) -> dict[str, Any]:
+    """A trace as the recorder writes it post-#606: an ``outcome`` alongside the
+    derived ``passed``. ``passed`` can be forced to prove which one the grid reads."""
+    tags = ["eval", f"version:{version}", "suite:s"]
+    if model:
+        tags.append(f"model:{model}")
+    if outcome == "plumbing_ok":
+        tags.append("plumbing")
+    if passed is ...:
+        passed = None if outcome == "plumbing_ok" else outcome == "pass"
+    meta: dict[str, Any] = {
+        "version": version,
+        "case_id": case,
+        "outcome": outcome,
+        "passed": passed,
+        "model": model,
+    }
+    return {"id": tid, "timestamp": ts, "tags": tags, "metadata": meta}
+
+
+def test_a_plumbing_cell_is_never_a_pass() -> None:
+    """The fake tier asserts only that the turn completed, so its cell must be a
+    distinct non-graded status: readable as "ran, not judged", impossible to mistake
+    for a green promotion gate."""
+    traces = [
+        _otrace("p1", "shaA", "c1", "2026-07-01T00:00:00Z", "plumbing_ok", "fake-model"),
+        _otrace("g1", "shaA", "c2", "2026-07-01T00:00:00Z", "fail", "opus"),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    cells = {
+        (row.case_id, cell.version): cell.status for row in matrix.rows for cell in row.cells
+    }
+    assert cells[("c1", "shaA")] == "plumbing_ok"
+    assert cells[("c2", "shaA")] == "fail"
+
+
+def test_the_outcome_wins_over_a_stale_passed_and_legacy_traces_still_render() -> None:
+    """``outcome`` is authoritative: a trace whose ``passed`` says True but whose
+    outcome is non-graded must NOT render green (that is exactly the false green).
+    A pre-#606 trace with no outcome key at all keeps rendering off ``passed``, so
+    historical matrix data needs no migration."""
+    traces = [
+        _otrace(
+            "new",
+            "shaA",
+            "c1",
+            "2026-07-01T00:00:00Z",
+            "plumbing_ok",
+            "fake-model",
+            passed=True,
+        ),
+        _trace("legacy", "shaA", "c2", "2026-07-01T00:00:00Z", passed=True),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    cells = {
+        (row.case_id, cell.version): cell.status for row in matrix.rows for cell in row.cells
+    }
+    assert cells[("c1", "shaA")] == "plumbing_ok"  # not "pass"
+    assert cells[("c2", "shaA")] == "pass"
+
+
+def test_a_later_plumbing_run_does_not_erase_an_earlier_graded_result() -> None:
+    """The grid is a promotion/comparison surface and a plumbing row carries zero
+    comparative information, so it must not overwrite real signal just by being
+    newer (someone re-running the sealed fake loop after a real eval). A graded cell
+    beats a plumbing cell regardless of timestamp; newest-wins still applies within
+    the same kind."""
+    traces = [
+        _otrace("graded", "shaA", "c1", "2026-07-01T00:00:00Z", "pass", "opus"),
+        _otrace("plumb", "shaA", "c1", "2026-07-09T00:00:00Z", "plumbing_ok", "fake-model"),
+        # c2 has only a plumbing run, so there is no graded signal to protect.
+        _otrace("only", "shaA", "c2", "2026-07-09T00:00:00Z", "plumbing_ok", "fake-model"),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    cells = {
+        (row.case_id, cell.version): cell for row in matrix.rows for cell in row.cells
+    }
+    assert cells[("c1", "shaA")].status == "pass"
+    assert cells[("c1", "shaA")].model == "opus"  # the graded run's label, not the fake's
+    assert cells[("c2", "shaA")].status == "plumbing_ok"
+
+
+def test_plumbing_rows_are_surfaced_without_diluting_any_pass_rate() -> None:
+    """A sealed sweep's rows must never enter a pass-rate: with 2 plumbing rows
+    counted as passes the fake model reads 100%, counted as fails it reads 0% -- both
+    fabricated. They are excluded from passed/total and surfaced as their own count,
+    so the rows stay visible rather than silently dropped."""
+    traces = [
+        _otrace("o1", "shaA", "c1", "2026-07-01T00:00:00Z", "pass", "opus"),
+        _otrace("o2", "shaA", "c2", "2026-07-01T00:00:00Z", "fail", "opus"),
+        _otrace("f1", "shaB", "c1", "2026-07-02T00:00:00Z", "plumbing_ok", "fake-model"),
+        _otrace("f2", "shaB", "c2", "2026-07-02T00:00:00Z", "plumbing_ok", "fake-model"),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    summaries = {m.model: m for m in matrix.model_summaries}
+    assert summaries["opus"].passed == 1
+    assert summaries["opus"].total == 2
+    assert summaries["opus"].pass_rate == 0.5
+    assert summaries["opus"].plumbing == 0
+
+    fake = summaries["fake-model"]
+    assert fake.total == 0  # nothing was graded...
+    assert fake.passed == 0
+    assert fake.plumbing == 2  # ...but the rows are visible, not dropped
+
+
+def test_a_plumbing_row_does_not_dilute_its_own_model_pass_rate() -> None:
+    """The exclusion is per-row, not per-model: a model with real graded rows keeps
+    its true pass-rate even when a plumbing row shares the label."""
+    traces = [
+        _otrace("g1", "shaA", "c1", "2026-07-01T00:00:00Z", "pass", "opus"),
+        _otrace("p1", "shaA", "c2", "2026-07-01T00:00:00Z", "plumbing_ok", "opus"),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    opus = next(m for m in matrix.model_summaries if m.model == "opus")
+    assert opus.passed == 1
+    assert opus.total == 1  # the plumbing row is not a denominator
+    assert opus.pass_rate == 1.0
+    assert opus.plumbing == 1

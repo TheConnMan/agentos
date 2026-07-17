@@ -8,6 +8,7 @@ import pytest
 from agentos_worker.eval import (
     EvalCase,
     EvalCaseResult,
+    EvalOutcome,
     EvalRunResult,
     EvalSuite,
     ExpectedStatus,
@@ -47,9 +48,9 @@ def test_run_result_rollups() -> None:
         version="v1",
         suite="basics",
         results=[
-            EvalCaseResult(case_id="a", passed=True, output="4", latency_ms=1.0),
-            EvalCaseResult(case_id="b", passed=False, output="x", latency_ms=1.0),
-            EvalCaseResult(case_id="c", passed=True, output="ok", latency_ms=1.0),
+            EvalCaseResult(case_id="a", outcome=EvalOutcome.PASS, output="4", latency_ms=1.0),
+            EvalCaseResult(case_id="b", outcome=EvalOutcome.FAIL, output="x", latency_ms=1.0),
+            EvalCaseResult(case_id="c", outcome=EvalOutcome.PASS, output="ok", latency_ms=1.0),
         ],
     )
     assert result.total == 3
@@ -60,6 +61,53 @@ def test_run_result_rollups() -> None:
 
 def test_all_passed_is_false_for_empty_suite() -> None:
     assert EvalRunResult(version="v", suite="s", results=[]).all_passed() is False
+
+
+def _row(case_id: str, outcome: EvalOutcome) -> EvalCaseResult:
+    return EvalCaseResult(case_id=case_id, outcome=outcome, output="all done", latency_ms=1.0)
+
+
+def test_passed_is_derived_from_outcome_and_a_plumbing_row_is_neither() -> None:
+    # `passed` is a read-only view of `outcome`, so no caller can ever set the two
+    # inconsistently, and a non-graded row reports null: not a pass, not a fail.
+    assert _row("p", EvalOutcome.PASS).passed is True
+    assert _row("f", EvalOutcome.FAIL).passed is False
+    assert _row("k", EvalOutcome.PLUMBING_OK).passed is None
+    # The derived value survives serialization, which is what the recorder writes
+    # into trace metadata and what the matrix reads back.
+    assert _row("k", EvalOutcome.PLUMBING_OK).model_dump()["passed"] is None
+    assert _row("k", EvalOutcome.PLUMBING_OK).model_dump()["outcome"] == "plumbing_ok"
+
+
+def test_an_all_plumbing_run_is_never_a_pass_but_is_a_clean_completion() -> None:
+    run = EvalRunResult(
+        version="v1",
+        suite="s",
+        results=[_row("a", EvalOutcome.PLUMBING_OK), _row("b", EvalOutcome.PLUMBING_OK)],
+    )
+    # Nothing was graded, so nothing passed: `all_passed` stays a pure grading
+    # predicate and must not go green on rows no grader ever judged.
+    assert run.passed_count == 0
+    assert run.all_passed() is False
+    # ...but nothing broke either, so the eval Job's process exit is success.
+    assert run.completed_without_failure() is True
+    # The operator-facing rollup must read as plumbing, never as "0/2 passed" --
+    # that number is a lie in the other direction (no case failed).
+    summary = run.summary()
+    assert "plumbing" in summary.lower()
+    assert "0/2" not in summary
+
+
+def test_a_plumbing_run_carrying_a_failure_is_not_a_clean_completion() -> None:
+    # The fake tier's ONLY assertion is that the turn completed; when one did not,
+    # the plumbing is genuinely broken and the run must still be operationally red.
+    run = EvalRunResult(
+        version="v1",
+        suite="s",
+        results=[_row("a", EvalOutcome.PLUMBING_OK), _row("b", EvalOutcome.FAIL)],
+    )
+    assert run.completed_without_failure() is False
+    assert run.all_passed() is False
 
 
 # --- Frozen eval-case contract (issue #8) -------------------------------------

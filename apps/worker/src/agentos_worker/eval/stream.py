@@ -407,6 +407,7 @@ class EvalStreamConsumer(StreamConsumer):
                 recorder=self._recorder,
                 token=token,
                 model=self._eval_model(item),
+                fake=self._config.fake_model,
             )
         finally:
             if release_key is not None:
@@ -506,6 +507,22 @@ class EvalStreamConsumer(StreamConsumer):
         return result
 
     async def _report(self, item: EvalJob, repo: str | None, result: EvalRunResult) -> None:
+        # The frozen EvalReport carries passed_count/total only, and the API turns
+        # it into a GitHub commit status. That shape cannot express "ran but was
+        # never graded": 0/N posts a red that did not happen and N/N posts the
+        # false green this gate exists to prevent. So a run whose every case is
+        # non-graded posts nothing -- no commit status is better than a fabricated
+        # one. A run carrying any FAIL still reports: broken plumbing is a real red
+        # and must reach the PR check. Skipping is a completed report attempt, so
+        # the caller acks rather than leaving the entry pending forever.
+        if result.all_plumbing():
+            logger.info(
+                "eval %s @ %s ran plumbing-only (%d cases, not graded); no report posted",
+                item.suite,
+                item.sha,
+                result.total,
+            )
+            return
         await self._reporter.report(
             EvalReport(
                 repo_full_name=repo or str(item.agent_id),

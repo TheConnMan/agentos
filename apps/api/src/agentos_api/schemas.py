@@ -650,10 +650,16 @@ class EvalCell(BaseModel):
 
     ``model`` is the model the result was produced under (the matrix's model
     dimension), or ``None`` when the recording run carried no model tag.
+
+    ``plumbing_ok`` means the case ran to completion but no grader judged it (the
+    fake-model tier, ADR-0055). It is a distinct status rather than a pass or a
+    fail because it is neither: the fake answers from a canned script, so its cell
+    carries no comparative information and must never read as a green promotion
+    gate.
     """
 
     version: str
-    status: Literal["pass", "fail", "missing"]
+    status: Literal["pass", "fail", "plumbing_ok", "missing"]
     model: str | None = None
 
 
@@ -672,12 +678,19 @@ class EvalModelSummary(BaseModel):
     ``cost_usd`` per model, so BYO-model work can compare which models a use case
     tolerates and at what cost. ``cost_usd`` is ``None`` when no case under this
     model reported a cost (e.g. the fake-model path), rather than a misleading 0.
+
+    ``plumbing`` counts the rows that ran but were never graded (ADR-0055). They
+    are excluded from ``passed``/``total``: counted as passes the fake model reads
+    100% and counted as fails it reads 0%, both fabricated. The count keeps those
+    rows visible instead of silently dropping them, so a model whose only rows are
+    plumbing still appears with ``total == 0``.
     """
 
     model: str | None = None
     passed: int
     total: int
     cost_usd: float | None = None
+    plumbing: int = 0
 
     @property
     def pass_rate(self) -> float:

@@ -5,6 +5,7 @@
 //! implementer creates the schemas alongside the `--json` wiring.
 
 use agentos::commands::{eval_json, status_json};
+use agentos::evals::CaseOutcome;
 use agentos::exit;
 use agentos::message::{
     message_awaiting_approval_json, message_dry_run_json, message_reply_json, message_timeout_json,
@@ -38,28 +39,99 @@ fn status_json_validates_against_status_schema() {
 #[test]
 fn eval_json_validates_against_eval_schema() {
     let schema = load_schema("eval.schema.json");
-    // Two cases, one pass one fail: (id, passed, seconds, output) rows plus the
+    // Two cases, one pass one fail: (id, outcome, seconds, output) rows plus the
     // roll-up. The failing case carries a non-empty reply for diagnosis (#548).
     let results = vec![
         (
             "case-pass".to_string(),
-            true,
+            CaseOutcome::Pass,
             1.5_f64,
             "the answer is 4".to_string(),
         ),
         (
             "case-fail".to_string(),
-            false,
+            CaseOutcome::Fail,
             0.25_f64,
             "i do not know".to_string(),
         ),
     ];
-    let value = eval_json(&results, 1, 2);
+    let value = eval_json(&results);
     let v = validator(&schema);
     assert!(
         v.is_valid(&value),
         "eval_json output must validate against eval.schema.json: {value}"
     );
+}
+
+/// The non-graded row is the new contract surface (ADR-0055, #612/#606): it must
+/// validate, report `outcome: "plumbing_ok"` with a NULL `passed`, and land in
+/// its own roll-up count rather than being folded into passed or failed.
+///
+/// Deleting the tri-state (making `passed` a bare bool) fails the null assert;
+/// deriving `failed` as `total - passed` again fails the `failed` assert, which
+/// is the false red R1 rejected.
+#[test]
+fn a_plumbing_ok_row_validates_and_is_neither_passed_nor_failed() {
+    let schema = load_schema("eval.schema.json");
+    let results = vec![(
+        "case-plumbing".to_string(),
+        CaseOutcome::PlumbingOk,
+        0.5_f64,
+        "all done".to_string(),
+    )];
+    let value = eval_json(&results);
+    let v = validator(&schema);
+    assert!(
+        v.is_valid(&value),
+        "a plumbing_ok row must validate against eval.schema.json: {value}"
+    );
+    assert_eq!(value["plumbing_ok"], 1, "{value}");
+    assert_eq!(
+        value["failed"], 0,
+        "a non-graded row is not a failure; `failed` must be counted, not derived: {value}"
+    );
+    assert_eq!(value["cases"][0]["outcome"], "plumbing_ok", "{value}");
+    assert!(
+        value["cases"][0]["passed"].is_null(),
+        "a non-graded row claims neither verdict: {value}"
+    );
+}
+
+/// The roll-up partitions the rows: every case lands in exactly one of the three
+/// counts. A mixed run is where a naive `total - passed` or a plumbing row
+/// silently folded into `passed` would show up.
+#[test]
+fn the_eval_rollup_partitions_every_row_across_the_three_outcomes() {
+    let schema = load_schema("eval.schema.json");
+    let results = vec![
+        (
+            "p".to_string(),
+            CaseOutcome::Pass,
+            1.0_f64,
+            "right".to_string(),
+        ),
+        (
+            "f".to_string(),
+            CaseOutcome::Fail,
+            1.0_f64,
+            "wrong".to_string(),
+        ),
+        (
+            "k".to_string(),
+            CaseOutcome::PlumbingOk,
+            1.0_f64,
+            "all done".to_string(),
+        ),
+    ];
+    let value = eval_json(&results);
+    assert!(validator(&schema).is_valid(&value), "{value}");
+    assert_eq!(value["total"], 3, "{value}");
+    assert_eq!(value["passed"], 1, "{value}");
+    assert_eq!(
+        value["failed"], 1,
+        "only the graded failure counts: {value}"
+    );
+    assert_eq!(value["plumbing_ok"], 1, "{value}");
 }
 
 #[test]
@@ -316,8 +388,13 @@ fn observability_schema_gate_has_teeth() {
 fn eval_schema_gate_has_teeth() {
     // negative control: proves the schema gate discriminates
     let schema = load_schema("eval.schema.json");
-    let results = vec![("only".to_string(), true, 1.0_f64, "ok".to_string())];
-    let mut value = eval_json(&results, 1, 1);
+    let results = vec![(
+        "only".to_string(),
+        CaseOutcome::Pass,
+        1.0_f64,
+        "ok".to_string(),
+    )];
+    let mut value = eval_json(&results);
     // Strip a required top-level key; a schema with real teeth must now reject.
     value
         .as_object_mut()

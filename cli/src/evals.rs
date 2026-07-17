@@ -205,10 +205,66 @@ pub fn graded_answer(events: &[OutboundEvent]) -> String {
 /// classified-failure or interrupted turn still never passes, because those
 /// statuses match neither `done` nor `awaiting-approval`.
 pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
+    turn_completed(case, events) && case.grader.grade(&graded_answer(events))
+}
+
+/// True when the turn ended in a `final` frame whose status matches the case's
+/// `expect_status` (default `done`, or `awaiting-approval` for a gate-blocked
+/// case). The one assertion the fake tier makes, and the gate the real path
+/// applies before the grader is ever consulted; a classified-failure or
+/// interrupted turn matches neither expected status, so it never completes.
+fn turn_completed(case: &EvalCase, events: &[OutboundEvent]) -> bool {
     let Some(OutboundEvent::Final { status, .. }) = events.last() else {
         return false;
     };
-    case.expect_status.matches(status) && case.grader.grade(&graded_answer(events))
+    case.expect_status.matches(status)
+}
+
+/// What a run of one eval case concluded. `PlumbingOk` is a THIRD state, not a
+/// shade of pass or fail: the fake model is a plumbing fixture, not a subject
+/// under test (ADR-0055), so a fake turn is never graded and can claim neither
+/// verdict. Mirrors the worker's `EvalOutcome`; the two vocabularies stay
+/// aligned or the skill/local/cluster parity this file exists to hold breaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaseOutcome {
+    Pass,
+    Fail,
+    PlumbingOk,
+}
+
+impl CaseOutcome {
+    /// The tri-state `passed` an agent consumer reads: a non-graded row claims
+    /// neither verdict, so it is `null` rather than a fabricated `false`.
+    pub fn passed(self) -> Option<bool> {
+        match self {
+            CaseOutcome::Pass => Some(true),
+            CaseOutcome::Fail => Some(false),
+            CaseOutcome::PlumbingOk => None,
+        }
+    }
+}
+
+/// The outcome of one case's turn. `fake` says the runner that produced `events`
+/// was booted with the fake model.
+///
+/// The completion gate runs FIRST and applies to both tiers: a turn that did not
+/// reach its `expect_status` is a genuine `Fail` whatever produced it, and on the
+/// fake tier that is the only thing left to catch. Past the gate the two tiers
+/// diverge: a fake turn returns `PlumbingOk` WITHOUT consulting the grader at all,
+/// so no grader verdict -- in either direction -- can reach a fake run's outcome.
+pub fn turn_outcome(case: &EvalCase, events: &[OutboundEvent], fake: bool) -> CaseOutcome {
+    if !turn_completed(case, events) {
+        return CaseOutcome::Fail;
+    }
+    if fake {
+        return CaseOutcome::PlumbingOk;
+    }
+    if case.grader.grade(&graded_answer(events)) {
+        CaseOutcome::Pass
+    } else {
+        CaseOutcome::Fail
+    }
 }
 
 /// One rendered result line: check-or-cross, name, duration (design canon).
@@ -219,6 +275,32 @@ pub fn case_line(name: &str, passed: bool, seconds: f64) -> String {
 
 pub fn summary_line(passed: usize, total: usize) -> String {
     format!("{passed}/{total} passed")
+}
+
+/// The mark and word for one case's outcome in the results table. A plumbing row
+/// gets neither the check nor the cross: it is not a verdict.
+pub fn outcome_label(outcome: CaseOutcome) -> String {
+    match outcome {
+        CaseOutcome::Pass => format!("{} pass", '\u{2713}'),
+        CaseOutcome::Fail => format!("{} fail", '\u{2717}'),
+        CaseOutcome::PlumbingOk => format!("{} plumbing OK", '\u{2022}'),
+    }
+}
+
+/// The run's one-line verdict. A run with no plumbing rows reads exactly as it
+/// always did (`summary_line`); once any row is non-graded the line says so in
+/// words, because `N/N passed` on a run that graded nothing is the false green
+/// this whole outcome exists to kill (#606). Pure so the wording is testable.
+pub fn rollup_line(passed: usize, failed: usize, plumbing_ok: usize) -> String {
+    if plumbing_ok == 0 {
+        return summary_line(passed, passed + failed);
+    }
+    let plumbing = format!("{plumbing_ok} plumbing OK (not graded)");
+    let graded = passed + failed;
+    if graded == 0 {
+        return plumbing;
+    }
+    format!("{}, {plumbing}", summary_line(passed, graded))
 }
 
 #[cfg(test)]

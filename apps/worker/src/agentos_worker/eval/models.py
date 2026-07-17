@@ -19,7 +19,14 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    computed_field,
+    field_validator,
+)
 
 
 class GraderKind(StrEnum):
@@ -130,8 +137,31 @@ class EvalSuite(BaseModel):
     cases: list[EvalCase] = Field(min_length=1)
 
 
+class EvalOutcome(StrEnum):
+    """How a case's turn ended: graded pass/fail, or completed but never graded.
+
+    ``PLUMBING_OK`` is the fake tier's outcome (ADR-0055): the fake model is a
+    plumbing fixture, so the only thing that tier asserts is that the turn
+    completed. No grader runs, so the row is neither a pass nor a fail -- keeping
+    it a distinct third value is what makes it impossible to mistake for a green
+    promotion gate. A fake turn that does *not* complete is still ``FAIL``: broken
+    plumbing is the one thing the tier must still catch.
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    PLUMBING_OK = "plumbing_ok"
+
+
 class EvalCaseResult(BaseModel):
-    """The outcome of running one case: pass/fail, the output, and any error.
+    """The outcome of running one case: its verdict, the output, and any error.
+
+    ``passed`` is a derived view of ``outcome`` and is tri-state: ``True`` for a
+    graded pass, ``False`` for a graded fail, ``None`` for a non-graded plumbing
+    row. Deriving it (rather than storing it) means no caller can set the two
+    inconsistently, and ``None`` keeps an unmigrated reader fail-safe: it is falsy,
+    so a truthiness check under-reports rather than ever going false-green, and
+    nothing ever claims a row failed that no grader judged.
 
     ``cost_usd`` is the dollar cost the runner attributed to this case's turn
     when the harness reported usage/pricing; it is ``None`` when cost is not
@@ -142,11 +172,18 @@ class EvalCaseResult(BaseModel):
     """
 
     case_id: str
-    passed: bool
+    outcome: EvalOutcome
     output: str
     latency_ms: float
     error: str | None = None
     cost_usd: float | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def passed(self) -> bool | None:
+        if self.outcome is EvalOutcome.PLUMBING_OK:
+            return None
+        return self.outcome is EvalOutcome.PASS
 
 
 class EvalRunResult(BaseModel):
@@ -171,11 +208,47 @@ class EvalRunResult(BaseModel):
 
     @property
     def passed_count(self) -> int:
-        return sum(1 for r in self.results if r.passed)
+        return sum(1 for r in self.results if r.outcome is EvalOutcome.PASS)
+
+    @property
+    def plumbing_count(self) -> int:
+        return sum(1 for r in self.results if r.outcome is EvalOutcome.PLUMBING_OK)
+
+    @property
+    def graded_total(self) -> int:
+        """The rows a grader actually judged: the only honest pass-rate denominator."""
+        return self.total - self.plumbing_count
 
     def all_passed(self) -> bool:
+        """Did every case pass a grader? A pure grading predicate.
+
+        Deliberately False for an all-plumbing run: nothing was graded, so nothing
+        passed. "Did anything break" is :meth:`completed_without_failure`.
+        """
         return self.total > 0 and self.passed_count == self.total
 
+    def all_plumbing(self) -> bool:
+        """Every row completed but none was graded (a fake-tier run)."""
+        return self.total > 0 and self.plumbing_count == self.total
+
+    def completed_without_failure(self) -> bool:
+        """Did nothing break? The operational question a process exit asks.
+
+        An all-plumbing run is a clean completion without being a pass; a run
+        carrying any FAIL is red whether or not the rest was graded.
+        """
+        return not any(r.outcome is EvalOutcome.FAIL for r in self.results)
+
     def summary(self) -> str:
-        """The one-line ``34/36 passed`` string the PR check surfaces."""
-        return f"{self.passed_count}/{self.total} passed"
+        """The one-line ``34/36 passed`` string the PR check surfaces.
+
+        A non-graded run never renders as ``N/M passed``: both ``0/3`` (a red that
+        did not happen) and ``3/3`` (the false green) are lies about rows no grader
+        judged, so plumbing rows are named as such and stay out of the ratio.
+        """
+        if self.all_plumbing():
+            return f"{self.plumbing_count} plumbing OK (not graded)"
+        graded = f"{self.passed_count}/{self.graded_total} passed"
+        if self.plumbing_count:
+            return f"{graded}, {self.plumbing_count} plumbing OK"
+        return graded

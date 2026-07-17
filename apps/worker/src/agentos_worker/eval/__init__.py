@@ -9,6 +9,7 @@ them. Run a Job with ``python -m agentos_worker.eval``.
 from .models import (
     EvalCase,
     EvalCaseResult,
+    EvalOutcome,
     EvalRunResult,
     EvalSuite,
     ExpectedStatus,
@@ -40,6 +41,7 @@ __all__ = [
     "EvalCase",
     "EvalCaseResult",
     "EvalJob",
+    "EvalOutcome",
     "EvalReport",
     "EvalReporter",
     "EvalRunResult",
