@@ -1081,3 +1081,24 @@ fn init_output_json_shape_is_pinned() {
         })
     );
 }
+
+/// The `next` command shell-quotes a dir with a space so it stays a single valid
+/// `cd` target, not a broken two-token command. A kebab path stays bare (asserted
+/// above), so this only fires for special-char paths.
+#[test]
+fn init_output_next_shell_quotes_a_dir_with_a_space() {
+    use std::path::PathBuf;
+    let out = InitOutput {
+        name: "deal-desk".to_string(),
+        dir: PathBuf::from("my bundle"),
+        from_spec: None,
+        created: vec![],
+        success_msg: String::new(),
+    }
+    .to_json();
+    assert_eq!(
+        out["next"],
+        json!("cd 'my bundle' && agentos skill up"),
+        "a dir with a space must be shell-quoted in the next command: {out}"
+    );
+}

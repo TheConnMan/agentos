@@ -319,6 +319,19 @@ pub struct InitOutput {
     pub success_msg: String,
 }
 
+impl InitOutput {
+    /// The copy-pasteable next-step command. The dir is shell-quoted (only when
+    /// it carries a special char -- a kebab bundle name stays bare) so a path
+    /// with a space yields a valid `cd`, not a broken two-token one. Shared by
+    /// `to_json` and `render` so the machine and human forms never drift.
+    fn next_command(&self) -> String {
+        format!(
+            "cd {} && agentos skill up",
+            crate::ops::shell_quote(&self.dir.display().to_string())
+        )
+    }
+}
+
 impl crate::ui::CliOutput for InitOutput {
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -331,7 +344,7 @@ impl crate::ui::CliOutput for InitOutput {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect::<Vec<_>>(),
-            "next": format!("cd {} && agentos skill up", self.dir.display()),
+            "next": self.next_command(),
         })
     }
 
@@ -340,10 +353,7 @@ impl crate::ui::CliOutput for InitOutput {
         for path in &self.created {
             ui.note(&format!("created {}", path.display()));
         }
-        ui.note(&format!(
-            "Next: cd {} && agentos skill up",
-            self.dir.display()
-        ));
+        ui.note(&format!("Next: {}", self.next_command()));
     }
 }
 
