@@ -192,12 +192,13 @@ release binary. It needs no Rust toolchain and no repo checkout:
 
 You are about to run a downloaded binary as root, so verify it first. Every
 release ships a `checksums.txt` signed by the release workflow; check the
-signature, then check the binary against it, then install:
+signature, then check the binary against it, then install. Set `VERSION` to the
+release you are installing, from the
+[Releases page](https://github.com/curie-eng/agentos/releases):
 
 ```bash
-# Linux (x86_64); for macOS Apple silicon swap in agentos-aarch64-apple-darwin
-VERSION=v0.4.0
-ASSET=agentos-x86_64-unknown-linux-gnu
+VERSION=vX.Y.Z                            # the release you are installing
+ASSET=agentos-x86_64-unknown-linux-gnu    # macOS Apple silicon: agentos-aarch64-apple-darwin
 BASE="https://github.com/curie-eng/agentos/releases/download/$VERSION"
 curl -fsSLO "$BASE/$ASSET" -O "$BASE/checksums.txt" -O "$BASE/checksums.txt.sigstore.json"
 
@@ -206,7 +207,7 @@ cosign verify-blob --bundle checksums.txt.sigstore.json \
   --certificate-identity "https://github.com/curie-eng/agentos/.github/workflows/release.yaml@refs/tags/$VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
-# 2. the binary is the one it names
+# 2. the binary is the one it names (macOS: shasum -a 256 --check --ignore-missing)
 sha256sum --check --ignore-missing checksums.txt
 # 3. both OK? install it
 chmod +x "$ASSET" && sudo mv "$ASSET" /usr/local/bin/agentos
@@ -214,6 +215,11 @@ chmod +x "$ASSET" && sudo mv "$ASSET" /usr/local/bin/agentos
 agentos cluster up
 agentos local up
 ```
+
+> **Which releases can be verified?** Every release published *after* v0.4.0.
+> `checksums.txt`, the signature, the provenance, and the SBOMs are produced by
+> the release workflow, so v0.4.0 and earlier shipped bare binaries and the two
+> integrity URLs above 404 against them. Install a newer release.
 
 No cosign? `gh attestation verify $ASSET --repo curie-eng/agentos --signer-workflow
 curie-eng/agentos/.github/workflows/release.yaml` does both checks in one command.

@@ -145,13 +145,23 @@ class TestBuildManifest:
         with pytest.raises(integrity.IntegrityError, match="SBOM"):
             integrity.build_manifest(dist, VERSION)
 
-    def test_refuses_when_an_unrecognized_asset_has_no_sbom(self, tmp_path):
+    def test_refuses_an_undeclared_asset(self, tmp_path):
         # The closed-world clause: a NEW asset someone adds to the release must be
-        # covered too, or the gate silently stops meaning anything.
+        # declared here too, or the gate silently stops meaning anything.
         dist = make_dist(tmp_path)
         (dist / "agentos-installer.sh").write_bytes(b"#!/bin/sh\n")
 
         with pytest.raises(integrity.IntegrityError, match="agentos-installer.sh"):
+            integrity.build_manifest(dist, VERSION)
+
+    def test_refuses_an_undeclared_asset_even_when_it_brings_an_sbom(self, tmp_path):
+        # `files: dist/*` publishes whatever is staged, so a stray file must not be
+        # able to buy its way into a signed release just by carrying an SBOM.
+        dist = make_dist(tmp_path)
+        (dist / "agentos-backdoor").write_bytes(b"pwned")
+        write_sbom(dist / "agentos-backdoor.spdx.json", "agentos-backdoor")
+
+        with pytest.raises(integrity.IntegrityError, match="not declared"):
             integrity.build_manifest(dist, VERSION)
 
     def test_refuses_an_empty_sbom(self, tmp_path):
@@ -166,6 +176,33 @@ class TestBuildManifest:
         (dist / f"{CHART}.spdx.json").write_text("<html>404: not found</html>")
 
         with pytest.raises(integrity.IntegrityError, match="SBOM"):
+            integrity.build_manifest(dist, VERSION)
+
+    def test_refuses_an_sbom_that_is_valid_json_but_not_an_sbom(self, tmp_path):
+        # `{}` parses. A generator that silently degrades to an empty document
+        # would otherwise satisfy the gate while inventorying nothing.
+        dist = make_dist(tmp_path)
+        (dist / f"{CHART}.spdx.json").write_text("{}")
+
+        with pytest.raises(integrity.IntegrityError, match="SPDX"):
+            integrity.build_manifest(dist, VERSION)
+
+    def test_refuses_an_sbom_that_inventories_nothing(self, tmp_path):
+        dist = make_dist(tmp_path)
+        (dist / f"{CHART}.spdx.json").write_text(
+            json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+        )
+
+        with pytest.raises(integrity.IntegrityError, match="no packages"):
+            integrity.build_manifest(dist, VERSION)
+
+    def test_refuses_an_sbom_with_no_asset(self, tmp_path):
+        # The closed-world rule is "an SBOM *for one*": an orphan SBOM means either
+        # an asset went missing or the SBOM is misnamed. Both are release bugs.
+        dist = make_dist(tmp_path)
+        write_sbom(dist / "ghost-asset.spdx.json", "ghost-asset")
+
+        with pytest.raises(integrity.IntegrityError, match="ghost-asset"):
             integrity.build_manifest(dist, VERSION)
 
 
@@ -196,11 +233,14 @@ class TestVerify:
         with pytest.raises(integrity.IntegrityError, match="sha256 mismatch"):
             integrity.verify(dist, VERSION)
 
-    def test_rejects_an_asset_absent_from_the_manifest(self, tmp_path):
+    def test_rejects_a_file_the_manifest_does_not_list(self, tmp_path):
+        # A declared asset published outside the signature: the manifest was built
+        # over a smaller dist than the one shipped, so the signature says nothing
+        # about this file.
         dist = seal(make_dist(tmp_path))
-        # Signed manifest, but an extra unsigned file rides along in the release.
-        (dist / "agentos-extra-tool").write_bytes(b"surprise")
-        write_sbom(dist / "agentos-extra-tool.spdx.json", "agentos-extra-tool")
+        manifest = dist / "checksums.txt"
+        kept = [ln for ln in manifest.read_text().splitlines() if not ln.endswith(f"  {COMPOSE}")]
+        manifest.write_text("".join(f"{ln}\n" for ln in kept))
 
         with pytest.raises(integrity.IntegrityError, match="not listed"):
             integrity.verify(dist, VERSION)

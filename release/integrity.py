@@ -80,9 +80,54 @@ def _check_required_present(dist: Path, version: str) -> None:
         )
 
 
+def _check_sbom_is_usable(sbom: Path) -> None:
+    """An SBOM must actually be an SPDX document that inventories something.
+
+    Presence is too weak a check: a generator that degrades to `{}` or to a
+    zero-package document still writes a file, and the gate would call that
+    covered while the SBOM says nothing at all.
+    """
+    raw = sbom.read_text().strip()
+    if not raw:
+        raise IntegrityError(f"SBOM {sbom.name} is empty; the generator produced nothing.")
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise IntegrityError(f"SBOM {sbom.name} is not valid JSON: {exc}") from exc
+    if not isinstance(doc, dict) or "spdxVersion" not in doc:
+        raise IntegrityError(f"SBOM {sbom.name} is not an SPDX document (no spdxVersion).")
+    if not doc.get("packages"):
+        raise IntegrityError(
+            f"SBOM {sbom.name} lists no packages; it inventories nothing. "
+            "Check what the generator was pointed at."
+        )
+
+
+def _check_no_undeclared_assets(dist: Path, version: str) -> None:
+    """Nothing gets published that this file does not name.
+
+    `files: dist/*` publishes whatever is in dist, and the steps above sign and
+    attest it. So a stray file -- a leftover build artifact, or anything a
+    compromised step drops in -- would otherwise ship signed and attested purely
+    because it brought an SBOM along. Declaring the release set here means adding
+    an asset is a reviewed edit to this list, not a side effect of a job writing
+    to dist.
+    """
+    declared = set(required_assets(version))
+    undeclared = [name for name in assets_in(dist) if name not in declared]
+    if undeclared:
+        raise IntegrityError(
+            f"file(s) staged for release but not declared in {Path(__file__).name}: "
+            f"{', '.join(undeclared)}. If this is a new release asset, add it to "
+            "required_assets() and generate an SBOM for it; if it is not, keep it "
+            "out of dist."
+        )
+
+
 def _check_sbom_coverage(dist: Path) -> None:
-    """Every asset -- known or not -- carries a parseable, non-empty SBOM."""
-    for name in assets_in(dist):
+    """Every asset carries a usable SBOM, and every SBOM belongs to an asset."""
+    assets = assets_in(dist)
+    for name in assets:
         sbom = dist / f"{name}{SBOM_SUFFIX}"
         if not sbom.is_file():
             raise IntegrityError(
@@ -90,13 +135,18 @@ def _check_sbom_coverage(dist: Path) -> None:
                 "Every published asset needs a dependency inventory (#629); add one "
                 "in the job that builds the asset."
             )
-        raw = sbom.read_text().strip()
-        if not raw:
-            raise IntegrityError(f"SBOM {sbom.name} is empty; the generator produced nothing.")
-        try:
-            json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise IntegrityError(f"SBOM {sbom.name} is not valid JSON: {exc}") from exc
+        _check_sbom_is_usable(sbom)
+
+    # An SBOM naming an asset that is not here means the asset went missing or the
+    # SBOM is misnamed; either way the release is not what it claims to be.
+    for path in sorted(dist.iterdir()):
+        if not path.name.endswith(SBOM_SUFFIX):
+            continue
+        subject = path.name[: -len(SBOM_SUFFIX)]
+        if subject not in assets:
+            raise IntegrityError(
+                f"SBOM {path.name} describes '{subject}', which is not in the release."
+            )
 
 
 def sha256_of(path: Path) -> str:
@@ -120,6 +170,7 @@ def build_manifest(dist: Path, version: str) -> str:
     documented verification step is `sha256sum --check checksums.txt`.
     """
     _check_required_present(dist, version)
+    _check_no_undeclared_assets(dist, version)
     _check_sbom_coverage(dist)
     lines = [f"{sha256_of(dist / name)}  {name}" for name in manifest_entries(dist)]
     return "".join(f"{line}\n" for line in lines)
@@ -140,6 +191,7 @@ def parse_manifest(text: str) -> dict[str, str]:
 def verify(dist: Path, version: str) -> None:
     """Re-check a published dist end to end, raising IntegrityError on any gap."""
     _check_required_present(dist, version)
+    _check_no_undeclared_assets(dist, version)
     _check_sbom_coverage(dist)
 
     manifest = dist / CHECKSUM_FILE

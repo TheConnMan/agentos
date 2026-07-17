@@ -7,6 +7,10 @@ root and pointing it at a cluster, so verify what you received before you run it
 This page is the reference. The [README quickstart](../README.md#quickstart) has
 the short copy-paste version for the default install path.
 
+These artifacts are produced by the release workflow, so they exist on every
+release published *after* v0.4.0. Nothing below works against v0.4.0 or earlier,
+which shipped bare binaries.
+
 ## What each release publishes
 
 | Asset | What it is |
@@ -36,7 +40,7 @@ Set the version you are installing and download the binary alongside the manifes
 and its signature:
 
 ```bash
-VERSION=v0.4.0
+VERSION=vX.Y.Z          # the release you are installing
 REPO=curie-eng/agentos
 ASSET=agentos-x86_64-unknown-linux-gnu   # macOS: agentos-aarch64-apple-darwin
 BASE="https://github.com/$REPO/releases/download/$VERSION"
@@ -114,13 +118,14 @@ Each asset ships an SPDX 2.3 SBOM at `<asset>.spdx.json`, covered by
 `checksums.txt` like any other file, so verify it the same way before trusting
 it:
 
-- **CLI binaries** -- cataloged from the `cli` source tree, so the SBOM is the
-  full crate dependency graph that `Cargo.lock` pins. This is the one to feed to
-  a vulnerability scanner.
+- **CLI binaries** -- cataloged from `cli/Cargo.lock`, so the SBOM is the full
+  crate dependency graph the build pinned. This is the one to feed to a
+  vulnerability scanner.
 - **Chart and compose** -- these are deployment manifests with no dependencies of
-  their own; their SBOMs inventory the packaged artifact itself. The dependency
-  graph of what they deploy belongs to the `agentos-*` container images, which
-  carry their own SBOMs (issue #62).
+  their own, so their SBOMs inventory the packaged artifact itself and little
+  else. The dependency graph of what they deploy belongs to the `agentos-*`
+  container images, and those do **not** carry SBOMs or provenance yet: that is
+  issue #62, still open. Do not read a verified chart as a verified stack.
 
 Scan one with any SPDX-aware tool, for example
 [grype](https://github.com/anchore/grype):
@@ -137,14 +142,22 @@ The release fails, before and after publishing.
 means. `.github/workflows/release.yaml` calls it twice: once before signing, to
 refuse to build a checksum manifest over an incomplete asset set (signing an
 incomplete manifest would launder the gap into a valid signature), and once
-after publishing, in the `verify-release` job, which re-downloads the release and
-re-runs the whole documented path -- checksums, cosign, and `gh attestation
-verify` -- against the bytes users will actually get.
+against the published bytes.
 
-The check is closed-world: every file in the release must be a known asset, an
-SBOM for one, or the manifest and its signature. A new asset added to the release
-without an SBOM fails the gate rather than shipping unattested. When it fires,
-add SBOM generation to the job that builds the asset -- do not widen the gate.
+The release is created as a **draft**, whose assets are not publicly
+downloadable. The `verify-and-publish` job then re-downloads it and re-runs the
+whole documented path -- checksums, cosign, and `gh attestation verify` -- and
+only promotes the draft to a published release if all of it passes. Publication
+is the consequence of verification, so an unverifiable release never reaches
+anyone.
+
+The check is closed-world: every file in the release must be an asset
+`release/integrity.py` declares, a usable SBOM for one of them, or the manifest
+and its signature. Anything else fails, including a stray file that brought an
+SBOM along -- `files: dist/*` publishes whatever is staged, so the declared list
+is what stops an unreviewed artifact from being signed and shipped. Adding a
+release asset therefore means declaring it there and generating an SBOM for it,
+which is a reviewed edit rather than a side effect.
 
 ## Not covered yet
 

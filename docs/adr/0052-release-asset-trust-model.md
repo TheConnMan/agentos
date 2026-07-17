@@ -41,42 +41,60 @@ key to store, rotate, or leak, and the identity a verifier pins is the workflow
 path plus the tag -- a fact about *who built it*, which is the actual question,
 rather than *who holds the key*.
 
-**Coverage is closed-world.** The gate does not check a list of assets we know
-about today. Every file in the release must be a known asset, an SBOM for one, or
-the manifest and its signature; anything else fails. An allowlist would go
-quietly stale the first time someone adds an asset -- the gate would still report
-green while shipping the new artifact unattested, which is the exact failure this
-ADR exists to prevent. The cost is that adding an asset means teaching the gate
-about it. That cost is the point.
+**Coverage is closed-world.** Every file in the release must be an asset
+`release/integrity.py` declares, a usable SBOM for one of them, or the manifest
+and its signature; anything else fails. Checking only that the assets we know
+about are covered would let the next asset ship uncovered while the gate reported
+green. Nor is "has an SBOM" sufficient on its own: `files: dist/*` publishes
+whatever is staged, so a stray file -- a leftover build artifact, or anything a
+compromised step drops into dist -- would otherwise be signed and attested purely
+for bringing an SBOM along. The cost is that adding an asset means declaring it,
+as a reviewed edit. That cost is the point.
 
-**The gate runs before signing, and again after publishing.** Before, because
-cosign will sign an incomplete manifest without complaint, laundering a coverage
-gap into a valid signature: `release/integrity.py` refuses to *build* a manifest
-over an incomplete dist, so the release fails closed. After, because what we
-uploaded is not evidence about what users download -- the `verify-release` job
-re-downloads the published release and re-runs the whole documented path
+**Publication is the consequence of verification, not a step before it.** The
+release is created as a draft, whose assets are not publicly downloadable; the
+`verify-and-publish` job re-downloads it, re-runs the whole documented path
 (checksums, `cosign verify-blob`, `gh attestation verify`) against the real
-bytes. That second run is also what keeps
+published bytes, and only then promotes the draft. Publishing first and verifying
+after was the obvious shape and is wrong: a release that fails verification would
+already be installed, already marked latest, and there is no rollback -- the
+workflow would go red while the artifact stayed up, which inverts the whole
+point. Verification against the *published* bytes (rather than the dist we
+uploaded from) is also what catches a create-release that uploaded only some of
+its assets, and what keeps
 [`docs/release-verification.md`](../release-verification.md) honest: if the
-documented commands stop working, the release goes red.
+documented commands stop working, no release goes out.
 
-**SBOM scope follows the artifact.** The CLI binaries are cataloged from the
-`cli` source tree, because `Cargo.lock` is what actually names every crate that
-went in and stripping removes what a binary scan would need. The chart and the
+The gate additionally runs *before* signing, because cosign will sign an
+incomplete manifest without complaint, laundering a coverage gap into a valid
+signature: `release/integrity.py` refuses to *build* a manifest over an
+incomplete dist.
+
+**SBOM scope follows the artifact.** The CLI binaries are cataloged from
+`cli/Cargo.lock`, because the lockfile is what actually names every crate that
+went in, stripping removes what a binary scan would need, and by SBOM time the
+`cli` tree also holds a `target/` full of build detritus. The chart and the
 compose file are deployment manifests with no dependencies of their own, so their
 SBOMs inventory the packaged artifact itself; the dependency graph of what they
-deploy belongs to the images they pin, and ships with those images (#62). This is
-the weakest part of the decision and is recorded as such: a chart SBOM that names
-only the chart is close to a restatement of its checksum.
+deploy belongs to the images they pin, which carry no SBOM or provenance today
+(#62, open). This is the weakest part of the decision and is recorded as such: a
+chart SBOM that names only the chart is close to a restatement of its checksum,
+and a verified chart is not a verified stack until #62 lands.
 
 ## Consequences
 
 - Verifying a release needs `cosign`, or `gh` for the one-command
   `gh attestation verify` path. Both are documented; neither is bundled.
-- The README pins an explicit version in its verification snippet, because the
-  cosign certificate identity names the exact tag. A wildcard identity would
-  accept any tag's manifest and defeat the pin, so the snippet goes stale by
-  design at each release rather than being loosened.
+- The verification snippets take the version as a `vX.Y.Z` placeholder the reader
+  substitutes, rather than a live tag. The cosign certificate identity names the
+  exact tag, so the snippet cannot be tag-agnostic; a wildcard identity would
+  accept any tag's manifest and defeat the pin. A hardcoded tag would be worse
+  than a placeholder -- it goes stale every release, and a stale tag sends people
+  to a release whose integrity URLs 404.
+- These artifacts exist only on releases published after v0.4.0. Verification is
+  not retroactive: v0.4.0 and earlier shipped bare binaries and always will, so
+  the docs say plainly that those cannot be verified rather than implying the
+  commands work everywhere.
 - A release binary still fetches the chart and compose assets itself at `cluster
   up` / `local up` and does **not** verify them; that fetch is protected by HTTPS
   to GitHub, not by this signature. Closing that is follow-on work -- the trust
