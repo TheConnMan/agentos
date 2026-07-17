@@ -15,7 +15,6 @@ from .k8s import (
     MANAGED_BY_VALUE,
     THREAD_HASH_LABEL,
     KubernetesSandboxClient,
-    SandboxClient,
 )
 from .substrate import HISTORY_ENV, SESSION_ENV, SandboxSubstrate
 from .types import (
@@ -24,6 +23,7 @@ from .types import (
     NoRouteError,
     RouteRecord,
     RouteState,
+    SandboxClient,
     SandboxError,
     SandboxHandle,
     SandboxView,

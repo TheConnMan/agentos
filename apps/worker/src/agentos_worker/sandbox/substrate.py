@@ -32,13 +32,13 @@ from .k8s import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
     THREAD_HASH_LABEL,
-    SandboxClient,
 )
 from .types import (
     ClaimTimeoutError,
     NoRouteError,
     RouteRecord,
     RouteState,
+    SandboxClient,
     SandboxHandle,
     SandboxView,
     SubstrateConfig,
