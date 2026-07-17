@@ -125,7 +125,7 @@ class _FakeK8s:
         if claim is None:
             return None
         return ClaimView(
-            name=claim.name, ready=True, sandbox_name=claim.sandbox_name, labels=dict(claim.labels)
+            name=claim.name, ready=True, sandbox_name=claim.sandbox_name
         )
 
     def delete_claim(self, name: str) -> None:

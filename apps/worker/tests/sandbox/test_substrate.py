@@ -253,7 +253,6 @@ class _SlowBindNoFqdnClient(FakeSandboxClient):
             name=claim.name,
             ready=ready,
             sandbox_name=claim.sandbox_name if ready else None,
-            labels=dict(claim.labels),
         )
 
     def get_sandbox(self, name: str) -> SandboxView | None:

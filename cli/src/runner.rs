@@ -17,15 +17,6 @@ pub struct RunnerClient {
     http: reqwest::Client,
 }
 
-/// The outcome of a `/v1/steer` call: the frame reached a live turn, or there
-/// was no turn to steer (the runner's 409, from which the worker falls back to a
-/// fresh `/v1/event`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SteerOutcome {
-    Delivered,
-    NoActiveTurn,
-}
-
 impl RunnerClient {
     pub fn new(base_url: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
@@ -137,52 +128,6 @@ impl RunnerClient {
             );
         }
         Ok(events)
-    }
-
-    /// Inject a follow-up event into the live turn (`POST /v1/steer`). The runner
-    /// answers 409 when there is no active turn.
-    pub async fn steer(&self, text: &str, user: &str) -> Result<SteerOutcome> {
-        let frame = InboundMessage::Event {
-            r#type: EventType::Message,
-            text: text.to_string(),
-            user: user.to_string(),
-            ts: slack_ts(),
-        };
-        let resp = self
-            .http
-            .post(format!("{}/v1/steer", self.base_url))
-            .json(&frame)
-            .send()
-            .await
-            .with_context(|| format!("POST {}/v1/steer", self.base_url))?;
-        match resp.status().as_u16() {
-            200 => Ok(SteerOutcome::Delivered),
-            409 => Ok(SteerOutcome::NoActiveTurn),
-            other => {
-                let body = resp.text().await.unwrap_or_default();
-                bail!("POST /v1/steer returned {other}: {}", body.trim());
-            }
-        }
-    }
-
-    /// Hard-stop the live turn (`POST /v1/interrupt`).
-    pub async fn interrupt(&self, reason: &str) -> Result<()> {
-        let frame = InboundMessage::Interrupt {
-            reason: reason.to_string(),
-        };
-        let resp = self
-            .http
-            .post(format!("{}/v1/interrupt", self.base_url))
-            .json(&frame)
-            .send()
-            .await
-            .with_context(|| format!("POST {}/v1/interrupt", self.base_url))?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!("POST /v1/interrupt returned {status}: {}", body.trim());
-        }
-        Ok(())
     }
 }
 
