@@ -49,7 +49,11 @@ wins, so a config author is not forced onto the single hardcoded
 ``AGENTOS_CREDENTIALS`` name. A key that is present but EMPTY is skipped rather
 than winning -- an empty value is "not supplied", never a credential. Unset or
 empty, the list defaults to ``(AGENTOS_CREDENTIALS,)``, which is exactly today's
-behavior.
+behavior. What it may TARGET is fenced: the boot env also holds the platform's
+scoped state tokens (ADR-0033) and the agent's connector secrets, so an
+``AGENTOS_``-prefixed target (other than ``AGENTOS_CREDENTIALS`` itself) is
+refused, keeping the declaration from becoming a way to forward the platform's
+own secrets to a third-party endpoint.
 
 The credential value (and its length) is never logged or echoed.
 """
@@ -76,6 +80,10 @@ MODEL_BASE_URL_ENV = "AGENTOS_MODEL_BASE_URL"
 API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
 # Declares which env var(s) carry the credential: a bare name or a JSON array.
 MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
+# The platform's own boot-env namespace. No var in it is a model credential
+# (AGENTOS_CREDENTIALS excepted), so it is off limits as an env_key target --
+# see parse_env_keys.
+_AGENTOS_ENV_PREFIX = "AGENTOS_"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 
 # A Claude Code OAuth token shares the sk-ant- prefix with an API key; this more
@@ -181,6 +189,19 @@ def parse_env_keys(raw: str) -> tuple[str, ...]:
     config picks up stray empties and they carry no meaning. Valid JSON of the
     wrong shape (a non-string array member, a mapping, a bare number) and a list
     that reduces to nothing are config errors, raised loudly.
+
+    An ``AGENTOS_``-prefixed target is refused (``AGENTOS_CREDENTIALS``, the
+    canonical credential name, excepted). The runner boot env is shared: it also
+    carries the platform's own scoped state tokens (ADR-0033) and the agent's
+    connector secrets. Naming one of those as a credential source under a
+    base-URL override would forward it to a third-party endpoint as the
+    ``x-api-key`` header, so the fence exists to keep the declaration from being a
+    secret-exfiltration primitive. The platform's own boot vars are never a model
+    credential, so naming one is either a mistake or an attack, and the runner
+    refuses either way. One bad name poisons the whole declaration rather than
+    being dropped silently: a silently-dropped name would let a typo'd (or
+    deliberate) exfil attempt look like it worked. The error may name the
+    offending env var, never its value.
     """
     try:
         decoded: object = json.loads(raw)
@@ -201,6 +222,13 @@ def parse_env_keys(raw: str) -> tuple[str, ...]:
     keys = tuple(name.strip() for name in names if name.strip())
     if not keys:
         raise InvalidEnvKeyError(f"{MODEL_ENV_KEY_ENV} declares no usable env var name.")
+    for key in keys:
+        if key.startswith(_AGENTOS_ENV_PREFIX) and key != CREDENTIALS_ENV:
+            raise InvalidEnvKeyError(
+                f"{MODEL_ENV_KEY_ENV} may not name {key}: the platform's own "
+                f"{_AGENTOS_ENV_PREFIX}* boot vars are never a model credential. "
+                f"Name a provider-native env var, or {CREDENTIALS_ENV}."
+            )
     return keys
 
 

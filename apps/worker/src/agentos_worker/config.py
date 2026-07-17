@@ -124,6 +124,12 @@ class WorkerConfig(BaseSettings):
     # Local model demo path: the worker can point the runner at an
     # Anthropic-compatible local endpoint without changing the fake-model default.
     model_base_url: str = Field(default="", validation_alias="AGENTOS_MODEL_BASE_URL")
+    # The endpoint's wire protocol and the env var(s) carrying the credential
+    # (#514), both declared rather than inferred. Operator scope like
+    # model_base_url: they select which env var a credential is read from and
+    # which wire protocol is dialed, so an agent author must never set them.
+    model_api_backend: str = Field(default="", validation_alias="AGENTOS_MODEL_API_BACKEND")
+    model_env_key: str = Field(default="", validation_alias="AGENTOS_MODEL_ENV_KEY")
     model: str = Field(default="", validation_alias="AGENTOS_MODEL")
 
     # When true, clear the Slack assistant-thread status (the "shimmer" the

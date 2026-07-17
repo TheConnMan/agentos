@@ -514,3 +514,118 @@ def test_resolve_sdk_env_default_env_key_path_unchanged() -> None:
     env = {CREDENTIALS_ENV: "sk-ant-PLACEHOLDER"}
     assert resolve_sdk_env(env) is None
     assert env[API_KEY_ENV] == "sk-ant-PLACEHOLDER"
+
+
+# --- env_key targeting fence (#514 hardening). resolve_credential walks whatever
+# names AGENTOS_MODEL_ENV_KEY hands it, but the runner boot env is shared: it also
+# carries the platform's own AGENTOS_-namespaced vars, including the scoped HMAC
+# state tokens (ADR-0033) the runner authenticates to the state API with. Naming
+# one of those as a credential source under a base-URL override would forward it
+# to a third-party endpoint as x-api-key -- a secret-exfiltration primitive. The
+# platform's own boot vars are never a model credential, so an AGENTOS_-prefixed
+# target is either a mistake or an attack, and the runner refuses either way.
+# AGENTOS_CREDENTIALS is the one exception: it IS the canonical credential name.
+# The existing reserved_env fence guards the name a connector secret may DECLARE;
+# this one guards the name an env_key may TARGET. Different direction, both needed.
+
+# Platform boot-env var NAMES the fence must refuse. Hoisted to named constants
+# because the secrets pre-commit hook false-positives on inline *_TOKEN / *_KEY
+# literals; these are variable names, never values.
+MEMORY_TOKEN_KEY = "AGENTOS_MEMORY_TOKEN"
+HISTORY_TOKEN_KEY = "AGENTOS_HISTORY_TOKEN"
+RUNNER_TOKEN_KEY = "AGENTOS_RUNNER_TOKEN"
+BUDGET_KEY = "AGENTOS_BUDGET"
+# An obvious fake placeholder standing in for a scoped state token's VALUE.
+FAKE_STATE_TOKEN_VALUE = "PLACEHOLDER-not-a-real-state-token"
+
+
+@pytest.mark.parametrize(
+    "name", [MEMORY_TOKEN_KEY, HISTORY_TOKEN_KEY, RUNNER_TOKEN_KEY, BUDGET_KEY]
+)
+def test_parse_env_keys_rejects_agentos_prefixed_target(name: str) -> None:
+    # The state tokens are the exfiltration targets; the budget stands in for the
+    # rest of the AGENTOS_ boot namespace (refs, ids) -- none is a credential.
+    with pytest.raises(InvalidEnvKeyError):
+        parse_env_keys(f'["{name}"]')
+
+
+def test_parse_env_keys_rejects_agentos_prefixed_bare_string_target() -> None:
+    # The fence applies to BOTH input forms; the bare-string path must not be a
+    # way around the array-form check.
+    with pytest.raises(InvalidEnvKeyError):
+        parse_env_keys(RUNNER_TOKEN_KEY)
+
+
+def test_parse_env_keys_allows_agentos_credentials_target() -> None:
+    # The one allowed AGENTOS_ name: it is the canonical credential var, and it is
+    # already the default, so declaring it explicitly must stay legal.
+    assert parse_env_keys(f'["{CREDENTIALS_ENV}"]') == (CREDENTIALS_ENV,)
+
+
+def test_parse_env_keys_allows_agentos_credentials_bare_string() -> None:
+    assert parse_env_keys(CREDENTIALS_ENV) == (CREDENTIALS_ENV,)
+
+
+def test_parse_env_keys_one_bad_name_poisons_the_whole_declaration() -> None:
+    # A mixed array raises rather than silently dropping the fenced name and
+    # falling through to the good one. Silently dropping would let a typo'd (or
+    # deliberate) exfil attempt LOOK like it worked -- the declaration resolves, a
+    # credential is found, nothing surfaces. Refusing the whole declaration makes
+    # the operator confront what they wrote.
+    with pytest.raises(InvalidEnvKeyError):
+        parse_env_keys(f'["{MEMORY_TOKEN_KEY}","{MY_CRED_KEY}"]')
+
+
+def test_parse_env_keys_still_allows_provider_native_names() -> None:
+    # Sourcing from a provider-native var is the whole point of the feature; the
+    # issue's own cited example (grok-build) is exactly this pair. Non-AGENTOS_
+    # names must stay allowed or the fence has eaten the feature.
+    assert parse_env_keys('["ANTHROPIC_AUTH_TOKEN","LC_ANTHROPIC_AUTH_TOKEN"]') == (
+        "ANTHROPIC_AUTH_TOKEN",
+        "LC_ANTHROPIC_AUTH_TOKEN",
+    )
+
+
+def test_parse_env_keys_still_allows_a_bare_non_agentos_name() -> None:
+    assert parse_env_keys("MY_PROVIDER_KEY") == ("MY_PROVIDER_KEY",)
+
+
+def test_resolve_credential_env_keys_rejects_agentos_prefixed_target() -> None:
+    # The fence is reachable through the env-facing resolver, not only through the
+    # parser it delegates to.
+    with pytest.raises(InvalidEnvKeyError):
+        resolve_credential_env_keys({MODEL_ENV_KEY_ENV: f'["{MEMORY_TOKEN_KEY}"]'})
+
+
+def test_resolve_sdk_env_refuses_to_exfiltrate_a_state_token_to_an_override() -> None:
+    # THE regression net for the actual vulnerability. A base URL points at a
+    # third-party endpoint and the declaration names the scoped state token
+    # (ADR-0033) that is sitting in the same boot env. Forwarding it would send the
+    # platform's own credential to that endpoint as the x-api-key header. It must
+    # raise, and the token value must never reach ANTHROPIC_API_KEY.
+    env = {
+        BASE_URL_ENV: ZHIPU_BASE_URL,
+        MODEL_ENV_KEY_ENV: f'["{MEMORY_TOKEN_KEY}"]',
+        MEMORY_TOKEN_KEY: FAKE_STATE_TOKEN_VALUE,
+    }
+    with pytest.raises(InvalidEnvKeyError) as excinfo:
+        resolve_sdk_env(env)
+
+    assert env.get(API_KEY_ENV) != FAKE_STATE_TOKEN_VALUE
+    assert API_KEY_ENV not in env  # nothing was resolved at all
+    # The error may name the offending VAR NAME (that is the actionable part) but
+    # must never echo the credential VALUE -- the module's no-echo discipline.
+    assert FAKE_STATE_TOKEN_VALUE not in str(excinfo.value)
+
+
+def test_resolve_sdk_env_refuses_state_token_on_the_plain_path_too() -> None:
+    # Same refusal with no base URL set, proving the gate is on the declaration
+    # itself rather than a side effect of the override branch.
+    env = {
+        MODEL_ENV_KEY_ENV: f'["{HISTORY_TOKEN_KEY}"]',
+        HISTORY_TOKEN_KEY: FAKE_STATE_TOKEN_VALUE,
+    }
+    with pytest.raises(InvalidEnvKeyError):
+        resolve_sdk_env(env)
+    assert API_KEY_ENV not in env
+    assert OAUTH_TOKEN_ENV not in env
