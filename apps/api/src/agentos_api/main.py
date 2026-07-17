@@ -16,6 +16,7 @@ from .config import get_settings
 from .db import create_engine, create_sessionmaker
 from .evalqueue import EvalQueue
 from .github_checks import GitHubStatusReporter
+from .graveyardwatcher import GraveyardWatcher
 from .k8s import build_lazy_pod_lister, build_lazy_pod_log_reader
 from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
@@ -118,6 +119,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     else:
         app.state.sweeper_task = None
+    # The dead-letter graveyard watcher (#531): read-only reader on
+    # <runs_stream>:dead that alerts on each new dead-letter. Interval <= 0
+    # disables it. Read-only, so it needs no ordering vs valkey.aclose() beyond
+    # being cancelled before it.
+    if settings.dead_letter_watch_interval_s > 0:
+        watcher = GraveyardWatcher(
+            valkey,
+            stream=settings.dead_letter_stream_name(),
+            interval_seconds=settings.dead_letter_watch_interval_s,
+        )
+        app.state.graveyard_watcher = watcher
+        app.state.graveyard_watcher_task = asyncio.create_task(watcher.run_forever())
+    else:
+        app.state.graveyard_watcher_task = None
     try:
         yield
     finally:
@@ -140,6 +155,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             try:
                 await asyncio.wait_for(app.state.sweeper_task, 5.0)
             except (TimeoutError, asyncio.CancelledError):
+                pass
+        # Read-only, so simply cancel it before closing valkey.
+        watcher_task = getattr(app.state, "graveyard_watcher_task", None)
+        if watcher_task is not None:
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
                 pass
         await valkey.aclose()
         await http_client.aclose()

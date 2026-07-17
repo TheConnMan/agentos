@@ -79,6 +79,18 @@ class Settings(BaseSettings):
     # Must match the worker's AGENTOS_STREAM (its consumer side).
     runs_stream: str = "agentos:runs"
 
+    # Dead-letter graveyard watcher (#531). The worker moves a permanently-failing
+    # entry to `<runs_stream>:dead` (ADR-0039, #505) and acks it; this watcher is
+    # the reader that alerts on each new dead-letter so the observable-single-loss
+    # trade is actually observable. Interval <= 0 disables it (tests/off-switch).
+    # It derives the graveyard name from runs_stream, matching the worker's default
+    # `dead_letter_stream_name()`; a worker that overrides AGENTOS_DEAD_LETTER_STREAM
+    # must set the override here too.
+    dead_letter_watch_interval_s: float = 30.0
+
+    def dead_letter_stream_name(self) -> str:
+        return f"{self.runs_stream}:dead"
+
     # How often the expiry sweeper scans for lapsed pending approvals (#412) and
     # resumes their stranded sessions. Values <= 0 disable the sweeper (the
     # operator kill lever and the fully-inert-app escape hatch for tests).
