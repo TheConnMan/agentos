@@ -30,6 +30,20 @@ class GraderKind(StrEnum):
     REGEX = "regex"
 
 
+class ExpectedStatus(StrEnum):
+    """The terminal session status an eval case asserts.
+
+    ``done`` = the turn completed and answered; ``awaiting-approval`` = an
+    approval gate correctly held (ADR-0010, epic #22). This is a deliberate
+    subset of ``SessionStatus``: a classified-failure is infra breakage, never an
+    expectable success, and idle-awaiting-input is out of scope. The set is
+    additive and can be widened later.
+    """
+
+    DONE = "done"
+    AWAITING_APPROVAL = "awaiting-approval"
+
+
 class Grader(BaseModel):
     """A single deterministic grader. MVP scope: string-shaped checks only.
 
@@ -91,6 +105,11 @@ class EvalCase(BaseModel):
     held (empty on a freshly-booted eval runner). Optional with a ``False``
     default, so it is a backward-compatible addition to the frozen eval-case
     schema (ADR-0019): an existing suite that omits it keeps decoding.
+
+    ``expect_status`` asserts the turn's terminal session status: it defaults to
+    ``done`` (keeping every pre-existing case unchanged), or ``awaiting-approval``
+    to assert an approval gate blocked the action -- so a gate holding is a green
+    result instead of a red one.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -99,6 +118,7 @@ class EvalCase(BaseModel):
     input: str
     grader: Grader
     shared_history: bool = False
+    expect_status: ExpectedStatus = ExpectedStatus.DONE
 
 
 class EvalSuite(BaseModel):

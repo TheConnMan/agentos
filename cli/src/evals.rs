@@ -29,6 +29,33 @@ pub enum GraderKind {
     Regex,
 }
 
+/// The terminal session status an eval case asserts. Mirrors the frozen
+/// `ExpectedStatus` (apps/worker/.../models.py): `done` = the turn completed and
+/// answered, `awaiting-approval` = an approval gate correctly held (ADR-0010).
+/// A deliberate subset of `SessionStatus`; classified-failure is never an
+/// expectable success. Default `done` keeps every pre-existing case unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExpectedStatus {
+    #[default]
+    Done,
+    AwaitingApproval,
+}
+
+impl ExpectedStatus {
+    /// True if an observed final `status` satisfies this expectation.
+    pub fn matches(self, status: &SessionStatus) -> bool {
+        matches!(
+            (self, status),
+            (ExpectedStatus::Done, SessionStatus::Done)
+                | (
+                    ExpectedStatus::AwaitingApproval,
+                    SessionStatus::AwaitingApproval
+                )
+        )
+    }
+}
+
 /// A single deterministic grader mirroring the worker's `Grader`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Grader {
@@ -69,6 +96,8 @@ impl Grader {
 }
 
 /// One eval: an input prompt and the grader that judges the answer.
+/// `expect_status` asserts the turn's terminal status: default `done`, or
+/// `awaiting-approval` to assert an approval gate blocked the action.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EvalCase {
     pub id: String,
@@ -89,6 +118,8 @@ pub struct EvalCase {
     /// suite that never wrote the field).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub shared_history: bool,
+    #[serde(default)]
+    pub expect_status: ExpectedStatus,
 }
 
 /// A named set of eval cases run together against one plugin version.
@@ -168,18 +199,16 @@ pub fn graded_answer(events: &[OutboundEvent]) -> String {
     }
 }
 
-/// Full pass condition for a turn: it must end in a `final` with status `done`
-/// AND the grader must match the graded answer. A classified-failure or
-/// interrupted turn never passes, even if its error text matches the grader.
+/// Full pass condition for a turn: it must end in a `final` whose status equals
+/// the case's `expect_status` (default `done`, or `awaiting-approval` for a
+/// gate-blocked case) AND the grader must match the graded answer. A
+/// classified-failure or interrupted turn still never passes, because those
+/// statuses match neither `done` nor `awaiting-approval`.
 pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
-    let completed = matches!(
-        events.last(),
-        Some(OutboundEvent::Final {
-            status: SessionStatus::Done,
-            ..
-        })
-    );
-    completed && case.grader.grade(&graded_answer(events))
+    let Some(OutboundEvent::Final { status, .. }) = events.last() else {
+        return false;
+    };
+    case.expect_status.matches(status) && case.grader.grade(&graded_answer(events))
 }
 
 /// One rendered result line: check-or-cross, name, duration (design canon).
@@ -206,11 +235,16 @@ mod tests {
     }
 
     fn case(g: Grader) -> EvalCase {
+        case_with_status(g, ExpectedStatus::Done)
+    }
+
+    fn case_with_status(g: Grader, expect_status: ExpectedStatus) -> EvalCase {
         EvalCase {
             id: "c".into(),
             input: "hi".into(),
             grader: g,
             shared_history: false,
+            expect_status,
         }
     }
 
@@ -251,6 +285,21 @@ mod tests {
         assert_eq!(suite.cases[0].id, "a");
         assert_eq!(suite.cases[0].grader.kind, GraderKind::Contains);
         assert!(!suite.cases[0].grader.case_sensitive);
+        // An absent expect_status defaults to Done, keeping pre-existing cases
+        // byte-identical in behavior.
+        assert_eq!(suite.cases[0].expect_status, ExpectedStatus::Done);
+    }
+
+    #[test]
+    fn loads_expect_status_awaiting_approval() {
+        let (_dir, path) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"contains","expected":"x"},"expect_status":"awaiting-approval"}]}"#,
+        );
+        let suite = load_suite(&path).unwrap();
+        assert_eq!(
+            suite.cases[0].expect_status,
+            ExpectedStatus::AwaitingApproval
+        );
     }
 
     #[test]
@@ -360,6 +409,59 @@ mod tests {
         let c = case(grader(GraderKind::Contains, "all done", false));
         assert!(turn_passes(&c, &done));
         assert!(!turn_passes(&c, &failed));
+    }
+
+    #[test]
+    fn gate_blocked_turn_is_green_and_narrate_only_is_red() {
+        // The run-7 anti-correlation, encoded: an approval-gated case that asserts
+        // `awaiting-approval` with a match-anything grader is GREEN when the gate
+        // holds (turn ends awaiting-approval) and RED when the agent merely
+        // narrated and the turn completed (done). Before this change the pass
+        // condition hardcoded Done, so "the gate correctly blocked" was RED and
+        // "the agent narrated" was GREEN -- scoring anti-correlated with safety.
+        let gated = case_with_status(
+            grader(GraderKind::Contains, "", false),
+            ExpectedStatus::AwaitingApproval,
+        );
+        let held = vec![final_event(
+            "blocked the close",
+            SessionStatus::AwaitingApproval,
+        )];
+        let narrated = vec![final_event("I asked for approval", SessionStatus::Done)];
+        assert!(turn_passes(&gated, &held)); // the gate held -> GREEN
+        assert!(!turn_passes(&gated, &narrated)); // agent just narrated -> RED
+
+        // Inverse guard: a default (Done) case never passes on an awaiting-approval
+        // final, so widening the enum did not loosen the default gate.
+        let default_case = case(grader(GraderKind::Contains, "", false));
+        assert!(!turn_passes(&default_case, &held));
+    }
+
+    #[test]
+    fn every_schema_expected_status_deserializes() {
+        // The frozen eval-case schema owns the expected-status vocabulary (#262).
+        // Every value it enumerates must round-trip through the Rust loader, so a
+        // value added to the schema but not to this crate's ExpectedStatus enum
+        // fails here rather than silently rejecting a valid platform-authored case.
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../apps/worker/schema/eval-cases.schema.json"
+        ))
+        .expect("committed eval-cases schema is valid JSON");
+        let statuses = schema["$defs"]["ExpectedStatus"]["enum"]
+            .as_array()
+            .expect("ExpectedStatus enum is an array");
+        assert!(!statuses.is_empty(), "schema declares no expected statuses");
+        for status in statuses {
+            let status = status.as_str().expect("expected status is a string");
+            let body = format!(
+                r#"{{"name":"s","cases":[{{"id":"c","input":"i","grader":{{"kind":"contains","expected":"x"}},"expect_status":"{status}"}}]}}"#
+            );
+            let (_dir, path) = write(&body);
+            let suite = load_suite(&path).unwrap_or_else(|e| {
+                panic!("schema expected status {status:?} was rejected by the Rust loader: {e}")
+            });
+            assert_eq!(suite.cases.len(), 1);
+        }
     }
 
     #[test]

@@ -80,6 +80,9 @@ class FakeEvalRunner:
         # Inputs whose turn ends idle-awaiting-input (an incomplete turn) while
         # still carrying text in responses[input].
         self.idle_inputs: set[str] = set()
+        # Inputs whose turn ends awaiting-approval (the gate held) while still
+        # carrying text in responses[input].
+        self.awaiting_approval_inputs: set[str] = set()
         # Per-input tool-call trajectory: the ordered tool names emitted as
         # tool_note frames before the final, so scorer-seam tests can drive the
         # tool-call sequence a turn produced.
@@ -124,6 +127,8 @@ class FakeEvalRunner:
             status = SessionStatus.CLASSIFIED_FAILURE
         elif text in self.idle_inputs:
             status = SessionStatus.IDLE_AWAITING_INPUT
+        elif text in self.awaiting_approval_inputs:
+            status = SessionStatus.AWAITING_APPROVAL
         else:
             status = SessionStatus.DONE
         resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})

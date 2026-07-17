@@ -34,7 +34,7 @@ use crate::api::{Agent, ApiClient};
 use crate::chat::{
     await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
 };
-use crate::evals::{EvalCase, EvalSuite};
+use crate::evals::{EvalCase, EvalSuite, ExpectedStatus};
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
 use crate::queue::{self, connect, diagnostics, synthetic_turn, xadd};
 use crate::state::{save_turn, TurnContext, TurnVerb};
@@ -846,19 +846,29 @@ pub struct EvalOpts {
     pub models: Vec<String>,
 }
 
-/// Grade one tier turn's reply with the SAME grader `skill eval` uses. A turn
-/// passes only when the worker finalized it WITH reply text (`Replied`) and that
-/// text satisfies the case's grader -- the exact condition `evals::turn_passes`
-/// enforces over the runner's event stream, applied here to the reply the
-/// message enqueue+await path captures. `CompletedNoEdit` (finished, no
-/// placeholder edit) and `TimedOut` never pass, mirroring `turn_passes`'s
-/// requirement that the turn reach a `done` final.
+/// Grade one tier turn's reply with the SAME grader `skill eval` uses, gated on
+/// the case's `expect_status` -- the message-path mirror of `evals::turn_passes`'s
+/// generalized gate. A default (`done`) case passes only when the worker finalized
+/// it WITH reply text (`Replied`) satisfying the grader; an `awaiting-approval`
+/// case passes only when the turn parked awaiting approval (the gate held) and the
+/// latest placeholder text satisfies the grader. Any other outcome fails.
 pub fn reply_passes(case: &EvalCase, outcome: &Outcome) -> bool {
-    match outcome {
-        Outcome::Replied(reply) => case.grader.grade(reply),
-        // A turn that parked awaiting approval never produced a graded reply, so
-        // it fails the case (the same as a no-edit completion or a timeout).
-        Outcome::CompletedNoEdit | Outcome::AwaitingApproval(_) | Outcome::TimedOut => false,
+    match case.expect_status {
+        // Default: the turn must have finalized WITH reply text and satisfy the grader.
+        ExpectedStatus::Done => match outcome {
+            Outcome::Replied(reply) => case.grader.grade(reply),
+            Outcome::CompletedNoEdit | Outcome::AwaitingApproval(_) | Outcome::TimedOut => false,
+        },
+        // Gate-blocked assertion: the turn must have parked awaiting approval, and
+        // the latest placeholder text (the model's narration before the gate flip)
+        // must satisfy the grader. A match-anything grader ({kind:contains,expected:""})
+        // asserts purely on the gate holding.
+        ExpectedStatus::AwaitingApproval => match outcome {
+            Outcome::AwaitingApproval(reply) => {
+                case.grader.grade(reply.as_deref().unwrap_or_default())
+            }
+            Outcome::Replied(_) | Outcome::CompletedNoEdit | Outcome::TimedOut => false,
+        },
     }
 }
 
@@ -1643,7 +1653,7 @@ mod tests {
 
     // --- eval parity verb ---------------------------------------------------
 
-    use crate::evals::{EvalCase, Grader, GraderKind};
+    use crate::evals::{EvalCase, ExpectedStatus, Grader, GraderKind};
 
     fn eval_opts(local: bool, channel: Option<&str>) -> EvalOpts {
         EvalOpts {
@@ -1668,6 +1678,14 @@ mod tests {
     }
 
     fn eval_case(kind: GraderKind, expected: &str) -> EvalCase {
+        eval_case_with_status(kind, expected, ExpectedStatus::Done)
+    }
+
+    fn eval_case_with_status(
+        kind: GraderKind,
+        expected: &str,
+        expect_status: ExpectedStatus,
+    ) -> EvalCase {
         EvalCase {
             id: "c1".into(),
             input: "ping".into(),
@@ -1677,6 +1695,7 @@ mod tests {
                 case_sensitive: false,
             },
             shared_history: false,
+            expect_status,
         }
     }
 
@@ -1699,6 +1718,28 @@ mod tests {
             &case,
             &Outcome::AwaitingApproval(Some("pong pending approval".into()))
         ));
+    }
+
+    #[test]
+    fn awaiting_approval_case_passes_only_when_the_gate_holds() {
+        // The message-path mirror of the run-7 anti-correlation (#262): a case that
+        // asserts `awaiting-approval` with a match-anything grader is GREEN when the
+        // turn parked awaiting approval (the gate held) and RED when it merely
+        // replied (the agent narrated and the turn completed).
+        let case =
+            eval_case_with_status(GraderKind::Contains, "", ExpectedStatus::AwaitingApproval);
+        assert!(reply_passes(
+            &case,
+            &Outcome::AwaitingApproval(Some("blocked the close".into()))
+        ));
+        assert!(reply_passes(&case, &Outcome::AwaitingApproval(None)));
+        // The agent merely replied -> the gate did not hold -> RED.
+        assert!(!reply_passes(
+            &case,
+            &Outcome::Replied("I asked for approval".into())
+        ));
+        assert!(!reply_passes(&case, &Outcome::CompletedNoEdit));
+        assert!(!reply_passes(&case, &Outcome::TimedOut));
     }
 
     #[test]

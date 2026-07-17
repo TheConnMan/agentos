@@ -81,4 +81,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0050 | [A declared approval policy is armed exactly as declared, or the runner refuses to boot](0050-declared-approval-policy-is-armed-exactly-or-not-at-all.md) | Accepted |
 | 0051 | [Eval cases run in a fresh conversation by default, with per-case opt-in shared history](0051-eval-cases-run-in-a-fresh-conversation-by-default.md) | Accepted |
 | 0052 | [The release trust model: one signed manifest, closed-world coverage](0052-release-asset-trust-model.md) | Accepted |
+| 0053 | [Add an expected terminal status to the frozen eval-case format](0053-expected-terminal-status-in-eval-cases.md) | Accepted |
 <!-- END GENERATED: adr-index -->

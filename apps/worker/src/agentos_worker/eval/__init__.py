@@ -11,6 +11,7 @@ from .models import (
     EvalCaseResult,
     EvalRunResult,
     EvalSuite,
+    ExpectedStatus,
     Grader,
     GraderKind,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "EvalRunner",
     "EvalStreamConsumer",
     "EvalSuite",
+    "ExpectedStatus",
     "Grader",
     "GraderKind",
     "GraderScorer",
