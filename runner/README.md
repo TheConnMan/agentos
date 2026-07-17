@@ -64,10 +64,11 @@ smoke; no model call).
 ## Build and smoke
 
 The image compiles against the frozen workspace packages, so build from the repo
-root:
+root with `agentos build` (the one build entry point; it wraps the
+`docker build -f runner/Dockerfile` under the hood):
 
 ```bash
-docker build -f runner/Dockerfile -t agentos-runner .
+agentos build
 # Offline round-trip (fake model, no credential), OTel to the dev collector:
 docker run -d --name runner-smoke --network agentos_default \
   -e AGENTOS_FAKE_MODEL=1 -e AGENTOS_PLUGIN_DIR=/unused \

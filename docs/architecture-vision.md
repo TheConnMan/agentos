@@ -157,9 +157,9 @@ backend would touch all three.
 ### 5. Relational database (Postgres today)
 
 **Port:** SQL through SQLAlchemy 2.0 plus alembic migrations
-(`apps/api/src/agentos_api/models.py`, `apps/api/alembic/versions/`, four
-migrations). The schema is deliberately minimal: agents, agent_versions,
-deployments.
+(`apps/api/src/agentos_api/models.py`, `apps/api/alembic/versions/`; run
+`alembic heads` for the current tip rather than a count pinned here). The core
+schema centers on agents, agent_versions, and deployments.
 
 **Current adapter:** the chart's Postgres
 (`charts/agentos/templates/postgres.yaml`); locally, the compose stack.

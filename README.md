@@ -66,19 +66,10 @@ for the per-package verify commands and
 ## Status
 
 The core spine is built, covered by CI, and was live-verified end to end
-against a real Slack workspace on a real model: the frozen contracts, the API
-server, the dispatcher, the runner, the sandbox substrate (Kubernetes and
-local Docker), the worker concurrency kernel with deployment-to-runtime
-binding, the UI (shell plus create/deploy/Runs/Metrics/Logs/Cost/Versions
-wired to the real backend), the CLI (local inner loop plus the cluster
-operator lifecycle), the Helm chart with its security rails and the
-runner-image prewarm DaemonSet, git-flow (push-to-deploy, merge-to-promote),
-the eval plane (eval-stream consumer, matrix endpoint, PR-check reporter), and
-budgets plus the kill switch. Still ahead: wiring the UI's Evals matrix and
-Usage/Settings views to their existing backends, the soak/chaos suite, and
-retiring the fixture/showroom surface. See "What is built vs deferred" in
-[`ARCHITECTURE.md`](ARCHITECTURE.md#11-what-is-built-vs-deferred)
-for the precise built/in-progress split.
+against a real Slack workspace on a real model. For the precise, maintained
+built-vs-deferred split, see "What is built vs deferred" in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#11-what-is-built-vs-deferred) — this file
+does not duplicate that list, which only drifts out of sync.
 
 Forward-looking work is planned and tracked in
 [GitHub issues](https://github.com/curie-eng/agentos/issues), with larger

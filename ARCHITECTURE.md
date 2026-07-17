@@ -537,7 +537,7 @@ from those, not from the images alone.
 
 ## 11. What is built vs deferred
 
-**Built and live-verified end to end** (32+ merged lanes; a real Slack
+**Built and live-verified end to end** (a real Slack
 conversation on a real model, a GHCR-default `helm install` on a fresh k3s
 cluster with the CLI deploy+chat loop answered through an in-cluster sandbox and
 an in-cluster Slack dispatcher, and a local middle-mode loop were all exercised —

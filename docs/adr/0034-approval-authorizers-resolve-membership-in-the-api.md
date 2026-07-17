@@ -14,7 +14,7 @@ server-side placement, and the sequence the line is built in all stand.
 
 ## Context
 
-[ADR-0010](0010-approval-gates-and-human-in-the-loop.md) (Proposed) established
+[ADR-0010](0010-approval-gates-and-human-in-the-loop.md) (Accepted) established
 the approval primitive and named the authorizer line it intended to build:
 channel membership first, then user-group, explicit user-list, and
 platform-RBAC, all behind one server-side check at resolution time. Only the
