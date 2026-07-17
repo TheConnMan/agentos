@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from agentos_worker.eval import (
+    EvalCase,
     EvalCaseResult,
     EvalRunResult,
     EvalSuite,
+    ExpectedStatus,
     Grader,
     GraderKind,
 )
@@ -101,6 +103,26 @@ def test_committed_fixture_parses_and_grades(eval_cases_example_path: Path) -> N
     assert grader.grade("I am the example agent.") is True
     assert grader.grade("literally anything") is False
     assert grader.grade("") is False
+
+
+def test_expect_status_defaults_to_done() -> None:
+    """A case with no expect_status defaults to `done`, keeping every pre-existing
+    case byte-identical in behavior (issue #262)."""
+    case = EvalCase(id="c", input="i", grader=Grader(kind=GraderKind.CONTAINS, expected="x"))
+    assert case.expect_status is ExpectedStatus.DONE
+
+
+def test_expect_status_awaiting_approval_round_trips() -> None:
+    """An `awaiting-approval` case (the gate-blocked assertion) constructs and
+    survives a JSON round-trip through the frozen schema."""
+    case = EvalCase(
+        id="c",
+        input="i",
+        grader=Grader(kind=GraderKind.CONTAINS, expected="x"),
+        expect_status=ExpectedStatus.AWAITING_APPROVAL,
+    )
+    reloaded = EvalCase.model_validate_json(case.model_dump_json())
+    assert reloaded.expect_status is ExpectedStatus.AWAITING_APPROVAL
 
 
 def test_old_array_form_is_rejected() -> None:

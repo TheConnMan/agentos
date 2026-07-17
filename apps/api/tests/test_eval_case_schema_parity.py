@@ -66,6 +66,18 @@ def test_grader_kinds_match_the_schema_enum() -> None:
     )
 
 
+def test_expect_status_values_match_the_schema_enum() -> None:
+    # A terminal status added to the worker schema's ExpectedStatus but not to
+    # EvalCaseOut's literal (or vice versa) is a silent divergence -- the promote
+    # endpoint would mint a status the runner rejects, or reject one it accepts.
+    schema_statuses = set(_schema()["$defs"]["ExpectedStatus"]["enum"])
+    api_statuses = set(EvalCaseOut.model_fields["expect_status"].annotation.__args__)
+    assert api_statuses == schema_statuses, (
+        f"EvalCaseOut.expect_status literals {sorted(api_statuses)} diverge from the "
+        f"schema ExpectedStatus enum {sorted(schema_statuses)}"
+    )
+
+
 def test_eval_case_field_names_match_the_schema() -> None:
     schema = _schema()
     for model, def_name in ((EvalCaseOut, "EvalCase"), (GraderOut, "Grader")):

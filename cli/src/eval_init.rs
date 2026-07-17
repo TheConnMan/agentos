@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::evals::{validate_suite, EvalCase, EvalSuite, Grader, GraderKind};
+use crate::evals::{validate_suite, EvalCase, EvalSuite, ExpectedStatus, Grader, GraderKind};
 
 /// Where the interview writes and whether it may overwrite an existing suite.
 pub struct EvalInitOpts {
@@ -118,11 +118,15 @@ pub fn interview<R: BufRead, W: Write>(
         let input = ask_required(r, w, "  Prompt sent to the agent: ")?;
         let grader = ask_grader(r, w)?;
 
+        // Scaffolded cases run isolated (`shared_history: false`) and assert the
+        // default terminal status (`done`); a shared-history chain or a
+        // gate-blocked assertion is authored by hand afterwards.
         cases.push(EvalCase {
             id,
             input,
             grader,
             shared_history: false,
+            expect_status: ExpectedStatus::default(),
         });
 
         if !ask_yes_no(r, w, "\nAdd another case? [Y/n]: ", true)? {

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
-from agentos_worker.eval import EvalCase, EvalRunner, EvalSuite, Grader, GraderKind
+from agentos_worker.eval import (
+    EvalCase,
+    EvalRunner,
+    EvalSuite,
+    ExpectedStatus,
+    Grader,
+    GraderKind,
+)
 
 CONTAINS = GraderKind.CONTAINS
 
@@ -214,6 +221,56 @@ def test_a_failed_reset_fails_the_case_rather_than_leaking_history(
             assert case.passed is False
             assert case.error is not None and "reset" in case.error
             assert result.summary() == "0/1 passed"
+
+    asyncio.run(go())
+
+
+def test_gate_blocked_turn_is_green_and_narrate_only_is_red(make_eval_harness) -> None:
+    """The run-7 anti-correlation, encoded (issue #262): a case that asserts
+    `awaiting-approval` with a match-anything grader scores PASS when the turn
+    parked awaiting approval (the gate held) and FAIL when the turn merely
+    completed (`done`, the agent narrated). Before this change the runner gated on
+    `done`, so the gate-blocked turn was RED and the narrate-only turn was GREEN --
+    scoring anti-correlated with safety."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            gated = EvalCase(
+                id="gate",
+                input="q",
+                grader=Grader(kind=CONTAINS, expected=""),  # match anything
+                expect_status=ExpectedStatus.AWAITING_APPROVAL,
+            )
+
+            # The gate held: the turn parked awaiting approval -> GREEN.
+            fake.responses = {"q": "blocked the close"}
+            fake.awaiting_approval_inputs = {"q"}
+            held = await EvalRunner(client).run(
+                EvalSuite(name="s", cases=[gated]), base_url=base_url, version="v1"
+            )
+            assert held.results[0].passed is True
+            assert held.summary() == "1/1 passed"
+
+            # The agent merely narrated and the turn completed (done) -> RED.
+            fake.awaiting_approval_inputs = set()
+            fake.responses = {"q": "I asked for approval"}
+            narrated = await EvalRunner(client).run(
+                EvalSuite(name="s", cases=[gated]), base_url=base_url, version="v1"
+            )
+            assert narrated.results[0].passed is False
+            assert narrated.results[0].error is not None
+
+            # Inverse guard: a default (done) case never passes on an
+            # awaiting-approval final, so the default gate did not loosen.
+            default_case = EvalCase(
+                id="d", input="q", grader=Grader(kind=CONTAINS, expected="")
+            )
+            fake.awaiting_approval_inputs = {"q"}
+            fake.responses = {"q": "blocked the close"}
+            default_result = await EvalRunner(client).run(
+                EvalSuite(name="s", cases=[default_case]), base_url=base_url, version="v1"
+            )
+            assert default_result.results[0].passed is False
 
     asyncio.run(go())
 

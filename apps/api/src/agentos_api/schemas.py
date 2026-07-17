@@ -418,12 +418,19 @@ class EvalCaseOut(BaseModel):
     ``shared_history`` mirrors the worker's ``EvalCase`` field (#550, ADR-0051):
     a promoted trace is a standalone case, so it emits the ``False`` default
     (fresh conversation). Kept here to satisfy the schema field-parity gate; the
-    promote endpoint has no reason to mint a history-chained case."""
+    promote endpoint has no reason to mint a history-chained case.
+
+    ``expect_status`` mirrors the frozen ``ExpectedStatus`` (#262, ADR-0053): the
+    terminal session status the case asserts, default ``done``. A promoted trace
+    is a completed conversation, so the emitted case keeps the default; a human
+    edits it to ``awaiting-approval`` when the case should assert an approval gate
+    held. Do not let this literal drift from the schema's ``ExpectedStatus`` enum."""
 
     id: str
     input: str
     grader: GraderOut
     shared_history: bool = False
+    expect_status: Literal["done", "awaiting-approval"] = "done"
 
 
 class VersionCreate(BaseModel):
