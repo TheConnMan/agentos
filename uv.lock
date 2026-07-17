@@ -28,10 +28,14 @@ version = "0.0.0"
 source = { editable = "packages/aci-protocol" }
 dependencies = [
     { name = "pydantic" },
+    { name = "pydantic-settings" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
+]
 
 [[package]]
 name = "agentos-api"
