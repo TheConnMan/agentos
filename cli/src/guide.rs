@@ -306,12 +306,22 @@ pub fn primer_markdown() -> String {
 /// `--json` flag prints the structured variant to stdout via the shared
 /// machine-output path (any human text would go to stderr).
 pub fn run() -> Result<()> {
-    let p = primer();
-    let ui = ui::ui();
-    if ui.json() {
-        ui.emit_json(&serde_json::to_value(&p)?);
-    } else {
-        ui.payload_plain(&render_markdown(&p));
-    }
+    ui::ui().emit(&GuideOutput { primer: primer() });
     Ok(())
+}
+
+/// Output of `agentos guide` (#474): the primer, structured under `--json` and
+/// rendered as markdown otherwise, routed through the one `Ui::emit` point.
+struct GuideOutput {
+    primer: Primer,
+}
+
+impl ui::CliOutput for GuideOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(&self.primer).unwrap_or_else(|_| serde_json::json!({}))
+    }
+
+    fn render(&self, ui: &ui::Ui) {
+        ui.payload_plain(&render_markdown(&self.primer));
+    }
 }

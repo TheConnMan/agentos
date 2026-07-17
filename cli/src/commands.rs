@@ -199,10 +199,24 @@ pub async fn check(plugin_dir: PathBuf, image: String, timeout_s: u64) -> Result
         )
     })?;
 
-    let ui = crate::ui::ui();
-    if ui.json() {
-        ui.emit_json(&serde_json::to_value(&report)?);
-    } else {
+    crate::ui::ui().emit(&CheckOutput { report: &report });
+    check_outcome(&report).map_err(anyhow::Error::from)
+}
+
+/// Output of `skill check` (#474): the MCP-load report, structured under `--json`
+/// and rendered line-by-line otherwise, routed through the one `Ui::emit` point.
+/// Borrows the report so the caller can still pass it to `check_outcome`.
+struct CheckOutput<'a> {
+    report: &'a CheckReport,
+}
+
+impl crate::ui::CliOutput for CheckOutput<'_> {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self.report).unwrap_or_else(|_| serde_json::json!({}))
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        let report = self.report;
         let mut lines = vec![format!("declared: {}", report.declared.len())];
         lines.extend(report.matches.iter().map(|entry| {
             format!(
@@ -223,8 +237,6 @@ pub async fn check(plugin_dir: PathBuf, image: String, timeout_s: u64) -> Result
         lines.extend(report.hints.iter().map(|hint| format!("hint: {hint}")));
         ui.payload_plain(&lines.join("\n"));
     }
-
-    check_outcome(&report).map_err(anyhow::Error::from)
 }
 
 pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBuf>) -> Result<()> {
@@ -1050,14 +1062,32 @@ pub async fn status(url: Option<String>) -> Result<()> {
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let status = client.status().await?;
-    let ui = crate::ui::ui();
-    if ui.json() {
-        ui.emit_json(&status_json(&url, &status));
-        return Ok(());
-    }
-    ui.note(&format!("runner {url}"));
-    ui.payload_plain(&serde_json::to_string_pretty(&status)?);
+    crate::ui::ui().emit(&StatusOutput {
+        url,
+        status: serde_json::to_value(&status)?,
+    });
     Ok(())
+}
+
+/// Output of `skill status` (#474). `to_json` delegates to the schema-gated
+/// `status_json` builder (byte-identical, so `cli/schema/status.schema.json` and
+/// `json_contract.rs` stay green); `render` reproduces the note + pretty payload.
+struct StatusOutput {
+    url: String,
+    status: serde_json::Value,
+}
+
+impl crate::ui::CliOutput for StatusOutput {
+    fn to_json(&self) -> serde_json::Value {
+        status_json(&self.url, &self.status)
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        ui.note(&format!("runner {}", self.url));
+        ui.payload_plain(
+            &serde_json::to_string_pretty(&self.status).unwrap_or_else(|_| self.status.to_string()),
+        );
+    }
 }
 
 pub async fn send(
@@ -1428,53 +1458,70 @@ pub fn report_sweep(rows: &[(String, usize, usize)]) -> Result<()> {
 /// `local eval`/`cluster eval` print the same summary `skill eval` does (the
 /// per-tier parity gate), not a hand-mirrored one.
 pub fn report_eval(results: &[EvalRow]) -> Result<()> {
-    let ui = crate::ui::ui();
     let total = results.len();
     let passed = results.iter().filter(|(_, ok, _, _)| *ok).count();
-
-    if ui.json() {
-        ui.emit_json(&eval_json(results, passed, total));
-        if passed < total {
-            std::process::exit(crate::exit::ExitClass::Failure.code());
-        }
-        return Ok(());
-    }
-
-    let rows: Vec<Vec<String>> = results
-        .iter()
-        .map(|(name, ok, seconds, _)| {
-            let result = if *ok {
-                format!("{} pass", '\u{2713}')
-            } else {
-                format!("{} fail", '\u{2717}')
-            };
-            vec![name.clone(), result, format!("{seconds:.1}s")]
-        })
-        .collect();
-    ui.payload_plain(&crate::ui::table(&["case", "result", "time"], &rows, &[2]));
-    if passed == total {
-        ui.success(&format!("{passed}/{total} passed"));
-    } else {
-        // Surface WHAT each red case actually replied, so a human need not re-run
-        // by hand to see why it failed (#548). Empty means the turn never produced
-        // gradeable text (no `done`/reply) -- itself the diagnosis.
-        for (name, _, _, output) in results.iter().filter(|(_, ok, _, _)| !*ok) {
-            let shown = if output.is_empty() {
-                "<no reply text>".to_string()
-            } else {
-                output.clone()
-            };
-            ui.note(&format!("{name} replied: {shown}"));
-        }
-        ui.warn(&format!(
-            "{passed}/{total} passed; {} failed",
-            total - passed
-        ));
-    }
+    // Emit through the one success point (#474), then apply the exit-code side
+    // effect for BOTH paths -- the json path had it inline, the human path after.
+    crate::ui::ui().emit(&EvalOutput {
+        results,
+        passed,
+        total,
+    });
     if passed < total {
         std::process::exit(crate::exit::ExitClass::Failure.code());
     }
     Ok(())
+}
+
+/// Output of `<tier> eval` (#474). `to_json` delegates to the schema-gated
+/// `eval_json` builder (byte-identical, so `cli/schema/eval.schema.json` and
+/// `json_contract.rs` stay green); `render` reproduces the per-case table and the
+/// roll-up verdict + per-red-case reply notes.
+struct EvalOutput<'a> {
+    results: &'a [EvalRow],
+    passed: usize,
+    total: usize,
+}
+
+impl crate::ui::CliOutput for EvalOutput<'_> {
+    fn to_json(&self) -> serde_json::Value {
+        eval_json(self.results, self.passed, self.total)
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        let (results, passed, total) = (self.results, self.passed, self.total);
+        let rows: Vec<Vec<String>> = results
+            .iter()
+            .map(|(name, ok, seconds, _)| {
+                let result = if *ok {
+                    format!("{} pass", '\u{2713}')
+                } else {
+                    format!("{} fail", '\u{2717}')
+                };
+                vec![name.clone(), result, format!("{seconds:.1}s")]
+            })
+            .collect();
+        ui.payload_plain(&crate::ui::table(&["case", "result", "time"], &rows, &[2]));
+        if passed == total {
+            ui.success(&format!("{passed}/{total} passed"));
+        } else {
+            // Surface WHAT each red case actually replied, so a human need not
+            // re-run by hand to see why it failed (#548). Empty means the turn
+            // never produced gradeable text (no `done`/reply) -- the diagnosis.
+            for (name, _, _, output) in results.iter().filter(|(_, ok, _, _)| !*ok) {
+                let shown = if output.is_empty() {
+                    "<no reply text>".to_string()
+                } else {
+                    output.clone()
+                };
+                ui.note(&format!("{name} replied: {shown}"));
+            }
+            ui.warn(&format!(
+                "{passed}/{total} passed; {} failed",
+                total - passed
+            ));
+        }
+    }
 }
 
 /// Where the eval cases live: an explicit `--cases` wins; otherwise
