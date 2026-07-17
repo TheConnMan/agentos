@@ -878,9 +878,12 @@ pub fn eval_dry_run_lines(opts: &EvalOpts, suite_name: &str, case_count: usize) 
                 opts.api_local_port
             )
         };
+        // The worker grades the DEPLOYED bundle's cases, not the local suite, so
+        // the plan names the suite but does not present the local case count as
+        // the platform truth (issue #608).
         let mut lines = vec![format!(
-            "sweep {} model(s) over suite {suite_name:?} ({case_count} case(s)) on the {tier} \
-             platform eval plane",
+            "sweep {} model(s) over suite {suite_name:?} on the {tier} platform eval plane \
+             (the deployed bundle's cases are graded server-side)",
             opts.models.len()
         )];
         let target = match opts.channel.as_deref() {
@@ -1026,13 +1029,35 @@ async fn run_eval_turns(
 /// so a suite that passes at `skill` can be re-asserted verbatim at `local` and
 /// `cluster` (issue #344, the per-tier parity gate).
 pub async fn eval(opts: EvalOpts) -> Result<()> {
-    let suite = resolve_suite(opts.cases.clone())?;
     // A `--model` sweep (#526) is the platform eval plane, not the in-CLI parity
     // gate: it triggers a matrix-producing run per model and reads the comparison
     // back off GET /evals/matrix. It is orthogonal to the tier's message path.
     if !opts.models.is_empty() {
+        // A `--cases` override cannot take effect on a sweep: the sweep only sends
+        // the suite NAME to `POST /evals/trigger`; the worker reloads the cases
+        // from the DEPLOYED bundle server-side. Grading a local case file this way
+        // is impossible, so refuse rather than silently evaluate the deployed
+        // cases while displaying the local ones (issue #608). Exit 4 (Unsupported,
+        // ADR-0041): the flag is understood but does not apply to this plane by
+        // construction, so no input or retry changes that -- the fix names the
+        // path that does honor a local suite.
+        if opts.cases.is_some() {
+            return Err(anyhow::Error::from(
+                crate::exit::CliError::unsupported(
+                    "--cases has no effect on a --model sweep: the sweep runs a platform eval \
+                     that grades the deployed bundle's evals/cases.json server-side, so a local \
+                     case file is never read",
+                )
+                .with_fix(
+                    "drop --cases to sweep the deployed suite, or omit --model to grade a local \
+                     suite in-CLI with `agentos <skill|local|cluster> eval --cases <file>`",
+                ),
+            ));
+        }
+        let suite = resolve_suite(opts.cases.clone())?;
         return eval_sweep(opts, suite).await;
     }
+    let suite = resolve_suite(opts.cases.clone())?;
     if opts.local {
         eval_local(opts, suite).await
     } else {
@@ -1116,12 +1141,19 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
         .context("listing agents to resolve the eval target")?;
     let agent_id = select_agent_id(&agents, opts.channel.as_deref())?;
 
+    // The suite NAME is what the worker keys on; the cases it grades come from the
+    // DEPLOYED bundle, not the local suite, so we do NOT present the local case
+    // count as the platform truth (issue #608).
     ui.note(&format!(
-        "model sweep: {} model(s) x {} case(s) via the platform eval plane",
+        "model sweep: {} model(s) over suite {:?} via the platform eval plane \
+         (the worker grades the deployed bundle's cases)",
         opts.models.len(),
-        suite.cases.len()
+        suite.name,
     ));
     let cl = ui.checklist();
+    // Every model triggers against the agent's active dev version, so all jobs
+    // share one commit sha; capture it to scope the poll to THIS run (#608).
+    let mut triggered_sha: Option<String> = None;
     for model in &opts.models {
         let step = cl.step(&format!("enqueue {model}"));
         let res = api
@@ -1133,43 +1165,46 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
             res.stream_id,
             &res.sha[..res.sha.len().min(8)]
         ));
+        triggered_sha = Some(res.sha);
     }
+    // Unreachable in practice (eval() only routes here with a non-empty --model
+    // list), but keep the sha resolution total rather than panicking.
+    let triggered_sha = triggered_sha
+        .context("a --model sweep must trigger at least one eval to establish the run's sha")?;
 
     let want: std::collections::BTreeSet<&str> = opts.models.iter().map(String::as_str).collect();
-    let deadline = Instant::now() + SWEEP_POLL_INTERVAL * (opts.models.len() as u32 + 1) * 20;
+    // The deadline derives from --timeout-secs so the documented recovery path --
+    // the timeout error tells the user to raise it -- actually works (#608).
+    let deadline = Instant::now() + Duration::from_secs(opts.timeout_secs);
     ui.note("waiting for the eval jobs to land in the matrix (Ctrl-C to stop; jobs keep running)");
     loop {
         let matrix = api
             .eval_matrix(&suite.name, 5)
             .await
             .context("reading the eval matrix")?;
-        let rows: Vec<(String, usize, usize)> = matrix
-            .model_summaries
-            .iter()
-            .filter_map(|s| {
-                let m = s.model.as_deref()?;
-                want.contains(m)
-                    .then(|| (m.to_string(), s.passed as usize, s.total as usize))
-            })
-            .filter(|(_, _, total)| *total > 0)
-            .collect();
-        let ready: std::collections::BTreeSet<&str> =
-            rows.iter().map(|(m, _, _)| m.as_str()).collect();
-        if want.iter().all(|m| ready.contains(m)) {
+        if let Some(rows) = sweep_ready_rows(&matrix, &triggered_sha, &want) {
             return crate::commands::report_sweep(&rows);
         }
         if Instant::now() >= deadline {
+            // Only report a partial once THIS run's version has landed at all;
+            // otherwise nothing for this sweep exists yet and reporting a prior
+            // run's rows would be the very lie the scoping guards against (#608).
+            let sha_present = matrix.versions.contains(&triggered_sha);
+            let rows = scoped_rows(&matrix, &want);
+            let ready: std::collections::BTreeSet<&str> =
+                rows.iter().map(|(m, _, _)| m.as_str()).collect();
             let missing = want
                 .iter()
                 .filter(|m| !ready.contains(**m))
                 .copied()
                 .collect::<Vec<_>>()
                 .join(", ");
-            if rows.is_empty() {
+            if !sha_present || rows.is_empty() {
                 bail!(
-                    "timed out waiting for eval results in the matrix; no requested model \
-                     landed (still pending: {missing}). Check the worker eval consumer is \
-                     running, or raise --timeout-secs."
+                    "timed out waiting for eval results for this run (sha {}); no requested \
+                     model landed (still pending: {missing}). Check the worker eval consumer \
+                     is running, or raise --timeout-secs.",
+                    &triggered_sha[..triggered_sha.len().min(8)]
                 );
             }
             ui.warn(&format!(
@@ -1179,6 +1214,58 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
         }
         tokio::time::sleep(SWEEP_POLL_INTERVAL).await;
     }
+}
+
+/// The wanted models' current rows in the matrix (`model`, `passed`, `total`),
+/// scoped to the sweep's `--model` set and dropping empty (`total == 0`) rows.
+/// The shared filter behind both the readiness check and the timeout partial.
+fn scoped_rows(
+    matrix: &crate::api::EvalMatrix,
+    want: &std::collections::BTreeSet<&str>,
+) -> Vec<(String, usize, usize)> {
+    matrix
+        .model_summaries
+        .iter()
+        .filter_map(|s| {
+            let m = s.model.as_deref()?;
+            want.contains(m)
+                .then(|| (m.to_string(), s.passed as usize, s.total as usize))
+        })
+        .filter(|(_, _, total)| *total > 0)
+        .collect()
+}
+
+/// The rows to report once the triggered sweep has landed, scoped to the run just
+/// triggered (issue #608). Returns `Some(rows)` only when BOTH hold, else `None`
+/// ("keep polling"):
+///   1. `triggered_sha` appears in the matrix's shown version columns -- i.e. at
+///      least one trace for THIS run has landed. A change produces a new commit
+///      sha, so a prior run's rows carry a different sha; on the first poll,
+///      before the new traces exist, the triggered sha is absent and the prior
+///      run cannot satisfy the exit condition (the pre-#608 gate exited here); and
+///   2. every wanted model has a summary row with `total > 0`.
+///
+/// Residual (documented): `model_summaries` rolls the last N version columns
+/// together and does not expose the per-`(version, model)` dimension, so when a
+/// prior run for the SAME models is still in the window, the moment this run's
+/// first model lands (satisfying 1) the still-present prior rows satisfy 2 for the
+/// other models. The reported numbers are then the latest per
+/// `(version, case, model)` -- correct once every model has landed, at worst a few
+/// seconds early during the sequential per-model landing, and strictly tighter
+/// than the pre-#608 gate that exited before any trace for the run existed.
+/// Precise per-model scoping needs a matrix that keys summaries by
+/// `(version, model)`; that is a matrix API change, out of scope here.
+fn sweep_ready_rows(
+    matrix: &crate::api::EvalMatrix,
+    triggered_sha: &str,
+    want: &std::collections::BTreeSet<&str>,
+) -> Option<Vec<(String, usize, usize)>> {
+    if !matrix.versions.iter().any(|v| v == triggered_sha) {
+        return None;
+    }
+    let rows = scoped_rows(matrix, want);
+    let ready: std::collections::BTreeSet<&str> = rows.iter().map(|(m, _, _)| m.as_str()).collect();
+    want.iter().all(|m| ready.contains(m)).then_some(rows)
 }
 
 async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
@@ -1764,5 +1851,90 @@ mod tests {
         assert!(select_agent_id(&agents, None).is_err());
         // A sole agent + no channel resolves without a flag.
         assert_eq!(select_agent_id(&agents[..1], None).unwrap(), "a1");
+    }
+
+    fn model_summary(model: &str, passed: u64, total: u64) -> crate::api::EvalModelSummary {
+        crate::api::EvalModelSummary {
+            model: Some(model.to_string()),
+            passed,
+            total,
+            cost_usd: None,
+        }
+    }
+
+    fn matrix(
+        versions: &[&str],
+        summaries: Vec<crate::api::EvalModelSummary>,
+    ) -> crate::api::EvalMatrix {
+        crate::api::EvalMatrix {
+            suite: "smoke".into(),
+            versions: versions.iter().map(|v| v.to_string()).collect(),
+            model_summaries: summaries,
+        }
+    }
+
+    #[test]
+    fn sweep_not_ready_when_only_a_prior_runs_rows_are_present() {
+        // The #608 regression guard: a repeat sweep after a change triggers a NEW
+        // sha, but the matrix still holds the PRIOR run's FULL rows (same models,
+        // total > 0) within its version window. Readiness must NOT be satisfied by
+        // the prior run -- the pre-#608 gate (model membership + total > 0, with no
+        // version scope) WOULD have reported those stale rows on the first poll.
+        let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
+        let m = matrix(
+            &["old-sha"],
+            vec![model_summary("opus", 3, 3), model_summary("sonnet", 2, 3)],
+        );
+        assert!(
+            sweep_ready_rows(&m, "new-sha", &want).is_none(),
+            "a prior run's rows must not satisfy readiness for a different triggered sha"
+        );
+    }
+
+    #[test]
+    fn sweep_ready_once_the_triggered_sha_has_landed_for_every_model() {
+        let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
+        let m = matrix(
+            &["new-sha", "old-sha"],
+            vec![model_summary("opus", 3, 3), model_summary("sonnet", 3, 3)],
+        );
+        let rows = sweep_ready_rows(&m, "new-sha", &want).expect("all models landed for the run");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|(model, _, _)| model == "opus"));
+        assert!(rows.iter().any(|(model, _, _)| model == "sonnet"));
+    }
+
+    #[test]
+    fn sweep_not_ready_until_every_wanted_model_has_a_row() {
+        // The triggered sha has landed, but only one of the two swept models has a
+        // row yet -- keep polling rather than report a half-finished sweep.
+        let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
+        let m = matrix(&["new-sha"], vec![model_summary("opus", 3, 3)]);
+        assert!(sweep_ready_rows(&m, "new-sha", &want).is_none());
+    }
+
+    #[tokio::test]
+    async fn model_sweep_refuses_an_explicit_cases_override() {
+        // AC3 (#608): a `--cases` override cannot reach the worker on a platform
+        // sweep, so it is refused with a reason and exit 4 (Unsupported), never
+        // silently evaluating the deployed cases while displaying the local ones.
+        // The refusal returns before any network or suite resolution, so this
+        // exercises the guard directly.
+        let mut opts = sweep_opts(true, None, &["opus"]);
+        opts.cases = Some(PathBuf::from("/tmp/does-not-need-to-exist.json"));
+        let err = eval(opts)
+            .await
+            .expect_err("--cases + --model must be refused");
+        let (class, fix) = crate::exit::classify(&err);
+        assert_eq!(
+            class,
+            crate::exit::ExitClass::Unsupported,
+            "the refusal is ADR-0041 Unsupported (exit 4): {err:#}"
+        );
+        let fix = fix.expect("the refusal names the honest alternative path");
+        assert!(
+            fix.contains("--cases") && fix.contains("--model"),
+            "the fix points at both the drop-flag and the in-CLI path: {fix}"
+        );
     }
 }
