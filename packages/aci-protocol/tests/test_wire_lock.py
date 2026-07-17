@@ -8,9 +8,10 @@ tuple via ``pydantic.create_model``); no file is touched, so the repo stays clea
 """
 
 import json
+from pathlib import Path
 
 import pytest
-from aci_protocol import PROTOCOL_VERSION, schema_export
+from aci_protocol import PROTOCOL_VERSION, schema_export, wire_lock
 from aci_protocol.schema_export import _MODELS
 from aci_protocol.session import SessionConfig
 from aci_protocol.wire_lock import (
@@ -121,12 +122,37 @@ def test_check_against_base_passes_when_base_matches_current_wire() -> None:
     check_against_base(base)
 
 
-def test_write_lock_refuses_an_unbumped_wire_change() -> None:
+def test_write_lock_refuses_an_unbumped_wire_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Closes the escape hatch (decision 4): the regenerator enforces the same
     # rule as the gate, so an author cannot silently rewrite the lock without a
-    # bump. Driven with a mutated model set so nothing is written to disk.
+    # bump.
+    #
+    # write_lock targets the REAL committed schema/wire.lock via _lock_path(),
+    # so this test points it at a tmp copy first (#627). Without that, during a
+    # PROTOCOL_VERSION bump -- version bumped, lock not yet regenerated -- the
+    # mutated fingerprint differs from the stale lock at a *different* version,
+    # which passes check_wire_lock and rewrites the real lock to a poisoned
+    # half-state, breaking the next check-contracts.sh run and this test's own
+    # precondition.
+    lock_file = tmp_path / "wire.lock"
+    original = (
+        json.dumps(
+            {"protocol_version": PROTOCOL_VERSION, "wire_sha256": wire_fingerprint()},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    lock_file.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(wire_lock, "_lock_path", lambda: lock_file)
+
     with pytest.raises(WireLockError):
         write_lock(_MUTATED_MODELS)
+
+    # The refusal fires before any write, so even the tmp lock is untouched.
+    assert lock_file.read_text(encoding="utf-8") == original
 
 
 def test_committed_lock_matches_the_current_wire() -> None:
