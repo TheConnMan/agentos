@@ -13,7 +13,9 @@ describingly. Outbound events are a discriminated union on ``type``; every
 outbound event carries a ``version`` equal to PROTOCOL_VERSION.
 """
 
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
@@ -26,6 +28,12 @@ from .version import PROTOCOL_VERSION, SEMVER_PATTERN
 # lives here (not in a new module) because every wire model shares it and the
 # tests import it from ``aci_protocol.events``.
 _READER_CONTEXT_KEY = "aci_reader"
+
+# The one reader context every sanctioned consumer decode threads. Public so a
+# consuming lane whose decode cannot go through a ``parse_*`` helper (FastAPI
+# validates a request body itself) can thread the same flag instead of inventing
+# a second tolerance mechanism.
+READER_CONTEXT: Mapping[str, bool] = MappingProxyType({_READER_CONTEXT_KEY: True})
 
 
 class _AciModel(BaseModel):

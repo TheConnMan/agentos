@@ -11,6 +11,7 @@ Run as ``python -m aci_protocol.rust_export`` to rewrite the committed crate.
 """
 
 import types as _types
+import uuid
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
@@ -27,12 +28,29 @@ from .events import (
     TextDelta,
     ToolNote,
 )
+from .service_config import (
+    RUNS_STREAM_DEFAULT,
+    STREAM_PAYLOAD_FIELD,
+    WORKER_GROUP_DEFAULT,
+)
 from .session import Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION, WIRE_VERSION_FIELD
+from .wire import ApprovalRequest, EvalJob, EvalReport, GateKind
 
 _NONE = type(None)
-_SCALARS: dict[type, str] = {str: "String", int: "i64", float: "f64", bool: "bool"}
+# uuid.UUID maps to String: Pydantic emits {"type":"string","format":"uuid"} and
+# the TypeScript lane gets `string`, so String is the coherent Rust counterpart.
+# The generator has no crate-import machinery, so the Rust lane does not get a
+# typed Uuid today -- String is the honest MVP, and the Python side keeps the
+# real uuid.UUID (downgrading it there would be a genuine loosening).
+_SCALARS: dict[type, str] = {
+    str: "String",
+    int: "i64",
+    float: "f64",
+    bool: "bool",
+    uuid.UUID: "String",
+}
 
 # Multi-valued string literals map to a dedicated Rust enum. Only Event.type
 # exists today; an unrecognized literal raises so the generator stays honest.
@@ -315,6 +333,12 @@ def render_rust() -> str:
         "#![allow(dead_code)]",
         "use serde::{Deserialize, Serialize};",
         f'pub const PROTOCOL_VERSION: &str = "{PROTOCOL_VERSION}";',
+        # The shared transport literals (#492), derived from the Python constants
+        # so the two cannot drift. Not wire models: they are not in the exported
+        # JSON Schema and do not move the wire fingerprint.
+        f'pub const RUNS_STREAM_DEFAULT: &str = "{RUNS_STREAM_DEFAULT}";',
+        f'pub const WORKER_GROUP_DEFAULT: &str = "{WORKER_GROUP_DEFAULT}";',
+        f'pub const STREAM_PAYLOAD_FIELD: &str = "{STREAM_PAYLOAD_FIELD}";',
         _VERSION_GUARD,
         _string_enum(
             "SessionStatus",
@@ -322,11 +346,17 @@ def render_rust() -> str:
             default=SessionStatus.DONE.value,
         ),
         _string_enum("EventType", _EVENT_TYPE_ARGS),
+        # No default variant: GateKind is only referenced as Option<GateKind>,
+        # which is Default regardless of the enum's own derives.
+        _string_enum("GateKind", tuple(m.value for m in GateKind)),
         _struct(Budget),
         _struct(OtelConfig),
         _struct(SessionConfig),
         _struct(ReplyHandle),
         _struct(QueuedTurn),
+        _struct(EvalJob),
+        _struct(EvalReport),
+        _struct(ApprovalRequest),
         _tagged_enum("InboundMessage", "kind", (Event, Interrupt)),
         _tagged_enum(
             "OutboundEvent",

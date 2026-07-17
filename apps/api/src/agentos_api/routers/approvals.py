@@ -27,7 +27,8 @@ from ..config import get_settings
 from ..deps import ApproverSetSelectorDep, ResumeQueueDep, SessionDep
 from ..models import Approval, ApprovalStatus
 from ..resumequeue import build_expiry_resume_turn, build_resume_turn
-from ..schemas import ApprovalAuditOut, ApprovalCreate, ApprovalOut, ApprovalResolve
+from ..schemas import ApprovalAuditOut, ApprovalOut, ApprovalResolve
+from ..wirebody import ApprovalRequestBody
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def _expired(approval: Approval) -> bool:
 
 @router.post("", response_model=ApprovalOut, status_code=status.HTTP_201_CREATED)
 async def create_approval(
-    data: ApprovalCreate, session: SessionDep, response: Response
+    data: ApprovalRequestBody, session: SessionDep, response: Response
 ) -> ApprovalOut:
     """Create a pending approval; idempotent on ``dedupe_key``.
 

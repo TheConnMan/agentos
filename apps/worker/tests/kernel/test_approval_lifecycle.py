@@ -288,6 +288,50 @@ def test_backend_failure_escalates_and_does_not_suspend(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_unknown_gate_kind_escalates_instead_of_stranding_the_turn(make_harness) -> None:
+    """#492/#544: ``gate_kind`` is authority-bearing, so the shared wire model
+    rejects an unrecognized value rather than degrading it to None (which would
+    route it through the prefix fallback and silently widen authority).
+
+    The ACI ``final`` frame types the field as a bare ``str``, so a runner can
+    emit anything and the rejection lands at the worker, at construction. Before
+    the model was shared this same value was rejected by the API with a 422,
+    surfacing as ``ApprovalBackendError`` and escalating; the local raise must
+    escalate identically. If it escaped ``_pause_for_approval`` the consumer
+    would leave the entry pending, redeliver it until the delivery cap, and
+    dead-letter it -- a full LLM re-run per redelivery and silence for the user.
+    The done marker is the proof it did not: it is only written once the turn is
+    terminally handled."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        async with make_harness(approvals=approvals) as h:
+            h.runner.default_script = [
+                TextDelta(text="Requesting sign-off"),
+                Final(
+                    text="Requesting sign-off",
+                    status=AWAITING,
+                    approval_summary="Anything",
+                    approval_gate_kind="not-a-real-gate",
+                ),
+            ]
+            ev = _qevent("gate this", thread="th-bad-gate")
+            await h.kernel.process_event(ev)
+
+            # Escalated to a human, exactly as the 422 path did.
+            assert h.sink.last_text is not None
+            assert "could not be created" in h.sink.last_text
+            # No record was created from the rejected payload.
+            assert approvals.requests == []
+            # Not suspended: a session no resolution could ever wake.
+            modes = [s.operating_mode for s in h.fake_k8s.sandboxes.values()]
+            assert modes == ["Running"]
+            # Terminally handled, so the entry is acked rather than redelivered.
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
+
+    asyncio.run(go())
+
+
 def test_pause_posts_the_approval_card(make_harness) -> None:
     """#246: pausing posts a Block Kit card into the approval's thread whose
     buttons carry the record id, alongside the placeholder notice."""

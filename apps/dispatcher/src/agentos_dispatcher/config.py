@@ -36,6 +36,7 @@ from aci_protocol.service_config import (
     API_KEY_ENV,
     HEARTBEAT_FILE_ENV,
     HEARTBEAT_INTERVAL_ENV,
+    RUNS_STREAM_DEFAULT,
     SHIMMER_ENV,
     STREAM_ENV,
     AliasOnlyEnvSource,
@@ -101,7 +102,7 @@ class DispatcherConfig(BaseSettings):
     valkey_password: str = ""
     valkey_db: int = 0
 
-    stream: str = Field(default="agentos:runs", validation_alias=STREAM_ENV)
+    stream: str = Field(default=RUNS_STREAM_DEFAULT, validation_alias=STREAM_ENV)
     dedupe_prefix: str = Field(
         default="agentos:dedupe:", validation_alias="AGENTOS_DEDUPE_PREFIX"
     )

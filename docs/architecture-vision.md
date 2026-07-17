@@ -105,7 +105,9 @@ into the URL namespace even though the payloads are ours.
 
 **Port:** our own eval plane defines the schema; Langfuse is storage behind
 it. The write path is the `agentos:evals` Valkey stream carrying an
-`EvalWorkItem`, consumed by `apps/worker/src/agentos_worker/eval/stream.py`,
+`EvalJob`, the wire model shared between the API producer and the worker
+consumer (`packages/aci-protocol`, issue #492), consumed by
+`apps/worker/src/agentos_worker/eval/stream.py`,
 with results shaped by our models (`apps/worker/src/agentos_worker/eval/models.py`). The UI-facing read path
 is our API's matrix endpoint (`apps/api/src/agentos_api/routers/evals.py`)
 returning our `EvalMatrix` schema, and the PR gate is our `/evals/report`

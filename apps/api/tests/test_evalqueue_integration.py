@@ -17,8 +17,9 @@ from typing import Any
 
 import redis
 import redis.asyncio as aioredis
+from aci_protocol import STREAM_PAYLOAD_FIELD, EvalJob
 from agentos_api.config import get_settings
-from agentos_api.evalqueue import STREAM_PAYLOAD_FIELD, EvalJobRequest, EvalQueue, now_iso
+from agentos_api.evalqueue import EvalQueue, from_stream_fields, now_iso
 
 SECRET = get_settings().github_webhook_secret
 REPO = "octo/k1-fanout"
@@ -31,7 +32,7 @@ VALID_FILES = {
 def test_enqueue_lands_with_exact_shape() -> None:
     stream = f"agentos:evals:test-{secrets.token_hex(4)}"
     agent_id, version_id = uuid.uuid4(), uuid.uuid4()
-    request = EvalJobRequest(
+    request = EvalJob(
         agent_id=agent_id,
         version_id=version_id,
         sha="deadbeef",
@@ -68,6 +69,28 @@ def test_enqueue_lands_with_exact_shape() -> None:
     finally:
         sync.delete(stream)
         sync.close()
+
+
+def test_from_stream_fields_tolerates_an_unknown_field() -> None:
+    """The reader side of the seam ignores fields it does not model.
+
+    ``from_stream_fields`` is a wire READ, so a newer producer's optional field
+    must decode, not raise. Asserted at the call site: the tolerance lives in
+    which decode the function calls, not in the model.
+    """
+
+    payload = {
+        "agent_id": str(uuid.uuid4()),
+        "version_id": str(uuid.uuid4()),
+        "sha": "deadbeef",
+        "suite": "default",
+        "bundle_ref": "bundles/x/y.tar.gz",
+        "requested_at": now_iso(),
+        "future_field": "from a newer producer",
+    }
+    job = from_stream_fields({STREAM_PAYLOAD_FIELD: json.dumps(payload)})
+    assert job.sha == "deadbeef"
+    assert not hasattr(job, "future_field")
 
 
 # --- end to end: a dev push fans out, a prod push does not -----------------

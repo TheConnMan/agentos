@@ -1,22 +1,23 @@
 """Eval endpoints (K1): the matrix grid and the PR-check report callback."""
 
+from aci_protocol import EvalJob
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import crud
 from ..auth import require_api_key
 from ..config import get_settings
 from ..deps import EvalQueueDep, GitHubReporterDep, LangfuseDep, SessionDep
-from ..evalqueue import EvalJobRequest, now_iso
+from ..evalqueue import now_iso
 from ..evals import build_matrix
 from ..github_checks import GitHubReportError
 from ..models import Environment
 from ..schemas import (
     EvalMatrix,
-    EvalReport,
     EvalReportResult,
     EvalTriggerRequest,
     EvalTriggerResult,
 )
+from ..wirebody import EvalReportBody
 
 router = APIRouter(
     prefix="/evals", tags=["evals"], dependencies=[Depends(require_api_key)]
@@ -28,7 +29,7 @@ async def trigger_eval(
     body: EvalTriggerRequest, session: SessionDep, queue: EvalQueueDep
 ) -> EvalTriggerResult:
     # On-demand sibling of the git-push eval fan-out (gitflow.process_push):
-    # enqueue the SAME EvalJobRequest onto agentos:evals, minus the push-only
+    # enqueue the SAME EvalJob onto agentos:evals, minus the push-only
     # gate. This does NOT parse the eval-case format (worker/CLI concern); it
     # only resolves and emits agent_id/version_id/sha/suite/bundle_ref.
     agent = await crud.get_agent(session, body.agent_id)
@@ -61,7 +62,7 @@ async def trigger_eval(
     if sha is None:
         # A version with no commit sha cannot be keyed in eval traces; this is a
         # caller/data problem, surfaced as a clean 4xx rather than a 500 on the
-        # required-string EvalJobRequest.sha field.
+        # required-string EvalJob.sha field.
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "resolved version has no commit sha; cannot run eval",
@@ -78,7 +79,7 @@ async def trigger_eval(
 
     suite = body.suite or get_settings().eval_default_suite
     stream_id = await queue.enqueue(
-        EvalJobRequest(
+        EvalJob(
             agent_id=agent.id,
             version_id=version.id,
             sha=sha,
@@ -113,7 +114,7 @@ async def eval_matrix(
 
 @router.post("/report", response_model=EvalReportResult)
 async def report_eval(
-    report: EvalReport, reporter: GitHubReporterDep
+    report: EvalReportBody, reporter: GitHubReporterDep
 ) -> EvalReportResult:
     # The eval Job (or the fan-out consumer) posts its rollup here on completion;
     # the API turns it into a GitHub commit status. Posting twice is harmless

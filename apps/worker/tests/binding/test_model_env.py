@@ -21,7 +21,7 @@ from agentos_worker.binding import (
     apply_model_env,
 )
 from agentos_worker.config import WorkerConfig
-from agentos_worker.eval.stream import EvalStreamConsumer, EvalWorkItem
+from agentos_worker.eval.stream import EvalJob, EvalStreamConsumer
 from agentos_worker.sandbox_token import verify
 
 
@@ -139,7 +139,7 @@ def test_eval_boot_env_carries_fake_and_credentials() -> None:
         recorder=None,  # type: ignore[arg-type]
         repo_lookup=None,
     )
-    item = EvalWorkItem(
+    item = EvalJob(
         agent_id=uuid.uuid4(),
         version_id=uuid.uuid4(),
         sha="deadbeef",
@@ -299,7 +299,7 @@ def test_eval_boot_env_carries_api_backend_and_env_key() -> None:
         recorder=None,  # type: ignore[arg-type]
         repo_lookup=None,
     )
-    item = EvalWorkItem(
+    item = EvalJob(
         agent_id=uuid.uuid4(),
         version_id=uuid.uuid4(),
         sha="deadbeef",

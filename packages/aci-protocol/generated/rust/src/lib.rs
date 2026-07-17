@@ -6,7 +6,13 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.1";
+pub const PROTOCOL_VERSION: &str = "0.2.2";
+
+pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
+
+pub const WORKER_GROUP_DEFAULT: &str = "agentos-workers";
+
+pub const STREAM_PAYLOAD_FIELD: &str = "payload";
 
 fn parse_semver(value: &str) -> Option<(u64, u64)> {
     let mut parts = value.split('.');
@@ -74,6 +80,14 @@ pub enum EventType {
     EvalCase,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum GateKind {
+    #[serde(rename = "permission")]
+    Permission,
+    #[serde(rename = "policy")]
+    Policy,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Budget {
     pub max_output_tokens_per_run: i64,
@@ -122,6 +136,54 @@ pub struct QueuedTurn {
     pub text: String,
     pub reply_handle: ReplyHandle,
     pub received_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct EvalJob {
+    pub agent_id: String,
+    pub version_id: String,
+    pub sha: String,
+    pub suite: String,
+    pub bundle_ref: Option<String>,
+    #[serde(default)]
+    pub target_url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    pub requested_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct EvalReport {
+    pub repo_full_name: String,
+    pub sha: String,
+    pub passed_count: i64,
+    pub total: i64,
+    #[serde(default)]
+    pub target_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    pub conversation_id: String,
+    pub author: String,
+    pub summary: String,
+    pub reply_channel: String,
+    pub reply_placeholder: String,
+    #[serde(default)]
+    pub reply_endpoint: Option<String>,
+    pub dedupe_key: String,
+    #[serde(default)]
+    pub route: Option<String>,
+    #[serde(default)]
+    pub card_channel: Option<String>,
+    #[serde(default)]
+    pub gate_kind: Option<GateKind>,
+    #[serde(default)]
+    pub granted_tool: Option<String>,
+    #[serde(default)]
+    pub expires_in_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

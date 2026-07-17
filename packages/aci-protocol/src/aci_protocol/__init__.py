@@ -14,6 +14,7 @@ class and regenerates the committed schema and types.
 from .conformance import ConformanceReport, Producer, run_conformance
 from .events import (
     OUTBOUND_EVENT_TYPES,
+    READER_CONTEXT,
     ErrorEvent,
     Event,
     Final,
@@ -29,6 +30,7 @@ from .ndjson import (
     ProtocolVersionError,
     dump_ndjson,
     iter_ndjson,
+    parse_eval_job,
     parse_inbound,
     parse_ndjson,
     parse_ndjson_line,
@@ -37,9 +39,15 @@ from .ndjson import (
     to_ndjson_line,
 )
 from .reference import reference_producer
+from .service_config import (
+    RUNS_STREAM_DEFAULT,
+    STREAM_PAYLOAD_FIELD,
+    WORKER_GROUP_DEFAULT,
+)
 from .session import Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION, is_compatible
+from .wire import ApprovalRequest, EvalJob, EvalReport, GateKind
 
 __version__ = "0.0.0"
 
@@ -54,6 +62,15 @@ __all__ = [
     # queue turn payload (the ingress job the worker consumes)
     "QueuedTurn",
     "ReplyHandle",
+    # eval/approval queue payloads (the API <-> worker seam)
+    "EvalJob",
+    "EvalReport",
+    "ApprovalRequest",
+    "GateKind",
+    # shared transport literals (defaults + the stream payload field)
+    "RUNS_STREAM_DEFAULT",
+    "WORKER_GROUP_DEFAULT",
+    "STREAM_PAYLOAD_FIELD",
     # inbound
     "Event",
     "Interrupt",
@@ -76,6 +93,8 @@ __all__ = [
     "parse_inbound",
     "to_inbound_json",
     "parse_queued_turn",
+    "parse_eval_job",
+    "READER_CONTEXT",
     "ProtocolVersionError",
     # conformance
     "run_conformance",

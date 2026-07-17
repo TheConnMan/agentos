@@ -1,7 +1,7 @@
 """On-demand eval trigger endpoint (issue #10) against real Postgres + Valkey.
 
 Asserts POST /evals/trigger resolves an agent's active dev deployment (or an
-explicit version) and enqueues the SAME EvalJobRequest shape onto agentos:evals
+explicit version) and enqueues the SAME EvalJob shape onto agentos:evals
 that the git-push fan-out uses -- minus the push-only gate. Mirrors
 test_evalqueue_integration's stream assertions and the router auth tests.
 """
@@ -12,9 +12,9 @@ import uuid
 from typing import Any
 
 import redis
+from aci_protocol import STREAM_PAYLOAD_FIELD, EvalJob
 from agentos_api import crud
 from agentos_api.config import get_settings
-from agentos_api.evalqueue import STREAM_PAYLOAD_FIELD, EvalJobRequest
 from agentos_api.models import Environment
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -130,11 +130,11 @@ def test_trigger_enqueues_for_active_dev_deployment(
     assert body["suite"] == get_settings().eval_default_suite
     assert body["bundle_ref"] == seeded["bundle_ref"]
 
-    # The decoded stream payload round-trips through EvalJobRequest with exactly
+    # The decoded stream payload round-trips through EvalJob with exactly
     # the resolved fields (same wire contract as the git-push fan-out).
     payload = _payload_for_stream_id(body["stream_id"])
     assert payload is not None
-    req = EvalJobRequest.model_validate(payload)
+    req = EvalJob.model_validate(payload)
     assert str(req.agent_id) == agent["id"]
     assert str(req.version_id) == seeded["version_id"]
     assert req.sha == seeded["sha"]
@@ -148,7 +148,7 @@ def test_trigger_threads_requested_model_onto_the_job(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
     """#526: a requested model is echoed in the result AND carried on the enqueued
-    EvalJobRequest, so the worker boots+tags that model and a sweep's rows land in
+    EvalJob, so the worker boots+tags that model and a sweep's rows land in
     the matrix's model column (one trigger per model)."""
     agent = _create_agent(client, auth_headers, "trigger-model")
     _seed(agent["id"])
@@ -163,7 +163,7 @@ def test_trigger_threads_requested_model_onto_the_job(
 
     payload = _payload_for_stream_id(resp.json()["stream_id"])
     assert payload is not None
-    assert EvalJobRequest.model_validate(payload).model == "claude-sweep-x"
+    assert EvalJob.model_validate(payload).model == "claude-sweep-x"
 
 
 def test_trigger_requires_api_key(client: Any) -> None:

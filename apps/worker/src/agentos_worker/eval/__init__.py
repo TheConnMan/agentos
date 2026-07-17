@@ -27,10 +27,10 @@ from .scorer import (
     match_trajectory,
 )
 from .stream import (
+    EvalJob,
     EvalReport,
     EvalReporter,
     EvalStreamConsumer,
-    EvalWorkItem,
     load_suite_from_bundle,
 )
 
@@ -38,13 +38,13 @@ __all__ = [
     "SCORE_NAME",
     "EvalCase",
     "EvalCaseResult",
+    "EvalJob",
     "EvalReport",
     "EvalReporter",
     "EvalRunResult",
     "EvalRunner",
     "EvalStreamConsumer",
     "EvalSuite",
-    "EvalWorkItem",
     "Grader",
     "GraderKind",
     "GraderScorer",

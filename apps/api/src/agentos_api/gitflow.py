@@ -16,12 +16,13 @@ import shutil
 import subprocess
 import tempfile
 
+from aci_protocol import EvalJob
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from . import bundles, crud, deploy
 from .config import Settings
-from .evalqueue import EvalJobRequest, EvalQueue, now_iso
+from .evalqueue import EvalQueue, now_iso
 from .models import Environment
 from .schemas import WebhookResult
 from .storage import ObjectStore
@@ -195,7 +196,7 @@ async def process_push(
     # for an already-bundled version does not spawn a duplicate eval job.
     if environment is Environment.dev and bundle_built:
         await eval_queue.enqueue(
-            EvalJobRequest(
+            EvalJob(
                 agent_id=agent.id,
                 version_id=version.id,
                 sha=after,

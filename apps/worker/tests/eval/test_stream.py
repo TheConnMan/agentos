@@ -32,10 +32,10 @@ from agentos_worker.bundle_store import BundleStore
 from agentos_worker.config import WorkerConfig
 from agentos_worker.eval import (
     EvalCase,
+    EvalJob,
     EvalReporter,
     EvalStreamConsumer,
     EvalSuite,
-    EvalWorkItem,
     Grader,
     GraderKind,
     LangfuseEvalRecorder,
@@ -173,8 +173,8 @@ def _item(
     bundle_ref: str | None,
     target_url: str | None,
     model: str | None = None,
-) -> EvalWorkItem:
-    return EvalWorkItem(
+) -> EvalJob:
+    return EvalJob(
         agent_id=uuid.uuid4(),
         version_id=uuid.uuid4(),
         sha=sha,
@@ -340,6 +340,67 @@ def test_seam_full_consume_eval_report_cycle(make_eval_harness, bundles) -> None
 
                 # Scores were recorded to the real Langfuse keyed by the version tag.
                 await _assert_langfuse_traces(lf_client, cfg, sha, expected=2)
+
+            await client.delete(cfg.eval_stream)
+            await client.aclose()
+
+    asyncio.run(go())
+
+
+def test_payload_with_unknown_field_still_runs_and_is_not_dropped(
+    make_eval_harness, bundles
+) -> None:
+    """A newer API adding an optional field must not poison the job.
+
+    The decode at the consumer is a wire READ, so it ignores fields it does not
+    model. If it rejected them, the raise would land in the poison-pill branch,
+    which acks and DROPS the entry with no dead letter and no page -- every
+    in-flight eval destroyed by one forward-compatible field. Driven through the
+    real stream decode, not the model, because that branch is the blast radius.
+    """
+    store, upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, _client):
+            fake.responses = {"2+2": "the answer is 4"}
+            bundle_ref = upload(
+                EvalSuite(
+                    name="basics",
+                    cases=[
+                        EvalCase(id="m", input="2+2", grader=Grader(kind=CONTAINS, expected="4")),
+                    ],
+                )
+            )
+            token = uuid.uuid4().hex[:8]
+            cfg = _cfg(f"test:evals:{token}", f"g-{token}")
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=30.0) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                sha = f"sha-{token}"
+                item = _item(suite="basics", sha=sha, bundle_ref=bundle_ref, target_url=base_url)
+                # Exactly what a newer API would XADD: the payload this build
+                # models, plus one field it does not.
+                payload = json.loads(item.model_dump_json())
+                payload["future_field"] = "from a newer api"
+                await client.xadd(cfg.eval_stream, {"payload": json.dumps(payload)})
+
+                await _drain_one(consumer, reports)
+
+                # Ran to completion and reported: not silently acked as poison.
+                assert reports and reports[0]["sha"] == sha
+                assert reports[0]["passed_count"] == 1
+                assert reports[0]["total"] == 1
+                summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert summary["pending"] == 0
 
             await client.delete(cfg.eval_stream)
             await client.aclose()

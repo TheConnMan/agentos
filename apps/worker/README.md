@@ -91,7 +91,7 @@ code.
 
 ```
 XREADGROUP agentos:evals            EvalStreamConsumer (own consumer group)
-   -> payload: EvalWorkItem JSON       one stream field `payload` (dispatcher seam)
+   -> payload: EvalJob JSON            one stream field `payload` (dispatcher seam)
    -> BundleStore.get(bundle_ref)      MinIO GET, extract, load evals/cases.json
    -> run_eval_suite(target)           target_url shortcut, else provision a runner
    -> LangfuseEvalRecorder.record      per-case eval_pass scores, tagged version:<sha>
@@ -100,7 +100,8 @@ XREADGROUP agentos:evals            EvalStreamConsumer (own consumer group)
 ```
 
 Stream seam (the exact producer contract): each entry carries one field `payload`
-holding an `EvalWorkItem` JSON object with `agent_id`, `version_id`, `sha`, `suite`
+holding an `EvalJob` JSON object (the shared `aci_protocol.EvalJob` model) with
+`agent_id`, `version_id`, `sha`, `suite`
 (the suite NAME, used to select/tag, not the cases themselves), `bundle_ref` (the
 MinIO object key), optional `target_url`, and `requested_at` (ISO-8601 UTC). The
 cases come FROM the bundle's own `evals/cases.json` (the `EvalSuite` JSON shape the

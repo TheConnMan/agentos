@@ -5,11 +5,16 @@
 //! The queue seam is the frozen `QueuedTurn` contract promoted into
 //! `packages/aci-protocol` (issue #7): the CLI uses the generated
 //! `agentos_aci_protocol` types directly rather than hand-mirroring them. The
-//! wire form is one `payload` field holding this model's JSON.
+//! wire form is one `payload` field holding this model's JSON. The stream,
+//! consumer-group, and payload-field transport literals come from that same
+//! generated crate (issue #492), so a rename cannot drift this lane out of sync
+//! with the dispatcher and worker.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentos_aci_protocol::{QueuedTurn, ReplyHandle};
+use agentos_aci_protocol::{
+    QueuedTurn, ReplyHandle, RUNS_STREAM_DEFAULT, STREAM_PAYLOAD_FIELD, WORKER_GROUP_DEFAULT,
+};
 use anyhow::{Context, Result};
 use redis::aio::MultiplexedConnection;
 use redis::streams::{StreamInfoGroupsReply, StreamPendingCountReply, StreamPendingReply};
@@ -18,16 +23,15 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-pub const DEFAULT_STREAM: &str = "agentos:runs";
+pub const DEFAULT_STREAM: &str = RUNS_STREAM_DEFAULT;
 pub const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
 /// The worker's consumer group (AGENTOS_CONSUMER_GROUP default); used to detect
 /// completion (the worker acks an entry only after the turn finalizes).
-pub const WORKER_GROUP: &str = "agentos-workers";
+pub const WORKER_GROUP: &str = WORKER_GROUP_DEFAULT;
 
 /// Prefix on the synthetic event id so dedupe can never collide with a real
 /// Slack event id (which are `Ev...`, not `EvSIM-...`).
 const EVENT_ID_PREFIX: &str = "EvSIM-";
-const STREAM_PAYLOAD_FIELD: &str = "payload";
 
 /// Build a synthetic turn: a fresh `EvSIM-` id and the current UTC time, with the
 /// given conversation/reply coordinates. Maps the Slack-facing drivers' inputs

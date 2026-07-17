@@ -17,10 +17,10 @@ evals. Other refs, unknown repos, and rejected bundles never enqueue.
 - Encoding mirrors `agentos:runs` exactly: one stream field named `payload`
   holds the model as `model_dump_json()`. A one-field JSON blob keeps the seam
   explicit and versionable (add fields without reshaping the stream schema).
-- The producer type is `agentos_api.evalqueue.EvalJobRequest`; the consumer
-  reconstructs it with `EvalJobRequest.from_stream_fields(entry_fields)`.
+- The producer and consumer share `aci_protocol.EvalJob` (`packages/aci-protocol`);
+  the consumer reconstructs it with `aci_protocol.parse_eval_job(entry_fields[...])`.
 
-## Payload fields (`EvalJobRequest`)
+## Payload fields (`EvalJob`)
 
 | field | type | meaning |
 |---|---|---|
@@ -34,7 +34,7 @@ evals. Other refs, unknown repos, and rejected bundles never enqueue.
 
 ## Consumer responsibilities (not built here)
 
-Read the stream with a consumer group, reconstruct the `EvalJobRequest`, run
+Read the stream with a consumer group, reconstruct the `EvalJob`, run
 `python -m agentos_worker.eval` for the version (resolving the suite JSON from the
 bundle and pointing it at a runner), and — on completion — POST the rollup to the
 API's `POST /evals/report` so the GitHub commit status is set. The recorder
