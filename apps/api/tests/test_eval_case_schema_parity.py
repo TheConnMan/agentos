@@ -50,7 +50,8 @@ def test_emitted_eval_case_validates_against_the_frozen_schema(kind: str) -> Non
         grader=GraderOut(kind=kind, expected="sunny", case_sensitive=False),
     )
     errors = sorted(_validator_for("EvalCase").iter_errors(case.model_dump()), key=str)
-    assert not errors, f"promote-emitted EvalCase failed the frozen schema: {[e.message for e in errors]}"
+    messages = [e.message for e in errors]
+    assert not errors, f"promote-emitted EvalCase failed the frozen schema: {messages}"
 
 
 def test_grader_kinds_match_the_schema_enum() -> None:
