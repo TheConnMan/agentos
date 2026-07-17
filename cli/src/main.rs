@@ -45,7 +45,7 @@ struct AgentTarget<T: TierDefaults> {
     agent: String,
     #[arg(long, default_value = T::API_URL, env = "AGENTOS_API_URL")]
     api_url: String,
-    #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+    #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
     api_key: String,
     #[arg(long)]
     dry_run: bool,
@@ -62,6 +62,76 @@ impl<T: TierDefaults> From<AgentTarget<T>> for AgentActionOpts {
             dry_run: target.dry_run,
         }
     }
+}
+
+/// The connection flags a LOCAL console verb takes (#630): `AgentTarget<LocalTier>`
+/// minus the agent positional, because a console session belongs to the install
+/// rather than to an agent. The cluster tier uses [`ClusterConn`] instead, for
+/// the same reason every other cluster verb does: it discovers the release's key.
+#[derive(Args, Debug, Clone)]
+struct ConsoleTarget {
+    #[arg(long, default_value = LocalTier::API_URL, env = "AGENTOS_API_URL")]
+    api_url: String,
+    #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
+    api_key: String,
+    #[arg(long)]
+    dry_run: bool,
+}
+
+impl From<ConsoleTarget> for commands::ConsoleOpts {
+    fn from(target: ConsoleTarget) -> Self {
+        commands::ConsoleOpts {
+            api_url: target.api_url,
+            api_key: target.api_key,
+            dry_run: target.dry_run,
+        }
+    }
+}
+
+/// `local console <verb>`: get into the local console, or shut every way in
+/// (#630/ADR-0049).
+///
+/// The connection flattens onto each LEAF rather than onto `console` itself, so
+/// the flags read after the verb (`console login --api-key x`) exactly as they do
+/// for every other verb in this CLI. The cluster twin is a separate enum because
+/// the two tiers genuinely differ in how they connect -- localhost defaults here
+/// vs release discovery there (#524) -- which is the same split that stopped
+/// `AgentTarget<T>` being shared across the tiers.
+#[derive(Subcommand, Debug, Clone)]
+enum LocalConsoleAction {
+    /// Mint a single-use login code to paste into the console.
+    Login {
+        #[command(flatten)]
+        target: ConsoleTarget,
+    },
+    /// Revoke every live console session (the kill switch).
+    Revoke {
+        #[command(flatten)]
+        target: ConsoleTarget,
+    },
+}
+
+/// `cluster console <verb>`: the [`LocalConsoleAction`] twin for a real release.
+/// It carries [`ClusterConn`], so an omitted `--api-key` is DISCOVERED from the
+/// release Secret and the operator never handles the platform key.
+#[derive(Subcommand, Debug, Clone)]
+enum ClusterConsoleAction {
+    /// Mint a single-use login code to paste into the console.
+    Login {
+        #[command(flatten)]
+        conn: ClusterConn,
+        /// Print the request that would be made and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Revoke every live console session (the kill switch).
+    Revoke {
+        #[command(flatten)]
+        conn: ClusterConn,
+        /// Print the request that would be made and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// The connection surface for a cluster governance verb (#524). Unlike the local
@@ -588,7 +658,7 @@ enum LocalAction {
         #[arg(long)]
         api_url: Option<String>,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued event.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -629,7 +699,7 @@ enum LocalAction {
         #[arg(long)]
         api_url: Option<String>,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -662,7 +732,7 @@ enum LocalAction {
         )]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -720,6 +790,11 @@ enum LocalAction {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Log in to the local AgentOS Console, or revoke every console session.
+    Console {
+        #[command(subcommand)]
+        action: LocalConsoleAction,
+    },
     /// Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
     Observability {
         /// Also open the browsable surfaces in a browser. Off by default: the URLs
@@ -741,7 +816,7 @@ enum LocalAction {
             env = "AGENTOS_API_URL"
         )]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         #[arg(long)]
         dry_run: bool,
@@ -756,7 +831,7 @@ enum LocalAction {
             env = "AGENTOS_API_URL"
         )]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Confirm the action.
         #[arg(long)]
@@ -774,7 +849,7 @@ enum LocalAction {
             env = "AGENTOS_API_URL"
         )]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         #[arg(long)]
         dry_run: bool,
@@ -866,6 +941,11 @@ enum ClusterAction {
         /// Print the read-only commands that would run and exit.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Log in to the release's AgentOS Console, or revoke every console session.
+    Console {
+        #[command(subcommand)]
+        action: ClusterConsoleAction,
     },
     /// Show the release's observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
     Observability {
@@ -973,7 +1053,7 @@ enum ClusterAction {
         #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
         api_local_port: u16,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued event.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -1035,7 +1115,7 @@ enum ClusterAction {
         #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
         api_local_port: u16,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
+        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
@@ -1073,7 +1153,7 @@ enum ClusterAction {
         #[arg(long, default_value = "agentos")]
         release: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = message::DEFAULT_API_KEY, env = "AGENTOS_API_KEY", hide_env_values = true, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -1605,6 +1685,26 @@ async fn run(command: Option<Command>) -> Result<()> {
                 )
                 .await?,
             ),
+            LocalAction::Console { action } => match action {
+                // The local console is always at a fixed localhost URL, so it
+                // needs no discovery -- the same reason `local observability`
+                // resolves from consts while the cluster twin shells kubectl.
+                // That URL is loopback, hence already a secure context, so the
+                // login exchange accepts it and there is no port-forward to name.
+                LocalConsoleAction::Login { target } => emit(
+                    commands::console_login(
+                        target.into(),
+                        ops::ConsoleAccess {
+                            url: Some(agentos::observability::LOCAL_CONSOLE_URL.to_string()),
+                            login: None,
+                        },
+                    )
+                    .await?,
+                ),
+                LocalConsoleAction::Revoke { target } => {
+                    emit(commands::console_revoke(target.into()).await?)
+                }
+            },
             LocalAction::Observability { open } => emit(commands::observability(open).await?),
             LocalAction::Budget {
                 agent,
@@ -1745,6 +1845,46 @@ async fn run(command: Option<Command>) -> Result<()> {
                 })
                 .await?,
             ),
+            ClusterAction::Console { action } => match action {
+                ClusterConsoleAction::Login { conn, dry_run } => {
+                    let common = CommonOpts {
+                        namespace: conn.namespace.clone(),
+                        release: conn.release.clone(),
+                        dry_run,
+                    };
+                    let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                    // Skipped under --dry-run: the dry-run plan does not carry a
+                    // console URL, so resolving one would be three kubectl calls
+                    // whose only result is discarded.
+                    let access = if dry_run {
+                        ops::ConsoleAccess::default()
+                    } else {
+                        ops::discover_console_access(&common).await
+                    };
+                    emit(
+                        commands::console_login(
+                            commands::ConsoleOpts {
+                                api_url,
+                                api_key,
+                                dry_run,
+                            },
+                            access,
+                        )
+                        .await?,
+                    )
+                }
+                ClusterConsoleAction::Revoke { conn, dry_run } => {
+                    let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                    emit(
+                        commands::console_revoke(commands::ConsoleOpts {
+                            api_url,
+                            api_key,
+                            dry_run,
+                        })
+                        .await?,
+                    )
+                }
+            },
             ClusterAction::Observability {
                 namespace,
                 release,
@@ -2665,6 +2805,92 @@ mod tests {
         // local budget/kill/resume are the mirrored lifecycle verbs.
         assert!(Cli::try_parse_from(["agentos", "local", "budget", "gh", "--limit", "1"]).is_ok());
         assert!(Cli::try_parse_from(["agentos", "local", "kill", "gh", "--yes"]).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Console login (#630 / ADR-0049): the only way into a sealed console.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn local_console_login_and_revoke_parse_with_flags_after_the_verb() {
+        // The flags flatten onto the LEAF, so they read after the verb the way
+        // every other verb in this CLI takes its flags.
+        match Cli::try_parse_from(["agentos", "local", "console", "login", "--api-key", "K"])
+            .expect("local console login")
+            .command
+        {
+            Some(Command::Local {
+                action:
+                    LocalAction::Console {
+                        action: LocalConsoleAction::Login { target },
+                    },
+            }) => {
+                assert_eq!(target.api_key, "K");
+            }
+            _ => panic!("expected local console login"),
+        }
+        // The bare verb must mint with no flags.
+        assert!(Cli::try_parse_from(["agentos", "local", "console", "login"]).is_ok());
+        assert!(matches!(
+            Cli::try_parse_from(["agentos", "local", "console", "revoke"])
+                .expect("local console revoke")
+                .command,
+            Some(Command::Local {
+                action: LocalAction::Console {
+                    action: LocalConsoleAction::Revoke { .. }
+                }
+            })
+        ));
+    }
+
+    #[test]
+    fn cluster_console_login_defaults_its_key_to_discovery() {
+        // The whole point of ADR-0049's minting story: an omitted --api-key is
+        // DISCOVERED from the release Secret, so the operator never handles the
+        // platform key. A `Some(...)` default here would send the dev sentinel
+        // and 401 against a real release (#524).
+        match Cli::try_parse_from(["agentos", "cluster", "console", "login"])
+            .expect("cluster console login")
+            .command
+        {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Console {
+                        action: ClusterConsoleAction::Login { conn, dry_run, .. },
+                    },
+            }) => {
+                assert_eq!(conn.api_key, None, "must discover, not default");
+                assert_eq!(conn.api_url, None, "must discover, not default");
+                assert_eq!(conn.namespace, "agentos");
+                assert_eq!(conn.release, "agentos");
+                assert!(!dry_run);
+            }
+            _ => panic!("expected cluster console login"),
+        }
+        // An explicit key still wins, matching every other cluster verb.
+        match Cli::try_parse_from(["agentos", "cluster", "console", "revoke", "--api-key", "K"])
+            .expect("cluster console revoke --api-key")
+            .command
+        {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Console {
+                        action: ClusterConsoleAction::Revoke { conn, .. },
+                    },
+            }) => assert_eq!(conn.api_key.as_deref(), Some("K")),
+            _ => panic!("expected cluster console revoke"),
+        }
+    }
+
+    #[test]
+    fn console_verbs_accept_the_global_json_flag_and_dry_run() {
+        // ADR-0021: every verb answers a machine consumer.
+        assert!(Cli::try_parse_from(["agentos", "local", "console", "login", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["agentos", "cluster", "console", "login", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["agentos", "local", "console", "login", "--dry-run"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["agentos", "cluster", "console", "revoke", "--dry-run"]).is_ok()
+        );
     }
 
     // -----------------------------------------------------------------------

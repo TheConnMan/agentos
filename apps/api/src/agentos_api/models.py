@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum, ForeignKey, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -248,6 +248,53 @@ class ApprovalAuditEntry(Base):
     # written before this column existed have none.
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class ConsoleSession(Base):
+    """A console login code and the session it becomes (#630, ADR-0049).
+
+    One row covers both halves of the flow, because they are the same grant at
+    two points in its life: the CLI mints a login code (``login_code_hash`` +
+    ``login_code_expires_at``), and the browser exchanges it exactly once for a
+    session token (``consumed_at`` + ``session_token_hash`` +
+    ``session_expires_at``).
+
+    Only SHA-256 digests of the code and the token are stored, so a database
+    read cannot replay a session. Both are looked up BY digest, never by
+    fetching rows and comparing, so the index does the work and no candidate
+    set is ever materialized.
+
+    Revocation is the ``revoked_at`` column write: a durable row an operator can
+    kill, which is what a self-contained signed token could not offer.
+    """
+
+    __tablename__ = "console_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # SHA-256 hex of the minted login code. Unique so the exchange is a single
+    # indexed lookup by digest.
+    login_code_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    login_code_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Set at exchange; a non-NULL value is what makes the code single-use.
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # SHA-256 hex of the session token the cookie carries, and its fixed
+    # absolute lifetime. NULL until the code is exchanged.
+    session_token_hash: Mapped[str | None] = mapped_column(
+        default=None, unique=True, index=True
+    )
+    session_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class WorkflowStateEntry(Base):

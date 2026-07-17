@@ -26,6 +26,22 @@ def test_agents_accept_valid_key(
     assert client.get("/agents", headers=auth_headers).status_code == 200
 
 
+def test_bogus_console_session_cookie_is_rejected(client: Any) -> None:
+    # require_api_key grew a second accepted credential (a live console session
+    # cookie, ADR-0049/#630). An unrecognized cookie must not widen anything.
+    client.cookies.set("agentos_console_session", "not-a-session")
+    assert client.get("/agents").status_code == 401
+
+
+def test_platform_key_is_honored_alongside_a_bogus_console_cookie(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # The platform-key path is checked first and unchanged (ADR-0049): a machine
+    # caller with a valid key is not broken by a junk cookie riding along.
+    client.cookies.set("agentos_console_session", "not-a-session")
+    assert client.get("/agents", headers=auth_headers).status_code == 200
+
+
 def test_scoped_state_token_is_rejected_on_a_crud_route(client: Any) -> None:
     # A scoped sandbox "state" token authorizes the state namespace only; it must
     # be rejected by the shared require_api_key guard on every other route, so the

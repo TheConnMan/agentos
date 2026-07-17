@@ -1,4 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubConsoleSession } from "./console-session";
+
+// #630: these specs drive an authenticated console; the login gate itself is
+// covered by console-login.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await stubConsoleSession(page);
+});
+
 
 // Wired Agents delete flow (stackless via route stubs): the agent list is
 // mutable so a successful DELETE drops the card, and a 409 (active deployment)

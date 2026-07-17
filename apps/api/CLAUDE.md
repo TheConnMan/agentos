@@ -7,21 +7,43 @@ worker, Postgres, MinIO/S3, Langfuse, and GitHub.
 
 ## Load-bearing invariants
 
-- **Auth is one shared API key today.** `require_api_key` (`auth.py`) compares
-  the `X-API-Key` header against `Settings.api_key` with `hmac.compare_digest`.
-  This is explicitly MVP-only; GitHub-App identity work is expected to
-  replace it eventually, but until that lands, do not add a second
-  auth scheme for a new router without raising it in an issue/PR first --
-  every router should share the one dependency.
+- **Auth is one shared dependency, carrying two credentials today.**
+  `require_api_key` (`auth.py`) accepts EITHER the shared platform key (the
+  `X-API-Key` header, compared against `Settings.api_key` with
+  `hmac.compare_digest`) OR a live console session (ADR-0049, #630). The
+  platform key is explicitly MVP-only; GitHub-App identity work is expected to
+  replace it eventually, but until that lands, do not add a second auth
+  scheme for a new router without raising it in an issue/PR first -- every
+  router should share the one dependency. Order inside it is load-bearing: the
+  platform-key check runs first and returns before the session store is read, so
+  machine callers pay no database read.
+- **The console session is a browser credential and needs the CSRF header
+  (ADR-0049, #630).** `require_api_key` accepts the `agentos_console_session`
+  cookie only when the request also carries `X-Console-Session`
+  (`CONSOLE_SESSION_HEADER`). A cookie is ambient authority and `SameSite=Strict`
+  does not close that -- "site" ignores the port, so `http://localhost:8080` is
+  same-site with every other localhost port, and the body-less `POST
+  /agents/{id}/kill` is a CORS-simple request nothing preflights. The custom
+  header cannot be set cross-origin without a preflight this CORS-free API
+  fails. Do not drop the header requirement, and do not extend it to the
+  platform-key path: it is a browser-only defense, and the CLI/worker/runner must
+  keep authenticating with the header credential alone.
+- **`require_platform_key` is the platform-key-only subset**, used by the console
+  operator routes (`POST /console/login-codes`, `DELETE /console/sessions`)
+  so a session cannot mint its own successor or mass-revoke the store it belongs
+  to (ADR-0049). It is a strict subset of `require_api_key`, not a second scheme.
+  Reach for it when a route must be the CLI's and not the browser's.
 - **The `state` router authenticates differently, on purpose (ADR-0033, #410).**
   `require_state_access` (`routers/state.py`) accepts EITHER the platform key OR a
   scoped, path-`agent_id`-bound `state` token minted by the worker for the
   sandbox, so a sandboxed agent can rehydrate its own memory/transcript without
-  holding a resolve-capable platform-wide key. Every OTHER router keeps
-  `require_api_key` (platform key only); a scoped token is rejected everywhere
-  else, including `/approvals/{id}/resolve`. Do not collapse the state router
-  back onto `require_api_key`, and do not extend scoped-token acceptance to
-  another router without a new ADR.
+  holding a resolve-capable platform-wide key. It does NOT accept a console
+  session; equally, a scoped `state` token is rejected by `require_api_key`
+  everywhere else, including `/approvals/{id}/resolve`. The two dependencies are
+  deliberately disjoint extensions of the platform key, so neither is a
+  laundering path into the other. Do not collapse the state router back onto
+  `require_api_key`, and do not extend scoped-token acceptance to another router
+  without a new ADR.
 - **The GitHub webhook is authenticated differently, on purpose.** `/github/webhook`
   verifies the HMAC signature GitHub sends (`x-hub-signature-256` against
   `settings.github_webhook_secret`), not the API key -- GitHub cannot send an

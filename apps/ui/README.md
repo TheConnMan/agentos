@@ -100,8 +100,15 @@ render without `?api=1`. Swap the rest by replacing the `src/fixtures` selectors
 **How wiring is gated.** `src/api/config.ts` resolves the mode at runtime, so a
 single build serves both the fixture demo and the live run:
 - Wired ON when the URL has `?api=1` (or the build set `VITE_WIRED=1`).
-- The API key is `?api_key=` else `VITE_API_KEY` else the dev default; sent as
-  `X-API-Key`.
+- There is no API key in the browser (#630 / [ADR-0049](../../docs/adr/0049-console-sessions-and-cli-minted-login-codes.md)).
+  A wired console authenticates with an HttpOnly session cookie, exchanged for a
+  single-use login code minted by `agentos <local|cluster> console login`. Every
+  call sends `credentials: "same-origin"` and no `X-API-Key` header. `?api_key=`,
+  `VITE_API_KEY`, and the dev-key fallback are deleted, not deprecated.
+- `ConsoleGate` (`src/components/ConsoleGate.tsx`) sits above the shell: while
+  unauthenticated it renders the login view *instead of* the console, so a locked
+  console mounts no provider and makes no authenticated call. Fixture mode never
+  calls the session endpoint at all.
 - All calls go to the same-origin `/api` prefix. `vite.config.ts` proxies `/api`
   to `AGENTOS_API_TARGET` (default `http://localhost:8000`), stripping the
   prefix. This avoids CORS: apps/api has no CORS middleware, so the browser must

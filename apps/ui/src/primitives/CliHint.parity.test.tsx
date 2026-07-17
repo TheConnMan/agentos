@@ -11,9 +11,11 @@ import { StoreProvider } from "../state/store";
 
 const PRODUCTION_ROOT = join(process.cwd(), "src");
 const EXPECTED_COMMAND_IDS = [
+  "cluster.console.login",
   "cluster.deploy",
   "cluster.status",
   "init",
+  "local.console.login",
   "local.deploy",
   "local.status",
 ] as const;

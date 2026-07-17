@@ -1379,6 +1379,10 @@ impl crate::ui::CliOutput for ClusterStatusOutput {
                 for url in &s.urls {
                     url.render(ui);
                 }
+                // The console URL above carries no secret and never will
+                // (ADR-0049), so it is not a way in on its own. Name the verb
+                // that is, or the operator is left guessing at a URL that 401s.
+                ui.note("log in to the console with `agentos cluster console login`");
                 if s.total > 0 && s.ready == s.total && s.unhealthy.is_empty() {
                     ui.success(&format!("healthy ({}/{} pods ready)", s.ready, s.total));
                 } else if s.total == 0 {
@@ -1711,6 +1715,96 @@ fn node_http_url(host: &str, port: u16, path: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Console secure context (#630, ADR-0049).
+// ---------------------------------------------------------------------------
+
+/// Hosts a browser treats as a secure context over plaintext, and therefore for
+/// which it honors the `Secure` console session cookie.
+///
+/// **Mirrors `apps/api/src/agentos_api/routers/console.py::_is_secure_context`
+/// and its `_LOOPBACK_HOSTS`.** The API is the authority: it refuses the
+/// `POST /console/session` exchange from any other origin. This copy exists only
+/// so the CLI can tell the operator, before they try, which URL will be accepted.
+/// A drift between the two would make the CLI confidently name a URL that then
+/// 400s, which is worse than saying nothing, so the two must be changed together.
+const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+
+/// The local port `console_login_path` forwards to. 8080 rather than the
+/// service's own port so the forward needs no root, and it matches the
+/// `kubectl port-forward` command the API already names in its refusal fix.
+const CONSOLE_LOCAL_PORT: u16 = 8080;
+
+/// Split a URL into its lowercased scheme and host, or None when it is not
+/// parseable as one. An IPv6 literal comes back unbracketed (`[::1]` -> `::1`),
+/// matching what Python's `urlparse(...).hostname` yields on the API side.
+fn scheme_and_host(url: &str) -> Option<(String, String)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match authority.strip_prefix('[') {
+        Some(after) => after.split_once(']')?.0,
+        None => authority.split(':').next()?,
+    };
+    if scheme.is_empty() || host.is_empty() {
+        return None;
+    }
+    Some((scheme.to_ascii_lowercase(), host.to_ascii_lowercase()))
+}
+
+/// Whether a browser at `url` would treat itself as a secure context, and so
+/// would keep the `Secure` console session cookie the login exchange sets.
+///
+/// Fail closed, by construction: an unparseable URL is not a secure context.
+/// See `LOOPBACK_HOSTS` for why this rule is a deliberate mirror of the API's.
+pub fn is_secure_context(url: &str) -> bool {
+    let Some((scheme, host)) = scheme_and_host(url) else {
+        return false;
+    };
+    if scheme == "https" {
+        return true;
+    }
+    scheme == "http" && LOOPBACK_HOSTS.contains(&host.as_str())
+}
+
+/// The loopback path that can actually accept a login code, for a console whose
+/// own URL cannot (a plaintext NodePort origin).
+///
+/// The CLI does not hold the forward open; it names the command, and the
+/// operator runs it. Both fields are data an agent reads under `--json`, not
+/// prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsoleLoginPath {
+    /// The `kubectl port-forward` command to run.
+    pub port_forward: String,
+    /// The loopback console URL that forward makes loginable.
+    pub url: String,
+}
+
+/// Build the loopback login path for a console service. Pure: no cluster contact.
+pub fn console_login_path(namespace: &str, service: &str, port: u16) -> ConsoleLoginPath {
+    ConsoleLoginPath {
+        port_forward: format!(
+            "kubectl -n {namespace} port-forward svc/{service} {CONSOLE_LOCAL_PORT}:{port}"
+        ),
+        url: format!(
+            "http://localhost:{CONSOLE_LOCAL_PORT}{}",
+            api_suffix_path(true)
+        ),
+    }
+}
+
+/// The login path for `console_url`, or None when that URL is already loginable.
+/// Pure: `console_url` is only inspected, never fetched.
+pub fn login_path_for(
+    console_url: &str,
+    namespace: &str,
+    service: &str,
+    port: u16,
+) -> Option<ConsoleLoginPath> {
+    (!is_secure_context(console_url)).then(|| console_login_path(namespace, service, port))
+}
+
 /// A usage error (exit 2) whose fix hint points the operator at `--api-url`,
 /// the escape hatch for every UI-proxy discovery failure.
 fn api_url_usage_err(msg: impl Into<String>) -> anyhow::Error {
@@ -1833,6 +1927,11 @@ pub struct ServiceUrl {
     namespace: String,
     api: bool,
     kind: ServiceUrlKind,
+    /// Set only for a console row whose resolved URL is not a secure context:
+    /// the URL is fine to print (it carries no secret and renders the console),
+    /// but the login exchange refuses that origin, so the operator also needs
+    /// the loopback path that works (#630, ADR-0049).
+    login: Option<ConsoleLoginPath>,
 }
 
 #[derive(Debug)]
@@ -1873,12 +1972,30 @@ impl ServiceUrl {
                 (None, Some(format!("could not read service {}", self.name)))
             }
         };
-        serde_json::json!({"name": self.label, "url": url, "note": note})
+        // `login` is an explicit null when the row is already loginable, per the
+        // repo convention that an agent-read payload never omits a key (#485).
+        let login = self
+            .login
+            .as_ref()
+            .map(|l| serde_json::json!({"url": l.url, "port_forward": l.port_forward}));
+        serde_json::json!({"name": self.label, "url": url, "note": note, "login": login})
     }
 
     fn render(&self, ui: &crate::ui::Ui) {
         match &self.kind {
-            ServiceUrlKind::NodePortUrl(url) => ui.kv(&self.label, &ui.url(url)),
+            ServiceUrlKind::NodePortUrl(url) => {
+                ui.kv(&self.label, &ui.url(url));
+                // The URL above still renders the console, so it stays printed
+                // unchanged. It just cannot hold a session, so name the path
+                // that can rather than leaving the operator at a login that
+                // 400s (#630, ADR-0049).
+                if let Some(login) = &self.login {
+                    ui.kv(
+                        &format!("{} login", self.label),
+                        &format!("{}  then {}", login.port_forward, ui.url(&login.url)),
+                    );
+                }
+            }
             ServiceUrlKind::NotFound => {
                 ui.kv(&self.label, &format!("service {} not found", self.name))
             }
@@ -1918,19 +2035,20 @@ async fn resolve_service_url(
     api: bool,
 ) -> ServiceUrl {
     let name = format!("{}-{}", o.release, suffix);
-    let mk = |kind| ServiceUrl {
+    let mk = |kind, login| ServiceUrl {
         label: label.to_string(),
         name: name.clone(),
         namespace: o.namespace.clone(),
         api,
         kind,
+        login,
     };
     let (ok, out, _) = match run_capture(&svc_cmd(o, suffix)).await {
         Ok(res) => res,
-        Err(_) => return mk(ServiceUrlKind::NotFound),
+        Err(_) => return mk(ServiceUrlKind::NotFound, None),
     };
     if !ok {
-        return mk(ServiceUrlKind::NotFound);
+        return mk(ServiceUrlKind::NotFound, None);
     }
     // Same discovery core as `cluster observability` (#460); this owns the
     // wording, so the status output stays byte-identical.
@@ -1942,7 +2060,19 @@ async fn resolve_service_url(
         }
         ServiceEndpoint::Unreadable => ServiceUrlKind::Unreadable,
     };
-    mk(kind)
+    // Only the console (`api`) has a login to be refused, and only a NodePort
+    // URL can be the plaintext origin that gets refused: the port-forward kinds
+    // already land the operator on loopback.
+    let login = match (&kind, api) {
+        (ServiceUrlKind::NodePortUrl(url), true) => login_path_for(
+            url,
+            &o.namespace,
+            &name,
+            parse_service(&out).map_or(0, |(_, _, port)| port),
+        ),
+        _ => None,
+    };
+    mk(kind, login)
 }
 
 /// From `kubectl get svc -o json`, return (type, first nodePort, first port).
@@ -2176,6 +2306,52 @@ pub async fn cluster_observability_endpoints(
         ),
         api_base_endpoint(opts, ui_svc.as_deref(), host.as_deref()),
     ]
+}
+
+/// The release's console URL for `cluster console login`, or None when it cannot
+/// be resolved.
+///
+/// Reuses the same discovery `cluster status` and `cluster observability` use,
+/// so the URL a login names is the URL those verbs print -- one resolution, not
+/// a third derivation. Returns an Option rather than erroring: a minted code is
+/// valid whether or not we can name the console, so a failed cosmetic lookup
+/// must not throw away a live credential.
+pub async fn discover_console_url(opts: &CommonOpts) -> Option<String> {
+    cluster_observability_endpoints(opts)
+        .await
+        .into_iter()
+        .find(|e| e.name == "AgentOS Console")
+        .and_then(|e| e.url)
+}
+
+/// How to reach the release's console, and how to log into it: the URL, plus the
+/// loopback path when that URL's origin is one the login exchange refuses.
+#[derive(Debug, Default)]
+pub struct ConsoleAccess {
+    pub url: Option<String>,
+    pub login: Option<ConsoleLoginPath>,
+}
+
+/// Resolve the console URL for `cluster console login` and, when that URL is a
+/// plaintext origin, the loopback path that can actually accept the code.
+///
+/// Naming a URL the operator's browser cannot log into is the whole point of
+/// this: `cluster up --expose` ships a NodePort console, so on the topology the
+/// chart actually deploys, the URL alone is never enough (#630, ADR-0049).
+pub async fn discover_console_access(opts: &CommonOpts) -> ConsoleAccess {
+    let url = discover_console_url(opts).await;
+    let login = match &url {
+        Some(url) if !is_secure_context(url) => {
+            let name = format!("{}-ui", opts.release);
+            let port = fetch_service(opts, "ui")
+                .await
+                .and_then(|svc| parse_service(&svc))
+                .map_or(0, |(_, _, port)| port);
+            Some(console_login_path(&opts.namespace, &name, port))
+        }
+        _ => None,
+    };
+    ConsoleAccess { url, login }
 }
 
 /// The read-only commands `agentos cluster observability` runs (and prints under
@@ -3320,6 +3496,119 @@ mod tests {
             node_http_url("10.0.0.5", 30080, ""),
             "http://10.0.0.5:30080"
         );
+    }
+
+    /// The decision that decides what `cluster status` and `console login` tell
+    /// the operator. It must agree, case for case, with
+    /// `apps/api/.../routers/console.py::_is_secure_context`, which is what
+    /// actually accepts or refuses the exchange: an https origin, or a loopback
+    /// host over plaintext. Anything else, including an unparseable URL, is not.
+    #[test]
+    fn secure_context_mirrors_the_api_gate() {
+        // https passes on any host, which is the API's first branch verbatim.
+        assert!(is_secure_context("https://console.example.com/?api=1"));
+        assert!(is_secure_context("https://10.0.0.5:30080/?api=1"));
+        // Loopback over plaintext: the three hosts in the API's _LOOPBACK_HOSTS.
+        assert!(is_secure_context("http://localhost:8080/?api=1"));
+        assert!(is_secure_context("http://127.0.0.1:8080/?api=1"));
+        assert!(is_secure_context("http://[::1]:8080/?api=1"));
+        // Scheme and host are compared case-insensitively, as urlparse does.
+        assert!(is_secure_context("HTTP://LocalHost:8080/?api=1"));
+        // The NodePort console the chart actually deploys: refused at exchange.
+        assert!(!is_secure_context("http://10.0.0.5:30080/?api=1"));
+        assert!(!is_secure_context("http://node.local:30080/?api=1"));
+        // A host merely containing a loopback name is not one.
+        assert!(!is_secure_context("http://localhost.evil.example/?api=1"));
+        // Fail closed on anything unparseable, matching the API's `if not origin`.
+        assert!(!is_secure_context(""));
+        assert!(!is_secure_context("not a url"));
+        assert!(!is_secure_context("ftp://localhost/"));
+    }
+
+    #[test]
+    fn login_path_is_named_only_for_a_console_that_refuses_a_login() {
+        // A plaintext NodePort console: the operator gets the forward that works.
+        assert_eq!(
+            login_path_for("http://10.0.0.5:30080/?api=1", "agentos", "agentos-ui", 80),
+            Some(ConsoleLoginPath {
+                port_forward: "kubectl -n agentos port-forward svc/agentos-ui 8080:80".into(),
+                url: "http://localhost:8080/?api=1".into(),
+            })
+        );
+        // Already loginable: no extra noise on either output.
+        assert_eq!(
+            login_path_for(
+                "https://console.example.com/?api=1",
+                "agentos",
+                "agentos-ui",
+                80
+            ),
+            None
+        );
+        assert_eq!(
+            login_path_for("http://localhost:8080/?api=1", "agentos", "agentos-ui", 80),
+            None
+        );
+    }
+
+    /// `cluster status` must print the plain console URL (secret-free, and it
+    /// renders) AND, when that URL cannot hold a session, the loopback path that
+    /// can. Under `--json` the loopback path is data an agent reads, not prose.
+    #[test]
+    fn status_console_row_carries_the_loginable_path_for_a_plaintext_nodeport() {
+        let row = ServiceUrl {
+            label: "UI".into(),
+            name: "agentos-ui".into(),
+            namespace: "agentos".into(),
+            api: true,
+            kind: ServiceUrlKind::NodePortUrl("http://10.0.0.5:30080/?api=1".into()),
+            login: login_path_for("http://10.0.0.5:30080/?api=1", "agentos", "agentos-ui", 80),
+        };
+        let json = row.to_json();
+        assert_eq!(json["url"], "http://10.0.0.5:30080/?api=1");
+        assert_eq!(json["login"]["url"], "http://localhost:8080/?api=1");
+        assert_eq!(
+            json["login"]["port_forward"],
+            "kubectl -n agentos port-forward svc/agentos-ui 8080:80"
+        );
+    }
+
+    #[test]
+    fn status_console_row_stays_quiet_when_the_console_is_already_loginable() {
+        for url in [
+            "https://console.example.com/?api=1",
+            "http://localhost:30080/?api=1",
+        ] {
+            let row = ServiceUrl {
+                label: "UI".into(),
+                name: "agentos-ui".into(),
+                namespace: "agentos".into(),
+                api: true,
+                kind: ServiceUrlKind::NodePortUrl(url.into()),
+                login: login_path_for(url, "agentos", "agentos-ui", 80),
+            };
+            let json = row.to_json();
+            assert_eq!(json["url"], url);
+            assert!(
+                json["login"].is_null(),
+                "a loginable console must not be told to port-forward: {json}"
+            );
+        }
+    }
+
+    /// Langfuse is not a console and has no login to refuse, so a plaintext
+    /// NodePort URL there earns no port-forward advice.
+    #[test]
+    fn a_non_console_row_never_names_a_login_path() {
+        let row = ServiceUrl {
+            label: "Langfuse".into(),
+            name: "agentos-langfuse-web".into(),
+            namespace: "agentos".into(),
+            api: false,
+            kind: ServiceUrlKind::NodePortUrl("http://10.0.0.5:30081".into()),
+            login: None,
+        };
+        assert!(row.to_json()["login"].is_null());
     }
 
     #[test]

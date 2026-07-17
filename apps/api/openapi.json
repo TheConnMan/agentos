@@ -945,6 +945,140 @@
         "title": "BundleOut",
         "type": "object"
       },
+      "ConsoleErrorOut": {
+        "description": "A refusal the operator can act on: what happened and what fixes it.\n\nThe `{error, fix}` pair of ADR-0021, flat rather than nested under `detail`,\nso the console can render the fix verbatim.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "fix": {
+            "title": "Fix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "fix"
+        ],
+        "title": "ConsoleErrorOut",
+        "type": "object"
+      },
+      "ConsoleLoginCodeMint": {
+        "description": "Mint a login code. Carries no fields: the mint is a bare request under the\nplatform key, and an empty body validates.",
+        "properties": {},
+        "title": "ConsoleLoginCodeMint",
+        "type": "object"
+      },
+      "ConsoleLoginCodeOut": {
+        "description": "The one and only moment the raw login code is readable.\n\nIt is never stored (only its digest is) and never returned again, so a\ncaller that loses it mints another.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "expires_at",
+          "session_id"
+        ],
+        "title": "ConsoleLoginCodeOut",
+        "type": "object"
+      },
+      "ConsoleLoginRefusedOut": {
+        "description": "A refused login code. One message for unknown, spent, expired, and\nrevoked alike: which one it was is not the caller's to learn.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ConsoleLoginRefusedOut",
+        "type": "object"
+      },
+      "ConsoleRevokeOut": {
+        "description": "How many live sessions the sweep killed.",
+        "properties": {
+          "revoked": {
+            "title": "Revoked",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revoked"
+        ],
+        "title": "ConsoleRevokeOut",
+        "type": "object"
+      },
+      "ConsoleSessionExchange": {
+        "description": "Exchange a login code for a session cookie.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "ConsoleSessionExchange",
+        "type": "object"
+      },
+      "ConsoleSessionOut": {
+        "description": "The established session's fixed absolute expiry. The token itself is\nreturned only as the HttpOnly cookie, never in the body.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expires_at"
+        ],
+        "title": "ConsoleSessionOut",
+        "type": "object"
+      },
+      "ConsoleSessionStatus": {
+        "description": "Whether the caller's cookie names a live session, for the console's own\n\"am I logged in\" check. Never carries the token or its digest.",
+        "properties": {
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "required": [
+          "authenticated"
+        ],
+        "title": "ConsoleSessionStatus",
+        "type": "object"
+      },
       "CostReport": {
         "description": "Daily spend series + total for an agent (L1 Cost view).",
         "properties": {
@@ -2414,6 +2548,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -2464,6 +2630,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -2534,6 +2732,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -2583,6 +2813,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -2640,6 +2902,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -2710,6 +3004,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -2766,6 +3092,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -2836,6 +3194,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -2892,6 +3282,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -2994,6 +3416,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -3053,6 +3507,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -3109,6 +3595,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -3169,6 +3687,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -3254,6 +3804,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -3313,6 +3895,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -3393,6 +4007,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -3451,6 +4097,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -3901,6 +4579,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -3961,6 +4671,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4041,6 +4783,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -4105,6 +4879,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4184,6 +4990,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4293,6 +5131,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -4344,6 +5214,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4414,6 +5316,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -4473,6 +5407,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4538,6 +5504,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "requestBody": {
@@ -4599,6 +5597,285 @@
         ]
       }
     },
+    "/console/login-codes": {
+      "post": {
+        "description": "Mint a login code for an operator to paste into the console.\n\nUnder the platform key on purpose: this is the CLI's endpoint, not the\nbrowser's. An unauthenticated caller that could mint its own code could log\nitself in, which would make the whole exchange decorative.",
+        "operationId": "mint_login_code_console_login_codes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleLoginCodeMint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleLoginCodeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint Login Code",
+        "tags": [
+          "console"
+        ]
+      }
+    },
+    "/console/session": {
+      "delete": {
+        "description": "Self-logout: revoke the session server-side and clear the cookie.\n\nBoth halves matter. Clearing the cookie alone would leave a stolen copy of\nthe token live, so the row write is the real revocation. Idempotent, so a\nlogout without a live session is still a 204.",
+        "operationId": "logout_console_session_delete",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "console"
+        ]
+      },
+      "get": {
+        "description": "Whether the caller's cookie names a live session, for the console's own\n\"am I logged in\" check. Anonymous is a 200 with authenticated=false, not a\n401: not being logged in is the answer, not an error.",
+        "operationId": "get_session_status_console_session_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleSessionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Status",
+        "tags": [
+          "console"
+        ]
+      },
+      "post": {
+        "description": "Exchange a login code for the session cookie. No auth dependency: the\ncode is the credential, and the cookie is what this call establishes.\n\nThe Origin gate runs BEFORE the code is touched, so a refusal costs the\noperator nothing: the code is still live to retry over the port-forward the\nfix names.",
+        "operationId": "exchange_login_code_console_session_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleSessionExchange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleErrorOut"
+                }
+              }
+            },
+            "description": "The origin is not a secure context, so a browser would drop the Secure session cookie. The login code is NOT consumed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleLoginRefusedOut"
+                }
+              }
+            },
+            "description": "The login code is unknown, already spent, expired, or revoked. Which one it was is deliberately not distinguished."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange Login Code",
+        "tags": [
+          "console"
+        ]
+      }
+    },
+    "/console/sessions": {
+      "delete": {
+        "description": "Revoke every live console grant. The operator's kill switch for the\nconsole, and why the session is a durable row rather than a signed token:\nthis takes effect on the next request, with no key rotation and no restart.",
+        "operationId": "revoke_sessions_console_sessions_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleRevokeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Sessions",
+        "tags": [
+          "console"
+        ]
+      }
+    },
     "/deployments": {
       "get": {
         "operationId": "list_deployments_deployments_get",
@@ -4634,6 +5911,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4685,6 +5994,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4755,6 +6096,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -4823,6 +6196,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -4871,6 +6276,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -4930,6 +6367,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -5100,6 +6569,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -5163,6 +6664,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -5221,6 +6754,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -5354,6 +6919,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -5467,6 +7064,38 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
+            }
           }
         ],
         "responses": {
@@ -5531,6 +7160,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],
@@ -5640,6 +7301,38 @@
                 }
               ],
               "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-console-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Console-Session"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "agentos_console_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentos Console Session"
             }
           }
         ],

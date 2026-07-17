@@ -1,4 +1,12 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { stubConsoleSession } from "./console-session";
+
+// #630: these specs drive an authenticated console; the login gate itself is
+// covered by console-login.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await stubConsoleSession(page);
+});
+
 
 // FX2 items 3 & 4: the wired trace drill-in. A trace with no observations is a
 // legitimate empty state (honest empty view, not an error toast); a trace whose

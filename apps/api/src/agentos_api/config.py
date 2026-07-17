@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # Single shared API key. Dev-only default; override in any shared deployment.
     api_key: str = "agentos-dev-key"
 
+    # Console sessions (#630, ADR-0049). The login code is a short-lived,
+    # single-use handoff between the CLI that mints it and the browser tab that
+    # exchanges it, so it only has to outlive a copy-paste. The session is a
+    # fixed absolute lifetime with no sliding refresh: a long-lived console tab
+    # is asked to log in again. Neither is a secret, so both stay out of the #57
+    # prod boot gate -- they are durations, not credentials.
+    console_login_code_ttl_seconds: int = 600  # 10 minutes
+    console_session_ttl_seconds: int = 43200  # 12 hours
+
     # Human-readable org/workspace name the UI reads (open /config endpoint) to
     # brand the app. Overridable via ORG_NAME for a white-labeled deployment.
     org_name: str = "AgentOS"

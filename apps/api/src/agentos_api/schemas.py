@@ -847,3 +847,68 @@ class MemoryEntryEdit(BaseModel):
 
     content: str
     expected_version: int
+
+
+# --- Console sessions (#630, ADR-0049) --------------------------------------
+
+
+class ConsoleLoginCodeMint(BaseModel):
+    """Mint a login code. Carries no fields: the mint is a bare request under the
+    platform key, and an empty body validates."""
+
+
+class ConsoleLoginCodeOut(BaseModel):
+    """The one and only moment the raw login code is readable.
+
+    It is never stored (only its digest is) and never returned again, so a
+    caller that loses it mints another.
+    """
+
+    code: str
+    expires_at: datetime
+    session_id: uuid.UUID
+
+
+class ConsoleSessionExchange(BaseModel):
+    """Exchange a login code for a session cookie."""
+
+    code: str
+
+
+class ConsoleErrorOut(BaseModel):
+    """A refusal the operator can act on: what happened and what fixes it.
+
+    The `{error, fix}` pair of ADR-0021, flat rather than nested under `detail`,
+    so the console can render the fix verbatim.
+    """
+
+    error: str
+    fix: str
+
+
+class ConsoleLoginRefusedOut(BaseModel):
+    """A refused login code. One message for unknown, spent, expired, and
+    revoked alike: which one it was is not the caller's to learn."""
+
+    detail: str
+
+
+class ConsoleSessionOut(BaseModel):
+    """The established session's fixed absolute expiry. The token itself is
+    returned only as the HttpOnly cookie, never in the body."""
+
+    expires_at: datetime
+
+
+class ConsoleSessionStatus(BaseModel):
+    """Whether the caller's cookie names a live session, for the console's own
+    "am I logged in" check. Never carries the token or its digest."""
+
+    authenticated: bool
+    expires_at: datetime | None = None
+
+
+class ConsoleRevokeOut(BaseModel):
+    """How many live sessions the sweep killed."""
+
+    revoked: int

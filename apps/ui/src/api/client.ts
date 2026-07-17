@@ -1,7 +1,13 @@
 // Typed client for the B1/B2 API, reached through the same-origin /api proxy.
-// Every call carries the X-API-Key header. Shapes mirror apps/api/openapi.json.
+// Shapes mirror apps/api/openapi.json.
+//
+// Authentication is the console session cookie and nothing else (#630 /
+// ADR-0049): the cookie is HttpOnly, so this module cannot read it and never
+// tries to. Every call opts into sending it with `credentials: "same-origin"`.
+// No call carries the platform key -- it has no browser-reachable path, so
+// there is no key here to attach.
 
-import { API_PREFIX, apiKey } from "./config";
+import { API_PREFIX } from "./config";
 
 // Open (unauthenticated) app config: the configurable org/workspace name.
 export interface AppConfig {
@@ -89,10 +95,20 @@ export class BundleValidationError extends Error {
 /** Thrown for any other non-2xx response. */
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The server's remediation text, from the `{error, fix}` bodies the API sends
+   * on the failures it can tell the operator how to fix (the console exchange's
+   * insecure-origin 400, the session store being unreachable). null when the
+   * response carried no `fix`. Kept a distinct field rather than concatenated
+   * into `message` so a view can render the reason and the instruction as the
+   * two different things they are.
+   */
+  fix: string | null;
+  constructor(status: number, message: string, fix: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.fix = fix;
   }
 }
 
@@ -100,17 +116,71 @@ function url(path: string): string {
   return `${API_PREFIX}${path}`;
 }
 
-function headers(extra?: Record<string, string>): Record<string, string> {
-  return { "X-API-Key": apiKey(), ...extra };
-}
+// The CSRF header the API requires alongside the session cookie (ADR-0049).
+// The cookie is ambient authority and SameSite=Strict does not close that: the
+// "site" a browser compares ignores the port, so http://localhost:8080 (the
+// port-forward login URL) is same-site with every other localhost port, and a
+// body-less POST like /agents/{id}/kill is a CORS-simple request that no
+// preflight guards. A custom header cannot be set cross-origin without a
+// preflight, which this CORS-free API answers with a rejection -- so carrying it
+// is what makes the cookie unusable by a forged cross-site request. apps/api
+// rejects the cookie without it, so every call must send it. Presence is the
+// check; the value is arbitrary.
+const CSRF_HEADERS = { "X-Console-Session": "1" };
+
+// Spread into every request init so the HttpOnly session cookie rides along.
+// The API is strictly same-origin (it runs no CORS middleware on purpose), so
+// "same-origin" is both the correct scope and the tightest one.
+const SAME_ORIGIN = { credentials: "same-origin", headers: { ...CSRF_HEADERS } } as const;
+
+// Callers that send a JSON body replace `headers` wholesale, so the CSRF header
+// is folded in here rather than lost. The multipart upload passes no headers at
+// all (fetch must pick the boundary), so it keeps SAME_ORIGIN's copy.
+const JSON_HEADERS = { ...CSRF_HEADERS, "Content-Type": "application/json" };
 
 async function jsonOrThrow<T>(resp: Response): Promise<T> {
   if (resp.ok) return (await resp.json()) as T;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
-function describeError(body: unknown): string | null {
+// The one place a non-2xx response becomes an ApiError, so every caller gets the
+// same treatment of both error shapes the API sends. statusText ("Bad Request")
+// stays the last resort: it names nothing the operator can act on, so it is used
+// only when the server sent no legible body at all.
+async function apiErrorFrom(resp: Response): Promise<ApiError> {
+  return apiError(resp.status, await resp.json().catch(() => null), resp.statusText);
+}
+
+// Body-based variant, for the one caller that must read the body itself (the
+// bundle 422 inspects it for validator issues before deciding what to throw).
+function apiError(status: number, body: unknown, statusText: string): ApiError {
+  const described = describeError(body);
+  return new ApiError(status, described?.message ?? statusText, described?.fix ?? null);
+}
+
+interface DescribedError {
+  message: string;
+  fix: string | null;
+}
+
+function describeError(body: unknown): DescribedError | null {
+  // The agent-facing {error, fix} shape (ADR-0021): a reason plus the operator's
+  // way out. The console exchange's only 400 is this shape, and its `fix` is the
+  // port-forward instruction that is the sole route in from a plaintext origin.
+  if (body && typeof body === "object" && "error" in body) {
+    const error = (body as { error: unknown }).error;
+    if (typeof error === "string") {
+      const fix = (body as { fix?: unknown }).fix;
+      return { message: error, fix: typeof fix === "string" ? fix : null };
+    }
+  }
+  const detailMessage = describeDetail(body);
+  return detailMessage === null ? null : { message: detailMessage, fix: null };
+}
+
+// FastAPI's {detail} shape, in its three flavors: a string, a nested {detail},
+// or a field-validation array.
+function describeDetail(body: unknown): string | null {
   if (body && typeof body === "object" && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;
@@ -129,6 +199,61 @@ function describeError(body: unknown): string | null {
   return null;
 }
 
+// ---- console session (#630 / ADR-0049) ----
+
+/** The console's own auth state, as the server sees it (ConsoleSessionStatus). */
+export interface ConsoleSession {
+  authenticated: boolean;
+  expires_at: string | null;
+}
+
+/**
+ * The established session (ConsoleSessionOut). The expiry is the whole body: the
+ * token is returned only as the HttpOnly cookie, and there is no `authenticated`
+ * field, because a response at all IS the authentication.
+ */
+export interface ConsoleSessionOut {
+  expires_at: string;
+}
+
+/**
+ * Read the current console session. This never 401s by design -- an anonymous
+ * caller is a 200 with authenticated=false, because not being logged in is the
+ * answer, not an error -- so there is no 401 branch here. A genuine failure
+ * (the session store being down, say) throws ApiError, which the gate treats as
+ * locked.
+ */
+export async function getSession(): Promise<ConsoleSession> {
+  const resp = await fetch(url("/console/session"), { ...SAME_ORIGIN });
+  return jsonOrThrow<ConsoleSession>(resp);
+}
+
+/**
+ * Exchange a single-use login code minted by `agentos <local|cluster> console
+ * login` for a session. The server consumes the code and returns the session as
+ * an HttpOnly cookie, so the code is spent here and never stored: this module
+ * keeps it only as the argument of this call. A rejected or expired code
+ * surfaces as ApiError carrying the server's reason (401); an exchange refused
+ * for a non-secure origin surfaces as ApiError whose `fix` names the
+ * port-forward the operator needs (400).
+ */
+export async function activateSession(code: string): Promise<ConsoleSessionOut> {
+  const resp = await fetch(url("/console/session"), {
+    method: "POST",
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ code }),
+  });
+  return jsonOrThrow<ConsoleSessionOut>(resp);
+}
+
+/** Revoke the current session server-side (the row is marked, not deleted). */
+export async function logout(): Promise<void> {
+  const resp = await fetch(url("/console/session"), { method: "DELETE", ...SAME_ORIGIN });
+  if (resp.ok) return;
+  throw await apiErrorFrom(resp);
+}
+
 export async function createAgent(input: {
   name: string;
   slack_channel: string;
@@ -137,7 +262,8 @@ export async function createAgent(input: {
 }): Promise<AgentOut> {
   const resp = await fetch(url("/agents"), {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
     body: JSON.stringify(input),
   });
   return jsonOrThrow<AgentOut>(resp);
@@ -149,7 +275,8 @@ export async function createVersion(
 ): Promise<VersionOut> {
   const resp = await fetch(url(`/agents/${agentId}/versions`), {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
     body: JSON.stringify(input),
   });
   return jsonOrThrow<VersionOut>(resp);
@@ -169,14 +296,14 @@ export async function uploadBundle(
   form.append("file", archive, "bundle.zip");
   const resp = await fetch(url(`/agents/${agentId}/versions/${versionId}/bundle`), {
     method: "PUT",
-    headers: headers(),
+    ...SAME_ORIGIN,
     body: form,
   });
   if (resp.ok) return (await resp.json()) as BundleOut;
   const body = await resp.json().catch(() => null);
   const issues = extractIssues(body);
   if (resp.status === 422 && issues) throw new BundleValidationError(issues);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw apiError(resp.status, body, resp.statusText);
 }
 
 // The bundle 422 body is { detail: { detail: "...", errors: [ {code,message,location} ] } }.
@@ -200,14 +327,14 @@ function extractIssues(body: unknown): BundleIssue[] | null {
 // traces carry the `agent-<id>` name token); without it, all recent traces.
 export async function listTraces(limit = 20, agentId?: string): Promise<RawTrace[]> {
   const resp = await fetch(url(`/langfuse/traces${query({ limit, agent_id: agentId })}`), {
-    headers: headers(),
+    ...SAME_ORIGIN,
   });
   return jsonOrThrow<RawTrace[]>(resp);
 }
 
 export async function getTrace(traceId: string): Promise<TraceTree> {
   const resp = await fetch(url(`/langfuse/traces/${encodeURIComponent(traceId)}`), {
-    headers: headers(),
+    ...SAME_ORIGIN,
   });
   return jsonOrThrow<TraceTree>(resp);
 }
@@ -217,7 +344,7 @@ export async function getTrace(traceId: string): Promise<TraceTree> {
 export async function promoteTraceToEvalCase(traceId: string): Promise<EvalCaseOut> {
   const resp = await fetch(url(`/langfuse/traces/${encodeURIComponent(traceId)}/eval-case`), {
     method: "POST",
-    headers: headers(),
+    ...SAME_ORIGIN,
   });
   return jsonOrThrow<EvalCaseOut>(resp);
 }
@@ -266,7 +393,7 @@ export interface RunnerPods {
 // Non-2xx throws ApiError carrying the status: 503 (no cluster), 502 (other).
 export async function listRunnerPods(namespace?: string): Promise<RunnerPods> {
   const resp = await fetch(url(`/observability/runners${query({ namespace })}`), {
-    headers: headers(),
+    ...SAME_ORIGIN,
   });
   return jsonOrThrow<RunnerPods>(resp);
 }
@@ -289,7 +416,7 @@ function query(params: Record<string, string | number | boolean | undefined>): s
 
 export async function getMetricsSummary(filter: MetricFilter = {}): Promise<MetricsSummary> {
   const resp = await fetch(url(`/observability/metrics/summary${query({ ...filter })}`), {
-    headers: headers(),
+    ...SAME_ORIGIN,
   });
   return jsonOrThrow<MetricsSummary>(resp);
 }
@@ -301,7 +428,7 @@ export async function getMetricSeries(
 ): Promise<MetricSeries> {
   const resp = await fetch(
     url(`/observability/metrics/series${query({ metric, granularity, ...filter })}`),
-    { headers: headers() },
+    { ...SAME_ORIGIN },
   );
   return jsonOrThrow<MetricSeries>(resp);
 }
@@ -323,7 +450,7 @@ export async function getRunnerLogs(
     url(
       `/observability/runners/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs${query({ ...opts })}`,
     ),
-    { headers: headers() },
+    { ...SAME_ORIGIN },
   );
   return jsonOrThrow<PodLogs>(resp);
 }
@@ -348,14 +475,14 @@ export interface KillState {
 }
 
 export async function getAgents(): Promise<AgentOut[]> {
-  const resp = await fetch(url("/agents"), { headers: headers() });
+  const resp = await fetch(url("/agents"), { ...SAME_ORIGIN });
   return jsonOrThrow<AgentOut[]>(resp);
 }
 
 // The open /config endpoint (no API key required) carries the configurable
 // org/workspace name the shared chrome renders.
 export async function getConfig(): Promise<AppConfig> {
-  const resp = await fetch(url("/config"));
+  const resp = await fetch(url("/config"), { ...SAME_ORIGIN });
   return jsonOrThrow<AppConfig>(resp);
 }
 
@@ -369,7 +496,8 @@ export async function updateAgent(
 ): Promise<AgentOut> {
   const resp = await fetch(url(`/agents/${agentId}`), {
     method: "PATCH",
-    headers: headers({ "Content-Type": "application/json" }),
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
     body: JSON.stringify(patch),
   });
   return jsonOrThrow<AgentOut>(resp);
@@ -378,19 +506,18 @@ export async function updateAgent(
 // Delete an agent (cascades its versions/deployments server-side; 204 No Content
 // on success). A 409 (active deployment) surfaces via the thrown ApiError.
 export async function deleteAgent(agentId: string): Promise<void> {
-  const resp = await fetch(url(`/agents/${agentId}`), { method: "DELETE", headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}`), { method: "DELETE", ...SAME_ORIGIN });
   if (resp.ok) return;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
 export async function getCost(agentId: string, range: { start?: string; end?: string } = {}): Promise<CostReport> {
-  const resp = await fetch(url(`/agents/${agentId}/cost${query({ ...range })}`), { headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/cost${query({ ...range })}`), { ...SAME_ORIGIN });
   return jsonOrThrow<CostReport>(resp);
 }
 
 export async function getBudget(agentId: string): Promise<BudgetConfig> {
-  const resp = await fetch(url(`/agents/${agentId}/budget`), { headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/budget`), { ...SAME_ORIGIN });
   return jsonOrThrow<BudgetConfig>(resp);
 }
 
@@ -399,14 +526,15 @@ export async function getBudget(agentId: string): Promise<BudgetConfig> {
 export async function putBudget(agentId: string, budget: BudgetConfig): Promise<BudgetConfig> {
   const resp = await fetch(url(`/agents/${agentId}/budget`), {
     method: "PUT",
-    headers: headers({ "Content-Type": "application/json" }),
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
     body: JSON.stringify(budget),
   });
   return jsonOrThrow<BudgetConfig>(resp);
 }
 
 export async function getKillState(agentId: string): Promise<KillState> {
-  const resp = await fetch(url(`/agents/${agentId}/kill`), { headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/kill`), { ...SAME_ORIGIN });
   return jsonOrThrow<KillState>(resp);
 }
 
@@ -436,12 +564,12 @@ export interface BundleFiles {
 }
 
 export async function listVersions(agentId: string): Promise<VersionOut[]> {
-  const resp = await fetch(url(`/agents/${agentId}/versions`), { headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/versions`), { ...SAME_ORIGIN });
   return jsonOrThrow<VersionOut[]>(resp);
 }
 
 export async function listDeployments(agentId: string): Promise<DeploymentOut[]> {
-  const resp = await fetch(url(`/deployments${query({ agent_id: agentId })}`), { headers: headers() });
+  const resp = await fetch(url(`/deployments${query({ agent_id: agentId })}`), { ...SAME_ORIGIN });
   return jsonOrThrow<DeploymentOut[]>(resp);
 }
 
@@ -449,7 +577,7 @@ export async function listDeployments(agentId: string): Promise<DeploymentOut[]>
 // by the env-scoped Agents/Overview views to decide which agents are live in the
 // selected environment.
 export async function listAllDeployments(): Promise<DeploymentOut[]> {
-  const resp = await fetch(url("/deployments"), { headers: headers() });
+  const resp = await fetch(url("/deployments"), { ...SAME_ORIGIN });
   return jsonOrThrow<DeploymentOut[]>(resp);
 }
 
@@ -459,7 +587,7 @@ export async function listAllDeployments(): Promise<DeploymentOut[]> {
  * the version yet; callers distinguish it via the thrown ApiError's status.
  */
 export async function getVersionFiles(agentId: string, versionId: string): Promise<BundleFiles> {
-  const resp = await fetch(url(`/agents/${agentId}/versions/${versionId}/files`), { headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/versions/${versionId}/files`), { ...SAME_ORIGIN });
   return jsonOrThrow<BundleFiles>(resp);
 }
 
@@ -480,7 +608,8 @@ export interface DeploymentCreate {
 export async function createDeployment(input: DeploymentCreate): Promise<DeploymentOut> {
   const resp = await fetch(url("/deployments"), {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
     body: JSON.stringify(input),
   });
   return jsonOrThrow<DeploymentOut>(resp);
@@ -507,7 +636,7 @@ export interface MemoryEntry {
 
 // List an agent's learned memory, oldest first (empty for a fresh agent).
 export async function listMemory(agentId: string): Promise<MemoryEntry[]> {
-  const resp = await fetch(url(`/agents/${agentId}/memory`), { headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/memory`), { ...SAME_ORIGIN });
   return jsonOrThrow<MemoryEntry[]>(resp);
 }
 
@@ -521,7 +650,8 @@ export async function editMemory(
 ): Promise<MemoryEntry> {
   const resp = await fetch(url(`/agents/${agentId}/memory/${index}`), {
     method: "PUT",
-    headers: headers({ "Content-Type": "application/json" }),
+    ...SAME_ORIGIN,
+    headers: JSON_HEADERS,
     body: JSON.stringify({ content, expected_version: expectedVersion }),
   });
   return jsonOrThrow<MemoryEntry>(resp);
@@ -537,20 +667,19 @@ export async function deleteMemory(
     url(`/agents/${agentId}/memory/${index}${query({ expected_version: expectedVersion })}`),
     {
       method: "DELETE",
-      headers: headers(),
+      ...SAME_ORIGIN,
     },
   );
   if (resp.ok) return;
-  const body = await resp.json().catch(() => null);
-  throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
+  throw await apiErrorFrom(resp);
 }
 
 export async function killAgent(agentId: string): Promise<KillState> {
-  const resp = await fetch(url(`/agents/${agentId}/kill`), { method: "POST", headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/kill`), { method: "POST", ...SAME_ORIGIN });
   return jsonOrThrow<KillState>(resp);
 }
 
 export async function resumeAgent(agentId: string): Promise<KillState> {
-  const resp = await fetch(url(`/agents/${agentId}/resume`), { method: "POST", headers: headers() });
+  const resp = await fetch(url(`/agents/${agentId}/resume`), { method: "POST", ...SAME_ORIGIN });
   return jsonOrThrow<KillState>(resp);
 }

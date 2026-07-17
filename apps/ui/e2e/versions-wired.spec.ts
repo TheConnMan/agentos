@@ -1,4 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubConsoleSession } from "./console-session";
+
+// #630: these specs drive an authenticated console; the login gate itself is
+// covered by console-login.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await stubConsoleSession(page);
+});
+
 
 // Wired Versions tab (stackless via route stubs): real versions joined with the
 // agent's deployments (environment / status / deployed_at), no Eval column, and

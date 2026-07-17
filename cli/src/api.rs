@@ -87,6 +87,19 @@ pub struct Version {
     pub created_at: Option<String>,
 }
 
+/// A freshly minted console login code (`ConsoleLoginCodeOut`, #630/ADR-0049).
+///
+/// The `code` is a single-use, short-lived credential the operator pastes into
+/// the console, NOT the platform key. It is meant to be printed: that is the
+/// whole point of minting it, since it is what lets the browser establish a
+/// session without ever receiving the key that authorizes every router.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConsoleLoginCode {
+    pub code: String,
+    pub expires_at: String,
+    pub session_id: String,
+}
+
 /// One learned memory entry (`MemoryEntryOut`) for the `memory` listing verb.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MemoryEntry {
@@ -769,6 +782,47 @@ impl ApiClient {
             .context("DELETE /agents/{id}")?;
         Self::expect_ok(resp, "deleting the agent").await?;
         Ok(())
+    }
+
+    /// Mint a single-use console login code: `POST /console/login-codes`
+    /// (#630/ADR-0049). Under the platform key on purpose -- minting is the
+    /// CLI's job, which is what keeps the browser off the key entirely.
+    pub async fn mint_console_login_code(&self) -> Result<ConsoleLoginCode> {
+        let resp = self
+            .http
+            .post(format!("{}/console/login-codes", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .json(&json!({}))
+            .send()
+            .await
+            .context("POST /console/login-codes")?;
+        Self::expect_ok(resp, "minting a console login code")
+            .await?
+            .json()
+            .await
+            .context("decoding the minted login code")
+    }
+
+    /// Revoke every live console grant: `DELETE /console/sessions`, returning
+    /// how many rows were revoked. The operator's kill switch for the console.
+    pub async fn revoke_console_sessions(&self) -> Result<u64> {
+        #[derive(Deserialize)]
+        struct Revoked {
+            revoked: u64,
+        }
+        let resp = self
+            .http
+            .delete(format!("{}/console/sessions", self.base_url))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("DELETE /console/sessions")?;
+        let out: Revoked = Self::expect_ok(resp, "revoking console sessions")
+            .await?
+            .json()
+            .await
+            .context("decoding the revoke result")?;
+        Ok(out.revoked)
     }
 }
 
