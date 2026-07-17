@@ -95,7 +95,6 @@ def _claim_view(obj: dict[str, Any]) -> ClaimView:
         name=obj["metadata"]["name"],
         ready=_conditions_ready(status),
         sandbox_name=sandbox,
-        labels=dict(obj["metadata"].get("labels") or {}),
     )
 
 

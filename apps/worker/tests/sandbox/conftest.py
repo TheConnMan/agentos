@@ -137,7 +137,6 @@ class FakeSandboxClient:
             name=claim.name,
             ready=claim.ready,
             sandbox_name=claim.sandbox_name if claim.ready else None,
-            labels=dict(claim.labels),
         )
 
     def delete_claim(self, name: str) -> None:

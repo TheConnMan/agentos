@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 
@@ -122,7 +122,6 @@ class ClaimView:
     name: str
     ready: bool
     sandbox_name: str | None
-    labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

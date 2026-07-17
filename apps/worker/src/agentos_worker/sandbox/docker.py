@@ -219,7 +219,7 @@ class DockerSandboxClient:
         inspected = self._inspect(name)
         if inspected is None:
             return None
-        status, labels = inspected
+        status, _ = inspected
         ready = status == "running" and self._healthz_ok(name)
         return ClaimView(
             name=name,
@@ -227,7 +227,6 @@ class DockerSandboxClient:
             # The container is its own sandbox; expose the name once it exists so
             # the substrate can advance to awaiting the dial target.
             sandbox_name=name,
-            labels=labels,
         )
 
     def delete_claim(self, name: str) -> None:
