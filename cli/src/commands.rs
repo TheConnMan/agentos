@@ -2398,16 +2398,28 @@ pub async fn memory(opts: AgentActionOpts) -> Result<MemoryOutput> {
     })
 }
 
-/// Output of `<tier> approvals <agent>`: the dry-run plan, or the gate list
-/// (empty vec == "no tools gated"). Owns its data so it outlives the `ApiClient`.
+/// The pending-list / resolve flags for `local approvals` (#506). Defaulted so
+/// the skill/cluster tiers, which keep only the gate view/set surface, pass an
+/// empty value.
+#[derive(Default)]
+pub struct ApprovalCmd {
+    pub list: bool,
+    pub resolve: Option<String>,
+    pub as_actor: Option<String>,
+    pub reject: bool,
+    pub note: Option<String>,
+}
+
+/// Output of `<tier> approvals <agent>`: the dry-run plan, the gate list (empty
+/// vec == "no tools gated"), the pending records, or a resolved record (#506).
+/// Owns its data so it outlives the `ApiClient`.
 ///
-/// `manifest_unreadable` carries the third state (#607). `gated_tools` alone
-/// cannot distinguish "the deployed bundle manifest declares no gates" from "the
-/// manifest could not be read at all" -- both used to arrive here as an empty vec
+/// `manifest_unreadable` carries the third gate-list state (#607): `gated_tools`
+/// alone cannot distinguish "the deployed bundle manifest declares no gates" from
+/// "the manifest could not be read at all" -- both used to arrive as an empty vec
 /// and render as the affirmative "calls run without approval". `Some(reason)`
 /// means the manifest lookup failed, so the list is what we could see rather than
-/// what is armed. Always `None` on the set path (`--gate`/`--clear`), which echoes
-/// the PATCHed platform field and never reads a manifest.
+/// what is armed. Always `None` on the set path (`--gate`/`--clear`).
 pub enum ApprovalsOutput {
     DryRun(crate::ui::DryRunPlan),
     Gates {
@@ -2415,6 +2427,28 @@ pub enum ApprovalsOutput {
         gated_tools: Vec<String>,
         manifest_unreadable: Option<String>,
     },
+    Pending {
+        agent: String,
+        records: Vec<crate::api::ApprovalRecord>,
+    },
+    Resolved {
+        record: crate::api::ApprovalRecord,
+    },
+}
+
+fn approval_record_json(r: &crate::api::ApprovalRecord) -> serde_json::Value {
+    serde_json::json!({
+        "id": r.id,
+        "author": r.author,
+        "route": r.route,
+        "gate_kind": r.gate_kind,
+        "granted_tool": r.granted_tool,
+        "status": r.status,
+        "conversation_id": r.conversation_id,
+        "summary": r.summary,
+        "expires_at": r.expires_at,
+        "resolved_by": r.resolved_by,
+    })
 }
 
 impl crate::ui::CliOutput for ApprovalsOutput {
@@ -2429,6 +2463,13 @@ impl crate::ui::CliOutput for ApprovalsOutput {
                 "agent": agent,
                 "gated_tools": gated_tools,
                 "manifest_unreadable": manifest_unreadable,
+            }),
+            ApprovalsOutput::Pending { agent, records } => serde_json::json!({
+                "agent": agent,
+                "pending": records.iter().map(approval_record_json).collect::<Vec<_>>(),
+            }),
+            ApprovalsOutput::Resolved { record } => serde_json::json!({
+                "resolved": approval_record_json(record),
             }),
         }
     }
@@ -2449,6 +2490,32 @@ impl crate::ui::CliOutput for ApprovalsOutput {
                 for tool in gated_tools {
                     ui.kv("gated", tool);
                 }
+            }
+            ApprovalsOutput::Pending { agent, records } => {
+                if records.is_empty() {
+                    ui.payload(&format!("{agent}: no pending approvals"));
+                } else {
+                    ui.payload(&format!("{agent} — {} pending approval(s):", records.len()));
+                    for r in records {
+                        let tool = r.granted_tool.as_deref().unwrap_or("-");
+                        let route = r.route.as_deref().unwrap_or("(requesting channel)");
+                        ui.kv(
+                            &r.id,
+                            &format!(
+                                "{} — {} [tool: {tool}, route: {route}, by: {}]",
+                                r.summary, r.conversation_id, r.author
+                            ),
+                        );
+                    }
+                }
+            }
+            ApprovalsOutput::Resolved { record } => {
+                ui.payload(&format!(
+                    "approval {} -> {} (by {})",
+                    record.id,
+                    record.status,
+                    record.resolved_by.as_deref().unwrap_or("?")
+                ));
             }
         }
     }
@@ -2491,7 +2558,62 @@ pub async fn approvals(
     opts: AgentActionOpts,
     gate: Vec<String>,
     clear: bool,
+    cmd: ApprovalCmd,
 ) -> Result<ApprovalsOutput> {
+    let gate_mode = clear || !gate.is_empty();
+
+    // --resolve <id> --as <user>: resolve one live approval record (#506). It is
+    // id-scoped, not gate config, so it is mutually exclusive with --gate/--clear/
+    // --list. Approve by default; --reject rejects.
+    if let Some(approval_id) = cmd.resolve {
+        if gate_mode || cmd.list {
+            return Err(crate::exit::usage(
+                "--resolve cannot be combined with --gate/--clear/--list",
+            ));
+        }
+        let actor = cmd.as_actor.ok_or_else(|| {
+            crate::exit::usage("--resolve requires --as <user> (the actor resolving it)")
+        })?;
+        let decision = if cmd.reject { "rejected" } else { "approved" };
+        if opts.dry_run {
+            return Ok(ApprovalsOutput::DryRun(crate::ui::DryRunPlan {
+                lines: vec![format!(
+                    "POST {}/approvals/{approval_id}/resolve decision={decision} resolved_by={actor:?}",
+                    opts.api_url
+                )],
+            }));
+        }
+        let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+        let record = client
+            .resolve_approval(&approval_id, decision, &actor, cmd.note.as_deref())
+            .await?;
+        return Ok(ApprovalsOutput::Resolved { record });
+    }
+
+    // --list: the agent's pending approval records (#506).
+    if cmd.list {
+        if gate_mode {
+            return Err(crate::exit::usage(
+                "--list cannot be combined with --gate/--clear",
+            ));
+        }
+        if opts.dry_run {
+            return Ok(ApprovalsOutput::DryRun(crate::ui::DryRunPlan {
+                lines: vec![format!(
+                    "GET {}/approvals?status_filter=pending&agent_id=<id>  (would resolve agent {:?} first)",
+                    opts.api_url, opts.agent
+                )],
+            }));
+        }
+        let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+        let agent = client.find_agent(&opts.agent).await?;
+        let records = client.list_pending_approvals(&agent.id).await?;
+        return Ok(ApprovalsOutput::Pending {
+            agent: agent.name,
+            records,
+        });
+    }
+
     if clear && !gate.is_empty() {
         return Err(crate::exit::usage(
             "--clear cannot be combined with --gate (clear removes all gates)",

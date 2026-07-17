@@ -668,6 +668,52 @@ fn approvals_output_json_shape_is_pinned() {
     );
 }
 
+#[test]
+fn approvals_pending_and_resolved_json_shapes_are_pinned() {
+    use agentos::api::ApprovalRecord;
+    let record = || ApprovalRecord {
+        id: "ap_1".to_string(),
+        author: "U1".to_string(),
+        route: Some("managers".to_string()),
+        gate_kind: Some("permission".to_string()),
+        granted_tool: Some("Bash".to_string()),
+        status: "pending".to_string(),
+        conversation_id: "C1-thread-9".to_string(),
+        summary: "Deploy the thing".to_string(),
+        expires_at: Some("2026-07-16T00:00:00Z".to_string()),
+        resolved_by: None,
+    };
+    assert_eq!(
+        ApprovalsOutput::Pending {
+            agent: "weather".to_string(),
+            records: vec![record()],
+        }
+        .to_json(),
+        json!({
+            "agent": "weather",
+            "pending": [{
+                "id": "ap_1",
+                "author": "U1",
+                "route": "managers",
+                "gate_kind": "permission",
+                "granted_tool": "Bash",
+                "status": "pending",
+                "conversation_id": "C1-thread-9",
+                "summary": "Deploy the thing",
+                "expires_at": "2026-07-16T00:00:00Z",
+                "resolved_by": null,
+            }],
+        })
+    );
+    let mut resolved = record();
+    resolved.status = "approved".to_string();
+    resolved.resolved_by = Some("U2".to_string());
+    assert_eq!(
+        ApprovalsOutput::Resolved { record: resolved }.to_json()["resolved"]["status"],
+        json!("approved")
+    );
+}
+
 /// Deliberate, reviewed contract EVOLUTION (#460), not a weakened pin: the
 /// payload key `surfaces` and the row key `name` are unchanged, and this still
 /// asserts EXACT equality against a literal, so a dropped/renamed/added key

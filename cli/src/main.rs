@@ -703,6 +703,22 @@ enum LocalAction {
         /// Clear all approval gates on the agent.
         #[arg(long)]
         clear: bool,
+        /// List the agent's pending approval records instead of the gate config.
+        #[arg(long)]
+        list: bool,
+        /// Resolve the approval with this id (approve by default; requires --as).
+        #[arg(long, value_name = "APPROVAL_ID")]
+        resolve: Option<String>,
+        /// The actor resolving the approval (required with --resolve). The
+        /// requester and approver may differ; the server blocks self-approval.
+        #[arg(long = "as", value_name = "USER")]
+        as_actor: Option<String>,
+        /// Reject instead of approve (with --resolve).
+        #[arg(long)]
+        reject: bool,
+        /// Optional note recorded with the resolution (with --resolve).
+        #[arg(long)]
+        note: Option<String>,
     },
     /// Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
     Observability {
@@ -1153,6 +1169,22 @@ enum ClusterAction {
         /// Clear all approval gates on the agent.
         #[arg(long)]
         clear: bool,
+        /// List the agent's pending approval records instead of the gate config.
+        #[arg(long)]
+        list: bool,
+        /// Resolve the approval with this id (approve by default; requires --as).
+        #[arg(long, value_name = "APPROVAL_ID")]
+        resolve: Option<String>,
+        /// The actor resolving the approval (required with --resolve). The
+        /// requester and approver may differ; the server blocks self-approval.
+        #[arg(long = "as", value_name = "USER")]
+        as_actor: Option<String>,
+        /// Reject instead of approve (with --resolve).
+        #[arg(long)]
+        reject: bool,
+        /// Optional note recorded with the resolution (with --resolve).
+        #[arg(long)]
+        note: Option<String>,
     },
 }
 
@@ -1553,7 +1585,26 @@ async fn run(command: Option<Command>) -> Result<()> {
                 target,
                 gate,
                 clear,
-            } => emit(commands::approvals(target.into(), gate, clear).await?),
+                list,
+                resolve,
+                as_actor,
+                reject,
+                note,
+            } => emit(
+                commands::approvals(
+                    target.into(),
+                    gate,
+                    clear,
+                    commands::ApprovalCmd {
+                        list,
+                        resolve,
+                        as_actor,
+                        reject,
+                        note,
+                    },
+                )
+                .await?,
+            ),
             LocalAction::Observability { open } => emit(commands::observability(open).await?),
             LocalAction::Budget {
                 agent,
@@ -2030,6 +2081,11 @@ async fn run(command: Option<Command>) -> Result<()> {
                 target,
                 gate,
                 clear,
+                list,
+                resolve,
+                as_actor,
+                reject,
+                note,
             } => {
                 let ClusterAgentTarget {
                     agent,
@@ -2047,6 +2103,13 @@ async fn run(command: Option<Command>) -> Result<()> {
                         },
                         gate,
                         clear,
+                        commands::ApprovalCmd {
+                            list,
+                            resolve,
+                            as_actor,
+                            reject,
+                            note,
+                        },
                     )
                     .await?,
                 )
@@ -2708,6 +2771,7 @@ mod tests {
                         target,
                         gate,
                         clear,
+                        ..
                     },
             }) => {
                 assert_eq!(target.agent, "gh");
