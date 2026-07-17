@@ -285,6 +285,19 @@ enum DevAction {
     DocsLint,
     /// Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`).
     PluginCompat,
+    /// Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml
+    /// version, and appVersion (`bash scripts/check-version-consistency.sh`).
+    VersionCheck,
+    /// Set the release version across cli/Cargo.toml + Chart.yaml
+    /// version/appVersion (and refresh the CLI lockfile) so a release cut can't
+    /// leave the three out of sync. Does not commit or tag.
+    BumpVersion {
+        /// The new release version: semver `X.Y.Z` or `X.Y.Z-rc.N`.
+        version: String,
+        /// Print the planned edits without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1237,6 +1250,12 @@ async fn run(command: Option<Command>) -> Result<()> {
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
             DevAction::DocsLint => commands::dev_script("scripts/check-docs.sh").await,
             DevAction::PluginCompat => commands::dev_script("scripts/check-plugin-compat.sh").await,
+            DevAction::VersionCheck => {
+                commands::dev_script("scripts/check-version-consistency.sh").await
+            }
+            DevAction::BumpVersion { version, dry_run } => {
+                commands::bump_version(&version, dry_run).await
+            }
         },
         Some(Command::Skill { action }) => match action {
             SkillAction::Up {

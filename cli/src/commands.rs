@@ -554,6 +554,134 @@ pub async fn dev_script(rel_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// `agentos dev bump-version <X.Y.Z>`: set the release-coupled version across
+/// cli/Cargo.toml + Chart.yaml version/appVersion in one shot, so a release cut
+/// cannot leave the three out of sync (the drift the #489 consistency gate
+/// catches). It rewrites ONLY the line-anchored release fields (never a
+/// dependency `version = ` line), refreshes the CLI lockfile, and prints the
+/// commit + tag follow-up -- it does not commit, tag, or push. `--dry-run` prints
+/// the planned edits and writes nothing.
+pub async fn bump_version(version: &str, dry_run: bool) -> Result<()> {
+    let ui = crate::ui::ui();
+    // semver X.Y.Z with an optional -rc.N (the only pre-release shape we cut).
+    let semver = regex::Regex::new(r"^\d+\.\d+\.\d+(-rc\.\d+)?$").expect("static regex");
+    if !semver.is_match(version) {
+        return Err(crate::exit::usage(format!(
+            "version {version:?} must be semver X.Y.Z or X.Y.Z-rc.N"
+        )));
+    }
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos dev \
+         bump-version` from an agentos source checkout.",
+    )?;
+
+    let cargo_path = root.join("cli/Cargo.toml");
+    let chart_path = root.join("charts/agentos/Chart.yaml");
+    let cargo = std::fs::read_to_string(&cargo_path)
+        .with_context(|| format!("reading {}", cargo_path.display()))?;
+    let chart = std::fs::read_to_string(&chart_path)
+        .with_context(|| format!("reading {}", chart_path.display()))?;
+
+    // Line-anchored so a dependency `version = "x"` line is never touched: only
+    // the first `version = ` at column 0 (the [package] version) is rewritten.
+    let cargo_new = replace_first_line(&cargo, "version = ", &format!("version = \"{version}\""))
+        .context("cli/Cargo.toml has no top-level `version = ` line")?;
+    let chart_new_v = replace_first_line(&chart, "version:", &format!("version: {version}"))
+        .context("Chart.yaml has no `version:` line")?;
+    let chart_new = replace_first_line(
+        &chart_new_v,
+        "appVersion:",
+        &format!("appVersion: \"{version}\""),
+    )
+    .context("Chart.yaml has no `appVersion:` line")?;
+
+    if dry_run {
+        ui.emit(&crate::ui::DryRunPlan {
+            lines: vec![
+                format!("cli/Cargo.toml: version = \"{version}\""),
+                format!("charts/agentos/Chart.yaml: version: {version}"),
+                format!("charts/agentos/Chart.yaml: appVersion: \"{version}\""),
+                "cargo update -p agentos (refresh Cargo.lock)".to_string(),
+            ],
+        });
+        return Ok(());
+    }
+
+    std::fs::write(&cargo_path, cargo_new)
+        .with_context(|| format!("writing {}", cargo_path.display()))?;
+    std::fs::write(&chart_path, chart_new)
+        .with_context(|| format!("writing {}", chart_path.display()))?;
+    ui.note(&format!(
+        "set version {version} in cli/Cargo.toml and charts/agentos/Chart.yaml"
+    ));
+
+    // Refresh the CLI lockfile so the committed Cargo.lock matches the new crate
+    // version. Best-effort: a missing cargo or offline registry must not fail the
+    // bump (the fields are already written); warn and let the operator run it.
+    let lock_ok = tokio::process::Command::new("cargo")
+        .args(["update", "-p", "agentos", "--precise", version])
+        .current_dir(root.join("cli"))
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !lock_ok {
+        ui.warn(
+            "could not refresh cli/Cargo.lock automatically; run `cargo update -p agentos` in cli/",
+        );
+    }
+
+    ui.emit(&BumpVersionOutput {
+        version: version.to_string(),
+    });
+    Ok(())
+}
+
+/// Replace the first line beginning with `prefix` (after optional leading
+/// whitespace) with `replacement`, preserving the line's indentation. Returns
+/// None when no such line exists.
+fn replace_first_line(content: &str, prefix: &str, replacement: &str) -> Option<String> {
+    let mut out = Vec::new();
+    let mut replaced = false;
+    for line in content.lines() {
+        if !replaced && line.trim_start().starts_with(prefix) {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            out.push(format!("{indent}{replacement}"));
+            replaced = true;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    if !replaced {
+        return None;
+    }
+    let mut joined = out.join("\n");
+    if content.ends_with('\n') {
+        joined.push('\n');
+    }
+    Some(joined)
+}
+
+/// Output of `dev bump-version`: the version now set across the release fields.
+#[derive(Debug)]
+pub struct BumpVersionOutput {
+    pub version: String,
+}
+
+impl crate::ui::CliOutput for BumpVersionOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({"version": self.version})
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        ui.payload(&format!("bumped release version to {}", self.version));
+        ui.note(&format!(
+            "commit the change, then tag it: git commit -am \"release {v}\" && git tag v{v}",
+            v = self.version
+        ));
+    }
+}
+
 /// Bail with a friendly pointer when a required tool is not on PATH.
 fn require_tool(bin: &str, hint: &str) -> Result<()> {
     if on_path(bin) {
@@ -2992,11 +3120,32 @@ pub fn skill_memory_unavailable() -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_secret_env, parse_manifest_gates, resolve_cases_path, seed_env_if_missing,
-        select_in_force_deployment, select_passthrough_env, validate_slack_channel, EnvSeed,
+        merge_secret_env, parse_manifest_gates, replace_first_line, resolve_cases_path,
+        seed_env_if_missing, select_in_force_deployment, select_passthrough_env,
+        validate_slack_channel, EnvSeed,
     };
     use serde::Deserialize;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn replace_first_line_rewrites_only_the_first_anchored_line() {
+        // The [package] version, not a dependency `version = ` line below it.
+        let cargo = "[package]\nname = \"agentos\"\nversion = \"0.4.0\"\n\n[dependencies]\nserde = { version = \"1\" }\n";
+        let out = replace_first_line(cargo, "version = ", "version = \"0.5.0\"").unwrap();
+        assert!(out.contains("version = \"0.5.0\""));
+        // The dependency's inline version is untouched.
+        assert!(out.contains("serde = { version = \"1\" }"));
+        assert_eq!(out.matches("0.5.0").count(), 1);
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn replace_first_line_preserves_indentation_and_reports_absence() {
+        let chart = "apiVersion: v2\nname: agentos\nappVersion: \"0.4.0\"\n";
+        let out = replace_first_line(chart, "appVersion:", "appVersion: \"0.5.0\"").unwrap();
+        assert!(out.contains("appVersion: \"0.5.0\""));
+        assert!(replace_first_line(chart, "nonexistent:", "x").is_none());
+    }
 
     /// Scaffold a bundle at `dir` under `name`, then overwrite its manifest's
     /// `secrets` policy with `secrets`. Shared setup for tests exercising the
