@@ -1528,10 +1528,10 @@ def test_run_expiry_sweeper_loop_sweeps_and_stops(
             )
             try:
                 # Poll (bounded) until the loop observes the lapse and flips it.
-                deadline = asyncio.get_running_loop().time() + 5.0
+                status_deadline = asyncio.get_running_loop().time() + 5.0
                 status = created["status"]
                 while status != "expired":
-                    assert asyncio.get_running_loop().time() < deadline, (
+                    assert asyncio.get_running_loop().time() < status_deadline, (
                         "sweeper loop never flipped the lapsed record"
                     )
                     await asyncio.sleep(0.1)
@@ -1545,8 +1545,9 @@ def test_run_expiry_sweeper_loop_sweeps_and_stops(
                 # stream entry too rather than asserting it immediately, or the
                 # sweeper's flip-before-enqueue ordering flakes this under load.
                 entries = await client.xrange(runs_stream)
+                entries_deadline = asyncio.get_running_loop().time() + 5.0
                 while len(entries) < 1:
-                    assert asyncio.get_running_loop().time() < deadline, (
+                    assert asyncio.get_running_loop().time() < entries_deadline, (
                         "sweeper flipped the record but never enqueued the resume turn"
                     )
                     await asyncio.sleep(0.05)
