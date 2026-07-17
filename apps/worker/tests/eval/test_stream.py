@@ -408,9 +408,10 @@ def test_payload_with_unknown_field_still_runs_and_is_not_dropped(
     asyncio.run(go())
 
 
-def test_malformed_payload_is_acked_and_dropped(make_eval_harness, bundles) -> None:
-    """A payload that will never parse on any redelivery is logged, acked, and
-    dropped -- never reported, never stuck pending."""
+def test_malformed_payload_is_dead_lettered_not_dropped(make_eval_harness, bundles) -> None:
+    """A payload that will never parse on any redelivery is logged, dead-lettered
+    to the eval graveyard, and acked -- never reported, never stuck pending, and
+    (unlike the old bare-ack drop) observable in <eval_stream>:dead (#535)."""
     store, _upload = bundles
 
     async def go() -> None:
@@ -432,15 +433,95 @@ def test_malformed_payload_is_acked_and_dropped(make_eval_harness, bundles) -> N
                 await client.xadd(cfg.eval_stream, {"payload": "not valid json {"})
 
                 task = asyncio.create_task(consumer.run())
-                await asyncio.sleep(0.5)  # poison acks fast; give the loop a few cycles
+                await asyncio.sleep(0.5)  # poison dead-letters fast; give a few cycles
                 consumer.request_stop()
                 await task
 
                 assert reports == []  # never reported
                 summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
-                assert summary["pending"] == 0  # acked and dropped, not stuck pending
+                assert summary["pending"] == 0  # acked, not stuck pending
+
+                grave = cfg.eval_dead_letter_stream_name()
+                rows = await client.xrange(grave)
+                assert len(rows) == 1
+                fields = rows[0][1]
+                assert fields["dl_reason"] == "unparseable"
+                assert fields["payload"] == "not valid json {"  # original recoverable
 
             await client.delete(cfg.eval_stream)
+            await client.delete(cfg.eval_dead_letter_stream_name())
+            await client.aclose()
+
+    asyncio.run(go())
+
+
+def test_over_cap_eval_is_dead_lettered_and_never_re_run(make_eval_harness, bundles) -> None:
+    """An eval that has exhausted its delivery budget is dead-lettered to
+    <eval_stream>:dead and acked off the group, so the reclaim loop never claims
+    and re-provisions it again (#535). Without the cap a permanently-failing eval
+    is re-run every tick, each redelivery burning a sandbox claim + an LLM suite."""
+    store, _upload = bundles
+
+    async def go() -> None:
+        async with make_eval_harness() as (_base_url, _fake, _client):
+            token = uuid.uuid4().hex[:8]
+            cfg = _cfg(
+                f"test:evals:{token}",
+                f"g-{token}",
+                max_delivery=2,
+                reclaim_min_idle_ms=0,
+            )
+            client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)
+            reports: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=30.0) as lf_client:
+                consumer = _build_consumer(
+                    redis_client=client,
+                    cfg=cfg,
+                    bundle_store=store,
+                    substrate=_UnusedSubstrate(),
+                    reports=reports,
+                    lf_client=lf_client,
+                )
+                await consumer.ensure_group()
+                # The entry is dead-lettered before it is ever handled, so its
+                # bundle/target values are immaterial.
+                item = _item(
+                    suite="recl", sha=f"sha-{token}", bundle_ref=None, target_url=_base_url
+                )
+                await client.xadd(cfg.eval_stream, {"payload": item.model_dump_json()})
+
+                # Drive the pre-claim delivery count to the cap: read it once
+                # (delivered=1), then XCLAIM once more (delivered=2 == max_delivery).
+                await client.xreadgroup(
+                    cfg.eval_consumer_group, "dead-1", {cfg.eval_stream: ">"}, count=10
+                )
+                pending = await client.xpending_range(
+                    cfg.eval_stream, cfg.eval_consumer_group, min="-", max="+", count=10
+                )
+                entry_id = str(pending[0]["message_id"])
+                await client.xclaim(
+                    cfg.eval_stream, cfg.eval_consumer_group, "dead-2", 0, [entry_id]
+                )
+
+                over_cap = await consumer._dead_letter_over_cap()
+                assert over_cap == {entry_id}
+
+                # Acked off the group (never re-dispatched) and in the graveyard.
+                summary = await client.xpending(cfg.eval_stream, cfg.eval_consumer_group)
+                assert summary["pending"] == 0
+                grave = cfg.eval_dead_letter_stream_name()
+                rows = await client.xrange(grave)
+                assert len(rows) == 1
+                assert rows[0][1]["dl_reason"] == "max-delivery-exceeded"
+                assert int(rows[0][1]["dl_delivery_count"]) >= cfg.max_delivery
+
+                # A subsequent reclaim never re-runs it (no report, no provision):
+                # it is acked off the group, so XAUTOCLAIM finds nothing to claim.
+                assert await consumer._reclaim_once() == 0
+                assert reports == []
+
+            await client.delete(cfg.eval_stream)
+            await client.delete(cfg.eval_dead_letter_stream_name())
             await client.aclose()
 
     asyncio.run(go())
