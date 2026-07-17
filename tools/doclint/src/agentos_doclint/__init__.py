@@ -24,6 +24,7 @@ from .citation import (
     CodeSpan,
     classify,
     find_code_spans,
+    find_field_enumerations,
     is_line_suppressed,
     link_target_matches_citation,
     path_exists,
@@ -46,7 +47,7 @@ from .generate import (
     replace_region,
     seam_link,
 )
-from .symbols import SymbolCache, SymbolSyntaxError, resolve_symbol
+from .symbols import SymbolCache, SymbolSyntaxError, dataclass_fields, resolve_symbol
 from .vision import VISION_REL, read_swap_readiness
 
 __all__ = [
@@ -406,6 +407,8 @@ def _lint_doc(
     for span in find_code_spans(text):
         raw.extend(_check_span(repo_root, rel, span, cache))
 
+    raw.extend(_check_field_enumerations(repo_root, rel, text, cache))
+
     kept: list[Finding] = []
     suppressed_lines: set[int] = set()
     for finding in raw:
@@ -489,6 +492,58 @@ def _check_citation(
                 span.content,
                 f"symbol '{classification.symbol}' does not resolve",
                 line=span.line,
+            )
+        )
+    return findings
+
+
+def _check_field_enumerations(
+    repo_root: Path, rel: str, text: str, cache: SymbolCache
+) -> list[Finding]:
+    """A sealed ``(`Class`: `a`, `b`, ...)`` field list must match the cited
+    class's actual annotated fields.
+
+    #573 deleted ``ClaimView.labels`` from the dataclass and both adapters but
+    left the substrate seam doc's field list intact, so a second implementer
+    building to the documented contract gets a ``TypeError`` on construction.
+    The citation still resolved, so citation resolution alone never caught the
+    stale field (#615). This complements the link-text-vs-target check by gating
+    the other described-shape drift: a documented field list. Compared as sets,
+    so field REORDERING is allowed; only extra/missing fields are flagged."""
+    findings: list[Finding] = []
+    for enum in find_field_enumerations(text):
+        classification = classify(enum.citation)
+        if classification.kind != "citation" or not classification.symbol:
+            continue
+        if not classification.path.endswith(".py"):
+            continue
+        if not path_exists(repo_root, classification.path):
+            continue  # a missing path is the citation walk's finding, not ours
+        try:
+            actual = dataclass_fields(
+                repo_root / classification.path, classification.symbol, cache
+            )
+        except SymbolSyntaxError:
+            continue  # a syntax error is the citation walk's finding
+        if not actual:
+            continue  # not a field-bearing dataclass -> nothing to compare
+        documented = set(enum.fields)
+        real = set(actual)
+        if documented == real:
+            continue
+        extra = sorted(documented - real)
+        missing = sorted(real - documented)
+        parts: list[str] = []
+        if extra:
+            parts.append(f"documents field(s) not on the class: {', '.join(extra)}")
+        if missing:
+            parts.append(f"omits actual field(s): {', '.join(missing)}")
+        findings.append(
+            Finding(
+                rel,
+                enum.citation,
+                "documented field list does not match the cited class; " + "; ".join(parts),
+                line=enum.line,
             )
         )
     return findings
