@@ -9,7 +9,7 @@ Public surface for F1 (the worker kernel):
 """
 
 from .affinity import AffinityStore
-from .docker import DockerError, DockerSandboxClient
+from .docker import DockerError, DockerSandboxClient, RunnerHardening
 from .k8s import KubernetesSandboxClient
 from .substrate import HISTORY_ENV, SESSION_ENV, SandboxSubstrate
 from .types import (
@@ -44,6 +44,7 @@ __all__ = [
     "NoRouteError",
     "RouteRecord",
     "RouteState",
+    "RunnerHardening",
     "SandboxClient",
     "SandboxError",
     "SandboxHandle",

@@ -45,10 +45,36 @@ pub struct CheckSpec {
     pub timeout_s: u64,
 }
 
+/// Container-isolation flags applied to every local runner container (#631):
+/// a read-only root filesystem (+ tmpfs for `/tmp` and the non-root runner's
+/// HOME so it can still write), all Linux capabilities dropped, and
+/// no-new-privileges. Mirrors the K8s runner `securityContext` and the worker
+/// Docker substrate's `RunnerHardening`
+/// (`apps/worker/src/agentos_worker/sandbox/docker.py`). Local mode accepts
+/// TRUSTED bundles only and is not the Kubernetes security boundary; these are
+/// practical defense-in-depth so a trusted-but-buggy bundle cannot escalate on
+/// the host. Docker's default seccomp profile stays active (never unconfined).
+/// Resource caps (memory/cpu) are intentionally left to the worker substrate,
+/// which runs the untrusted product loop; the interactive skill-dev loop here
+/// keeps them off so a developer's heavy local run is not throttled.
+fn runner_hardening_args() -> Vec<String> {
+    vec![
+        "--read-only".into(),
+        "--tmpfs".into(),
+        "/tmp:rw,mode=1777".into(),
+        "--tmpfs".into(),
+        "/home/runner:rw,mode=1777".into(),
+        "--cap-drop".into(),
+        "ALL".into(),
+        "--security-opt".into(),
+        "no-new-privileges".into(),
+    ]
+}
+
 impl CheckSpec {
     /// The one shot check container argv (after the `docker` executable).
     pub fn run_args(&self) -> Vec<String> {
-        vec![
+        let mut args: Vec<String> = vec![
             "run".into(),
             "--rm".into(),
             // Offline contract: the check must never reach the network. A bundle
@@ -58,6 +84,11 @@ impl CheckSpec {
             // legitimate in-bundle stdio-server case.
             "--network".into(),
             "none".into(),
+        ];
+        // Same container isolation as the long-lived runner (#631): the check
+        // executes an untrusted bundle's MCP servers, so it must not run looser.
+        args.extend(runner_hardening_args());
+        args.extend([
             "-v".into(),
             format!("{}:/plugin:ro", self.plugin_dir),
             "-e".into(),
@@ -68,7 +99,8 @@ impl CheckSpec {
             "python".into(),
             "-m".into(),
             "agentos_runner.check".into(),
-        ]
+        ]);
+        args
     }
 }
 
@@ -93,6 +125,9 @@ impl StartSpec {
             "-e".into(),
             format!("AGENTOS_BUDGET={}", self.budget_json),
         ];
+        // Container isolation (#631): read-only rootfs + tmpfs, cap-drop ALL,
+        // no-new-privileges. Mirrors the worker Docker substrate + K8s runner.
+        args.extend(runner_hardening_args());
         if self.fake_model {
             args.push("-e".into());
             args.push("AGENTOS_FAKE_MODEL=1".into());
@@ -548,6 +583,49 @@ mod tests {
         assert!(joined.contains("--network agentos_default"));
         assert!(joined.contains("-e OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318"));
         assert_eq!(args.last().unwrap(), "agentos-runner");
+    }
+
+    #[test]
+    fn run_args_apply_container_hardening() {
+        // Every local runner boots hardened (#631): read-only rootfs with tmpfs
+        // for /tmp and HOME, all caps dropped, and no privilege escalation.
+        let joined = spec().run_args().join(" ");
+        assert!(joined.contains("--read-only"), "{joined}");
+        assert!(joined.contains("--tmpfs /tmp:rw,mode=1777"), "{joined}");
+        assert!(
+            joined.contains("--tmpfs /home/runner:rw,mode=1777"),
+            "{joined}"
+        );
+        assert!(joined.contains("--cap-drop ALL"), "{joined}");
+        assert!(
+            joined.contains("--security-opt no-new-privileges"),
+            "{joined}"
+        );
+        // The default seccomp profile is left active -- never disabled.
+        assert!(!joined.contains("seccomp=unconfined"), "{joined}");
+    }
+
+    #[test]
+    fn check_run_args_are_isolated_and_hardened() {
+        // The offline MCP-load check runs untrusted bundle code, so it stays
+        // network-isolated AND carries the same container hardening.
+        let spec = CheckSpec {
+            image: "agentos-runner".into(),
+            plugin_dir: "/tmp/deal-desk".into(),
+            timeout_s: 30,
+        };
+        let joined = spec.run_args().join(" ");
+        assert!(joined.contains("--network none"), "{joined}");
+        assert!(joined.contains("--read-only"), "{joined}");
+        assert!(joined.contains("--cap-drop ALL"), "{joined}");
+        assert!(
+            joined.contains("--security-opt no-new-privileges"),
+            "{joined}"
+        );
+        assert!(
+            joined.trim_end().ends_with("agentos_runner.check"),
+            "{joined}"
+        );
     }
 
     #[test]

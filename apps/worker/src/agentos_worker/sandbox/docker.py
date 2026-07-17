@@ -47,6 +47,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..binding import (
@@ -93,6 +94,99 @@ _WORKER_OWNED_ENV = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class RunnerHardening:
+    """Container-level isolation applied to every runner container the Docker
+    substrate boots.
+
+    Local mode accepts TRUSTED bundles only and is NOT the Kubernetes security
+    boundary (that is the Helm path: gVisor + a default-deny egress
+    NetworkPolicy). These controls are practical defense-in-depth that mirror the
+    K8s runner ``securityContext`` + ``resources`` (charts/agentos:
+    ``readOnlyRootFilesystem``, ``capabilities.drop: [ALL]``,
+    ``allowPrivilegeEscalation: false``, ``seccompProfile: RuntimeDefault``, and
+    bounded cpu/memory), so a trusted-but-buggy bundle cannot escalate on the
+    host, reach the Docker daemon, or roam the data tier.
+
+    Every field is overridable from the worker env (``from_env``) so an operator
+    can loosen a limit a heavy bundle needs without editing code; ``enabled=0``
+    turns the whole set off for debugging. Docker's default seccomp profile (the
+    RuntimeDefault equivalent) stays active whenever hardening is on -- this code
+    never passes ``seccomp=unconfined``.
+    """
+
+    enabled: bool = True
+    read_only_root: bool = True
+    # tmpfs mounts (the emptyDir equivalent) so a read-only-rootfs runner can
+    # still write HOME and /tmp. Mirrors the chart's runner writablePaths. The
+    # runner image runs as uid 1000; sticky world-writable (mode 1777) mounts let
+    # it create entries it owns under a root-owned mount, matching the chart's
+    # fsGroup-owned emptyDir semantics.
+    writable_paths: tuple[str, ...] = ("/tmp", "/home/runner")
+    drop_all_capabilities: bool = True
+    no_new_privileges: bool = True
+    # Bounded process/memory/cpu (chart runner limits: memory 768Mi, cpu "1").
+    # pids has no chart analogue; a fork-bomb ceiling is cheap defense here.
+    pids_limit: int = 512
+    memory_limit: str = "768m"
+    cpu_limit: str = "1"
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> RunnerHardening:
+        """Build from ``AGENTOS_RUNNER_HARDENING*`` env, falling back to the
+        K8s-mirroring defaults above. Any unset knob keeps its default."""
+
+        def _flag(name: str, default: bool) -> bool:
+            raw = env.get(name)
+            if raw is None or raw == "":
+                return default
+            return raw.strip().lower() not in ("0", "false", "no", "off")
+
+        enabled = _flag("AGENTOS_RUNNER_HARDENING", True)
+        paths_raw = env.get("AGENTOS_RUNNER_WRITABLE_PATHS")
+        writable_paths = (
+            tuple(p for p in (s.strip() for s in paths_raw.split(",")) if p)
+            if paths_raw
+            else cls.writable_paths
+        )
+        pids_raw = env.get("AGENTOS_RUNNER_PIDS_LIMIT")
+        return cls(
+            enabled=enabled,
+            read_only_root=_flag("AGENTOS_RUNNER_READ_ONLY", True),
+            writable_paths=writable_paths,
+            drop_all_capabilities=_flag("AGENTOS_RUNNER_CAP_DROP_ALL", True),
+            no_new_privileges=_flag("AGENTOS_RUNNER_NO_NEW_PRIVILEGES", True),
+            pids_limit=int(pids_raw) if pids_raw else cls.pids_limit,
+            memory_limit=env.get("AGENTOS_RUNNER_MEMORY_LIMIT") or cls.memory_limit,
+            cpu_limit=env.get("AGENTOS_RUNNER_CPU_LIMIT") or cls.cpu_limit,
+        )
+
+    def run_args(self) -> list[str]:
+        """The ``docker run`` flags that impose this hardening. Empty when
+        disabled, so a debug run degrades to the pre-hardening argv exactly."""
+        if not self.enabled:
+            return []
+        args: list[str] = []
+        if self.read_only_root:
+            args.append("--read-only")
+            for path in self.writable_paths:
+                # rw + sticky world-writable so the non-root runner can write.
+                args += ["--tmpfs", f"{path}:rw,mode=1777"]
+        if self.drop_all_capabilities:
+            args += ["--cap-drop", "ALL"]
+        if self.no_new_privileges:
+            # Blocks setuid/gain-privilege on exec (== allowPrivilegeEscalation:
+            # false). Docker's default seccomp profile is left active alongside.
+            args += ["--security-opt", "no-new-privileges"]
+        if self.pids_limit > 0:
+            args += ["--pids-limit", str(self.pids_limit)]
+        if self.memory_limit:
+            args += ["--memory", self.memory_limit]
+        if self.cpu_limit:
+            args += ["--cpus", self.cpu_limit]
+        return args
+
+
 class DockerError(SandboxError):
     """A ``docker`` CLI invocation failed.
 
@@ -116,6 +210,7 @@ class DockerSandboxClient:
         host: str = "127.0.0.1",
         default_plugin_dir: str = "/bundles/current",
         healthz_timeout_s: float = 0.5,
+        hardening: RunnerHardening | None = None,
         environ: Mapping[str, str] | None = None,
     ) -> None:
         self._image = image
@@ -125,6 +220,10 @@ class DockerSandboxClient:
         self._host = host
         self._default_plugin_dir = default_plugin_dir
         self._healthz_timeout_s = healthz_timeout_s
+        # Container isolation (read-only rootfs, dropped caps, no-new-privileges,
+        # bounded resources). Defaults to the K8s-mirroring RunnerHardening; a
+        # None means "use the on-by-default set", never "no hardening".
+        self._hardening = hardening if hardening is not None else RunnerHardening()
         # Presence-only view of the worker environment, used to decide which SDK
         # credential vars to forward by name. Never read for their values.
         self._environ = environ if environ is not None else os.environ
@@ -153,6 +252,13 @@ class DockerSandboxClient:
             "-p",
             f"{self._host}::{RUNNER_CONTAINER_PORT}",
         ]
+        # Container isolation flags (read-only rootfs + tmpfs, cap-drop ALL,
+        # no-new-privileges, bounded pids/memory/cpu). The runner never receives
+        # the Docker socket -- only the worker does -- so the daemon stays out of
+        # reach; the data tier is denied by the runner's dedicated network (see
+        # AGENTOS_DOCKER_NETWORK). This is local trusted-bundle defense-in-depth,
+        # not the K8s security boundary.
+        args += self._hardening.run_args()
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
         if self._network:

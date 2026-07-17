@@ -37,6 +37,7 @@ from .sandbox import (
     AffinityStore,
     DockerSandboxClient,
     KubernetesSandboxClient,
+    RunnerHardening,
     SandboxClient,
     SandboxSubstrate,
     SubstrateConfig,
@@ -126,6 +127,10 @@ def _sandbox_client(
             network=env.get("AGENTOS_DOCKER_NETWORK") or None,
             otel_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
             default_plugin_dir=config.bundle_plugin_dir,
+            # Container isolation for every spawned runner (#631): read-only
+            # rootfs, dropped caps, no-new-privileges, bounded resources. Mirrors
+            # the K8s runner securityContext; overridable via AGENTOS_RUNNER_*.
+            hardening=RunnerHardening.from_env(env),
             environ=env,
         )
         # Prewarm the runner image once at startup so the first claim window is

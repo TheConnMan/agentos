@@ -261,6 +261,47 @@ def compose_docs():
     ]
 
 
+def test_runner_network_excludes_data_tier():
+    """The dedicated `agentos_runner` network carries only the runner's
+    documented dependencies, never the data tier (#631).
+
+    A hardened runner joins `agentos_runner` (AGENTOS_DOCKER_NETWORK). Membership
+    of that network is the local mirror of the K8s data-tier NetworkPolicy: the
+    stores (postgres/valkey/minio/clickhouse) must NOT be on it, so a
+    trusted-but-buggy bundle cannot reach their embedded credentials by service
+    name, while otel-collector (telemetry), ollama (local model), and agentos-api
+    (state) must be, so the documented flows still resolve.
+    """
+    runner_net = "agentos_runner"
+    data_tier = {"postgres", "valkey", "minio", "clickhouse"}
+    required_members = {"otel-collector", "ollama", "agentos-api"}
+    for label, doc in compose_docs():
+        # The network is declared with an explicit, project-independent name so
+        # `--network agentos_runner` resolves regardless of the compose project.
+        networks = doc.get("networks") or {}
+        assert runner_net in networks, f"{label}: {runner_net} network not declared"
+        assert (networks[runner_net] or {}).get("name") == runner_net, (
+            f"{label}: {runner_net} must pin an explicit `name:` so the worker's "
+            f"--network {runner_net} resolves regardless of compose project name"
+        )
+
+        def members_of(svc, _doc=doc):
+            nets = _doc["services"][svc].get("networks") or []
+            # networks may be a list or a mapping; normalize to a set of names.
+            return set(nets) if isinstance(nets, list) else set(nets.keys())
+
+        for store in data_tier & set(doc["services"]):
+            assert runner_net not in members_of(store), (
+                f"{label}: data-tier service {store!r} is ON the {runner_net} "
+                f"network; a runner could reach the store's credentials directly"
+            )
+        for dep in required_members & set(doc["services"]):
+            assert runner_net in members_of(dep), (
+                f"{label}: {dep!r} is NOT on the {runner_net} network; a hardened "
+                f"runner cannot resolve its documented dependency by name"
+            )
+
+
 def test_dispatcher_api_base_url_is_in_network():
     """The dispatcher points at the API by compose service name, not localhost.
 
@@ -384,10 +425,12 @@ def test_worker_traces_to_shipped_collector_by_default():
             f"nowhere to go"
         )
         docker_network = resolve_shell_default(env.get("AGENTOS_DOCKER_NETWORK"))
-        assert docker_network == "agentos_default", (
+        assert docker_network == "agentos_runner", (
             f"{label}: agentos-worker AGENTOS_DOCKER_NETWORK resolves to "
-            f"{docker_network!r}, expected agentos_default so spawned sandbox "
-            f"containers can resolve otel-collector by name"
+            f"{docker_network!r}, expected agentos_runner (#631): the dedicated, "
+            "data-tier-free runner network onto which otel-collector, ollama, and "
+            "agentos-api are multi-homed so a hardened runner resolves its "
+            "documented dependencies by name without reaching the stores"
         )
 
 

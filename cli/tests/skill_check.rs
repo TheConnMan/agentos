@@ -132,12 +132,24 @@ fn check_run_args_are_the_exact_offline_argv() {
     };
     let args = spec.run_args();
 
-    // The argv MUST be exactly this vector, in this order.
+    // The argv MUST be exactly this vector, in this order. The check runs
+    // untrusted bundle MCP code, so it is offline (--network none) AND hardened
+    // at the container level (#631): read-only rootfs + tmpfs, cap-drop ALL,
+    // no-new-privileges.
     let expected: Vec<String> = [
         "run",
         "--rm",
         "--network",
         "none",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,mode=1777",
+        "--tmpfs",
+        "/home/runner:rw,mode=1777",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
         "-v",
         "/tmp/deal-desk:/plugin:ro",
         "-e",

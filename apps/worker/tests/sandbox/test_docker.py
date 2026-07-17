@@ -17,6 +17,7 @@ from agentos_worker.sandbox.docker import (
     RUNNER_CONTAINER_PORT,
     DockerError,
     DockerSandboxClient,
+    RunnerHardening,
 )
 
 
@@ -427,6 +428,101 @@ def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
         root = extract_bundle(_plugin_tar_gz(wrapper=None), Path(tmp))
         assert root == Path(tmp)
         assert (root / ".claude-plugin" / "plugin.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Container hardening (#631): every spawned runner is isolated at the container
+# level (read-only rootfs, dropped caps, no privilege escalation, bounded
+# resources) and never receives the Docker socket or a route to the data tier.
+# ---------------------------------------------------------------------------
+
+
+def test_create_claim_applies_container_hardening_by_default() -> None:
+    # A default client hardens every runner: read-only rootfs + tmpfs for the
+    # writable paths, all caps dropped, no-new-privileges, bounded pids/mem/cpu.
+    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    argv = client.calls[0]
+    assert "--read-only" in argv
+    tmpfs = _flag_values(argv, "--tmpfs")
+    assert "/tmp:rw,mode=1777" in tmpfs
+    assert "/home/runner:rw,mode=1777" in tmpfs
+    assert "ALL" in _flag_values(argv, "--cap-drop")
+    assert "no-new-privileges" in _flag_values(argv, "--security-opt")
+    assert "512" in _flag_values(argv, "--pids-limit")
+    assert "768m" in _flag_values(argv, "--memory")
+    assert "1" in _flag_values(argv, "--cpus")
+    # The default seccomp profile stays active: never disabled.
+    assert all("seccomp=unconfined" not in a for a in argv)
+
+
+def test_runner_never_receives_the_docker_socket() -> None:
+    # AC3: the runner must not be able to reach the Docker daemon. Only the worker
+    # mounts the socket; a spawned runner never gets it as a bind mount.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        environ={"CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER"},
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    assert all("docker.sock" not in m for m in _flag_values(client.calls[0], "-v"))
+
+
+def test_hardening_disabled_emits_no_hardening_flags() -> None:
+    # An explicit opt-out (AGENTOS_RUNNER_HARDENING=0) degrades to the
+    # pre-hardening argv exactly, for debugging a bundle the rails break.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        hardening=RunnerHardening.from_env({"AGENTOS_RUNNER_HARDENING": "0"}),
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    argv = client.calls[0]
+    assert "--read-only" not in argv
+    assert _flag_values(argv, "--cap-drop") == []
+    assert _flag_values(argv, "--memory") == []
+
+
+def test_hardening_env_overrides_limits_and_paths() -> None:
+    # Each knob is overridable so an operator can loosen a limit a heavy bundle
+    # needs without editing code.
+    hardening = RunnerHardening.from_env(
+        {
+            "AGENTOS_RUNNER_MEMORY_LIMIT": "2g",
+            "AGENTOS_RUNNER_CPU_LIMIT": "2",
+            "AGENTOS_RUNNER_PIDS_LIMIT": "1024",
+            "AGENTOS_RUNNER_WRITABLE_PATHS": "/tmp, /home/runner, /var/scratch",
+        }
+    )
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        hardening=hardening,
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    argv = client.calls[0]
+    assert "2g" in _flag_values(argv, "--memory")
+    assert "2" in _flag_values(argv, "--cpus")
+    assert "1024" in _flag_values(argv, "--pids-limit")
+    tmpfs = _flag_values(argv, "--tmpfs")
+    assert "/var/scratch:rw,mode=1777" in tmpfs
+    assert "/tmp:rw,mode=1777" in tmpfs
+
+
+def test_hardening_read_only_opt_out_keeps_other_rails() -> None:
+    # Turning off just the read-only rootfs (a bundle that legitimately writes
+    # outside the tmpfs paths) still drops caps and blocks privilege escalation.
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        hardening=RunnerHardening.from_env({"AGENTOS_RUNNER_READ_ONLY": "false"}),
+    )
+    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    argv = client.calls[0]
+    assert "--read-only" not in argv
+    assert _flag_values(argv, "--tmpfs") == []  # no read-only -> no tmpfs needed
+    assert "ALL" in _flag_values(argv, "--cap-drop")
+    assert "no-new-privileges" in _flag_values(argv, "--security-opt")
 
 
 def test_ensure_image_pulls_when_absent() -> None:
