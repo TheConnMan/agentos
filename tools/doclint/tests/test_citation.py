@@ -163,3 +163,41 @@ def test_adr_directory_is_not_linted(
     regenerate(clean_repo)
     code, _ = run_lint(clean_repo)
     assert code == 0
+
+
+# --- Test 11: a decorated citation's link target must match its cited path --
+
+
+def test_link_target_disagreeing_with_cited_path_fails(
+    clean_repo: Path, run_lint: RunLint
+) -> None:
+    # #575's drift: the link TEXT cites one file (approval.py) while the link
+    # TARGET navigates to another (queue.rs). Both resolve, so the pre-existing
+    # path/symbol checks pass; only the text-vs-target check catches it.
+    write(
+        clean_repo,
+        "ARCHITECTURE.md",
+        "The gate is a "
+        "([`runner/src/agentos_runner/approval.py::ApprovalGate`](cli/src/queue.rs)).\n",
+    )
+    code, out = run_lint(clean_repo)
+    assert code != 0
+    assert "ARCHITECTURE.md" in out  # names the offending doc
+    assert "cli/src/queue.rs" in out  # names the mismatched target
+    assert "does not point at" in out.lower()  # names the reason
+
+
+def test_link_target_matching_cited_path_passes(
+    clean_repo: Path, run_lint: RunLint
+) -> None:
+    # The same decorated citation whose target agrees with the cited path is a
+    # legitimate navigable citation and must stay green.
+    write(
+        clean_repo,
+        "ARCHITECTURE.md",
+        "The gate is a "
+        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
+        "(runner/src/agentos_runner/approval.py)).\n",
+    )
+    code, _ = run_lint(clean_repo)
+    assert code == 0

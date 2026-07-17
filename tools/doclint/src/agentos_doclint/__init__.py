@@ -25,6 +25,7 @@ from .citation import (
     classify,
     find_code_spans,
     is_line_suppressed,
+    link_target_matches_citation,
     path_exists,
     scan_raw_line_ban,
 )
@@ -443,34 +444,54 @@ def _check_citation(
 ) -> list[Finding]:
     if not path_exists(repo_root, classification.path):
         return [Finding(rel, span.content, "cited path does not exist", line=span.line)]
+
+    findings: list[Finding] = []
+    if span.href is not None and not link_target_matches_citation(
+        repo_root, rel, classification.path, span.href
+    ):
+        findings.append(
+            Finding(
+                rel,
+                span.content,
+                f"link target '{span.href}' does not point at the cited path "
+                f"'{classification.path}'; a decorated citation's link must "
+                "navigate to the file it cites",
+                line=span.line,
+            )
+        )
+
     if not classification.symbol:
-        return []
+        return findings
 
     extension = classification.path.rsplit(".", 1)[-1]
     if extension != "py":
-        return [
+        findings.append(
             Finding(
                 rel,
                 span.content,
                 f"symbol resolution is not supported for .{extension}; cite the file only",
                 line=span.line,
             )
-        ]
+        )
+        return findings
 
     try:
         resolved = resolve_symbol(repo_root / classification.path, classification.symbol, cache)
     except SymbolSyntaxError:
-        return [Finding(rel, span.content, "cited file has a syntax error", line=span.line)]
+        findings.append(
+            Finding(rel, span.content, "cited file has a syntax error", line=span.line)
+        )
+        return findings
     if not resolved:
-        return [
+        findings.append(
             Finding(
                 rel,
                 span.content,
                 f"symbol '{classification.symbol}' does not resolve",
                 line=span.line,
             )
-        ]
-    return []
+        )
+    return findings
 
 
 def _is_under(path: Path, ancestor: Path) -> bool:
