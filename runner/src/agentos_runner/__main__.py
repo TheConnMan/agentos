@@ -180,6 +180,7 @@ def build_runner(
         history_store=history_store,
         approval_gate=approval_gate,
         approval_resumed_kind=config.approval_resumed_kind,
+        false_completion_check=config.false_completion_check,
     )
 
 

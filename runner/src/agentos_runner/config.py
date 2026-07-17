@@ -44,6 +44,12 @@ class RunnerConfig:
     # the past, used only to emit an observe-only warning when a resumed policy
     # turn takes no action. It must never influence can_use_tool.
     approval_resumed_kind: str | None
+    # Opt-in false-completion check (#517), authority-free and observe-only. When
+    # AGENTOS_FALSE_COMPLETION_CHECK is truthy, a turn that ends DONE with a
+    # substantive answer but ZERO tool calls emits a non-terminal warning frame.
+    # Default off, exactly like approval_resumed_kind's observe-only pattern; it
+    # never influences can_use_tool or the final's status.
+    false_completion_check: bool
     port: int
     runner_token: str | None
 
@@ -91,6 +97,8 @@ class RunnerConfig:
         approval_resumed_kind = (
             resumed_raw.strip() if resumed_raw and resumed_raw.strip() else None
         )
+        false_completion_raw = env.get("AGENTOS_FALSE_COMPLETION_CHECK", "")
+        false_completion_check = false_completion_raw.strip().lower() in ("1", "true", "yes")
         return cls(
             session=session,
             model=env.get("AGENTOS_MODEL"),
@@ -101,6 +109,7 @@ class RunnerConfig:
             approval_required_tools=approval_required,
             approval_grant_tool=approval_grant_tool,
             approval_resumed_kind=approval_resumed_kind,
+            false_completion_check=false_completion_check,
             port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
             runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None,
         )
