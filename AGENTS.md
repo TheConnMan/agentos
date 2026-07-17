@@ -277,7 +277,7 @@ Two different tools; do not conflate them.
   runner image is `IfNotPresent` and kept pinned on every node by the
   `agentSandbox.runner.prewarm` DaemonSet, which pulls at install/upgrade. A
   mid-boot pull of the ~380MB runner image blew the 90s claim timeout in a live
-  incident; never switch the runner image to `Always`
+  incident (2026-07-06); never switch the runner image to `Always`
   (`charts/agentos/templates/runner-prewarm.yaml`, `charts/agentos/values.yaml`).
 - **Suspend/resume is a cold rehydrate, not a live hibernate** (ADR-0003). A
   suspended sandbox's pod is deleted; resume creates a new pod and injects

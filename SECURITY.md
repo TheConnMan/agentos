@@ -78,13 +78,10 @@ Private Vulnerability Reporting is the channel.
 
 ## Supported versions
 
-AgentOS is pre-1.0. The latest release is **v0.2.0**. Only the latest minor
-release line receives security fixes.
-
-| Version | Supported |
-| ------- | --------- |
-| 0.2.x   | Yes       |
-| < 0.2   | No        |
+AgentOS is pre-1.0. Only the latest minor release line receives security
+fixes; older lines are unsupported. See the
+[Releases page](https://github.com/curie-eng/agentos/releases) for the current
+version rather than a number pinned here (which only goes stale).
 
 ## Operator responsibilities
 

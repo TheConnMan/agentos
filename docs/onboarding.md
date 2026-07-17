@@ -35,10 +35,10 @@ binary on `PATH`; the commands below assume `agentos` resolves.
 `cluster` target.
 
 If you build the CLI from source, build the runner image once from the repo
-root:
+root with `agentos build` (the single build entry point):
 
 ```bash
-docker build -f runner/Dockerfile -t agentos-runner .
+agentos build
 ```
 
 A released binary instead pulls the pinned runner image from `GHCR` on first
@@ -145,7 +145,7 @@ Only one local compose stack runs at a time.
 Use this as the verification loop for a code change:
 
 1. Rebuild what changed. Rebuild the runner image with
-   `docker build -f runner/Dockerfile -t agentos-runner .` if you touched runner
+   `agentos build` if you touched runner
    code. Run
    `agentos local deploy --plugin-dir . --slack-channel C-DEMO --api-url http://localhost:28000`
    again to push a changed bundle.

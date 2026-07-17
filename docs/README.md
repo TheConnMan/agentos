@@ -13,7 +13,7 @@ git history (`git log -- docs/`).
   what it could become. The document we hold new features against. Read this to
   understand *why* the project exists before *how* it works.
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md): the as-built architecture reference
-  (the deep "what talks to what," with file:line citations). Start here for
+  (the deep "what talks to what," with path/symbol citations). Start here for
   detail.
 - [`diagrams/`](diagrams/): four focused, presentation-grade flow docs, each a
   single clean diagram with narration. Start here to explain the system to

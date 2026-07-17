@@ -40,7 +40,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0008 | [Multi-tenancy: one code path, pooled RLS, hard-siloed compute](0008-multi-tenancy.md) | Accepted |
 | 0009 | [Per-agent secrets and connector credentials](0009-per-agent-connector-auth.md) | Accepted |
 | 0010 | [Approval gates and human-in-the-loop](0010-approval-gates-and-human-in-the-loop.md) | Accepted |
-| 0011 | [OpenCode as the second harness behind the ACI](0011-opencode-second-harness.md) | Proposed (acceptance gated on the steer spike below) |
+| 0011 | [OpenCode as the second harness behind the ACI](0011-opencode-second-harness.md) | Accepted (gating steer spike done — ADR-0031, #25/PR #226) |
 | 0012 | [A substrate-agnostic worker and a channel-agnostic runner (the thin-shim thesis)](0012-substrate-and-channel-agnostic-core.md) | Accepted |
 | 0013 | [Concurrency and delivery: at-least-once streams with an idempotent, side-effect-aware kernel](0013-concurrency-and-delivery-model.md) | Accepted |
 | 0014 | [A git push is the deploy: immutable bundles, promote-not-rebuild, evals as a CI gate](0014-git-push-is-the-deploy.md) | Accepted |

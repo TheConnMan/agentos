@@ -1,7 +1,7 @@
 # 11. OpenCode as the second harness behind the ACI
 
 Date: 2026-07-09
-Status: Proposed (acceptance gated on the steer spike below)
+Status: Accepted (gating steer spike done — ADR-0031, #25/PR #226)
 
 ## Context
 
