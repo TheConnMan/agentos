@@ -12,6 +12,7 @@ holding the model's JSON). The turn's ``event_id`` is deterministic per
 approval, so the worker's done-marker dedupes any double-enqueue.
 """
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,25 @@ def resume_event_id(approval_id: object) -> str:
     """The deterministic idempotency key of an approval's resume turn."""
 
     return f"approval-{approval_id}-resolved"
+
+
+def parse_resume_event_id(event_id: str) -> uuid.UUID | None:
+    """The inverse of ``resume_event_id``: recover the approval id, or None.
+
+    Strips the ``approval-`` prefix and the ``-resolved`` suffix (the historical
+    shared key both the resolve and expiry paths use -- see
+    ``build_expiry_resume_turn``) and parses the middle as a UUID. Returns None
+    when the shape does not match or the middle is not a valid UUID, so the
+    dead-letter scan never mistakes a non-resume graveyard row for an approval.
+    """
+
+    if not event_id.startswith("approval-") or not event_id.endswith("-resolved"):
+        return None
+    middle = event_id[len("approval-") : -len("-resolved")]
+    try:
+        return uuid.UUID(middle)
+    except ValueError:
+        return None
 
 
 def _build_turn(approval: Approval, *, author: str, text: str) -> QueuedTurn:
@@ -121,7 +141,13 @@ def resume_turn_for(approval: Approval) -> QueuedTurn:
 class ResumeQueue:
     """Producer half of the resume seam (the worker's runs consumer is the other)."""
 
-    def __init__(self, client: redis.Redis, stream: str | None = None) -> None:
+    def __init__(
+        self,
+        client: redis.Redis,
+        stream: str | None = None,
+        *,
+        dead_letter_stream: str | None = None,
+    ) -> None:
         # The runs stream is declared once, on the settings object (#492): the
         # module constant this used to default to was a second declaration of
         # the same name. Settings.runs_stream defaults to the shared
@@ -130,8 +156,47 @@ class ResumeQueue:
         # when the queue is built, not at import time.
         self._client = client
         self._stream = stream if stream is not None else get_settings().runs_stream
+        # The graveyard the #532 backstop scans (READ-ONLY here; the API never
+        # mutates it). The derivation MUST match the worker's
+        # WorkerConfig.dead_letter_stream_name() (`<stream>:dead`). An operator
+        # who overrides the worker's AGENTOS_DEAD_LETTER_STREAM or AGENTOS_STREAM
+        # must set the API's override to match, or the backstop reads the wrong
+        # graveyard.
+        self._dead_letter_stream = dead_letter_stream or f"{self._stream}:dead"
 
     async def enqueue(self, turn: QueuedTurn) -> str:
         fields: dict[Any, Any] = {STREAM_PAYLOAD_FIELD: turn.model_dump_json()}
         stream_id = await self._client.xadd(self._stream, fields)
         return stream_id.decode() if isinstance(stream_id, bytes) else str(stream_id)
+
+    async def read_dead_letter(
+        self, *, count: int
+    ) -> list[tuple[str, dict[str, str]]]:
+        """Read up to ``count`` MOST-RECENT graveyard rows, newest-first
+        (READ-ONLY; never XDEL/XACK).
+
+        Scans with ``xrevrange`` so a freshly dead-lettered resume turn (which
+        lands at the newest end of the graveyard) is seen promptly even when
+        older graveyard rows have not yet evicted and the scan cap sits below
+        the worker's graveyard MAXLEN.
+
+        Normalizes each entry id and every field key/value from bytes-or-str to
+        str (the same bytes-guard ``enqueue`` applies to the xadd id), so the
+        caller sees plain strings regardless of the client's decode_responses
+        setting.
+        """
+
+        entries = await self._client.xrevrange(self._dead_letter_stream, count=count)
+        result: list[tuple[str, dict[str, str]]] = []
+        for entry_id, fields in entries or []:
+            entry_id_str = (
+                entry_id.decode() if isinstance(entry_id, bytes) else str(entry_id)
+            )
+            fields_str = {
+                (k.decode() if isinstance(k, bytes) else str(k)): (
+                    v.decode() if isinstance(v, bytes) else str(v)
+                )
+                for k, v in (fields or {}).items()
+            }
+            result.append((entry_id_str, fields_str))
+        return result

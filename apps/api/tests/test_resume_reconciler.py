@@ -72,6 +72,9 @@ def valkey(runs_stream: str) -> Iterator[redis.Redis]:
         pytest.skip(f"Valkey not reachable: {exc}")
     yield client
     client.delete(runs_stream)
+    # #532's graveyard-scan tests write to the dead-letter stream too; clean it
+    # between tests so a persisted row never leaks into the next test's scan.
+    client.delete(runs_stream + ":dead")
     client.close()
 
 
@@ -667,3 +670,340 @@ def test_reconciler_skips_row_locked_by_concurrent_claim(
     turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
     assert turn.event_id == f"approval-{approval_id}-resolved"
     assert resumed_at is not None
+
+
+# --- #532: dead-lettered resume backstop ---------------------------------------
+#
+# The NULL-gated finder (`list_resolved_unresumed`) misses a resume turn that
+# DID reach the runs stream (so `resumed_at` is SET) and then died at the worker's
+# delivery cap (#505): the worker moves it to the `<runs>:dead` graveyard and acks
+# it off, leaving `resumed_at` set but the sandbox never woken. `#532` adds a
+# graveyard-scan pass that RE-OPENS such approvals (clears `resumed_at`) so the
+# existing reconcile pass re-enqueues them. These tests seed a real graveyard row
+# and assert the real `resumed_at` NULL<->set transitions and stream landings.
+
+
+def _dl_iso(seconds_ago: float = 0.0) -> str:
+    """A tz-aware UTC ISO-8601 ``now - seconds_ago`` ending in ``+00:00``.
+
+    The worker stamps ``dl_dead_lettered_at`` with ``datetime.now(UTC).isoformat()``;
+    the backstop parses it to naive UTC to compare against the naive ``resumed_at``
+    column. Seeding with the same tz-aware shape keeps the parse honest.
+    """
+
+    return (datetime.now(UTC) - timedelta(seconds=seconds_ago)).isoformat()
+
+
+def _seed_graveyard_row(
+    valkey: redis.Redis,
+    runs_stream: str,
+    approval_id: uuid.UUID,
+    *,
+    dead_lettered_at: str,
+    status: str = ApprovalStatus.approved,
+    resolved_by: str | None = "U9",
+) -> None:
+    """Seed one dead-lettered resume turn onto ``<runs>:dead``, sync, as the worker
+    would: the QueuedTurn's ``event_id`` is ``resume_event_id(approval_id)`` (so the
+    backstop parses it back to this approval), plus the ``dl_*`` metadata columns."""
+
+    from agentos_api.resumequeue import build_resume_turn
+
+    approval = _detached_approval(status, resolved_by=resolved_by)
+    approval.id = approval_id
+    turn = build_resume_turn(approval)
+    valkey.xadd(
+        f"{runs_stream}:dead",
+        {
+            "payload": turn.model_dump_json(),
+            "dl_dead_lettered_at": dead_lettered_at,
+            "dl_original_id": "1-0",
+            "dl_delivery_count": "5",
+            "dl_reason": "max delivery exceeded",
+        },
+    )
+
+
+def test_reopen_dead_lettered_resume_reenqueues_owed_wake(
+    clean_db: None, valkey: redis.Redis, runs_stream: str
+) -> None:
+    """Core AC: a delivered-but-dead-lettered wake is detected, re-opened, and
+    re-enqueued -- the gap the NULL-gated finder alone cannot close.
+
+    The row carries ``resolved_at`` set AND ``resumed_at`` set (the wake reached
+    the stream, so the inline path marked it) yet the sandbox never woke because
+    the turn died at the delivery cap and was dead-lettered. First prove the gap:
+    a bare ``reconcile_once`` enqueues nothing and leaves ``resumed_at`` set,
+    because ``list_resolved_unresumed`` filters ``resumed_at IS NULL``. Then the
+    graveyard scan re-opens it (``resumed_at`` -> NULL) and the very next
+    ``reconcile_once`` re-enqueues the resume turn and re-marks it.
+    """
+
+    async def insert_and_prove_gap(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> tuple[uuid.UUID, int, datetime | None]:
+        approval_id = await _insert_approval(
+            sessionmaker,
+            status=ApprovalStatus.approved,
+            resolved_at=_naive(3600),
+            resumed_at=_naive(1800),
+        )
+        reconciler = ResumeReconciler(
+            sessionmaker,
+            queue,
+            interval_seconds=30,
+            grace_seconds=0,
+            batch_limit=100,
+            dead_letter_scan_limit=1000,
+        )
+        gap_count = await reconciler.reconcile_once()
+        return approval_id, gap_count, await _resumed_at(sessionmaker, approval_id)
+
+    approval_id, gap_count, gap_resumed = _run_async(insert_and_prove_gap, runs_stream)
+
+    # The gap: the finder never re-selects a row whose resumed_at is set.
+    assert gap_count == 0
+    assert valkey.xrange(runs_stream) == []
+    assert gap_resumed is not None
+
+    # A graveyard row dead-lettered AFTER the wake was marked delivered.
+    _seed_graveyard_row(
+        valkey, runs_stream, approval_id, dead_lettered_at=_dl_iso(0)
+    )
+
+    async def reopen_then_reconcile(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> tuple[int, datetime | None, int, datetime | None]:
+        reconciler = ResumeReconciler(
+            sessionmaker,
+            queue,
+            interval_seconds=30,
+            grace_seconds=0,
+            batch_limit=100,
+            dead_letter_scan_limit=1000,
+        )
+        reopened = await reconciler.reopen_dead_lettered_resumes()
+        resumed_after_reopen = await _resumed_at(sessionmaker, approval_id)
+        reconcile_count = await reconciler.reconcile_once()
+        return (
+            reopened,
+            resumed_after_reopen,
+            reconcile_count,
+            await _resumed_at(sessionmaker, approval_id),
+        )
+
+    reopened, resumed_after_reopen, reconcile_count, resumed_final = _run_async(
+        reopen_then_reconcile, runs_stream
+    )
+
+    assert reopened == 1
+    assert resumed_after_reopen is None  # the backstop cleared it
+    assert reconcile_count == 1
+    assert resumed_final is not None  # the re-enqueue re-marked it
+    entries = valkey.xrange(runs_stream)
+    assert len(entries) == 1
+    turn = QueuedTurn.model_validate(json.loads(entries[0][1]["payload"]))
+    assert turn.event_id == f"approval-{approval_id}-resolved"
+
+
+def test_reopen_is_idempotent_against_persistent_graveyard_row(
+    clean_db: None, valkey: redis.Redis, runs_stream: str
+) -> None:
+    """A graveyard row that survives across passes (the stream's MAXLEN has not
+    evicted it) is re-opened at most once: the ``resumed_at < dl_dead_lettered_at``
+    guard fails on the second pass because the re-enqueue re-marked ``resumed_at``
+    to a time NEWER than the row's dead-letter timestamp. No duplicate wake.
+    """
+
+    async def insert(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> uuid.UUID:
+        return await _insert_approval(
+            sessionmaker,
+            status=ApprovalStatus.approved,
+            resolved_at=_naive(3600),
+            resumed_at=_naive(1800),
+        )
+
+    approval_id = _run_async(insert, runs_stream)
+
+    # Dead-lettered between the original wake (30m ago) and now, so the FIRST
+    # reopen matches; the re-enqueue then re-marks resumed_at to now (> this).
+    _seed_graveyard_row(
+        valkey, runs_stream, approval_id, dead_lettered_at=_dl_iso(1500)
+    )
+
+    async def reopen_reconcile_reopen(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> tuple[int, datetime | None, int, int, datetime | None]:
+        reconciler = ResumeReconciler(
+            sessionmaker,
+            queue,
+            interval_seconds=30,
+            grace_seconds=0,
+            batch_limit=100,
+            dead_letter_scan_limit=1000,
+        )
+        first = await reconciler.reopen_dead_lettered_resumes()
+        resumed_after_reopen = await _resumed_at(sessionmaker, approval_id)
+        reconcile_count = await reconciler.reconcile_once()
+        # The row is STILL present in the graveyard; a second scan must no-op.
+        second = await reconciler.reopen_dead_lettered_resumes()
+        return (
+            first,
+            resumed_after_reopen,
+            reconcile_count,
+            second,
+            await _resumed_at(sessionmaker, approval_id),
+        )
+
+    first, resumed_after_reopen, reconcile_count, second, resumed_final = _run_async(
+        reopen_reconcile_reopen, runs_stream
+    )
+
+    assert first == 1
+    assert resumed_after_reopen is None
+    assert reconcile_count == 1
+    assert second == 0  # the guard rejects the now-newer resumed_at
+    assert resumed_final is not None  # not re-cleared: no duplicate wake
+    # Exactly one re-enqueue reached the stream across both scans.
+    assert len(valkey.xrange(runs_stream)) == 1
+
+
+def test_reopen_ignores_stale_graveyard_row(
+    clean_db: None, valkey: redis.Redis, runs_stream: str
+) -> None:
+    """A graveyard row OLDER than the approval's current ``resumed_at`` is a
+    successful LATER delivery's stale corpse, not an owed wake: re-opening it would
+    re-wake a session that already resumed. The ``resumed_at < dl_dead_lettered_at``
+    guard excludes it -- 0 re-opened, ``resumed_at`` untouched.
+    """
+
+    async def insert(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> uuid.UUID:
+        return await _insert_approval(
+            sessionmaker,
+            status=ApprovalStatus.approved,
+            resolved_at=_naive(3600),
+            resumed_at=_naive(0),  # woke just now, AFTER the dead-letter below
+        )
+
+    approval_id = _run_async(insert, runs_stream)
+    _seed_graveyard_row(
+        valkey, runs_stream, approval_id, dead_lettered_at=_dl_iso(3600)
+    )
+
+    async def reopen(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> tuple[int, datetime | None]:
+        reconciler = ResumeReconciler(
+            sessionmaker,
+            queue,
+            interval_seconds=30,
+            grace_seconds=0,
+            batch_limit=100,
+            dead_letter_scan_limit=1000,
+        )
+        count = await reconciler.reopen_dead_lettered_resumes()
+        return count, await _resumed_at(sessionmaker, approval_id)
+
+    count, resumed_at = _run_async(reopen, runs_stream)
+
+    assert count == 0
+    assert resumed_at is not None  # the later delivery's mark stands
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_reopen_ignores_malformed_and_non_resume_rows(
+    clean_db: None, valkey: redis.Redis, runs_stream: str
+) -> None:
+    """The scan tolerates graveyard rows it cannot act on -- no payload, an
+    unparseable payload, or a valid turn whose ``event_id`` is not a resume id --
+    returning 0 and never raising. An unrelated delivered approval is untouched,
+    proving the scan clears only rows it positively matched to a resume event.
+    """
+
+    from aci_protocol import ReplyHandle
+
+    async def insert(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> uuid.UUID:
+        return await _insert_approval(
+            sessionmaker,
+            status=ApprovalStatus.approved,
+            resolved_at=_naive(3600),
+            resumed_at=_naive(0),
+        )
+
+    unrelated_id = _run_async(insert, runs_stream)
+
+    dead = f"{runs_stream}:dead"
+    # (a) metadata-only row: no payload field at all.
+    valkey.xadd(
+        dead,
+        {
+            "dl_dead_lettered_at": _dl_iso(0),
+            "dl_original_id": "1-0",
+            "dl_delivery_count": "5",
+            "dl_reason": "max delivery exceeded",
+        },
+    )
+    # (b) payload that is not valid QueuedTurn JSON.
+    valkey.xadd(
+        dead,
+        {"payload": "this is not json", "dl_dead_lettered_at": _dl_iso(0)},
+    )
+    # (c) a valid QueuedTurn whose event_id is NOT a resume id.
+    non_resume = QueuedTurn(
+        event_id="eval-123",
+        conversation_id="th-eval",
+        author="system",
+        text="not a resume turn",
+        reply_handle=ReplyHandle(channel="C1", placeholder="p-1", endpoint=None),
+        received_at=datetime.now(UTC).isoformat(),
+    )
+    valkey.xadd(
+        dead,
+        {"payload": non_resume.model_dump_json(), "dl_dead_lettered_at": _dl_iso(0)},
+    )
+
+    async def reopen(
+        sessionmaker: async_sessionmaker[AsyncSession], queue: ResumeQueue
+    ) -> tuple[int, datetime | None]:
+        reconciler = ResumeReconciler(
+            sessionmaker,
+            queue,
+            interval_seconds=30,
+            grace_seconds=0,
+            batch_limit=100,
+            dead_letter_scan_limit=1000,
+        )
+        count = await reconciler.reopen_dead_lettered_resumes()
+        return count, await _resumed_at(sessionmaker, unrelated_id)
+
+    count, unrelated_resumed = _run_async(reopen, runs_stream)
+
+    assert count == 0
+    assert unrelated_resumed is not None  # untouched by the tolerant scan
+    assert valkey.xrange(runs_stream) == []
+
+
+def test_parse_resume_event_id_inverts_resume_event_id() -> None:
+    """``parse_resume_event_id`` is the exact inverse of ``resume_event_id`` for a
+    real resume key, and returns None for anything that is not one -- so the scan
+    never mistakes a non-resume graveyard row for an approval to re-open.
+
+    Pure unit: no DB, no Valkey. The UUID round-trip is the load-bearing case;
+    the None cases fence the malformed shapes the scan must skip.
+    """
+
+    from agentos_api.resumequeue import parse_resume_event_id, resume_event_id
+
+    approval_id = uuid.uuid4()
+    assert parse_resume_event_id(resume_event_id(approval_id)) == approval_id
+
+    assert parse_resume_event_id("eval-123") is None
+    assert parse_resume_event_id("approval--resolved") is None
+    assert parse_resume_event_id("approval-not-a-uuid-resolved") is None
+    assert parse_resume_event_id(uuid.uuid4().hex) is None

@@ -63,7 +63,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
     app.state.eval_queue = EvalQueue(valkey)
-    app.state.resume_queue = ResumeQueue(valkey, stream=settings.runs_stream)
+    app.state.resume_queue = ResumeQueue(
+        valkey,
+        stream=settings.runs_stream,
+        dead_letter_stream=settings.resume_dead_letter_stream or None,
+    )
     # The composition root for approvals (#420, ADR-0034): the only place that
     # names Slack to build the approver-set selector, so the authorizer and the
     # resolve endpoint depend on ports rather than on a provider. The usergroup
@@ -96,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         interval_seconds=settings.resume_reconciler_interval_seconds,
         grace_seconds=settings.resume_reconciler_grace_seconds,
         batch_limit=settings.resume_reconciler_batch_limit,
+        dead_letter_scan_limit=settings.resume_dead_letter_scan_limit,
     )
     app.state.resume_reconciler = reconciler
     app.state.resume_reconciler_task = (
