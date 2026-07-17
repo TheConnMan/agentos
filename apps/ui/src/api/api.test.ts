@@ -212,7 +212,6 @@ describe("agent-detail client calls", () => {
         agent_id: "a1",
         version_id: "v2",
         environment: "prod",
-        bot_identity: null,
         commit_sha: null,
         status: "active",
         deployed_at: "now",

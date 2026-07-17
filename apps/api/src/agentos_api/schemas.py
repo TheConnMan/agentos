@@ -476,7 +476,6 @@ class DeploymentOut(BaseModel):
     agent_id: uuid.UUID
     version_id: uuid.UUID
     environment: Environment
-    bot_identity: str | None
     commit_sha: str | None
     status: str
     deployed_at: datetime
@@ -578,7 +577,6 @@ class WebhookResult(BaseModel):
 
     status: str
     environment: Environment | None = None
-    bot_identity: str | None = None
     agent_id: uuid.UUID | None = None
     version_id: uuid.UUID | None = None
     deployment_id: uuid.UUID | None = None

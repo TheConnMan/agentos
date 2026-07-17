@@ -12,7 +12,6 @@ const dep = (
   agent_id,
   version_id: `ver-${agent_id}-${environment}`,
   environment,
-  bot_identity: null,
   commit_sha: null,
   status,
   deployed_at: "2026-07-08T00:00:00Z",

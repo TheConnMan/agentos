@@ -137,7 +137,6 @@ def test_dev_push_deploys_dev_bot(
     body = resp.json()
     assert body["status"] == "deployed"
     assert body["environment"] == "dev"
-    assert body["bot_identity"] == "@agentos-dev"
     assert body["commit_sha"] == sha
 
     # The version was built from the commit and its bundle is stored + fetchable.
@@ -158,7 +157,6 @@ def test_dev_push_deploys_dev_bot(
     ).json()
     assert len(deployments) == 1
     assert deployments[0]["environment"] == "dev"
-    assert deployments[0]["bot_identity"] == "@agentos-dev"
 
 
 def test_main_push_promotes_and_reuses_the_built_version(
@@ -176,17 +174,16 @@ def test_main_push_promotes_and_reuses_the_built_version(
 
     assert prod["status"] == "promoted"
     assert prod["environment"] == "prod"
-    assert prod["bot_identity"] == "@agentos"
     # Promote reuses the already-built bundle rather than rebuilding.
     assert prod["version_id"] == dev["version_id"]
 
     envs = {
-        d["environment"]: d["bot_identity"]
+        d["environment"]
         for d in client.get(
             "/deployments", params={"agent_id": agent_id}, headers=auth_headers
         ).json()
     }
-    assert envs == {"dev": "@agentos-dev", "prod": "@agentos"}
+    assert envs == {"dev", "prod"}
 
 
 def test_partial_version_is_rebuilt_not_reused(

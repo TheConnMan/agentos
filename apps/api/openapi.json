@@ -1018,17 +1018,6 @@
             "title": "Agent Id",
             "type": "string"
           },
-          "bot_identity": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bot Identity"
-          },
           "commit_sha": {
             "anyOf": [
               {
@@ -1068,7 +1057,6 @@
           "agent_id",
           "version_id",
           "environment",
-          "bot_identity",
           "commit_sha",
           "status",
           "deployed_at"
@@ -2306,17 +2294,6 @@
               }
             ],
             "title": "Agent Id"
-          },
-          "bot_identity": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bot Identity"
           },
           "commit_sha": {
             "anyOf": [

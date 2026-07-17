@@ -62,8 +62,6 @@ class Settings(BaseSettings):
     # Suite name put on the fan-out request for a dev-push eval run (the plugin
     # bundle carries the suite itself; the consumer resolves it by this name).
     eval_default_suite: str = "default"
-    bot_identity_dev: str = "@agentos-dev"
-    bot_identity_prod: str = "@agentos"
     # Clone-URL schemes the git-flow builder will fetch from. file:// supports
     # the hermetic local-bare-repo tests; anything else (e.g. git ext::) is
     # refused before a subprocess runs.

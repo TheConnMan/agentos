@@ -52,7 +52,6 @@ const mkDep = (
   agent_id: "a1",
   version_id,
   environment,
-  bot_identity: null,
   commit_sha: null,
   status,
   deployed_at,

@@ -134,9 +134,6 @@ class Deployment(Base):
     environment: Mapped[Environment] = mapped_column(
         Enum(Environment, name="environment", schema=SCHEMA)
     )
-    # The Slack bot identity this deployment routes to (J1): @agentos-dev for
-    # dev, @agentos for prod.
-    bot_identity: Mapped[str | None] = mapped_column(default=None)
     commit_sha: Mapped[str | None] = mapped_column(default=None)
     status: Mapped[str] = mapped_column(server_default="active")
     deployed_at: Mapped[datetime] = mapped_column(server_default=func.now())

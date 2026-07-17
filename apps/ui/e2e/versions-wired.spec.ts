@@ -23,7 +23,7 @@ async function stubVersions(page: Page) {
   await page.route("**/api/deployments*", (route) =>
     route.fulfill(
       json(200, [
-        { id: "d1", agent_id: AGENT.id, version_id: "v1", environment: "prod", bot_identity: "@agentos", commit_sha: "abc", status: "active", deployed_at: "2026-07-03T00:00:00Z" },
+        { id: "d1", agent_id: AGENT.id, version_id: "v1", environment: "prod", commit_sha: "abc", status: "active", deployed_at: "2026-07-03T00:00:00Z" },
       ]),
     ),
   );

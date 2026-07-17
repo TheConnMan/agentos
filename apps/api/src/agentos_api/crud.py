@@ -242,7 +242,6 @@ async def create_deployment_row(
     agent_id: uuid.UUID,
     version_id: uuid.UUID,
     environment: Environment,
-    bot_identity: str | None = None,
     commit_sha: str | None = None,
     status: str = "active",
 ) -> Deployment:
@@ -250,7 +249,6 @@ async def create_deployment_row(
         agent_id=agent_id,
         version_id=version_id,
         environment=environment,
-        bot_identity=bot_identity,
         commit_sha=commit_sha,
         status=status,
     )
