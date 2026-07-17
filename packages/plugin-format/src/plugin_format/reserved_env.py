@@ -2,7 +2,8 @@
 
 Single source of truth for the names a per-agent connector secret must never
 declare, consulted by every write seam so a connector secret cannot shadow a
-runner-owned model credential or a platform boot-env key:
+runner-owned model credential or a platform boot-env key, NOR a generic
+redirect/capture-capable key the SDK's HTTP/TLS stack reads (#487):
 
 - API validator ``agentos_api.schemas._validate_secret_map``,
 - bundle validator ``plugin_format.validate._validate_secrets``,
@@ -28,15 +29,32 @@ credential key is added there but not covered here (or if the Helm list drifts).
 from __future__ import annotations
 
 # The four runner ``sdk_auth`` credential keys that are NOT ``AGENTOS_``-prefixed.
-# These are the exact gap #457 closes -- and, per the drift pin, the ONLY
-# non-prefixed members allowed in the set (the Helm ``_helpers.tpl`` reserved
-# list must equal this subset).
+# These are the exact gap #457 closes. Together with ``_REDIRECT_CAPTURE_KEYS``
+# below, these are the non-prefixed members of the set; per the drift pin, the
+# Helm ``_helpers.tpl`` reserved list must equal that combined non-prefixed subset.
 _CREDENTIAL_KEYS = frozenset(
     {
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_AUTH_TOKEN",
+    }
+)
+
+# Generic, non-``AGENTOS_``-prefixed env that the SDK's HTTP/TLS stack (or Node)
+# reads to REDIRECT or CAPTURE the model session, rather than being a key the
+# worker/runner explicitly owns (#487). Each reaches the same end state #457 closed
+# for ``ANTHROPIC_BASE_URL``: a connector secret named one of these could route the
+# session (and its resolved credential) through an operator-named proxy, add a
+# trusted CA for transparent TLS MITM, or inject arbitrary headers onto model
+# calls. Fenced here so the reserved set means "reserved OR redirect/capture-
+# capable", not merely "keys we own".
+_REDIRECT_CAPTURE_KEYS = frozenset(
+    {
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NODE_EXTRA_CA_CERTS",
+        "ANTHROPIC_CUSTOM_HEADERS",
     }
 )
 
@@ -69,7 +87,9 @@ _AGENTOS_BOOT_KEYS = frozenset(
     }
 )
 
-RESERVED_BOOT_ENV: frozenset[str] = _CREDENTIAL_KEYS | _AGENTOS_BOOT_KEYS
+RESERVED_BOOT_ENV: frozenset[str] = (
+    _CREDENTIAL_KEYS | _REDIRECT_CAPTURE_KEYS | _AGENTOS_BOOT_KEYS
+)
 
 
 def is_reserved_boot_env_name(name: str) -> bool:

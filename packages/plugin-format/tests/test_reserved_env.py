@@ -33,6 +33,18 @@ def test_credential_keys_are_members_of_the_set(name: str) -> None:
     assert name in RESERVED_BOOT_ENV
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["HTTPS_PROXY", "HTTP_PROXY", "NODE_EXTRA_CA_CERTS", "ANTHROPIC_CUSTOM_HEADERS"],
+)
+def test_redirect_capture_keys_are_reserved(name: str) -> None:
+    # #487: generic env that redirects/captures the model session (proxy, extra
+    # CA, custom headers) is reserved even though the worker/runner don't "own" it
+    # and it carries no AGENTOS_ prefix -- it reaches the same capture end state.
+    assert is_reserved_boot_env_name(name) is True
+    assert name in RESERVED_BOOT_ENV
+
+
 def test_model_base_url_alias_is_reserved() -> None:
     # sdk_auth's AGENTOS_-prefixed alias of the base-URL seam.
     assert is_reserved_boot_env_name("AGENTOS_MODEL_BASE_URL") is True

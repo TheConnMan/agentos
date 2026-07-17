@@ -489,8 +489,9 @@ def _validate_secrets(manifest: PluginManifest, c: _Collector) -> None:
             # binding at delivery time, or silently redirect the model session.
             c.error(
                 "secrets.name_reserved",
-                f"secret name {name!r} is reserved: it is a platform boot-env or "
-                "model-credential key and cannot be used for a connector secret",
+                f"secret name {name!r} is reserved: it is a platform boot-env, "
+                "model-credential, or redirect/capture-capable key and cannot be "
+                "used for a connector secret",
                 loc,
             )
 

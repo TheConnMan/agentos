@@ -176,8 +176,9 @@ def _validate_secret_map(value: dict[str, str] | None) -> dict[str, str] | None:
             # or be silently dropped by the worker binding's reserved-key
             # guard, so reject it on write.
             raise ValueError(
-                f"secret name {name!r} is reserved: it is a platform boot-env "
-                "or model-credential key and cannot be used for a connector secret"
+                f"secret name {name!r} is reserved: it is a platform boot-env, "
+                "model-credential, or redirect/capture-capable key and cannot be "
+                "used for a connector secret"
             )
         if not secret:
             raise ValueError(f"secret {name!r} has an empty value")
