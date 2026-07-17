@@ -502,6 +502,51 @@ async def mark_approval_resumed(session: AsyncSession, approval_id: uuid.UUID) -
     await session.commit()
 
 
+async def reopen_dead_lettered_resume(
+    session: AsyncSession, approval_id: uuid.UUID, *, dead_lettered_after: datetime
+) -> bool:
+    """Re-open an approval whose DELIVERED resume turn was dead-lettered (#532).
+
+    A resume turn that reached the runs stream (so ``resumed_at`` was marked)
+    can still die at the worker's delivery cap (#505) and be moved to the
+    graveyard, acked off, and never woken -- a row the NULL-gated finder cannot
+    re-select. Clearing ``resumed_at`` puts it back on the reconciler's owed-wake
+    work-list so the standard reconcile pass re-enqueues it. Conditional UPDATE
+    mirroring ``mark_approval_resumed``; returns whether a row was re-opened.
+
+    The ``resumed_at < dead_lettered_after`` guard is LOAD-BEARING for
+    idempotency: it fires only when the CURRENTLY-marked wake predates THIS
+    dead-letter, so a graveyard row that persists across passes (the stream is
+    only approximately trimmed) cannot repeatedly re-open a row that has since
+    been re-enqueued -- its new ``resumed_at`` is newer than the row's
+    dead-letter time. A genuinely new dead-letter carries a newer time and
+    re-triggers. A row already re-opened (``resumed_at`` NULL) matches zero rows,
+    so the standard NULL-gated reconciler owns it, never this path.
+
+    The comparison is a CROSS-NODE clock comparison: ``resumed_at`` is stamped
+    by Postgres (``func.now()`` on the inline mark path) or the API pod clock
+    (``datetime.now(UTC)`` on the reconcile re-enqueue path), while
+    ``dead_lettered_after`` is the worker pod's clock (``dl_dead_lettered_at``).
+    It is safe because the gap between marking a wake and exhausting the
+    delivery cap is minutes, dwarfing realistic NTP skew.
+    """
+
+    result = await session.execute(
+        update(Approval)
+        .where(
+            Approval.id == approval_id,
+            Approval.status.in_(_RESUMABLE_STATUSES),
+            Approval.resumed_at.is_not(None),
+            Approval.resumed_at < dead_lettered_after,
+        )
+        .values(resumed_at=None)
+        .returning(Approval.id)
+    )
+    reopened = result.scalar_one_or_none() is not None
+    await session.commit()
+    return reopened
+
+
 # The statuses an owed-wake row can carry: a terminal outcome that must still
 # reach its suspended session. ``expired`` belongs here since #412 gave both
 # expiry paths (the sweeper and the resolve-path expiry branch) a resume turn of

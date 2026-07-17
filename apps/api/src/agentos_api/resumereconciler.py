@@ -16,6 +16,12 @@ expiry wake the one permanently unrecoverable case. Which turn a candidate owes
 follows from its status, so the reconciler defers to ``resume_turn_for`` rather
 than carrying the mapping itself.
 
+Each pass is two steps (#532): ``reopen_dead_lettered_resumes`` first re-opens
+any approval whose DELIVERED resume turn (``resumed_at`` set) died at the
+worker's delivery cap and was dead-lettered -- a case the NULL-gated finder
+above cannot re-select -- then ``reconcile_once`` re-enqueues every owed wake,
+so a row re-opened this pass is re-enqueued in the same pass.
+
 Three qualifications shape the design:
 
 - **Grace window (load-bearing).** ``reconcile_once`` only considers records
@@ -52,14 +58,50 @@ Three qualifications shape the design:
 
 import asyncio
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
+from aci_protocol import QueuedTurn
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from . import crud
-from .resumequeue import ResumeQueue, resume_turn_for
+from .resumequeue import ResumeQueue, parse_resume_event_id, resume_turn_for
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_dead_lettered_resume(
+    fields: dict[str, str],
+) -> tuple[uuid.UUID, datetime] | None:
+    """Decode a graveyard row into ``(approval_id, dead_lettered_at)`` or None.
+
+    Returns None for any row the scan cannot act on: no ``payload`` field, a
+    payload that is not a valid ``QueuedTurn``, an ``event_id`` that is not a
+    resume key, a missing ``dl_dead_lettered_at``, or one that does not parse.
+    The timestamp is normalized to naive UTC to compare against the naive
+    ``resumed_at`` column.
+    """
+
+    payload = fields.get("payload")
+    if payload is None:
+        return None
+    try:
+        turn = QueuedTurn.model_validate_json(payload)
+    except ValidationError:
+        return None
+    approval_id = parse_resume_event_id(turn.event_id)
+    if approval_id is None:
+        return None
+    raw = fields.get("dl_dead_lettered_at")
+    if raw is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    dt_naive = dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo else dt
+    return approval_id, dt_naive
 
 
 class ResumeReconciler:
@@ -73,12 +115,14 @@ class ResumeReconciler:
         interval_seconds: int,
         grace_seconds: int,
         batch_limit: int,
+        dead_letter_scan_limit: int = 1000,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._resume_queue = resume_queue
         self._interval_seconds = interval_seconds
         self._grace_seconds = grace_seconds
         self._batch_limit = batch_limit
+        self._dead_letter_scan_limit = dead_letter_scan_limit
 
     async def reconcile_once(self) -> int:
         """Re-enqueue every owed wake past the grace horizon; return the count.
@@ -128,8 +172,75 @@ class ResumeReconciler:
                 logger.info("approval %s resume turn re-enqueued", approval_id)
         return count
 
+    async def reopen_dead_lettered_resumes(self) -> int:
+        """Re-open approvals whose DELIVERED resume turn was dead-lettered (#532).
+
+        The gap: a resume turn that reached the runs stream (so ``resumed_at`` was
+        marked by the inline path) can still die at the worker's delivery cap
+        (#505). The worker moves it to the ``<runs>:dead`` graveyard and acks it
+        off, so the sandbox never woke -- yet ``resumed_at`` is SET, and the
+        NULL-gated finder (``list_resolved_unresumed``) never re-selects it. Such
+        a row is stranded forever without this pass.
+
+        The signal is a graveyard row whose payload ``event_id`` decodes back to
+        an approval id via ``parse_resume_event_id``. For each such row this pass
+        clears ``resumed_at`` (re-opens the approval) and DEFERS the actual
+        re-enqueue to the standard ``reconcile_once`` pass -- ``run_forever``
+        runs this immediately before it each cycle, so a row re-opened here is
+        re-enqueued in the same cycle.
+
+        Eviction / best-effort contract: the graveyard is bounded by an
+        approximate MAXLEN, so a row is transient -- act only while it exists, and
+        never assume permanence. A row beyond the scan cap is picked up on a later
+        pass as the graveyard trims.
+
+        Idempotency: ``crud.reopen_dead_lettered_resume`` only fires when the
+        currently-marked ``resumed_at`` predates the row's dead-letter time, so a
+        row that persists across passes cannot re-open a row already re-enqueued
+        (its new ``resumed_at`` is newer). And a row already re-opened
+        (``resumed_at`` NULL) is owned by the standard NULL-gated finder, never
+        this path. A Valkey read failure logs and returns the count so far -- a
+        graveyard read blip never kills the pass (mirrors ``reconcile_once``'s
+        per-record isolation).
+        """
+
+        count = 0
+        try:
+            entries = await self._resume_queue.read_dead_letter(
+                count=self._dead_letter_scan_limit
+            )
+        except Exception:
+            logger.warning(
+                "resume dead-letter scan read failed, skipping this pass",
+                exc_info=True,
+            )
+            return count
+
+        for _entry_id, fields in entries:
+            parsed = _parse_dead_lettered_resume(fields)
+            if parsed is None:
+                continue
+            approval_id, dead_lettered_at = parsed
+            async with self._sessionmaker() as session:
+                reopened = await crud.reopen_dead_lettered_resume(
+                    session, approval_id, dead_lettered_after=dead_lettered_at
+                )
+            if reopened:
+                count += 1
+                logger.info(
+                    "approval %s resume turn was dead-lettered; re-opened as an "
+                    "owed wake",
+                    approval_id,
+                )
+        return count
+
     async def run_forever(self) -> None:
         """Reconcile on the interval forever; never die from a reconcile error.
+
+        Each pass is two steps: first ``reopen_dead_lettered_resumes`` re-opens
+        any approval whose delivered resume turn was dead-lettered (#532), then
+        ``reconcile_once`` re-enqueues every owed wake -- so a row re-opened this
+        pass is re-enqueued in the same pass.
 
         The loop sleeps before each pass (including the first): the inline path
         handles the common case, so a just-started pod need not sweep instantly,
@@ -140,6 +251,7 @@ class ResumeReconciler:
         while True:
             await asyncio.sleep(self._interval_seconds)
             try:
+                await self.reopen_dead_lettered_resumes()
                 await self.reconcile_once()
             except asyncio.CancelledError:
                 raise

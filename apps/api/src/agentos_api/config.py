@@ -120,6 +120,23 @@ class Settings(BaseSettings):
     resume_reconciler_grace_seconds: int = 900
     resume_reconciler_batch_limit: int = 100
 
+    # Dead-lettered resume backstop (#532): each reconciler pass first scans the
+    # graveyard for resume turns that reached the runs stream (resumed_at marked)
+    # but then died at the worker's delivery cap (#505) and were dead-lettered,
+    # re-opening them (resumed_at -> NULL) so the reconcile pass re-enqueues them.
+    #
+    # resume_dead_letter_stream overrides the graveyard stream the backstop scans;
+    # empty derives `<runs_stream>:dead`. It MUST match the worker's
+    # AGENTOS_DEAD_LETTER_STREAM / its `<stream>:dead` derivation, or the backstop
+    # reads the wrong stream.
+    #
+    # resume_dead_letter_scan_limit caps the graveyard rows scanned per pass
+    # (XRANGE COUNT). Resume-turn dead-letters are rare and the graveyard is
+    # MAXLEN-bounded, so this only caps a pathological scan; a row beyond the cap
+    # is picked up on a later pass as the graveyard trims.
+    resume_dead_letter_stream: str = ""
+    resume_dead_letter_scan_limit: int = 1000
+
     # The Slack bot token the API uses for its OWN user-group lookups (#420),
     # rather than trusting a caller's claim about who is in a group. The same
     # token the dispatcher and worker already hold; empty is the normal state
