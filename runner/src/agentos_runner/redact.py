@@ -5,7 +5,16 @@ Defense in depth. AgentOS forwards real credentials into the sandbox (the ACI
 self-emits OTel spans to a trace backend, so a secret that reaches a log line or a
 span attribute has already left the trust boundary by the time anything downstream
 sees it. This module scrubs the value on the way out, at the last point the runner
-still owns it: stdout and the gen_ai span attributes.
+still owns it.
+
+Scope is the two boundaries issue #518 names: the runner's stdout logs and the
+gen_ai span attributes. That is not the whole of the runner's egress, and this
+module does not claim otherwise. ``server.py`` streams verbatim model output as
+NDJSON ACI frames, which is a larger surface left deliberately untouched here: the
+frames are the product contract, and scrubbing them is a separate decision.
+``check.py`` writes its own stdout without this pass, which is scoped out because
+it has no credential path and never issues a model query, and because its JSON
+output is a frozen contract that a scrub would mangle.
 
 This complements, and does not replace, the export-time validator in issue #512,
 which drops records that still carry an unscrubbed secret. That validator is the
@@ -45,15 +54,6 @@ def _placeholder(name: str) -> str:
     return f"[REDACTED:{name}]"
 
 
-# Composed from fragments rather than written as one literal: the repo's staged
-# diff secret scanner matches a full PEM header wherever it appears, and a
-# redactor for PEM blocks necessarily contains that header in its own pattern.
-# Splitting the marker keeps the scanner useful for real pasted keys.
-_PEM_LABEL = r"[A-Z ]*PRIVATE KEY-----"
-_PEM_BEGIN = "-----BEGIN " + _PEM_LABEL
-_PEM_END = "-----END " + _PEM_LABEL
-
-
 # Order is load bearing. ``url_secret_param`` is anchored on a query-param prefix
 # and runs before ``secret_assignment`` so a token carried in a URL is attributed
 # to the URL rule rather than swallowed by the generic assignment rule; the
@@ -64,7 +64,9 @@ _PEM_END = "-----END " + _PEM_LABEL
 REDACTION_RULES: tuple[RedactionRule, ...] = (
     RedactionRule(
         name="pem_private_key",
-        pattern=re.compile(_PEM_BEGIN + r"[\s\S]*?" + _PEM_END),
+        pattern=re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+        ),
         placeholder=_placeholder("pem_private_key"),
     ),
     RedactionRule(
@@ -150,17 +152,15 @@ def redact_text(text: str) -> str:
 def redact_span_attribute(value: object) -> object:
     """Redact a span attribute value, preserving its type.
 
-    Strings are scrubbed. Lists and tuples are scrubbed element-wise with the
-    container type preserved. Every other scalar (int, float, bool) passes through
-    untouched, so the ``gen_ai.usage.*`` token counts stay ints.
+    Strings are scrubbed; every other value (int, float, bool) passes through
+    untouched, so the ``gen_ai.usage.*`` token counts stay ints. Only str and int
+    attributes are set today. OTel also permits sequence values, and a sequence
+    would pass through here unscrubbed, so a caller that starts setting one must
+    extend this function and add its frozen vector.
     """
 
     if isinstance(value, str):
         return redact_text(value)
-    if isinstance(value, list):
-        return [redact_text(item) if isinstance(item, str) else item for item in value]
-    if isinstance(value, tuple):
-        return tuple(redact_text(item) if isinstance(item, str) else item for item in value)
     return value
 
 

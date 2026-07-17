@@ -1,7 +1,7 @@
 """Redaction: every secret class is scrubbed at every runner output boundary.
 
-The two boundaries are the runner's stdout (structured logs) and the gen_ai span
-attributes shipped to the trace backend. A regex that only one boundary applies is
+The two boundaries this ticket scopes are the runner's stdout (structured logs) and
+the gen_ai span attributes shipped to the trace backend. A regex that only one applies is
 a leak, so each frozen vector is driven through the real code at BOTH boundaries:
 a real ``logging`` handler for stdout, and a real ``RunTracer`` plus in-memory
 exporter for spans. The two tripwires below make adding a rule or a boundary
@@ -208,14 +208,6 @@ def test_redact_span_attribute_preserves_non_string_types() -> None:
         result = redact_span_attribute(value)
         assert result == value
         assert type(result) is type(value)
-
-
-def test_redact_span_attribute_redacts_strings_inside_sequences() -> None:
-    result = redact_span_attribute([f"key {FAKE_API_KEY}", "plain"])
-    assert isinstance(result, list)
-    assert FAKE_API_KEY not in result[0]
-    assert _placeholder("api_key") in result[0]
-    assert result[1] == "plain"
 
 
 def test_every_rule_has_a_frozen_vector() -> None:
