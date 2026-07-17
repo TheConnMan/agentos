@@ -8,9 +8,10 @@
 # informer by confining cluster LIST/WATCH to a namespaced Role (the #350
 # crash-loop). See docs/adr/0023-controller-networkpolicy-rbac-cluster-read-namespace-mutate.md.
 #
-# Four assertions (plan §4), scanning the FULL multi-doc render (ClusterRoles
-# come from BOTH templates/agent-sandbox.yaml and the vendored
-# files/agent-sandbox/controller.yaml, so no --show-only):
+# Six assertions. (a)-(e) scan the FULL multi-doc render (ClusterRoles come from
+# BOTH templates/agent-sandbox.yaml and the vendored
+# files/agent-sandbox/controller.yaml, so no --show-only); (f) EXECUTES the
+# rendered preflight script against a stub kubectl:
 #
 #   (a) Exactly ONE cluster-scope ClusterRole grants networkpolicies, its verb
 #       set is exactly {get,list,watch}, bound to SA agent-sandbox-controller in
@@ -23,6 +24,12 @@
 #   (d) The controller-ready preflight gate renders with defaults and suppresses
 #       correctly under agentSandbox.controller.deploy=false and
 #       preflights.controllerReady.enabled=false.
+#   (e) The gate's FAIL diagnostic has a lease-specific branch (issue #507).
+#   (f) The gate's classifier BEHAVES: run the rendered script under sh with a
+#       stub kubectl serving crafted logs. It must not fabricate an RBAC match
+#       from two concatenated logs, and cause-specific remediation must print
+#       only under its own branch (issue #611). (e) is presence-only and cannot
+#       see either bug.
 #
 # Runnable locally (from anywhere) and from CI. Fails loudly, naming the
 # violated assertion.
@@ -259,5 +266,138 @@ grep -q "NOT an RBAC/NetworkPolicy problem" "$DEFAULT" \
   || fail "(e) cause classification — the lease diagnostic must explicitly disclaim RBAC as the cause (issue #507)"
 echo "  ok: (e) the controller-ready gate distinguishes a lease timeout from an RBAC failure"
 
+# --- (f) The classifier BEHAVES correctly, executed against a stub kubectl ---
+# (e) above is presence-only: it greps the render for strings and so cannot see
+# either a log-concatenation false match or a diagnostic leaking across case
+# branches. So actually RUN the rendered script under `sh` with a stub kubectl
+# that serves crafted logs per scenario, and assert on its stdout (issue #611).
+FDIR="$TMP/f"
+mkdir -p "$FDIR/bin"
+
+# Pull the inline /bin/sh -c script body out of the preflight Job's container.
+python3 - "$DEFAULT" "$FDIR/preflight.sh" <<'PY' || fail "(f) behavioral classifier -- could not extract the preflight script from the render"
+import sys, yaml
+
+render_path, out_path = sys.argv[1:3]
+
+with open(render_path) as f:
+    docs = [d for d in yaml.safe_load_all(f) if d]
+
+jobs = [
+    d
+    for d in docs
+    if d.get("kind") == "Job"
+    and ((d.get("metadata") or {}).get("name") or "").endswith("-preflight-controller")
+]
+if len(jobs) != 1:
+    sys.stdout.write("expected exactly one *-preflight-controller Job, found %d\n" % len(jobs))
+    sys.exit(1)
+
+containers = jobs[0]["spec"]["template"]["spec"]["containers"]
+command = containers[0].get("command") or []
+if len(command) < 3 or command[0] != "/bin/sh" or command[1] != "-c":
+    sys.stdout.write("preflight container command is not the expected /bin/sh -c form: %r\n" % (command,))
+    sys.exit(1)
+
+with open(out_path, "w") as f:
+    f.write(command[2])
+PY
+
+# Stub kubectl. Dispatches on its args and serves the logs for ${SCENARIO}; the
+# --previous case must be matched before the plain logs case (the real call adds
+# --previous to an otherwise identical argv).
+cat > "$FDIR/bin/kubectl" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *rollout*status*)
+    exit 0
+    ;;
+  *get*pods*jsonpath*)
+    # Nonzero restartCount, so the script fetches the --previous log at all.
+    printf '1'
+    ;;
+  *get*pods*)
+    printf 'agent-sandbox-controller-0   0/1   Error   1   30s\n'
+    ;;
+  *logs*--previous*)
+    if [ "${SCENARIO}" = "lease_glue" ]; then
+      # FIRST line is a leases-forbidden line: glued onto the current log's
+      # networkpolicies-mentioning last line it fabricates an RBAC signature.
+      printf 'Error: leases.coordination.k8s.io "agent-sandbox-controller" is forbidden: User cannot get resource\n'
+      printf 'E0717 12:00:01 failed to renew lease agent-sandbox-system/agent-sandbox-controller: context deadline exceeded\n'
+    fi
+    ;;
+  *logs*)
+    if [ "${SCENARIO}" = "lease_glue" ]; then
+      printf 'I0717 12:00:00 starting manager\n'
+      # LAST line mentions networkpolicies but carries no "forbidden".
+      printf 'I0717 12:00:00 reflector starting for networkpolicies\n'
+    else
+      printf 'I0717 12:00:00 starting manager\n'
+      printf 'E0717 12:00:00 reflector: failed to list *v1.NetworkPolicy: networkpolicies.networking.k8s.io is forbidden: User "system:serviceaccount:agent-sandbox-system:agent-sandbox-controller" cannot list resource "networkpolicies" at the cluster scope\n'
+    fi
+    ;;
+esac
+exit 0
+STUB
+chmod +x "$FDIR/bin/kubectl"
+
+# TIMEOUT is small so the poll loop cannot linger; every scenario breaks out on
+# the first iteration anyway. The FAIL path is expected to exit 1, so the
+# function itself must not propagate that under set -e (it would abort this
+# script) -- it stashes the exit code in $FDIR/rc for the caller to assert on
+# instead.
+run_preflight() {
+  PATH="$FDIR/bin:$PATH" SCENARIO="$1" \
+    CONTROLLER_NS=agent-sandbox-system DEPLOY=agent-sandbox-controller TIMEOUT=5 \
+    sh "$FDIR/preflight.sh" 2>&1
+  echo $? > "$FDIR/rc"
+}
+
+# (f.1) The glue regression (AC1): a lease failure whose current log also
+# mentions networkpolicies must classify as lease, not rbac.
+lease_out="$(run_preflight lease_glue)"
+lease_rc="$(cat "$FDIR/rc")"
+[ "$lease_rc" -eq 1 ] \
+  || fail "(f.1) exit code -- the lease FAIL path must exit 1 (ADR-0023's gate must not pass a broken controller), got $lease_rc:
+$lease_out"
+echo "$lease_out" | grep -q "lost its leader-election lease" \
+  || fail "(f.1) classifier glue -- a lease failure whose logs also mention networkpolicies must classify as lease, got:
+$lease_out"
+echo "$lease_out" | grep -q "forbidden networkpolicies log" \
+  && fail "(f.1) classifier glue -- concatenating the current and previous logs fabricated an RBAC match (issue #611), got:
+$lease_out"
+echo "  ok: (f.1) a lease failure whose logs mention networkpolicies classifies as lease, not rbac, and exits 1"
+
+# (f.2) Branch leak (AC2/AC3): the crash-loop hint is written for the #350 RBAC
+# signature and must not trail a lease diagnostic. Presence-only greps cannot
+# catch this; only running the lease branch can. Anchored on the hint's
+# distinctive prose ("delete the controller") rather than "CrashLoopBackOff",
+# since that status also appears in the FAIL diagnostic's own `kubectl get
+# pods` dump and would false-FAIL the moment the stub's stubbed pod status
+# stops being "Error".
+echo "$lease_out" | grep -q "NOT an RBAC/NetworkPolicy problem" \
+  || fail "(f.2) branch leak -- the lease diagnostic must disclaim RBAC, got:
+$lease_out"
+echo "$lease_out" | grep -q "delete the controller" \
+  && fail "(f.2) branch leak -- the RBAC crash-loop hint must NOT print under the lease branch (issue #611), got:
+$lease_out"
+echo "  ok: (f.2) the lease branch emits no RBAC crash-loop hint"
+
+# (f.3) The RBAC path still works: a genuine forbidden-networkpolicies line
+# classifies as rbac AND keeps its crash-loop remediation.
+rbac_out="$(run_preflight rbac)"
+rbac_rc="$(cat "$FDIR/rc")"
+[ "$rbac_rc" -eq 1 ] \
+  || fail "(f.3) exit code -- the rbac FAIL path must exit 1 (ADR-0023's gate must not pass a broken controller), got $rbac_rc:
+$rbac_out"
+echo "$rbac_out" | grep -q "forbidden-networkpolicies logged" \
+  || fail "(f.3) rbac path -- a genuine forbidden-networkpolicies log must classify as rbac, got:
+$rbac_out"
+echo "$rbac_out" | grep -q "delete the controller" \
+  || fail "(f.3) rbac path -- the rbac branch must keep its crash-loop remediation, got:
+$rbac_out"
+echo "  ok: (f.3) a genuine RBAC failure classifies as rbac, keeps its crash-loop hint, and exits 1"
+
 echo
-echo "PASS: exactly one read-only cluster networkpolicies grant (get/list/watch, bound to the controller SA); no cluster-wide mutate anywhere; namespaced Role keeps mutate and drops list/watch; the controller-ready gate renders on defaults, suppresses correctly under both flags, and classifies a lease timeout distinctly from an RBAC failure."
+echo "PASS: exactly one read-only cluster networkpolicies grant (get/list/watch, bound to the controller SA); no cluster-wide mutate anywhere; namespaced Role keeps mutate and drops list/watch; the controller-ready gate renders on defaults, suppresses correctly under both flags, classifies a lease timeout distinctly from an RBAC failure, and -- executed against a stub kubectl -- neither fabricates an RBAC match from two concatenated logs nor leaks the RBAC crash-loop hint into the lease branch."
