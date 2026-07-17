@@ -241,26 +241,26 @@ flowchart TB
         Worker --> API
     end
 
-    subgraph harness["Job 5: harness / runtime"]
+    subgraph harness["Job 1: harness / runtime"]
         SDK["claude-agent-sdk (today)"]
         HarnessAlt["ADK, Codex, Strands (candidates)"]
     end
 
-    subgraph obs["Job 1: observability store"]
+    subgraph obs["Job 2: observability store"]
         Collector["OTel Collector"]
         Langfuse["Langfuse (today) or Arize Phoenix"]
         Collector --> Langfuse
     end
 
-    subgraph evals["Job 2: evals"]
+    subgraph evals["Job 3: evals"]
         EvalStore["Langfuse scores (today) or Arize"]
     end
 
-    subgraph blob["Job 3: blob storage"]
+    subgraph blob["Job 4: blob storage"]
         S3["MinIO (today), S3, GCS"]
     end
 
-    subgraph db["Job 4: relational database"]
+    subgraph db["Job 5: relational database"]
         PG["Postgres (today) or managed SQL"]
     end
 

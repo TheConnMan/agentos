@@ -11,12 +11,12 @@ the k8scratch e2e test.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol
+from typing import Any
 
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 
-from .types import ClaimView, SandboxView
+from .types import ClaimView, OperatingMode, SandboxView
 
 CORE_GROUP = "agents.x-k8s.io"
 CORE_VERSION = "v1beta1"
@@ -26,8 +26,6 @@ EXT_VERSION = "v1beta1"
 MANAGED_BY_LABEL = "agentos.dev/managed-by"
 MANAGED_BY_VALUE = "agentos-sandbox-substrate"
 THREAD_HASH_LABEL = "agentos.dev/thread-hash"
-
-OperatingMode = Literal["Running", "Suspended"]
 
 # Per-claim env with no containerName reaches only the FIRST main container (the
 # agent-sandbox Overrides policy). The bundle ref must additionally reach the
@@ -56,29 +54,6 @@ CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 # rather than leaking it. Defined locally to keep the substrate seam free of a
 # binding import (like BUNDLE_REF_ENV / CREDENTIALS_ENV above).
 CONNECTOR_SECRET_KEYS_ENV = "AGENTOS_CONNECTOR_SECRET_KEYS"
-
-
-class SandboxClient(Protocol):
-    """What the substrate needs from the cluster, and nothing more."""
-
-    def create_claim(
-        self,
-        name: str,
-        *,
-        pool: str,
-        env: dict[str, str] | None = None,
-        labels: dict[str, str] | None = None,
-    ) -> None: ...
-
-    def get_claim(self, name: str) -> ClaimView | None: ...
-
-    def delete_claim(self, name: str) -> None: ...
-
-    def list_claims(self, *, label_selector: str) -> list[ClaimView]: ...
-
-    def get_sandbox(self, name: str) -> SandboxView | None: ...
-
-    def set_sandbox_mode(self, name: str, mode: OperatingMode) -> None: ...
 
 
 def _conditions_ready(status: dict[str, Any]) -> bool:

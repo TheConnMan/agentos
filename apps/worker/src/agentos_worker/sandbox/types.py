@@ -13,6 +13,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from typing import Literal, Protocol
 
 
 class RouteState(StrEnum):
@@ -139,6 +140,38 @@ class SandboxView:
     service_fqdn: str | None
     operating_mode: str
     port: int | None = None
+
+
+OperatingMode = Literal["Running", "Suspended"]
+
+
+class SandboxClient(Protocol):
+    """What the substrate needs from the cluster, and nothing more.
+
+    The port lives here in the substrate-neutral types module, NOT in a concrete
+    adapter (#543): it is the seam every backend implements (Kubernetes, Docker),
+    and declaring it inside the k8s adapter read as "the port is a Kubernetes
+    thing" -- the opposite of the swap-readiness the seam exists to provide.
+    """
+
+    def create_claim(
+        self,
+        name: str,
+        *,
+        pool: str,
+        env: dict[str, str] | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> None: ...
+
+    def get_claim(self, name: str) -> ClaimView | None: ...
+
+    def delete_claim(self, name: str) -> None: ...
+
+    def list_claims(self, *, label_selector: str) -> list[ClaimView]: ...
+
+    def get_sandbox(self, name: str) -> SandboxView | None: ...
+
+    def set_sandbox_mode(self, name: str, mode: OperatingMode) -> None: ...
 
 
 class SandboxError(Exception):
