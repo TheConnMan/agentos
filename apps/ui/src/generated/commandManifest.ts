@@ -634,9 +634,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                ""
-              ],
               "env": "SLACK_APP_TOKEN",
               "global": false,
               "help": "Slack app token. Defaults from SLACK_APP_TOKEN",
@@ -646,9 +643,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                ""
-              ],
               "env": "SLACK_BOT_TOKEN",
               "global": false,
               "help": "Slack bot token. Defaults from SLACK_BOT_TOKEN",
@@ -721,9 +715,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "valkeypass"
-              ],
               "env": "AGENTOS_VALKEY_PASSWORD",
               "global": false,
               "help": "Valkey password (compose default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
@@ -741,9 +732,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup",
@@ -819,9 +807,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "valkeypass"
-              ],
               "env": "AGENTOS_VALKEY_PASSWORD",
               "global": false,
               "help": "Valkey password (compose default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
@@ -839,9 +824,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup",
@@ -935,9 +917,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "help": "Platform API key",
@@ -1011,9 +990,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "id": "api_key",
@@ -1058,9 +1034,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "id": "api_key",
@@ -1105,9 +1078,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "id": "api_key",
@@ -1199,6 +1169,95 @@ export const commandManifest = {
           "name": "approvals"
         },
         {
+          "about": "Log in to the local AgentOS Console, or revoke every console session",
+          "hidden": false,
+          "name": "console",
+          "subcommands": [
+            {
+              "about": "Mint a single-use login code to paste into the console",
+              "args": [
+                {
+                  "default_values": [
+                    "http://localhost:28000"
+                  ],
+                  "env": "AGENTOS_API_URL",
+                  "global": false,
+                  "id": "api_url",
+                  "long": "api-url",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "env": "AGENTOS_API_KEY",
+                  "global": false,
+                  "id": "api_key",
+                  "long": "api-key",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "global": false,
+                  "id": "dry_run",
+                  "long": "dry-run",
+                  "positional": false,
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false
+                },
+                {
+                  "global": false,
+                  "help": "Optional note recorded on the session, to tell sessions apart",
+                  "id": "label",
+                  "long": "label",
+                  "positional": false,
+                  "required": false
+                }
+              ],
+              "hidden": false,
+              "name": "login"
+            },
+            {
+              "about": "Revoke every live console session (the kill switch)",
+              "args": [
+                {
+                  "default_values": [
+                    "http://localhost:28000"
+                  ],
+                  "env": "AGENTOS_API_URL",
+                  "global": false,
+                  "id": "api_url",
+                  "long": "api-url",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "env": "AGENTOS_API_KEY",
+                  "global": false,
+                  "id": "api_key",
+                  "long": "api-key",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "global": false,
+                  "id": "dry_run",
+                  "long": "dry-run",
+                  "positional": false,
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false
+                }
+              ],
+              "hidden": false,
+              "name": "revoke"
+            }
+          ]
+        },
+        {
           "about": "Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base)",
           "args": [
             {
@@ -1247,9 +1306,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "id": "api_key",
@@ -1294,9 +1350,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "id": "api_key",
@@ -1353,9 +1406,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "id": "api_key",
@@ -1601,6 +1651,139 @@ export const commandManifest = {
           "name": "status"
         },
         {
+          "about": "Log in to the release's AgentOS Console, or revoke every console session",
+          "hidden": false,
+          "name": "console",
+          "subcommands": [
+            {
+              "about": "Mint a single-use login code to paste into the console",
+              "args": [
+                {
+                  "env": "AGENTOS_API_URL",
+                  "global": false,
+                  "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
+                  "id": "api_url",
+                  "long": "api-url",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "env": "AGENTOS_API_KEY",
+                  "global": false,
+                  "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
+                  "id": "api_key",
+                  "long": "api-key",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "default_values": [
+                    "agentos"
+                  ],
+                  "global": false,
+                  "help": "Kubernetes namespace of the release. Default: agentos",
+                  "id": "namespace",
+                  "long": "namespace",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "default_values": [
+                    "agentos"
+                  ],
+                  "global": false,
+                  "help": "Helm release name. Default: agentos",
+                  "id": "release",
+                  "long": "release",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "global": false,
+                  "help": "Optional note recorded on the session, to tell sessions apart",
+                  "id": "label",
+                  "long": "label",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "global": false,
+                  "help": "Print the request that would be made and exit without executing",
+                  "id": "dry_run",
+                  "long": "dry-run",
+                  "positional": false,
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false
+                }
+              ],
+              "hidden": false,
+              "name": "login"
+            },
+            {
+              "about": "Revoke every live console session (the kill switch)",
+              "args": [
+                {
+                  "env": "AGENTOS_API_URL",
+                  "global": false,
+                  "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
+                  "id": "api_url",
+                  "long": "api-url",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "env": "AGENTOS_API_KEY",
+                  "global": false,
+                  "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
+                  "id": "api_key",
+                  "long": "api-key",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "default_values": [
+                    "agentos"
+                  ],
+                  "global": false,
+                  "help": "Kubernetes namespace of the release. Default: agentos",
+                  "id": "namespace",
+                  "long": "namespace",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "default_values": [
+                    "agentos"
+                  ],
+                  "global": false,
+                  "help": "Helm release name. Default: agentos",
+                  "id": "release",
+                  "long": "release",
+                  "positional": false,
+                  "required": false
+                },
+                {
+                  "global": false,
+                  "help": "Print the request that would be made and exit without executing",
+                  "id": "dry_run",
+                  "long": "dry-run",
+                  "positional": false,
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false
+                }
+              ],
+              "hidden": false,
+              "name": "revoke"
+            }
+          ]
+        },
+        {
           "about": "Show the release's observability surfaces (AgentOS Console + Langfuse traces/cost + API base)",
           "args": [
             {
@@ -1681,9 +1864,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                ""
-              ],
               "env": "SLACK_APP_TOKEN",
               "global": false,
               "help": "Slack app token. Defaults from SLACK_APP_TOKEN",
@@ -1693,9 +1873,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                ""
-              ],
               "env": "SLACK_BOT_TOKEN",
               "global": false,
               "help": "Slack bot token. Defaults from SLACK_BOT_TOKEN",
@@ -1843,9 +2020,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "valkeypass"
-              ],
               "env": "AGENTOS_VALKEY_PASSWORD",
               "global": false,
               "help": "Valkey password (chart default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
@@ -1866,9 +2040,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup",
@@ -1996,9 +2167,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "valkeypass"
-              ],
               "env": "AGENTOS_VALKEY_PASSWORD",
               "global": false,
               "help": "Valkey password (chart default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
@@ -2019,9 +2187,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup",
@@ -2134,9 +2299,6 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
               "help": "Platform API key",

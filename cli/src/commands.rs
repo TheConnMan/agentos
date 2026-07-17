@@ -2694,6 +2694,157 @@ pub async fn approvals(
     })
 }
 
+/// Shared flags for the console verbs (`<tier> console login|revoke`, #630).
+///
+/// Deliberately not `AgentActionOpts`: a console session belongs to the INSTALL,
+/// not to an agent, so there is no agent to resolve and no `agent` field to
+/// carry. Both verbs authenticate with the platform key, which is the whole
+/// point of ADR-0049 -- session management is reachable only from where the key
+/// already lives, so a session can never mint its own successor.
+pub struct ConsoleOpts {
+    pub api_url: String,
+    pub api_key: String,
+    pub dry_run: bool,
+}
+
+/// Output of `<tier> console login`: the dry-run plan, or the minted code.
+///
+/// Owns its data so `to_json`/`render` outlive the `ApiClient`. What is printed
+/// here is the single-use CODE, never the platform key: the code is a
+/// short-lived credential for exactly one session, and printing it is the
+/// mechanism by which the operator never has to handle the key.
+#[derive(Debug)]
+pub enum ConsoleLoginOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Minted {
+        code: String,
+        expires_at: String,
+        session_id: String,
+        /// The console to paste the code into, when it could be resolved. An
+        /// `Option` rather than a hard failure: a code we minted is valid even
+        /// if we cannot name the URL, and failing the mint over a cosmetic
+        /// lookup would throw away a live credential.
+        console_url: Option<String>,
+    },
+}
+
+impl crate::ui::CliOutput for ConsoleLoginOutput {
+    /// `{"code","expires_at","session_id","console_url":<string|null>}`.
+    ///
+    /// `console_url` is emitted with an explicit null rather than omitted when
+    /// unresolved, per the repo convention pinned by
+    /// `kill_output_json_shape_is_pinned`.
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ConsoleLoginOutput::DryRun(plan) => plan.to_json(),
+            ConsoleLoginOutput::Minted {
+                code,
+                expires_at,
+                session_id,
+                console_url,
+            } => serde_json::json!({
+                "code": code,
+                "expires_at": expires_at,
+                "session_id": session_id,
+                "console_url": console_url,
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ConsoleLoginOutput::DryRun(plan) => plan.render(ui),
+            ConsoleLoginOutput::Minted {
+                code,
+                expires_at,
+                console_url,
+                ..
+            } => {
+                ui.kv("login code", code);
+                ui.kv("expires at", expires_at);
+                match console_url {
+                    Some(url) => ui.kv("console", &ui.url(url)),
+                    None => ui.note(
+                        "could not resolve the console URL; find it with `agentos cluster status`",
+                    ),
+                }
+                ui.note("single use: open the console, paste the code, and it is spent");
+            }
+        }
+    }
+}
+
+/// `<tier> console login`: mint a single-use login code for the console
+/// (`POST /console/login-codes`, #630/ADR-0049).
+///
+/// `console_url` is resolved by the caller because the tiers resolve it
+/// differently (a fixed localhost URL vs the release's `ui` service), which is
+/// the same split `observability` already draws between the two tiers.
+pub async fn console_login(
+    opts: ConsoleOpts,
+    label: Option<String>,
+    console_url: Option<String>,
+) -> Result<ConsoleLoginOutput> {
+    if opts.dry_run {
+        return Ok(ConsoleLoginOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!("POST {}/console/login-codes", opts.api_url)],
+        }));
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let minted = client.mint_console_login_code(label.as_deref()).await?;
+    Ok(ConsoleLoginOutput::Minted {
+        code: minted.code,
+        expires_at: minted.expires_at,
+        session_id: minted.session_id,
+        console_url,
+    })
+}
+
+/// Output of `<tier> console revoke`: the dry-run plan, or the revoked count.
+#[derive(Debug)]
+pub enum ConsoleRevokeOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done { revoked: u64 },
+}
+
+impl crate::ui::CliOutput for ConsoleRevokeOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ConsoleRevokeOutput::DryRun(plan) => plan.to_json(),
+            ConsoleRevokeOutput::Done { revoked } => serde_json::json!({ "revoked": revoked }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ConsoleRevokeOutput::DryRun(plan) => plan.render(ui),
+            ConsoleRevokeOutput::Done { revoked } => {
+                ui.payload(&format!("revoked {revoked} console session(s)"));
+                ui.note("mint a new way in with `console login`");
+            }
+        }
+    }
+}
+
+/// `<tier> console revoke`: revoke every live console session
+/// (`DELETE /console/sessions`, #630/ADR-0049).
+///
+/// No `--yes` confirmation gate, deliberately diverging from `kill`: this is the
+/// operator's kill switch for a credential they believe is compromised, and a
+/// prompt between them and revocation is the wrong thing to put there. It is
+/// also cheap to undo -- `console login` mints a new way in -- which is what
+/// makes the asymmetry with `kill` (which stops an agent's runs) correct.
+pub async fn console_revoke(opts: ConsoleOpts) -> Result<ConsoleRevokeOutput> {
+    if opts.dry_run {
+        return Ok(ConsoleRevokeOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!("DELETE {}/console/sessions", opts.api_url)],
+        }));
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let revoked = client.revoke_console_sessions().await?;
+    Ok(ConsoleRevokeOutput::Done { revoked })
+}
+
 /// `local observability`: print the local platform's observability surfaces --
 /// the AgentOS Console, the Langfuse UI, and the API base -- resolved through the
 /// shared tier-aware endpoint seam (`crate::observability`).
@@ -4260,6 +4411,73 @@ mod tests {
         assert_eq!(
             super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS="),
             "AGENTOS_APPROVAL_REQUIRED_TOOLS=''"
+        );
+    }
+
+    /// The console-login payload shape is a contract an agent parses (#630).
+    /// `console_url` must be an explicit null when unresolved, never omitted --
+    /// the repo convention pinned by `kill_output_json_shape_is_pinned`.
+    #[test]
+    fn console_login_json_shape_is_pinned() {
+        use crate::ui::CliOutput;
+        let out = super::ConsoleLoginOutput::Minted {
+            code: "abc123".into(),
+            expires_at: "2026-07-17T12:00:00Z".into(),
+            session_id: "11111111-1111-1111-1111-111111111111".into(),
+            console_url: None,
+        };
+        let json = out.to_json();
+        assert!(
+            json.get("console_url")
+                .is_some_and(serde_json::Value::is_null),
+            "an unresolved console_url must be an explicit null, not omitted: {json}"
+        );
+        assert_eq!(json["code"], "abc123");
+        assert_eq!(json["expires_at"], "2026-07-17T12:00:00Z");
+        assert_eq!(json["session_id"], "11111111-1111-1111-1111-111111111111");
+    }
+
+    #[tokio::test]
+    async fn console_dry_run_plans_the_request_and_makes_none() {
+        use crate::ui::CliOutput;
+        // An unroutable URL: if a dry run ever sent a request, this would error
+        // rather than return a plan, so the assertion proves no call was made.
+        let opts = || super::ConsoleOpts {
+            api_url: "http://127.0.0.1:1".into(),
+            api_key: "K".into(),
+            dry_run: true,
+        };
+        let login = super::console_login(opts(), None, None).await.unwrap();
+        assert_eq!(login.to_json()["dry_run"], true);
+        assert_eq!(
+            login.to_json()["plan"][0],
+            "POST http://127.0.0.1:1/console/login-codes"
+        );
+
+        let revoke = super::console_revoke(opts()).await.unwrap();
+        assert_eq!(revoke.to_json()["dry_run"], true);
+        assert_eq!(
+            revoke.to_json()["plan"][0],
+            "DELETE http://127.0.0.1:1/console/sessions"
+        );
+    }
+
+    /// The minted code IS meant to be printed -- it is the credential that keeps
+    /// the platform key out of the browser. The platform key never is.
+    #[test]
+    fn console_login_renders_the_code_and_never_the_platform_key() {
+        use crate::ui::CliOutput;
+        let out = super::ConsoleLoginOutput::Minted {
+            code: "abc123".into(),
+            expires_at: "2026-07-17T12:00:00Z".into(),
+            session_id: "sid".into(),
+            console_url: Some("http://localhost:28080/?api=1".into()),
+        };
+        let json = out.to_json().to_string();
+        assert!(json.contains("abc123"), "the code is the point of the verb");
+        assert!(
+            !json.contains("agentos-dev-key"),
+            "the platform key must never reach the output"
         );
     }
 

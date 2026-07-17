@@ -87,13 +87,25 @@ fn arg_to_value(arg: &clap::Arg) -> Value {
     obj.insert("required".into(), json!(arg.is_required_set()));
     obj.insert("global".into(), json!(arg.is_global_set()));
 
-    let defaults: Vec<String> = arg
-        .get_default_values()
-        .iter()
-        .map(|v| v.to_string_lossy().into_owned())
-        .collect();
-    if !defaults.is_empty() {
-        obj.insert("default_values".into(), json!(defaults));
+    // A credential's default is deliberately NOT emitted (#630). The console
+    // bundles this manifest into `dist/`, so any default here is a static asset
+    // served to every browser -- and `--api-key`'s default IS the API's own
+    // `Settings.api_key` default, i.e. the live platform key on a dev install.
+    // `hide_env_values` is the marker: it is already how this CLI declares "this
+    // arg carries a credential" (cli/CLAUDE.md), so keying off it means a new
+    // credential arg is covered the moment it follows the existing convention,
+    // rather than needing to be remembered here. The arg, its `--help`, and its
+    // runtime default are all unchanged; only the machine-readable snapshot
+    // stops carrying the value.
+    if !arg.is_hide_env_values_set() {
+        let defaults: Vec<String> = arg
+            .get_default_values()
+            .iter()
+            .map(|v| v.to_string_lossy().into_owned())
+            .collect();
+        if !defaults.is_empty() {
+            obj.insert("default_values".into(), json!(defaults));
+        }
     }
 
     let possible: Vec<String> = arg
@@ -144,6 +156,46 @@ mod tests {
                 ),
             )
             .subcommand(Command::new("hidden-one").hide(true))
+            .subcommand(
+                Command::new("auth").about("Auth it").arg(
+                    Arg::new("api-key")
+                        .long("api-key")
+                        .env("DEMO_API_KEY")
+                        .hide_env_values(true)
+                        .default_value("demo-dev-key")
+                        .help("Key"),
+                ),
+            )
+    }
+
+    /// A credential arg's default must never reach the manifest (#630): the
+    /// console bundles this file, so a default here is a credential served as a
+    /// static asset. The arg itself must still be described in full, or the
+    /// console's `cliCommand()` hints lose a real flag.
+    #[test]
+    fn manifest_omits_a_credential_args_default_but_keeps_the_arg() {
+        let value = manifest(&sample());
+        let subs = value["subcommands"].as_array().expect("subcommands");
+        let auth = subs.iter().find(|c| c["name"] == "auth").expect("auth");
+        let key = auth["args"]
+            .as_array()
+            .expect("auth args")
+            .iter()
+            .find(|a| a["id"] == "api-key")
+            .expect("api-key arg");
+
+        assert!(
+            key.get("default_values").is_none(),
+            "a credential default must not be emitted into the manifest: {key:?}"
+        );
+        assert!(
+            !manifest_json(&sample()).contains("demo-dev-key"),
+            "the credential value must not appear anywhere in the manifest"
+        );
+        // The arg is described, just without its value.
+        assert_eq!(key["long"], "api-key");
+        assert_eq!(key["env"], "DEMO_API_KEY");
+        assert_eq!(key["help"], "Key");
     }
 
     #[test]

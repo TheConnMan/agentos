@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { C, R } from "../tokens";
 import { Button } from "../primitives";
+import { cliCommand } from "../primitives/cliCommand";
 import { ApiError } from "../api/client";
 
 // The console's login gate (#630 / ADR-0049). The operator pastes a single-use
@@ -55,18 +56,40 @@ export function ConsoleLogin({ onActivate }: { onActivate: (code: string) => Pro
           }}
         >
           <h1 style={{ fontSize: 19, fontWeight: 400, color: C.text, margin: "0 0 6px" }}>Sign in to AgentOS</h1>
-          <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.5, margin: "0 0 20px" }}>
-            {/*
-              The exact `agentos ... console login` invocation is deliberately not
-              written out here. Per apps/ui/CLAUDE.md every agentos command string
-              in a component must resolve from the committed manifest through
-              cliCommand(), and the console login verb is not in the manifest yet
-              (it is the CLI half of #630). Once `pnpm gen:manifest` picks it up
-              this paragraph gets a CliHint next to it.
-            */}
-            Run the AgentOS CLI&rsquo;s console login command on this install to mint a login code, then paste it
-            below. Codes are single use and expire.
+          <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.5, margin: "0 0 12px" }}>
+            Mint a login code with the AgentOS CLI on this install, then paste it below. Codes are single use and
+            expire.
           </p>
+          {/*
+            Both tiers are shown because this view CANNOT know which one it is
+            serving: `env` is a store concept, and the gate mounts above
+            StoreProvider on purpose (a locked console must not mount the
+            providers that fetch). Naming one tier would be a guess that is wrong
+            half the time, so the operator picks the line matching their install.
+
+            Plain text rather than a <CliHint>: CliHint calls useStore() for its
+            "Copied" toast, and there is no store above the gate. The parity rule
+            in apps/ui/CLAUDE.md is that the command STRING resolves from the
+            committed manifest via cliCommand() -- which it does here -- not that
+            it must be carried by CliHint.
+          */}
+          <div
+            data-testid="console-login-cli"
+            style={{
+              background: C.input,
+              border: "1px solid " + C.border,
+              borderRadius: R.btn,
+              padding: "8px 10px",
+              fontFamily: C.mono,
+              fontSize: 12,
+              color: C.muted,
+              lineHeight: 1.7,
+              marginBottom: 20,
+            }}
+          >
+            <div>{cliCommand("cluster.console.login")}</div>
+            <div>{cliCommand("local.console.login")}</div>
+          </div>
 
           <label htmlFor="console-login-code" style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 6 }}>
             Login code

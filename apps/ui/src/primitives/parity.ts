@@ -53,6 +53,12 @@ export const WIRED_ACTIONS = [
   { id: "budget", label: "Set budget", mapping: { command: "cluster.budget" } },
   { id: "delete", label: "Delete an agent", mapping: { command: "cluster.delete" } },
 
+  // ConsoleLogin (#630) — the login gate names the verb that mints a code. Both
+  // tiers are listed because the gate cannot know which one serves it: it mounts
+  // above the store that carries `env`.
+  { id: "console-login-cluster", label: "Mint a console login code (prod)", mapping: { command: "cluster.console.login" } },
+  { id: "console-login-local", label: "Mint a console login code (dev)", mapping: { command: "local.console.login" } },
+
   // Genuinely-unmapped actions: no dedicated CLI verb exists yet. These render
   // the honest amber glyph linking to the parity epic instead of a command.
   { id: "rollback", label: "Roll back to an earlier version", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },

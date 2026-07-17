@@ -1379,6 +1379,10 @@ impl crate::ui::CliOutput for ClusterStatusOutput {
                 for url in &s.urls {
                     url.render(ui);
                 }
+                // The console URL above carries no secret and never will
+                // (ADR-0049), so it is not a way in on its own. Name the verb
+                // that is, or the operator is left guessing at a URL that 401s.
+                ui.note("log in to the console with `agentos cluster console login`");
                 if s.total > 0 && s.ready == s.total && s.unhealthy.is_empty() {
                     ui.success(&format!("healthy ({}/{} pods ready)", s.ready, s.total));
                 } else if s.total == 0 {
@@ -2176,6 +2180,22 @@ pub async fn cluster_observability_endpoints(
         ),
         api_base_endpoint(opts, ui_svc.as_deref(), host.as_deref()),
     ]
+}
+
+/// The release's console URL for `cluster console login`, or None when it cannot
+/// be resolved.
+///
+/// Reuses the same discovery `cluster status` and `cluster observability` use,
+/// so the URL a login names is the URL those verbs print -- one resolution, not
+/// a third derivation. Returns an Option rather than erroring: a minted code is
+/// valid whether or not we can name the console, so a failed cosmetic lookup
+/// must not throw away a live credential.
+pub async fn discover_console_url(opts: &CommonOpts) -> Option<String> {
+    cluster_observability_endpoints(opts)
+        .await
+        .into_iter()
+        .find(|e| e.name == "AgentOS Console")
+        .and_then(|e| e.url)
 }
 
 /// The read-only commands `agentos cluster observability` runs (and prints under
