@@ -195,6 +195,10 @@ pub fn primer() -> Primer {
                 detail: "A connect that rotates a secret must also roll the pod; `agentos cluster comms` does this for you.",
             },
             Landmine {
+                title: "You wire the non-secret setup; the human supplies only secrets and browser-made apps",
+                detail: "When you are asked to get a bundle running, do the plumbing yourself -- source the bundle's dotenv, run `agentos local up`, `agentos local deploy`, and `agentos local comms --slack`, then tear down -- rather than handing the human a shell checklist to copy-paste. Two parts are irreducibly manual and stay with the human: supplying the actual secret VALUES (never type a credential or API key yourself) and creating an external app in a browser to mint its tokens (e.g. the Slack app). Automate everything between. If a credential already lives in the environment or the bundle's own `.env`, use it instead of asking for it to be exported.",
+            },
+            Landmine {
                 title: "A real-model `cluster up` fails closed without a gVisor runtime",
                 detail: "On a cluster with no `runsc` RuntimeClass, the default `security.gvisor.mode=auto` renders a blocking enforcement preflight for a real (non-fake) model, so `agentos cluster up` fails closed instead of running runner pods on the host kernel. Install anyway with `agentos cluster up --set security.gvisor.mode=off` (no kernel isolation, knowingly), use `--fake-model` (the sealed path skips the preflight), or install runsc on the nodes. This is the security posture, not a bug.",
             },
