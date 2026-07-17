@@ -68,7 +68,7 @@ tempfile = "3"
 # JSON Schema validation for the agent-facing --json contract gate (ADR-0021).
 # Default features pull reqwest + a second TLS stack for remote $ref resolution
 # we never use; the committed schemas are self-contained, so keep it lean.
-jsonschema = { version = "0.47", default-features = false }
+jsonschema = { version = "0.48", default-features = false }
 # The frozen ACI types are a normal dependency of the lib, but integration test
 # crates need them by name to build a SessionStatus for the status_json contract.
 agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
