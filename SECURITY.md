@@ -55,6 +55,27 @@ silently false-pass. Run it against your cluster to verify enforcement.
 and gVisor only isolates if the RuntimeClass is installed. Both are operator
 responsibilities (see below).
 
+### Local mode is not the Kubernetes boundary
+
+The local developer loop (`agentos local up` / `agentos skill up`, the Docker
+substrate) **accepts TRUSTED bundles only.** It is a convenience for developing
+and demoing your own bundles on a laptop, not a security boundary for running
+untrusted code. The Kubernetes sandbox rails above (gVisor + default-deny
+NetworkPolicy + per-agent RBAC) are the only supported boundary for untrusted
+bundles; do not use local mode to run a bundle you would not run as a plain
+script on your machine.
+
+Local mode still applies practical container isolation as defense-in-depth so a
+trusted-but-buggy bundle cannot casually escalate on the host: each runner
+container boots with a **read-only root filesystem** (writable `tmpfs` for `/tmp`
+and `$HOME` only), **all Linux capabilities dropped**, **no-new-privileges**, the
+Docker **default seccomp profile**, and **bounded pids/memory/cpu**, and it joins
+a **dedicated `agentos_runner` network** that carries only its documented
+dependencies (telemetry collector, local model, and the API state endpoint) --
+never the data tier (Postgres/Valkey/MinIO) and never the Docker daemon socket
+(which only the worker holds). These controls reduce blast radius; they are not a
+substitute for the Kubernetes boundary.
+
 ## Reporting a vulnerability
 
 Please report security issues privately through **GitHub Private Vulnerability

@@ -205,7 +205,10 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
                 format!("http://ollama:{OLLAMA_PORT}"),
             ),
             ("AGENTOS_MODEL".into(), model.clone()),
-            ("AGENTOS_DOCKER_NETWORK".into(), "agentos_default".into()),
+            // Spawned runners join the dedicated, data-tier-free runner network
+            // (#631). ollama is multi-homed onto it, so `--local-model` resolves
+            // `ollama` by name without exposing postgres/valkey/minio.
+            ("AGENTOS_DOCKER_NETWORK".into(), "agentos_runner".into()),
             // Pin the compose project name so the default network is always
             // `agentos_default`, regardless of the working-directory basename
             // (which is what compose otherwise derives the project name from).
@@ -599,7 +602,7 @@ mod tests {
             .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
         assert!(cmd.env.contains(&(
             String::from("AGENTOS_DOCKER_NETWORK"),
-            String::from("agentos_default"),
+            String::from("agentos_runner"),
         )));
         assert!(cmd.env.contains(&(
             String::from("COMPOSE_PROJECT_NAME"),

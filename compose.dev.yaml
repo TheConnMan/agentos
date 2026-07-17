@@ -161,6 +161,10 @@ services:
   ollama:
     image: ollama/ollama:0.24.0
     profiles: [local-model]
+    # Multi-homed onto agentos_runner (#631) so a hardened runner on that
+    # isolated network can resolve `ollama` by name for --local-model, while the
+    # data tier stays off it.
+    networks: [default, agentos_runner]
     ports:
       - "21434:11434"
     volumes:
@@ -240,6 +244,10 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
     profiles: *full_profiles
+    # Multi-homed onto agentos_runner (#631): a hardened runner exports OTLP to
+    # `otel-collector:4318` from the isolated runner network, while the collector
+    # still reaches langfuse-web on the default network.
+    networks: [default, agentos_runner]
     command: ["--config=/etc/otel/collector-config.yaml"]
     depends_on:
       langfuse-web:
@@ -290,6 +298,14 @@ services:
   agentos-api:
     image: ghcr.io/curie-eng/agentos-api:latest
     profiles: *core_profiles
+    # Multi-homed onto agentos_runner (#631): the runner's documented `state`
+    # dependency is the API's /agents/.../state endpoints, so the API is the one
+    # control-plane surface reachable from the isolated runner network. Being a
+    # core-profile always-up service, it also guarantees the agentos_runner
+    # network exists even for a `--minimal` (core-only) stack, so the worker's
+    # `--network agentos_runner` always resolves. The data tier
+    # (postgres/valkey/minio/clickhouse) is deliberately NOT on this network.
+    networks: [default, agentos_runner]
     depends_on:
       postgres:
         condition: service_healthy
@@ -367,16 +383,26 @@ services:
   # hand-run host process. It uses the DOCKER sandbox substrate: it spawns runner
   # CONTAINERS on the host's Docker daemon through the mounted socket.
   #
-  # SECURITY: this service is host-root-equivalent BY DESIGN. Mounting
+  # SECURITY: this WORKER service is host-root-equivalent BY DESIGN. Mounting
   # /var/run/docker.sock and running as user 0 gives it the same power as the
-  # host's docker CLI (i.e. host root). This is a LOCAL DEVELOPER CONVENIENCE
-  # with NO security boundary -- it is identical in power to the documented
-  # host-process middle mode (a developer running `python -m agentos_worker` with
-  # docker access). Do NOT model production on this. The hardened path is the
-  # Helm deployment (charts/agentos): the worker there uses the Kubernetes
-  # substrate (no docker socket), and runner sandboxes run under gVisor with a
-  # default-deny egress NetworkPolicy. The socket mount and user:0 are confined
-  # to THIS service; no other service in this file gets them.
+  # host's docker CLI (i.e. host root). This is a LOCAL DEVELOPER CONVENIENCE and
+  # is NOT the Kubernetes security boundary -- it is identical in power to the
+  # documented host-process middle mode (a developer running
+  # `python -m agentos_worker` with docker access). Do NOT model production on
+  # this. The hardened path is the Helm deployment (charts/agentos): the worker
+  # there uses the Kubernetes substrate (no docker socket), and runner sandboxes
+  # run under gVisor with a default-deny egress NetworkPolicy. The socket mount
+  # and user:0 are confined to THIS service; no other service in this file gets
+  # them.
+  #
+  # The RUNNER CONTAINERS this worker spawns ARE hardened (#631), even though the
+  # worker itself is not: each runner boots with a read-only rootfs (+ tmpfs for
+  # /tmp and HOME), all Linux capabilities dropped, no-new-privileges, the
+  # default seccomp profile, and bounded pids/memory/cpu, and joins the isolated
+  # `agentos_runner` network (no data-tier reach, no docker socket). This is
+  # practical trusted-bundle defense-in-depth for local mode -- see
+  # apps/worker/src/agentos_worker/sandbox/docker.py (RunnerHardening). Local mode
+  # accepts TRUSTED bundles only; it is not a substitute for the K8s boundary.
   #
   # network_mode: host recreates the exact topology the Docker substrate was
   # written and tested against (the host-process middle mode): the worker reaches
@@ -440,12 +466,16 @@ services:
       - ANTHROPIC_API_KEY
       - CLAUDE_CODE_OAUTH_TOKEN
       - AGENTOS_CREDENTIALS
-      # By default, the worker joins spawned sandbox containers to the compose
-      # network (AGENTOS_DOCKER_NETWORK=agentos_default) and points them at the
-      # shipped collector (OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318),
-      # so a plain `agentos local up` traces with no manual flags. The network
-      # join is also what lets --local-model resolve ollama by name. Both are
-      # overridable from the shell.
+      # By default, the worker joins spawned sandbox containers to the DEDICATED
+      # runner network (AGENTOS_DOCKER_NETWORK=agentos_runner, #631) and points
+      # them at the shipped collector (OTEL_EXPORTER_OTLP_ENDPOINT=
+      # http://otel-collector:4318), so a plain `agentos local up` traces with no
+      # manual flags. agentos_runner carries only the runner's documented
+      # dependencies -- otel-collector (telemetry), ollama (--local-model), and
+      # agentos-api (state) -- NOT the data tier (postgres/valkey/minio), so a
+      # trusted-but-buggy bundle cannot reach the stores' embedded credentials.
+      # The collector join is also what lets --local-model resolve ollama by name.
+      # Both are overridable from the shell.
       #
       # The endpoint default is what a full-profile `local up` gets. It uses the
       # `${VAR-default}` form (substitute only when UNSET), not `${VAR:-default}`
@@ -454,12 +484,12 @@ services:
       # --minimal selects the `core` profile, which does not start otel-collector,
       # and a runner pointed at a host that never resolves stalls on synchronous
       # export retries per span. AGENTOS_DOCKER_NETWORK stays on `:-` because the
-      # network join is correct under `core` too.
+      # runner network is created (via agentos-api's membership) under `core` too.
       - AGENTOS_MODEL_BASE_URL=${AGENTOS_MODEL_BASE_URL:-}
       - AGENTOS_MODEL_API_BACKEND=${AGENTOS_MODEL_API_BACKEND:-}
       - AGENTOS_MODEL_ENV_KEY=${AGENTOS_MODEL_ENV_KEY:-}
       - AGENTOS_MODEL=${AGENTOS_MODEL:-}
-      - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-agentos_default}
+      - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-agentos_runner}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
     restart: unless-stopped
 
@@ -501,6 +531,19 @@ services:
       # explicitly rather than relying on the two defaults happening to match.
       AGENTOS_API_KEY: agentos-dev-key
     restart: unless-stopped
+
+networks:
+  # The dedicated runner network (#631). Spawned runner containers join THIS
+  # (AGENTOS_DOCKER_NETWORK=agentos_runner), never the default network that
+  # carries the data tier (postgres/valkey/minio/clickhouse). Only the runner's
+  # documented dependencies are multi-homed onto it -- otel-collector
+  # (telemetry), ollama (--local-model), and agentos-api (state) -- so a
+  # trusted-but-buggy bundle cannot reach the stores' embedded credentials, and a
+  # real-model run still gets external egress (this is a normal, non-`internal`
+  # bridge). `name:` pins the actual network name so the worker's
+  # `--network agentos_runner` resolves regardless of the compose project name.
+  agentos_runner:
+    name: agentos_runner
 
 volumes:
   postgres_data:
