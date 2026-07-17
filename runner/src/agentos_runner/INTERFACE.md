@@ -19,6 +19,24 @@ rather than a parallel path. This is one seam, many providers.
 When set to a non-empty value, the runner enters override mode. Unset or empty
 means normal Anthropic credential resolution (`resolve_model_credential`).
 
+### `AGENTOS_MODEL_API_BACKEND` (input)
+
+Declares the endpoint's wire protocol instead of leaving it assumed: one of
+`messages`, `chat_completions`, `responses` (the `ApiBackend` members). Unset or
+empty means `messages`, which is what override mode previously assumed of every
+endpoint. Only `messages` is dialable — the runner speaks the Anthropic Messages
+wire format via claude-agent-sdk — so `resolve_sdk_env` checks the declaration
+FIRST, before any credential or base-URL branching, and rejects an OpenAI-shaped
+backend with an actionable error rather than mis-dialing it. Reaching one needs a
+translating proxy in front of the runner. See ADR-0048.
+
+### `AGENTOS_MODEL_ENV_KEY` (input)
+
+Declares which env var(s) carry the credential: a bare name or a JSON array of
+names. The keys are walked in declared order and the first that is both set and
+non-empty wins; a present-but-empty key is skipped, never wins. Unset or empty
+defaults to `AGENTOS_CREDENTIALS`, the single hardcoded name read before this.
+
 ### `ANTHROPIC_API_KEY` (output, set by the runner)
 
 A NON-EMPTY no-op placeholder (`not-needed`, the `NO_OP_API_KEY` constant).
@@ -46,7 +64,8 @@ The model name (e.g. `qwen3:4b`), passed through to `ClaudeAgentOptions.model`.
 
 ## OpenRouter mapping
 
-An `sk-or-...` credential in `AGENTOS_CREDENTIALS` is auto-detected by
+An `sk-or-...` credential in the declared credential env var (`AGENTOS_CREDENTIALS`
+unless `AGENTOS_MODEL_ENV_KEY` says otherwise) is auto-detected by
 `resolve_model_credential`. The runner sets
 `ANTHROPIC_BASE_URL=https://openrouter.ai/api` and places the real key in
 `ANTHROPIC_API_KEY` (sent as the `x-api-key` header, which OpenRouter's Anthropic
