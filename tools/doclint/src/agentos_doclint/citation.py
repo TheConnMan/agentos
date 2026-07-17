@@ -52,6 +52,10 @@ _MD = MarkdownIt("commonmark")
 class CodeSpan:
     content: str
     line: int | None
+    # The href of the enclosing markdown link, when the span is the visible text
+    # of a ``[`text`](target)`` link; ``None`` for a bare inline-code span. Used
+    # to gate that a decorated citation's target agrees with its cited path.
+    href: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,7 +140,7 @@ def find_code_spans(text: str) -> list[CodeSpan]:
                 if current_href is not None and child.content.strip() == current_href.strip():
                     continue
                 line = start_line + 1 + line_offset if start_line is not None else None
-                spans.append(CodeSpan(content=child.content, line=line))
+                spans.append(CodeSpan(content=child.content, line=line, href=current_href))
     return spans
 
 
@@ -234,3 +238,29 @@ def is_line_suppressed(lines: list[str], line_no: int) -> bool:
 def path_exists(repo_root: Path, rel_path: str) -> bool:
     """Repo-root-relative existence check. Never doc-relative."""
     return (repo_root / rel_path).is_file()
+
+
+def link_target_matches_citation(
+    repo_root: Path, doc_rel: str, cite_path: str, href: str
+) -> bool:
+    """True when a decorated citation's link target points at the cited file.
+
+    A ``[`path::Symbol`](target)`` link asserts two things about the same file:
+    its citation text (repo-root-relative ``cite_path``) and its navigable
+    ``target``. When the two name different files the reader is sent somewhere
+    the citation does not describe -- the exact drift #575 left in ARCHITECTURE.md,
+    where the text cited ``types.py`` but the link went to ``k8s.py``.
+
+    The href is resolved with normal markdown semantics (relative to the doc's
+    own directory) and compared to the citation resolved from the repo root.
+    A pure-anchor href (``#section``, no path) is a same-doc link, not a file
+    target, so it is treated as consistent.
+    """
+
+    href_path = href.split("#", 1)[0].split("?", 1)[0].strip()
+    if not href_path:
+        return True
+    doc_dir = (repo_root / doc_rel).parent
+    href_abs = (doc_dir / href_path).resolve()
+    cite_abs = (repo_root / cite_path).resolve()
+    return href_abs == cite_abs
