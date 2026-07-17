@@ -213,12 +213,7 @@ spec:
           # write targets a mounted emptyDir (the fetched archive to `bundles`, mc's
           # config to the dedicated `mc-config` volume via MC_CONFIG_DIR), so a
           # read-only rootfs is safe.
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop: [ALL]
+          {{- include "agentos.sandboxHardening.securityContext" . | nindent 10 }}
           {{- end }}
           command:
             - /bin/sh
@@ -262,12 +257,7 @@ spec:
           # Same container-level lockdown as the runner (see bundle-fetch): all
           # writes target the mounted `bundles` volume, so a read-only rootfs is
           # safe here too.
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop: [ALL]
+          {{- include "agentos.sandboxHardening.securityContext" . | nindent 10 }}
           {{- end }}
           command:
             - /bin/sh
@@ -332,12 +322,7 @@ spec:
           {{- if $runner.hardening.enabled }}
           # Same container-level lockdown as the runner: the proxy only reads its
           # mounted config and talks upstream, so a read-only rootfs is safe.
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop: [ALL]
+          {{- include "agentos.sandboxHardening.securityContext" . | nindent 10 }}
           {{- end }}
           args:
             - --config
@@ -362,12 +347,7 @@ spec:
           image: {{ include "agentos.image" (dict "repository" $runner.image "tag" $runner.tag "digest" $runner.digest "defaultTag" $.Chart.AppVersion) | quote }}
           imagePullPolicy: {{ $runner.imagePullPolicy }}
           {{- if $runner.hardening.enabled }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop: [ALL]
+          {{- include "agentos.sandboxHardening.securityContext" . | nindent 10 }}
           {{- end }}
           ports:
             - name: aci

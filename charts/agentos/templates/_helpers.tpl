@@ -480,3 +480,31 @@ true
 true
 {{- end -}}
 {{- end -}}
+
+{{/* ---- Sandbox container hardening (Rail 3) ----
+     The identical container-level lockdown applied to the runner and every
+     helper container in the sandbox pod (bundle-fetch, bundle-extract, litellm).
+     Extracted so the four copies cannot drift (#493); callers keep their own
+     `{{- if $runner.hardening.enabled }}` guard and apply `nindent 10`. This is
+     the container securityContext only -- the pod-level securityContext
+     (runAsUser/fsGroup/seccomp) is a separate, non-duplicated block. */}}
+{{- define "agentos.sandboxHardening.securityContext" -}}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: [ALL]
+{{- end -}}
+
+{{/* ---- First-party service container securityContext ----
+     The `securityContext:` + `toYaml` wrapper the four first-party services (api,
+     worker, dispatcher, ui) each render from their own
+     `.Values.<svc>.containerSecurityContext`. Extracted so the wrapper lives once
+     (#493). Call with the container-security-context VALUE inside the existing
+     `{{- with .Values.<svc>.containerSecurityContext }}` guard and apply
+     `nindent 10`; the `with` handles the empty case exactly as before. */}}
+{{- define "agentos.containerSecurityContext" -}}
+securityContext:
+{{- toYaml . | nindent 2 }}
+{{- end -}}

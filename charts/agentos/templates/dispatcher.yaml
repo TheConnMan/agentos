@@ -34,8 +34,7 @@ spec:
           image: {{ include "agentos.image" (dict "repository" .Values.dispatcher.image.repository "tag" .Values.dispatcher.image.tag "digest" .Values.dispatcher.image.digest "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.dispatcher.image.pullPolicy }}
           {{- with .Values.dispatcher.containerSecurityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
+          {{- include "agentos.containerSecurityContext" . | nindent 10 }}
           {{- end }}
           env:
             {{- include "agentos.env.valkey" . | nindent 12 }}
