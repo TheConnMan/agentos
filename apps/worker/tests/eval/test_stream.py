@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import pytest
 import redis
 from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV, MODEL_ENV
 from agentos_worker.bundle_store import BundleStore
@@ -124,9 +125,7 @@ class _FakeK8s:
         claim = self.claims.get(name)
         if claim is None:
             return None
-        return ClaimView(
-            name=claim.name, ready=True, sandbox_name=claim.sandbox_name
-        )
+        return ClaimView(name=claim.name, ready=True, sandbox_name=claim.sandbox_name)
 
     def delete_claim(self, name: str) -> None:
         self.claims.pop(name, None)
@@ -898,6 +897,50 @@ def test_eval_requested_model_labels_even_a_target_url_run() -> None:
     assert consumer._eval_model(labelled) == "claude-y"
     unlabelled = _item(suite="s", sha="d", bundle_ref=None, target_url="http://runner")
     assert consumer._eval_model(unlabelled) is None
+
+
+def test_eval_fake_model_install_refuses_to_label_a_model_never_called(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#606: a fake-model install (the sealed default, or AGENTOS_FAKE_MODEL=1) runs
+    the canned FakeModelSession regardless of the requested model. A sweep row must
+    NOT be tagged with a model that was never called -- that fabricates a
+    cross-model comparison indistinguishable from a real one (ADR-0041). The row is
+    left unlabelled, and the discarded request is logged rather than silently
+    dropped."""
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(fake_model=True, model="worker-default"),
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    booted = _item(
+        suite="s",
+        sha="deadbeef",
+        bundle_ref="bundles/x.zip",
+        target_url=None,
+        model="claude-opus-4-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        assert consumer._eval_model(booted) is None  # NOT "claude-opus-4-8"
+    assert any("claude-opus-4-8" in r.getMessage() for r in caplog.records), (
+        "the discarded requested model must be logged, not silently dropped"
+    )
+
+    # A fake run with no requested model is unlabelled too (not the worker default,
+    # which the fake session never calls either).
+    default_item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.zip", target_url=None)
+    assert consumer._eval_model(default_item) is None
+
+    # The target_url runner we did not boot is exempt: our fake flag says nothing
+    # about what that runner ran, so a caller-asserted label still stands.
+    remote = _item(
+        suite="s", sha="d", bundle_ref=None, target_url="http://runner", model="claude-y"
+    )
+    assert consumer._eval_model(remote) == "claude-y"
 
 
 def test_eval_boot_env_drops_reserved_connector_secret() -> None:
