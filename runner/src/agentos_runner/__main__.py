@@ -18,7 +18,8 @@ from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
 from .approval import (
-    ApprovalGate,
+    ApprovalPolicyError,
+    build_approval_gate,
     build_approval_server,
     build_can_use_tool,
     load_approval_policy,
@@ -101,19 +102,24 @@ def build_runner(
     # those calls pending approval; the gate object is shared with the
     # SessionRunner so a blocked call flips the turn's final to
     # awaiting-approval. Neither configured keeps the bypass posture.
-    policy_routes = load_approval_policy(config.session.plugin_dir)
-    gated_tools = frozenset(config.approval_required_tools or ()) | frozenset(
-        policy_routes
-    )
-    approval_gate = (
-        ApprovalGate(
-            required=gated_tools,
-            route_by_tool=policy_routes,
+    # Both halves fail closed (#520): load_approval_policy raises rather than
+    # degrading a declared-but-unarmable policy to "nothing gated", and
+    # build_approval_gate refuses a bundle gate that would redefine the route
+    # of a tool the operator already gated. Either raises before the first
+    # turn, so a misdeclared policy never boots ungated.
+    try:
+        policy_routes = load_approval_policy(config.session.plugin_dir)
+        approval_gate = build_approval_gate(
+            operator_tools=config.approval_required_tools,
+            policy_routes=policy_routes,
             grant_tool=config.approval_grant_tool,
         )
-        if gated_tools
-        else None
-    )
+    except ApprovalPolicyError as exc:
+        # Log then re-raise, matching the module's other two fatal boot paths
+        # (credential resolution, session start): a bare traceback is the one
+        # thing an operator cannot triage from pod logs.
+        logger.error("approval policy unusable error_class=%s: %s", type(exc).__name__, exc)
+        raise
 
     def factory() -> ModelSession:
         if fake_model:

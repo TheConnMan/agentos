@@ -142,7 +142,14 @@ in code now:
   The bundle manifest's `approvalPolicy`
   gates (schema + deploy validation from #273) are consumed at runner boot
   (`load_approval_policy`): each `{gate, route}` pair adds the tool to the permission gate
-  and tags it with a route NAME, versioned with the agent. The policy-gate tool accepts an
+  and tags it with a route NAME, versioned with the agent. That consumption is
+  **fail-closed** (#520, ADR-0050): enforcement intent is read from the RAW declaration, so a
+  declared policy that cannot be armed exactly — unparseable, or any distinct declared gate
+  name arming nothing — refuses the boot instead of returning the empty map, which builds no
+  gate at all and silently restores the bypass posture. The gated-tool set stays the UNION of
+  the manifest gates and the operator's `AGENTOS_APPROVAL_REQUIRED_TOOLS`, and that union is
+  the anti-hollow-out mechanism: a bundle may ADD gated names but can never remove an
+  operator's. The policy-gate tool accepts an
   optional `route` argument for skill-raised requests, and the runner now **validates that
   route against the manifest's declared routes and fails loud** (#544, ADR-0046, Decision B):
   `build_approval_server(gate)` is per-gate so the `request_approval` tool can see the
