@@ -18,16 +18,15 @@ import zipfile
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 
-import boto3
 import pytest
 from aci_protocol import Final, SessionStatus, ToolNote
+from aci_protocol.s3 import build_s3_client
 from agentos_worker.bundle_store import BundleStore
 from agentos_worker.config import WorkerConfig
 from agentos_worker.eval import EvalSuite
 from agentos_worker.runner_client import RunnerClient
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from botocore.client import Config as BotoConfig
 
 # The committed cross-language eval-case fixture, shared by the model and stream
 # tests. conftest.py -> parents[2] is apps/worker.
@@ -149,13 +148,11 @@ def bundles() -> Iterator[tuple[BundleStore, Callable[[EvalSuite | bytes], str]]
     helper. Uploaded objects are deleted on teardown; skips if MinIO is down."""
     cfg = WorkerConfig(**_MINIO)  # type: ignore[arg-type]
     store = BundleStore(cfg)
-    client = boto3.client(
-        "s3",
+    client = build_s3_client(
         endpoint_url=cfg.s3_endpoint_url,
-        aws_access_key_id=cfg.s3_access_key,
-        aws_secret_access_key=cfg.s3_secret_key,
-        region_name=cfg.s3_region,
-        config=BotoConfig(s3={"addressing_style": "path"}),
+        access_key=cfg.s3_access_key,
+        secret_key=cfg.s3_secret_key,
+        region=cfg.s3_region,
     )
     try:
         client.head_bucket(Bucket=cfg.bundle_bucket)
