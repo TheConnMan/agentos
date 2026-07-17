@@ -245,5 +245,19 @@ if ! out="$(python3 "$ASSERT_PY" "$DEFAULT" "$NOCTRL" "$NOGATE" "$NS" 2>&1)"; th
 fi
 echo "$out"
 
+# --- (e) The preflight FAIL diagnostic classifies the CAUSE (issue #507) ---
+# A leader-election lease timeout and the #350 RBAC crash-loop both restart the
+# controller pod, so the gate must not blame NetworkPolicy RBAC unconditionally.
+# Assert the rendered Job script both DETECTS the lease signal and emits a
+# lease-specific (non-RBAC) diagnostic, so a regression back to the hardcoded
+# RBAC blame fails here.
+grep -q "leader election lost\|failed to renew lease" "$DEFAULT" \
+  || fail "(e) cause classification — preflight script must grep for a leader-election lease signal (issue #507)"
+grep -q "lost its leader-election lease" "$DEFAULT" \
+  || fail "(e) cause classification — preflight FAIL diagnostic must have a lease-specific branch (issue #507)"
+grep -q "NOT an RBAC/NetworkPolicy problem" "$DEFAULT" \
+  || fail "(e) cause classification — the lease diagnostic must explicitly disclaim RBAC as the cause (issue #507)"
+echo "  ok: (e) the controller-ready gate distinguishes a lease timeout from an RBAC failure"
+
 echo
-echo "PASS: exactly one read-only cluster networkpolicies grant (get/list/watch, bound to the controller SA); no cluster-wide mutate anywhere; namespaced Role keeps mutate and drops list/watch; the controller-ready gate renders on defaults and suppresses correctly under both flags."
+echo "PASS: exactly one read-only cluster networkpolicies grant (get/list/watch, bound to the controller SA); no cluster-wide mutate anywhere; namespaced Role keeps mutate and drops list/watch; the controller-ready gate renders on defaults, suppresses correctly under both flags, and classifies a lease timeout distinctly from an RBAC failure."
