@@ -53,12 +53,24 @@ _MINIO: dict[str, object] = {
 
 
 class FakeEvalRunner:
-    """Answers /v1/event with ``responses[input]`` (or 500 for ``fail_inputs``)."""
+    """Answers /v1/event with ``responses[input]`` (or 500 for ``fail_inputs``).
+
+    Models a single long-lived conversation the way the real runner does: every
+    delivered ``/v1/event`` input is appended to ``history`` and ``POST /v1/reset``
+    clears it. An input listed in ``recall_inputs`` answers with the joined
+    conversation history *so far* rather than a canned response, so a test can
+    prove a case answering from a prior case's history (the #550 false green) --
+    and prove that the per-case reset now clears that history.
+    """
 
     def __init__(self) -> None:
         self.app = web.Application()
         self.app.add_routes(
-            [web.post("/v1/event", self._event), web.get("/status", self._status)]
+            [
+                web.post("/v1/event", self._event),
+                web.post("/v1/reset", self._reset),
+                web.get("/status", self._status),
+            ]
         )
         self.responses: dict[str, str] = {}
         self.fail_inputs: set[str] = set()
@@ -74,9 +86,26 @@ class FakeEvalRunner:
         self.tool_calls: dict[str, list[str]] = {}
         self.default_output = ""
         self.seen: list[dict[str, str]] = []
+        # The accumulated conversation: every delivered input, cleared by reset.
+        self.history: list[str] = []
+        # Inputs that answer from `history` (prior inputs joined) instead of a
+        # canned response -- the memory-recall shape #550 is about.
+        self.recall_inputs: set[str] = set()
+        # How many times /v1/reset was called (isolation assertions).
+        self.resets = 0
+        # When True, /v1/reset answers 500 -- models a runner that could not
+        # establish per-case isolation.
+        self.fail_reset = False
 
     async def _status(self, _request: web.Request) -> web.Response:
         return web.json_response({"status": "done", "turn_active": False})
+
+    async def _reset(self, _request: web.Request) -> web.Response:
+        self.resets += 1
+        if self.fail_reset:
+            return web.json_response({"error": "reset boom"}, status=500)
+        self.history.clear()
+        return web.json_response({"ok": True})
 
     async def _event(self, request: web.Request) -> web.StreamResponse:
         body = await request.json()
@@ -84,7 +113,13 @@ class FakeEvalRunner:
         text = body["text"]
         if text in self.fail_inputs:
             return web.json_response({"error": "boom"}, status=500)
-        output = self.responses.get(text, self.default_output)
+        # A recall input answers from the conversation so far (the history that a
+        # reset would have cleared); otherwise fall back to the canned response.
+        if text in self.recall_inputs:
+            output = " | ".join(self.history)
+        else:
+            output = self.responses.get(text, self.default_output)
+        self.history.append(text)
         if text in self.classified_failure_inputs:
             status = SessionStatus.CLASSIFIED_FAILURE
         elif text in self.idle_inputs:

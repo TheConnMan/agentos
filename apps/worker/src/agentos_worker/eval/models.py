@@ -76,13 +76,29 @@ class Grader(BaseModel):
 
 
 class EvalCase(BaseModel):
-    """One eval: an input prompt and the grader that judges the answer."""
+    """One eval: an input prompt and the grader that judges the answer.
+
+    ``shared_history`` is the per-case isolation opt-out (#550). Each case runs
+    in a *fresh conversation* by default (``False``): the eval driver resets the
+    runner's conversation before the case so it cannot answer from an earlier
+    case's history instead of actually invoking its tools -- a false green for a
+    side-effecting agent (the behavior under test never ran) and a silent, order-
+    dependent suite. Set ``True`` to deliberately chain a case onto the prior
+    case's conversation (a multi-turn scenario expressed as ordered cases); the
+    driver then skips the reset so the case inherits that history. On the *first*
+    case it is a no-op-with-caveat: there is no prior case to chain onto, so it
+    only means "do not reset first", inheriting whatever state the runner already
+    held (empty on a freshly-booted eval runner). Optional with a ``False``
+    default, so it is a backward-compatible addition to the frozen eval-case
+    schema (ADR-0019): an existing suite that omits it keeps decoding.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     id: str
     input: str
     grader: Grader
+    shared_history: bool = False
 
 
 class EvalSuite(BaseModel):

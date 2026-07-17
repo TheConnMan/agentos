@@ -13,6 +13,10 @@ Productizes the prototype's aiohttp ``/run`` into the ACI session channel:
                          caller falls back to a fresh ``/v1/event``
 - ``POST /v1/interrupt`` hard-stop the live turn: body is an ACI ``interrupt``
                          frame; the open turn's final is reclassified to idle
+- ``POST /v1/reset``     discard the conversation and start a fresh model
+                         session (eval isolation, #550); 409 while a turn is
+                         active. Not an ACI wire frame -- a runner control route,
+                         like /status and /healthz, so it takes no body
 
 One turn consumes the SDK generator at a time (enforced by the runner's turn
 lock); steer and interrupt are side-channel injections whose output surfaces on
@@ -35,7 +39,7 @@ _NDJSON = "application/x-ndjson"
 # The three ACI POST routes that drive a turn; gated when a token is configured.
 # /healthz and /status stay open so the chart readinessProbe (no auth header)
 # keeps working.
-_GATED_PATHS = frozenset({"/v1/event", "/v1/steer", "/v1/interrupt"})
+_GATED_PATHS = frozenset({"/v1/event", "/v1/steer", "/v1/interrupt", "/v1/reset"})
 
 # Typed app key so aiohttp resolves the runner without the string-key warning.
 RUNNER: web.AppKey[SessionRunner] = web.AppKey("runner", SessionRunner)
@@ -96,6 +100,7 @@ def create_app(runner: SessionRunner, token: str | None = None) -> web.Applicati
             web.post("/v1/event", _event),
             web.post("/v1/steer", _steer),
             web.post("/v1/interrupt", _interrupt),
+            web.post("/v1/reset", _reset),
         ]
     )
     app.on_cleanup.append(_on_cleanup)
@@ -174,4 +179,17 @@ async def _interrupt(request: web.Request) -> web.Response:
         return web.json_response({"error": "expected an interrupt frame"}, status=400)
 
     await runner.interrupt(frame.reason)
+    return web.json_response({"ok": True})
+
+
+async def _reset(request: web.Request) -> web.Response:
+    runner: SessionRunner = request.app[RUNNER]
+    # Refuse to reset a session mid-turn: tearing the SDK session down under a
+    # live turn would strand the open /v1/event stream. 409 mirrors the steer
+    # finish-race boundary -- the caller resets once the turn has completed.
+    if runner.turn_active:
+        return web.json_response(
+            {"error": "cannot reset while a turn is active"}, status=409
+        )
+    await runner.reset()
     return web.json_response({"ok": True})

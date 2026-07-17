@@ -118,6 +118,22 @@ class RunnerClient:
                 body = await resp.text()
                 raise RunnerError(f"/v1/interrupt -> {resp.status}: {body}")
 
+    async def reset(self, base_url: str, token: str | None = None) -> None:
+        """Discard the runner's conversation so the next turn starts fresh (#550).
+
+        The eval driver calls this between cases to enforce per-case isolation.
+        A 409 (a turn is still active) is surfaced as a ``RunnerError`` like any
+        other unexpected status: the eval flow is sequential, so a turn should
+        never be live at reset time -- a 409 here is a real ordering bug, not a
+        condition to swallow.
+        """
+        async with self._session.post(
+            f"{base_url}/v1/reset", headers=_auth_headers(token)
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RunnerError(f"/v1/reset -> {resp.status}: {body}")
+
     async def status(self, base_url: str) -> dict[str, object]:
         async with self._session.get(f"{base_url}/status") as resp:
             if resp.status != 200:

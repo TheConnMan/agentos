@@ -68,6 +68,29 @@ impl RunnerClient {
         resp.json().await.context("decoding /status body")
     }
 
+    /// Discard the runner's conversation so the next turn starts fresh (#550).
+    ///
+    /// `agentos skill eval` calls this between cases to enforce per-case
+    /// isolation: a case must not answer from an earlier case's history instead
+    /// of actually invoking its tools. Not an ACI wire frame -- a runner control
+    /// route like `/status`, so it takes no body. A 409 (a turn is still active)
+    /// surfaces as an error; the eval loop is sequential, so a turn is never live
+    /// at reset time.
+    pub async fn reset(&self) -> Result<()> {
+        let resp = self
+            .http
+            .post(format!("{}/v1/reset", self.base_url))
+            .send()
+            .await
+            .with_context(|| format!("POST {}/v1/reset", self.base_url))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("POST /v1/reset returned {status}: {}", body.trim());
+        }
+        Ok(())
+    }
+
     /// Open a turn: POST the event frame, stream back the outbound events.
     ///
     /// `on_event` fires per frame as it arrives (live streaming to the
