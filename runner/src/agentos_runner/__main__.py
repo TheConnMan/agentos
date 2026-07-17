@@ -18,6 +18,7 @@ from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
 from .approval import (
+    ApprovalPolicyError,
     build_approval_gate,
     build_approval_server,
     build_can_use_tool,
@@ -106,12 +107,19 @@ def build_runner(
     # build_approval_gate refuses a bundle gate that would redefine the route
     # of a tool the operator already gated. Either raises before the first
     # turn, so a misdeclared policy never boots ungated.
-    policy_routes = load_approval_policy(config.session.plugin_dir)
-    approval_gate = build_approval_gate(
-        operator_tools=config.approval_required_tools,
-        policy_routes=policy_routes,
-        grant_tool=config.approval_grant_tool,
-    )
+    try:
+        policy_routes = load_approval_policy(config.session.plugin_dir)
+        approval_gate = build_approval_gate(
+            operator_tools=config.approval_required_tools,
+            policy_routes=policy_routes,
+            grant_tool=config.approval_grant_tool,
+        )
+    except ApprovalPolicyError as exc:
+        # Log then re-raise, matching the module's other two fatal boot paths
+        # (credential resolution, session start): a bare traceback is the one
+        # thing an operator cannot triage from pod logs.
+        logger.error("approval policy unusable error_class=%s: %s", type(exc).__name__, exc)
+        raise
 
     def factory() -> ModelSession:
         if fake_model:

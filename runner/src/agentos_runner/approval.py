@@ -31,6 +31,7 @@ identical seam as a real model call.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,8 @@ from claude_agent_sdk.types import (
     ToolPermissionContext,
 )
 from plugin_format import ApprovalPolicy, PluginManifest
+
+logger = logging.getLogger(__name__)
 
 # The server key under ClaudeAgentOptions.mcp_servers; the SDK prefixes tool
 # names as mcp__<server>__<tool>.
@@ -513,32 +516,35 @@ def build_approval_gate(
     bundle manifest's ``approvalPolicy`` (versioned with the agent, each gate
     carrying its route). Neither naming a tool keeps the bypass posture.
 
-    **The bundle may only ADD names, never redefine an operator-set one**
-    (#520). The gated-tool set is a union, so a bundle already cannot *remove*
-    an operator's gate. The routes are the hollow-out surface: the operator's
-    list carries no routes, so a bundle gate naming a tool the operator
-    independently gated would silently choose which of the operator's own
-    approval channels governs the operator's own gate -- the trusted name
-    survives while its authority is redirected.
+    **The bundle may only ADD names, never remove an operator-set one** (#520,
+    the anti-hollow-out property). The gated-tool set is a UNION, which is what
+    enforces that: no bundle-supplied value is subtracted from it, so a bundle
+    cannot keep a trusted name while emptying what it restricts. That invariant
+    is load-bearing -- rebuilding this merge as anything but a union (a dict
+    update, an override, a bundle-wins precedence) would silently break it.
 
-    That conflict raises rather than resolving to a side, because both
-    resolutions widen: honouring the bundle's route lets an untrusted bundle
-    pick the approving audience, and dropping it falls back to ADR-0034
-    channel membership, which may be wider than the route the operator would
-    have chosen. Refusing to boot is the only reading that neither widens nor
-    lets the bundle redefine, and it mirrors ADR-0046's "escalate loudly,
-    create no approval" over a silent fallback.
+    The residual surface the union does NOT close is which ROUTE governs a tool
+    both sources name: the operator's list carries no routes, so the bundle's
+    route rides an operator-gated name and picks the approving audience. It is
+    bounded -- the bundle can only name routes the operator has itself bound to
+    a channel in ``approval_routes``, and ADR-0046 refuses an unbound one
+    outright -- so the tool stays gated and the audience stays operator-chosen.
+    We log it rather than refusing: making it fatal is disproportionate to a
+    bounded widening, and `agentos <tier> approvals` reports the two sources as
+    one unlabeled list while `--gate` writes a full replacement, so echoing the
+    displayed set back is the documented way to CREATE this overlap. A boot
+    raise would crash-loop that flow, and would strand an approved action whose
+    resume re-derives the same config. See ADR-0050.
     """
 
     operator = frozenset(operator_tools or ())
     redefined = sorted(operator & set(policy_routes))
     if redefined:
-        raise ApprovalPolicyError(
-            f"the bundle declares approvalPolicy route(s) for {redefined!r}, which"
-            " the operator already gated via AGENTOS_APPROVAL_REQUIRED_TOOLS; a"
-            " bundle may add gated tools but may not redefine the approval route"
-            " of an operator-set gate. Remove the gate from the bundle manifest,"
-            " or drop the tool from the operator list to let the bundle own it."
+        logger.warning(
+            "bundle approvalPolicy declares route(s) for %r, which the operator"
+            " also gated via AGENTOS_APPROVAL_REQUIRED_TOOLS; the tool stays"
+            " gated and the bundle's route decides the approving audience",
+            redefined,
         )
     gated_tools = operator | frozenset(policy_routes)
     if not gated_tools:

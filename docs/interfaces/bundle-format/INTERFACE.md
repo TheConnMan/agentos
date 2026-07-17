@@ -99,7 +99,11 @@ declarations rejected), but they differ in whether the runtime acts on them yet:
 - `approvalPolicy` (`{gates: [{gate, route}]}` approval declarations, #273) is **consumed at
   runtime**, not merely validated: the runner reads the gates at boot (`load_approval_policy`,
   #247 / ADR-0010) and arms each `{gate, route}` on the permission gate — so calling this
-  "not-yet-built" is stale (see the [approval seam](../approval/INTERFACE.md)).
+  "not-yet-built" is stale (see the [approval seam](../approval/INTERFACE.md)). A declared
+  policy is armed **exactly as declared or the runner refuses to boot** (#520, ADR-0050):
+  every distinct declared gate name must arm, and a policy that is declared but unparseable
+  (or a manifest that cannot be read at all) fails the boot rather than degrading to an
+  unarmed empty map, which would restore the ungated bypass posture.
 - `triggers` (a list of `cron`/`webhook` declarations for waking the agent beyond chat, #273/#270 —
   see the [triggers seam](../triggers/INTERFACE.md)) is still **declaration-only**: its validator
   runs at deploy, but no runtime scheduler/ingress consumes a declared trigger yet (Epic #29).

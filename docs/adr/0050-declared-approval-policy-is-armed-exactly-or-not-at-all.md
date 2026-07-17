@@ -40,16 +40,21 @@ The distinction the old docstring missed: hooks and `systemPrompt` degrade to a
 them. `approvalPolicy` degrades to a **wider authority set**. Same swallow,
 opposite blast radius.
 
-**2. A bundle could redefine the route of an operator-set gate.** The gated-tool
-set is a union, so a bundle already could not *remove* an operator's gate — the
-append-only half was correct. The routes were not. `route_by_tool` was assigned
-verbatim from the bundle's map, and the operator's list carries no routes of its
-own, so a bundle gate naming a tool the operator independently gated silently
-chose **which of the operator's own approval channels governs the operator's own
-gate**. The trusted name survives; its authority is redirected. ADR-0046 closed
-the adjacent fail-open (a named-but-*unbound* route no longer falls back to the
-requesting channel) but never addressed a bundle naming a route the operator
-*has* bound.
+**2. The anti-hollow-out property was already held — by the union.** The gated
+tool set is `operator | bundle`, and because no bundle-supplied value is ever
+subtracted from it, a bundle cannot keep a trusted name while emptying what it
+restricts. That is the Grok pattern's core, and AgentOS already satisfies it.
+What it did not hold was a regression *guard*: nothing pinned the union, so a
+later refactor to a dict update, a bundle-wins precedence, or `policy_routes`
+used directly as `required` would have broken it silently.
+
+The residual the union does not close is which **route** governs a tool both
+sources name. `route_by_tool` is taken verbatim from the bundle, and the
+operator's list carries no routes, so the bundle's route rides an operator-gated
+name and picks the approving audience. It is bounded: the bundle can only name a
+route the operator has itself bound to a channel in `approval_routes`, and
+ADR-0046 refuses an unbound one outright. The tool stays gated; the audience
+stays drawn from channels the operator chose.
 
 Note what is **not** in scope. The egress allowlist was the issue's suspected
 home for pattern 1 and turns out to be already fail-closed end to end:
@@ -83,18 +88,35 @@ tool are a last-wins duplicate that `plugin_format.validate_bundle` accepts, and
 rejecting them here would crash-loop a deploy-valid bundle. A validator and a
 loader that disagree are the #453 fail-open shape in reverse.
 
-### 2. A bundle may add gated names, never redefine an operator-set one
+### 2. The union is the anti-hollow-out mechanism, and is now pinned as one
 
 `build_approval_gate` (extracted from `__main__`, so the merge is testable
-rather than inline) raises when a bundle gate names a tool already in the
-operator's list.
+rather than inline) keeps the union and documents it as load-bearing rather than
+incidental. An adversarial test pins it: a bundle that re-declares the
+operator's own gate and adds its own must not drop either operator name. Any
+rebuild of this merge that lets bundle config subtract fails that test.
 
-It **raises rather than resolving to a side, because both resolutions widen**:
-honouring the bundle's route lets an untrusted bundle pick the approving
-audience, and dropping it falls back to ADR-0034 channel membership, which may
-be wider than the route the operator would have chosen. Refusing is the only
-reading that neither widens nor lets the bundle redefine. This mirrors
-ADR-0046's "escalate loudly, create no approval" over a silent fallback.
+An overlapping name **warns and proceeds**; it does not refuse. We first
+implemented the refusal and reversed it on review, because the refusal is
+disproportionate to a bounded widening and the crash it causes is reachable
+through the product's own documented flow:
+
+- `agentos <tier> approvals` reports the operator field and the deployed
+  manifest's gates as **one unlabeled list** (`cli/src/commands.rs`, the #607
+  union), while `--gate` writes a **full replacement** through `PATCH
+  /agents/{id}`. So an operator who reads the displayed gates and re-passes them
+  with one more writes bundle-declared names into the operator field. That is
+  the obvious flow, and it would have armed a boot-fatal error.
+- Nothing catches the overlap earlier: the API validates only non-empty and
+  comma-free, and `validate_bundle` cannot see deployment config.
+- Resume re-derives the same config, so an operator PATCHing a gate while an
+  approval pends would turn the approved action's resume into a crash — the
+  human says yes and the action never runs.
+
+Refusing to boot over a widening this bounded, in exchange for that, is a worse
+failure than the one it prevents. The honest fix is to close the CLI's
+read/write asymmetry (label provenance, make `--gate` additive) and only then
+consider a config-time refusal; that is its own change, tracked as follow-up.
 
 ### 3. The CLI mirror follows
 
@@ -114,33 +136,43 @@ boot on — a reporting/runtime drift in the same family as #607.
 - **Arm the gates that did parse and drop the rest.** Rejected: a partially
   armed policy is the most dangerous outcome. The operator reads "gated" and
   gets a subset, with no signal which gates are missing.
-- **Let the bundle's route win for an operator-set tool** (bundle is more
-  specific). Rejected: it is exactly the hollow-out — the operator's `Bash` gate
-  keeps its trusted name while an untrusted bundle picks its audience.
+- **Refuse to boot on an operator/bundle overlap.** Implemented, then reversed
+  on review — see Decision §2. It makes a bounded widening fatal, and the
+  `approvals --gate` replace-semantics walk operators straight into it.
 - **Silently ignore the bundle's route for an operator-set tool.** Rejected: it
   looks safe but falls back to ADR-0034 channel membership, which can be *wider*
   than the bundle route it replaced. It trades a visible conflict for a quiet
-  widening.
+  widening, and unlike the warn-and-proceed form it also discards information
+  the operator's own binding map authorized.
+- **Reject the overlap at `PATCH /agents/{id}` instead of at boot.** The right
+  end state — a config-time refusal is the same verdict without the crash-loop —
+  but it needs the in-force manifest resolvable at PATCH time and the CLI's
+  read/write asymmetry closed first, or it just moves the footgun. Follow-up.
 - **Pin the egress/secret profile across suspend/resume** (#520 sub-item 3).
   Deferred, not rejected — see below.
 
 ## Consequences
 
 - **Behavior change operators must know about:** a bundle whose `approvalPolicy`
-  is malformed, partially unarmable, or conflicts with the operator's gated-tool
-  list now fails the runner at boot instead of running ungated. On the real path
-  `load_plugins` already rejected most of these, so the visible change is
-  concentrated on the fake tier and on the new operator/bundle conflict. A
-  deploy-time-valid bundle is unaffected: `validate_bundle` rejects every shape
-  this now raises on, except the operator-conflict case, which is deployment
-  config the validator cannot see.
+  is malformed or partially unarmable now fails the runner at boot instead of
+  running ungated. A deploy-time-valid bundle is unaffected — `validate_bundle`
+  rejects every shape this raises on — so on the real path `load_plugins`
+  already rejected these and the visible change is concentrated on the fake
+  tier. The failure is loud: a structured `error_class=` line then a non-zero
+  exit before the port binds, matching the module's credential and session-start
+  precedents.
 - **The fake tier gains the gate it was missing**, so approvals rehearsed on
   `skill`/`local --fake-model` now match the deployed tier's arming behavior.
-- **The operator/bundle conflict is a boot failure, not a warning.** An operator
-  migrating a tool from the `AGENTOS_APPROVAL_REQUIRED_TOOLS` stopgap to a
-  versioned manifest gate must drop it from the operator list in the same
-  change, rather than running with both. The error names both sides and the two
-  ways out.
+- **Boot logs now carry the offending manifest field's value.** The pydantic
+  validation error is interpolated into the raise, so a malformed
+  `approvalPolicy` echoes the failing field into pod logs where it was
+  previously swallowed. Bounded to the single failing field, and the manifest
+  carries secret *names* only (never values), so this is a diagnosability win
+  rather than a leak — but it is a change in what boot logs contain.
+- **An operator/bundle overlap warns and proceeds.** The tool stays gated; the
+  bundle's route decides the audience, bounded by the operator's own
+  `approval_routes` binding map. Closing that residual properly starts with the
+  CLI read/write asymmetry (Decision §2), not with a runner-side refusal.
 - **Sub-item 3 (resume pinning) remains open.** A resumed turn re-derives its
   whole execution profile — model, bundle ref, connector secrets, gated-tool
   list — from live config at resume time (`BindingResolver.resolve` /

@@ -721,36 +721,63 @@ def test_explicitly_empty_gates_list_arms_nothing(tmp_path) -> None:
     assert load_approval_policy(bundle) == {}
 
 
-def test_bundle_may_not_route_a_tool_the_operator_gated() -> None:
-    """A bundle may ADD gated names, never redefine an operator-set one.
+def test_a_bundle_cannot_hollow_out_an_operator_set_gate() -> None:
+    """A bundle may ADD gated names; it can never remove an operator's.
 
-    NEGATIVE CONTROL for #520 pattern 2. The operator gated `Bash` with no
-    route (ADR-0034 channel-membership default). A bundle naming a route for
-    `Bash` would silently pick which of the operator's own approval channels
-    governs the operator's own gate -- the trusted name survives, its
-    authority is redirected. Deleting the conflict check makes this test
-    fail: the gate is built with the bundle's route in `route_by_tool`.
+    NEGATIVE CONTROL for #520 pattern 2, pinning the anti-hollow-out property
+    the union already provides. The adversarial bundle here re-declares the
+    operator's own `Bash` and adds `Write`. Rebuilding this merge as anything
+    that lets bundle-supplied config subtract -- a dict update, a bundle-wins
+    precedence, `policy_routes` used directly as `required` -- drops `Read`
+    and/or `Bash` and fails this test. That is the Grok hollow-out shape: keep
+    the trusted name, empty what it restricts.
     """
 
-    with pytest.raises(ApprovalPolicyError) as exc:
-        build_approval_gate(
-            operator_tools=["Bash"],
-            policy_routes={"Bash": "legal"},
-        )
-    assert "Bash" in str(exc.value)
+    gate = build_approval_gate(
+        operator_tools=["Read", "Bash"],
+        policy_routes={"Bash": "legal", "Write": "managers"},
+    )
+    assert gate is not None
+    # Every operator name survives, whatever the bundle declared.
+    assert {"Read", "Bash"} <= gate.required
+    assert gate.required == frozenset({"Read", "Bash", "Write"})
 
 
-def test_bundle_routes_apply_to_names_only_the_bundle_gates() -> None:
-    """The append-only case is untouched: bundle-only names keep their route."""
+def test_bundle_routes_ride_the_names_the_bundle_gates() -> None:
+    """Bundle-only names keep their route; operator-only names carry none."""
 
     gate = build_approval_gate(
         operator_tools=["Read"],
         policy_routes={"Bash": "managers"},
     )
     assert gate is not None
-    # Union of both sources arms; the bundle's route rides only its own name.
     assert gate.required == frozenset({"Read", "Bash"})
+    # `Read` is operator-set with no route: ADR-0034 channel-membership default.
     assert gate.route_by_tool == {"Bash": "managers"}
+    assert gate.route_by_tool.get("Read") is None
+
+
+def test_an_overlapping_bundle_route_is_logged_not_fatal(caplog) -> None:
+    """The bounded residual the union does not close: who approves an
+    overlapping name.
+
+    The bundle's route rides an operator-gated name, so the bundle picks the
+    audience. It is bounded (the route must be one the operator bound, and
+    ADR-0046 refuses an unbound one), so this warns rather than refusing --
+    `approvals --gate` writes a full replacement over an unlabeled union of
+    both sources, making the overlap something the CLI itself creates. See
+    ADR-0050.
+    """
+
+    with caplog.at_level("WARNING"):
+        gate = build_approval_gate(
+            operator_tools=["Bash"],
+            policy_routes={"Bash": "legal"},
+        )
+    assert gate is not None
+    # Still gated -- the union never subtracts.
+    assert "Bash" in gate.required
+    assert any("Bash" in r.getMessage() for r in caplog.records), caplog.text
 
 
 def test_no_declared_gate_from_either_source_keeps_the_bypass_posture() -> None:
