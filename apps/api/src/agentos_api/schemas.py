@@ -847,3 +847,67 @@ class MemoryEntryEdit(BaseModel):
 
     content: str
     expected_version: int
+
+
+# --- Console sessions (#630, ADR-0049) --------------------------------------
+
+
+class ConsoleLoginCodeMint(BaseModel):
+    """Mint a login code. The label is an operator's note for the inventory."""
+
+    label: str | None = None
+
+
+class ConsoleLoginCodeOut(BaseModel):
+    """The one and only moment the raw login code is readable.
+
+    It is never stored (only its digest is) and never returned again, so a
+    caller that loses it mints another.
+    """
+
+    code: str
+    expires_at: datetime
+    session_id: uuid.UUID
+
+
+class ConsoleSessionExchange(BaseModel):
+    """Exchange a login code for a session cookie."""
+
+    code: str
+
+
+class ConsoleSessionOut(BaseModel):
+    """The established session's fixed absolute expiry. The token itself is
+    returned only as the HttpOnly cookie, never in the body."""
+
+    expires_at: datetime
+
+
+class ConsoleSessionStatus(BaseModel):
+    """Whether the caller's cookie names a live session, for the console's own
+    "am I logged in" check. Never carries the token or its digest."""
+
+    authenticated: bool
+    expires_at: datetime | None = None
+
+
+class ConsoleSessionListItem(BaseModel):
+    """One session in the operator's inventory.
+
+    An inventory, never a way to read a session: no field here carries the code,
+    the token, or either digest. ``expires_at`` is the expiry that currently
+    governs the row -- the session's once exchanged, the login code's until then.
+    """
+
+    id: uuid.UUID
+    label: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    consumed_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class ConsoleRevokeOut(BaseModel):
+    """How many live sessions the sweep killed."""
+
+    revoked: int

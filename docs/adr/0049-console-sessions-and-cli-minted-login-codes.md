@@ -74,6 +74,16 @@ worker, runner, and CLI are untouched. This extends the shared dependency rather
 than adding a second auth scheme to a router, which is the boundary
 `apps/api/CLAUDE.md` draws.
 
+**A session cannot mint or manage sessions.** The three operator routes
+(`POST /console/login-codes`, `GET /console/sessions`, `DELETE /console/sessions`)
+depend on `require_platform_key`, which is the pre-existing platform-key-only
+check: a strict subset of `require_api_key`, not a second scheme. This is
+load-bearing rather than cautious. If a session cookie could mint a login code,
+it could mint its own successor indefinitely, which is a refresh token by another
+name and would quietly defeat the fixed absolute lifetime this ADR chose. Session
+management is therefore reachable only from the CLI, which is where the platform
+key already lives.
+
 **TLS is enforced at exchange, fail-closed.** `POST /console/session` reads the
 `Origin` header and refuses with a `{error, fix}` 400 unless the origin is
 `https:` or a loopback host (`localhost`, `127.0.0.1`, `[::1]`), which browsers

@@ -1,6 +1,9 @@
 """Database access helpers for agents, versions, deployments, and approvals."""
 
+import hashlib
+import secrets
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,6 +16,7 @@ from .models import (
     Approval,
     ApprovalAuditEntry,
     ApprovalStatus,
+    ConsoleSession,
     Deployment,
     Environment,
 )
@@ -668,3 +672,159 @@ async def list_approval_audit(
         .order_by(ApprovalAuditEntry.created_at)
     )
     return list(result)
+
+
+# --- Console sessions (#630, ADR-0049) --------------------------------------
+
+# Entropy for a login code and a session token. Both are bearer credentials, so
+# they are unguessable rather than memorable; token_urlsafe's argument is BYTES
+# of entropy, not the printed length.
+CONSOLE_TOKEN_BYTES = 32
+
+
+def _digest(value: str) -> str:
+    """The stored form of a login code or session token.
+
+    Hashing lives here, behind the store, so no caller ever holds a digest and
+    every lookup below is an indexed equality on this value. A plain SHA-256 is
+    right for a 32-byte random secret: there is no low-entropy guess space for a
+    slow KDF to protect, and the digest is what a database read would leak.
+    """
+
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+async def mint_console_login_code(
+    session: AsyncSession, label: str | None, ttl_seconds: int
+) -> tuple[str, ConsoleSession]:
+    """Mint a single-use login code. Returns the RAW code and its row.
+
+    The raw code is returned exactly once, to the CLI caller that minted it
+    under the platform key; only its digest is stored, so nothing can hand it
+    back later.
+    """
+
+    code = secrets.token_urlsafe(CONSOLE_TOKEN_BYTES)
+    row = ConsoleSession(
+        label=label,
+        login_code_hash=_digest(code),
+        login_code_expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return code, row
+
+
+async def exchange_console_login_code(
+    session: AsyncSession, code: str, ttl_seconds: int
+) -> tuple[str, datetime] | None:
+    """Consume a login code and mint its session. Returns the RAW token and the
+    session's expiry, or None when the code is unknown, spent, expired, or
+    revoked (all one indistinguishable refusal to the caller).
+
+    Single-use is the conditional UPDATE, not a read-then-write: the
+    ``consumed_at IS NULL`` guard is the compare-and-set (the same resolve-once
+    idiom approvals use), so two concurrent exchanges of one code cannot both
+    win and mint two sessions.
+    """
+
+    token = secrets.token_urlsafe(CONSOLE_TOKEN_BYTES)
+    expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    result = await session.execute(
+        update(ConsoleSession)
+        .where(
+            ConsoleSession.login_code_hash == _digest(code),
+            ConsoleSession.consumed_at.is_(None),
+            ConsoleSession.login_code_expires_at > func.now(),
+            ConsoleSession.revoked_at.is_(None),
+        )
+        .values(
+            consumed_at=func.now(),
+            session_token_hash=_digest(token),
+            session_expires_at=expires_at,
+        )
+        .returning(ConsoleSession.id)
+    )
+    consumed = result.scalar_one_or_none()
+    await session.commit()
+    if consumed is None:
+        return None
+    return token, expires_at
+
+
+async def live_console_session(
+    session: AsyncSession, token: str
+) -> ConsoleSession | None:
+    """The live session a raw cookie token names, or None.
+
+    One indexed read per request, with liveness evaluated in the same statement:
+    a revoked or expired session is simply not found, so revocation takes effect
+    on the next request with nothing to invalidate. ``session_expires_at >
+    now()`` also excludes an unconsumed code's NULL, so a login code can never
+    act as a session token.
+    """
+
+    found: ConsoleSession | None = await session.scalar(
+        select(ConsoleSession).where(
+            ConsoleSession.session_token_hash == _digest(token),
+            ConsoleSession.revoked_at.is_(None),
+            ConsoleSession.session_expires_at > func.now(),
+        )
+    )
+    return found
+
+
+async def revoke_console_session(session: AsyncSession, token: str) -> None:
+    """Revoke the session a raw cookie token names (self-logout).
+
+    A durable row write, so a copy of the cookie taken before logout is dead
+    too; clearing only the browser's copy would leave a stolen token live.
+    Idempotent: an unknown or already-revoked token updates nothing.
+    """
+
+    await session.execute(
+        update(ConsoleSession)
+        .where(
+            ConsoleSession.session_token_hash == _digest(token),
+            ConsoleSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=func.now())
+    )
+    await session.commit()
+
+
+async def revoke_all_console_sessions(session: AsyncSession) -> int:
+    """Revoke every live grant; returns how many were killed.
+
+    "Live" is the governing expiry: a session's once the code is exchanged, the
+    login code's until then, so an unexchanged code is killed by the same sweep
+    rather than surviving as a way back in. Already-revoked and already-expired
+    rows are not live, so a second sweep revokes nothing.
+    """
+
+    result = await session.execute(
+        update(ConsoleSession)
+        .where(
+            ConsoleSession.revoked_at.is_(None),
+            func.coalesce(
+                ConsoleSession.session_expires_at,
+                ConsoleSession.login_code_expires_at,
+            )
+            > func.now(),
+        )
+        .values(revoked_at=func.now())
+        .returning(ConsoleSession.id)
+    )
+    revoked = len(result.scalars().all())
+    await session.commit()
+    return revoked
+
+
+async def list_console_sessions(session: AsyncSession) -> Sequence[ConsoleSession]:
+    """Every session row, newest first, for the operator's inventory."""
+
+    found = await session.scalars(
+        select(ConsoleSession).order_by(ConsoleSession.created_at.desc())
+    )
+    return found.all()
