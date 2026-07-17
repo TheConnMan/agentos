@@ -476,7 +476,31 @@ mod tests {
         // and the loader ignores the documentation-only `note` key on the case.
         assert_eq!(case.id, "reports-a-temperature");
         assert_eq!(case.grader.kind, GraderKind::Regex);
-        assert_eq!(case.grader.expected, "\\d+\\s*°");
+        // #620: the pattern accepts the degree glyph AND the spelled-out unit, so
+        // a correct plain-English forecast is no longer graded red. The alternation
+        // stays inside the Python-re / Rust-regex intersection (no lookaround, no
+        // backreferences), so the CLI compiles it identically to the platform.
+        assert_eq!(case.grader.expected, "\\d+\\s*(°|deg)");
+    }
+
+    #[test]
+    fn weather_grader_accepts_glyph_and_spelled_unit_but_not_a_figureless_refusal() {
+        // #620: prove the committed pattern's behavior by EXECUTING the grader
+        // (not by inspecting the string) against the acceptance strings. The glyph
+        // and both spellings pass; a refusal that carries no figure fails.
+        let body = include_str!("../../examples/weather/evals/cases.json");
+        let (_dir, path) = write(body);
+        let grader = &load_suite(&path).unwrap().cases[0].grader;
+        assert!(grader.grade("68°"), "glyph form must pass");
+        assert!(grader.grade("68 deg F"), "abbreviated unit must pass");
+        assert!(
+            grader.grade("The high in San Francisco today is 68 degrees Fahrenheit"),
+            "spelled-out unit must pass"
+        );
+        assert!(
+            !grader.grade("I could not confirm a current forecast"),
+            "a refusal with no temperature figure must still fail"
+        );
     }
 
     #[test]
