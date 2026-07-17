@@ -975,8 +975,7 @@ impl crate::ui::CliOutput for StatusOutput {
     fn render(&self, ui: &crate::ui::Ui) {
         ui.note(&format!("runner {}", self.url));
         ui.payload_plain(
-            &serde_json::to_string_pretty(&self.status)
-                .unwrap_or_else(|_| self.status.to_string()),
+            &serde_json::to_string_pretty(&self.status).unwrap_or_else(|_| self.status.to_string()),
         );
     }
 }
