@@ -21,6 +21,8 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import CanUseTool, ToolPermissionContext
 
+from .approval import APPROVAL_TOOL_NAME, ApprovalGate, process_approval_request
+
 
 def _assistant(*blocks: Any, usage: dict[str, Any] | None = None) -> AssistantMessage:
     return AssistantMessage(content=list(blocks), model="fake-model", usage=usage)
@@ -114,10 +116,16 @@ class FakeModelSession:
         *,
         truncate_on_interrupt: bool = True,
         can_use_tool: CanUseTool | None = None,
+        approval_gate: ApprovalGate | None = None,
     ) -> None:
         self._script_factory = script_factory or self._default_script
         self._truncate_on_interrupt = truncate_on_interrupt
         self._can_use_tool = can_use_tool
+        # The shared policy gate (#561): a scripted request_approval block must
+        # run the SAME route-resolution decision table the real MCP tool does, or
+        # the fake tier omits the sole-route auto-bind / unknown-route refusal and
+        # silently widens the card -- the exact real-path regression #544 closed.
+        self._approval_gate = approval_gate
         self.connected = False
         self.queries: list[str] = []
         self.interrupts = 0
@@ -167,12 +175,20 @@ class FakeModelSession:
         the un-gated fake unchanged.
         """
 
-        if self._can_use_tool is None:
-            return
         if not isinstance(message, AssistantMessage):
             return
         for block in message.content:
-            if isinstance(block, ToolUseBlock):
+            if not isinstance(block, ToolUseBlock):
+                continue
+            if block.name == APPROVAL_TOOL_NAME and self._approval_gate is not None:
+                # Run the real decision table so the container fake tier resolves
+                # the route (sole-route auto-bind, unknown-route refusal) and sets
+                # the same sticky gate flags _merge_gate_block reconciles (#561).
+                # build_can_use_tool below leaves the (un-gated) approval tool
+                # untouched, so this is the only thing that sets the policy fields.
+                payload = block.input if isinstance(block.input, dict) else {}
+                process_approval_request(self._approval_gate, payload)
+            if self._can_use_tool is not None:
                 await self._can_use_tool(block.name, block.input, ToolPermissionContext())
 
     async def close(self) -> None:
