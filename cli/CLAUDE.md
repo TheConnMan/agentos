@@ -16,8 +16,9 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
 - **Under `--json`, the agent-facing read and result verbs emit one JSON object
   to stdout -- never empty stdout (issue #456).** That covers the read/query
   verbs (`versions`, `memory`, `approvals`, `observability`), the lifecycle
-  result verbs (`kill`, `resume`, `budget`, `delete`), and every verb's
-  `--dry-run` plan. Silent empty-stdout-exit-0 is the worst failure mode for an
+  result verbs (`kill`, `resume`, `budget`, `delete`), `init` (both the
+  plain-name and `--from-spec` branches, via `InitOutput`, issue #485), and every
+  verb's `--dry-run` plan. Silent empty-stdout-exit-0 is the worst failure mode for an
   agent consumer: it looks like success but carries no data. The json-vs-human
   decision lives in exactly one place, `Ui::emit` (the success-path mirror of
   `main.rs`'s centralized error emit). A new or refactored verb returns a

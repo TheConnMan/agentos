@@ -252,6 +252,8 @@ pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBu
         let created = scaffold_from_spec(&dir, &spec)?;
         report_scaffold(
             ui,
+            spec.name.clone(),
+            Some(spec_path.clone()),
             format!(
                 "initialized plugin bundle '{}' in {} (from spec {})",
                 spec.name,
@@ -272,6 +274,8 @@ pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBu
     let created = scaffold(&dir, &name)?;
     report_scaffold(
         ui,
+        name.clone(),
+        None,
         format!("initialized plugin bundle '{name}' in {}", dir.display()),
         created,
         &dir,
@@ -279,15 +283,68 @@ pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBu
     Ok(())
 }
 
-/// Report a freshly scaffolded bundle: the success line, one `created` note per
-/// written path, and the `Next:` hint. Shared by both `init` branches so the
-/// only per-branch difference is the success message text.
-fn report_scaffold(ui: &crate::ui::Ui, success_msg: String, created: Vec<PathBuf>, dir: &Path) {
-    ui.success(&success_msg);
-    for path in created {
-        ui.note(&format!("created {}", path.display()));
+/// Report a freshly scaffolded bundle through the one success-path decision point
+/// (`Ui::emit`, issue #485): under `--json` emit one structured `InitOutput`
+/// object to stdout; otherwise render the success line, a `created` note per
+/// written path, and the `Next:` hint on stderr (byte-identical to before).
+/// Shared by both `init` branches so the only per-branch difference is the
+/// success message text and whether a spec sourced the bundle.
+fn report_scaffold(
+    ui: &crate::ui::Ui,
+    name: String,
+    from_spec: Option<PathBuf>,
+    success_msg: String,
+    created: Vec<PathBuf>,
+    dir: &Path,
+) {
+    ui.emit(&InitOutput {
+        name,
+        dir: dir.to_path_buf(),
+        from_spec,
+        created,
+        success_msg,
+    });
+}
+
+/// The result of `agentos init` (both the plain-name and `--from-spec` branches),
+/// carried through `Ui::emit`. Under `--json` an agent gets the bundle name, the
+/// directory, the spec source (null for the plain-name path), the list of created
+/// paths, and the next-step command -- never empty stdout (issue #485). Owns its
+/// data so `to_json`/`render` outlive the scaffold call.
+pub struct InitOutput {
+    pub name: String,
+    pub dir: PathBuf,
+    pub from_spec: Option<PathBuf>,
+    pub created: Vec<PathBuf>,
+    pub success_msg: String,
+}
+
+impl crate::ui::CliOutput for InitOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "initialized": true,
+            "name": self.name,
+            "dir": self.dir.display().to_string(),
+            "from_spec": self.from_spec.as_ref().map(|p| p.display().to_string()),
+            "created": self
+                .created
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>(),
+            "next": format!("cd {} && agentos skill up", self.dir.display()),
+        })
     }
-    ui.note(&format!("Next: cd {} && agentos skill up", dir.display()));
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        ui.success(&self.success_msg);
+        for path in &self.created {
+            ui.note(&format!("created {}", path.display()));
+        }
+        ui.note(&format!(
+            "Next: cd {} && agentos skill up",
+            self.dir.display()
+        ));
+    }
 }
 
 /// `agentos build`: build the runner image locally from the repo's Dockerfile.
