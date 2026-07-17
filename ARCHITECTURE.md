@@ -166,7 +166,7 @@ does not duplicate it.
 ### 3a. Substrate seam — `SandboxClient`
 
 The worker talks to a `SandboxClient` Protocol
-([`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient`](apps/worker/src/agentos_worker/sandbox/k8s.py))
+([`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient`](apps/worker/src/agentos_worker/sandbox/k8s.py))
 whose methods are `create_claim`, `get_claim`, `delete_claim`, `list_claims`,
 `get_sandbox`, `set_sandbox_mode`. Two implementations satisfy it:
 

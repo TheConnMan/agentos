@@ -23,16 +23,16 @@ The substrate is where a conversation thread claims, dials, suspends, and reaps 
 
 ## Current contract
 
-A second implementation must satisfy the `SandboxClient` `Protocol` at `apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient`, six methods:
+A second implementation must satisfy the `SandboxClient` `Protocol` at `apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient`, six methods:
 
-- `create_claim(name, *, pool, env=None, labels=None) -> None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.create_claim`)
-- `get_claim(name) -> ClaimView | None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.get_claim`)
-- `delete_claim(name) -> None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.delete_claim`)
-- `list_claims(*, label_selector) -> list[ClaimView]` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.list_claims`)
-- `get_sandbox(name) -> SandboxView | None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.get_sandbox`)
-- `set_sandbox_mode(name, mode: OperatingMode) -> None` (`apps/worker/src/agentos_worker/sandbox/k8s.py::SandboxClient.set_sandbox_mode`)
+- `create_claim(name, *, pool, env=None, labels=None) -> None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.create_claim`)
+- `get_claim(name) -> ClaimView | None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.get_claim`)
+- `delete_claim(name) -> None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.delete_claim`)
+- `list_claims(*, label_selector) -> list[ClaimView]` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.list_claims`)
+- `get_sandbox(name) -> SandboxView | None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.get_sandbox`)
+- `set_sandbox_mode(name, mode: OperatingMode) -> None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.set_sandbox_mode`)
 
-The exchanged value types are `ClaimView` (`apps/worker/src/agentos_worker/sandbox/types.py::ClaimView`: `name`, `ready`, `sandbox_name`, `labels`) and `SandboxView` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxView`: `name`, `ready`, `service_fqdn`, `operating_mode`, `port`). `operating_mode` must report `"Running"` for a claim to be handed back (`apps/worker/src/agentos_worker/sandbox/substrate.py::SandboxSubstrate.claim`), and `OperatingMode` is `Literal["Running", "Suspended"]` (`apps/worker/src/agentos_worker/sandbox/k8s.py::OperatingMode`). The selector reads `AGENTOS_SANDBOX_SUBSTRATE` (default `"kubernetes"`, else `"docker"`) in `_sandbox_client()` at `apps/worker/src/agentos_worker/run.py::_sandbox_client`, which branches on the value inside that same function.
+The exchanged value types are `ClaimView` (`apps/worker/src/agentos_worker/sandbox/types.py::ClaimView`: `name`, `ready`, `sandbox_name`, `labels`) and `SandboxView` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxView`: `name`, `ready`, `service_fqdn`, `operating_mode`, `port`). `operating_mode` must report `"Running"` for a claim to be handed back (`apps/worker/src/agentos_worker/sandbox/substrate.py::SandboxSubstrate.claim`), and `OperatingMode` is `Literal["Running", "Suspended"]` (`apps/worker/src/agentos_worker/sandbox/types.py::OperatingMode`). The selector reads `AGENTOS_SANDBOX_SUBSTRATE` (default `"kubernetes"`, else `"docker"`) in `_sandbox_client()` at `apps/worker/src/agentos_worker/run.py::_sandbox_client`, which branches on the value inside that same function.
 
 ## Implementations today
 
