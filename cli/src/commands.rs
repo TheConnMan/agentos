@@ -539,22 +539,43 @@ fn find_repo_root() -> Option<PathBuf> {
 /// Pick the model-credential env vars to forward into the runner container, BY
 /// NAME (docker reads their values from the caller's env; no secret is put in
 /// argv). Mirrors the worker docker substrate's positive single-credential
-/// selection (apps/worker/src/agentos_worker/sandbox/docker.py):
-/// - fake/local model (`suppress_credential`): forward NONE -- those runners
-///   resolve no Anthropic credential, and a real token must not sit in an
+/// selection (apps/worker/src/agentos_worker/sandbox/docker.py:199-207), which is
+/// the authority this function mirrors. Three states:
+/// - `fake_model`: forward NONE, and fake dominates every other state -- a fake
+///   runner resolves no Anthropic credential, and a real token must not sit in an
 ///   untrusted, egress-rail-less container readable via /proc/1/environ.
 /// - an explicit non-empty AGENTOS_CREDENTIALS (`byo_credential`): the operator's
 ///   chosen BYO credential, forwarded ALONE so an ambient SDK token can neither
-///   shadow it nor ride into the sandbox.
-/// - otherwise: the ambient SDK creds for the legacy real-Anthropic path.
-fn select_passthrough_env(suppress_credential: bool, byo_credential: Option<&str>) -> Vec<String> {
-    if suppress_credential {
+///   shadow it nor ride into the sandbox. Kept even under a `base_url_override`:
+///   the runner routes an sk-or- OpenRouter key into ANTHROPIC_API_KEY with a
+///   preset base URL, so dropping it would break BYO OpenRouter.
+/// - otherwise: the ambient SDK creds for the legacy real-Anthropic path, each
+///   only when `ambient_present` reports it, and only when there is no
+///   `base_url_override` -- a local endpoint needs no real Anthropic token.
+///
+/// The rule is frozen as data in tests/vectors/model-credential-forwarding.json,
+/// which both this lane and the worker lane assert against: changing the rule
+/// here without changing the worker (or the vectors) fails that gate (issue #495).
+fn select_passthrough_env(
+    fake_model: bool,
+    base_url_override: bool,
+    byo_credential: Option<&str>,
+    ambient_present: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    if fake_model {
         return Vec::new();
     }
-    match byo_credential {
-        Some(cred) if !cred.is_empty() => vec!["AGENTOS_CREDENTIALS".into()],
-        _ => vec!["CLAUDE_CODE_OAUTH_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
+    if byo_credential.is_some_and(|c| !c.is_empty()) {
+        return vec!["AGENTOS_CREDENTIALS".into()];
     }
+    if base_url_override {
+        return Vec::new();
+    }
+    ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        .into_iter()
+        .filter(|name| ambient_present(name))
+        .map(String::from)
+        .collect()
 }
 
 /// Append `--secret` env var NAMES to the model-credential passthrough list,
@@ -599,6 +620,14 @@ fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
 
 fn stored_env_contains(env: &[(String, String)], name: &str) -> bool {
     env.iter().any(|(stored_name, _)| stored_name == name)
+}
+
+/// The ambient-presence rule `select_passthrough_env` selects on.
+///
+/// Presence must match what `StartSpec::run_args` later filters the NAMES on
+/// (docker.rs:117), or selection and emission disagree.
+fn ambient_present_for(docker_env: &[(String, String)]) -> impl Fn(&str) -> bool + '_ {
+    move |name| std::env::var_os(name).is_some() || stored_env_contains(docker_env, name)
 }
 
 fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
@@ -703,9 +732,14 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     // Forward exactly one model credential (or none under fake/local) -- never
     // the ambient SDK token alongside a chosen BYO credential. See
     // select_passthrough_env.
-    let suppress_credential = opts.local_model.is_some() || opts.fake_model;
+    // `--local-model` is a base-URL override, not a fake-model run: it keeps an
+    // explicit BYO credential (the runner routes it at the local endpoint) and
+    // drops only the ambient SDK fallback. Derive both states the way the
+    // container actually gets them, so the seam cannot drift from the argv.
+    let fake_model = opts.local_model.is_none() && opts.fake_model;
+    let base_url_override = model_base_url.is_some();
     let mut docker_env = Vec::new();
-    if !suppress_credential {
+    if !fake_model {
         docker_env.extend(load_model_credentials_from_secret_store()?);
     }
     let byo_credential = std::env::var("AGENTOS_CREDENTIALS")
@@ -730,10 +764,19 @@ pub async fn start(opts: StartOpts) -> Result<()> {
             }
         }
     }
-    let passthrough_env = merge_secret_env(
-        select_passthrough_env(suppress_credential, byo_credential.as_deref()),
-        &opts.secret,
-    );
+    // Scoped so the borrow of `docker_env` ends before it is moved into the spec.
+    let passthrough_env = {
+        let ambient_present = ambient_present_for(&docker_env);
+        merge_secret_env(
+            select_passthrough_env(
+                fake_model,
+                base_url_override,
+                byo_credential.as_deref(),
+                &ambient_present,
+            ),
+            &opts.secret,
+        )
+    };
 
     let spec = StartSpec {
         image: opts.image.clone(),
@@ -743,7 +786,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         session_id: session_id.clone(),
         sandbox_id: "local".into(),
         budget_json: opts.budget,
-        fake_model: opts.local_model.is_none() && opts.fake_model,
+        fake_model,
         network,
         otel_endpoint: opts.otel_endpoint,
         model_base_url: model_base_url.clone(),
@@ -1185,10 +1228,14 @@ async fn boot_eval_runner(
             }
         }
     }
-    let passthrough_env = merge_secret_env(
-        select_passthrough_env(false, byo_credential.as_deref()),
-        secrets,
-    );
+    // Scoped so the borrow of `docker_env` ends before it is moved into the spec.
+    let passthrough_env = {
+        let ambient_present = ambient_present_for(&docker_env);
+        merge_secret_env(
+            select_passthrough_env(false, false, byo_credential.as_deref(), &ambient_present),
+            secrets,
+        )
+    };
     let spec = StartSpec {
         image: image.to_string(),
         container_name: name.to_string(),
@@ -2742,6 +2789,7 @@ mod tests {
         merge_secret_env, parse_manifest_gates, resolve_cases_path, seed_env_if_missing,
         select_in_force_deployment, select_passthrough_env, validate_slack_channel, EnvSeed,
     };
+    use serde::Deserialize;
     use std::path::{Path, PathBuf};
 
     /// Scaffold a bundle at `dir` under `name`, then overwrite its manifest's
@@ -2887,13 +2935,19 @@ mod tests {
         assert!(validate_slack_channel("  #testing").is_err());
     }
 
+    /// A fully-credentialed host, for the cases below that are not about which
+    /// ambient names happen to be exported.
+    fn all_ambient_present(_name: &str) -> bool {
+        true
+    }
+
     #[test]
-    fn suppress_credential_forwards_nothing_even_with_byo() {
-        // A fake OR local model run needs no credential: forward none, even when
-        // an explicit BYO reference is present, so a real token never leaks into
+    fn fake_model_forwards_nothing_even_with_byo() {
+        // A fake model run needs no credential: forward none, even when an
+        // explicit BYO reference is present, so a real token never leaks into
         // the untrusted runner.
         assert_eq!(
-            select_passthrough_env(true, Some("sk-or-x")),
+            select_passthrough_env(true, false, Some("sk-or-x"), &all_ambient_present),
             Vec::<String>::new()
         );
     }
@@ -2903,7 +2957,7 @@ mod tests {
         // A non-empty BYO credential is forwarded alone -- the ambient SDK vars
         // must not shadow the operator's chosen credential.
         assert_eq!(
-            select_passthrough_env(false, Some("sk-or-x")),
+            select_passthrough_env(false, false, Some("sk-or-x"), &all_ambient_present),
             vec!["AGENTOS_CREDENTIALS".to_string()]
         );
     }
@@ -2913,7 +2967,7 @@ mod tests {
         // An empty AGENTOS_CREDENTIALS (a blank line in .env) is treated as unset,
         // so the ambient SDK vars carry the legacy real-Anthropic credential.
         assert_eq!(
-            select_passthrough_env(false, Some("")),
+            select_passthrough_env(false, false, Some(""), &all_ambient_present),
             vec![
                 "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
                 "ANTHROPIC_API_KEY".to_string()
@@ -2924,12 +2978,96 @@ mod tests {
     #[test]
     fn no_byo_credential_falls_back_to_sdk_vars() {
         assert_eq!(
-            select_passthrough_env(false, None),
+            select_passthrough_env(false, false, None, &all_ambient_present),
             vec![
                 "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
                 "ANTHROPIC_API_KEY".to_string()
             ]
         );
+    }
+
+    /// One row of the committed cross-language forwarding matrix. The five
+    /// inputs are booleans: the rule keys on presence, never on a credential's
+    /// content.
+    ///
+    /// `deny_unknown_fields` makes an unrecognized key a hard parse failure
+    /// rather than a silently ignored input: a row that grows a sixth input
+    /// this lane cannot see would otherwise pass vacuously, which is the exact
+    /// drift the gate exists to catch. A new input must be taught to this
+    /// struct, to the Python lane's expected key set
+    /// (apps/worker/tests/sandbox/test_vector_credential_forwarding.py), and to
+    /// the vector file itself.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ForwardingVector {
+        name: String,
+        /// Documentation carried by the vector file; parsed so the row's own
+        /// rationale is not an unknown field, and read back into the assertion
+        /// message so a failing vector explains itself.
+        why: String,
+        fake_model: bool,
+        base_url_override: bool,
+        byo_credential: bool,
+        ambient_oauth: bool,
+        ambient_api_key: bool,
+        expected: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ForwardingVectors {
+        /// The file-level rationale; parsed so it is not an unknown field.
+        /// Underscore-prefixed so rustc's dead_code lint skips it; the serde
+        /// rename keeps the JSON key it matches on as `comment`.
+        #[serde(rename = "comment")]
+        _comment: String,
+        vectors: Vec<ForwardingVector>,
+    }
+
+    #[test]
+    fn cli_matches_every_forwarding_vector() {
+        // The Rust half of the cross-language gate (#495). The Python worker lane
+        // (apps/worker/tests/sandbox/test_vector_credential_forwarding.py) reads
+        // this same file, so a rule changed in one language without the other
+        // fails that language's test. The rule is not restated here.
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/vectors/model-credential-forwarding.json"
+        ))
+        .expect("read tests/vectors/model-credential-forwarding.json");
+        let parsed: ForwardingVectors = serde_json::from_str(&raw).unwrap_or_else(|err| {
+            panic!(
+                "parse tests/vectors/model-credential-forwarding.json: {err}\n\
+                 An unknown field is rejected on purpose: a new input this lane cannot see \
+                 would pass vacuously. Teach the new key to ForwardingVector here, to \
+                 _EXPECTED_VECTOR_KEYS in \
+                 apps/worker/tests/sandbox/test_vector_credential_forwarding.py, and to both \
+                 implementations of the rule."
+            )
+        });
+        // Guards against a rename or a truncated file making this loop vacuously pass.
+        assert!(!parsed.vectors.is_empty(), "no vectors parsed");
+
+        for vector in &parsed.vectors {
+            let ambient_present = |name: &str| match name {
+                "CLAUDE_CODE_OAUTH_TOKEN" => vector.ambient_oauth,
+                "ANTHROPIC_API_KEY" => vector.ambient_api_key,
+                _ => false,
+            };
+            let byo = vector.byo_credential.then_some("sk-or-PLACEHOLDER-byo");
+            assert_eq!(
+                select_passthrough_env(
+                    vector.fake_model,
+                    vector.base_url_override,
+                    byo,
+                    &ambient_present
+                ),
+                vector.expected,
+                "{}: {}",
+                vector.name,
+                vector.why
+            );
+        }
     }
 
     #[test]
@@ -2938,7 +3076,7 @@ mod tests {
         // authed MCP server gets its token next to the model token.
         assert_eq!(
             merge_secret_env(
-                select_passthrough_env(false, None),
+                select_passthrough_env(false, false, None, &all_ambient_present),
                 &["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
             ),
             vec![
@@ -2955,7 +3093,7 @@ mod tests {
         // secret must still reach the sandbox.
         assert_eq!(
             merge_secret_env(
-                select_passthrough_env(true, None),
+                select_passthrough_env(true, false, None, &all_ambient_present),
                 &["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
             ),
             vec!["GITHUB_PERSONAL_ACCESS_TOKEN".to_string()]
@@ -2967,7 +3105,7 @@ mod tests {
         // Passing a model-credential var as --secret must not duplicate it.
         assert_eq!(
             merge_secret_env(
-                select_passthrough_env(false, None),
+                select_passthrough_env(false, false, None, &all_ambient_present),
                 &["ANTHROPIC_API_KEY".to_string()]
             ),
             vec![
