@@ -7,6 +7,7 @@ escalates to the orchestrator.
 """
 
 from .archive import UnsupportedArchive, bundle_root, safe_extract
+from .manifest import MANIFEST_LOCATIONS, resolve_manifest
 from .models import (
     ApprovalGate,
     ApprovalPolicy,
@@ -28,6 +29,8 @@ __all__ = [
     "__version__",
     "RESERVED_BOOT_ENV",
     "is_reserved_boot_env_name",
+    "MANIFEST_LOCATIONS",
+    "resolve_manifest",
     "PluginManifest",
     "Author",
     "SkillFrontmatter",

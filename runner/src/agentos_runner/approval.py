@@ -45,7 +45,7 @@ from claude_agent_sdk.types import (
     PermissionResultDeny,
     ToolPermissionContext,
 )
-from plugin_format import ApprovalPolicy, PluginManifest
+from plugin_format import ApprovalPolicy, PluginManifest, resolve_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -414,8 +414,6 @@ def build_can_use_tool(gate: ApprovalGate) -> CanUseTool:
 
 # --- The manifest approval policy (#247): gates shipped in the bundle -----------
 
-_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
-
 
 class ApprovalPolicyError(RuntimeError):
     """A declared approval policy cannot be armed exactly as declared.
@@ -456,9 +454,7 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
     if not plugin_dir:
         return {}
     root = Path(plugin_dir)
-    manifest_path = next(
-        (root / loc for loc in _MANIFEST_LOCATIONS if (root / loc).is_file()), None
-    )
+    manifest_path = resolve_manifest(root)
     if manifest_path is None:
         return {}
     # Read raw first: a manifest that will not parse cannot prove it declares
