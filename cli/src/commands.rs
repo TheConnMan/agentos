@@ -2225,11 +2225,20 @@ pub async fn memory(opts: AgentActionOpts) -> Result<MemoryOutput> {
 
 /// Output of `<tier> approvals <agent>`: the dry-run plan, or the gate list
 /// (empty vec == "no tools gated"). Owns its data so it outlives the `ApiClient`.
+///
+/// `manifest_unreadable` carries the third state (#607). `gated_tools` alone
+/// cannot distinguish "the deployed bundle manifest declares no gates" from "the
+/// manifest could not be read at all" -- both used to arrive here as an empty vec
+/// and render as the affirmative "calls run without approval". `Some(reason)`
+/// means the manifest lookup failed, so the list is what we could see rather than
+/// what is armed. Always `None` on the set path (`--gate`/`--clear`), which echoes
+/// the PATCHed platform field and never reads a manifest.
 pub enum ApprovalsOutput {
     DryRun(crate::ui::DryRunPlan),
     Gates {
         agent: String,
         gated_tools: Vec<String>,
+        manifest_unreadable: Option<String>,
     },
 }
 
@@ -2237,28 +2246,67 @@ impl crate::ui::CliOutput for ApprovalsOutput {
     fn to_json(&self) -> serde_json::Value {
         match self {
             ApprovalsOutput::DryRun(plan) => plan.to_json(),
-            ApprovalsOutput::Gates { agent, gated_tools } => {
-                serde_json::json!({"agent": agent, "gated_tools": gated_tools})
-            }
+            ApprovalsOutput::Gates {
+                agent,
+                gated_tools,
+                manifest_unreadable,
+            } => serde_json::json!({
+                "agent": agent,
+                "gated_tools": gated_tools,
+                "manifest_unreadable": manifest_unreadable,
+            }),
         }
     }
 
     fn render(&self, ui: &crate::ui::Ui) {
         match self {
             ApprovalsOutput::DryRun(plan) => plan.render(ui),
-            ApprovalsOutput::Gates { agent, gated_tools } => {
-                if gated_tools.is_empty() {
-                    ui.payload(&format!(
-                        "{agent}: no tools are gated (calls run without approval)"
-                    ));
-                } else {
-                    ui.payload(&format!("{agent} — {} gated tool(s):", gated_tools.len()));
-                    for tool in gated_tools {
-                        ui.kv("gated", tool);
-                    }
+            ApprovalsOutput::Gates {
+                agent,
+                gated_tools,
+                manifest_unreadable,
+            } => {
+                ui.payload(&approvals_summary_line(
+                    agent,
+                    gated_tools,
+                    manifest_unreadable.as_deref(),
+                ));
+                for tool in gated_tools {
+                    ui.kv("gated", tool);
                 }
             }
         }
+    }
+}
+
+/// The human summary line for `<tier> approvals`' gate view.
+///
+/// Four lines for three states, because whether gates were found is orthogonal to
+/// whether we could read the manifest that declares them. The `unreadable` arm is
+/// the one that matters: an unanswered lookup must not borrow the vocabulary of an
+/// answered one. Reporting "no tools are gated (calls run without approval)"
+/// because the deployment list request errored tells the reader the runner will
+/// not pause, which is a claim this command never checked -- and the reader acts on
+/// it. Same reasoning as the skill tier's `gates_summary_line`, where the unseen
+/// source is the boot-time env override rather than the deployed manifest.
+///
+/// The unreadable-with-gates arm is not redundant: gates from the platform's
+/// `approval_required_tools` field are real, but presenting them without the
+/// caveat implies the list is the whole set.
+fn approvals_summary_line(agent: &str, gated_tools: &[String], unreadable: Option<&str>) -> String {
+    match (gated_tools.is_empty(), unreadable) {
+        (true, None) => format!("{agent}: no tools are gated (calls run without approval)"),
+        (false, None) => format!("{agent} — {} gated tool(s):", gated_tools.len()),
+        (true, Some(reason)) => format!(
+            "{agent}: the deployed bundle manifest could not be read ({reason}), so whether it \
+             gates any tool is unknown. The platform's approval_required_tools field lists none, \
+             which is not the same as nothing being gated"
+        ),
+        (false, Some(reason)) => format!(
+            "{agent} — {} gated tool(s), and this list may be incomplete: the deployed bundle \
+             manifest could not be read ({reason}), so any gate it declares is not shown:",
+            gated_tools.len()
+        ),
     }
 }
 
@@ -2294,13 +2342,13 @@ pub async fn approvals(
     let ui = crate::ui::ui();
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
     let agent = client.find_agent(&opts.agent).await?;
-    let gates = if setting {
+    let (gates, unreadable) = if setting {
         let cl = ui.checklist();
         let step = cl.step(&format!("updating approval gates for {}", agent.name));
         match client.set_approval_tools(&agent.id, &gate).await {
             Ok(updated) => {
                 step.done("updated");
-                updated.approval_required_tools.unwrap_or_default()
+                (updated.approval_required_tools.unwrap_or_default(), None)
             }
             Err(err) => {
                 step.fail("failed");
@@ -2313,17 +2361,27 @@ pub async fn approvals(
         // AGENTOS_APPROVAL_REQUIRED_TOOLS) AND the in-force deployed bundle
         // manifest's `approvalPolicy` gates. Reading only the API field reported an
         // empty set while a manifest gate was armed and blocking.
+        //
+        // When that manifest half cannot be read, the union is only the field half
+        // and the report says so (#607) rather than passing a partial answer off as
+        // the effective set.
         let mut gated = agent.approval_required_tools.clone().unwrap_or_default();
-        for name in deployed_manifest_gate_names(&client, &agent.id).await? {
-            if !gated.contains(&name) {
-                gated.push(name);
+        match deployed_manifest_gate_names(&client, &agent.id).await? {
+            ManifestGates::Readable(names) => {
+                for name in names {
+                    if !gated.contains(&name) {
+                        gated.push(name);
+                    }
+                }
+                (gated, None)
             }
+            ManifestGates::Unreadable(reason) => (gated, Some(reason)),
         }
-        gated
     };
     Ok(ApprovalsOutput::Gates {
         agent: agent.name,
         gated_tools: gates,
+        manifest_unreadable: unreadable,
     })
 }
 
@@ -2661,31 +2719,64 @@ fn select_in_force_deployment(
 /// gate set while the manifest gate is armed and blocking. Best-effort on the
 /// fetch (no deployment / no bundle / API hiccup → no manifest gates), but a
 /// deployed manifest that is actually invalid is surfaced (it disarms every gate).
-async fn deployed_manifest_gate_names(client: &ApiClient, agent_id: &str) -> Result<Vec<String>> {
+///
+/// The empty-vec outcomes are NOT interchangeable, which is why this returns
+/// `ManifestGates` rather than a bare list (#607): "the manifest declares nothing"
+/// is an answer, "the API call failed" is the absence of one, and the caller's
+/// report reads very differently for each.
+enum ManifestGates {
+    /// The lookup completed. The vec is the manifest's armed gates, empty when
+    /// there is no deployed bundle, no manifest in it, or no `approvalPolicy`.
+    Readable(Vec<String>),
+    /// The lookup did not complete, so the manifest's gates are unknown. Carries
+    /// the reason, which is reported rather than swallowed.
+    Unreadable(String),
+}
+
+async fn deployed_manifest_gate_names(client: &ApiClient, agent_id: &str) -> Result<ManifestGates> {
     let deployments = match client.list_deployments(agent_id).await {
         Ok(d) => d,
-        Err(_) => return Ok(Vec::new()),
+        Err(err) => {
+            return Ok(ManifestGates::Unreadable(format!(
+                "listing the agent's deployments failed: {err}"
+            )))
+        }
     };
-    let Some(version_id) =
-        select_in_force_deployment(&deployments).and_then(|d| d.version_id.clone())
-    else {
-        return Ok(Vec::new());
+    // No active deployment is a real answer: nothing is running this agent's
+    // bundle, so no manifest gate can be armed from one.
+    let Some(deployment) = select_in_force_deployment(&deployments) else {
+        return Ok(ManifestGates::Readable(Vec::new()));
+    };
+    // A deployment IS in force but names no version. `version_id` is
+    // `#[serde(default)]`, so this is response drift rather than a stated absence
+    // -- the bundle exists and we simply cannot address it.
+    let Some(version_id) = deployment.version_id.clone() else {
+        return Ok(ManifestGates::Unreadable(format!(
+            "the in-force deployment {} reports no version id",
+            deployment.id
+        )));
     };
     let files = match client.bundle_files(agent_id, &version_id).await {
         Ok(f) => f,
-        Err(_) => return Ok(Vec::new()),
+        Err(err) => {
+            return Ok(ManifestGates::Unreadable(format!(
+                "fetching the deployed bundle's files failed: {err}"
+            )))
+        }
     };
     let Some(manifest) = files
         .iter()
         .find(|f| MANIFEST_LOCATIONS.contains(&f.path.as_str()))
     else {
-        return Ok(Vec::new());
+        return Ok(ManifestGates::Readable(Vec::new()));
     };
     let gates = parse_manifest_gates(
         &manifest.content,
         &format!("deployed bundle manifest ({})", manifest.path),
     )?;
-    Ok(gates.into_iter().map(|(gate, _route)| gate).collect())
+    Ok(ManifestGates::Readable(
+        gates.into_iter().map(|(gate, _route)| gate).collect(),
+    ))
 }
 
 /// POSIX-shell-quote a value for safe interpolation into emitted shell text.
@@ -3394,6 +3485,44 @@ mod tests {
         let none = vec![deployment("dev", "superseded", "x", "2026-07-01")];
         assert!(select_in_force_deployment(&none).is_none());
         assert!(select_in_force_deployment(&[]).is_none());
+    }
+
+    #[test]
+    fn approvals_summary_line_never_claims_ungated_when_the_manifest_is_unreadable() {
+        // The whole point of the three-state split (#607): "no gates found" and
+        // "could not look" are different answers, and only the first one licenses
+        // the affirmative claim. A failed manifest fetch used to collapse into the
+        // second branch here and report the agent as running without approval.
+        let ungated = super::approvals_summary_line("weather", &[], None);
+        assert!(
+            ungated.contains("no tools are gated (calls run without approval)"),
+            "a genuinely readable, gate-free agent still gets the affirmative claim: {ungated}"
+        );
+
+        let blind = super::approvals_summary_line("weather", &[], Some("the deploy list failed"));
+        assert!(
+            !blind.contains("no tools are gated"),
+            "an unreadable manifest must not render as an affirmative un-gated claim: {blind}"
+        );
+        assert!(
+            blind.contains("could not be read") && blind.contains("the deploy list failed"),
+            "the reason we could not look is disclosed: {blind}"
+        );
+
+        // Gates found from the platform field while the manifest was unreadable:
+        // the list is real but partial, and silence about that implies complete.
+        let partial =
+            super::approvals_summary_line("weather", &["Bash".into()], Some("the fetch failed"));
+        assert!(
+            partial.contains("incomplete") && partial.contains("could not be read"),
+            "a partial list discloses that more gates may be armed: {partial}"
+        );
+
+        let complete = super::approvals_summary_line("weather", &["Bash".into()], None);
+        assert!(
+            !complete.contains("incomplete") && complete.contains("1 gated tool(s)"),
+            "a fully-read gate list makes no incompleteness caveat: {complete}"
+        );
     }
 
     #[test]
