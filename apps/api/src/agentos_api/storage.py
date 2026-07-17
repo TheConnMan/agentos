@@ -20,8 +20,7 @@ extraction only makes it a drop-in when that demand arrives.
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-import boto3
-from botocore.client import Config as BotoConfig
+from aci_protocol.s3 import build_s3_client as shared_build_s3_client
 from botocore.exceptions import ClientError
 from starlette.concurrency import run_in_threadpool
 
@@ -68,20 +67,18 @@ class ObjectStore(Protocol):
 
 
 def build_s3_client(settings: Settings) -> "S3Client":
-    """Construct the path-style S3 client shared by every S3-backed store.
+    """Construct the path-style S3 client from the API's ``Settings``.
 
-    Path-style addressing is required for MinIO and works with AWS S3, so this is
-    the single construction the API writer and the worker reader must agree on
-    (the seam the blob-storage INTERFACE flags as "hand-aligned client sites").
-    Centralizing it here removes one copy of that alignment.
+    A thin adapter over the one shared builder (`aci_protocol.s3.build_s3_client`,
+    #501) so the API writer and the worker reader cannot drift on endpoint /
+    credentials / path-style addressing. Kept as a named function because callers
+    (and `test_storage_port`) import it from this module.
     """
-    return boto3.client(
-        "s3",
+    return shared_build_s3_client(
         endpoint_url=settings.s3_endpoint_url,
-        aws_access_key_id=settings.s3_access_key,
-        aws_secret_access_key=settings.s3_secret_key,
-        region_name=settings.s3_region,
-        config=BotoConfig(s3={"addressing_style": "path"}),
+        access_key=settings.s3_access_key,
+        secret_key=settings.s3_secret_key,
+        region=settings.s3_region,
     )
 
 

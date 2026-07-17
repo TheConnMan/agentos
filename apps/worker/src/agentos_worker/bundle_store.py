@@ -18,8 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-import boto3
-from botocore.client import Config as BotoConfig
+from aci_protocol.s3 import build_s3_client
 from plugin_format import bundle_root, safe_extract
 
 from .config import WorkerConfig
@@ -54,13 +53,13 @@ class BundleStore:
 
     def __init__(self, config: WorkerConfig) -> None:
         self._bucket = config.bundle_bucket
-        self._client: S3Client = boto3.client(
-            "s3",
+        # The one shared path-style construction (#501), also used by the API's
+        # write path, so reader and writer cannot drift on addressing/creds.
+        self._client: S3Client = build_s3_client(
             endpoint_url=config.s3_endpoint_url,
-            aws_access_key_id=config.s3_access_key,
-            aws_secret_access_key=config.s3_secret_key,
-            region_name=config.s3_region,
-            config=BotoConfig(s3={"addressing_style": "path"}),
+            access_key=config.s3_access_key,
+            secret_key=config.s3_secret_key,
+            region=config.s3_region,
         )
 
     def get(self, key: str) -> bytes:
