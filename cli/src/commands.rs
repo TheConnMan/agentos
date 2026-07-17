@@ -2472,12 +2472,13 @@ const MANIFEST_LOCATIONS: [&str; 2] = [".claude-plugin/plugin.json", "plugin.jso
 /// `plugin_format.models.ApprovalGate`, kept private here so `scaffold`'s
 /// `read_manifest` (used by `skill up`/`skill check`) keeps its narrow shape.
 ///
-/// Both fields are `Option` to keep the runner's two tiers distinguishable: the
-/// pydantic model declares `gate: str` / `route: str` with no default, so a
-/// MISSING key fails validation and disarms the whole policy, whereas a key
-/// present but empty only drops its own gate. Collapsing the two (via
-/// `#[serde(default)]` on a `String`) would report the siblings of a key-missing
-/// gate as armed when the runner arms nothing.
+/// Both fields are `Option` so a MISSING key stays distinguishable from one
+/// present but empty. Since #520 both refuse the manifest (the runner arms a
+/// declared policy exactly or not at all), so the distinction no longer changes
+/// the verdict -- but it still names the actual defect in the error, which is
+/// the difference between a fixable message and a puzzle. `#[serde(default)]`
+/// on a `String` would collapse them and report "empty" for a key that is
+/// simply absent.
 #[derive(Deserialize)]
 struct ApprovalGateDecl {
     gate: Option<String>,
@@ -2614,23 +2615,18 @@ fn gates_summary_line(gates: &[(String, String)]) -> String {
 /// Read the bundle's declared approval gates as `(gate, route)` pairs.
 ///
 /// The manifest is probed at `.claude-plugin/plugin.json` then `plugin.json`,
-/// mirroring the runner's `load_approval_policy`. That function's semantics are
-/// two-tier, and this mirrors both tiers because the difference decides whether a
-/// gate is armed at all:
+/// mirroring the runner's `load_approval_policy`. Since #520 that function is
+/// single-tier and fail-closed: ANY gate it cannot arm exactly as declared --
+/// a required key missing (the manifest's `name`, or a gate's `gate`/`route`),
+/// or a key present but empty/whitespace so it keys nothing -- raises rather
+/// than degrading to "nothing gated". So both shapes are reported here as one
+/// usage error naming the problem. The manifest is invalid input, deterministic
+/// and fixable by hand; reporting an empty list instead would read as "no gates
+/// configured", a different lie (#607).
 ///
-/// 1. A REQUIRED key missing (the manifest's `name`, or a gate's `gate`/`route`)
-///    fails `model_validate`, which `load_approval_policy` catches by returning
-///    `{}` -- the runner arms ZERO gates, not merely the offending one. Reported
-///    here as a usage error naming the problem: the manifest is invalid input,
-///    deterministic and fixable by hand, and reporting an empty list instead
-///    would read as "no gates configured" -- a different lie.
-/// 2. A key PRESENT but empty/whitespace passes validation and is dropped by the
-///    final comprehension's trim filter, so only THAT gate is skipped and its
-///    well-formed siblings stay armed.
-///
-/// A manifest with no `approvalPolicy` at all is neither: it yields no gates and
-/// no error. A bundle with no manifest is a usage error (the plugin dir is
-/// simply wrong).
+/// A manifest with no `approvalPolicy` at all, or an explicitly empty `gates`
+/// list, declares no gate: no gates and no error. A bundle with no manifest is a
+/// usage error (the plugin dir is simply wrong).
 fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
     let manifest_path = MANIFEST_LOCATIONS
         .iter()
@@ -2648,11 +2644,13 @@ fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
 }
 
 /// Parse the `approvalPolicy` gates out of a plugin-manifest JSON body, mirroring
-/// the runner's `load_approval_policy` two-tier semantics (a missing REQUIRED key
-/// disarms every gate → usage error; a present-but-empty gate/route is dropped,
-/// siblings survive). `source` labels the manifest in errors. Shared by the skill
-/// tier (manifest on local disk) and the local/cluster tiers (manifest pulled from
-/// the deployed bundle over the API, #546) so both read gates identically.
+/// the runner's `load_approval_policy` fail-closed semantics (#520): any declared
+/// gate the runner cannot arm exactly as declared -- a missing REQUIRED key, or a
+/// key present but empty -- refuses the whole manifest rather than arming a
+/// subset, so this reports a usage error for both. `source` labels the manifest in
+/// errors. Shared by the skill tier (manifest on local disk) and the local/cluster
+/// tiers (manifest pulled from the deployed bundle over the API, #546) so both
+/// read gates identically.
 fn parse_manifest_gates(body: &str, source: &str) -> Result<Vec<(String, String)>> {
     let invalid = |problem: &str| {
         crate::exit::usage(format!(
@@ -2671,10 +2669,13 @@ fn parse_manifest_gates(body: &str, source: &str) -> Result<Vec<(String, String)
             (_, None) => return Err(invalid("a gate in `approvalPolicy.gates` omits `route`")),
             (Some(gate), Some(route)) => (gate.trim(), route.trim()),
         };
-        // Tier 2: present but empty. Valid to the runner, dropped by its trim
-        // filter, siblings unaffected.
+        // Present but empty: parses, but keys nothing once trimmed, so the
+        // runner refuses to boot rather than arm a partial policy (#520).
+        // Reporting it as armed here would name a gate that stops the runner.
         if gate.is_empty() || route.is_empty() {
-            continue;
+            return Err(invalid(
+                "a gate in `approvalPolicy.gates` has an empty `gate` or `route`",
+            ));
         }
         // The runner keys a dict by the trimmed gate name, so a repeated gate
         // collapses to one entry: the first declaration fixes the position, the
@@ -3549,6 +3550,32 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn parse_manifest_gates_refuses_a_gate_the_runner_cannot_arm() {
+        // NEGATIVE CONTROL for the #520 CLI mirror. The runner refuses to boot
+        // on a declared gate it cannot arm, so reporting `Bash` as armed here
+        // would name a gate that in fact stops the runner. Restoring the old
+        // `continue` (drop the empty gate, keep its siblings) makes this fail.
+        for body in [
+            // Present but empty/whitespace: parses, keys nothing once trimmed.
+            r#"{"name":"x","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"   ","route":"eng"}]}}"#,
+            r#"{"name":"x","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"Write","route":""}]}}"#,
+            // Required key missing entirely.
+            r#"{"name":"x","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"Write"}]}}"#,
+        ] {
+            assert!(
+                parse_manifest_gates(body, "partial manifest").is_err(),
+                "reported gates for a manifest the runner refuses: {body}"
+            );
+        }
+        // An explicitly empty gates list declares nothing: no gates, no error.
+        assert_eq!(
+            parse_manifest_gates(r#"{"name":"x","approvalPolicy":{"gates":[]}}"#, "empty")
+                .expect("an empty gates list is a valid declaration of no gates"),
+            Vec::new()
+        );
+    }
+
     #[tokio::test]
     async fn skill_approvals_view_lists_bundle_gates() {
         use crate::ui::CliOutput;
@@ -3597,20 +3624,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skill_approvals_view_skips_incomplete_gate() {
-        use crate::ui::CliOutput;
+    async fn skill_approvals_view_refuses_an_incomplete_gate() {
         let dir = tempfile::tempdir().unwrap();
-        // The second gate has an empty route: mirror the runner's leniency and
-        // skip it rather than erroring, while the well-formed gate still shows.
+        // The second gate has an empty route, so it keys nothing and the runner
+        // refuses to boot on it (#520). Mirror that refusal: reporting `Bash` as
+        // armed while the runner will not start is the drift this test pins.
         write_manifest(
             dir.path(),
             ".claude-plugin/plugin.json",
             r#"{"name":"x","version":"1","approvalPolicy":{"gates":[{"gate":"Bash","route":"eng"},{"gate":"NoRoute","route":""}]}}"#,
         );
-        let out = super::skill_approvals(dir.path().to_path_buf(), vec![], false)
-            .await
-            .unwrap();
-        assert_eq!(gate_names(&out.to_json()), vec!["Bash".to_string()]);
+        assert!(
+            super::skill_approvals(dir.path().to_path_buf(), vec![], false)
+                .await
+                .is_err(),
+            "reported gates for a manifest the runner refuses to boot on"
+        );
     }
 
     #[tokio::test]

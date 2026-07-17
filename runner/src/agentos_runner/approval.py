@@ -31,6 +31,7 @@ identical seam as a real model call.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -413,6 +414,17 @@ def build_can_use_tool(gate: ApprovalGate) -> CanUseTool:
 _MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
 
 
+class ApprovalPolicyError(RuntimeError):
+    """A declared approval policy cannot be armed exactly as declared.
+
+    Raised instead of degrading to "nothing is gated". A bundle that declares
+    a gate the runner cannot arm is a hard configuration error surfaced at
+    startup -- the same posture ``load_plugins`` takes for an invalid bundle,
+    and for the same reason: booting anyway answers with the wrong (here,
+    empty) authority set.
+    """
+
+
 def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
     """The bundle manifest's ``approvalPolicy`` gates as ``{tool: route}``.
 
@@ -420,9 +432,22 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
     class of the ADR-0010 permission gate); its ``route`` names the approval
     route the platform binds to a channel per deployment. Declared in the
     bundle so the policy is versioned and evaluable with the agent (#247);
-    validated at deploy by ``plugin_format.validate_bundle``. Best-effort,
-    mirroring the hooks/systemPrompt readers: no dir, no manifest, or no
-    policy yields {} and the authoritative parse gate stays load_plugins.
+    validated at deploy by ``plugin_format.validate_bundle``.
+
+    **Enforcement intent is read from the DECLARED policy, never from the
+    resolved map** (#520). The resolved map empties on a resolution error, so
+    deciding "must I enforce?" from it fails OPEN exactly when parsing broke:
+    ``__main__`` builds no gate at all from an empty map, restoring the
+    hardcoded bypass. This reader therefore raises ``ApprovalPolicyError``
+    once a policy is declared but cannot be armed as declared, and reserves
+    the empty map for the honest cases: no dir, no manifest, no
+    ``approvalPolicy``, or an explicitly empty ``gates`` list.
+
+    Unlike the hooks/systemPrompt readers this one is NOT best-effort. Those
+    degrade to a smaller capability set and ``load_plugins`` is a sufficient
+    backstop; this one degrades to a wider authority set, and ``load_plugins``
+    does not run on the fake tier at all (``__main__.factory`` returns first),
+    so the backstop is absent precisely where it would be needed.
     """
 
     if not plugin_dir:
@@ -433,17 +458,93 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
     )
     if manifest_path is None:
         return {}
+    # Read raw first: a manifest that will not parse cannot prove it declares
+    # no policy, so the fail-closed reading is to refuse rather than assume.
     try:
-        manifest = PluginManifest.model_validate(
-            json.loads(manifest_path.read_text(encoding="utf-8"))
-        )
-        if manifest.approvalPolicy is None:
-            return {}
-        policy = ApprovalPolicy.model_validate(manifest.approvalPolicy)
-    except (json.JSONDecodeError, ValueError, OSError):
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ApprovalPolicyError(
+            f"cannot read the bundle manifest at {manifest_path} to determine whether"
+            f" it declares an approvalPolicy; refusing to boot ungated ({exc})"
+        ) from exc
+    if not isinstance(raw, dict) or raw.get("approvalPolicy") is None:
         return {}
-    return {
+    # An approvalPolicy IS declared. From here every failure is fail-closed:
+    # the intent is established and a parse error cannot revoke it.
+    try:
+        manifest = PluginManifest.model_validate(raw)
+        policy = ApprovalPolicy.model_validate(manifest.approvalPolicy)
+    except (ValueError, TypeError) as exc:
+        raise ApprovalPolicyError(
+            f"the bundle at {root} declares an approvalPolicy that does not parse;"
+            f" refusing to boot with its gates unarmed ({exc})"
+        ) from exc
+    routes = {
         gate.gate.strip(): gate.route.strip()
         for gate in policy.gates
         if gate.gate and gate.gate.strip() and gate.route and gate.route.strip()
     }
+    # Compare DISTINCT declared names against armed names, not counts: two
+    # entries for one tool are a last-wins duplicate that validate_bundle
+    # accepts, and rejecting them here would crash-loop a deploy-valid bundle.
+    declared_names = {
+        gate.gate.strip() for gate in policy.gates if isinstance(gate.gate, str)
+    }
+    unarmed = declared_names - set(routes)
+    if unarmed:
+        raise ApprovalPolicyError(
+            f"the bundle at {root} declares approvalPolicy gate(s)"
+            f" {sorted(unarmed)!r} that arm no tool; refusing to boot with a"
+            " partially armed policy"
+        )
+    return routes
+
+
+def build_approval_gate(
+    *,
+    operator_tools: Sequence[str] | None,
+    policy_routes: dict[str, str],
+    grant_tool: str | None = None,
+) -> ApprovalGate | None:
+    """Merge the operator's gated tools with the bundle's declared gates.
+
+    Two sources name approval-required tools: ``AGENTOS_APPROVAL_REQUIRED_TOOLS``
+    (operator/per-agent config, a bare list of names with no route) and the
+    bundle manifest's ``approvalPolicy`` (versioned with the agent, each gate
+    carrying its route). Neither naming a tool keeps the bypass posture.
+
+    **The bundle may only ADD names, never redefine an operator-set one**
+    (#520). The gated-tool set is a union, so a bundle already cannot *remove*
+    an operator's gate. The routes are the hollow-out surface: the operator's
+    list carries no routes, so a bundle gate naming a tool the operator
+    independently gated would silently choose which of the operator's own
+    approval channels governs the operator's own gate -- the trusted name
+    survives while its authority is redirected.
+
+    That conflict raises rather than resolving to a side, because both
+    resolutions widen: honouring the bundle's route lets an untrusted bundle
+    pick the approving audience, and dropping it falls back to ADR-0034
+    channel membership, which may be wider than the route the operator would
+    have chosen. Refusing to boot is the only reading that neither widens nor
+    lets the bundle redefine, and it mirrors ADR-0046's "escalate loudly,
+    create no approval" over a silent fallback.
+    """
+
+    operator = frozenset(operator_tools or ())
+    redefined = sorted(operator & set(policy_routes))
+    if redefined:
+        raise ApprovalPolicyError(
+            f"the bundle declares approvalPolicy route(s) for {redefined!r}, which"
+            " the operator already gated via AGENTOS_APPROVAL_REQUIRED_TOOLS; a"
+            " bundle may add gated tools but may not redefine the approval route"
+            " of an operator-set gate. Remove the gate from the bundle manifest,"
+            " or drop the tool from the operator list to let the bundle own it."
+        )
+    gated_tools = operator | frozenset(policy_routes)
+    if not gated_tools:
+        return None
+    return ApprovalGate(
+        required=gated_tools,
+        route_by_tool=policy_routes,
+        grant_tool=grant_tool,
+    )

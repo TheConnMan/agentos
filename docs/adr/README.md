@@ -78,4 +78,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0046 | [Converged approval gates: durable provenance, loud route resolution, and observe-only resume reconciliation](0046-converged-approval-gates-and-durable-provenance.md) | Accepted |
 | 0047 | [ADR-0047: Canonical env-var names for the API base URL and model credential](0047-canonical-env-var-names.md) | Accepted |
 | 0048 | [ADR-0048: Declare the model endpoint's wire protocol and credential keys](0048-declared-model-wire-protocol-and-credential-keys.md) | Accepted |
+| 0050 | [A declared approval policy is armed exactly as declared, or the runner refuses to boot](0050-declared-approval-policy-is-armed-exactly-or-not-at-all.md) | Accepted |
 <!-- END GENERATED: adr-index -->

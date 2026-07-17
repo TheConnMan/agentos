@@ -18,6 +18,8 @@ from agentos_runner.approval import (
     APPROVAL_SUMMARY_PREFIX,
     APPROVAL_TOOL_NAME,
     ApprovalGate,
+    ApprovalPolicyError,
+    build_approval_gate,
     build_approval_server,
     build_can_use_tool,
     guard_reserved_summary,
@@ -602,6 +604,173 @@ def test_load_approval_policy_reads_manifest_gates(tmp_path) -> None:
     assert load_approval_policy(str(tmp_path / "missing")) == {}
 
 
+# --- fail-closed hardening (#520): declared intent, anti-hollow-out merge -------
+
+
+def _write_manifest(tmp_path, body: str) -> str:
+    plugin = tmp_path / ".claude-plugin"
+    plugin.mkdir(exist_ok=True)
+    (plugin / "plugin.json").write_text(body)
+    return str(tmp_path)
+
+
+def test_declared_but_unparseable_policy_fails_closed(tmp_path) -> None:
+    """A declared gate that cannot be resolved must raise, never yield {}.
+
+    NEGATIVE CONTROL for #520 pattern 1. The resolved map empties on a
+    resolution error; deciding "must I enforce?" from it would silently drop
+    the gate and restore the bypass posture. Deleting the declared-intent
+    check in ``load_approval_policy`` makes this test fail: the call returns
+    {} instead of raising.
+    """
+
+    # `Bash` is complete and `Write` is missing its route. The whole map
+    # previously collapsed to {} -- silently ungating `Bash` too.
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {"gate": "Bash", "route": "managers"},
+                        {"gate": "Write"},
+                    ]
+                },
+            }
+        ),
+    )
+    with pytest.raises(ApprovalPolicyError) as exc:
+        load_approval_policy(bundle)
+    assert "approvalPolicy" in str(exc.value)
+
+
+def test_declared_gate_that_arms_nothing_fails_closed(tmp_path) -> None:
+    """Every DISTINCT declared gate name must end up armed, or boot fails.
+
+    NEGATIVE CONTROL for #520 pattern 1. A blank gate name parses fine but
+    arms nothing, so the resolved map is a strict subset of what was
+    declared. Removing the declared-vs-armed comparison makes this pass
+    silently with `Bash` gated and the blank entry quietly dropped.
+    """
+
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {"gate": "Bash", "route": "managers"},
+                        {"gate": "   ", "route": "legal"},
+                    ]
+                },
+            }
+        ),
+    )
+    with pytest.raises(ApprovalPolicyError):
+        load_approval_policy(bundle)
+
+
+def test_unreadable_manifest_cannot_prove_no_policy_is_declared(tmp_path) -> None:
+    """A corrupt manifest fails closed: absence of a policy is unprovable.
+
+    NEGATIVE CONTROL for #520 pattern 1. ``load_plugins`` rejects this bundle
+    on the real path, but the fake tier returns before ``load_plugins`` runs
+    (``__main__.factory``), so swallowing the parse error here is the fake
+    tier's whole gate. Restoring the ``return {}`` makes this test fail.
+    """
+
+    bundle = _write_manifest(tmp_path, "{not json at all")
+    with pytest.raises(ApprovalPolicyError):
+        load_approval_policy(bundle)
+
+
+def test_duplicate_gate_names_are_not_a_resolution_failure(tmp_path) -> None:
+    """Two entries for one tool arm that tool -- last wins, as before.
+
+    Guards the declared-vs-armed check against over-tightening into a
+    divergence from ``plugin_format.validate_bundle``: a bundle the deploy
+    validator accepts must never crash-loop the runner.
+    """
+
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {"gate": "Bash", "route": "managers"},
+                        {"gate": "Bash", "route": "legal"},
+                    ]
+                },
+            }
+        ),
+    )
+    assert load_approval_policy(bundle) == {"Bash": "legal"}
+
+
+def test_explicitly_empty_gates_list_arms_nothing(tmp_path) -> None:
+    """`gates: []` declares no gate, so the empty map is the honest answer."""
+
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps({"name": "deal-desk", "approvalPolicy": {"gates": []}}),
+    )
+    assert load_approval_policy(bundle) == {}
+
+
+def test_bundle_may_not_route_a_tool_the_operator_gated() -> None:
+    """A bundle may ADD gated names, never redefine an operator-set one.
+
+    NEGATIVE CONTROL for #520 pattern 2. The operator gated `Bash` with no
+    route (ADR-0034 channel-membership default). A bundle naming a route for
+    `Bash` would silently pick which of the operator's own approval channels
+    governs the operator's own gate -- the trusted name survives, its
+    authority is redirected. Deleting the conflict check makes this test
+    fail: the gate is built with the bundle's route in `route_by_tool`.
+    """
+
+    with pytest.raises(ApprovalPolicyError) as exc:
+        build_approval_gate(
+            operator_tools=["Bash"],
+            policy_routes={"Bash": "legal"},
+        )
+    assert "Bash" in str(exc.value)
+
+
+def test_bundle_routes_apply_to_names_only_the_bundle_gates() -> None:
+    """The append-only case is untouched: bundle-only names keep their route."""
+
+    gate = build_approval_gate(
+        operator_tools=["Read"],
+        policy_routes={"Bash": "managers"},
+    )
+    assert gate is not None
+    # Union of both sources arms; the bundle's route rides only its own name.
+    assert gate.required == frozenset({"Read", "Bash"})
+    assert gate.route_by_tool == {"Bash": "managers"}
+
+
+def test_no_declared_gate_from_either_source_keeps_the_bypass_posture() -> None:
+    """Neither source naming a tool yields no gate, as before."""
+
+    assert build_approval_gate(operator_tools=None, policy_routes={}) is None
+
+
+def test_build_approval_gate_carries_the_grant_tool() -> None:
+    """The ADR-0035/0046 one-shot grant still reaches the gate unchanged."""
+
+    gate = build_approval_gate(
+        operator_tools=["Bash"],
+        policy_routes={},
+        grant_tool="Bash",
+    )
+    assert gate is not None
+    assert gate.grant_tool == "Bash"
+
+
 def test_gate_block_records_the_declared_route() -> None:
     gate = ApprovalGate(
         required=frozenset({"Bash", "Read"}), route_by_tool={"Bash": "managers"}
@@ -959,7 +1128,9 @@ def test_route_normalization_agrees_between_validator_and_runner(
     The contract, both directions:
       - validator ACCEPTS  -> the runner arms the gate, and the route it matches
         on is the same normalized value the validator judged.
-      - validator REJECTS  -> the gate never reaches the runner at all.
+      - validator REJECTS  -> the gate never reaches the runner at all. Since
+        #520 the runner is stricter still: a declared gate it cannot arm is a
+        boot failure, not a silent degrade to the unarmed empty map.
     """
 
     bundle = _write_bundle(tmp_path, declared)
@@ -969,16 +1140,16 @@ def test_route_normalization_agrees_between_validator_and_runner(
         f"errors={[e.code for e in result.errors]}"
     )
 
-    policy = load_approval_policy(bundle)
-
     if not validator_accepts:
         # A bundle the validator refuses never deploys, so the runner must never
-        # be holding an armed gate for it.
-        assert policy == {}, (
-            f"validator rejected {declared!r} but the runner still armed {policy!r} "
-            "-- a gate that validates red yet arms at runtime"
-        )
+        # be holding an armed gate for it -- and must not quietly boot ungated
+        # either, since a declared-but-unarmable gate means enforcement intent
+        # was expressed and could not be honoured (#520).
+        with pytest.raises(ApprovalPolicyError):
+            load_approval_policy(bundle)
         return
+
+    policy = load_approval_policy(bundle)
 
     # The validator accepted it, so the runner MUST have armed it, keyed on the
     # same normalization the validator evaluated (the stripped value).
