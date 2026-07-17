@@ -47,8 +47,7 @@ spec:
           image: {{ include "agentos.image" (dict "repository" .Values.ui.image.repository "tag" .Values.ui.image.tag "digest" .Values.ui.image.digest "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           {{- with .Values.ui.containerSecurityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
+          {{- include "agentos.containerSecurityContext" . | nindent 10 }}
           {{- end }}
           env:
             # nginx reverse-proxies /api/ to this upstream (the /api prefix is

@@ -79,8 +79,7 @@ spec:
           image: {{ include "agentos.image" (dict "repository" .Values.worker.image.repository "tag" .Values.worker.image.tag "digest" .Values.worker.image.digest "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           {{- with .Values.worker.containerSecurityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
+          {{- include "agentos.containerSecurityContext" . | nindent 10 }}
           {{- end }}
           env:
             {{- include "agentos.env.postgres" . | nindent 12 }}

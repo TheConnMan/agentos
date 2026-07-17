@@ -123,6 +123,15 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/connector-secrets-assertions.sh
 
+      # Prove every container in the untrusted sandbox pod renders the identical
+      # Rail 3 hardened securityContext from the shared helper (issue #493), so a
+      # helper edit that weakens the lockdown -- or a container that skips it --
+      # fails CI rather than silently shipping a looser sandbox.
+      - name: helm render assertions (sandbox hardening)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/sandbox-hardening-assertions.sh
+
       # Prove the dispatcher is told where the platform API is and how to
       # authenticate to it (issue #442). Unwired, it falls back to its code
       # default http://localhost:8000 -- itself -- and every Slack Approve click
