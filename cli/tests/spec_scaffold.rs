@@ -33,10 +33,13 @@ fn output_text(output: &std::process::Output) -> String {
 }
 
 /// A valid two-skill spec with one connector and one eval. The single eval
-/// grader is `{kind: contains, expected: "all done"}` deliberately: that is the
-/// fake-model-compatible grader that makes the offline `skill eval` parity demo
-/// pass, so a spec authored this way scaffolds a suite that greens without a
-/// real model.
+/// grader is FALSIFIABLE -- it requires the agent to name itself, so a broken,
+/// empty, or off-topic turn fails it. This is the same footing #553 put the
+/// `init` lane on; the spec lane was left behind on a `contains "all done"`
+/// grader tuned to the fake model's canned reply (#612). No grader needs to be
+/// fake-compatible any more: the fake tier is a plumbing fixture and is never
+/// graded at all, so a grader written to match its canned text buys nothing but
+/// a false green.
 fn valid_spec_json() -> &'static str {
     r#"{
       "name": "deal-desk",
@@ -58,7 +61,7 @@ fn valid_spec_json() -> &'static str {
         "crm": { "command": "crm-mcp", "args": ["--stdio"] }
       },
       "evals": [
-        { "id": "prices-a-deal", "input": "Quote 20% off for Acme", "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false } }
+        { "id": "prices-a-deal", "input": "Quote 20% off for Acme as the deal-desk agent", "grader": { "kind": "contains", "expected": "deal-desk", "case_sensitive": false } }
       ]
     }"#
 }
@@ -372,7 +375,37 @@ fn scaffolded_evals_load_through_the_skill_eval_loader() {
     let case = &suite.cases[0];
     assert_eq!(case.id, "prices-a-deal");
     assert_eq!(case.grader.kind, GraderKind::Contains);
-    assert_eq!(case.grader.expected, "all done");
+    assert_eq!(case.grader.expected, "deal-desk");
+}
+
+/// A spec-scaffolded grader carries through to the eval path FALSIFIABLE, on the
+/// same footing as the `init` lane's seed (#553 / #527). #612: this lane kept a
+/// grader tuned to the fake model's canned "all done", which passed on output the
+/// fake produces regardless of the agent -- a green that proved nothing. Since
+/// the fake tier is never graded at all, a grader may and must be written to
+/// judge the real work.
+#[test]
+fn a_spec_scaffolded_grader_is_not_satisfied_by_the_fake_models_canned_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bundle");
+    let spec = parse(valid_spec_json()).unwrap();
+    scaffold_from_spec(&out, &spec).unwrap();
+
+    let suite = load_suite(&out.join("evals/cases.json")).expect("suite loads");
+    let grader = &suite.cases[0].grader;
+    // "all done" is `fake.py::default_turn()`'s final text, whatever the input.
+    assert!(
+        !grader.grade("all done"),
+        "a spec-scaffolded grader must judge the real work, not the fake's canned text"
+    );
+    assert!(
+        !grader.grade(""),
+        "an empty turn must never satisfy a scaffolded grader"
+    );
+    assert!(
+        grader.grade("The deal-desk agent quotes 20% off for Acme."),
+        "an on-topic answer must still pass"
+    );
 }
 
 // --- validation / error behavior ------------------------------------------

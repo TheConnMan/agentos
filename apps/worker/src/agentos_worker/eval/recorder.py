@@ -3,10 +3,12 @@
 Per the architecture (detailed-architecture section 4), eval Jobs write scores to
 Langfuse and the eval matrix reads the grid back keyed by version tag. This
 recorder posts, for each case, a Langfuse trace (input/output/metadata, tagged
-with the version and suite) plus an ``eval_pass`` numeric score (1.0 / 0.0) to the
-public ingestion API. The API server's matrix endpoint (a J1/observability
-handoff, not built here) then queries scores/traces filtered by the version tag to
-assemble the grid across N pinned versions.
+with the version and suite) plus, for a graded case, an ``eval_pass`` numeric score
+(1.0 / 0.0) to the public ingestion API. A non-graded case (the fake tier, ADR-0055)
+records its trace but no score: it has no grade, and either number would be a lie.
+The API server's matrix endpoint (a J1/observability handoff, not built here) then
+queries scores/traces filtered by the version tag to assemble the grid across N
+pinned versions.
 
 Ingestion is asynchronous on Langfuse v3 (queued, then materialized in
 ClickHouse), so a read-back is eventually consistent, not immediate.
@@ -20,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from .models import EvalCaseResult, EvalRunResult
+from .models import EvalCaseResult, EvalOutcome, EvalRunResult
 
 SCORE_NAME = "eval_pass"
 
@@ -57,7 +59,12 @@ class LangfuseEvalRecorder:
             trace_id = uuid.uuid4().hex
             trace_ids.append(trace_id)
             batch.append(self._trace_event(trace_id, run, result, now))
-            batch.append(self._score_event(trace_id, result, now))
+            # A non-graded case has no grade to record: 0.0 would read as a fail
+            # that never happened and 1.0 is the false green. Omitting the score
+            # is the only honest shape -- the trace still lands, so the row stays
+            # visible with its outcome, it just carries no eval_pass.
+            if result.outcome is not EvalOutcome.PLUMBING_OK:
+                batch.append(self._score_event(trace_id, result, now))
 
         resp = await self._client.post(
             f"{self._base}/api/public/ingestion",
@@ -83,6 +90,11 @@ class LangfuseEvalRecorder:
         tags = ["eval", f"version:{run.version}", f"suite:{run.suite}"]
         if run.model:
             tags.append(f"model:{run.model}")
+        # A non-graded row is tagged so the grid can filter plumbing runs out of a
+        # comparison without parsing metadata; the tag means exactly "no grader
+        # judged this", never "this failed".
+        if result.outcome is EvalOutcome.PLUMBING_OK:
+            tags.append("plumbing")
         return {
             "id": uuid.uuid4().hex,
             "type": "trace-create",
@@ -99,6 +111,10 @@ class LangfuseEvalRecorder:
                     "suite": run.suite,
                     "model": run.model,
                     "case_id": result.case_id,
+                    "outcome": result.outcome.value,
+                    # Kept alongside `outcome` so an unmigrated reader stays
+                    # fail-safe: a plumbing row's null renders as missing, never as
+                    # a fabricated pass or fail. `outcome` is the authoritative one.
                     "passed": result.passed,
                     "latency_ms": result.latency_ms,
                     "cost_usd": result.cost_usd,

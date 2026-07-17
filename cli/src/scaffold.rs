@@ -5,8 +5,11 @@
 //! `skills/<name>/SKILL.md` with YAML frontmatter, a root `.mcp.json`, plus a
 //! CLI-local `evals/cases.json` seed (a suite object
 //! `{name, cases: [{id, input, grader}]}`, hand-mirroring the frozen eval-case
-//! schema) for `agentos skill eval` -- a single smoke case that passes on any
-//! completed turn. Two more files teach the developer's coding agent how to
+//! schema) for `agentos skill eval` -- a single smoke case whose grader is
+//! falsifiable: it requires the agent to name itself, so an empty, broken, or
+//! off-topic turn fails it (#527). Under `--fake-model` that grader never runs
+//! at all -- the fake tier is a plumbing fixture and reports the non-graded
+//! `plumbing_ok` (ADR-0055). Two more files teach the developer's coding agent how to
 //! drive the harness: a root `AGENTS.md` (the cross-agent auto-scanned standard)
 //! and an installable primer skill at `.claude/skills/using-agentos/SKILL.md`
 //! whose body is rendered from `guide::primer_markdown()` so it can never drift
@@ -50,10 +53,17 @@ fn skill_md(name: &str) -> String {
     )
 }
 
-/// The `evals/cases.json` seed: a single smoke case named for `<name>`. The
-/// `contains ""` grader passes on any completed (`Done`) turn, so the scaffold
-/// is green out of the box under both `--fake-model` and a real credential --
-/// a status gate the author replaces with real graders first.
+/// The `evals/cases.json` seed: a single smoke case named for `<name>`, graded
+/// by a falsifiable `contains: <name>` (#527) -- the agent must name itself, so
+/// a broken, empty, or off-topic turn is red.
+///
+/// The two tiers reach that grader differently, and neither is "green out of the
+/// box". Under a real credential the case is graded and a correct introduction
+/// passes it. Under `--fake-model` the case is NOT graded at all: the fake
+/// answers every input with the same canned text, so `skill eval` reports the
+/// non-graded `plumbing_ok` -- exit 0, but a claim about the plumbing, not about
+/// the agent (ADR-0055). Replacing this with a real domain grader is the
+/// author's first step either way.
 fn eval_cases(name: &str) -> String {
     serde_json::to_string_pretty(&serde_json::json!({
         "name": name,
@@ -84,7 +94,7 @@ fn eval_cases(name: &str) -> String {
 /// current landmine list.
 fn agents_md(name: &str) -> String {
     format!(
-        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` -- must be green before any deploy. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list.\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n"
+        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n   The fake model is plumbing, not a subject under test: it answers every input\n   with the same canned reply, so nothing it says is evidence about behavior.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` under `--fake-model` reports `plumbing_ok` -- it proves\n   the turn completed, and grades nothing. Re-run it with a real credential to\n   grade the cases; that green is the promotion gate. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Grading, and therefore green and red, is a\n  real-credential concept; never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list.\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n"
     )
 }
 
@@ -361,7 +371,8 @@ mod tests {
                 .unwrap();
         assert!(mcp["mcpServers"].is_object());
 
-        // Single smoke case named for <name>: contains "" (status-gated pass).
+        // Single smoke case named for <name>, graded by a falsifiable
+        // `contains: <name>` (#527) -- never the vacuous `contains ""`.
         let cases: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.path().join("evals/cases.json")).unwrap(),
         )

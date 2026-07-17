@@ -1,21 +1,51 @@
 """Eval matrix (K1): assemble the case-by-version grid from Langfuse.
 
 K1's recorder writes, per case, a trace tagged version:<sha> + suite:<name> whose
-metadata carries case_id and the pass/fail (mirrored by an eval_pass score). The
-matrix reads pass/fail straight off each suite trace's metadata -- scoping to the
-traces just fetched, rather than joining a globally-paginated scores query -- and
-pivots them into rows = cases, columns = the last N versions, cells =
-pass/fail/missing. Pure builder so the pivot is unit-testable off canned data.
+metadata carries case_id and the outcome (mirrored, for a graded case, by an
+eval_pass score). The matrix reads the outcome straight off each suite trace's
+metadata -- scoping to the traces just fetched, rather than joining a
+globally-paginated scores query -- and pivots them into rows = cases, columns =
+the last N versions, cells = pass/fail/plumbing_ok/missing. Pure builder so the
+pivot is unit-testable off canned data.
 """
 
 from typing import Any, Literal
 
 from .schemas import EvalCell, EvalMatrix, EvalMatrixRow, EvalModelSummary
 
-Status = Literal["pass", "fail", "missing"]
+Status = Literal["pass", "fail", "plumbing_ok", "missing"]
 
 _VERSION_TAG = "version:"
 _MODEL_TAG = "model:"
+_PLUMBING_OK = "plumbing_ok"
+
+
+def _outcome_of(trace: dict[str, Any]) -> Status:
+    """This trace's cell status, from ``outcome`` when present.
+
+    ``outcome`` is authoritative over ``passed``: a non-graded row derives
+    ``passed=None``, but reading ``passed`` first would render any stale or
+    fabricated True as a green cell -- exactly the false green the fake tier's
+    non-graded outcome exists to prevent. A pre-#606 trace carries no ``outcome``
+    key at all, so it falls back to ``passed`` and historical matrix data keeps
+    rendering with no migration.
+    """
+    metadata = trace.get("metadata") or {}
+    outcome = metadata.get("outcome")
+    if outcome == _PLUMBING_OK:
+        return "plumbing_ok"
+    if outcome == "pass":
+        return "pass"
+    if outcome == "fail":
+        return "fail"
+    passed = metadata.get("passed")
+    if passed is None:
+        return "missing"
+    return "pass" if passed else "fail"
+
+
+def _is_graded(trace: dict[str, Any]) -> bool:
+    return _outcome_of(trace) in ("pass", "fail")
 
 
 def _version_of(trace: dict[str, Any]) -> str | None:
@@ -56,6 +86,26 @@ def _cost_of(trace: dict[str, Any]) -> float | None:
     return None
 
 
+def _supersedes(
+    trace: dict[str, Any], current: dict[str, Any] | None, ts: str
+) -> bool:
+    """Should ``trace`` replace ``current`` in its cell?
+
+    Newest wins, with one exception: a graded result always beats a non-graded one
+    regardless of timestamp. The grid is a promotion/comparison surface and a
+    plumbing row carries zero comparative information, so re-running the sealed
+    fake loop after a real eval must not erase the real signal just by being newer.
+    A plumbing row only occupies a cell no graded run has claimed; it stays visible
+    either way via the per-model plumbing count.
+    """
+    if current is None:
+        return True
+    trace_graded, current_graded = _is_graded(trace), _is_graded(current)
+    if trace_graded != current_graded:
+        return trace_graded
+    return ts >= str(current.get("timestamp") or "")
+
+
 def build_matrix(
     traces: list[dict[str, Any]],
     suite: str,
@@ -77,12 +127,10 @@ def build_matrix(
             continue
         ts = str(trace.get("timestamp") or "")
         key = (version, case_id)
-        if key not in latest or ts >= str(latest[key].get("timestamp") or ""):
+        if _supersedes(trace, latest.get(key), ts):
             latest[key] = trace
         model_key = (version, case_id, _model_of(trace))
-        if model_key not in latest_by_model or ts >= str(
-            latest_by_model[model_key].get("timestamp") or ""
-        ):
+        if _supersedes(trace, latest_by_model.get(model_key), ts):
             latest_by_model[model_key] = trace
         if ts >= version_last_seen.get(version, ""):
             version_last_seen[version] = ts
@@ -100,10 +148,7 @@ def build_matrix(
         trace = latest.get((version, case))
         if trace is None:
             return "missing"
-        passed = (trace.get("metadata") or {}).get("passed")
-        if passed is None:
-            return "missing"
-        return "pass" if passed else "fail"
+        return _outcome_of(trace)
 
     rows = [
         EvalMatrixRow(
@@ -141,30 +186,43 @@ def _model_summaries(
     displayed grid) is what lets a same-version sweep across N models keep all N
     rows instead of collapsing to whichever recorded last (#526). Cost sums only
     the cases that reported one; a model with no cost anywhere stays ``None``.
+
+    A non-graded row (ADR-0055) never enters ``passed``/``total`` -- there is no
+    verdict to average -- and is counted under ``plumbing`` instead, so the rows
+    are surfaced rather than dropped. The exclusion is per row, not per model: a
+    model with real graded rows keeps its true pass-rate even when a plumbing row
+    shares its label.
     """
     passed: dict[str | None, int] = {}
     total: dict[str | None, int] = {}
+    plumbing: dict[str | None, int] = {}
     cost: dict[str | None, float | None] = {}
     for (version, _case, model), trace in latest_by_model.items():
         if version not in version_set:
             continue
-        meta_passed = (trace.get("metadata") or {}).get("passed")
-        if meta_passed is None:
+        status = _outcome_of(trace)
+        if status == "plumbing_ok":
+            plumbing[model] = plumbing.get(model, 0) + 1
+            continue
+        if status == "missing":
             continue
         total[model] = total.get(model, 0) + 1
-        passed[model] = passed.get(model, 0) + (1 if meta_passed else 0)
+        passed[model] = passed.get(model, 0) + (1 if status == "pass" else 0)
         case_cost = _cost_of(trace)
         if case_cost is not None:
             cost[model] = (cost.get(model) or 0.0) + case_cost
 
-    # Deterministic order: named models sorted, unlabelled (None) last.
-    keys = sorted(total, key=lambda m: (m is None, m or ""))
+    # Deterministic order: named models sorted, unlabelled (None) last. A model
+    # whose every row was plumbing has no `total` entry, so the keys are the union
+    # -- otherwise a fully sealed sweep would vanish from the rollup entirely.
+    keys = sorted(set(total) | set(plumbing), key=lambda m: (m is None, m or ""))
     return [
         EvalModelSummary(
             model=model,
             passed=passed.get(model, 0),
-            total=total[model],
+            total=total.get(model, 0),
             cost_usd=cost.get(model),
+            plumbing=plumbing.get(model, 0),
         )
         for model in keys
     ]

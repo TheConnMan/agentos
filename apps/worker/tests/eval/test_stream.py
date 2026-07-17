@@ -28,6 +28,7 @@ from typing import Any, cast
 import httpx
 import pytest
 import redis
+from aci_protocol import STREAM_PAYLOAD_FIELD
 from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV, MODEL_ENV
 from agentos_worker.bundle_store import BundleStore
 from agentos_worker.config import WorkerConfig
@@ -42,7 +43,7 @@ from agentos_worker.eval import (
     LangfuseEvalRecorder,
     load_suite_from_bundle,
 )
-from agentos_worker.eval.models import EvalRunResult
+from agentos_worker.eval.models import EvalCaseResult, EvalOutcome, EvalRunResult
 from agentos_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
 from agentos_worker.sandbox.types import ClaimView, SandboxView
 from redis.asyncio import Redis as AsyncRedis
@@ -943,6 +944,133 @@ def test_eval_fake_model_install_refuses_to_label_a_model_never_called(
     assert consumer._eval_model(remote) == "claude-y"
 
 
+def _consumer(cfg: WorkerConfig, **wiring: Any) -> EvalStreamConsumer:
+    deps: dict[str, Any] = {
+        "redis": None,
+        "bundle_store": None,
+        "substrate": None,
+        "reporter": None,
+        "recorder": None,
+        "repo_lookup": None,
+    }
+    deps.update(wiring)
+    return EvalStreamConsumer(config=cfg, **deps)  # type: ignore[arg-type]
+
+
+def _canned_run(monkeypatch, outcomes: list[EvalOutcome]) -> None:
+    """Pin ``run_eval_suite`` to a result with the given per-case outcomes.
+
+    The report gate is what is under test here; the suite execution is the seam
+    being held still, exactly as the token-threading test does.
+    """
+    from agentos_worker.eval import stream as stream_module
+
+    async def _fake_run(suite: EvalSuite, *, version: str, **_kw: Any) -> EvalRunResult:
+        return EvalRunResult(
+            version=version,
+            suite=suite.name,
+            model=None,
+            results=[
+                EvalCaseResult(
+                    case_id=f"c{i}", outcome=outcome, output="all done", latency_ms=1.0
+                )
+                for i, outcome in enumerate(outcomes)
+            ],
+        )
+
+    monkeypatch.setattr(stream_module, "run_eval_suite", _fake_run)
+
+
+def _fake_job_consumer(reporter: Any) -> EvalStreamConsumer:
+    suite = EvalSuite(
+        name="s",
+        cases=[EvalCase(id="1", input="q", grader=Grader(kind=CONTAINS, expected="a"))],
+    )
+    return _consumer(
+        WorkerConfig(fake_model=True),
+        bundle_store=_FakeBundleStore(_suite_bundle(suite)),
+        substrate=_TokenSubstrate("tok"),
+        reporter=reporter,
+        repo_lookup=_StubRepo(),
+    )
+
+
+def test_an_all_plumbing_run_posts_no_eval_report_but_is_still_acked(monkeypatch) -> None:
+    """The frozen EvalReport carries passed_count/total only, and the API turns it
+    into a GitHub commit status. That shape cannot express non-graded: 0/N posts a
+    red that did not happen and N/N posts the false green this change exists to
+    kill. So an all-plumbing run posts nothing at all -- and the skip still counts
+    as a completed report attempt, so the entry is acked rather than redelivered
+    forever."""
+    _canned_run(monkeypatch, [EvalOutcome.PLUMBING_OK, EvalOutcome.PLUMBING_OK])
+    reporter = _FakeReporter()
+    consumer = _fake_job_consumer(reporter)
+    acked: list[str] = []
+
+    async def _record_ack(entry_id: str) -> None:
+        acked.append(entry_id)
+
+    monkeypatch.setattr(consumer, "_ack", _record_ack)
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.tgz", target_url=None)
+
+    async def go() -> None:
+        await consumer._handle("1-0", {STREAM_PAYLOAD_FIELD: item.model_dump_json()})
+
+    asyncio.run(go())
+
+    assert reporter.reports == []  # no commit status is better than a fabricated one
+    assert acked == ["1-0"]  # ...and the job is done, not left pending
+
+
+def test_a_fake_run_carrying_a_failure_still_posts_its_report(monkeypatch) -> None:
+    """A fake turn that did not complete means the plumbing is genuinely broken, so
+    that red is real and must reach the PR check."""
+    _canned_run(monkeypatch, [EvalOutcome.PLUMBING_OK, EvalOutcome.FAIL])
+    reporter = _FakeReporter()
+    consumer = _fake_job_consumer(reporter)
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.tgz", target_url=None)
+
+    async def go() -> None:
+        await consumer._run_and_report(item)
+
+    asyncio.run(go())
+
+    assert len(reporter.reports) == 1
+    report = reporter.reports[0]
+    assert report.sha == "deadbeef"
+    assert report.passed_count == 0  # nothing passed; the broken turn is the signal
+
+
+def test_a_real_run_still_posts_its_report(monkeypatch) -> None:
+    """The report gate is keyed on the non-graded outcome, not switched off wholesale:
+    a graded run reports exactly as before."""
+    _canned_run(monkeypatch, [EvalOutcome.PASS, EvalOutcome.PASS])
+    reporter = _FakeReporter()
+    consumer = _consumer(
+        WorkerConfig(fake_model=False),
+        bundle_store=_FakeBundleStore(
+            _suite_bundle(
+                EvalSuite(
+                    name="s",
+                    cases=[EvalCase(id="1", input="q", grader=Grader(kind=CONTAINS, expected="a"))],
+                )
+            )
+        ),
+        substrate=_TokenSubstrate("tok"),
+        reporter=reporter,
+        repo_lookup=_StubRepo(),
+    )
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.tgz", target_url=None)
+
+    async def go() -> None:
+        await consumer._run_and_report(item)
+
+    asyncio.run(go())
+
+    assert len(reporter.reports) == 1
+    assert reporter.reports[0].passed_count == 2
+
+
 def test_eval_boot_env_drops_reserved_connector_secret() -> None:
     """#457 eval-path parity: the eval consumer's connector-secret injection must
     honor the reserved-boot-env policy exactly like binding.boot_env does. A secret
@@ -996,10 +1124,12 @@ def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
         recorder: Any = None,
         token: Any = None,
         model: Any = None,
+        fake: Any = None,
     ) -> EvalRunResult:
         captured["base_url"] = base_url
         captured["token"] = token
         captured["model"] = model
+        captured["fake"] = fake
         return EvalRunResult(version=version, suite=suite.name, results=[])
 
     monkeypatch.setattr(stream_module, "run_eval_suite", _capture_run)
@@ -1026,6 +1156,48 @@ def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
 
     assert captured["base_url"] == "http://sandbox.local:8080"
     assert captured["token"] == "tok-eval-xyz"
+
+
+@pytest.mark.parametrize("fake_model", [True, False])
+def test_eval_threads_the_workers_fake_state_into_run_eval_suite(
+    monkeypatch, fake_model: bool
+) -> None:
+    """The worker is the sole authority on fake-ness: nothing downstream of the
+    stream can infer it (the ACI Final frame carries no model field and no fake
+    marker), so the consumer must hand its own config down to the grading layer.
+    Without this thread the runner would grade a canned reply -- the false green.
+    """
+    from agentos_worker.eval import stream as stream_module
+
+    captured: dict[str, Any] = {}
+
+    async def _capture_run(
+        suite: EvalSuite, *, version: str, fake: Any = None, **_kw: Any
+    ) -> EvalRunResult:
+        captured["fake"] = fake
+        return EvalRunResult(version=version, suite=suite.name, results=[])
+
+    monkeypatch.setattr(stream_module, "run_eval_suite", _capture_run)
+
+    suite = EvalSuite(
+        name="s",
+        cases=[EvalCase(id="1", input="q", grader=Grader(kind=CONTAINS, expected="a"))],
+    )
+    consumer = _consumer(
+        WorkerConfig(fake_model=fake_model),
+        bundle_store=_FakeBundleStore(_suite_bundle(suite)),
+        substrate=_TokenSubstrate("tok"),
+        reporter=_FakeReporter(),
+        repo_lookup=_StubRepo(),
+    )
+    item = _item(suite="s", sha="deadbeef", bundle_ref="bundles/x.tgz", target_url=None)
+
+    async def go() -> None:
+        await consumer._run_and_report(item)
+
+    asyncio.run(go())
+
+    assert captured["fake"] is fake_model
 
 
 async def _assert_langfuse_traces(

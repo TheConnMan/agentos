@@ -28,7 +28,7 @@ import aiohttp
 from aci_protocol import ErrorEvent, Event, Final, SessionStatus, TextDelta, ToolNote
 
 from ..runner_client import RunnerClient, RunnerError
-from .models import EvalCase, EvalCaseResult, EvalRunResult, EvalSuite
+from .models import EvalCase, EvalCaseResult, EvalOutcome, EvalRunResult, EvalSuite
 from .scorer import GraderScorer, Scorer
 
 
@@ -41,7 +41,8 @@ class EvalRunner:
     :class:`~.scorer.TrajectoryScorer` over the tool-call sequence) to score the
     same turns differently. The runner still owns the completion gate (a
     classified-failure or non-``done`` turn fails regardless of the scorer), so a
-    scorer only ever judges a turn that actually completed.
+    scorer only ever judges a turn that actually completed. A ``fake=True`` run
+    skips the scorer entirely (see :meth:`run`).
     """
 
     def __init__(self, runner: RunnerClient, *, scorer: Scorer | None = None) -> None:
@@ -56,7 +57,14 @@ class EvalRunner:
         version: str,
         token: str | None = None,
         model: str | None = None,
+        fake: bool = False,
     ) -> EvalRunResult:
+        """Run every case against ``base_url``.
+
+        ``fake`` says the runner behind ``base_url`` is the fake model, whose
+        canned replies no grader can meaningfully judge (ADR-0055). It is not a
+        scoring mode: the scorer is not consulted at all on a completed fake turn.
+        """
         results: list[EvalCaseResult] = []
         for case in suite.cases:
             # Fresh conversation by default (#550): reset the runner before a case
@@ -72,14 +80,14 @@ class EvalRunner:
                     results.append(
                         EvalCaseResult(
                             case_id=case.id,
-                            passed=False,
+                            outcome=EvalOutcome.FAIL,
                             output="",
                             latency_ms=0.0,
                             error=isolation_error,
                         )
                     )
                     continue
-            results.append(await self._run_case(case, base_url, token))
+            results.append(await self._run_case(case, base_url, token, fake=fake))
         return EvalRunResult(
             version=version, suite=suite.name, results=results, model=model
         )
@@ -98,7 +106,12 @@ class EvalRunner:
         return None
 
     async def _run_case(
-        self, case: EvalCase, base_url: str, token: str | None = None
+        self,
+        case: EvalCase,
+        base_url: str,
+        token: str | None = None,
+        *,
+        fake: bool = False,
     ) -> EvalCaseResult:
         start = time.monotonic()
         event = Event(type="eval_case", text=case.input, user="eval", ts="0")
@@ -125,7 +138,7 @@ class EvalRunner:
         except (RunnerError, aiohttp.ClientError, TimeoutError) as exc:
             return EvalCaseResult(
                 case_id=case.id,
-                passed=False,
+                outcome=EvalOutcome.FAIL,
                 output="",
                 latency_ms=_elapsed_ms(start),
                 error=str(exc),
@@ -138,7 +151,7 @@ class EvalRunner:
         if final_status is SessionStatus.CLASSIFIED_FAILURE:
             return EvalCaseResult(
                 case_id=case.id,
-                passed=False,
+                outcome=EvalOutcome.FAIL,
                 output=output,
                 latency_ms=_elapsed_ms(start),
                 error=error_detail or "runner reported a classified failure",
@@ -154,10 +167,24 @@ class EvalRunner:
         if final_status is None or final_status.value != expected.value:
             return EvalCaseResult(
                 case_id=case.id,
-                passed=False,
+                outcome=EvalOutcome.FAIL,
                 output=output,
                 latency_ms=_elapsed_ms(start),
                 error=f"turn ended {final_status}, expected status {expected.value!r}",
+            )
+        # The turn completed, which on the fake tier is the whole assertion: the
+        # fake answers from a canned script, so grading its text measures the
+        # script, not the agent. Returning before the scorer is what makes that
+        # literal -- no grader runs at all -- and the non-graded outcome keeps the
+        # row out of every pass-rate rather than fabricating one. This sits AFTER
+        # the gates above deliberately: a fake turn that never completed means the
+        # plumbing is genuinely broken, and catching that is this tier's only job.
+        if fake:
+            return EvalCaseResult(
+                case_id=case.id,
+                outcome=EvalOutcome.PLUMBING_OK,
+                output=output,
+                latency_ms=_elapsed_ms(start),
             )
         # The turn completed cleanly, so a negative verdict is the scorer saying
         # "no", not a runner/turn error -- keep `error` reserved for the latter
@@ -165,7 +192,7 @@ class EvalRunner:
         verdict = self._scorer.score(case, output, trajectory)
         return EvalCaseResult(
             case_id=case.id,
-            passed=verdict.passed,
+            outcome=EvalOutcome.PASS if verdict.passed else EvalOutcome.FAIL,
             output=output,
             latency_ms=_elapsed_ms(start),
         )

@@ -1024,7 +1024,11 @@ async fn run_eval_turns(
         };
         results.push((
             case.id.clone(),
-            reply_passes(case, &outcome),
+            if reply_passes(case, &outcome) {
+                crate::evals::CaseOutcome::Pass
+            } else {
+                crate::evals::CaseOutcome::Fail
+            },
             elapsed,
             output,
         ));
@@ -1108,6 +1112,186 @@ pub fn select_agent_id(agents: &[Agent], channel: Option<&str>) -> Result<String
     }
 }
 
+/// Refuse a `--model` sweep against a stack running the fake model (#606, AC2 of
+/// #612). Pure so the class and the wording are testable with no stack.
+///
+/// The fake never calls a model: it returns one canned reply whatever the input
+/// and whatever the requested model, so a sweep of N models compares one string
+/// to itself N times and reports a comparison that never happened. The default
+/// parity-gate run (no `--model`) on a fake stack is the DOCUMENTED onboarding
+/// loop and stays allowed -- it asserts plumbing, and it claims nothing about
+/// any model.
+///
+/// Usage (exit 2), never `Unsupported` (exit 4): supplying a credential makes
+/// this exact argv work, so a model sweep is not absent from this tier by
+/// construction, which is ADR-0041's boundary for exit 4.
+pub fn guard_fake_sweep(fake: bool, models: &[String], local: bool) -> Result<()> {
+    if !fake || models.is_empty() {
+        return Ok(());
+    }
+    let fix = if local {
+        "set AGENTOS_CREDENTIALS to a real model credential and re-run `agentos local up`, then \
+         sweep again"
+    } else {
+        "re-install the release with a real model (`--set agentSandbox.runner.fakeModel=false`, \
+         plus a model credential) and sweep again"
+    };
+    // The reason has to be the one that actually applies. With a single
+    // `--model` there is no comparison to fabricate: the request simply cannot
+    // be honored. The comparison-axis rationale is only true from two up.
+    let why = if models.len() == 1 {
+        format!(
+            "this stack runs the fake model, so it will never call `{}`: the fake answers every \
+             input with the same scripted text whatever --model asks for. The run would be that \
+             canned script, not the model you pinned.",
+            models[0]
+        )
+    } else {
+        format!(
+            "this stack runs the fake model, so sweeping {} models would compare one canned reply \
+             to itself: the fake never calls a model, and answers every input with the same \
+             scripted text whatever --model asks for. Every row would be labelled fake-model and \
+             carry an identical answer, so the comparison would be fabricated.",
+            models.len()
+        )
+    };
+    Err(anyhow::Error::from(
+        crate::exit::CliError::usage(why).with_fix(fix),
+    ))
+}
+
+/// Read the fake-ness of the tier's DEPLOYED worker: the already-composed value
+/// of `AGENTOS_FAKE_MODEL` on the artifact that is actually running.
+///
+/// Deliberately a read of the output, not a re-derivation of the input. The
+/// chart's effective value is the composite `fakeModel AND NOT inference.deploy`
+/// and compose's is `${AGENTOS_FAKE_MODEL:-1}`; re-deriving either in the CLI
+/// would give a second config that drifts from the truth (an
+/// `inference.deploy` + `fakeModel=true` install is a REAL install, and shell
+/// env is not what the running container was booted with). A probe failure is
+/// reported as itself; it never falls back to a default guess.
+async fn probe_fake_model(opts: &EvalOpts) -> Result<bool> {
+    let env = if opts.local {
+        let worker = local_worker_container().await?;
+        let cmd = OpsCommand::new(
+            "docker",
+            vec![
+                plain("inspect"),
+                plain(&worker),
+                plain("--format"),
+                plain("{{range .Config.Env}}{{println .}}{{end}}"),
+            ],
+        );
+        let (ok, stdout, stderr) = run_capture(&cmd).await?;
+        if !ok {
+            bail!(
+                "inspecting the local worker container {worker}: {}",
+                stderr.trim()
+            );
+        }
+        stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("AGENTOS_FAKE_MODEL="))
+            .map(str::to_string)
+    } else {
+        require_on_path("kubectl")?;
+        let deployment = format!("deployment/{}-worker", opts.release);
+        let cmd = OpsCommand::new(
+            "kubectl",
+            vec![
+                plain("-n"),
+                plain(&opts.namespace),
+                plain("get"),
+                plain(&deployment),
+                plain("-o"),
+                plain(
+                    "jsonpath={.spec.template.spec.containers[*].env[?(@.name==\"AGENTOS_FAKE_MODEL\")].value}",
+                ),
+            ],
+        );
+        let (ok, stdout, stderr) = run_capture(&cmd).await?;
+        if !ok {
+            bail!(
+                "reading {deployment} in namespace {} to check whether the release runs the fake \
+                 model: {}",
+                opts.namespace,
+                stderr.trim()
+            );
+        }
+        let value = stdout.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    };
+    // An absent variable means the worker was booted without the flag at all,
+    // which is the live path on both tiers (compose only defaults to fake
+    // through `${AGENTOS_FAKE_MODEL:-1}`, which materializes the value).
+    Ok(env
+        .as_deref()
+        .is_some_and(crate::local::fake_model_is_truthy))
+}
+
+/// The compose service the worker runs as, per `compose.dev.yaml`. Container
+/// NAMES vary with the compose project (`<project>-agentos-worker-1`), so the
+/// service label is the only stable selector; `cli/tests/fake_tier_plumbing.rs`
+/// pins this against the compose file so a service rename cannot silently
+/// blind the probe again.
+pub(crate) const COMPOSE_WORKER_SERVICE: &str = "agentos-worker";
+
+/// The label selector the probe matches on, quoted into diagnostics so an
+/// operator can re-run the same `docker ps` and see what the CLI saw.
+fn worker_label_selector() -> String {
+    format!("label=com.docker.compose.service={COMPOSE_WORKER_SERVICE}")
+}
+
+fn worker_ps_command() -> OpsCommand {
+    OpsCommand::new(
+        "docker",
+        vec![
+            plain("ps"),
+            plain("--filter"),
+            plain(worker_label_selector()),
+            plain("--format"),
+            plain("{{.Names}}"),
+        ],
+    )
+}
+
+/// Pick the one running compose worker from `docker ps` output. Zero or many is
+/// an explicit diagnostic: guessing which stack the sweep would hit is exactly
+/// the fabrication this probe exists to prevent. Both diagnostics name the
+/// selector rather than asserting a stack-wide fact the probe did not check --
+/// "no container matched X" is verifiable; "there is no stack" is not.
+fn select_worker_container(stdout: &str) -> Result<String> {
+    let names: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    match names.as_slice() {
+        [only] => Ok((*only).to_string()),
+        [] => bail!(
+            "no running container matches `{}`, so the sweep cannot read which model the local \
+             stack is running. Start a stack with `agentos local up`.",
+            worker_label_selector()
+        ),
+        many => bail!(
+            "{} running containers match `{}` ({}); a sweep cannot tell which stack it would \
+             measure. Stop the extras with `agentos local down`.",
+            many.len(),
+            worker_label_selector(),
+            many.join(", ")
+        ),
+    }
+}
+
+async fn local_worker_container() -> Result<String> {
+    let cmd = worker_ps_command();
+    let (ok, stdout, stderr) = run_capture(&cmd).await?;
+    if !ok {
+        bail!("listing the local worker container: {}", stderr.trim());
+    }
+    select_worker_container(&stdout)
+}
+
 /// The `--model` sweep at the local/cluster tier: enqueue one platform eval per
 /// model against the agent's active dev version, then poll the matrix for the
 /// per-model pass-rate the recorder writes (#526). Unlike the skill sweep (which
@@ -1116,11 +1300,14 @@ pub fn select_agent_id(agents: &[Agent], channel: Option<&str>) -> Result<String
 async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     let ui = crate::ui::ui();
     if opts.dry_run {
+        // A dry run is an offline, non-mutating plan: it does not probe the
+        // runtime, so it must not claim what the current stack would do.
         ui.emit(&crate::ui::DryRunPlan {
             lines: eval_dry_run_lines(&opts, &suite.name, suite.cases.len()),
         });
         return Ok(());
     }
+    guard_fake_sweep(probe_fake_model(&opts).await?, &opts.models, opts.local)?;
 
     // The trigger + matrix reads go over the platform API. Local reaches it
     // directly; cluster tunnels an api port-forward kept alive for the whole poll.
@@ -1387,6 +1574,60 @@ async fn eval_cluster(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The probe is only honest if it filters on the service compose actually
+    /// runs the worker as. It previously matched `service=worker`, which exists
+    /// nowhere in the compose file, so the fake-sweep guard silently never fired
+    /// against a running stack and the CLI reported "no stack" while one ran.
+    #[test]
+    fn the_probe_matches_the_worker_service_compose_declares() {
+        let compose = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../compose.dev.yaml"),
+        )
+        .expect("compose.dev.yaml is readable from the cli crate");
+        assert!(
+            compose.contains(&format!("\n  {COMPOSE_WORKER_SERVICE}:\n")),
+            "compose.dev.yaml declares no `{COMPOSE_WORKER_SERVICE}:` service, so the probe's \
+             docker ps filter would match nothing"
+        );
+        assert_eq!(
+            worker_label_selector(),
+            "label=com.docker.compose.service=agentos-worker"
+        );
+        let argv = worker_ps_command().display();
+        assert!(
+            argv.contains("--filter label=com.docker.compose.service=agentos-worker"),
+            "docker ps argv lost the service filter: {argv}"
+        );
+    }
+
+    #[test]
+    fn one_matching_container_is_the_worker_to_inspect() {
+        assert_eq!(
+            select_worker_container("agentos-agentos-worker-1\n").unwrap(),
+            "agentos-agentos-worker-1"
+        );
+    }
+
+    /// Zero and many are diagnostics about the SELECTOR, never a claim about
+    /// the world the probe did not check.
+    #[test]
+    fn zero_and_many_matches_are_diagnostics_naming_the_selector() {
+        let none = select_worker_container("\n  \n").unwrap_err().to_string();
+        assert!(
+            none.contains("no running container matches")
+                && none.contains("com.docker.compose.service=agentos-worker"),
+            "{none}"
+        );
+        let many = select_worker_container("a-agentos-worker-1\nb-agentos-worker-1\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            many.contains("2 running containers match")
+                && many.contains("a-agentos-worker-1, b-agentos-worker-1"),
+            "{many}"
+        );
+    }
 
     fn agent(name: &str, channel: &str) -> Agent {
         Agent {

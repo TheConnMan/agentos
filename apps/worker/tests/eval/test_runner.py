@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 
+import pytest
 from agentos_worker.eval import (
     EvalCase,
+    EvalOutcome,
     EvalRunner,
     EvalSuite,
     ExpectedStatus,
     Grader,
     GraderKind,
+    ScoreResult,
 )
 
 CONTAINS = GraderKind.CONTAINS
@@ -289,5 +293,101 @@ def test_all_passed_suite(make_eval_harness) -> None:
             result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
             assert result.all_passed() is True
             assert result.summary() == "2/2 passed"
+
+    asyncio.run(go())
+
+
+class _SpyScorer:
+    """A scorer that would pass ANYTHING, and counts the times it was consulted.
+
+    The unconditional ``passed=True`` is the point: if the fake path ever reaches
+    a grader, the case comes back PASS and ``calls`` is non-zero, so a test asserting
+    "never graded" cannot go green by accident.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def score(self, case: EvalCase, output: str, trajectory: Sequence[str]) -> ScoreResult:
+        self.calls += 1
+        return ScoreResult(passed=True)
+
+
+def _one_case_suite() -> EvalSuite:
+    # A grader the fake's canned "all done" could never satisfy on content, so a
+    # PLUMBING_OK outcome can only come from skipping grading, never from passing it.
+    return EvalSuite(
+        name="s",
+        cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="deal-desk"))],
+    )
+
+
+def test_a_fake_turn_is_never_graded_and_is_neither_pass_nor_fail(make_eval_harness) -> None:
+    """The fake model is a plumbing fixture, not a subject under test: the only
+    thing the fake tier asserts is that the turn completed. The grader must not run
+    at all, and the outcome is a distinct non-graded PLUMBING_OK."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "all done"}
+            spy = _SpyScorer()
+            result = await EvalRunner(client, scorer=spy).run(
+                _one_case_suite(), base_url=base_url, version="v1", fake=True
+            )
+
+            assert spy.calls == 0, "the grader must not run at all on a fake turn"
+            case = result.results[0]
+            assert case.outcome is EvalOutcome.PLUMBING_OK
+            assert case.passed is None  # not a pass, not a fail
+            assert case.error is None  # the turn completed; nothing broke
+            assert case.output == "all done"  # the turn's text is still recorded
+
+    asyncio.run(go())
+
+
+def test_a_real_turn_is_still_graded_when_the_run_is_not_fake(make_eval_harness) -> None:
+    """The falsifiability guard (#527/ADR-0022): PLUMBING_OK must not become a
+    backdoor that stops grading a real run. Off the fake tier, the same off-topic
+    answer against the same grader is a real, graded FAIL."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "all done"}
+            result = await EvalRunner(client).run(
+                _one_case_suite(), base_url=base_url, version="v1", fake=False
+            )
+
+            case = result.results[0]
+            assert case.outcome is EvalOutcome.FAIL
+            assert case.passed is False
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    "breakage", ["classified_failure_inputs", "idle_inputs", "fail_inputs"]
+)
+def test_a_fake_turn_that_does_not_complete_is_a_failure_not_plumbing_ok(
+    make_eval_harness, breakage: str
+) -> None:
+    """Ordering is load-bearing: the classified-failure / non-DONE / transport-error
+    gates run BEFORE the fake early return. A fake turn that did not complete means
+    the plumbing is genuinely broken -- the one thing this tier must still catch --
+    so it is a real FAIL, never the non-graded outcome."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "all done"}
+            getattr(fake, breakage).add("q")
+            spy = _SpyScorer()
+            result = await EvalRunner(client, scorer=spy).run(
+                _one_case_suite(), base_url=base_url, version="v1", fake=True
+            )
+
+            case = result.results[0]
+            assert case.outcome is EvalOutcome.FAIL
+            assert case.passed is False
+            assert case.error is not None  # the breakage reason is recorded
+            assert spy.calls == 0  # a broken turn is not graded either
 
     asyncio.run(go())

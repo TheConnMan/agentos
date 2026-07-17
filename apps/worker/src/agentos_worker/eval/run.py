@@ -42,16 +42,23 @@ async def run_eval_suite(
     recorder: LangfuseEvalRecorder | None = None,
     token: str | None = None,
     model: str | None = None,
+    fake: bool = False,
 ) -> EvalRunResult:
     """Run a suite against a runner endpoint and, if configured, record it.
 
     ``model`` is the model id the suite is being run under; it is threaded onto
     the ``EvalRunResult`` so the recorder can tag the model dimension and the
-    eval matrix can slice pass-rate/cost by model.
+    eval matrix can slice pass-rate/cost by model. ``fake`` says that runner is
+    the fake model, whose turns are never graded (ADR-0055).
     """
     async with RunnerClient() as runner:
         result = await EvalRunner(runner).run(
-            suite, base_url=base_url, version=version, token=token, model=model
+            suite,
+            base_url=base_url,
+            version=version,
+            token=token,
+            model=model,
+            fake=fake,
         )
     if recorder is not None:
         await recorder.record(result)
@@ -85,7 +92,11 @@ async def _main_async(env: Mapping[str, str]) -> int:
         )
 
     print(result.model_dump_json())
-    return 0 if result.all_passed() else 1
+    # The exit code answers "did anything break", not "did anything pass": a run
+    # whose cases were never graded (the fake tier) broke nothing, so failing the
+    # Job on it would report a failure that did not happen. A real FAIL -- including
+    # a fake turn that never completed -- is still non-zero.
+    return 0 if result.completed_without_failure() else 1
 
 
 def main(env: Mapping[str, str] | None = None) -> None:

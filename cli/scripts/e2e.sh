@@ -41,9 +41,12 @@ trap cleanup EXIT
 echo
 echo "=== agentos init --from-spec (non-interactive, agent-authored spec) ==="
 # AC #2: a coding agent writes a spec, the CLI scaffolds a runnable bundle from
-# it with zero prompts, and the spec-scaffolded evals/cases.json greens on the
-# eval path. The single grader is `contains "all done"` so it passes under the
-# offline fake model (fake.py's final frame text is "all done").
+# it with zero prompts, and the spec-scaffolded evals/cases.json runs on the eval
+# path. The grader is falsifiable (it requires the agent to name itself), NOT
+# tuned to the fake model's canned "all done" reply: a grader written to match
+# the fake manufactures a green, and CI carrying one is exactly why #612 went
+# unnoticed. Under --fake-model the grader is never consulted at all -- the run
+# reports the non-graded plumbing_ok (ADR-0055).
 cat > "$WORKDIR/agent-spec.json" <<'EOF'
 {
   "name": "deal-desk",
@@ -58,9 +61,9 @@ cat > "$WORKDIR/agent-spec.json" <<'EOF'
   ],
   "evals": [
     {
-      "id": "finishes-the-turn",
-      "input": "wrap it up",
-      "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false }
+      "id": "introduces-itself",
+      "input": "In one short sentence, introduce yourself as the deal-desk agent.",
+      "grader": { "kind": "contains", "expected": "deal-desk", "case_sensitive": false }
     }
   ]
 }
@@ -69,24 +72,24 @@ EOF
 
 cd "$WORKDIR/deal-desk"
 
-# Eval cases matched to the runner's offline fake-model script (fake.py):
-# the scripted turn streams "Looking into it", a Bash tool note, then a final
-# frame whose text is "all done". The graded answer is the FINAL text only, so
-# every grader below must be satisfied by "all done" (interim streamed text such
-# as "looking into it" is no longer graded).
+# A second suite for the explicit `--cases` leg. Its graders are real domain
+# graders, deliberately NOT matched to the fake-model script's canned "all done"
+# reply: this run is offline under --fake-model, so the graders are never
+# consulted and the suite reports plumbing_ok. Writing them to match the fake
+# would only re-create the bypass that let #612 ship green.
 cat > evals/e2e-cases.json <<'EOF'
 {
   "name": "e2e",
   "cases": [
     {
-      "id": "finishes-the-turn",
-      "input": "wrap it up",
-      "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false }
+      "id": "introduces-itself",
+      "input": "In one short sentence, introduce yourself as the deal-desk agent.",
+      "grader": { "kind": "contains", "expected": "deal-desk", "case_sensitive": false }
     },
     {
-      "id": "reports-done",
-      "input": "what is the status?",
-      "grader": { "kind": "contains", "expected": "done", "case_sensitive": false }
+      "id": "names-its-domain",
+      "input": "What kind of requests do you handle?",
+      "grader": { "kind": "contains", "expected": "pricing", "case_sensitive": false }
     }
   ]
 }

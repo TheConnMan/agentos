@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 import pytest
 from agentos_api.config import get_settings
-from agentos_worker.eval.models import EvalCaseResult, EvalRunResult
+from agentos_worker.eval.models import EvalCaseResult, EvalOutcome, EvalRunResult
 from agentos_worker.eval.recorder import LangfuseEvalRecorder
 
 
@@ -31,13 +31,17 @@ def _stack_up() -> bool:
 pytestmark = pytest.mark.skipif(not _stack_up(), reason="dev stack not reachable")
 
 
+def _outcome(passed: bool) -> EvalOutcome:
+    return EvalOutcome.PASS if passed else EvalOutcome.FAIL
+
+
 def _result(version: str, suite: str, c1: bool, c2: bool) -> EvalRunResult:
     return EvalRunResult(
         version=version,
         suite=suite,
         results=[
-            EvalCaseResult(case_id="c1", passed=c1, output="o", latency_ms=1.0),
-            EvalCaseResult(case_id="c2", passed=c2, output="o", latency_ms=1.0),
+            EvalCaseResult(case_id="c1", outcome=_outcome(c1), output="o", latency_ms=1.0),
+            EvalCaseResult(case_id="c2", outcome=_outcome(c2), output="o", latency_ms=1.0),
         ],
     )
 

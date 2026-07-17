@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "agentos skill eval --json",
-  "description": "The agent-facing payload of `agentos skill eval --json`: the pass/fail roll-up plus one row per eval case.",
+  "description": "The agent-facing payload of `agentos skill eval --json`: the outcome roll-up plus one row per eval case.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["total", "passed", "failed", "cases"],
+  "required": ["total", "passed", "failed", "plumbing_ok", "cases"],
   "properties": {
     "total": {
       "type": "integer",
@@ -16,20 +16,31 @@
     },
     "failed": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Cases the grader FAILED. Counted, never inferred as `total - passed`: a `plumbing_ok` row was never graded and is not a failure."
+    },
+    "plumbing_ok": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cases that completed on the fake model and so were not graded at all (ADR-0055). Neither passes nor failures; `passed + failed + plumbing_ok == total`."
     },
     "cases": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "passed", "seconds", "output"],
+        "required": ["id", "outcome", "passed", "seconds", "output"],
         "properties": {
           "id": {
             "type": "string"
           },
+          "outcome": {
+            "enum": ["pass", "fail", "plumbing_ok"],
+            "description": "The case's verdict. `plumbing_ok` is a third state, not a shade of pass or fail: the turn completed on the fake model, which returns one canned reply whatever the input, so no grader was run."
+          },
           "passed": {
-            "type": "boolean"
+            "type": ["boolean", "null"],
+            "description": "Tri-state view of `outcome`: true for pass, false for fail, null for plumbing_ok. A non-graded row claims neither verdict, so it is null rather than a fabricated false."
           },
           "seconds": {
             "type": "number"

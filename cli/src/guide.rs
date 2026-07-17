@@ -97,7 +97,11 @@ pub fn primer() -> Primer {
             Rung {
                 tier: "skill",
                 command: "agentos skill eval",
-                purpose: "Run evals/cases.json in-process. This is the promotion gate; it must be green.",
+                purpose: "Run evals/cases.json in-process. This is the promotion gate -- but only \
+                          under a real credential, where the cases are graded. Under --fake-model \
+                          it reports plumbing_ok: the fake returns one canned reply whatever the \
+                          input, so nothing is graded and a green here says only that the turn \
+                          completed.",
             },
             Rung {
                 tier: "skill",
@@ -174,7 +178,9 @@ pub fn primer() -> Primer {
             Decision {
                 question: "how an eval gates promotion",
                 answer: "evals/cases.json is the contract. `agentos skill eval` must be green before \
-                         you deploy; `agentos local eval` and `agentos cluster eval` re-run the SAME \
+                         you deploy -- green under a real credential, since the fake model grades \
+                         nothing and only reports plumbing_ok; \
+                         `agentos local eval` and `agentos cluster eval` re-run the SAME \
                          cases with the SAME grader at each tier (the per-tier parity gate), so a \
                          suite that is green at skill can be re-asserted verbatim once deployed. \
                          Merging to main promotes to prod (git flow is the deploy model). Never \

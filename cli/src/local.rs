@@ -73,7 +73,10 @@ pub enum ModelMode {
 
 /// Match the runner's truthy parse of `AGENTOS_FAKE_MODEL`
 /// (`runner/src/agentos_runner/__main__.py`): lowercase one of `1`/`true`/`yes`.
-fn fake_model_is_truthy(v: &str) -> bool {
+/// The runtime's own reading of `AGENTOS_FAKE_MODEL`. Shared with the eval
+/// sweep's worker probe (`message::probe_fake_model`) so the CLI judges a
+/// deployed worker's fake-ness by the same rule the worker judges itself.
+pub(crate) fn fake_model_is_truthy(v: &str) -> bool {
     matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
 }
 

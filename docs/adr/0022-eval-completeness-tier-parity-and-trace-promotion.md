@@ -12,6 +12,11 @@ and the eval issues under it. Read
 [ADR-0021](0021-agentos-is-a-harness-for-coding-agents.md) first: evals are the
 contract the harness's parity promise is measured against.
 
+[ADR-0055](0055-the-fake-model-is-a-plumbing-fixture.md) **bounds** this ADR
+without superseding it: this ADR's thesis holds for every tier that runs a real
+model, and 0054 says what it means on the fake tier, where no model is called and
+so nothing is graded.
+
 [ADR-0042](0042-llm-as-a-verifier-grader-and-progress-signal.md) extends this ADR
 with the **semantic** grader (`GraderKind.verifier`) and supersedes one point of it:
 this ADR's rejection of an LLM judge inside the frozen enum. The two divide by case

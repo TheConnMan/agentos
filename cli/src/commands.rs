@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, CheckSpec, StartSpec};
-use crate::evals::{graded_answer, load_suite, turn_passes, EvalSuite};
+use crate::evals::{
+    graded_answer, load_suite, outcome_label, rollup_line, turn_outcome, CaseOutcome, EvalSuite,
+};
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
 use crate::scaffold::{read_declared_secrets, read_manifest, scaffold, scaffold_from_spec};
@@ -1161,27 +1163,56 @@ pub fn status_json<T: serde::Serialize>(url: &str, status: &T) -> serde_json::Va
     serde_json::json!({ "url": url, "session": status })
 }
 
-/// One graded eval case: `(id, passed, seconds, output)`. `output` is the graded
-/// answer text (the reply `turn_passes`/`reply_passes` judged), carried so a red
-/// case is diagnosable from `--json` without a manual re-run (#548). Shared by the
-/// skill runner path and the local/cluster message path so both report the same
-/// shape through `report_eval`/`eval_json`.
-pub type EvalRow = (String, bool, f64, String);
+/// One eval case's result: `(id, outcome, seconds, output)`. `output` is the
+/// graded answer text (the reply `turn_outcome`/`reply_passes` judged), carried
+/// so a red case is diagnosable from `--json` without a manual re-run (#548).
+/// Shared by the skill runner path and the local/cluster message path so both
+/// report the same shape through `report_eval`/`eval_json`.
+pub type EvalRow = (String, CaseOutcome, f64, String);
 
-/// The `agentos skill eval --json` payload: the pass/fail roll-up plus one row
-/// per case. Pure so it stays unit/contract-testable against
+/// The three counts every eval surface reports. Split out so the `--json`
+/// payload, the human roll-up, and the exit code all read the SAME tally rather
+/// than each re-deriving it -- `failed` in particular must be counted, never
+/// inferred as `total - passed`, which would book every non-graded plumbing row
+/// as a failure (#606).
+fn eval_counts(results: &[EvalRow]) -> (usize, usize, usize) {
+    let count = |want: CaseOutcome| results.iter().filter(|(_, o, _, _)| *o == want).count();
+    (
+        count(CaseOutcome::Pass),
+        count(CaseOutcome::Fail),
+        count(CaseOutcome::PlumbingOk),
+    )
+}
+
+/// The `agentos skill eval --json` payload: the outcome roll-up plus one row per
+/// case. Pure so it stays unit/contract-testable against
 /// `cli/schema/eval.schema.json`.
-pub fn eval_json(results: &[EvalRow], passed: usize, total: usize) -> serde_json::Value {
+pub fn eval_json(results: &[EvalRow]) -> serde_json::Value {
+    // Derive every count from `results` in one pass so the rollup can never
+    // disagree with the per-case rows (no caller-supplied passed/total to drift).
+    let total = results.len();
+    let (passed, failed, plumbing_ok) = eval_counts(results);
     let cases: Vec<serde_json::Value> = results
         .iter()
-        .map(|(id, ok, seconds, output)| {
-            serde_json::json!({ "id": id, "passed": ok, "seconds": seconds, "output": output })
+        .map(|(id, outcome, seconds, output)| {
+            serde_json::json!({
+                "id": id,
+                "outcome": outcome,
+                // Tri-state (ADR-0055): a non-graded row claims neither verdict.
+                // `null` keeps a truthiness reader fail-safe (it under-reports,
+                // never false-greens) without ever alleging a failure that did
+                // not happen.
+                "passed": outcome.passed(),
+                "seconds": seconds,
+                "output": output,
+            })
         })
         .collect();
     serde_json::json!({
         "total": total,
         "passed": passed,
-        "failed": total - passed,
+        "failed": failed,
+        "plumbing_ok": plumbing_ok,
         "cases": cases,
     })
 }
@@ -1369,7 +1400,8 @@ pub async fn eval(
     secrets: Vec<String>,
     image: String,
 ) -> Result<()> {
-    let state_plugin_dir = state::load(Path::new("."))?.map(|s| PathBuf::from(s.plugin_dir));
+    let saved = state::load(Path::new("."))?;
+    let state_plugin_dir = saved.as_ref().map(|s| PathBuf::from(s.plugin_dir.clone()));
     let cases_path = resolve_cases_path(cases_path, Path::new("."), state_plugin_dir.as_deref())?;
     let suite = load_suite(&cases_path)?;
 
@@ -1389,22 +1421,41 @@ pub async fn eval(
         .await;
     }
 
+    let fake = drives_a_fake_runner(saved.as_ref(), url.as_deref());
     let url = resolve_url(url)?;
     let client = RunnerClient::new(&url)?;
     let ui = crate::ui::ui();
     let bar = ui.progress_bar(suite.cases.len() as u64, "running evals");
-    let results = run_suite_cases(&client, &suite, |_| bar.inc(1)).await?;
+    let results = run_suite_cases(&client, &suite, fake, |_| bar.inc(1)).await?;
     bar.finish();
 
     report_eval(&results)
 }
 
-/// Run every case in `suite` against a runner, returning `(id, passed, seconds)`
-/// rows. `on_case` is called once per completed case (progress). Shared by the
-/// single-runner path and the per-model sweep so both grade identically.
+/// Whether the runner `skill eval` is about to drive is the fake. Learned from
+/// `.agentos/runner.json` -- the CLI's own record of the runner IT booted, not a
+/// guess at the shell env.
+///
+/// An explicit `--url` that is not the recorded runner points somewhere the
+/// saved state says nothing about, so the recorded fake-ness does not transfer
+/// and the run stays graded. `resolve_url`'s precedence is explicit-wins, so
+/// this must mirror it: absent or matching URL only.
+fn drives_a_fake_runner(saved: Option<&state::RunnerState>, explicit_url: Option<&str>) -> bool {
+    match saved {
+        Some(s) if s.fake_model => explicit_url.is_none_or(|u| u == s.base_url),
+        _ => false,
+    }
+}
+
+/// Run every case in `suite` against a runner, returning `(id, outcome, seconds,
+/// output)` rows. `fake` says the runner is the fake model, in which case the
+/// cases are not graded at all. `on_case` is called once per completed case
+/// (progress). Shared by the single-runner path and the per-model sweep so both
+/// judge identically.
 async fn run_suite_cases(
     client: &RunnerClient,
     suite: &EvalSuite,
+    fake: bool,
     mut on_case: impl FnMut(usize),
 ) -> Result<Vec<EvalRow>> {
     let mut results = Vec::with_capacity(suite.cases.len());
@@ -1426,11 +1477,12 @@ async fn run_suite_cases(
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
-        // Capture the graded answer -- the exact text `turn_passes` judged -- so a
-        // red case can be diagnosed from `--json` without a manual re-run (#548).
+        // Capture the graded answer -- the exact text `turn_outcome` judged -- so
+        // a red case can be diagnosed from `--json` without a manual re-run
+        // (#548). A fake row carries its canned reply for the same reason.
         results.push((
             case.id.clone(),
-            turn_passes(case, &events),
+            turn_outcome(case, &events, fake),
             elapsed,
             graded_answer(&events),
         ));
@@ -1538,10 +1590,15 @@ async fn eval_sweep(
             }
         };
         let client = RunnerClient::new(&url)?;
-        let run = run_suite_cases(&client, suite, |_| {}).await;
+        // `boot_eval_runner` pins `fake_model: false`, so every sweep runner is a
+        // REAL model whatever the standing dev runner is -- the sweep grades.
+        let run = run_suite_cases(&client, suite, false, |_| {}).await;
         let _ = docker::remove_container(&name).await;
         let results = run?;
-        let passed = results.iter().filter(|(_, ok, _, _)| *ok).count();
+        let passed = results
+            .iter()
+            .filter(|(_, o, _, _)| *o == CaseOutcome::Pass)
+            .count();
         step.done(&format!("{passed}/{}", suite.cases.len()));
         rows.push((model.clone(), passed, suite.cases.len()));
     }
@@ -1594,20 +1651,22 @@ pub fn report_sweep(rows: &[(String, usize, usize)]) -> Result<()> {
 /// Render a finished eval run identically for every tier (`skill`, `local`,
 /// `cluster`): under `--json` the whole roll-up is one machine payload on
 /// stdout; otherwise the per-case table is payload -> stdout and the roll-up
-/// verdict is a diagnostic -> stderr. A failing run exits `Failure`. Shared so
-/// `local eval`/`cluster eval` print the same summary `skill eval` does (the
-/// per-tier parity gate), not a hand-mirrored one.
+/// verdict is a diagnostic -> stderr. Shared so `local eval`/`cluster eval`
+/// print the same summary `skill eval` does (the per-tier parity gate), not a
+/// hand-mirrored one.
+///
+/// Only a genuine `Fail` exits `Failure`. A run that graded nothing because it
+/// ran on the fake tier is operationally successful without being a pass, so it
+/// exits 0 and says "plumbing OK" in words -- the documented onboarding loop is
+/// not red (#612), and it is not fake-green either (#606).
 pub fn report_eval(results: &[EvalRow]) -> Result<()> {
-    let total = results.len();
-    let passed = results.iter().filter(|(_, ok, _, _)| *ok).count();
+    let (_passed, failed, _plumbing_ok) = eval_counts(results);
     // Emit through the one success point (#474), then apply the exit-code side
     // effect for BOTH paths -- the json path had it inline, the human path after.
-    crate::ui::ui().emit(&EvalOutput {
-        results,
-        passed,
-        total,
-    });
-    if passed < total {
+    // Only a genuine `Fail` (failed > 0) exits non-zero: a plumbing-only run
+    // graded nothing but is operationally successful, so it exits 0 (#606/#612).
+    crate::ui::ui().emit(&EvalOutput { results });
+    if failed > 0 {
         std::process::exit(crate::exit::ExitClass::Failure.code());
     }
     Ok(())
@@ -1619,36 +1678,44 @@ pub fn report_eval(results: &[EvalRow]) -> Result<()> {
 /// roll-up verdict + per-red-case reply notes.
 struct EvalOutput<'a> {
     results: &'a [EvalRow],
-    passed: usize,
-    total: usize,
 }
 
 impl crate::ui::CliOutput for EvalOutput<'_> {
     fn to_json(&self) -> serde_json::Value {
-        eval_json(self.results, self.passed, self.total)
+        eval_json(self.results)
     }
 
     fn render(&self, ui: &crate::ui::Ui) {
-        let (results, passed, total) = (self.results, self.passed, self.total);
+        let results = self.results;
+        let (passed, failed, plumbing_ok) = eval_counts(results);
         let rows: Vec<Vec<String>> = results
             .iter()
-            .map(|(name, ok, seconds, _)| {
-                let result = if *ok {
-                    format!("{} pass", '\u{2713}')
-                } else {
-                    format!("{} fail", '\u{2717}')
-                };
-                vec![name.clone(), result, format!("{seconds:.1}s")]
+            .map(|(name, outcome, seconds, _)| {
+                vec![
+                    name.clone(),
+                    outcome_label(*outcome),
+                    format!("{seconds:.1}s"),
+                ]
             })
             .collect();
         ui.payload_plain(&crate::ui::table(&["case", "result", "time"], &rows, &[2]));
-        if passed == total {
-            ui.success(&format!("{passed}/{total} passed"));
+        if failed == 0 {
+            ui.success(&rollup_line(passed, failed, plumbing_ok));
+            if plumbing_ok > 0 {
+                ui.note(
+                    "the fake model returns one canned reply whatever the input, so these cases \
+                     were not graded -- they prove the turn completed, nothing more. Re-run with \
+                     a real credential to grade them.",
+                );
+            }
         } else {
             // Surface WHAT each red case actually replied, so a human need not
             // re-run by hand to see why it failed (#548). Empty means the turn
             // never produced gradeable text (no `done`/reply) -- the diagnosis.
-            for (name, _, _, output) in results.iter().filter(|(_, ok, _, _)| !*ok) {
+            for (name, _, _, output) in results
+                .iter()
+                .filter(|(_, o, _, _)| *o == CaseOutcome::Fail)
+            {
                 let shown = if output.is_empty() {
                     "<no reply text>".to_string()
                 } else {
@@ -1657,8 +1724,8 @@ impl crate::ui::CliOutput for EvalOutput<'_> {
                 ui.note(&format!("{name} replied: {shown}"));
             }
             ui.warn(&format!(
-                "{passed}/{total} passed; {} failed",
-                total - passed
+                "{}; {failed} failed",
+                rollup_line(passed, failed, plumbing_ok)
             ));
         }
     }
