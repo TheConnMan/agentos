@@ -21,10 +21,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-# Where the plugin manifest lives; used only to locate the bundle root inside an
-# archive that wraps everything in one folder. (validate.py keeps its own copy
-# for the frozen validator; this one serves the extraction path.)
-_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
+from .manifest import resolve_manifest
 
 
 class UnsupportedArchive(Exception):
@@ -81,7 +78,7 @@ def safe_extract(data: bytes, dest: Path) -> None:
 
 
 def _has_manifest(directory: Path) -> bool:
-    return any((directory / loc).is_file() for loc in _MANIFEST_LOCATIONS)
+    return resolve_manifest(directory) is not None
 
 
 def bundle_root(extracted: Path) -> Path:

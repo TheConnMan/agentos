@@ -23,10 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import HookMatcher
-from plugin_format import HookMatcherConfig, PluginManifest
+from plugin_format import HookMatcherConfig, PluginManifest, resolve_manifest
 from pydantic import TypeAdapter, ValidationError
 
-_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
 _HOOKS_ADAPTER = TypeAdapter(dict[str, list[HookMatcherConfig]])
 
 # Deny convention (Claude Code): a command hook that exits with this code blocks
@@ -47,9 +46,7 @@ def _load_manifest_hooks(plugin_dir: str | None) -> dict[str, list[HookMatcherCo
     if not plugin_dir:
         return None
     root = Path(plugin_dir)
-    manifest_path = next(
-        (root / loc for loc in _MANIFEST_LOCATIONS if (root / loc).is_file()), None
-    )
+    manifest_path = resolve_manifest(root)
     if manifest_path is None:
         return None
     try:

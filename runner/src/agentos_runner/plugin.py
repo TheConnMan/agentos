@@ -13,11 +13,7 @@ import json
 from pathlib import Path
 
 from claude_agent_sdk import SdkPluginConfig
-from plugin_format import PluginManifest, validate_bundle
-
-# The manifest lives at .claude-plugin/plugin.json; a bare plugin.json at the
-# bundle root is accepted as a fallback, mirroring plugin_format's own lookup.
-_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
+from plugin_format import PluginManifest, resolve_manifest, validate_bundle
 
 
 class PluginBundleError(RuntimeError):
@@ -37,10 +33,7 @@ def load_bundle_system_prompt(plugin_dir: str | None) -> str | None:
 
     if not plugin_dir:
         return None
-    root = Path(plugin_dir)
-    manifest_path = next(
-        (root / loc for loc in _MANIFEST_LOCATIONS if (root / loc).is_file()), None
-    )
+    manifest_path = resolve_manifest(plugin_dir)
     if manifest_path is None:
         return None
     try:

@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from .manifest import resolve_manifest
 from .models import (
     _TRIGGER_TYPES,
     ApprovalPolicy,
@@ -32,9 +33,6 @@ _TRIGGERS_ADAPTER = TypeAdapter(list[TriggerDeclaration])
 # Claude Code plugin names are kebab-case: lowercase alphanumerics and hyphens.
 _NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
-# The manifest lives at .claude-plugin/plugin.json; a bare plugin.json at the
-# bundle root is accepted as a fallback (see README Decisions).
-_MANIFEST_LOCATIONS = (Path(".claude-plugin") / "plugin.json", Path("plugin.json"))
 
 
 class ValidationIssue(BaseModel):
@@ -90,9 +88,7 @@ def validate_bundle(path: str | Path) -> ValidationResult:
 
 
 def _validate_manifest(root: Path, c: _Collector) -> PluginManifest | None:
-    manifest_path = next(
-        (root / loc for loc in _MANIFEST_LOCATIONS if (root / loc).is_file()), None
-    )
+    manifest_path = resolve_manifest(root)
     if manifest_path is None:
         c.error(
             "manifest.missing",
