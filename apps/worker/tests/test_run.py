@@ -7,11 +7,13 @@ AGENTOS_FAKE_MODEL must fail loudly instead of silently degrading to a fake.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Any
 
 import pytest
 from agentos_worker.config import WorkerConfig
-from agentos_worker.run import _sandbox_client, _substrate_config
+from agentos_worker.run import _sandbox_client, _substrate_config, main
 from agentos_worker.sandbox import DockerSandboxClient, SubstrateConfig
 
 _SUB = SubstrateConfig(namespace="default", warm_pool="pool")
@@ -153,3 +155,51 @@ def test_sandbox_client_docker_prepulls_image(monkeypatch) -> None:
         _SUB,
     )
     assert len(calls) == 1
+
+
+def test_main_installs_dead_letter_alerting(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source_logger = logging.getLogger("agentos_worker.consumer")
+    original_handlers = list(source_logger.handlers)
+    original_propagate = source_logger.propagate
+    for handler in original_handlers:
+        source_logger.removeHandler(handler)
+    source_logger.propagate = False
+
+    captured_coroutines: list[Any] = []
+
+    def capture_run(coroutine: Any) -> None:
+        captured_coroutines.append(coroutine)
+
+    monkeypatch.setattr(asyncio, "run", capture_run)
+    caplog.clear()
+
+    try:
+        with caplog.at_level(logging.ERROR):
+            main({})
+            source_logger.error(
+                "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
+                "1730000000000-0",
+                2,
+                "max delivery exceeded",
+                "agentos:runs:dead",
+            )
+
+        assert len(captured_coroutines) == 1
+        alerts = [
+            record
+            for record in caplog.records
+            if record.name == "agentos_worker.alerts.dead_letter"
+            and record.levelno == logging.CRITICAL
+        ]
+        assert len(alerts) == 1, f"expected one dead letter alert, got {alerts}"
+    finally:
+        for coroutine in captured_coroutines:
+            coroutine.close()
+        for handler in list(source_logger.handlers):
+            source_logger.removeHandler(handler)
+        for handler in original_handlers:
+            source_logger.addHandler(handler)
+        source_logger.propagate = original_propagate
