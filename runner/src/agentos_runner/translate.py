@@ -67,6 +67,13 @@ class TurnState:
     # but their empty-signature thinking block trips the SDK's result extraction,
     # leaving ``ResultMessage.result`` empty (issue #107).
     assistant_text: str = ""
+    # Count of ALL tool calls this turn (every ToolUseBlock), the evidence signal
+    # the false-completion check keys on (#517). Distinct from
+    # ``side_effect_emitted``, which flips only for non-idempotent tools: a
+    # read-only investigation (Read/Grep/WebSearch) IS tool-call evidence but
+    # leaves ``side_effect_emitted`` False, so this counter -- not that flag -- is
+    # the right "did any tool run" signal.
+    tool_call_count: int = 0
     # The delivered text of the terminal ``final`` for a successful turn, set by
     # the session loop when a DONE/idle final is produced. It is the assistant
     # reply recorded into the conversation transcript (#20); left None on a
@@ -125,6 +132,9 @@ def _translate_assistant(
                 events.append(TextDelta(text=block.text))
         elif isinstance(block, ToolUseBlock):
             events.append(ToolNote(text=f"running tool {block.name}", tool=block.name))
+            # Every tool call is evidence for the false-completion check (#517),
+            # including the approval-request tool below and read-only tools.
+            state.tool_call_count += 1
             if gen is not None:
                 gen.tool_span(block.name)
             if block.name == APPROVAL_TOOL_NAME:

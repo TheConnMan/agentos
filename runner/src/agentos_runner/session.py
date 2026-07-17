@@ -81,6 +81,10 @@ AUTH_REJECTED_CLASSIFICATION = "model-credential-rejected"
 # approved action ran", so it false-alarms on a text-only decision and
 # false-passes on any incidental tool -- which is why A2 ships observe-only.
 APPROVAL_NOT_ACTED_CLASSIFICATION = "approval-not-acted"
+# The false-completion warning classification (#517): a turn declared DONE with a
+# substantive answer but no tool-call evidence. Rides the free-form
+# ErrorEvent.classification field like the markers above, so it is contract-safe.
+FALSE_COMPLETION_CLASSIFICATION = "false-completion"
 
 
 def _is_auth_rejection(message: object) -> bool:
@@ -131,6 +135,7 @@ class SessionRunner:
         history_store: TranscriptStore | None = None,
         approval_gate: ApprovalGate | None = None,
         approval_resumed_kind: str | None = None,
+        false_completion_check: bool = False,
     ) -> None:
         self._factory = session_factory
         self._ceiling = ceiling
@@ -156,6 +161,9 @@ class SessionRunner:
         # this boot is resuming from a policy-gate approval. It confers no
         # capability -- it only arms the observe-only turn-end reconciliation.
         self._approval_resumed_kind = approval_resumed_kind
+        # Opt-in, observe-only false-completion check (#517): warn when a turn
+        # ends DONE with a substantive answer but zero tool calls. Off by default.
+        self._false_completion_check = false_completion_check
 
         self._session: ModelSession | None = None
         self._turn_lock = anyio.Lock()
@@ -425,6 +433,8 @@ class SessionRunner:
                     final = _apply_approval_override(self._reclassify(outbound), state)
                     for line in self._approval_not_acted_lines(state, final):
                         yield line
+                    for line in self._false_completion_lines(state, final):
+                        yield line
                     self._status = final.status
                     self._turn_open = False
                     # Capture the delivered reply so run_turn can persist the
@@ -453,6 +463,10 @@ class SessionRunner:
         self._merge_gate_block(state)
         final = _apply_approval_override(Final(text="", status=status), state)
         for line in self._approval_not_acted_lines(state, final):
+            yield line
+        # No-op on this empty-text fallback final (the check requires a
+        # substantive answer), kept beside its twin for parity.
+        for line in self._false_completion_lines(state, final):
             yield line
         self._status = final.status
         self._turn_open = False
@@ -496,6 +510,52 @@ class SessionRunner:
                             "the approved action was never taken"
                         ),
                         classification=APPROVAL_NOT_ACTED_CLASSIFICATION,
+                    )
+                )
+            ]
+        return []
+
+    def _false_completion_lines(self, state: TurnState, final: Final) -> list[str]:
+        """The OBSERVE-ONLY false-completion warning (#517).
+
+        Emits a single non-terminal warning frame -- never a non-clean final --
+        when a turn declared DONE with a substantive answer yet made ZERO tool
+        calls this turn. That is the runner-observable analog of "declared done
+        with no tool-call evidence" (Grok's laziness classifier). It keys on
+        ``tool_call_count`` (all tools), not ``side_effect_emitted`` (a proxy for
+        "some non-idempotent tool ran"), so a read-only investigation counts as
+        evidence and never trips this.
+
+        Opt-in and observe-only, deliberately: the runner cannot tell a
+        legitimately-answerable question ("what is 2+2", "summarize our last
+        exchange") from a lazy false completion without judging task intent, which
+        it does not do. So this instruments -- it warns and leaves the final clean
+        -- and, like the approval-not-acted signal, gates on
+        ``self._false_completion_check`` until real-trace rates justify any
+        promotion to enforce. An approval pause, budget halt, or classified
+        failure never reaches the clean-DONE case reconciled here.
+        """
+
+        if (
+            self._false_completion_check
+            and final.status is SessionStatus.DONE
+            and state.tool_call_count == 0
+            and final.text.strip()
+            and not state.approval_summary
+        ):
+            logger.warning(
+                "false completion session=%s: turn declared done with a "
+                "substantive answer but made no tool call",
+                self._session_id,
+            )
+            return [
+                to_ndjson_line(
+                    ErrorEvent(
+                        message=(
+                            "turn declared done with a substantive answer but made "
+                            "no tool call this turn (no evidence backing the claim)"
+                        ),
+                        classification=FALSE_COMPLETION_CLASSIFICATION,
                     )
                 )
             ]
