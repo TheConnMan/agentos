@@ -28,12 +28,10 @@ import uuid
 
 from ..binding import RUNNER_TOKEN_ENV
 from .affinity import AffinityStore
-from .k8s import (
+from .types import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
     THREAD_HASH_LABEL,
-)
-from .types import (
     ClaimTimeoutError,
     NoRouteError,
     RouteRecord,

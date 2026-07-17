@@ -53,11 +53,14 @@ from ..binding import (
     PLUGIN_DIR_ENV,
 )
 from ..bundle_store import BundleReader, extract_bundle
-from .k8s import (
+from .types import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
+    ClaimView,
+    OperatingMode,
+    SandboxError,
+    SandboxView,
 )
-from .types import ClaimView, OperatingMode, SandboxError, SandboxView
 
 logger = logging.getLogger(__name__)
 

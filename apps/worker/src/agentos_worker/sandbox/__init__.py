@@ -10,14 +10,12 @@ Public surface for F1 (the worker kernel):
 
 from .affinity import AffinityStore
 from .docker import DockerError, DockerSandboxClient
-from .k8s import (
+from .k8s import KubernetesSandboxClient
+from .substrate import HISTORY_ENV, SESSION_ENV, SandboxSubstrate
+from .types import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
     THREAD_HASH_LABEL,
-    KubernetesSandboxClient,
-)
-from .substrate import HISTORY_ENV, SESSION_ENV, SandboxSubstrate
-from .types import (
     ClaimTimeoutError,
     ClaimView,
     NoRouteError,

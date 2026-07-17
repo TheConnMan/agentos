@@ -16,16 +16,18 @@ from typing import Any
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 
-from .types import ClaimView, OperatingMode, SandboxView
+from .types import (
+    MANAGED_BY_LABEL,
+    MANAGED_BY_VALUE,
+    ClaimView,
+    OperatingMode,
+    SandboxView,
+)
 
 CORE_GROUP = "agents.x-k8s.io"
 CORE_VERSION = "v1beta1"
 EXT_GROUP = "extensions.agents.x-k8s.io"
 EXT_VERSION = "v1beta1"
-
-MANAGED_BY_LABEL = "agentos.dev/managed-by"
-MANAGED_BY_VALUE = "agentos-sandbox-substrate"
-THREAD_HASH_LABEL = "agentos.dev/thread-hash"
 
 # Per-claim env with no containerName reaches only the FIRST main container (the
 # agent-sandbox Overrides policy). The bundle ref must additionally reach the
