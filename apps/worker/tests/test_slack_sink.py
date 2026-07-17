@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import aiohttp
 import pytest
 from agentos_worker.config import WorkerConfig
 from agentos_worker.slack_sink import AsyncSlackSink
@@ -236,3 +237,80 @@ def test_update_does_not_retry_when_blocks_update_succeeds() -> None:
 
     assert len(calls) == 1  # a spurious retry would make this 2
     assert isinstance(calls[0].get("blocks"), list)
+
+
+# --- #530: fall back to the default transport when a resumed reply endpoint is
+# unreachable (the ephemeral CLI stub died; its URL is persisted on the Approval).
+
+
+def _raise_connection_error():
+    async def _fake(**_kwargs):
+        raise aiohttp.ClientError("connection refused")
+
+    return _fake
+
+
+def _record_call(sink_calls, label):
+    async def _fake(**kwargs):
+        sink_calls.append(label)
+        return {"ok": True, "ts": "9.9"}
+
+    return _fake
+
+
+def test_update_falls_back_to_default_when_endpoint_unreachable() -> None:
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    landed: list[str] = []
+    # The per-turn (stub) client's host is dead -> connection error.
+    sink._client_for("http://stub:2/api/").chat_update = _raise_connection_error()  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _record_call(landed, "default")  # type: ignore[method-assign]
+
+    asyncio.run(sink.update(channel="C1", ts="1.1", text="hi", endpoint="http://stub:2/api/"))
+
+    assert landed == ["default"], "the resumed reply must land on the default transport"
+
+
+def test_slack_api_error_is_not_treated_as_unreachable() -> None:
+    # A SlackApiError means the endpoint IS reachable but rejected the call; it must
+    # NOT trigger a transport fallback (that would misroute a live-workspace reply).
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    default_hits: list[str] = []
+
+    async def _reject(**_kwargs):
+        raise SlackApiError("nope", response={"error": "channel_not_found"})
+
+    sink._client_for("http://stub:2/api/").chat_update = _reject  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _record_call(default_hits, "default")  # type: ignore[method-assign]
+
+    with pytest.raises(SlackApiError):
+        asyncio.run(
+            sink.update(channel="C1", ts="1.1", text="hi", endpoint="http://stub:2/api/")
+        )
+    assert default_hits == [], "a SlackApiError must not fall back to the default"
+
+
+def test_no_fallback_when_endpoint_equals_default() -> None:
+    # A turn already on the default transport has no alternate to try; the
+    # connection error propagates (there is nowhere else to send it).
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    sink._client_for(None).chat_update = _raise_connection_error()  # type: ignore[method-assign]
+
+    with pytest.raises(aiohttp.ClientError):
+        asyncio.run(sink.update(channel="C1", ts="1.1", text="hi"))  # no endpoint -> default
+
+
+def test_no_fallback_when_no_default_is_configured() -> None:
+    # No worker default (real Slack, no base_url): a dead per-turn endpoint has no
+    # safe fallback, so the error propagates rather than guessing a transport.
+    sink = AsyncSlackSink("xoxb-test")  # default is the real Slack sentinel
+    # Make BOTH the per-turn and the (real-Slack) default raise so a fallback, if it
+    # wrongly fired, would still error -- but we assert it never reaches the default.
+    default_hits: list[str] = []
+    sink._client_for("http://stub:2/api/").chat_update = _raise_connection_error()  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _record_call(default_hits, "default")  # type: ignore[method-assign]
+
+    with pytest.raises(aiohttp.ClientError):
+        asyncio.run(
+            sink.update(channel="C1", ts="1.1", text="hi", endpoint="http://stub:2/api/")
+        )
+    assert default_hits == [], "real-Slack default is not a safe fallback for a CLI-stub endpoint"
