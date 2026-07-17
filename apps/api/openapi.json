@@ -965,20 +965,8 @@
         "type": "object"
       },
       "ConsoleLoginCodeMint": {
-        "description": "Mint a login code. The label is an operator's note for the inventory.",
-        "properties": {
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Label"
-          }
-        },
+        "description": "Mint a login code. Carries no fields: the mint is a bare request under the\nplatform key, and an empty body validates.",
+        "properties": {},
         "title": "ConsoleLoginCodeMint",
         "type": "object"
       },
@@ -1048,68 +1036,6 @@
           "code"
         ],
         "title": "ConsoleSessionExchange",
-        "type": "object"
-      },
-      "ConsoleSessionListItem": {
-        "description": "One session in the operator's inventory.\n\nAn inventory, never a way to read a session: no field here carries the code,\nthe token, or either digest. ``expires_at`` is the expiry that currently\ngoverns the row -- the session's once exchanged, the login code's until then.",
-        "properties": {
-          "consumed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Consumed At"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Label"
-          },
-          "revoked_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revoked At"
-          }
-        },
-        "required": [
-          "id",
-          "created_at",
-          "expires_at"
-        ],
-        "title": "ConsoleSessionListItem",
         "type": "object"
       },
       "ConsoleSessionOut": {
@@ -5945,58 +5871,6 @@
           }
         },
         "summary": "Revoke Sessions",
-        "tags": [
-          "console"
-        ]
-      },
-      "get": {
-        "description": "The operator's inventory of console sessions.\n\nAn inventory, never a way to read one: no digest and no raw credential is\nprojected here, so a listing cannot be replayed into a login.",
-        "operationId": "list_sessions_console_sessions_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-api-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ConsoleSessionListItem"
-                  },
-                  "title": "Response List Sessions Console Sessions Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Sessions",
         "tags": [
           "console"
         ]

@@ -1205,14 +1205,6 @@ export const commandManifest = {
                     "false"
                   ],
                   "required": false
-                },
-                {
-                  "global": false,
-                  "help": "Optional note recorded on the session, to tell sessions apart",
-                  "id": "label",
-                  "long": "label",
-                  "positional": false,
-                  "required": false
                 }
               ],
               "hidden": false,
@@ -1695,14 +1687,6 @@ export const commandManifest = {
                   "help": "Helm release name. Default: agentos",
                   "id": "release",
                   "long": "release",
-                  "positional": false,
-                  "required": false
-                },
-                {
-                  "global": false,
-                  "help": "Optional note recorded on the session, to tell sessions apart",
-                  "id": "label",
-                  "long": "label",
                   "positional": false,
                   "required": false
                 },

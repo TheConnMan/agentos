@@ -81,8 +81,8 @@ the way in, not a 500 and not a 401 -- the kill switch and the pod-log proxy are
 what an operator reaches for when the system is already sick, and neither of them
 needed Postgres to authenticate before this ADR.
 
-**A session cannot mint or manage sessions.** The three operator routes
-(`POST /console/login-codes`, `GET /console/sessions`, `DELETE /console/sessions`)
+**A session cannot mint or manage sessions.** The two operator routes
+(`POST /console/login-codes`, `DELETE /console/sessions`)
 depend on `require_platform_key`, which is the pre-existing platform-key-only
 check: a strict subset of `require_api_key`, not a second scheme. This is
 load-bearing rather than cautious. If a session cookie could mint a login code,

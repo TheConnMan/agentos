@@ -853,9 +853,8 @@ class MemoryEntryEdit(BaseModel):
 
 
 class ConsoleLoginCodeMint(BaseModel):
-    """Mint a login code. The label is an operator's note for the inventory."""
-
-    label: str | None = None
+    """Mint a login code. Carries no fields: the mint is a bare request under the
+    platform key, and an empty body validates."""
 
 
 class ConsoleLoginCodeOut(BaseModel):
@@ -907,22 +906,6 @@ class ConsoleSessionStatus(BaseModel):
 
     authenticated: bool
     expires_at: datetime | None = None
-
-
-class ConsoleSessionListItem(BaseModel):
-    """One session in the operator's inventory.
-
-    An inventory, never a way to read a session: no field here carries the code,
-    the token, or either digest. ``expires_at`` is the expiry that currently
-    governs the row -- the session's once exchanged, the login code's until then.
-    """
-
-    id: uuid.UUID
-    label: str | None = None
-    created_at: datetime
-    expires_at: datetime
-    consumed_at: datetime | None = None
-    revoked_at: datetime | None = None
 
 
 class ConsoleRevokeOut(BaseModel):

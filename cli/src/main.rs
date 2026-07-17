@@ -92,7 +92,7 @@ impl From<ConsoleTarget> for commands::ConsoleOpts {
 /// (#630/ADR-0049).
 ///
 /// The connection flattens onto each LEAF rather than onto `console` itself, so
-/// the flags read after the verb (`console login --label x`) exactly as they do
+/// the flags read after the verb (`console login --api-key x`) exactly as they do
 /// for every other verb in this CLI. The cluster twin is a separate enum because
 /// the two tiers genuinely differ in how they connect -- localhost defaults here
 /// vs release discovery there (#524) -- which is the same split that stopped
@@ -103,9 +103,6 @@ enum LocalConsoleAction {
     Login {
         #[command(flatten)]
         target: ConsoleTarget,
-        /// Optional note recorded on the session, to tell sessions apart.
-        #[arg(long)]
-        label: Option<String>,
     },
     /// Revoke every live console session (the kill switch).
     Revoke {
@@ -123,9 +120,6 @@ enum ClusterConsoleAction {
     Login {
         #[command(flatten)]
         conn: ClusterConn,
-        /// Optional note recorded on the session, to tell sessions apart.
-        #[arg(long)]
-        label: Option<String>,
         /// Print the request that would be made and exit without executing.
         #[arg(long)]
         dry_run: bool,
@@ -1697,10 +1691,9 @@ async fn run(command: Option<Command>) -> Result<()> {
                 // resolves from consts while the cluster twin shells kubectl.
                 // That URL is loopback, hence already a secure context, so the
                 // login exchange accepts it and there is no port-forward to name.
-                LocalConsoleAction::Login { target, label } => emit(
+                LocalConsoleAction::Login { target } => emit(
                     commands::console_login(
                         target.into(),
-                        label,
                         ops::ConsoleAccess {
                             url: Some(agentos::observability::LOCAL_CONSOLE_URL.to_string()),
                             login: None,
@@ -1853,11 +1846,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 .await?,
             ),
             ClusterAction::Console { action } => match action {
-                ClusterConsoleAction::Login {
-                    conn,
-                    label,
-                    dry_run,
-                } => {
+                ClusterConsoleAction::Login { conn, dry_run } => {
                     let common = CommonOpts {
                         namespace: conn.namespace.clone(),
                         release: conn.release.clone(),
@@ -1879,7 +1868,6 @@ async fn run(command: Option<Command>) -> Result<()> {
                                 api_key,
                                 dry_run,
                             },
-                            label,
                             access,
                         )
                         .await?,
@@ -2827,31 +2815,21 @@ mod tests {
     fn local_console_login_and_revoke_parse_with_flags_after_the_verb() {
         // The flags flatten onto the LEAF, so they read after the verb the way
         // every other verb in this CLI takes its flags.
-        match Cli::try_parse_from([
-            "agentos",
-            "local",
-            "console",
-            "login",
-            "--label",
-            "laptop",
-            "--api-key",
-            "K",
-        ])
-        .expect("local console login")
-        .command
+        match Cli::try_parse_from(["agentos", "local", "console", "login", "--api-key", "K"])
+            .expect("local console login")
+            .command
         {
             Some(Command::Local {
                 action:
                     LocalAction::Console {
-                        action: LocalConsoleAction::Login { target, label },
+                        action: LocalConsoleAction::Login { target },
                     },
             }) => {
-                assert_eq!(label.as_deref(), Some("laptop"));
                 assert_eq!(target.api_key, "K");
             }
             _ => panic!("expected local console login"),
         }
-        // --label is optional: the bare verb must mint.
+        // The bare verb must mint with no flags.
         assert!(Cli::try_parse_from(["agentos", "local", "console", "login"]).is_ok());
         assert!(matches!(
             Cli::try_parse_from(["agentos", "local", "console", "revoke"])

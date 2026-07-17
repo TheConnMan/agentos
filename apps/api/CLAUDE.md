@@ -29,7 +29,7 @@ worker, Postgres, MinIO/S3, Langfuse, and GitHub.
   platform-key path: it is a browser-only defense, and the CLI/worker/runner must
   keep authenticating with the header credential alone.
 - **`require_platform_key` is the platform-key-only subset**, used by the console
-  operator routes (`POST /console/login-codes`, `GET|DELETE /console/sessions`)
+  operator routes (`POST /console/login-codes`, `DELETE /console/sessions`)
   so a session cannot mint its own successor or mass-revoke the store it belongs
   to (ADR-0049). It is a strict subset of `require_api_key`, not a second scheme.
   Reach for it when a route must be the CLI's and not the browser's.

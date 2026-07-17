@@ -273,9 +273,6 @@ class ConsoleSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    # Operator-supplied note for the inventory listing ("laptop"), never a
-    # credential.
-    label: Mapped[str | None] = mapped_column(default=None)
     # SHA-256 hex of the minted login code. Unique so the exchange is a single
     # indexed lookup by digest.
     login_code_hash: Mapped[str] = mapped_column(unique=True, index=True)

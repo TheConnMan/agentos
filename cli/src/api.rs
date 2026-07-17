@@ -787,12 +787,12 @@ impl ApiClient {
     /// Mint a single-use console login code: `POST /console/login-codes`
     /// (#630/ADR-0049). Under the platform key on purpose -- minting is the
     /// CLI's job, which is what keeps the browser off the key entirely.
-    pub async fn mint_console_login_code(&self, label: Option<&str>) -> Result<ConsoleLoginCode> {
+    pub async fn mint_console_login_code(&self) -> Result<ConsoleLoginCode> {
         let resp = self
             .http
             .post(format!("{}/console/login-codes", self.base_url))
             .header("X-API-Key", &self.api_key)
-            .json(&json!({ "label": label }))
+            .json(&json!({}))
             .send()
             .await
             .context("POST /console/login-codes")?;

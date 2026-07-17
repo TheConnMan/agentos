@@ -133,12 +133,8 @@ def _parse_ts(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _mint_code(
-    client: Any, auth_headers: dict[str, str], label: str | None = None
-) -> dict[str, Any]:
-    resp = client.post(
-        "/console/login-codes", headers=auth_headers, json={"label": label}
-    )
+def _mint_code(client: Any, auth_headers: dict[str, str]) -> dict[str, Any]:
+    resp = client.post("/console/login-codes", headers=auth_headers, json={})
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -187,7 +183,7 @@ def test_minted_code_carries_an_expiry_from_the_configured_ttl(
     console_client: Any, auth_headers: dict[str, str], clean_console_sessions: None
 ) -> None:
     before = datetime.now(UTC)
-    minted = _mint_code(console_client, auth_headers, label="laptop")
+    minted = _mint_code(console_client, auth_headers)
 
     ttl = get_settings().console_login_code_ttl_seconds
     assert ttl == 600  # the shipped default the ADR specifies
@@ -363,48 +359,6 @@ def test_revoking_all_sessions_kills_a_live_cookie_immediately(
         # Only LIVE sessions count, so a second sweep revokes nothing.
         again = console_client.delete("/console/sessions", headers=auth_headers)
         assert again.json() == {"revoked": 0}
-
-
-def test_listing_sessions_requires_the_platform_key_and_leaks_no_secret(
-    console_client: Any, auth_headers: dict[str, str], clean_console_sessions: None
-) -> None:
-    assert console_client.get("/console/sessions").status_code == 401
-    assert (
-        console_client.get(
-            "/console/sessions", headers={"X-API-Key": "wrong"}
-        ).status_code
-        == 401
-    )
-
-    minted = _mint_code(console_client, auth_headers, label="laptop")
-    exchanged = _exchange(console_client, minted["code"])
-    assert exchanged.status_code == 200, exchanged.text
-    token = _cookie_value(exchanged)
-
-    listed = console_client.get("/console/sessions", headers=auth_headers)
-    assert listed.status_code == 200, listed.text
-    items = listed.json()
-    assert len(items) == 1
-    item = items[0]
-    assert set(item) == {
-        "id",
-        "label",
-        "created_at",
-        "expires_at",
-        "consumed_at",
-        "revoked_at",
-    }
-    assert item["id"] == minted["session_id"]
-    assert item["label"] == "laptop"
-    assert item["consumed_at"] is not None
-    assert item["revoked_at"] is None
-
-    # The listing is an operator's inventory of sessions, never a way to read
-    # one: neither the code nor the token may be recoverable from it.
-    body = listed.text
-    assert minted["code"] not in body
-    assert token not in body
-    assert _sha256(token) not in body
 
 
 def test_only_hashes_of_the_code_and_token_are_stored(

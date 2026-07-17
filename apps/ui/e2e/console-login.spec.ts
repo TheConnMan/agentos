@@ -183,6 +183,32 @@ test("the login code and api_key never enter the URL or any history entry (AC1, 
   }
 });
 
+test("no request Referer header carries the api_key, login code, or dev key (AC5)", async ({ page }) => {
+  // AC5's referrers half, proven directly rather than transitively. The login
+  // code travels only in the exchange POST body and the key has no URL path at
+  // all, so a request's Referer -- the referring document's full same-origin
+  // URL -- must never echo any of them onward to a downstream host. Driven from
+  // the clean `/?api=1` origin (no planted key) so the Referer values captured
+  // are the real ones a normal login produces.
+  await stubSession(page);
+  const referers: { url: string; referer: string | undefined }[] = [];
+  page.on("request", (req) => referers.push({ url: req.url(), referer: req.headers()["referer"] }));
+
+  await page.goto("/?api=1");
+  await logIn(page);
+  await expect(page.getByRole("navigation")).toBeVisible({ timeout: 10_000 });
+
+  // Real captured values, not a presence check: at least one request must have
+  // actually sent a Referer, or this proves nothing.
+  const seen = referers.filter((req) => req.referer !== undefined);
+  expect(seen.length, "no request carried a Referer header: nothing was asserted").toBeGreaterThan(0);
+  for (const req of seen) {
+    expect(req.referer, `Referer on request to ${req.url}`).not.toContain("api_key");
+    expect(req.referer, `Referer on request to ${req.url}`).not.toContain(LOGIN_CODE);
+    expect(req.referer, `Referer on request to ${req.url}`).not.toContain(DEV_KEY);
+  }
+});
+
 test("a planted ?api_key= is inert: it never reaches a request, and no request carries the key or code (AC3, AC5)", async ({
   page,
 }) => {

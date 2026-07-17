@@ -3,7 +3,6 @@
 import hashlib
 import secrets
 import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -695,7 +694,7 @@ def _digest(value: str) -> str:
 
 
 async def mint_console_login_code(
-    session: AsyncSession, label: str | None, ttl_seconds: int
+    session: AsyncSession, ttl_seconds: int
 ) -> tuple[str, ConsoleSession]:
     """Mint a single-use login code. Returns the RAW code and its row.
 
@@ -711,7 +710,6 @@ async def mint_console_login_code(
 
     code = secrets.token_urlsafe(CONSOLE_TOKEN_BYTES)
     row = ConsoleSession(
-        label=label,
         login_code_hash=_digest(code),
         login_code_expires_at=func.now() + timedelta(seconds=ttl_seconds),
     )
@@ -828,12 +826,3 @@ async def revoke_all_console_sessions(session: AsyncSession) -> int:
     revoked = len(result.scalars().all())
     await session.commit()
     return revoked
-
-
-async def list_console_sessions(session: AsyncSession) -> Sequence[ConsoleSession]:
-    """Every session row, newest first, for the operator's inventory."""
-
-    found = await session.scalars(
-        select(ConsoleSession).order_by(ConsoleSession.created_at.desc())
-    )
-    return found.all()

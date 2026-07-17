@@ -2805,7 +2805,6 @@ impl crate::ui::CliOutput for ConsoleLoginOutput {
 /// is the same split `observability` already draws between the two tiers.
 pub async fn console_login(
     opts: ConsoleOpts,
-    label: Option<String>,
     access: crate::ops::ConsoleAccess,
 ) -> Result<ConsoleLoginOutput> {
     if opts.dry_run {
@@ -2814,7 +2813,7 @@ pub async fn console_login(
         }));
     }
     let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
-    let minted = client.mint_console_login_code(label.as_deref()).await?;
+    let minted = client.mint_console_login_code().await?;
     Ok(ConsoleLoginOutput::Minted {
         code: minted.code,
         expires_at: minted.expires_at,
@@ -4476,7 +4475,7 @@ mod tests {
             api_key: "K".into(),
             dry_run: true,
         };
-        let login = super::console_login(opts(), None, Default::default())
+        let login = super::console_login(opts(), Default::default())
             .await
             .unwrap();
         assert_eq!(login.to_json()["dry_run"], true);

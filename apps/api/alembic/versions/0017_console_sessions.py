@@ -29,7 +29,6 @@ def upgrade() -> None:
     op.create_table(
         "console_sessions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("label", sa.String(), nullable=True),
         sa.Column("login_code_hash", sa.String(), nullable=False),
         sa.Column(
             "login_code_expires_at", sa.DateTime(timezone=True), nullable=False

@@ -8,8 +8,8 @@ it: the CLI mints a short-lived single-use login code under the platform key, an
 the console exchanges that code for an HttpOnly session cookie that page script
 cannot read and an operator can revoke with a row write.
 
-The routes split by who calls them. Minting and the operator's inventory are the
-CLI's, under the platform key. The exchange and the session's own
+The routes split by who calls them. Minting and the operator's kill switch are
+the CLI's, under the platform key. The exchange and the session's own
 status/logout are the browser's, and carry no auth dependency because the cookie
 is the thing they are establishing or reading.
 """
@@ -31,7 +31,6 @@ from ..schemas import (
     ConsoleLoginRefusedOut,
     ConsoleRevokeOut,
     ConsoleSessionExchange,
-    ConsoleSessionListItem,
     ConsoleSessionOut,
     ConsoleSessionStatus,
 )
@@ -84,7 +83,7 @@ async def mint_login_code(
 
     settings = get_settings()
     code, row = await crud.mint_console_login_code(
-        session, data.label, settings.console_login_code_ttl_seconds
+        session, settings.console_login_code_ttl_seconds
     )
     return ConsoleLoginCodeOut(
         code=code, expires_at=row.login_code_expires_at, session_id=row.id
@@ -209,33 +208,6 @@ async def logout(
         CONSOLE_SESSION_COOKIE, path="/", httponly=True, secure=True, samesite="strict"
     )
     return response
-
-
-@router.get(
-    "/sessions",
-    response_model=list[ConsoleSessionListItem],
-    dependencies=[Depends(require_platform_key)],
-)
-async def list_sessions(session: SessionDep) -> list[ConsoleSessionListItem]:
-    """The operator's inventory of console sessions.
-
-    An inventory, never a way to read one: no digest and no raw credential is
-    projected here, so a listing cannot be replayed into a login.
-    """
-
-    return [
-        ConsoleSessionListItem(
-            id=row.id,
-            label=row.label,
-            created_at=row.created_at,
-            # The expiry that currently governs the row: the session's once the
-            # code is exchanged, the login code's until then.
-            expires_at=row.session_expires_at or row.login_code_expires_at,
-            consumed_at=row.consumed_at,
-            revoked_at=row.revoked_at,
-        )
-        for row in await crud.list_console_sessions(session)
-    ]
 
 
 @router.delete(
