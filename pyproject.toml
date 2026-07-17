@@ -62,6 +62,10 @@ testpaths = [
     "compose/tests",
     "examples/tests",
     "tools/doclint/tests",
+    # Only the offline harness unit tests -- NOT the whole tree: the cluster
+    # scenario in test_soak_resilience.py stays out of default collection and
+    # runs only under AGENTOS_SOAK=1 (#499).
+    "tests/soak/test_harness_unit.py",
 ]
 
 [tool.ruff]

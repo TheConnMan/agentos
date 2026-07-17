@@ -18,8 +18,10 @@ The scenario never runs in default CI. It is gated on `AGENTOS_SOAK=1` and skips
 cleanly with no cluster. The pure-helper unit tests in `test_harness_unit.py`
 always run (offline, no cluster) and cover the deterministic harness logic.
 
-`tests/soak` is intentionally not in the pytest `testpaths`, so the scenario runs
-only when invoked by explicit path.
+Only `test_harness_unit.py` is in the pytest `testpaths` (`pyproject.toml`), so
+the offline helpers run in default CI while `test_soak_resilience.py` (the
+cluster scenario) stays out of default collection and runs only when invoked by
+explicit path or under `AGENTOS_SOAK=1`.
 
 ## How to run
 
