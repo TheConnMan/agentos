@@ -78,6 +78,10 @@ __all__ = [
 # Pause before retrying the blocking eval read after a transient transport error.
 _EVAL_READ_ERROR_BACKOFF_S = 0.5
 
+# Page size for the PEL scan in the delivery-cap check (#535); mirrors the runs
+# lane's _CAP_SCAN_PAGE so the whole pending list is cap-checked, not just its head.
+_EVAL_CAP_SCAN_PAGE = 1000
+
 
 class EvalReporter:
     """POSTs an EvalReport to the platform API's /evals/report, with retries."""
@@ -229,6 +233,16 @@ class EvalStreamConsumer(StreamConsumer):
             await self._sleep_or_stop(self._config.reclaim_interval_s)
 
     async def _reclaim_once(self) -> int:
+        """Reclaim eval entries a dead consumer left pending and re-run them.
+
+        Entries that have already spent their delivery budget are dead-lettered
+        first and then skipped, so a permanently-failing eval (an unresolvable
+        bundle, a provisioning failure) is not reclaimed and re-provisioned every
+        tick forever (#535) -- each redelivery would otherwise claim a sandbox and
+        run an LLM suite, burning money on a job that can never pass. Mirrors the
+        runs-lane cap (ADR-0039, #505) locally in the eval lane.
+        """
+        over_cap = await self._dead_letter_over_cap()
         reclaimed = 0
         cursor: str = "0-0"
         while not self._stop.is_set():
@@ -245,11 +259,112 @@ class EvalStreamConsumer(StreamConsumer):
             for entry_id, fields in entries:
                 if entry_id in self._inflight_ids:
                     continue  # still being handled here; not an orphan
+                if entry_id in over_cap:
+                    continue  # budget spent; never re-run it again
                 reclaimed += 1
                 await self._handle(entry_id, fields)
             if cursor in ("0-0", "0"):
                 break
         return reclaimed
+
+    async def _dead_letter_over_cap(self) -> set[str]:
+        """Dead-letter eval entries that have exhausted their delivery budget.
+
+        Reads ``times_delivered`` from the PEL with ``XPENDING`` BEFORE
+        ``XAUTOCLAIM`` (which bumps the count on claim), so the pre-claim value is
+        the budget already spent and an entry at ``>= max_delivery`` has had its
+        full budget. Pages the whole pending list (``XAUTOCLAIM`` pages all of it
+        too), keeps the ``IDLE`` filter equal to ``XAUTOCLAIM``'s
+        ``min_idle_time``, and keeps the ``_inflight_ids`` skip ahead of the cap
+        check -- the same invariants the runs lane holds (#505). Returns every
+        over-cap id (including ones whose dead-letter failed) so the caller never
+        re-dispatches them. One entry's failure is isolated so it cannot stop the
+        reclaim tick.
+        """
+        over_cap: set[str] = set()
+        cursor = "-"
+        while True:
+            pending = await self._redis.xpending_range(
+                self._config.eval_stream,
+                self._config.eval_consumer_group,
+                min=cursor,
+                max="+",
+                count=_EVAL_CAP_SCAN_PAGE,
+                idle=self._config.reclaim_min_idle_ms,
+            )
+            if not pending:
+                break
+            for row in pending:
+                entry_id = str(row["message_id"])
+                if entry_id in self._inflight_ids:
+                    continue
+                delivered = int(row["times_delivered"])
+                if delivered < self._config.max_delivery:
+                    continue
+                over_cap.add(entry_id)
+                try:
+                    fields = await self._entry_fields(entry_id)
+                    await self._dead_letter(
+                        entry_id, fields, reason="max-delivery-exceeded", delivery_count=delivered
+                    )
+                except Exception:
+                    logger.exception(
+                        "dead-lettering eval entry %s failed; left pending, not re-run",
+                        entry_id,
+                    )
+            if len(pending) < _EVAL_CAP_SCAN_PAGE:
+                break
+            cursor = f"({pending[-1]['message_id']}"
+        return over_cap
+
+    async def _entry_fields(self, entry_id: str) -> dict[str, str] | None:
+        """The original entry's fields, or None if it was already trimmed off the
+        stream (then a metadata-only graveyard row is written)."""
+        rows = await self._redis.xrange(self._config.eval_stream, min=entry_id, max=entry_id)
+        return dict(rows[0][1]) if rows else None
+
+    async def _dead_letter(
+        self,
+        entry_id: str,
+        fields: dict[str, str] | None,
+        *,
+        reason: str,
+        delivery_count: int,
+    ) -> None:
+        """Move an eval entry to ``<eval_stream>:dead`` and ack it off the group.
+
+        XADD before XACK (a crash between costs a duplicate graveyard row, never a
+        lost entry); the XADD is bounded by an approximate ``dead_letter_maxlen``
+        so the graveyard cannot OOM. Original ``dl_*`` keys are escaped so the
+        metadata written last always wins and the original stays recoverable --
+        the same convention the runs lane uses.
+        """
+        target = self._config.eval_dead_letter_stream_name()
+        payload: dict[str, str] = {
+            (f"dl_{k}" if k.startswith("dl_") else k): v for k, v in (fields or {}).items()
+        }
+        payload.update(
+            {
+                "dl_original_id": entry_id,
+                "dl_delivery_count": str(delivery_count),
+                "dl_reason": reason,
+                "dl_dead_lettered_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        await self._redis.xadd(
+            target,
+            payload,
+            maxlen=self._config.dead_letter_maxlen,
+            approximate=True,
+        )
+        logger.error(
+            "dead-lettered eval entry %s after %d deliveries (reason=%s) -> %s",
+            entry_id,
+            delivery_count,
+            reason,
+            target,
+        )
+        await self._ack(entry_id)
 
     async def _handle(self, entry_id: str, fields: dict[str, str]) -> None:
         self._inflight_ids.add(entry_id)
@@ -260,9 +375,11 @@ class EvalStreamConsumer(StreamConsumer):
                 # would ack and DROP the job with no dead letter.
                 item = parse_eval_job(fields[STREAM_PAYLOAD_FIELD])
             except Exception:
-                # Poison pill: unprocessable on any redelivery, so ack and drop.
-                logger.exception("malformed eval work item %s; acking as poison", entry_id)
-                await self._ack(entry_id)
+                # Poison pill: unprocessable on any redelivery. Dead-letter it
+                # (not a bare ack) so the malformed entry is observable in the
+                # eval graveyard, matching the runs lane's unparseable path (#535).
+                logger.exception("malformed eval work item %s; dead-lettering as poison", entry_id)
+                await self._dead_letter(entry_id, fields, reason="unparseable", delivery_count=1)
                 return
             try:
                 result = await self._run_and_report(item)

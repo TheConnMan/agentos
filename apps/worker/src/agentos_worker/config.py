@@ -361,3 +361,14 @@ class WorkerConfig(BaseSettings):
         which reasons about the same name.
         """
         return self.dead_letter_stream or f"{self.stream}:dead"
+
+    def eval_dead_letter_stream_name(self) -> str:
+        """The eval lane's graveyard: ``<eval_stream>:dead`` (#535).
+
+        Derived from ``eval_stream``, NOT ``dead_letter_stream_name()`` (which is
+        keyed to the runs ``stream``): the eval lane runs its own delivery cap, so
+        a permanently-failing eval must dead-letter to its own graveyard rather
+        than the runs graveyard. Always derived, so it can never collide with
+        ``eval_stream`` and needs no self-targeting validator.
+        """
+        return f"{self.eval_stream}:dead"
