@@ -27,6 +27,8 @@ The trust chain is: provenance and the cosign signature establish that
 establishes that each file is the one that workflow produced. So verifying the
 manifest's signature and then checking a file against the manifest is enough --
 you do not need a separate signature per asset.
+[ADR-0052](adr/0052-release-asset-trust-model.md) records why the trust model is
+shaped this way.
 
 ## Verify the CLI before installing it
 
