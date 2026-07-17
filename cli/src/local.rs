@@ -495,10 +495,24 @@ pub async fn down(o: LocalDownOpts) -> Result<LocalDownOutput> {
         "stopping stack"
     };
     run_step(&cl, label, "stopped", &cmd).await?;
-    let reaped = docker::reap_labeled(docker::SANDBOX_LABEL).await?;
+    let report = docker::reap_labeled(docker::SANDBOX_LABEL).await;
+    if let Some(err) = report.error {
+        // The stack stopped, but the runner reap did not complete cleanly. Fail
+        // loudly rather than report success with orphaned containers still
+        // holding ports and credentials (#613).
+        let still = if report.still_present.is_empty() {
+            "unknown".to_string()
+        } else {
+            report.still_present.join(", ")
+        };
+        bail!(
+            "dev stack stopped, but reaping runner containers did not complete cleanly: {err}. \
+             Still running: {still}. Remove them with `docker rm -f <id>` before restarting."
+        );
+    }
     Ok(LocalDownOutput::Down {
         volumes_wiped: o.wipe,
-        reaped,
+        reaped: report.removed,
     })
 }
 

@@ -273,10 +273,23 @@ pub async fn remove_container(name_or_id: &str) -> Result<()> {
         .map(|_| ())
 }
 
-/// Remove all containers matching a Docker label filter. Best-effort on the
-/// list step (if no containers match or Docker is unreachable we silently
-/// return 0); bails on a removal failure.
-pub async fn reap_labeled(label: &str) -> Result<usize> {
+/// The outcome of reaping labeled containers: what was removed, what is still
+/// running, and whether the reap could be confirmed clean (#613).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReapReport {
+    /// Containers `docker rm -f` confirmed removed (echoed on its stdout, #551).
+    pub removed: usize,
+    /// Labeled containers still present after the reap, established by re-listing
+    /// rather than inferred from the `rm` exit. Non-empty means a failed or
+    /// partial removal that must NOT be reported as a clean teardown.
+    pub still_present: Vec<String>,
+    /// A docker error that made the reap uncertain (the list step failed, the
+    /// remove exited nonzero while containers remain, or the confirming re-list
+    /// failed). `None` only when the teardown is confirmed clean.
+    pub error: Option<String>,
+}
+
+async fn labeled_container_ids(label: &str) -> Result<Vec<String>> {
     let list_args: Vec<String> = vec![
         "ps".into(),
         "-a".into(),
@@ -284,31 +297,101 @@ pub async fn reap_labeled(label: &str) -> Result<usize> {
         format!("label={label}"),
         "-q".into(),
     ];
-    let ids = match docker(&list_args).await {
-        Ok(out) => out
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-        Err(_) => return Ok(0),
+    let out = docker(&list_args).await?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Assemble a [`ReapReport`] from the `rm` output and the post-`rm` re-list.
+///
+/// Pure so the disclosure logic (#613) is testable without a Docker daemon.
+/// `still_present` is the ground truth for what is left running: a container
+/// that raced away between the two lists is gone from both `removed` (it is not
+/// echoed by `rm`, #551) and here, so it is neither over-counted nor falsely
+/// reported as leftover. A nonzero `rm` exit whose containers are nonetheless
+/// gone (the "No such container" of exactly that race) is therefore clean.
+fn reap_report(
+    rm_stdout: &str,
+    rm_error: Option<String>,
+    still_present: Vec<String>,
+) -> ReapReport {
+    let removed = count_removed(rm_stdout);
+    let error = if still_present.is_empty() {
+        None
+    } else {
+        Some(rm_error.unwrap_or_else(|| {
+            format!(
+                "{} container(s) still running after docker rm -f",
+                still_present.len()
+            )
+        }))
     };
-    if ids.is_empty() {
-        return Ok(0);
+    ReapReport {
+        removed,
+        still_present,
+        error,
     }
-    let mut rm_args: Vec<String> = vec!["rm".into(), "-f".into()];
-    rm_args.extend(ids);
-    // Count what `docker rm -f` ACTUALLY removed, not the candidate set: it echoes
-    // one removed id per stdout line, and a container that vanished between `ps`
-    // and `rm` (a race, or a concurrent teardown) is silently skipped there. The
-    // pre-removal `ids.len()` overreports in exactly that case, which trained a
-    // user to distrust the teardown count (#551). Best-effort: a partial failure
-    // still reports the number confirmed gone rather than aborting the teardown.
-    let removed = match docker(&rm_args).await {
-        Ok(out) => count_removed(&out),
-        Err(_) => 0,
+}
+
+/// Remove all containers matching a Docker label filter, reporting what was and
+/// was not removed.
+///
+/// Unlike the old best-effort version, neither the list step nor the removal
+/// step is collapsed to a silent zero: a list failure, a nonzero `rm`, or a
+/// confirming re-list failure is surfaced on [`ReapReport::error`] so a caller
+/// (e.g. `local down`) cannot report a clean teardown while runner containers
+/// keep holding ports and credentials (#613).
+pub async fn reap_labeled(label: &str) -> ReapReport {
+    let candidates = match labeled_container_ids(label).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            return ReapReport {
+                removed: 0,
+                still_present: Vec::new(),
+                error: Some(format!("could not list containers labeled {label}: {e}")),
+            }
+        }
     };
-    Ok(removed)
+    if candidates.is_empty() {
+        return ReapReport {
+            removed: 0,
+            still_present: Vec::new(),
+            error: None,
+        };
+    }
+
+    let mut rm_args: Vec<String> = vec!["rm".into(), "-f".into()];
+    rm_args.extend(candidates.iter().cloned());
+    // Capture (not `docker`) so a nonzero exit keeps its stdout: `docker rm -f`
+    // exits nonzero if ANY id fails, yet still echoes the ids it did remove.
+    let (rm_stdout, rm_error) = match docker_capture_with_env(&rm_args, &[]).await {
+        Ok((status, stdout, _)) if status.success() => (stdout, None),
+        Ok((status, stdout, stderr)) => (
+            stdout,
+            Some(format!("docker rm -f exited {status}: {}", stderr.trim())),
+        ),
+        Err(e) => (
+            String::new(),
+            Some(format!("could not run docker rm -f: {e}")),
+        ),
+    };
+
+    // Re-list for the ground truth of what is still running.
+    match labeled_container_ids(label).await {
+        Ok(still_present) => reap_report(&rm_stdout, rm_error, still_present),
+        Err(e) => ReapReport {
+            removed: count_removed(&rm_stdout),
+            still_present: Vec::new(),
+            error: Some(match rm_error {
+                Some(r) => format!("{r}; also could not confirm teardown: {e}"),
+                None => format!("could not confirm teardown of containers labeled {label}: {e}"),
+            }),
+        },
+    }
 }
 
 /// The number of containers `docker rm -f` confirmed removed: it echoes one
@@ -366,6 +449,58 @@ mod tests {
         // Nothing removed -> zero, not a phantom "removed 1".
         assert_eq!(count_removed(""), 0);
         assert_eq!(count_removed("\n   \n"), 0);
+    }
+
+    #[test]
+    fn reap_report_clean_when_nothing_remains() {
+        // Both candidates removed, re-list empty: a clean teardown, no error.
+        let r = reap_report("abc123\ndef456\n", None, Vec::new());
+        assert_eq!(r.removed, 2);
+        assert!(r.still_present.is_empty());
+        assert_eq!(r.error, None);
+    }
+
+    #[test]
+    fn reap_report_discloses_a_partial_failure() {
+        // rm exited nonzero and a container is still present: NOT a clean
+        // teardown. The count reflects what was confirmed gone; the leftover and
+        // the docker error are surfaced so `local down` cannot report success.
+        let r = reap_report(
+            "abc123\n",
+            Some("docker rm -f exited 1: permission denied".into()),
+            vec!["def456".into()],
+        );
+        assert_eq!(r.removed, 1);
+        assert_eq!(r.still_present, vec!["def456".to_string()]);
+        assert_eq!(
+            r.error.as_deref(),
+            Some("docker rm -f exited 1: permission denied")
+        );
+    }
+
+    #[test]
+    fn reap_report_treats_a_raced_away_container_as_clean() {
+        // `docker rm -f` exited nonzero because a candidate vanished between the
+        // list and the remove ("No such container"), but the re-list is empty:
+        // nothing is actually left, so the teardown is clean despite the nonzero.
+        let r = reap_report(
+            "abc123\n",
+            Some("docker rm -f exited 1: No such container: def456".into()),
+            Vec::new(),
+        );
+        assert_eq!(r.removed, 1);
+        assert!(r.still_present.is_empty());
+        assert_eq!(r.error, None);
+    }
+
+    #[test]
+    fn reap_report_flags_leftovers_even_without_an_rm_error() {
+        // A container remains but `rm` reported success (e.g. it was recreated by
+        // a restart policy): still disclosed with a generated message.
+        let r = reap_report("abc123\n", None, vec!["ghi789".into()]);
+        assert_eq!(r.removed, 1);
+        assert_eq!(r.still_present, vec!["ghi789".to_string()]);
+        assert!(r.error.unwrap().contains("still running"));
     }
 
     fn spec() -> StartSpec {
