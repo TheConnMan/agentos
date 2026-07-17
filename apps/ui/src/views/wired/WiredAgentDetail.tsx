@@ -219,8 +219,8 @@ export function WiredAgentDetail() {
   };
 
   // Promote the dev-active version to prod: a single createDeployment (prod gets
-  // the server-default active status — no gitflow bot_identity plumbing here),
-  // then refresh so the Versions/active state reflects the new prod deployment.
+  // the server-default active status), then refresh so the Versions/active state
+  // reflects the new prod deployment.
   const promote = async () => {
     if (!agentId || promoting || !devActiveVersionId) return;
     setPromoting(true);

@@ -419,7 +419,6 @@ export interface DeploymentOut {
   agent_id: string;
   version_id: string;
   environment: Environment;
-  bot_identity: string | null;
   commit_sha: string | null;
   status: string;
   deployed_at: string;

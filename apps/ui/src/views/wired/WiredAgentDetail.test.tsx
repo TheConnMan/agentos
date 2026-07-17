@@ -71,7 +71,6 @@ const deployment = (version_id: string, environment: "prod" | "dev", deployed_at
   agent_id: "a1",
   version_id,
   environment,
-  bot_identity: null,
   commit_sha: null,
   status: "active",
   deployed_at,

@@ -182,17 +182,11 @@ async def process_push(
     # or repaired it; it is non-None from here on.
     assert version is not None
 
-    bot_identity = (
-        settings.bot_identity_prod
-        if environment is Environment.prod
-        else settings.bot_identity_dev
-    )
     deployment = await crud.create_deployment_row(
         session,
         agent.id,
         version.id,
         environment,
-        bot_identity=bot_identity,
         commit_sha=after,
     )
 
@@ -214,7 +208,6 @@ async def process_push(
     return WebhookResult(
         status="promoted" if environment is Environment.prod else "deployed",
         environment=environment,
-        bot_identity=bot_identity,
         agent_id=agent.id,
         version_id=version.id,
         deployment_id=deployment.id,

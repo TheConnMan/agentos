@@ -31,7 +31,7 @@ async function stubAgentDetail(page: Page, rec: Recorder) {
     },
   ];
   const deployments: Array<Record<string, unknown>> = [
-    { id: "d1", agent_id: "a1", version_id: "v1", environment: "prod", bot_identity: null, commit_sha: null, status: "active", deployed_at: "2026-07-01T00:00:00Z" },
+    { id: "d1", agent_id: "a1", version_id: "v1", environment: "prod", commit_sha: null, status: "active", deployed_at: "2026-07-01T00:00:00Z" },
   ];
   const filesByVersion: Record<string, string> = { v1: SKILL_V1 };
 
@@ -76,7 +76,7 @@ async function stubAgentDetail(page: Page, rec: Recorder) {
     if (route.request().method() === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}");
       rec.postedDeploymentVersion = body.version_id;
-      deployments.push({ id: "d2", agent_id: "a1", version_id: body.version_id, environment: "prod", bot_identity: null, commit_sha: null, status: "active", deployed_at: "2026-07-02T00:00:00Z" });
+      deployments.push({ id: "d2", agent_id: "a1", version_id: body.version_id, environment: "prod", commit_sha: null, status: "active", deployed_at: "2026-07-02T00:00:00Z" });
       return json(route, 201, deployments[deployments.length - 1]);
     }
     return json(route, 200, deployments);
