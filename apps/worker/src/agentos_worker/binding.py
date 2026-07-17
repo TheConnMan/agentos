@@ -71,6 +71,11 @@ MEMORY_TOKEN_ENV = "AGENTOS_MEMORY_TOKEN"
 HISTORY_REF_ENV = "AGENTOS_HISTORY_REF"
 HISTORY_TOKEN_ENV = "AGENTOS_HISTORY_TOKEN"
 BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+# The endpoint's wire protocol (#514), declared so an OpenAI-shaped endpoint
+# fails loudly in the runner instead of being silently mis-dialed.
+API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
+# Which env var(s) carry the model credential (#514): a bare name or a JSON array.
+MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
 MODEL_ENV = "AGENTOS_MODEL"
 # Per-claim bearer token the runner enforces on its ACI POST routes (issue #63).
 # Not a model credential, so apply_model_env never sees it; minted fresh per claim.
@@ -467,6 +472,10 @@ def apply_model_env(
     ``model_override`` is the per-agent AGENTOS_MODEL (#254): when set it wins
     over the worker's configured default model, so a single agent can be pinned
     to a specific model. None means "use the platform default" (config.model).
+    It is the ONLY per-agent knob here. The api_backend and env_key declarations
+    (#514) come from WorkerConfig only and take no override: they select which
+    wire protocol is dialed and which env var a credential is read from, so a
+    lower-privileged agent author must not be able to set them.
     """
     if config.fake_model:
         env[FAKE_MODEL_ENV] = "1"
@@ -474,6 +483,10 @@ def apply_model_env(
         env[CREDENTIALS_ENV] = config.credentials
     if config.model_base_url:
         env[BASE_URL_ENV] = config.model_base_url
+    if config.model_api_backend:
+        env[API_BACKEND_ENV] = config.model_api_backend
+    if config.model_env_key:
+        env[MODEL_ENV_KEY_ENV] = config.model_env_key
     model = model_override if model_override is not None else config.model
     if model:
         env[MODEL_ENV] = model

@@ -456,6 +456,8 @@ services:
       # export retries per span. AGENTOS_DOCKER_NETWORK stays on `:-` because the
       # network join is correct under `core` too.
       - AGENTOS_MODEL_BASE_URL=${AGENTOS_MODEL_BASE_URL:-}
+      - AGENTOS_MODEL_API_BACKEND=${AGENTOS_MODEL_API_BACKEND:-}
+      - AGENTOS_MODEL_ENV_KEY=${AGENTOS_MODEL_ENV_KEY:-}
       - AGENTOS_MODEL=${AGENTOS_MODEL:-}
       - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-agentos_default}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}

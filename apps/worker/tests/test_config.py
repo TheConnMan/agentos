@@ -281,6 +281,63 @@ def test_overrides_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None
         )
 
 
+# --- Operator-scoped model wire declaration (#514) ---------------------------
+#
+# Two new fields mirroring model_base_url: they read only their AGENTOS_* alias
+# and default to "" (not declared). They are deliberately absent from the
+# _WORKER_OVERRIDES parity oracle above -- that dict pins the vars the old
+# hand-rolled from_env read, and these are new, not a port of anything.
+
+
+def test_model_api_backend_and_env_key_default_to_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Undeclared is the default, so the producer emits nothing and the runner
+    keeps its own pre-#514 defaults."""
+    _clear_all_config_env(monkeypatch)
+
+    config = WorkerConfig()
+
+    assert config.model_api_backend == ""
+    assert config.model_env_key == ""
+
+
+def test_worker_config_reads_model_api_backend_and_env_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_MODEL_API_BACKEND", "messages")
+    monkeypatch.setenv("AGENTOS_MODEL_ENV_KEY", '["ANTHROPIC_AUTH_TOKEN"]')
+
+    config = WorkerConfig()
+
+    assert config.model_api_backend == "messages"
+    assert config.model_env_key == '["ANTHROPIC_AUTH_TOKEN"]'
+
+
+def test_model_api_backend_and_env_key_ignore_bare_field_name_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aliased like every other AGENTOS_* knob: a stray bare-name env var in the
+    pod env must not leak in."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("MODEL_API_BACKEND", "chat_completions")
+    monkeypatch.setenv("MODEL_ENV_KEY", "STRAY_NAME")
+
+    config = WorkerConfig()
+
+    assert config.model_api_backend == ""
+    assert config.model_env_key == ""
+
+
+def test_model_api_backend_and_env_key_populate_by_field_name() -> None:
+    """populate_by_name construction (used by the binding tests) works."""
+    config = WorkerConfig(model_api_backend="messages", model_env_key="MY_PROVIDER_KEY")
+
+    assert config.model_api_backend == "messages"
+    assert config.model_env_key == "MY_PROVIDER_KEY"
+
+
 # --- Per-service bool divergence (review #178) -------------------------------
 #
 # The old worker ``_b`` accepted only ("1", "true", "yes") as truthy -- notably

@@ -31,10 +31,27 @@ the Anthropic wire format (kept even for OpenRouter, so prompt caching survives)
 ## Current contract
 
 Resolution lives in `runner/src/agentos_runner/sdk_auth.py`. A provider is defined by
-three things:
+four things:
 
-- **Credential**, delivered as `AGENTOS_CREDENTIALS` (`runner/src/agentos_runner/sdk_auth.py::CREDENTIALS_ENV`).
-  `resolve_model_credential` (`runner/src/agentos_runner/sdk_auth.py::resolve_model_credential`) routes it by
+- **Wire protocol**, declared as `AGENTOS_MODEL_API_BACKEND`
+  (`runner/src/agentos_runner/sdk_auth.py::API_BACKEND_ENV`), one of the `ApiBackend`
+  members (`runner/src/agentos_runner/sdk_auth.py::ApiBackend`): `messages`,
+  `chat_completions`, `responses`. Unset or empty means `messages`
+  (`runner/src/agentos_runner/sdk_auth.py::DEFAULT_API_BACKEND`), which is what every
+  endpoint was previously assumed to speak. Only `messages` is dialable
+  (`runner/src/agentos_runner/sdk_auth.py::ApiBackend.speaks_anthropic_wire`) — the
+  runner speaks the Anthropic wire format via claude-agent-sdk, so the OpenAI-shaped
+  backends are declarable but rejected up front by `resolve_sdk_env`
+  (`runner/src/agentos_runner/sdk_auth.py::UnsupportedApiBackendError`); reaching one
+  needs a translating proxy in front of the runner. See
+  [ADR-0048](../../adr/0048-declared-model-wire-protocol-and-credential-keys.md).
+- **Credential**, delivered as `AGENTOS_CREDENTIALS`
+  (`runner/src/agentos_runner/sdk_auth.py::CREDENTIALS_ENV`) by default, or from the env
+  var names `AGENTOS_MODEL_ENV_KEY` declares
+  (`runner/src/agentos_runner/sdk_auth.py::MODEL_ENV_KEY_ENV`) — a bare name or a JSON
+  array of them, walked in order, first set and non-empty key winning
+  (`runner/src/agentos_runner/sdk_auth.py::resolve_credential`); a present-but-empty key
+  is skipped. `resolve_model_credential` (`runner/src/agentos_runner/sdk_auth.py::resolve_model_credential`) routes it by
   prefix: `sk-ant-oat...` → `CLAUDE_CODE_OAUTH_TOKEN`; other `sk-ant-...`
   → `ANTHROPIC_API_KEY`; `sk-or-...` (OpenRouter) → base-URL override; a bare `sk-...`
   raises `UnsupportedCredentialError` (`runner/src/agentos_runner/sdk_auth.py::UnsupportedCredentialError`). An SDK credential
@@ -93,4 +110,4 @@ The credential value is never logged.
 
 - **Epic(s):** #24 — bring your own model (OpenRouter + native Anthropic-format endpoints), the seam's forward work; #46 (closed) — the Ollama local-model demo mode, which also exercises this base-URL-override + credential path.
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — core config seam, not one of the six swappable jobs.
-- **ADR(s):** [ADR-0009](../../adr/0009-per-agent-connector-auth.md) — per-agent secrets and connector credentials (the model credential is the one credential the platform resolves today, via prefix mapping in `sdk_auth.py`).
+- **ADR(s):** [ADR-0009](../../adr/0009-per-agent-connector-auth.md) — per-agent secrets and connector credentials (the model credential is the one credential the platform resolves today, via prefix mapping in `sdk_auth.py`); [ADR-0048](../../adr/0048-declared-model-wire-protocol-and-credential-keys.md) — the endpoint's wire protocol and the credential's source env var are declared rather than assumed.

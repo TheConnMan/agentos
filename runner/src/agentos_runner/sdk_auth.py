@@ -32,12 +32,37 @@ these endpoints read). Canonical base URLs live in ``PROVIDER_BASE_URLS``. A
 Claude Code OAuth token (``sk-ant-oat``) is never forwarded to a third-party
 endpoint -- override mode keeps it blanked (hermetic).
 
+The endpoint's wire protocol is **declared, not inferred** (#514).
+``AGENTOS_MODEL_API_BACKEND`` names it as an ``ApiBackend`` member and defaults to
+``messages``, which is the only wire format the runner can dial: the session runs
+on claude-agent-sdk, which speaks the Anthropic Messages format. The
+OpenAI-shaped backends (``chat_completions``, ``responses``) are therefore
+declarable but rejected up front, in ``resolve_sdk_env``, before any credential or
+base-URL branching -- a deterministic gate, so an OpenAI-shaped endpoint fails
+loudly with an actionable message instead of being silently mis-dialed. Reaching
+one needs a translating proxy in front of the runner.
+
+Which env var carries the credential is likewise declarable (#514).
+``AGENTOS_MODEL_ENV_KEY`` holds either a bare env-var name or a JSON array of
+them; the keys are walked in order and the first that is both set and non-empty
+wins, so a config author is not forced onto the single hardcoded
+``AGENTOS_CREDENTIALS`` name. A key that is present but EMPTY is skipped rather
+than winning -- an empty value is "not supplied", never a credential. Unset or
+empty, the list defaults to ``(AGENTOS_CREDENTIALS,)``, which is exactly today's
+behavior. What it may TARGET is fenced: the boot env also holds the platform's
+scoped state tokens (ADR-0033) and the agent's connector secrets, so an
+``AGENTOS_``-prefixed target (other than ``AGENTOS_CREDENTIALS`` itself) is
+refused, keeping the declaration from becoming a way to forward the platform's
+own secrets to a third-party endpoint.
+
 The credential value (and its length) is never logged or echoed.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import MutableMapping
+from enum import StrEnum
 
 CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -49,6 +74,16 @@ AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 # namespace (like AGENTOS_MODEL / AGENTOS_CREDENTIALS) instead of setting the
 # SDK's own ANTHROPIC_BASE_URL directly. The raw var wins when both are set.
 MODEL_BASE_URL_ENV = "AGENTOS_MODEL_BASE_URL"
+# Declares the endpoint's wire protocol (see module docstring). AGENTOS_-namespaced
+# like its MODEL_BASE_URL sibling, so it is already fenced by the reserved-boot-env
+# prefix rule in plugin_format.reserved_env.
+API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
+# Declares which env var(s) carry the credential: a bare name or a JSON array.
+MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
+# The platform's own boot-env namespace. No var in it is a model credential
+# (AGENTOS_CREDENTIALS excepted), so it is off limits as an env_key target --
+# see parse_env_keys.
+_AGENTOS_ENV_PREFIX = "AGENTOS_"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 
 # A Claude Code OAuth token shares the sk-ant- prefix with an API key; this more
@@ -83,6 +118,146 @@ NO_OP_API_KEY = "not-needed"
 
 class UnsupportedCredentialError(RuntimeError):
     """``AGENTOS_CREDENTIALS`` is a recognizably non-Anthropic credential."""
+
+
+class UnsupportedApiBackendError(RuntimeError):
+    """``AGENTOS_MODEL_API_BACKEND`` names an unknown or undialable wire format."""
+
+
+class InvalidEnvKeyError(ValueError):
+    """``AGENTOS_MODEL_ENV_KEY`` is not a name or a JSON array of names."""
+
+
+class ApiBackend(StrEnum):
+    """The wire protocol an endpoint speaks, as declared by config.
+
+    The member values are the wire contract: they are what a config author writes
+    into ``AGENTOS_MODEL_API_BACKEND``.
+    """
+
+    MESSAGES = "messages"
+    CHAT_COMPLETIONS = "chat_completions"
+    RESPONSES = "responses"
+
+    @property
+    def speaks_anthropic_wire(self) -> bool:
+        """Whether claude-agent-sdk can dial this backend directly.
+
+        The runner's session is a claude-agent-sdk session, which speaks only the
+        Anthropic Messages wire format. The OpenAI-shaped backends have a
+        different request/response body, so they are not dialable without a
+        translating proxy in front of the runner.
+        """
+        return self is ApiBackend.MESSAGES
+
+
+DEFAULT_API_BACKEND = ApiBackend.MESSAGES
+
+# The credential env var(s) consulted when AGENTOS_MODEL_ENV_KEY is not declared.
+# This is today's behavior expressed as the default of the new list.
+DEFAULT_CREDENTIAL_ENV_KEYS: tuple[str, ...] = (CREDENTIALS_ENV,)
+
+
+def resolve_api_backend(env: MutableMapping[str, str]) -> ApiBackend:
+    """Resolve the declared wire protocol, defaulting to Messages.
+
+    Unset or empty means "not declared", not "declared as empty", so both fall
+    back to ``DEFAULT_API_BACKEND`` and preserve the pre-#514 assumption that
+    every endpoint speaks Messages. The value is hand-written config, so casing
+    and stray whitespace are tolerated; anything else unrecognized raises rather
+    than silently defaulting, since a near-miss spelling would otherwise mis-dial.
+    """
+    raw = env.get(API_BACKEND_ENV, "").strip()
+    if not raw:
+        return DEFAULT_API_BACKEND
+    try:
+        return ApiBackend(raw.lower())
+    except ValueError:
+        supported = ", ".join(member.value for member in ApiBackend)
+        raise UnsupportedApiBackendError(
+            f"{API_BACKEND_ENV}={raw!r} is not a supported model API backend. "
+            f"Supported values: {supported}."
+        ) from None
+
+
+def parse_env_keys(raw: str) -> tuple[str, ...]:
+    """Parse ``AGENTOS_MODEL_ENV_KEY`` into an ordered tuple of env var names.
+
+    Accepts a JSON array of names or a single bare name. A bare name like
+    ``MY_CRED`` is not valid JSON, so a decode failure falls back to the
+    bare-string form rather than raising. Blank entries are dropped: hand-written
+    config picks up stray empties and they carry no meaning. Valid JSON of the
+    wrong shape (a non-string array member, a mapping, a bare number) and a list
+    that reduces to nothing are config errors, raised loudly.
+
+    An ``AGENTOS_``-prefixed target is refused (``AGENTOS_CREDENTIALS``, the
+    canonical credential name, excepted). The runner boot env is shared: it also
+    carries the platform's own scoped state tokens (ADR-0033) and the agent's
+    connector secrets. Naming one of those as a credential source under a
+    base-URL override would forward it to a third-party endpoint as the
+    ``x-api-key`` header, so the fence exists to keep the declaration from being a
+    secret-exfiltration primitive. The platform's own boot vars are never a model
+    credential, so naming one is either a mistake or an attack, and the runner
+    refuses either way. One bad name poisons the whole declaration rather than
+    being dropped silently: a silently-dropped name would let a typo'd (or
+    deliberate) exfil attempt look like it worked. The error may name the
+    offending env var, never its value.
+    """
+    try:
+        decoded: object = json.loads(raw)
+    except ValueError:
+        decoded = raw  # not JSON at all: the bare-name form
+    if isinstance(decoded, str):
+        names = [decoded]
+    elif isinstance(decoded, list):
+        if not all(isinstance(item, str) for item in decoded):
+            raise InvalidEnvKeyError(
+                f"{MODEL_ENV_KEY_ENV} must be an env var name or a JSON array of names."
+            )
+        names = [item for item in decoded if isinstance(item, str)]
+    else:
+        raise InvalidEnvKeyError(
+            f"{MODEL_ENV_KEY_ENV} must be an env var name or a JSON array of names."
+        )
+    keys = tuple(name.strip() for name in names if name.strip())
+    if not keys:
+        raise InvalidEnvKeyError(f"{MODEL_ENV_KEY_ENV} declares no usable env var name.")
+    for key in keys:
+        if key.startswith(_AGENTOS_ENV_PREFIX) and key != CREDENTIALS_ENV:
+            raise InvalidEnvKeyError(
+                f"{MODEL_ENV_KEY_ENV} may not name {key}: the platform's own "
+                f"{_AGENTOS_ENV_PREFIX}* boot vars are never a model credential. "
+                f"Name a provider-native env var, or {CREDENTIALS_ENV}."
+            )
+    return keys
+
+
+def resolve_credential_env_keys(env: MutableMapping[str, str]) -> tuple[str, ...]:
+    """Resolve the ordered credential env var names to consult.
+
+    Unset or empty falls back to ``DEFAULT_CREDENTIAL_ENV_KEYS``, keeping the
+    undeclared path byte-identical to today's single ``AGENTOS_CREDENTIALS`` read.
+    """
+    raw = env.get(MODEL_ENV_KEY_ENV, "").strip()
+    if not raw:
+        return DEFAULT_CREDENTIAL_ENV_KEYS
+    return parse_env_keys(raw)
+
+
+def resolve_credential(env: MutableMapping[str, str]) -> str:
+    """Read the credential from the first declared key that actually carries one.
+
+    Walks the keys in declared order and returns the first value that is both set
+    AND non-empty, or ``""`` when none is. A key that is present but empty is
+    SKIPPED rather than winning: an empty credential is "not supplied", and
+    letting it beat a real one further down the list is a silent auth failure. The
+    value is returned, never logged or echoed.
+    """
+    for key in resolve_credential_env_keys(env):
+        value = env.get(key)
+        if value:
+            return value
+    return ""
 
 
 def resolve_base_url_override(env: MutableMapping[str, str]) -> dict[str, str] | None:
@@ -131,15 +306,17 @@ def _is_forwardable_provider_credential(credential: str) -> bool:
 
 
 def resolve_model_credential(env: MutableMapping[str, str]) -> None:
-    """Populate the SDK credential env from ``AGENTOS_CREDENTIALS`` when needed.
+    """Populate the SDK credential env from the declared credential key when needed.
 
-    Mutates ``env`` in place. No-op when an SDK credential is already present or
-    ``AGENTOS_CREDENTIALS`` is unset. Raises ``UnsupportedCredentialError`` for a
-    recognizably non-Anthropic key.
+    The credential is read via ``resolve_credential`` (``AGENTOS_CREDENTIALS`` by
+    default, or the keys ``AGENTOS_MODEL_ENV_KEY`` declares). Mutates ``env`` in
+    place. No-op when an SDK credential is already present or no declared key
+    carries a value. Raises ``UnsupportedCredentialError`` for a recognizably
+    non-Anthropic key.
     """
     if any(env.get(var) for var in _SDK_CREDENTIAL_ENV):
         return  # an explicit SDK credential wins
-    credential = env.get(CREDENTIALS_ENV)
+    credential = resolve_credential(env)
     if not credential:
         return
     if credential.startswith("sk-ant-oat"):
@@ -175,6 +352,11 @@ def resolve_model_credential(env: MutableMapping[str, str]) -> None:
 def resolve_sdk_env(env: MutableMapping[str, str]) -> dict[str, str] | None:
     """Decide the SDK auth env from the boot env.
 
+    The declared wire protocol is checked FIRST, before any credential or base-URL
+    branching, so rejecting an undialable backend is a deterministic gate on the
+    declaration itself rather than a side effect of whichever path config happens
+    to select.
+
     An ``sk-or-`` OpenRouter credential is routed by ``resolve_model_credential``
     (which sets the OpenRouter base URL and the real key in ``ANTHROPIC_API_KEY``,
     the ``x-api-key`` header OpenRouter reads) even when ``ANTHROPIC_BASE_URL`` is
@@ -184,7 +366,17 @@ def resolve_sdk_env(env: MutableMapping[str, str]) -> dict[str, str] | None:
     Returns the override dict to pass as ``ClaudeAgentOptions.env`` (base-URL
     override mode), or ``None`` when resolution mutated ``env`` in place.
     """
-    credential = env.get(CREDENTIALS_ENV, "")
+    backend = resolve_api_backend(env)
+    if not backend.speaks_anthropic_wire:
+        raise UnsupportedApiBackendError(
+            f"{API_BACKEND_ENV}={backend.value!r} is not dialable by this runner. The "
+            "runner speaks the Anthropic Messages wire format via claude-agent-sdk; "
+            f"{ApiBackend.CHAT_COMPLETIONS.value!r} and {ApiBackend.RESPONSES.value!r} "
+            "are OpenAI-shaped and need a translating proxy in front of the runner. "
+            f"Set {API_BACKEND_ENV}={ApiBackend.MESSAGES.value!r} (the default) and "
+            "point the base URL at an Anthropic Messages endpoint."
+        )
+    credential = resolve_credential(env)
     if not credential.startswith("sk-or-"):
         override = resolve_base_url_override(env)
         if override is not None:

@@ -190,6 +190,182 @@ def test_binding_boot_env_forwards_per_agent_model() -> None:
     assert env[MODEL_ENV] == "platform-default"
 
 
+# --- Operator-scoped model wire declaration (#514) -----------------------------
+#
+# The runner reads AGENTOS_MODEL_API_BACKEND (the endpoint's wire protocol) and
+# AGENTOS_MODEL_ENV_KEY (which env var carries the credential). The runner boot
+# env is closed-world -- only what apply_model_env emits is there -- so without a
+# producer here both vars are unreachable and the feature is dead config. Both
+# mirror model_base_url's chain exactly: WorkerConfig field -> apply_model_env ->
+# boot env, emitted only when non-empty.
+#
+# The env-var names are the cross-package contract with the runner; asserted by
+# their literal strings so this file never depends on a constant that only exists
+# after the feature lands (which would break collection of the whole module).
+API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
+MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
+
+
+def test_binding_exports_the_new_model_env_constants() -> None:
+    # The emission sites must go through module constants, like BASE_URL_ENV does,
+    # rather than inline literals scattered across the two lanes.
+    from agentos_worker import binding
+
+    assert binding.API_BACKEND_ENV == API_BACKEND_ENV
+    assert binding.MODEL_ENV_KEY_ENV == MODEL_ENV_KEY_ENV
+
+
+def test_apply_model_env_forwards_api_backend_and_env_key_when_set() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(
+        env,
+        WorkerConfig(
+            model_api_backend="messages",
+            model_env_key='["ANTHROPIC_AUTH_TOKEN"]',
+        ),
+    )
+
+    assert env[API_BACKEND_ENV] == "messages"
+    assert env[MODEL_ENV_KEY_ENV] == '["ANTHROPIC_AUTH_TOKEN"]'
+
+
+def test_apply_model_env_omits_api_backend_and_env_key_by_default() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig())
+
+    assert API_BACKEND_ENV not in env
+    assert MODEL_ENV_KEY_ENV not in env
+
+
+def test_apply_model_env_omits_api_backend_and_env_key_when_empty_string() -> None:
+    # ABSENT, not present-and-empty. The runner treats "" as "not declared" and
+    # defaults, so emitting an empty var would work by accident today -- but it
+    # also makes the boot env lie about what was configured, and any consumer that
+    # checks presence rather than truthiness would then see a declaration that was
+    # never made.
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig(model_api_backend="", model_env_key=""))
+
+    assert API_BACKEND_ENV not in env
+    assert MODEL_ENV_KEY_ENV not in env
+
+
+def test_apply_model_env_composes_new_vars_with_the_existing_emission() -> None:
+    # The two additions must not disturb the fake_model / credentials / base_url /
+    # model emission they sit next to.
+    env: dict[str, str] = {}
+    apply_model_env(
+        env,
+        WorkerConfig(
+            fake_model=True,
+            credentials="cred-compose",
+            model_base_url="http://ollama:11434",
+            model="qwen3:4b",
+            model_api_backend="messages",
+            model_env_key="MY_PROVIDER_KEY",
+        ),
+    )
+
+    assert env[FAKE_MODEL_ENV] == "1"
+    assert env[CREDENTIALS_ENV] == "cred-compose"
+    assert env[BASE_URL_ENV] == "http://ollama:11434"
+    assert env[MODEL_ENV] == "qwen3:4b"
+    assert env[API_BACKEND_ENV] == "messages"
+    assert env[MODEL_ENV_KEY_ENV] == "MY_PROVIDER_KEY"
+
+
+def test_binding_boot_env_carries_api_backend_and_env_key() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig(  # type: ignore[attr-defined]
+        model_api_backend="messages", model_env_key="MY_PROVIDER_KEY"
+    )
+
+    env = resolver.boot_env(_resolved(), "thread-1")
+    assert env[API_BACKEND_ENV] == "messages"
+    assert env[MODEL_ENV_KEY_ENV] == "MY_PROVIDER_KEY"
+
+
+def test_eval_boot_env_carries_api_backend_and_env_key() -> None:
+    # Both lanes boot the runner through apply_model_env, so the eval consumer
+    # gets the declaration too rather than silently dialing a different endpoint.
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(
+            model_api_backend="messages", model_env_key="MY_PROVIDER_KEY"
+        ),
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    item = EvalWorkItem(
+        agent_id=uuid.uuid4(),
+        version_id=uuid.uuid4(),
+        sha="deadbeef",
+        suite="smoke",
+        bundle_ref="bundles/x.zip",
+        requested_at="2026-07-05T00:00:00+00:00",
+    )
+
+    env = consumer._boot_env(item)
+    assert env[API_BACKEND_ENV] == "messages"
+    assert env[MODEL_ENV_KEY_ENV] == "MY_PROVIDER_KEY"
+
+
+# --- Operator scope is the security property, not a style choice (#514) --------
+#
+# Both vars are OPERATOR scope: they come from WorkerConfig and NEVER from the
+# per-agent row. AGENTOS_MODEL is per-agent (#254) precisely because a model id is
+# inert. These two are not: model_env_key names which env var the runner reads a
+# credential OUT of, and it is read from the same boot env that holds the scoped
+# state tokens (ADR-0033) and the agent's connector secrets. A per-agent override
+# would let anyone who can write an agent row aim the runner at those. The tests
+# below fail if someone later plumbs either one through the agent row.
+
+
+def test_apply_model_env_has_no_per_agent_override_params() -> None:
+    # Signature pin. model_override (#254, the per-agent model) is the ONLY
+    # per-agent parameter this function may take. A new *_override parameter here
+    # is the shape of the regression: it would mean an agent row can aim the
+    # credential read or redeclare the wire protocol.
+    import inspect
+
+    params = set(inspect.signature(apply_model_env).parameters)
+    assert params == {"env", "config", "model_override"}
+
+
+def test_resolved_deployment_carries_no_api_backend_or_env_key_field() -> None:
+    # The agent row is the other half of the same seam: if the columns never reach
+    # ResolvedDeployment, boot_env has nothing per-agent to forward.
+    fields = set(ResolvedDeployment.model_fields)
+    assert "model_api_backend" not in fields
+    assert "model_env_key" not in fields
+    assert "api_backend" not in fields
+    assert "env_key" not in fields
+
+
+def test_binding_boot_env_api_backend_is_not_overridable_per_agent() -> None:
+    # Operator config is the sole source: an agent row (here carrying its own
+    # pinned model, the one thing it MAY override) cannot change or supply either
+    # declaration.
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig(  # type: ignore[attr-defined]
+        model_api_backend="messages", model_env_key="MY_PROVIDER_KEY"
+    )
+
+    env = resolver.boot_env(_resolved(model="agent-pinned-model"), "thread-1")
+    assert env[MODEL_ENV] == "agent-pinned-model"  # per-agent model still wins
+    assert env[API_BACKEND_ENV] == "messages"  # operator scope, unchanged
+    assert env[MODEL_ENV_KEY_ENV] == "MY_PROVIDER_KEY"
+
+    # With the operator config silent, no agent row can conjure either var.
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+    env = resolver.boot_env(_resolved(model="agent-pinned-model"), "thread-1")
+    assert API_BACKEND_ENV not in env
+    assert MODEL_ENV_KEY_ENV not in env
+
+
 # --- Per-sandbox runner token minting (issue #63) -----------------------------
 # The env-var name is the cross-package contract with the runner; asserted by its
 # literal string so this test file never depends on a constant that only exists
