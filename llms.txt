@@ -17,6 +17,7 @@ The point of the three targets (`skill` in-process, `local` via docker compose, 
 - [README.md#which-target-do-i-want](README.md#which-target-do-i-want): the target table, which of skill/local/cluster answers your question.
 - [cli/README.md](cli/README.md): the full `agentos` command reference across all three targets.
 - [docs/operations.md](docs/operations.md): the cluster runbook (credential model, Slack connect, zero-Slack message flow).
+- [docs/release-verification.md](docs/release-verification.md): verify a downloaded release asset (checksums, cosign signature, provenance, SBOMs) before running it.
 
 ## Architecture
 

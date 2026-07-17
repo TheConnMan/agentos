@@ -38,6 +38,9 @@ git history (`git log -- docs/`).
   declarative data rather than code, and what is wired today.
 - [`operations.md`](operations.md): running a cluster install, plus
   operator-facing findings from early installs.
+- [`release-verification.md`](release-verification.md): what every release asset
+  carries (checksums, signature, provenance, SBOM) and how to verify one before
+  you run it.
 - [`design/multi-dev-shared-cluster.md`](design/multi-dev-shared-cluster.md): the
   design pass for many developers iterating against one shared cluster (isolation,
   targeting, ambient context), answering epic #44's deferred open questions.
