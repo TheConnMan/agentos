@@ -805,10 +805,13 @@ def test_backfill_classifies_existing_rows() -> None:
     cfg.set_main_option("script_location", str(ALEMBIC_DIR))
 
     with _isolated_migration_db():
-        # Bring the fresh DB up to the full schema, then step back over the
-        # provenance columns to the state an existing deployment holds.
+        # Bring the fresh DB up to the full schema, then step back to BEFORE the
+        # provenance migration (0015) to the state an existing deployment holds.
+        # Target 0014 explicitly rather than a relative "-1": a later migration
+        # (e.g. 0016) moving head would make "-1" stop short of undoing 0015, and
+        # the backfill would never re-run on the seeded rows.
         command.upgrade(cfg, "head")
-        command.downgrade(cfg, "-1")
+        command.downgrade(cfg, "0014")
         permission_id = uuid.uuid4()
         policy_id = uuid.uuid4()
         _seed_raw_approval(
