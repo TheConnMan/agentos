@@ -289,11 +289,24 @@ jobs:
           strip "$bin" || true
           mkdir -p dist
           cp "$bin" "dist/agentos-${{ matrix.target }}"
+      # Cataloged from the cli/ source tree, not the stripped binary: Cargo.lock is
+      # what actually names every crate that went in, and stripping removes the
+      # symbols a binary scan would need (#629).
+      - name: Generate the CLI SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: cli
+          format: spdx-json
+          output-file: dist/agentos-${{ matrix.target }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
           name: agentos-${{ matrix.target }}
-          path: dist/agentos-${{ matrix.target }}
+          path: |
+            dist/agentos-${{ matrix.target }}
+            dist/agentos-${{ matrix.target }}.spdx.json
           if-no-files-found: error
 
   chart:
@@ -306,27 +319,53 @@ jobs:
           persist-credentials: false
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Resolve version
+        id: ver
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Package chart
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.ver.outputs.v }}"
           mkdir -p dist
           helm package charts/agentos --version "$version" --app-version "$version" -d dist
       - name: Generate and stage the release compose
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.ver.outputs.v }}"
           mkdir -p dist
           python3 compose/generate_release_compose.py --version "${version}" > dist/compose.release.yaml
+      # The chart and the compose file are deployment manifests, so these SBOMs
+      # inventory the packaged artifact itself. The dependency graph of what they
+      # pin -- the agentos-* images -- ships with those images (#62).
+      - name: Generate the chart SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: dist/agentos-${{ steps.ver.outputs.v }}.tgz
+          format: spdx-json
+          output-file: dist/agentos-${{ steps.ver.outputs.v }}.tgz.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate the compose SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: dist/compose.release.yaml
+          format: spdx-json
+          output-file: dist/compose.release.yaml.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - name: Upload chart artifact
         uses: actions/upload-artifact@v7
         with:
           name: agentos-chart
-          path: dist/agentos-*.tgz
+          path: |
+            dist/agentos-*.tgz
+            dist/agentos-*.tgz.spdx.json
           if-no-files-found: error
       - name: Upload release compose artifact
         uses: actions/upload-artifact@v7
         with:
           name: agentos-compose
-          path: dist/compose.release.yaml
+          path: |
+            dist/compose.release.yaml
+            dist/compose.release.yaml.spdx.json
           if-no-files-found: error
 
   release:
@@ -336,19 +375,95 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Keyless cosign signing and build provenance both mint a short-lived OIDC
+      # identity for this workflow run; there is no long-lived signing key (#629).
+      id-token: write
+      attestations: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Download built binaries
         uses: actions/download-artifact@v8
         with:
           pattern: agentos-*
           path: dist
           merge-multiple: true
+      - name: Resolve version
+        id: ver
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # The gate runs BEFORE signing, not after: cosign will happily sign an
+      # incomplete manifest, laundering a coverage gap into a valid signature.
+      # Refusing to build the manifest at all is what makes the release fail
+      # closed when an asset or its SBOM is missing (#629).
+      - name: Gate the asset set and build the checksum manifest
+        run: python3 release/integrity.py manifest --dist dist --version "${{ steps.ver.outputs.v }}"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the checksum manifest
+        run: |
+          cosign sign-blob --yes \
+            --bundle dist/checksums.txt.sigstore.json \
+            dist/checksums.txt
+      # One attestation covering every file in dist, the manifest included, so each
+      # asset carries SLSA provenance naming this repo, this workflow, and the
+      # release commit. Runs after signing so the bundle is a subject too.
+      - name: Attest build provenance for every asset
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/*
       - name: Create release with generated notes
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          files: |
-            dist/agentos-*
-            dist/compose.release.yaml
+          # Everything staged in dist is published: assets, their SBOMs, the
+          # checksum manifest, and its signature.
+          files: dist/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}
+
+  verify-release:
+    name: Verify the published release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Resolve version
+        id: ver
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # Re-download what users will actually get, rather than trusting the dist
+      # directory we uploaded from. This is the check that the documented
+      # verification path in docs/release-verification.md really works.
+      - name: Download the published assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir dist
+      - name: Every asset is checksummed and carries an SBOM
+        run: python3 release/integrity.py verify --dist dist --version "${{ steps.ver.outputs.v }}"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: The checksum manifest signature is this workflow's
+        run: |
+          cosign verify-blob \
+            --bundle dist/checksums.txt.sigstore.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yaml@${GITHUB_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/checksums.txt
+      - name: Every asset has provenance from this workflow and commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in dist/*; do
+            echo "== $f"
+            gh attestation verify "$f" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yaml" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA"
+          done

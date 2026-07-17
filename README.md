@@ -190,14 +190,36 @@ channel binding, and troubleshooting) see
 The fastest way in — for operators and coding agents alike — is the prebuilt
 release binary. It needs no Rust toolchain and no repo checkout:
 
+You are about to run a downloaded binary as root, so verify it first. Every
+release ships a `checksums.txt` signed by the release workflow; check the
+signature, then check the binary against it, then install:
+
 ```bash
 # Linux (x86_64); for macOS Apple silicon swap in agentos-aarch64-apple-darwin
-curl -L -o agentos \
-  https://github.com/curie-eng/agentos/releases/latest/download/agentos-x86_64-unknown-linux-gnu
-chmod +x agentos && sudo mv agentos /usr/local/bin/
+VERSION=v0.4.0
+ASSET=agentos-x86_64-unknown-linux-gnu
+BASE="https://github.com/curie-eng/agentos/releases/download/$VERSION"
+curl -fsSLO "$BASE/$ASSET" -O "$BASE/checksums.txt" -O "$BASE/checksums.txt.sigstore.json"
+
+# 1. checksums.txt really came from this repo's release workflow, at this tag
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/curie-eng/agentos/.github/workflows/release.yaml@refs/tags/$VERSION" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+# 2. the binary is the one it names
+sha256sum --check --ignore-missing checksums.txt
+# 3. both OK? install it
+chmod +x "$ASSET" && sudo mv "$ASSET" /usr/local/bin/agentos
+
 agentos cluster up
 agentos local up
 ```
+
+No cosign? `gh attestation verify $ASSET --repo curie-eng/agentos --signer-workflow
+curie-eng/agentos/.github/workflows/release.yaml` does both checks in one command.
+Either way, see [`docs/release-verification.md`](docs/release-verification.md) for
+the full story: what each asset carries, how to verify the chart and compose file,
+and the per-asset SBOMs.
 
 > **macOS: "unidentified developer"?** The release binaries are not yet
 > notarized by Apple, so a copy downloaded through a browser is quarantined and

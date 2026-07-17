@@ -60,6 +60,7 @@ testpaths = [
     "apps/worker/tests",
     "runner/tests",
     "compose/tests",
+    "release/tests",
     "examples/tests",
     "tools/doclint/tests",
     # Only the offline harness unit tests -- NOT the whole tree: the cluster
