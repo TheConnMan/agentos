@@ -2894,6 +2894,11 @@ export const commandManifest = {
           "name": "plugin-compat"
         },
         {
+          "about": "Run the committed eval suites through the fake model and assert every case goes RED -- the falsifiability gate's real-path negative control (#619, `bash cli/scripts/eval-falsifiability.sh`). Offline, no credential",
+          "hidden": false,
+          "name": "eval-falsifiability"
+        },
+        {
           "about": "Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml version, and appVersion (`bash scripts/check-version-consistency.sh`)",
           "hidden": false,
           "name": "version-check"

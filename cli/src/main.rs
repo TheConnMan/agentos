@@ -285,6 +285,10 @@ enum DevAction {
     DocsLint,
     /// Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`).
     PluginCompat,
+    /// Run the committed eval suites through the fake model and assert every case
+    /// goes RED -- the falsifiability gate's real-path negative control (#619,
+    /// `bash cli/scripts/eval-falsifiability.sh`). Offline, no credential.
+    EvalFalsifiability,
     /// Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml
     /// version, and appVersion (`bash scripts/check-version-consistency.sh`).
     VersionCheck,
@@ -1282,6 +1286,9 @@ async fn run(command: Option<Command>) -> Result<()> {
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
             DevAction::DocsLint => commands::dev_script("scripts/check-docs.sh").await,
             DevAction::PluginCompat => commands::dev_script("scripts/check-plugin-compat.sh").await,
+            DevAction::EvalFalsifiability => {
+                commands::dev_script("cli/scripts/eval-falsifiability.sh").await
+            }
             DevAction::VersionCheck => {
                 commands::dev_script("scripts/check-version-consistency.sh").await
             }
@@ -2345,6 +2352,14 @@ mod tests {
             cli.command,
             Some(Command::Dev {
                 action: DevAction::DocsLint
+            })
+        ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "eval-falsifiability"])
+            .expect("dev eval-falsifiability should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Dev {
+                action: DevAction::EvalFalsifiability
             })
         ));
     }

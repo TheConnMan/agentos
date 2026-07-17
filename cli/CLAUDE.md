@@ -165,3 +165,15 @@ AGENTOS_E2E_API_URL=http://localhost:8000 bash cli/scripts/e2e.sh
 ```
 Both require the `agentos-runner` image built once from the repo root
 (`docker build -f runner/Dockerfile -t agentos-runner .`).
+
+Falsifiability gate (issue #619) -- a gate, NOT an E2E test: it never runs a real
+agent or makes a model call. Its real-path half boots the FAKE model and asserts
+every committed eval suite goes RED (a case that greens against a do-nothing
+agent is unfalsifiable, #527):
+```bash
+agentos dev eval-falsifiability   # bash cli/scripts/eval-falsifiability.sh
+```
+The grader-level half (the `contains: "weather"` input-parrot vacuousness control
+and the known-good-exemplar positive control) rides `cargo test`
+(`cli/tests/eval_falsifiability.rs`); together they are the gate. Both run
+offline with no credential.
