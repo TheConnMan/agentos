@@ -425,8 +425,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --json isDraft --jq .isDraft 2>/dev/null || echo absent)
+          # Distinguish "no such release" from "gh could not tell us". Treating every
+          # nonzero exit as absent would fail OPEN: a 503 or a rate limit on a
+          # published tag would read as absent and upload onto the live release,
+          # which is the exact defect this step exists to prevent.
+          if state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --json isDraft --jq .isDraft 2>err.txt); then
+            :
+          elif grep -qi 'release not found' err.txt; then
+            state=absent
+          else
+            echo "::error::cannot determine the release state of $GITHUB_REF_NAME; refusing to stage a draft against an unknown state." >&2
+            cat err.txt >&2
+            exit 1
+          fi
           if [ "$state" = "false" ]; then
             echo "::error::$GITHUB_REF_NAME is already published. Re-running would upload assets onto the live release without verifying them. Delete the release and re-run, or cut a new tag." >&2
             exit 1

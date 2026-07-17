@@ -97,7 +97,15 @@ and a verified chart is not a verified stack until #62 lands.
   have uploaded onto the live release and skipped verification entirely -- the one
   state where the draft gate silently does not apply. Recovering a bad release
   means deleting it or cutting a new tag, which is the intended friction. A
-  re-run against a *stuck draft* is fine and repairs it.
+  re-run against a *stuck draft* is fine and repairs it. The guard fails closed on
+  an indeterminate answer: if the release state cannot be read at all, that is not
+  a safe state to stage against.
+- Two runs against the same tag (a force-pushed tag) are not serialized. The
+  workflow takes no `concurrency` group, because the only correct scope is
+  workflow-level -- a job-level group spanning `release` and `verify-and-publish`
+  would deadlock on their `needs:` edge -- and that would also serialize the
+  main-push image builds, which is a cadence change this decision does not want to
+  make on its own. Force-pushing a release tag stays an operation you must not do.
 - These artifacts exist only on releases published after v0.4.0. Verification is
   not retroactive: v0.4.0 and earlier shipped bare binaries and always will, so
   the docs say plainly that those cannot be verified rather than implying the
