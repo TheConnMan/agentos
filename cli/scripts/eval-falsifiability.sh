@@ -88,8 +88,9 @@ FAILED=0
 for suite in "${SUITES[@]}"; do
     rel="${suite#"$REPO_ROOT"/}"
     echo "--- $rel"
-    # skill eval exits non-zero when ANY case passes; capture the JSON either way
-    # so we can assert passed==0 (ALL red), not merely "some failed".
+    # skill eval exits non-zero when ANY case is RED (here that is ALL of them,
+    # which is the pass condition, not a failure); capture the JSON regardless of
+    # exit code and assert passed==0 off the parsed rollup, not off the exit code.
     out="$("$BIN" --json skill eval --cases "$suite" --url "$URL" || true)"
     passed="$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["passed"])' 2>/dev/null || echo "ERR")"
     total="$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total"])' 2>/dev/null || echo "ERR")"
@@ -101,7 +102,7 @@ for suite in "${SUITES[@]}"; do
     fi
     echo "    $passed/$total passed against the do-nothing fake agent"
     if [[ "$passed" != "0" ]]; then
-        greeners="$(printf '%s' "$out" | python3 -c 'import json,sys; print(", ".join(c["id"] for c in json.load(sys.stdin)["cases"] if c["passed"]))')"
+        greeners="$(printf '%s' "$out" | python3 -c 'import json,sys; print(", ".join(c["id"] for c in json.load(sys.stdin)["cases"] if c["passed"]))' 2>/dev/null || echo "(unparseable)")"
         echo "    UNFALSIFIABLE: these cases pass against a do-nothing agent (#527): $greeners" >&2
         FAILED=1
     fi
