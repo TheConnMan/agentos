@@ -1,0 +1,321 @@
+{
+  "_comment": "Cross-language bound gate (#490): the committed channel-protocol schema declares field bounds (Action.label<=75, value<=255, interaction id<=255, choice options<=10, all min 1). The Python OutboundMessage model rejects violations; the Rust adapter (cli/src/channel.rs) must NOT render a violating message as a widget -- it degrades to plain text (no actions). Each side asserts against this corpus so a bound change on one side without the other fails a test.",
+  "valid": [
+    {
+      "version": "1.0",
+      "text": "Pick one",
+      "interaction": {
+        "kind": "choice",
+        "id": "repo",
+        "prompt": "Repository",
+        "options": [
+          {
+            "label": "AgentOS",
+            "value": "curie-eng/agentos"
+          }
+        ],
+        "allow_free_text": false
+      }
+    },
+    {
+      "version": "1.0",
+      "text": "Deploy?",
+      "interaction": {
+        "kind": "confirm",
+        "id": "deploy",
+        "prompt": "Deploy?",
+        "confirm": {
+          "label": "Deploy",
+          "value": "deploy"
+        },
+        "cancel": {
+          "label": "Cancel",
+          "value": "cancel"
+        },
+        "allow_free_text": false
+      }
+    },
+    {
+      "version": "1.0",
+      "text": "Pick one",
+      "interaction": {
+        "kind": "choice",
+        "id": "repo",
+        "prompt": "Repository",
+        "options": [
+          {
+            "label": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "value": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+          }
+        ],
+        "allow_free_text": false
+      }
+    },
+    {
+      "version": "1.0",
+      "text": "Pick one",
+      "interaction": {
+        "kind": "choice",
+        "id": "repo",
+        "prompt": "Repository",
+        "options": [
+          {
+            "label": "0",
+            "value": "0"
+          },
+          {
+            "label": "1",
+            "value": "1"
+          },
+          {
+            "label": "2",
+            "value": "2"
+          },
+          {
+            "label": "3",
+            "value": "3"
+          },
+          {
+            "label": "4",
+            "value": "4"
+          },
+          {
+            "label": "5",
+            "value": "5"
+          },
+          {
+            "label": "6",
+            "value": "6"
+          },
+          {
+            "label": "7",
+            "value": "7"
+          },
+          {
+            "label": "8",
+            "value": "8"
+          },
+          {
+            "label": "9",
+            "value": "9"
+          }
+        ],
+        "allow_free_text": false
+      }
+    },
+    {
+      "version": "1.0",
+      "text": "Pick one",
+      "interaction": {
+        "kind": "choice",
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "prompt": "Repository",
+        "options": [
+          {
+            "label": "AgentOS",
+            "value": "curie-eng/agentos"
+          }
+        ],
+        "allow_free_text": false
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "reason": "label over 75",
+      "message": {
+        "version": "1.0",
+        "text": "Pick one",
+        "interaction": {
+          "kind": "choice",
+          "id": "repo",
+          "prompt": "Repository",
+          "options": [
+            {
+              "label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "value": "v"
+            }
+          ],
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "label empty",
+      "message": {
+        "version": "1.0",
+        "text": "Pick one",
+        "interaction": {
+          "kind": "choice",
+          "id": "repo",
+          "prompt": "Repository",
+          "options": [
+            {
+              "label": "",
+              "value": "v"
+            }
+          ],
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "value over 255",
+      "message": {
+        "version": "1.0",
+        "text": "Pick one",
+        "interaction": {
+          "kind": "choice",
+          "id": "repo",
+          "prompt": "Repository",
+          "options": [
+            {
+              "label": "L",
+              "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "value empty",
+      "message": {
+        "version": "1.0",
+        "text": "Pick one",
+        "interaction": {
+          "kind": "choice",
+          "id": "repo",
+          "prompt": "Repository",
+          "options": [
+            {
+              "label": "L",
+              "value": ""
+            }
+          ],
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "choice id over 255",
+      "message": {
+        "version": "1.0",
+        "text": "Pick one",
+        "interaction": {
+          "kind": "choice",
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "prompt": "Repository",
+          "options": [
+            {
+              "label": "AgentOS",
+              "value": "curie-eng/agentos"
+            }
+          ],
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "options over 10",
+      "message": {
+        "version": "1.0",
+        "text": "Pick one",
+        "interaction": {
+          "kind": "choice",
+          "id": "repo",
+          "prompt": "Repository",
+          "options": [
+            {
+              "label": "0",
+              "value": "0"
+            },
+            {
+              "label": "1",
+              "value": "1"
+            },
+            {
+              "label": "2",
+              "value": "2"
+            },
+            {
+              "label": "3",
+              "value": "3"
+            },
+            {
+              "label": "4",
+              "value": "4"
+            },
+            {
+              "label": "5",
+              "value": "5"
+            },
+            {
+              "label": "6",
+              "value": "6"
+            },
+            {
+              "label": "7",
+              "value": "7"
+            },
+            {
+              "label": "8",
+              "value": "8"
+            },
+            {
+              "label": "9",
+              "value": "9"
+            },
+            {
+              "label": "10",
+              "value": "10"
+            }
+          ],
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "confirm id over 255",
+      "message": {
+        "version": "1.0",
+        "text": "Deploy?",
+        "interaction": {
+          "kind": "confirm",
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "prompt": "Deploy?",
+          "confirm": {
+            "label": "Deploy",
+            "value": "deploy"
+          },
+          "cancel": {
+            "label": "Cancel",
+            "value": "cancel"
+          },
+          "allow_free_text": false
+        }
+      }
+    },
+    {
+      "reason": "confirm.confirm label over 75",
+      "message": {
+        "version": "1.0",
+        "text": "Deploy?",
+        "interaction": {
+          "kind": "confirm",
+          "id": "deploy",
+          "prompt": "Deploy?",
+          "confirm": {
+            "label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "value": "deploy"
+          },
+          "cancel": {
+            "label": "Cancel",
+            "value": "cancel"
+          },
+          "allow_free_text": false
+        }
+      }
+    }
+  ]
+}

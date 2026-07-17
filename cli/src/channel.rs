@@ -123,6 +123,28 @@ fn display_lines(
     lines
 }
 
+// Field bounds the channel-protocol schema declares
+// (`packages/channel-protocol/schema/channel-protocol.schema.json`). The Rust
+// adapter enforces them so a message the Python model would reject does not
+// render as an interactive widget here -- it degrades to plain text (the same
+// drop-to-fallback this parser already does for malformed input). Gated against
+// the committed schema corpus (#490) so these cannot silently drift.
+const ACTION_LABEL_MAX: usize = 75;
+const ACTION_VALUE_MAX: usize = 255;
+const INTERACTION_ID_MAX: usize = 255;
+const CHOICE_OPTIONS_MAX: usize = 10;
+
+/// An action's label/value are both 1..=max chars (schema min_length 1).
+fn action_bounds_ok(action: &Action) -> bool {
+    (1..=ACTION_LABEL_MAX).contains(&action.label.chars().count())
+        && (1..=ACTION_VALUE_MAX).contains(&action.value.chars().count())
+}
+
+/// An interaction id is 1..=255 chars.
+fn interaction_id_ok(id: &str) -> bool {
+    (1..=INTERACTION_ID_MAX).contains(&id.chars().count())
+}
+
 /// Parse a complete fenced semantic message. Legacy button pairs remain readable
 /// during migration, but only the versioned shape is the public contract.
 pub fn parse_terminal_message(text: &str) -> Option<TerminalMessage> {
@@ -145,37 +167,47 @@ pub fn parse_terminal_message(text: &str) -> Option<TerminalMessage> {
                 prompt,
                 options,
                 allow_free_text,
-            }) if !id.is_empty() && !options.is_empty() => (
-                options
-                    .into_iter()
-                    .map(|action| TerminalAction {
-                        label: action.label,
-                        value: action.value,
-                    })
-                    .collect(),
-                prompt,
-                allow_free_text,
-            ),
+            }) if interaction_id_ok(&id)
+                && (1..=CHOICE_OPTIONS_MAX).contains(&options.len())
+                && options.iter().all(action_bounds_ok) =>
+            {
+                (
+                    options
+                        .into_iter()
+                        .map(|action| TerminalAction {
+                            label: action.label,
+                            value: action.value,
+                        })
+                        .collect(),
+                    prompt,
+                    allow_free_text,
+                )
+            }
             Some(Interaction::Confirm {
                 id,
                 prompt,
                 confirm,
                 cancel,
                 allow_free_text,
-            }) if !id.is_empty() => (
-                vec![
-                    TerminalAction {
-                        label: confirm.label,
-                        value: confirm.value,
-                    },
-                    TerminalAction {
-                        label: cancel.label,
-                        value: cancel.value,
-                    },
-                ],
-                Some(prompt),
-                allow_free_text,
-            ),
+            }) if interaction_id_ok(&id)
+                && action_bounds_ok(&confirm)
+                && action_bounds_ok(&cancel) =>
+            {
+                (
+                    vec![
+                        TerminalAction {
+                            label: confirm.label,
+                            value: confirm.value,
+                        },
+                        TerminalAction {
+                            label: cancel.label,
+                            value: cancel.value,
+                        },
+                    ],
+                    Some(prompt),
+                    allow_free_text,
+                )
+            }
             _ => (Vec::new(), None, true),
         };
         return Some(TerminalMessage {
@@ -219,6 +251,43 @@ pub fn parse_terminal_message(text: &str) -> Option<TerminalMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The committed cross-language corpus (#490): the SAME file the Python
+    /// channel-protocol model test asserts against, so a field-bound change on one
+    /// side without the other fails a corpus test here or there.
+    const CORPUS: &str =
+        include_str!("../../packages/channel-protocol/schema/channel-protocol.corpus.json");
+
+    fn fenced(message: &serde_json::Value) -> String {
+        format!("```agentos-reply\n{message}\n```")
+    }
+
+    #[test]
+    fn field_bounds_match_the_shared_schema_corpus() {
+        let corpus: serde_json::Value = serde_json::from_str(CORPUS).unwrap();
+        // A valid message renders an interactive widget (non-empty actions).
+        for message in corpus["valid"].as_array().unwrap() {
+            let parsed = parse_terminal_message(&fenced(message)).expect("valid message parses");
+            assert!(
+                !parsed.actions.is_empty(),
+                "corpus valid message rendered no widget: {message}"
+            );
+        }
+        // An out-of-bounds message must NOT render a widget: the bound guard fails
+        // and it degrades to plain text (no actions) -- the same rejection the
+        // Python model makes with a ValidationError.
+        for entry in corpus["invalid"].as_array().unwrap() {
+            let message = &entry["message"];
+            let widget = parse_terminal_message(&fenced(message))
+                .map(|m| !m.actions.is_empty())
+                .unwrap_or(false);
+            assert!(
+                !widget,
+                "corpus out-of-bounds message rendered a widget ({}): {message}",
+                entry["reason"]
+            );
+        }
+    }
 
     #[test]
     fn choice_renders_labels_but_preserves_values() {
