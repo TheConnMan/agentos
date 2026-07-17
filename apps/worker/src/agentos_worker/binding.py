@@ -263,12 +263,17 @@ class BindingResolver:
         ``granted_tool`` column and does not re-derive it. Three cases on
         ``gate_kind``:
 
-        * ``'policy'`` -- refuse OUTRIGHT, whatever ``granted_tool`` contains
-          (Decision C defence in depth): a policy gate authorizes a business
-          decision and never a tool, so even a corrupted or hand-edited row
-          cannot turn one into a grant. This is the seam #430/#410 were filed on.
-        * ``'permission'`` -- return the ``granted_tool`` column (the trusted
-          ``can_use_tool`` value the runner denied), never a parse of the summary.
+        * ``'policy'`` or ``'permission'`` -- return the ``granted_tool`` column
+          (or None when NULL). For a permission gate this is the trusted
+          ``can_use_tool`` value the runner denied. For a policy gate, #558
+          (superseding ADR-0046 Decision C's outright refusal) lets an
+          operator-opted ``grantableViaPolicy`` gate carry a grant: the runner
+          stamps the MANIFEST-declared tool onto ``granted_tool`` for exactly
+          those gates and leaves it NULL for every other policy gate, so honoring
+          the column grants the opted-in gates and preserves #544's no-grant
+          default (NULL -> None) elsewhere. The value is never model-authored
+          (runner-sourced from the manifest), never a parse of the summary, so
+          the #430/#410 forgery seam stays closed.
         * ``NULL`` -- the rolling-deploy window (edge case 7): a NEW worker met an
           OLD pinned runner whose final carried no provenance. Fall back to the
           legacy summary-prefix parse -- byte-identical to today's behavior, so a
@@ -306,10 +311,16 @@ class BindingResolver:
         if row_agent_id is None or row_agent_id != agent_id:
             return None
         gate_kind = row["gate_kind"]
-        if gate_kind == "policy":
-            # Refuse outright: a policy gate never grants a tool (Decision A/C).
-            return None
-        if gate_kind == "permission":
+        if gate_kind in ("policy", "permission"):
+            # #558 (supersedes ADR-0046 Decision C's "policy refuses outright"): a
+            # policy gate mints a grant ONLY when the operator opted its manifest
+            # gate into grantability (grantableViaPolicy). The runner stamps the
+            # manifest-declared tool onto granted_tool for exactly those gates and
+            # leaves it NULL otherwise, so honoring the column grants the opted-in
+            # gates and preserves #544's no-grant default (NULL -> None) for every
+            # other policy gate. granted_tool is never model-authored (the runner
+            # sources it from the manifest), so this cannot be reached by a
+            # prompt-injected model. The permission path is unchanged.
             tool: str | None = row["granted_tool"]
             return tool or None
         # gate_kind IS NULL: the old-runner fallback, today's prefix parse.

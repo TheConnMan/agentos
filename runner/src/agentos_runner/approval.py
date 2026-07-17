@@ -45,7 +45,12 @@ from claude_agent_sdk.types import (
     PermissionResultDeny,
     ToolPermissionContext,
 )
-from plugin_format import ApprovalPolicy, PluginManifest, resolve_manifest
+from plugin_format import (
+    ApprovalPolicy,
+    PluginManifest,
+    grantable_routes,
+    resolve_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +329,14 @@ class ApprovalGate:
     boot-turn-only so it never leaks across turns: ``reset()`` runs at the start
     of every turn, so the FIRST reset (the boot turn) preserves a freshly
     injected grant and every later reset clears it.
+
+    ``grantable_by_route`` is the #558 operator-opt-in map: for a manifest gate
+    marked ``grantableViaPolicy``, it binds the gate's route to the MANIFEST tool
+    that a policy approval on that route may grant. The session stamps
+    ``approval_granted_tool`` from ``grantable_tool_for_route`` at turn end, so
+    the granted tool comes from the manifest, never a model-supplied string; a
+    route absent from this map resolves to None, preserving #544's no-grant
+    default.
     """
 
     required: frozenset[str] = field(default_factory=frozenset)
@@ -348,7 +361,20 @@ class ApprovalGate:
     policy_rejected: bool = False
     policy_route: str | None = None
     grant_tool: str | None = None
+    grantable_by_route: dict[str, str] = field(default_factory=dict)
     _boot_turn_seen: bool = False
+
+    def grantable_tool_for_route(self, route: str | None) -> str | None:
+        """The manifest tool a policy approval on ``route`` may grant (#558).
+
+        None when ``route`` is None or the operator did not mark a gate on this
+        route ``grantableViaPolicy``, preserving #544's no-grant default. The
+        value comes from the manifest, never a model-supplied string.
+        """
+
+        if route is None:
+            return None
+        return self.grantable_by_route.get(route)
 
     def reset(self) -> None:
         self.pending_summary = None
@@ -426,8 +452,23 @@ class ApprovalPolicyError(RuntimeError):
     """
 
 
-def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
-    """The bundle manifest's ``approvalPolicy`` gates as ``{tool: route}``.
+@dataclass(frozen=True)
+class ApprovalPolicyResolution:
+    """The single parse of a bundle's ``approvalPolicy`` (#544/#558).
+
+    ``route_by_tool`` is the ``{tool: route}`` map every gated tool the runner
+    intercepts binds to; ``grantable_by_route`` is the #558 opt-in map of routes
+    an operator marked ``grantableViaPolicy`` to the MANIFEST tool a policy
+    approval on that route may grant. An honest empty policy yields
+    ``ApprovalPolicyResolution({}, {})``.
+    """
+
+    route_by_tool: dict[str, str]
+    grantable_by_route: dict[str, str]
+
+
+def resolve_approval_policy(plugin_dir: str | None) -> ApprovalPolicyResolution:
+    """Parse the bundle manifest's ``approvalPolicy`` gates once (#544/#558).
 
     A gate's ``gate`` field names the tool the runner intercepts (the tool
     class of the ADR-0010 permission gate); its ``route`` names the approval
@@ -441,7 +482,7 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
     ``__main__`` builds no gate at all from an empty map, restoring the
     hardcoded bypass. This reader therefore raises ``ApprovalPolicyError``
     once a policy is declared but cannot be armed as declared, and reserves
-    the empty map for the honest cases: no dir, no manifest, no
+    the empty resolution for the honest cases: no dir, no manifest, no
     ``approvalPolicy``, or an explicitly empty ``gates`` list.
 
     Unlike the hooks/systemPrompt readers this one is NOT best-effort. Those
@@ -449,14 +490,21 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
     backstop; this one degrades to a wider authority set, and ``load_plugins``
     does not run on the fake tier at all (``__main__.factory`` returns first),
     so the backstop is absent precisely where it would be needed.
+
+    The grantable map (#558) is computed from the SAME normalization the deploy
+    validator uses (``plugin_format.grantable_routes``), so validator and loader
+    agree on which routes are grantable by construction (#453). The loader
+    IGNORES the ambiguous set as defense in depth: it arms no ambiguous grant but
+    does NOT raise on it -- the ambiguous gates still arm their tools, so the
+    policy is armable, and the deploy validator already rejects the ambiguity.
     """
 
     if not plugin_dir:
-        return {}
+        return ApprovalPolicyResolution({}, {})
     root = Path(plugin_dir)
     manifest_path = resolve_manifest(root)
     if manifest_path is None:
-        return {}
+        return ApprovalPolicyResolution({}, {})
     # Read raw first: a manifest that will not parse cannot prove it declares
     # no policy, so the fail-closed reading is to refuse rather than assume.
     try:
@@ -467,7 +515,7 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
             f" it declares an approvalPolicy; refusing to boot ungated ({exc})"
         ) from exc
     if not isinstance(raw, dict) or raw.get("approvalPolicy") is None:
-        return {}
+        return ApprovalPolicyResolution({}, {})
     # An approvalPolicy IS declared. From here every failure is fail-closed:
     # the intent is established and a parse error cannot revoke it.
     try:
@@ -496,7 +544,23 @@ def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
             f" {sorted(unarmed)!r} that arm no tool; refusing to boot with a"
             " partially armed policy"
         )
-    return routes
+    # #558: derive the grantable route -> manifest tool map. The ambiguous set is
+    # ignored here (arm no ambiguous grant); the deploy validator already rejects
+    # it, so this is belt-and-braces, not the enforcement point.
+    grantable_by_route, _ambiguous = grantable_routes(policy.gates)
+    return ApprovalPolicyResolution(routes, grantable_by_route)
+
+
+def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
+    """The bundle manifest's ``approvalPolicy`` gates as ``{tool: route}``.
+
+    A thin wrapper over ``resolve_approval_policy`` returning only the
+    ``route_by_tool`` map, preserved for callers that need just the gated-tool
+    routes (and its existing fail-closed test suite). See
+    ``resolve_approval_policy`` for the full fail-closed contract.
+    """
+
+    return resolve_approval_policy(plugin_dir).route_by_tool
 
 
 def build_approval_gate(
@@ -504,6 +568,7 @@ def build_approval_gate(
     operator_tools: Sequence[str] | None,
     policy_routes: dict[str, str],
     grant_tool: str | None = None,
+    grantable_by_route: dict[str, str] | None = None,
 ) -> ApprovalGate | None:
     """Merge the operator's gated tools with the bundle's declared gates.
 
@@ -549,4 +614,5 @@ def build_approval_gate(
         required=gated_tools,
         route_by_tool=policy_routes,
         grant_tool=grant_tool,
+        grantable_by_route=grantable_by_route or {},
     )

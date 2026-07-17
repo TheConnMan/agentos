@@ -19,11 +19,13 @@ from agentos_runner.approval import (
     APPROVAL_TOOL_NAME,
     ApprovalGate,
     ApprovalPolicyError,
+    ApprovalPolicyResolution,
     build_approval_gate,
     build_approval_server,
     build_can_use_tool,
     guard_reserved_summary,
     load_approval_policy,
+    resolve_approval_policy,
     summarize_tool_call,
 )
 from agentos_runner.config import RunnerConfig
@@ -1287,7 +1289,14 @@ def test_policy_gate_never_carries_a_granted_tool(
     """
 
     async def go() -> None:
-        gate = ApprovalGate(required=frozenset(route_by_tool), route_by_tool=route_by_tool)
+        # No gate is opted into grantability (empty grantable_by_route), so this
+        # pins the DEFAULT #544 no-grant behavior (#558): a policy approval on a
+        # gate the operator did NOT mark grantable never mints authority.
+        gate = ApprovalGate(
+            required=frozenset(route_by_tool),
+            route_by_tool=route_by_tool,
+            grantable_by_route={},
+        )
         frames = await _run_policy_turn(gate, "Give ACME 20% off", route=route_arg)
 
         final = frames[-1]
@@ -1299,6 +1308,248 @@ def test_policy_gate_never_carries_a_granted_tool(
         )
 
     anyio.run(go)
+
+
+# --- #558: operator opt-in grantableViaPolicy on a policy gate ------------------
+#
+# A gate the operator marks grantableViaPolicy:true opts that gate's policy
+# approval into minting a one-shot grant for the tool the MANIFEST names (its
+# `gate` field, resolved server-side, never model-supplied). The runner surfaces
+# it as `approval_granted_tool` on the awaiting-approval final, still gate_kind
+# 'policy'. A non-opted route stays None (the #544 baseline); a rejected route
+# stays None (no approval exists to grant against).
+
+
+def test_resolve_approval_policy_returns_routes_and_grantable_map(tmp_path) -> None:
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {"gate": "Bash", "route": "managers"},
+                        {
+                            "gate": "close_issue",
+                            "route": "deal-desk",
+                            "grantableViaPolicy": True,
+                        },
+                    ]
+                },
+            }
+        ),
+    )
+    resolution = resolve_approval_policy(bundle)
+    assert isinstance(resolution, ApprovalPolicyResolution)
+    assert resolution.route_by_tool == {
+        "Bash": "managers",
+        "close_issue": "deal-desk",
+    }
+    # Only the opted-in gate contributes a grantable route: route -> its tool.
+    assert resolution.grantable_by_route == {"deal-desk": "close_issue"}
+
+
+def test_resolve_approval_policy_no_opt_in_has_empty_grantable_map(tmp_path) -> None:
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [{"gate": "Bash", "route": "managers"}]
+                },
+            }
+        ),
+    )
+    resolution = resolve_approval_policy(bundle)
+    assert resolution.route_by_tool == {"Bash": "managers"}
+    assert resolution.grantable_by_route == {}
+
+
+def test_resolve_approval_policy_excludes_ambiguous_grantable_route(tmp_path) -> None:
+    # Two grantable gates claim one route with different tools. validate_bundle
+    # rejects this at DEPLOY; the loader is defense-in-depth: it arms the tools
+    # (route_by_tool) but refuses to hand the ambiguous route a grant, WITHOUT
+    # raising (both tools still arm, so the policy is armable).
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {
+                            "gate": "close_issue",
+                            "route": "deal-desk",
+                            "grantableViaPolicy": True,
+                        },
+                        {
+                            "gate": "escalate",
+                            "route": "deal-desk",
+                            "grantableViaPolicy": True,
+                        },
+                    ]
+                },
+            }
+        ),
+    )
+    resolution = resolve_approval_policy(bundle)
+    assert resolution.route_by_tool == {
+        "close_issue": "deal-desk",
+        "escalate": "deal-desk",
+    }
+    assert resolution.grantable_by_route == {}
+
+
+def test_grantable_tool_for_route_lookup() -> None:
+    gate = ApprovalGate(
+        required=frozenset({"Bash"}),
+        route_by_tool={"Bash": "deal-desk"},
+        grantable_by_route={"deal-desk": "close_issue"},
+    )
+    assert gate.grantable_tool_for_route(None) is None
+    assert gate.grantable_tool_for_route("deal-desk") == "close_issue"
+    assert gate.grantable_tool_for_route("unknown") is None
+
+
+def test_build_approval_gate_carries_the_grantable_map() -> None:
+    gate = build_approval_gate(
+        operator_tools=["Bash"],
+        policy_routes={"Bash": "managers"},
+        grantable_by_route={"managers": "close_issue"},
+    )
+    assert gate is not None
+    assert gate.grantable_by_route == {"managers": "close_issue"}
+
+
+def test_policy_gate_grantable_route_carries_the_manifest_tool() -> None:
+    """An accepted policy request on a GRANTABLE route stamps the manifest tool.
+
+    The sole manifest route binds implicitly; because the operator marked it
+    grantable, the awaiting-approval final carries approval_granted_tool = the
+    manifest's tool, still gate_kind 'policy'."""
+
+    async def go() -> None:
+        gate = ApprovalGate(
+            required=frozenset({"Bash"}),
+            route_by_tool={"Bash": "managers"},
+            grantable_by_route={"managers": "close_issue"},
+        )
+        frames = await _run_policy_turn(gate, "Close the ACME issue")
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_gate_kind"] == "policy"
+        assert final["approval_route"] == "managers"
+        assert final["approval_granted_tool"] == "close_issue"
+
+    anyio.run(go)
+
+
+def test_policy_gate_non_grantable_route_stays_none() -> None:
+    """An accepted policy request on a route the operator did NOT mark grantable
+    carries no grant (the #544 baseline)."""
+
+    async def go() -> None:
+        gate = ApprovalGate(
+            required=frozenset({"Bash"}),
+            route_by_tool={"Bash": "managers"},
+            grantable_by_route={},
+        )
+        frames = await _run_policy_turn(gate, "Close the ACME issue")
+
+        final = frames[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_gate_kind"] == "policy"
+        assert final["approval_granted_tool"] is None
+
+    anyio.run(go)
+
+
+def test_policy_gate_rejected_route_stays_none() -> None:
+    """A rejected request (unknown route) creates no approval, so there is
+    nothing to grant against: the turn ends clean with no granted tool."""
+
+    async def go() -> None:
+        gate = ApprovalGate(
+            required=frozenset({"Bash"}),
+            route_by_tool={"Bash": "managers"},
+            grantable_by_route={"managers": "close_issue"},
+        )
+        frames = await _run_policy_turn(gate, "Close the ACME issue", route="not-a-route")
+
+        final = frames[-1]
+        # A refused request creates no approval; the final is a clean terminal.
+        assert final["status"] == "done"
+        assert final.get("approval_granted_tool") is None
+
+
+    anyio.run(go)
+
+
+def test_validate_and_loader_agree_on_grantable_routes(tmp_path) -> None:
+    """Executed parity (#453/#544 pin): one manifest through BOTH the deploy-time
+    validator and the runtime loader must agree on which routes are grantable.
+
+    An ACCEPTED config's grantable route is armed in the loader; an ambiguous
+    config the validator REJECTS is armed as no-grant (excluded) by the loader.
+    """
+
+    accept_dir = tmp_path / "accept"
+    accept_dir.mkdir()
+    accept = _write_manifest(
+        accept_dir,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {
+                            "gate": "close_issue",
+                            "route": "deal-desk",
+                            "grantableViaPolicy": True,
+                        }
+                    ]
+                },
+            }
+        ),
+    )
+    accept_result = validate_bundle(accept)
+    assert accept_result.valid, accept_result.errors
+    assert resolve_approval_policy(accept).grantable_by_route == {
+        "deal-desk": "close_issue"
+    }
+
+    reject_dir = tmp_path / "reject"
+    reject_dir.mkdir()
+    reject = _write_manifest(
+        reject_dir,
+        json.dumps(
+            {
+                "name": "deal-desk",
+                "approvalPolicy": {
+                    "gates": [
+                        {
+                            "gate": "close_issue",
+                            "route": "deal-desk",
+                            "grantableViaPolicy": True,
+                        },
+                        {
+                            "gate": "escalate",
+                            "route": "deal-desk",
+                            "grantableViaPolicy": True,
+                        },
+                    ]
+                },
+            }
+        ),
+    )
+    reject_result = validate_bundle(reject)
+    assert "approval_policy.grant_route_ambiguous" in {
+        i.code for i in reject_result.errors
+    }
+    # The loader arms the same config as no-grant: the ambiguous route is excluded.
+    assert resolve_approval_policy(reject).grantable_by_route == {}
 
 
 def test_permission_gate_grants_the_denied_tool_name() -> None:

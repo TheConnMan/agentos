@@ -6,6 +6,7 @@ is a frozen interface (see the package README); a change stops the task and
 escalates to the orchestrator.
 """
 
+from .approval_policy import grantable_routes
 from .archive import UnsupportedArchive, bundle_root, safe_extract
 from .manifest import MANIFEST_LOCATIONS, resolve_manifest
 from .models import (
@@ -41,6 +42,7 @@ __all__ = [
     "TriggerDeclaration",
     "ApprovalPolicy",
     "ApprovalGate",
+    "grantable_routes",
     "validate_bundle",
     "ValidationResult",
     "ValidationIssue",

@@ -1,5 +1,5 @@
 import pytest
-from plugin_format import McpServer, PluginManifest, SkillFrontmatter
+from plugin_format import ApprovalGate, McpServer, PluginManifest, SkillFrontmatter
 from pydantic import ValidationError
 
 
@@ -85,3 +85,24 @@ def test_manifest_trigger_and_approval_policy_fields() -> None:
     # Absent -> None (backward compatible).
     bare = PluginManifest.model_validate({"name": "demo"})
     assert bare.triggers is None and bare.approvalPolicy is None
+
+
+def test_approval_gate_grantable_via_policy_field() -> None:
+    """The operator opt-in ``grantableViaPolicy`` round-trips on ApprovalGate (#558).
+
+    A gate the operator explicitly marks may mint a one-shot grant on a policy
+    approval; absent, it defaults False (the #544 no-grant baseline), so an old
+    manifest keeps its behavior.
+    """
+
+    gate = ApprovalGate.model_validate(
+        {"gate": "close_issue", "route": "deal-desk", "grantableViaPolicy": True}
+    )
+    assert gate.grantableViaPolicy is True
+    # Absent -> False (backward compatible; existing gates keep the no-grant default).
+    gate2 = ApprovalGate.model_validate({"gate": "close_issue", "route": "deal-desk"})
+    assert gate2.grantableViaPolicy is False
+    # Serializes back under the verbatim camelCase key and round-trips.
+    dumped = gate.model_dump()
+    assert dumped["grantableViaPolicy"] is True
+    assert ApprovalGate.model_validate(dumped).grantableViaPolicy is True
