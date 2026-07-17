@@ -45,6 +45,7 @@ from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus
 from agentos_dispatcher.queue import to_stream_fields
 from agentos_worker.config import WorkerConfig
 from agentos_worker.consumer import Consumer
+from agentos_worker.dead_letter_alert import install_dead_letter_alerting
 from pydantic import ValidationError
 
 DONE = SessionStatus.DONE
@@ -777,6 +778,135 @@ def test_dead_letter_is_logged_loudly_with_the_operational_facts(
                 await h.async_redis.delete(_dead_stream(h.config))
 
     asyncio.run(go())
+
+
+def test_dead_letter_emits_one_retention_independent_critical_alert(
+    make_harness,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source_logger = logging.getLogger("agentos_worker.consumer")
+    original_handlers = list(source_logger.handlers)
+    original_propagate = source_logger.propagate
+    for handler in original_handlers:
+        source_logger.removeHandler(handler)
+    source_logger.propagate = False
+
+    async def go() -> None:
+        async with make_harness(max_delivery=2, reclaim_min_idle_ms=0) as h:
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await consumer.ensure_group()
+
+            async def always_fails(qevent: QueuedTurn) -> None:
+                raise RuntimeError("simulated dead reply endpoint")
+
+            h.kernel.process_event = always_fails  # type: ignore[method-assign,assignment]
+
+            qe = _qevent("poison turn", thread="tdl-alert", event_id="poison-alert")
+            entry_id = await h.async_redis.xadd(h.config.stream, to_stream_fields(qe))
+            dead = _dead_stream(h.config)
+
+            try:
+                assert await _deliver_new(consumer, h) == 1
+                await _reclaim_and_settle(consumer)
+                assert entry_id in await _pending_ids(h)
+                await _reclaim_and_settle(consumer)
+
+                assert await h.async_redis.delete(dead) == 1
+
+                alerts = [
+                    record
+                    for record in caplog.records
+                    if record.name == "agentos_worker.alerts.dead_letter"
+                    and record.levelno == logging.CRITICAL
+                ]
+                assert len(alerts) == 1, f"expected one dead letter alert, got {alerts}"
+                assert alerts[0].getMessage() == (
+                    f"event=agentos.dead_letter entry_id={entry_id} delivery_count=2 "
+                    f"reason=max delivery exceeded dead_stream={dead}"
+                )
+
+                caplog.clear()
+                source_logger.error("unrelated consumer error for entry %s", entry_id)
+                source_logger.error(
+                    "dead-lettered entry %s after %d deliveries reason=%s -> %s",
+                    entry_id,
+                    2,
+                    "max delivery exceeded",
+                    dead,
+                )
+                source_logger.error(
+                    "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
+                    entry_id,
+                    2,
+                    "max delivery exceeded",
+                )
+                assert not [
+                    record
+                    for record in caplog.records
+                    if record.name == "agentos_worker.alerts.dead_letter"
+                    and record.levelno == logging.CRITICAL
+                ]
+
+                caplog.clear()
+                child_logger = logging.getLogger("agentos_worker.consumer.child")
+                child_logger.error(
+                    "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
+                    entry_id,
+                    2,
+                    "max delivery exceeded",
+                    dead,
+                )
+                assert not [
+                    record
+                    for record in caplog.records
+                    if record.name == "agentos_worker.alerts.dead_letter"
+                    and record.levelno == logging.CRITICAL
+                ]
+
+                caplog.clear()
+                source_logger.critical(
+                    "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
+                    entry_id,
+                    2,
+                    "max delivery exceeded",
+                    dead,
+                )
+                assert not [
+                    record
+                    for record in caplog.records
+                    if record.name == "agentos_worker.alerts.dead_letter"
+                    and record.levelno == logging.CRITICAL
+                ]
+
+                caplog.clear()
+                source_logger.error(
+                    "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
+                    entry_id,
+                    "two",
+                    "max delivery exceeded",
+                    dead,
+                )
+                assert not [
+                    record
+                    for record in caplog.records
+                    if record.name == "agentos_worker.alerts.dead_letter"
+                    and record.levelno == logging.CRITICAL
+                ]
+            finally:
+                await h.async_redis.delete(dead)
+
+    caplog.clear()
+    try:
+        install_dead_letter_alerting()
+        install_dead_letter_alerting()
+        with caplog.at_level(logging.ERROR):
+            asyncio.run(go())
+    finally:
+        for handler in list(source_logger.handlers):
+            source_logger.removeHandler(handler)
+        for handler in original_handlers:
+            source_logger.addHandler(handler)
+        source_logger.propagate = original_propagate
 
 
 def test_max_delivery_below_the_floor_is_rejected() -> None:

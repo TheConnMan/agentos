@@ -26,6 +26,7 @@ from .binding import BindingResolver
 from .bundle_store import BundleStore
 from .config import WorkerConfig
 from .consumer import Consumer
+from .dead_letter_alert import install_dead_letter_alerting
 from .eval import EvalReporter, EvalStreamConsumer, LangfuseEvalRecorder
 from .heartbeat import run_heartbeat
 from .kernel import Kernel
@@ -270,6 +271,7 @@ async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
 
 def main(env: Mapping[str, str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
+    install_dead_letter_alerting()
     resolved = env if env is not None else os.environ
     config = WorkerConfig()
     asyncio.run(_run(config, resolved))
