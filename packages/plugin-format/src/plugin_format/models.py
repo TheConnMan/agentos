@@ -55,9 +55,8 @@ class PluginManifest(BaseModel):
     hooks: str | dict[str, Any] | None = None
     mcpServers: str | dict[str, Any] | None = None
     # AgentOS authoring extension (epic #30): the agent's system prompt, shipped
-    # in the bundle and versioned with it rather than only supplied out-of-band
-    # via the ``AGENTOS_SYSTEM_PROMPT`` env var. Inline prompt text; applied at
-    # runner boot, with the env var taking precedence for backward compatibility.
+    # in the bundle and versioned with it. Inline prompt text; applied at runner
+    # boot as the sole system-prompt surface (#488) -- no env var shadows it.
     systemPrompt: str | None = None
     # Initial terminal/chat affordances. These are bundle-authored conversation
     # starters, not response actions; adapters discard them after the first turn.

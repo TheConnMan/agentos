@@ -24,8 +24,9 @@ def load_bundle_system_prompt(plugin_dir: str | None) -> str | None:
     """Return the ``systemPrompt`` declared in the bundle manifest, if any.
 
     The system prompt travels in the bundle (manifest field, epic #30) so it is
-    versioned with the agent rather than supplied only out-of-band via
-    ``AGENTOS_SYSTEM_PROMPT``. Returns ``None`` when there is no plugin dir, no
+    versioned with the agent, and this is its sole surface: the out-of-band env
+    override was removed in #488, so the bundle always wins. Returns ``None``
+    when there is no plugin dir, no
     manifest, or no ``systemPrompt`` field. Best-effort and non-fatal: a bundle
     that fails to parse here is caught by ``load_plugins`` at startup, which is
     the authoritative validation gate, so this reader stays quiet.

@@ -51,12 +51,11 @@ readinessProbe hits `/healthz`).
 ACI-frozen (`aci-protocol.SessionConfig`): `AGENTOS_PLUGIN_DIR`,
 `AGENTOS_SESSION_ID`, `AGENTOS_SANDBOX_ID`, `AGENTOS_BUDGET`, optional
 `AGENTOS_MEMORY_REF` / `AGENTOS_CREDENTIALS`, `OTEL_EXPORTER_OTLP_*`.
-Runner-local: `AGENTOS_MODEL`, `AGENTOS_SYSTEM_PROMPT`, `AGENTOS_MAX_TURNS`,
+Runner-local: `AGENTOS_MODEL`, `AGENTOS_MAX_TURNS`,
 `AGENTOS_HISTORY_REF` (rehydrate; falls back to `AGENTOS_MEMORY_REF`),
 `AGENTOS_HISTORY_MAX_TURNS` / `AGENTOS_HISTORY_MAX_BYTES` (bound the rehydrated
 history preamble to a tail window; defaults 40 turns / 16000 bytes, a
 nonpositive value falls back to the default),
-`AGENTOS_IDEMPOTENT_TOOLS` (override the read-only allowlist),
 `AGENTOS_RUNNER_PORT`, `AGENTOS_RUNNER_TOKEN` (per-sandbox bearer token gating the
 three ACI POST routes; enforced only when set), `AGENTOS_FAKE_MODEL` (offline
 smoke; no model call).

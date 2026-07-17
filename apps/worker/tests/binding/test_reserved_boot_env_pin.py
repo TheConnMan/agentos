@@ -8,9 +8,13 @@ Three guards, all checked at import time (no Postgres, no fixtures):
     class of gap #457 closes.  ``AGENTOS_MODEL_BASE_URL`` / ``AGENTOS_CREDENTIALS``
     are already safe via the prefix rule, but the pin asserts them anyway so the
     sdk_auth inventory is covered exhaustively.
-(b) Every ``agentos_worker.binding`` ``*_ENV`` literal that starts with
-    ``AGENTOS_`` is caught. This passes today via the prefix rule; it is a
-    tripwire against the predicate silently regressing.
+(b) Every boot key a worker-lane producer WRITES is caught. Retargeted in #488
+    from ``agentos_worker.binding``'s ``*_ENV`` literals to
+    ``aci_protocol.BootEnv``'s declared key list, because #488 moves the
+    declaration out of the binding and deletes those constants -- the old guard
+    would have gone red (it carries a non-vacuity floor, so it fails loudly
+    rather than passing vacuously), and retargeting is what keeps the tripwire
+    pointed at the real declaration site instead of a dead one.
 (c) Cross-language parity: the Helm ``_helpers.tpl`` reserved list is an
     unavoidable second copy (Helm cannot import Python). Its
     ``agentos.reservedConnectorSecretNames`` define MUST list exactly the
@@ -24,7 +28,7 @@ import re
 from pathlib import Path
 
 import agentos_runner.sdk_auth as sdk_auth
-import agentos_worker.binding as binding
+from aci_protocol import BootEnv
 from plugin_format import RESERVED_BOOT_ENV, is_reserved_boot_env_name
 
 # --- (a) sdk_auth credential-key literals ------------------------------------
@@ -75,29 +79,66 @@ def test_every_sdk_auth_credential_key_is_reserved() -> None:
         )
 
 
-# --- (b) binding AGENTOS_* *_ENV literals ------------------------------------
+# --- (b) declared worker-lane boot keys --------------------------------------
+
+# The producers whose writes land in the worker lane: the binding's per-claim
+# render and the kernel's resume overlay. Deliberately NOT `substrate` or
+# `operator` -- their keys include the OTel trio, which is not reserved (a
+# connector secret named OTEL_EXPORTER_OTLP_ENDPOINT is a separate policy
+# question, out of #488's scope; see #487 for the redirect/capture class). This
+# guard's scope is exactly the old one's: the keys the worker lane itself writes.
+_WORKER_LANE_PRODUCERS = ("worker", "kernel")
 
 
-def _binding_agentos_env_literals() -> dict[str, str]:
-    out: dict[str, str] = {}
-    for attr in dir(binding):
-        if not attr.endswith("_ENV"):
-            continue
-        value = getattr(binding, attr)
-        if isinstance(value, str) and value.startswith("AGENTOS_"):
-            out[attr] = value
-    return out
+def _worker_lane_boot_env_keys() -> set[str]:
+    """The declared boot keys a worker-lane producer writes.
+
+    Read through ``BootEnv.env_keys``, the public accessor, so a rename of the
+    model's internals cannot silently narrow this. Dynamic (not a hardcoded
+    list) so a NEW worker-written boot key is caught even if nobody updates the
+    pin -- the same property the old binding-introspection guard had.
+    """
+    return {
+        key
+        for producer in _WORKER_LANE_PRODUCERS
+        for key in BootEnv.env_keys(producer=producer)
+    }
 
 
-def test_every_binding_agentos_env_literal_is_reserved() -> None:
-    literals = _binding_agentos_env_literals()
-    # Sanity: the introspection actually found the boot keys (guards against a
-    # rename making this test vacuously pass).
-    assert literals, "found no AGENTOS_* *_ENV literals in agentos_worker.binding"
-    for attr, value in literals.items():
-        assert is_reserved_boot_env_name(value), (
-            f"binding.{attr} == {value!r} is not caught by the reserved policy"
+def test_every_declared_worker_lane_boot_key_is_reserved() -> None:
+    keys = _worker_lane_boot_env_keys()
+    # Sanity floor: discovery is not vacuous, and the load-bearing keys are all
+    # present (guards against the accessor silently narrowing, or a producer
+    # retag emptying the set, making this test pass while covering nothing).
+    assert keys, "found no worker-lane boot keys declared on aci_protocol.BootEnv"
+    assert {
+        "AGENTOS_BUDGET",
+        "AGENTOS_SESSION_ID",
+        "AGENTOS_RUNNER_TOKEN",
+        "AGENTOS_CREDENTIALS",
+        "AGENTOS_APPROVAL_GRANT_TOOL",
+        # Non-prefixed, so the prefix catch-all does NOT cover it: this key is
+        # what makes the guard bite rather than restate the prefix rule. It is
+        # reserved only because #457 enumerated it explicitly.
+        "ANTHROPIC_BASE_URL",
+    } <= keys, keys
+    for key in sorted(keys):
+        assert is_reserved_boot_env_name(key), (
+            f"BootEnv declares {key!r} as a worker-lane boot key, but it is not "
+            "caught by the reserved policy: a connector secret could shadow it"
         )
+
+
+def test_dropping_agent_id_from_the_enumeration_does_not_unreserve_it() -> None:
+    """#488 removed AGENTOS_AGENT_ID from _AGENTOS_BOOT_KEYS; that is a no-op.
+
+    The entry was dead enumeration once the write site went away, but the
+    ``AGENTOS_`` prefix catch-all still reserves the name, so no connector secret
+    can claim it. Asserted so the removal is provably policy-neutral rather than
+    a silent narrowing of the reserved set.
+    """
+    assert "AGENTOS_AGENT_ID" not in RESERVED_BOOT_ENV
+    assert is_reserved_boot_env_name("AGENTOS_AGENT_ID")
 
 
 # --- (c) Helm cross-language drift gate --------------------------------------

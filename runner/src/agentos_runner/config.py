@@ -1,11 +1,15 @@
-"""Runner configuration: the typed ACI SessionConfig plus runner-local knobs.
+"""Runner configuration: the declared BootEnv, read back as the runner's view.
 
-``SessionConfig`` (frozen, from ``aci-protocol``) is the ACI session-setup
-contract read from ``AGENTOS_*`` env. ``RunnerConfig`` wraps it with the handful
-of runner-local settings that are not part of the frozen wire contract (model,
-system prompt, turn cap, history ref, idempotent-tool override, listen port),
-each read from its own env var so an operator can tune the harness without a
-contract change.
+``BootEnv`` (from ``aci-protocol``) is the single declaration of the worker-to-
+runner boot env: the frozen ACI ``SessionConfig`` plus the platform-operational
+vars. ``RunnerConfig`` is the runner-local shape the boot path consumes, built
+from that one parse rather than from its own ``AGENTOS_*`` reads -- every name
+this lane needs is declared once, in the contract, so a rename cannot leave the
+sandbox booting fine with a silently dropped feature (#488, ADR-0049).
+
+The parse tolerance is deliberately non-uniform and lives in ``BootEnv``: the
+turn cap and the port raise on garbage, the history-window knobs degrade to
+their default. Each var keeps the behavior it has.
 """
 
 from __future__ import annotations
@@ -13,17 +17,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from aci_protocol import SessionConfig
+from aci_protocol import BootEnv, SessionConfig
 
 
 @dataclass(frozen=True)
 class RunnerConfig:
     session: SessionConfig
     model: str | None
-    system_prompt: str | None
     max_turns: int
     history_ref: str | None
-    idempotent_tools: list[str] | None
     # Tool names whose calls require human approval (#245, ADR-0010). The
     # runner intercepts these proactively via the SDK can_use_tool callback
     # and ends the turn awaiting-approval instead of executing. Injected
@@ -52,6 +54,11 @@ class RunnerConfig:
     false_completion_check: bool
     port: int
     runner_token: str | None
+    # Operator bounds on the rehydrated history preamble, reachable through the
+    # chart's runner.extraEnv. None hands the consumer its own default, so the
+    # defaults live at the call site rather than here.
+    history_max_turns: int | None
+    history_max_bytes: int | None
 
     @property
     def ceiling(self) -> int:
@@ -67,49 +74,38 @@ class RunnerConfig:
     def from_env(cls, env: Mapping[str, str]) -> RunnerConfig:
         """Parse a RunnerConfig from a process environment mapping.
 
-        The ACI-frozen vars are parsed by ``SessionConfig.from_env``; a malformed
-        or missing required var raises there. ``history_ref`` is read only from an
-        explicit ``AGENTOS_HISTORY_REF``, the URL of this thread's transcript
-        namespace on the state API (ADR-0029, resolved by ``history.py`` into a
+        ``BootEnv.from_env`` is the single parse; a malformed or missing required
+        var raises there. ``history_ref`` is read only from an explicit
+        ``AGENTOS_HISTORY_REF``, the URL of this thread's transcript namespace on
+        the state API (ADR-0029, resolved by ``history.py`` into a
         ``TranscriptStore`` and delivered as a boot preamble). It is deliberately
         NOT derived from ``AGENTOS_MEMORY_REF``: memory is per-agent durable
         lessons, history is this thread's conversation (ADR-0025 keeps them
         distinct). Both live outside the sandbox and are rehydrated at boot
         (ADR-0003, stateless-first).
+
+        The turn-cap and port defaults are applied here rather than on the model:
+        a non-None default on ``BootEnv`` would render keys nobody sends and move
+        the wire.
         """
 
-        session = SessionConfig.from_env(env)
-        idempotent_raw = env.get("AGENTOS_IDEMPOTENT_TOOLS")
-        idempotent = (
-            [t.strip() for t in idempotent_raw.split(",") if t.strip()]
-            if idempotent_raw
-            else None
-        )
-        approval_raw = env.get("AGENTOS_APPROVAL_REQUIRED_TOOLS")
-        approval_required = (
-            [t.strip() for t in approval_raw.split(",") if t.strip()]
-            if approval_raw
-            else None
-        )
-        grant_raw = env.get("AGENTOS_APPROVAL_GRANT_TOOL")
-        approval_grant_tool = grant_raw.strip() if grant_raw and grant_raw.strip() else None
-        resumed_raw = env.get("AGENTOS_APPROVAL_RESUMED_KIND")
-        approval_resumed_kind = (
-            resumed_raw.strip() if resumed_raw and resumed_raw.strip() else None
-        )
+        boot = BootEnv.from_env(env)
+        # A runner-local read, not a BootEnv contract key (#517): the false-
+        # completion check is observe-only and has no worker producer lane, so it
+        # stays a direct env read parsed to an explicit 1/true/yes truthy.
         false_completion_raw = env.get("AGENTOS_FALSE_COMPLETION_CHECK", "")
         false_completion_check = false_completion_raw.strip().lower() in ("1", "true", "yes")
         return cls(
-            session=session,
-            model=env.get("AGENTOS_MODEL"),
-            system_prompt=env.get("AGENTOS_SYSTEM_PROMPT"),
-            max_turns=int(env.get("AGENTOS_MAX_TURNS", "20")),
-            history_ref=env.get("AGENTOS_HISTORY_REF"),
-            idempotent_tools=idempotent,
-            approval_required_tools=approval_required,
-            approval_grant_tool=approval_grant_tool,
-            approval_resumed_kind=approval_resumed_kind,
+            session=boot.session,
+            model=boot.model,
+            max_turns=boot.max_turns if boot.max_turns is not None else 20,
+            history_ref=boot.history_ref,
+            approval_required_tools=boot.approval_required_tools,
+            approval_grant_tool=boot.approval_grant_tool,
+            approval_resumed_kind=boot.approval_resumed_kind,
             false_completion_check=false_completion_check,
-            port=int(env.get("AGENTOS_RUNNER_PORT", "8080")),
-            runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None,
+            port=boot.port if boot.port is not None else 8080,
+            runner_token=boot.runner_token,
+            history_max_turns=boot.history_max_turns,
+            history_max_bytes=boot.history_max_bytes,
         )

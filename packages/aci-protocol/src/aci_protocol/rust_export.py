@@ -35,7 +35,7 @@ from .service_config import (
     STREAM_PAYLOAD_FIELD,
     WORKER_GROUP_DEFAULT,
 )
-from .session import Budget, OtelConfig, SessionConfig
+from .session import BootEnv, Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION, WIRE_VERSION_FIELD
 from .wire import ApprovalRequest, EvalJob, EvalReport, GateKind
@@ -185,6 +185,29 @@ def _struct(model: type[BaseModel]) -> str:
     # dropping it only loosens the read path we mean to loosen.
     lines = [_STRUCT_DERIVES, f"pub struct {model.__name__} {{"]
     lines.extend(_struct_fields(model, skip=set(), public=True))
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _env_keys_module() -> str:
+    """Emit the boot-env key constants so no lane retypes the literals.
+
+    Sorted by ``BootEnv.env_keys()`` and emitted verbatim: an env key is already
+    a valid SCREAMING_CASE Rust identifier, so it is deliberately NOT routed
+    through ``_pascal``/``_RUST_KEYWORDS`` (both are for field names, and either
+    would mangle the constant away from the key it names). Sorting is what keeps
+    regeneration byte-identical, so the ``git diff --exit-code`` drift gate
+    cannot flap on field-declaration order.
+    """
+
+    lines = [
+        "/// Boot-env variable names, generated from aci_protocol.session.BootEnv.",
+        "/// The env key is the contract; the Rust CLI and the chart render-assert",
+        "/// pin against these instead of retyping the literals.",
+        "pub mod env_keys {",
+    ]
+    for key in BootEnv.env_keys():
+        lines.append(f'    pub const {key}: &str = "{key}";')
     lines.append("}")
     return "\n".join(lines)
 
@@ -356,6 +379,8 @@ def render_rust() -> str:
         _struct(Budget),
         _struct(OtelConfig),
         _struct(SessionConfig),
+        _struct(BootEnv),
+        _env_keys_module(),
         _struct(ReplyHandle),
         _struct(QueuedTurn),
         _struct(EvalJob),

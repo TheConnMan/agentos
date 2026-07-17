@@ -7,9 +7,8 @@ from __future__ import annotations
 import time
 
 import pytest
+from aci_protocol import BootEnv
 from agentos_worker.sandbox import (
-    HISTORY_ENV,
-    SESSION_ENV,
     AffinityStore,
     ClaimTimeoutError,
     ClaimView,
@@ -24,6 +23,13 @@ from agentos_worker.sandbox import (
 )
 
 from .conftest import FakeClaim, FakeSandbox, FakeSandboxClient
+
+# Named from the boot contract, NOT re-imported from the module under test:
+# asserting against the substrate's own constant passes under any rename on
+# either side, so it proves the resume env agrees with itself rather than with
+# the runner that has to read it (#488).
+HISTORY_ENV = BootEnv.env_key("history_ref")
+SESSION_ENV = BootEnv.env_key("session_id")
 
 
 @pytest.fixture

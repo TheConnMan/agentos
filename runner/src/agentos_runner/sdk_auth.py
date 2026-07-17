@@ -64,22 +64,30 @@ import json
 from collections.abc import MutableMapping
 from enum import StrEnum
 
-CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
+from aci_protocol import BootEnv
+
+# A declared boot key: the worker renders the agent's credential reference under
+# this name, so it is read from the one declaration rather than retyped (#488).
+CREDENTIALS_ENV = BootEnv.env_key("credentials_ref")
 OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
-BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+# A declared boot key: the worker renders the agent's model base URL under this
+# name, so it is read from the one declaration rather than retyped here (#488).
+BASE_URL_ENV = BootEnv.env_key("base_url")
 AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 # AGENTOS_-namespaced alias for the base-URL override seam, mapped onto the raw
 # SDK var (BASE_URL_ENV). It lets a config author stay in the AGENTOS_* config
 # namespace (like AGENTOS_MODEL / AGENTOS_CREDENTIALS) instead of setting the
 # SDK's own ANTHROPIC_BASE_URL directly. The raw var wins when both are set.
 MODEL_BASE_URL_ENV = "AGENTOS_MODEL_BASE_URL"
-# Declares the endpoint's wire protocol (see module docstring). AGENTOS_-namespaced
-# like its MODEL_BASE_URL sibling, so it is already fenced by the reserved-boot-env
-# prefix rule in plugin_format.reserved_env.
-API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
+# Declares the endpoint's wire protocol (see module docstring). A declared boot
+# key: the worker renders it, so it is read from the one declaration rather than
+# retyped (#488). AGENTOS_-namespaced like its MODEL_BASE_URL sibling, so it is
+# also fenced by the reserved-boot-env prefix rule in plugin_format.reserved_env.
+API_BACKEND_ENV = BootEnv.env_key("api_backend")
 # Declares which env var(s) carry the credential: a bare name or a JSON array.
-MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
+# Also a declared boot key, read from the declaration for the same reason.
+MODEL_ENV_KEY_ENV = BootEnv.env_key("model_env_key")
 # The platform's own boot-env namespace. No var in it is a model credential
 # (AGENTOS_CREDENTIALS excepted), so it is off limits as an env_key target --
 # see parse_env_keys.

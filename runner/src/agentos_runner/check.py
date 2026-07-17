@@ -29,12 +29,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from aci_protocol import BootEnv
 from claude_agent_sdk import ClaudeSDKClient
 
 from .adapter import build_options
 from .plugin import PluginBundleError, load_plugins
 
 logger = logging.getLogger(__name__)
+
+# A declared boot key. The CLI produces it from the same declaration (the
+# generated `env_keys::AGENTOS_PLUGIN_DIR`) when it runs this check, so the
+# consumer side reads it from the declaration too rather than retyping it (#488).
+PLUGIN_DIR_ENV = BootEnv.env_key("plugin_dir")
 
 CHECK_NAME = "mcp-load"
 CHECK_VERSION = 1
@@ -430,7 +436,7 @@ def _timeout_s() -> int:
 # --------------------------------------------------------------------------- #
 def main() -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
-    plugin_dir = os.environ.get("AGENTOS_PLUGIN_DIR")
+    plugin_dir = os.environ.get(PLUGIN_DIR_ENV)
     if not plugin_dir or not Path(plugin_dir).is_dir():
         result = _invalid_bundle_result(
             plugin_dir or "", [f"plugin dir not found: {plugin_dir!r}"]

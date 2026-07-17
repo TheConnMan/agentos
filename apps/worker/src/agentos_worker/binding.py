@@ -36,7 +36,7 @@ import uuid
 from typing import Any
 from urllib.parse import quote
 
-from aci_protocol import Budget
+from aci_protocol import BootEnv, Budget
 from plugin_format import is_reserved_boot_env_name
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -48,56 +48,62 @@ from .config import WorkerConfig
 
 logger = logging.getLogger(__name__)
 
-# Env vars the worker injects into a bound sandbox claim. AGENTOS_BUNDLE_REF is
-# the MinIO object key sandbox provisioning fetches into AGENTOS_PLUGIN_DIR (a
-# runner/chart handoff); the rest are the frozen ACI SessionConfig env.
-BUNDLE_REF_ENV = "AGENTOS_BUNDLE_REF"
-PLUGIN_DIR_ENV = "AGENTOS_PLUGIN_DIR"
-BUDGET_ENV = "AGENTOS_BUDGET"
-SESSION_ID_ENV = "AGENTOS_SESSION_ID"
-AGENT_ID_ENV = "AGENTOS_AGENT_ID"
-FAKE_MODEL_ENV = "AGENTOS_FAKE_MODEL"
-CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
-# The memory port (#264): the URL of the agent's memory namespace on the state
-# API, dereferenced by the runner at boot, plus the API key it authenticates
-# with. MEMORY_REF is the frozen ACI SessionConfig field; MEMORY_TOKEN is a
-# runner-local knob (not part of the frozen env), like AGENTOS_RUNNER_TOKEN.
-MEMORY_REF_ENV = "AGENTOS_MEMORY_REF"
-MEMORY_TOKEN_ENV = "AGENTOS_MEMORY_TOKEN"
+# Env vars the worker injects into a bound sandbox claim, named from the ONE
+# declaration in ``aci_protocol.BootEnv`` (#488, ADR-0049). These are aliases for
+# the lanes that cannot go through ``BootEnv.render_worker`` -- the kernel's
+# resume overlay, the substrates, and the eval consumer -- never a second
+# declaration: retyping the literal here is the drift #488 closes, since a rename
+# on one side would leave the sandbox booting fine with the feature silently
+# dropped. ``env_key`` raises on an unknown field, so a typo fails at import.
+#
+# AGENTOS_BUNDLE_REF is the MinIO object key sandbox provisioning fetches into
+# AGENTOS_PLUGIN_DIR (a runner/chart handoff); the rest are the frozen ACI
+# SessionConfig env.
+BUNDLE_REF_ENV = BootEnv.env_key("bundle_ref")
+PLUGIN_DIR_ENV = BootEnv.env_key("plugin_dir")
+BUDGET_ENV = BootEnv.env_key("budget")
+SESSION_ID_ENV = BootEnv.env_key("session_id")
+FAKE_MODEL_ENV = BootEnv.env_key("fake_model")
+CREDENTIALS_ENV = BootEnv.env_key("credentials_ref")
+# The memory port (#264): the API key the runner authenticates with when it
+# dereferences the agent's memory namespace on the state API at boot. A scoped
+# ``state`` token (ADR-0033), and a runner-local knob rather than part of the
+# frozen ACI env, like AGENTOS_RUNNER_TOKEN. The namespace URL itself rides in
+# the frozen SessionConfig's memory_ref, which render_worker emits.
+MEMORY_TOKEN_ENV = BootEnv.env_key("memory_token")
 # The conversation-history port (#20, ADR-0029): the URL of THIS thread's
 # transcript key on the same durable state store, dereferenced by the runner at
 # boot to rehydrate the conversation after an unplanned restart, plus the API key
 # it authenticates with. Both are runner-local knobs, NOT frozen ACI env.
-HISTORY_REF_ENV = "AGENTOS_HISTORY_REF"
-HISTORY_TOKEN_ENV = "AGENTOS_HISTORY_TOKEN"
-BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+HISTORY_REF_ENV = BootEnv.env_key("history_ref")
+HISTORY_TOKEN_ENV = BootEnv.env_key("history_token")
+BASE_URL_ENV = BootEnv.env_key("base_url")
 # The endpoint's wire protocol (#514), declared so an OpenAI-shaped endpoint
 # fails loudly in the runner instead of being silently mis-dialed.
-API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
+API_BACKEND_ENV = BootEnv.env_key("api_backend")
 # Which env var(s) carry the model credential (#514): a bare name or a JSON array.
-MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
-MODEL_ENV = "AGENTOS_MODEL"
+MODEL_ENV_KEY_ENV = BootEnv.env_key("model_env_key")
+MODEL_ENV = BootEnv.env_key("model")
 # Per-claim bearer token the runner enforces on its ACI POST routes (issue #63).
 # Not a model credential, so apply_model_env never sees it; minted fresh per claim.
-RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+RUNNER_TOKEN_ENV = BootEnv.env_key("runner_token")
 # Per-agent permission gates (#245, ADR-0010): comma-separated tool names whose
 # calls the runner intercepts via can_use_tool and pauses awaiting approval.
-# A runner-local knob (not frozen ACI env), like AGENTOS_IDEMPOTENT_TOOLS.
-APPROVAL_REQUIRED_ENV = "AGENTOS_APPROVAL_REQUIRED_TOOLS"
+APPROVAL_REQUIRED_ENV = BootEnv.env_key("approval_required_tools")
 # Marks which boot-env keys are per-agent connector secrets (ADR-0009, #429).
 # The k8s substrate reads it to strip those plaintext values off the value-only
 # SandboxClaim CR (their secretKeyRef delivery is #440); the docker substrate
 # forwards them directly. The marker and the keys it names are both kept off the
 # k8s claim, so a connector secret is never persisted in etcd.
-CONNECTOR_SECRET_KEYS_ENV = "AGENTOS_CONNECTOR_SECRET_KEYS"
+CONNECTOR_SECRET_KEYS_ENV = BootEnv.env_key("connector_secret_keys")
 # #430 one-shot post-approval allowance (ADR-0035): a runner-local knob carrying
 # the single approved tool name the runner gate lets through once on a resume boot.
-GRANT_TOOL_ENV = "AGENTOS_APPROVAL_GRANT_TOOL"
+GRANT_TOOL_ENV = BootEnv.env_key("approval_grant_tool")
 # #544 Decision A2 turn-end reconciliation marker: an authority-free FACT that
 # THIS resume boot is resuming a policy-gate approval. Unlike GRANT_TOOL_ENV it
 # confers nothing -- the runner reads it only to decide whether to emit an
 # observe-only warning when the approved business action never ran.
-RESUMED_KIND_ENV = "AGENTOS_APPROVAL_RESUMED_KIND"
+RESUMED_KIND_ENV = BootEnv.env_key("approval_resumed_kind")
 # the worker re-mints every turn; this only bounds a leaked-token window (ADR-0033)
 SANDBOX_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
@@ -395,43 +401,33 @@ class BindingResolver:
         )
 
     def boot_env(self, resolved: ResolvedDeployment, thread_key: str) -> dict[str, str]:
-        """The env injected into the sandbox claim for a bound run."""
-        env = {
-            BUDGET_ENV: self.budget_for(resolved).model_dump_json(),
-            SESSION_ID_ENV: f"agent-{resolved.agent_id}-thread-{thread_key}",
-            AGENT_ID_ENV: str(resolved.agent_id),
-            PLUGIN_DIR_ENV: self._config.bundle_plugin_dir,
-            RUNNER_TOKEN_ENV: secrets.token_urlsafe(32),
-        }
-        if resolved.bundle_ref is not None:
-            env[BUNDLE_REF_ENV] = resolved.bundle_ref
-        # Deliver the agent's permission gates (#245): the runner intercepts
-        # these tool calls via can_use_tool and pauses awaiting approval.
-        # Names are comma-joined (validated comma-free at the API on write).
-        if resolved.approval_required_tools:
-            env[APPROVAL_REQUIRED_ENV] = ",".join(resolved.approval_required_tools)
-        # Deliver the memory ref (#264): the agent's scoped namespace on the
-        # durable state store (#23/#248). The runner dereferences it at boot to
-        # load prior memory and to append learned records with provenance. The
-        # runner now receives a scoped ``state`` token (ADR-0033, #410) bound to
-        # this agent, not the raw platform key, so a sandboxed agent cannot
-        # resolve approvals or reach another agent's namespace.
+        """The env injected into the sandbox claim for a bound run.
+
+        Rendered from the declared contract (``BootEnv``, #488/ADR-0049) rather
+        than a hand-built dict, so every name here is typed once, in one place,
+        and a rename cannot leave the sandbox booting fine with a silently
+        dropped feature. ``render_worker`` emits only the worker-authoritative
+        keys: it never writes AGENTOS_SANDBOX_ID or AGENTOS_RUNNER_PORT, which
+        the substrate derives from the pod itself.
+        """
+        # The memory ref (#264): the agent's scoped namespace on the durable
+        # state store (#23/#248). The runner dereferences it at boot to load
+        # prior memory and to append learned records with provenance.
         base = self._config.api_base_url.rstrip("/")
-        env[MEMORY_REF_ENV] = f"{base}/agents/{resolved.agent_id}/state/memory"
-        # Deliver the history ref (#20, ADR-0029): this thread's transcript key on
-        # the same state store. It is deterministic per (agent, thread), so a
-        # fresh, restarted, or resumed sandbox all boot with the same ref and the
-        # runner rehydrates the conversation identically -- an unplanned restart
-        # needs no special branch. thread_key is URL-encoded so a channel/ts with
-        # reserved characters cannot break the key path.
+        memory_ref = f"{base}/agents/{resolved.agent_id}/state/memory"
+        # The history ref (#20, ADR-0029): this thread's transcript key on the
+        # same state store. It is deterministic per (agent, thread), so a fresh,
+        # restarted, or resumed sandbox all boot with the same ref and the runner
+        # rehydrates the conversation identically -- an unplanned restart needs no
+        # special branch. thread_key is URL-encoded so a channel/ts with reserved
+        # characters cannot break the key path.
         thread_segment = quote(thread_key, safe="")
-        env[HISTORY_REF_ENV] = (
-            f"{base}/agents/{resolved.agent_id}/state/transcript/{thread_segment}"
-        )
+        history_ref = f"{base}/agents/{resolved.agent_id}/state/transcript/{thread_segment}"
         # Mint one scoped ``state`` token (ADR-0033, #410) for this agent and use
         # it for both the memory and history tokens. When no platform key is
         # configured (fake/local) there is nothing to sign with, so no token is
         # minted and neither is set -- preserving the pre-#410 no-key path.
+        state_token: str | None = None
         if self._config.api_key:
             state_token = sandbox_token.mint(
                 self._config.api_key,
@@ -439,22 +435,48 @@ class BindingResolver:
                 scope="state",
                 exp=int(time.time()) + SANDBOX_TOKEN_TTL_SECONDS,
             )
-            env[MEMORY_TOKEN_ENV] = state_token
-            env[HISTORY_TOKEN_ENV] = state_token
+        env = BootEnv.render_worker(
+            plugin_dir=self._config.bundle_plugin_dir,
+            session_id=f"agent-{resolved.agent_id}-thread-{thread_key}",
+            budget=self.budget_for(resolved),
+            memory_ref=memory_ref,
+            history_ref=history_ref,
+            bundle_ref=resolved.bundle_ref,
+            # Not a model credential, so the model keys never see it; minted
+            # fresh per claim and enforced by the runner on its ACI POST routes.
+            runner_token=secrets.token_urlsafe(32),
+            # The agent's permission gates (#245): the runner intercepts these
+            # tool calls via can_use_tool and pauses awaiting approval. Names are
+            # comma-joined by the render (validated comma-free at the API).
+            approval_required_tools=resolved.approval_required_tools,
+            # The agent's pinned model (#254) overrides the worker default; None
+            # falls back to the platform default.
+            model=resolved.model if resolved.model is not None else self._config.model,
+            fake_model=self._config.fake_model,
+            credentials_ref=self._config.credentials,
+            base_url=self._config.model_base_url,
+            # The endpoint's declared wire protocol and credential key(s) (#514).
+            # Operator scope only: read from WorkerConfig, never from the agent
+            # row, so no per-agent value can redeclare the wire or aim the
+            # credential read. Empty config means undeclared, so the render omits
+            # the key and the runner keeps its defaults.
+            api_backend=self._config.model_api_backend or None,
+            model_env_key=self._config.model_env_key or None,
+            history_token=state_token,
+            memory_token=state_token,
+        )
         # Deliver the agent's connector secrets (ADR-0009, #429): named secret
         # values the bundle's authed MCP servers read from the sandbox env, where
         # `.mcp.json` `${VAR}` expansion consumes them. Injected by value; the
         # docker substrate forwards them as `-e KEY=VALUE`, while the k8s
         # substrate strips them off its plaintext claim CR by the marker
         # AGENTOS_CONNECTOR_SECRET_KEYS (their secretKeyRef delivery is #440).
-        # Reserved boot-env names are filtered out order-independently -- see the
-        # inject_connector_secrets docstring for the #457 rationale.
+        # Runs AFTER the render so the reserved-name filter sees the rendered
+        # keys, and stays the marker's sole writer -- see the
+        # inject_connector_secrets docstring for the #457/#429 rationale.
         inject_connector_secrets(
             env, resolved.secrets, agent_label=resolved.agent_id
         )
-        # The agent's pinned model (#254) overrides the worker default; None
-        # falls back to config.model inside apply_model_env.
-        apply_model_env(env, self._config, model_override=resolved.model)
         return env
 
 

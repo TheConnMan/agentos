@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use agentos_aci_protocol::env_keys;
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
@@ -92,7 +93,7 @@ impl CheckSpec {
             "-v".into(),
             format!("{}:/plugin:ro", self.plugin_dir),
             "-e".into(),
-            "AGENTOS_PLUGIN_DIR=/plugin".into(),
+            format!("{}=/plugin", env_keys::AGENTOS_PLUGIN_DIR),
             "-e".into(),
             format!("AGENTOS_CHECK_TIMEOUT_S={}", self.timeout_s),
             self.image.clone(),
@@ -117,28 +118,28 @@ impl StartSpec {
             "-v".into(),
             format!("{}:/plugin:ro", self.plugin_dir.display()),
             "-e".into(),
-            "AGENTOS_PLUGIN_DIR=/plugin".into(),
+            format!("{}=/plugin", env_keys::AGENTOS_PLUGIN_DIR),
             "-e".into(),
-            format!("AGENTOS_SESSION_ID={}", self.session_id),
+            format!("{}={}", env_keys::AGENTOS_SESSION_ID, self.session_id),
             "-e".into(),
-            format!("AGENTOS_SANDBOX_ID={}", self.sandbox_id),
+            format!("{}={}", env_keys::AGENTOS_SANDBOX_ID, self.sandbox_id),
             "-e".into(),
-            format!("AGENTOS_BUDGET={}", self.budget_json),
+            format!("{}={}", env_keys::AGENTOS_BUDGET, self.budget_json),
         ];
         // Container isolation (#631): read-only rootfs + tmpfs, cap-drop ALL,
         // no-new-privileges. Mirrors the worker Docker substrate + K8s runner.
         args.extend(runner_hardening_args());
         if self.fake_model {
             args.push("-e".into());
-            args.push("AGENTOS_FAKE_MODEL=1".into());
+            args.push(format!("{}=1", env_keys::AGENTOS_FAKE_MODEL));
         }
         if let Some(model) = &self.model {
             args.push("-e".into());
-            args.push(format!("AGENTOS_MODEL={model}"));
+            args.push(format!("{}={model}", env_keys::AGENTOS_MODEL));
         }
         if let Some(url) = &self.model_base_url {
             args.push("-e".into());
-            args.push(format!("ANTHROPIC_BASE_URL={url}"));
+            args.push(format!("{}={url}", env_keys::ANTHROPIC_BASE_URL));
         }
         if let Some(network) = &self.network {
             args.push("--network".into());
@@ -146,7 +147,10 @@ impl StartSpec {
         }
         if let Some(endpoint) = &self.otel_endpoint {
             args.push("-e".into());
-            args.push(format!("OTEL_EXPORTER_OTLP_ENDPOINT={endpoint}"));
+            args.push(format!(
+                "{}={endpoint}",
+                env_keys::OTEL_EXPORTER_OTLP_ENDPOINT
+            ));
         }
         for var in &self.passthrough_env {
             if std::env::var_os(var).is_some()

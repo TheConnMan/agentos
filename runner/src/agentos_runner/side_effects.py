@@ -11,9 +11,11 @@ other tool the harness executes is treated as potentially side-effecting and
 flags the run. This fails safe: a new or unknown tool escalates rather than
 being silently retried. The alternative, an explicit non-idempotent denylist,
 fails open (a new mutating tool would be missed) and was rejected for that
-reason. The allowlist is overridable via ``AGENTOS_IDEMPOTENT_TOOLS`` (a comma
-separated list that replaces the default) so an operator can widen it per plugin
-without a code change.
+reason. The default allowlist is replaceable by an in-process caller through the
+``idempotent_tools`` constructor argument; there is no env knob for it. The env
+override that once advertised itself here was never wired to a consumer, and an
+unwired widening knob on a deny-by-default classifier is worse than none -- it
+reads as an escape hatch that silently does nothing (#488).
 """
 
 from collections.abc import Iterable

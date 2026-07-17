@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aci_protocol import BootEnv
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 
@@ -34,7 +35,12 @@ EXT_VERSION = "v1beta1"
 # init containers that fetch and extract the bundle, or a Kubernetes runner boots
 # an empty plugin dir. These names MUST match the init containers the chart's
 # SandboxTemplate declares (charts/agentos/templates/agent-sandbox.yaml).
-BUNDLE_REF_ENV = "AGENTOS_BUNDLE_REF"
+#
+# Named from the ONE declaration in ``aci_protocol.BootEnv`` (#488, ADR-0049),
+# never retyped: this substrate is the same consumer as the boot contract, so a
+# local literal would drift silently on a rename -- the sandbox would still boot
+# and answer, with the bundle simply absent.
+BUNDLE_REF_ENV = BootEnv.env_key("bundle_ref")
 BUNDLE_INIT_CONTAINERS = ("bundle-fetch", "bundle-extract")
 
 # The SandboxClaim env schema is value-only (no secretKeyRef), so anything put
@@ -43,8 +49,11 @@ BUNDLE_INIT_CONTAINERS = ("bundle-fetch", "bundle-extract")
 # from the chart Secret (a secretKeyRef the Overrides policy leaves in place when
 # the claim does not set it), so the Kubernetes runner still receives it without
 # a plaintext copy on every claim. The Docker substrate has no Secret object and
-# forwards it directly; this stripping is Kubernetes-only.
-CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
+# forwards it directly; this stripping is Kubernetes-only. Named from the BootEnv
+# declaration for the same reason as BUNDLE_REF_ENV above, and with a sharper
+# consequence: a local literal that drifted on a rename would stop matching the
+# key it strips, persisting the model credential as plaintext in etcd.
+CREDENTIALS_ENV = BootEnv.env_key("credentials_ref")
 
 # Per-agent connector secrets (ADR-0009, #429) travel through the substrate-
 # agnostic boot env by value. On this value-only claim CR they would be stored as
@@ -53,9 +62,10 @@ CREDENTIALS_ENV = "AGENTOS_CREDENTIALS"
 # (comma-separated names); strip both the marker and every key it names off the
 # claim. Their secretKeyRef delivery via a per-agent Secret is #440; until then
 # an authed-MCP bundle simply is not delivered its secret on the cluster tier
-# rather than leaking it. Defined locally to keep the substrate seam free of a
-# binding import (like BUNDLE_REF_ENV / CREDENTIALS_ENV above).
-CONNECTOR_SECRET_KEYS_ENV = "AGENTOS_CONNECTOR_SECRET_KEYS"
+# rather than leaking it. Named from the BootEnv declaration like the two above:
+# a local literal that drifted on a rename would stop matching the marker the
+# binding writes, and every connector secret would be persisted as plaintext.
+CONNECTOR_SECRET_KEYS_ENV = BootEnv.env_key("connector_secret_keys")
 
 
 def _conditions_ready(status: dict[str, Any]) -> bool:

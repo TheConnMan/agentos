@@ -11,9 +11,9 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from collections.abc import Mapping
 
 import anyio
+from aci_protocol import BootEnv
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
@@ -82,12 +82,12 @@ def build_runner(
     (OTel export included). It never reaches the Anthropic API.
     """
 
-    # The effective system prompt: the ``AGENTOS_SYSTEM_PROMPT`` env value wins
-    # for backward compatibility; otherwise fall back to the ``systemPrompt``
-    # shipped in the bundle manifest (versioned with the agent, epic #30).
-    system_prompt = config.system_prompt
-    if system_prompt is None:
-        system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
+    # The effective system prompt is the ``systemPrompt`` shipped in the bundle
+    # manifest, versioned with the agent (epic #30). It is the declared surface
+    # and always wins: an env override let an operator silently replace the
+    # prompt the bundle ships, so the bundle said one thing and the sandbox ran
+    # another (#488).
+    system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
     # Prior memory (#264) and this thread's recovered conversation (#20), both
     # loaded from outside the sandbox, lead the system prompt so the model sees
     # learned lessons and the prior exchange as durable context.
@@ -172,7 +172,7 @@ def build_runner(
         session_factory=factory,
         ceiling=config.ceiling,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(config.idempotent_tools),
+        classifier=SideEffectClassifier(),
         trace_name=f"agentos-run:{config.session.session_id}",
         session_id=config.session.session_id,
         model=config.model,
@@ -214,30 +214,6 @@ def _load_memory(config: RunnerConfig) -> tuple[MemoryStore, str | None]:
     return store, format_memory_preamble(records)
 
 
-def _int_env(env: Mapping[str, str], name: str, default: int | None) -> int | None:
-    """Parse an optional integer env override, defensively falling back on default.
-
-    An unset/blank value, one that does not parse as an int, or a nonpositive
-    value uses ``default`` rather than failing boot (mirrors ``check._timeout_s``
-    and the tolerant env reads elsewhere in the runner). A nonpositive budget is
-    meaningless here -- ``max_turns=0`` slices ``kept[-0:]`` (every turn) and a
-    nonpositive byte budget can never be met -- so it is rejected like a bad parse.
-    """
-
-    raw = env.get(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        value = int(raw.strip())
-    except ValueError:
-        logger.warning("ignoring invalid %s=%r; using default %r", name, raw, default)
-        return default
-    if value <= 0:
-        logger.warning("ignoring nonpositive %s=%r; using default %r", name, raw, default)
-        return default
-    return value
-
-
 def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
     """Resolve AGENTOS_HISTORY_REF and load this thread's transcript into a preamble.
 
@@ -247,13 +223,23 @@ def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
     transcript store is briefly unavailable (the answer just lacks prior context).
 
     The delivered preamble is windowed to a recent tail so a long thread does not
-    balloon the boot prompt; AGENTOS_HISTORY_MAX_TURNS/AGENTOS_HISTORY_MAX_BYTES
-    override the sane defaults (parsed defensively).
+    balloon the boot prompt; the operator's window knobs override the sane
+    defaults. They arrive through the declared boot env (parsed defensively, so a
+    typo degrades to the default rather than failing boot), which is why the
+    defaults are applied here rather than read off the process env at this call.
     """
 
     store = resolve_history(config.history_ref, os.environ)
-    max_turns = _int_env(os.environ, "AGENTOS_HISTORY_MAX_TURNS", DEFAULT_PREAMBLE_MAX_TURNS)
-    max_bytes = _int_env(os.environ, "AGENTOS_HISTORY_MAX_BYTES", DEFAULT_PREAMBLE_MAX_BYTES)
+    max_turns = (
+        config.history_max_turns
+        if config.history_max_turns is not None
+        else DEFAULT_PREAMBLE_MAX_TURNS
+    )
+    max_bytes = (
+        config.history_max_bytes
+        if config.history_max_bytes is not None
+        else DEFAULT_PREAMBLE_MAX_BYTES
+    )
 
     async def _load() -> list[TurnRecord]:
         return await store.load()
@@ -277,7 +263,16 @@ def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     install_stdout_redaction()
-    fake_model = os.environ.get("AGENTOS_FAKE_MODEL", "").lower() in ("1", "true", "yes")
+    # The NAME comes from the one declaration (#488); the parse deliberately does
+    # not. BootEnv reads any non-"0" value as true, while this boot has always
+    # required an explicit 1/true/yes -- routing through it would turn
+    # AGENTOS_FAKE_MODEL=false into fake-model ON. The declaration moved; the wire
+    # did not.
+    fake_model = os.environ.get(BootEnv.env_key("fake_model"), "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     logger.info("runner starting fake_model=%s", fake_model)
     # A real session authenticates from the SDK's own credential env; map the
     # forwarded ACI AGENTOS_CREDENTIALS reference onto it (a no-op for a fake

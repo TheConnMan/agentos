@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from aci_protocol import PROTOCOL_VERSION, schema_export, wire_lock
 from aci_protocol.schema_export import _MODELS
-from aci_protocol.session import SessionConfig
+from aci_protocol.turn import QueuedTurn
 from aci_protocol.wire_lock import (
     WireLockError,
     check_against_base,
@@ -29,17 +29,28 @@ _MUTATED_MODELS = _MODELS + (create_model("Injected", x=(str, ...)),)
 
 # A model set identical on the wire to the shipped one but carrying a different
 # docstring and a new field ``description`` -- a doc-only edit. ``create_model``
-# (not a subclass) keeps the ``$defs`` key "SessionConfig" so the sole schema
-# delta is documentation. SessionConfig is a pure root (no other model in the set
-# $refs it), so replacing it introduces no name collision.
+# (not a subclass) keeps the ``$defs`` key "QueuedTurn" so the sole schema delta
+# is documentation.
+#
+# The swapped model MUST be a pure root -- one no other model in the set $refs.
+# Replacing a $ref'd model makes pydantic disambiguate the name collision by
+# module-qualifying BOTH defs ("__main____X" / "aci_protocol__session__X") and
+# retargeting its referrer's $ref, which moves structural keys the fingerprint
+# deliberately keeps. That is a fixture artifact, not a doc-only edit, and it
+# would make this test assert the opposite of what it means.
+#
+# This was ``SessionConfig`` until #488, whose ``BootEnv`` composes it as a field
+# and so ended its pure-root status. ``QueuedTurn`` is the structural analogue:
+# nothing $refs it, and it $refs another model (``ReplyHandle``) just as
+# SessionConfig $refs Budget/OtelConfig.
 _DOC_ONLY_MODELS = tuple(
     create_model(
-        "SessionConfig",
-        __base__=SessionConfig,
+        "QueuedTurn",
+        __base__=QueuedTurn,
         __doc__="A deliberately different docstring: documentation only.",
-        plugin_dir=(str, Field(description="where the plugin bundle is mounted")),
+        text=(str, Field(description="the inbound message text")),
     )
-    if model is SessionConfig
+    if model is QueuedTurn
     else model
     for model in _MODELS
 )

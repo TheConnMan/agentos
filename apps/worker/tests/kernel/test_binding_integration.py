@@ -13,7 +13,6 @@ from collections.abc import Callable
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_worker.behaviorpacks import BehaviorPacks
 from agentos_worker.binding import (
-    AGENT_ID_ENV,
     BUDGET_ENV,
     BUNDLE_REF_ENV,
     PLUGIN_DIR_ENV,
@@ -37,7 +36,6 @@ class StubBinding:
     def boot_env(self, resolved: ResolvedDeployment, thread_key: str) -> dict[str, str]:
         env = {
             BUDGET_ENV: '{"max_output_tokens_per_run":100000,"max_usd_per_day":10.0}',
-            AGENT_ID_ENV: str(resolved.agent_id),
             PLUGIN_DIR_ENV: "/bundles/current",
         }
         if resolved.bundle_ref is not None:
@@ -107,12 +105,11 @@ def test_bound_channel_claims_sandbox_with_boot_env(make_harness) -> None:
             assert h.runner.opened == ["hi"]
             assert h.sink.last_text == "answer"
             # The sandbox was claimed WITH exactly the resolved boot env
-            # (BUNDLE_REF / PLUGIN_DIR / BUDGET / AGENT_ID), unmodified.
+            # (BUNDLE_REF / PLUGIN_DIR / BUDGET), unmodified.
             env = h.fake_k8s.claim_envs[-1]
             assert env == binding.boot_env(resolved, "th-1")
             assert env is not None
             assert env[BUNDLE_REF_ENV] == "bundles/x.zip"
-            assert env[AGENT_ID_ENV] == str(agent_id)
             assert env[PLUGIN_DIR_ENV] == "/bundles/current"
             assert "max_usd_per_day" in env[BUDGET_ENV]
 

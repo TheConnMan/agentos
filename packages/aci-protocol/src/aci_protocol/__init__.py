@@ -46,7 +46,8 @@ from .service_config import (
     STREAM_PAYLOAD_FIELD,
     WORKER_GROUP_DEFAULT,
 )
-from .session import Budget, OtelConfig, SessionConfig
+from .session import BootEnv, Budget, OtelConfig, SessionConfig
+from .session import Producer as EnvProducer
 from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION, is_compatible
 from .wire import ApprovalRequest, EvalJob, EvalReport, GateKind
@@ -61,6 +62,9 @@ __all__ = [
     "SessionConfig",
     "Budget",
     "OtelConfig",
+    # the platform boot-env superset (#488, ADR-0049)
+    "BootEnv",
+    "EnvProducer",
     # queue turn payload (the ingress job the worker consumes)
     "QueuedTurn",
     "ReplyHandle",
