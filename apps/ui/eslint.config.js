@@ -33,6 +33,12 @@ export default [
     rules: {
       ...tseslint.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
+      // New in eslint-plugin-react-hooks 7's recommended set: flags a setState
+      // called synchronously inside an effect. Several wired views load data
+      // that way (fetch-in-effect -> setState); adopting the rule is a behavioral
+      // refactor, out of scope for a dependency bump. Deferred to a dedicated
+      // pass (the frontend-toolchain migration, #220) rather than smuggled in here.
+      "react-hooks/set-state-in-effect": "off",
       // TypeScript itself resolves identifiers/types; the core rule produces
       // false positives on ambient DOM lib types (e.g. RequestInit) in .ts files.
       "no-undef": "off",
