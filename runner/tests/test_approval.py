@@ -840,6 +840,72 @@ def test_policy_gate_unknown_route_is_an_error_naming_valid_routes() -> None:
     anyio.run(go)
 
 
+async def _run_container_fake_policy_turn(
+    gate: ApprovalGate, summary: str, route: str | None = None
+) -> list[dict[str, object]]:
+    """Drive a policy turn on the CONTAINER fake tier (#561).
+
+    Unlike ``_run_policy_turn``, this wires the fake exactly as ``__main__``
+    does for ``AGENTOS_FAKE_MODEL`` -- ``can_use_tool=build_can_use_tool(gate)``
+    and ``approval_gate=gate`` -- with NO test-only callback that executes the
+    approval tool. So it exercises the real production offline path: the fake
+    itself must run the route-resolution decision table. Before #561 it did not,
+    and an omitted/unknown route flowed straight to the final unresolved.
+    """
+
+    session = FakeModelSession(
+        lambda: approval_turn(summary, route=route),
+        can_use_tool=build_can_use_tool(gate),
+        approval_gate=gate,
+    )
+    runner = SessionRunner(
+        session_factory=lambda: session,
+        ceiling=10_000,
+        tracer=RunTracer(None),
+        classifier=SideEffectClassifier(),
+        trace_name="test",
+        session_id="s-1",
+        approval_gate=gate,
+    )
+    await runner.start()
+    return await _drain(runner, "please decide")
+
+
+def test_container_fake_binds_the_sole_route_and_refuses_bad_routes() -> None:
+    """#561: the container fake tier resolves routes like the real SDK path.
+
+    A parity break otherwise: the offline tier would leave a sole-route gate's
+    route None (card widens to the requesting channel) and let an unknown route
+    reach the final verbatim -- the exact regressions #544 closed on the real
+    path, silently reopened on local/cluster fake-model runs.
+    """
+
+    async def go() -> None:
+        # (1) sole declared route, omitted argument -> auto-bound.
+        gate = ApprovalGate(required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"})
+        final = (await _run_container_fake_policy_turn(gate, "Discount for ACME"))[-1]
+        assert final["status"] == "awaiting-approval"
+        assert final["approval_route"] == "managers"
+
+        # (2) two declared routes, omitted argument -> ambiguous, refused: the
+        # turn does not end awaiting-approval on an unresolved route.
+        gate = ApprovalGate(
+            required=frozenset({"Bash", "Write"}),
+            route_by_tool={"Bash": "managers", "Write": "legal"},
+        )
+        final = (await _run_container_fake_policy_turn(gate, "Discount"))[-1]
+        assert final["approval_route"] is None
+        assert final["approval_summary"] is None
+
+        # (3) unknown route -> refused, never reaches the final verbatim.
+        gate = ApprovalGate(required=frozenset({"Bash"}), route_by_tool={"Bash": "managers"})
+        final = (await _run_container_fake_policy_turn(gate, "Discount", route="not-a-route"))[-1]
+        assert final["approval_route"] != "not-a-route"
+        assert final["approval_summary"] is None
+
+    anyio.run(go)
+
+
 def _write_bundle(tmp_path, route: str) -> str:
     """A minimal deployable bundle declaring one gate with ``route``."""
 

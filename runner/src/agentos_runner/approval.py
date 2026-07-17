@@ -131,58 +131,93 @@ def build_approval_server(gate: ApprovalGate | None = None) -> McpSdkServerConfi
     shipped two silent fail-opens).
     """
 
-    declared = _distinct_routes(gate)
-
     @tool(_TOOL_NAME, _TOOL_DESCRIPTION, _TOOL_SCHEMA)
     async def request_approval(args: dict[str, Any]) -> dict[str, Any]:
-        if gate is not None:
-            # policy_requested is sticky-True: any call this turn means a policy
-            # gate was raised. The per-request outcome (rejected/route), though,
-            # must be fully determined by THIS call so the last call in the turn
-            # wins -- a retry with a valid route after an is_error refusal must
-            # clear the prior rejection, or _merge_gate_block drops the approval
-            # the retry created (#544, Decision B recovery path).
-            gate.policy_requested = True
-            gate.policy_rejected = False
-            gate.policy_route = None
-        summary = str(args.get("summary") or "").strip()
-        if not summary:
-            if gate is not None:
-                gate.policy_rejected = True
-            return _approval_error(
-                "Rejected: pass a non-empty summary of what needs approval."
-            )
-        raw_route = args.get("route")
-        route = str(raw_route).strip() if raw_route is not None else ""
-        if declared:
-            if not route:
-                if len(declared) == 1:
-                    # Unambiguous: the manifest declares exactly one route, so
-                    # bind it rather than guessing or refusing.
-                    if gate is not None:
-                        gate.policy_route = declared[0]
-                else:
-                    if gate is not None:
-                        gate.policy_rejected = True
-                    return _approval_error(
-                        "Rejected: this decision has more than one approval route;"
-                        f" pass route as one of: {', '.join(declared)}."
-                    )
-            elif route in declared:
-                if gate is not None:
-                    gate.policy_route = route
-            else:
-                if gate is not None:
-                    gate.policy_rejected = True
-                return _approval_error(
-                    f"Rejected: unknown approval route {route!r};"
-                    f" pass route as one of: {', '.join(declared)}."
-                )
-        return _APPROVAL_OK
+        return process_approval_request(gate, args)
 
     return create_sdk_mcp_server(
         name=APPROVAL_SERVER_NAME, version="1.0.0", tools=[request_approval]
     )
+
+
+def resolve_policy_route(
+    declared: list[str], raw_route: Any
+) -> tuple[bool, str | None, str | None]:
+    """The pure route-resolution decision table (#544 Decision B, #561).
+
+    Returns ``(rejected, resolved_route, error_message)`` for a model-supplied
+    ``raw_route`` against the gate's ``declared`` manifest routes:
+
+    - no declared routes -> generic policy approval, ``(False, None, None)``;
+    - omitted route, exactly one declared -> auto-bind it, unambiguous;
+    - omitted route, more than one declared -> refuse (ambiguous);
+    - a declared route -> accept it;
+    - an unknown route -> refuse.
+
+    The route is normalized identically to ``load_approval_policy`` (a
+    ``.strip()``) so a route that validates green at deploy cannot fail to match
+    at runtime (#453). This is the ONE decision table both the real SDK path (the
+    ``request_approval`` tool) and the offline fake path share, so the fake tier
+    cannot silently widen a card to the requesting channel (#561).
+    """
+
+    route = str(raw_route).strip() if raw_route is not None else ""
+    if not declared:
+        return (False, None, None)
+    if not route:
+        if len(declared) == 1:
+            return (False, declared[0], None)
+        return (
+            True,
+            None,
+            "Rejected: this decision has more than one approval route;"
+            f" pass route as one of: {', '.join(declared)}.",
+        )
+    if route in declared:
+        return (False, route, None)
+    return (
+        True,
+        None,
+        f"Rejected: unknown approval route {route!r};"
+        f" pass route as one of: {', '.join(declared)}.",
+    )
+
+
+def process_approval_request(
+    gate: ApprovalGate | None, args: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply one ``request_approval`` call to ``gate`` and return the model result.
+
+    The single source of truth for the approval-request outcome, invoked from
+    BOTH the in-process MCP tool (real SDK path) and ``FakeModelSession`` (offline
+    path), so the two tiers resolve routes identically (#561). It mutates the
+    sticky policy flags on ``gate`` and returns the tool result the model sees.
+    """
+
+    if gate is not None:
+        # policy_requested is sticky-True: any call this turn means a policy
+        # gate was raised. The per-request outcome (rejected/route), though,
+        # must be fully determined by THIS call so the last call in the turn
+        # wins -- a retry with a valid route after an is_error refusal must
+        # clear the prior rejection, or _merge_gate_block drops the approval
+        # the retry created (#544, Decision B recovery path).
+        gate.policy_requested = True
+        gate.policy_rejected = False
+        gate.policy_route = None
+    summary = str(args.get("summary") or "").strip()
+    if not summary:
+        if gate is not None:
+            gate.policy_rejected = True
+        return _approval_error("Rejected: pass a non-empty summary of what needs approval.")
+    rejected, route, error = resolve_policy_route(_distinct_routes(gate), args.get("route"))
+    if rejected:
+        if gate is not None:
+            gate.policy_rejected = True
+        assert error is not None
+        return _approval_error(error)
+    if route is not None and gate is not None:
+        gate.policy_route = route
+    return _APPROVAL_OK
 
 
 # --- The permission gate (#245): canUseTool over approval-required tools --------
