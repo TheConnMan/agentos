@@ -16,12 +16,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 import redis.asyncio as redis
-from aci_protocol import QueuedTurn, ReplyHandle
+from aci_protocol import STREAM_PAYLOAD_FIELD, QueuedTurn, ReplyHandle
 
+from .config import get_settings
 from .models import Approval, ApprovalStatus
-
-RUNS_STREAM = "agentos:runs"
-STREAM_PAYLOAD_FIELD = "payload"
 
 
 def resume_event_id(approval_id: object) -> str:
@@ -123,9 +121,15 @@ def resume_turn_for(approval: Approval) -> QueuedTurn:
 class ResumeQueue:
     """Producer half of the resume seam (the worker's runs consumer is the other)."""
 
-    def __init__(self, client: redis.Redis, stream: str = RUNS_STREAM) -> None:
+    def __init__(self, client: redis.Redis, stream: str | None = None) -> None:
+        # The runs stream is declared once, on the settings object (#492): the
+        # module constant this used to default to was a second declaration of
+        # the same name. Settings.runs_stream defaults to the shared
+        # RUNS_STREAM_DEFAULT and stays overridable via RUNS_STREAM. Resolved at
+        # construction rather than as a default arg so the env override is read
+        # when the queue is built, not at import time.
         self._client = client
-        self._stream = stream
+        self._stream = stream if stream is not None else get_settings().runs_stream
 
     async def enqueue(self, turn: QueuedTurn) -> str:
         fields: dict[Any, Any] = {STREAM_PAYLOAD_FIELD: turn.model_dump_json()}

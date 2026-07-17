@@ -5,6 +5,12 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
+# The approval-request and eval-report payloads are declared once in the frozen
+# ACI package (#492) and re-exported here, so this module stays the single import
+# site for the API's request/response models. ``ApprovalRequest`` is the former
+# ``ApprovalCreate``; ``EvalReport`` kept its name.
+from aci_protocol import ApprovalRequest as ApprovalRequest
+from aci_protocol import EvalReport as EvalReport
 from plugin_format import is_reserved_boot_env_name
 from pydantic import (
     BaseModel,
@@ -481,34 +487,6 @@ class DeploymentOut(BaseModel):
     deployed_at: datetime
 
 
-class ApprovalCreate(BaseModel):
-    """A durable approval request (#244), created by the worker when a run ends
-    awaiting-approval. ``dedupe_key`` is the triggering event id, so a
-    redelivered turn adopts the existing record instead of forking a second one.
-    ``route``/``card_channel`` (#247) record the manifest route the request
-    named and the channel the worker routed the card to after binding
-    resolution; the authorizer proves membership against ``card_channel``."""
-
-    agent_id: uuid.UUID | None = None
-    conversation_id: str = Field(min_length=1)
-    author: str = Field(min_length=1)
-    summary: str = Field(min_length=1)
-    reply_channel: str = Field(min_length=1)
-    reply_placeholder: str = Field(min_length=1)
-    reply_endpoint: str | None = None
-    dedupe_key: str = Field(min_length=1)
-    route: str | None = None
-    card_channel: str | None = None
-    # Durable gate provenance (#544, Decision C), written by the runner. Both
-    # optional: an older runner emits neither and the row's columns stay NULL
-    # (the rolling-deploy window the worker's prefix fallback covers).
-    gate_kind: Literal["permission", "policy"] | None = None
-    granted_tool: str | None = None
-    # Optional SLA: seconds from creation after which the record can only
-    # expire, never be approved or rejected.
-    expires_in_seconds: int | None = Field(default=None, gt=0)
-
-
 class ApprovalResolve(BaseModel):
     """One resolution attempt. Exactly one attempt wins (compare-and-set), and
     the server-side authorizer (#246) decides first whether this actor may
@@ -713,7 +691,7 @@ class EvalMatrix(BaseModel):
 class EvalTriggerRequest(BaseModel):
     """Ask for an on-demand platform eval run for an agent (issue #10).
 
-    Enqueues the same EvalJobRequest the git-push fan-out uses, minus the
+    Enqueues the same EvalJob the git-push fan-out uses, minus the
     push-only gate. With no version_id the agent's active dev deployment is
     evaluated; suite falls back to Settings.eval_default_suite when omitted.
     """
@@ -740,16 +718,6 @@ class EvalTriggerResult(BaseModel):
     # Echoes the requested model (#526) so a sweep caller can key each enqueued
     # job to the model it will land under in the matrix; None = worker default.
     model: str | None = None
-
-
-class EvalReport(BaseModel):
-    """An eval run's rollup, reported so the API can post the PR check."""
-
-    repo_full_name: str
-    sha: str
-    passed_count: int
-    total: int
-    target_url: str | None = None
 
 
 class EvalReportResult(BaseModel):

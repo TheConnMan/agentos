@@ -350,6 +350,39 @@ def test_create_get_list_round_trip(
     assert [a["id"] for a in listed.json()] == [body["id"]]
 
 
+def test_create_tolerates_unknown_field_from_a_newer_worker(
+    approvals_client: TestClient, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    """The route is a CONSUMER of the wire, so it ignores fields it does not model.
+
+    A newer worker adding an optional field must not 422 against an older API
+    during a rolling deploy -- that is what makes a new optional field a patch
+    bump. Exercised through the real route, because the strictness this guards
+    lives in FastAPI's own body validation, not in the model constructed by hand.
+    """
+
+    payload = _payload(future_field="from a newer worker")
+    created = approvals_client.post("/approvals", json=payload, headers=auth_headers)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["status"] == "pending"
+    assert body["summary"] == payload["summary"]
+    # The unknown field is ignored, not persisted onto the durable record.
+    assert "future_field" not in body
+
+
+def test_create_still_rejects_an_invalid_modelled_field(
+    approvals_client: TestClient, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    """Tolerance is for UNKNOWN fields only; a modelled field's constraint still binds."""
+
+    resp = approvals_client.post(
+        "/approvals", json=_payload(author=""), headers=auth_headers
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"][0]["loc"] == ["body", "author"]
+
+
 def test_create_is_idempotent_on_dedupe_key(
     approvals_client: TestClient, auth_headers: dict[str, str], clean_db: None
 ) -> None:

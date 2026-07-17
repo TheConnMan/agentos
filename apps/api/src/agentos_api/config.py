@@ -7,6 +7,7 @@ environment variable for shared or production deployments.
 
 from functools import lru_cache
 
+from aci_protocol import RUNS_STREAM_DEFAULT
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -76,8 +77,10 @@ class Settings(BaseSettings):
     valkey_url: str | None = None
 
     # The runs stream approval resolutions enqueue resume turns onto (#244).
-    # Must match the worker's AGENTOS_STREAM (its consumer side).
-    runs_stream: str = "agentos:runs"
+    # Must match the worker's AGENTOS_STREAM (its consumer side) -- which is why
+    # the default is the shared declaration both lanes import (#492) rather than
+    # a literal mirrored here. Still overridable via RUNS_STREAM.
+    runs_stream: str = RUNS_STREAM_DEFAULT
 
     # How often the expiry sweeper scans for lapsed pending approvals (#412) and
     # resumes their stranded sessions. Values <= 0 disable the sweeper (the

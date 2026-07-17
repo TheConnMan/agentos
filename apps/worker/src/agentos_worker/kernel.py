@@ -29,13 +29,14 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 from aci_protocol import (
     ErrorEvent,
     Event,
     Final,
+    GateKind,
     OutboundEvent,
     QueuedTurn,
     SessionStatus,
@@ -43,6 +44,7 @@ from aci_protocol import (
     TextDelta,
     ToolNote,
 )
+from pydantic import ValidationError
 
 from .approvals import ApprovalBackendError, ApprovalCreator, ApprovalRequest
 from .behaviorpacks import (
@@ -705,11 +707,22 @@ class Kernel:
                     dedupe_key=qevent.event_id,
                     route=route,
                     card_channel=card_channel,
-                    gate_kind=outcome.approval_gate_kind,
+                    # The ACI ``final`` frame types this as a bare ``str``, so an
+                    # unrecognized value only fails when the shared model
+                    # validates it (#492/#544: it is authority-bearing, so it is
+                    # rejected, never degraded to None). The cast defers to that
+                    # validation; ValidationError below is the rejection path.
+                    gate_kind=cast("GateKind | None", outcome.approval_gate_kind),
                     granted_tool=outcome.approval_granted_tool,
                 )
             )
-        except ApprovalBackendError as exc:
+        except (ApprovalBackendError, ValidationError) as exc:
+            # ValidationError: the shared model rejected the payload at
+            # construction (#492) -- an unknown gate_kind, or an empty
+            # conversation_id/author/dedupe_key, which the wire's QueuedTurn does
+            # not constrain. The API rejected these with a 422 before the model
+            # was shared, which surfaced here as ApprovalBackendError; both still
+            # escalate to a human rather than stranding the turn.
             logger.warning("approval create failed for %s: %s", qevent.event_id, exc)
             await self._escalate(
                 qevent,

@@ -34,6 +34,20 @@ HEARTBEAT_FILE_ENV = "AGENTOS_HEARTBEAT_FILE"
 HEARTBEAT_INTERVAL_ENV = "AGENTOS_HEARTBEAT_INTERVAL_SECONDS"
 SHIMMER_ENV = "AGENTOS_SHIMMER"
 
+# The transport literals the services hand-mirrored, declared once (#492). Same
+# rationale as the env names above: a rename used to drift one lane out of sync
+# with another. These are plain string constants, NOT Pydantic models -- they are
+# not in the exported JSON Schema and not in the wire fingerprint, so they cannot
+# force a protocol bump. The frozen wire contract stays transport-agnostic.
+#
+# RUNS_STREAM_DEFAULT and WORKER_GROUP_DEFAULT are DEFAULTS: each service binds
+# them through its pydantic config field, so the env-override path (#496's
+# STREAM_ENV / AGENTOS_CONSUMER_GROUP) is preserved. STREAM_PAYLOAD_FIELD is the
+# stream field holding a payload model's JSON.
+RUNS_STREAM_DEFAULT = "agentos:runs"
+WORKER_GROUP_DEFAULT = "agentos-workers"
+STREAM_PAYLOAD_FIELD = "payload"
+
 
 def api_url_validation_alias() -> AliasChoices:
     """The ``validation_alias`` for the platform API base URL field: the canonical

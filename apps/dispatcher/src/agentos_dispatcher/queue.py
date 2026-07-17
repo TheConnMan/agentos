@@ -24,11 +24,9 @@ does not require scanning the Stream.
 
 from typing import Any, Protocol, cast, runtime_checkable
 
-from aci_protocol import QueuedTurn, parse_queued_turn
+from aci_protocol import STREAM_PAYLOAD_FIELD, QueuedTurn, parse_queued_turn
 
 from .config import DispatcherConfig
-
-STREAM_PAYLOAD_FIELD = "payload"
 
 
 @runtime_checkable

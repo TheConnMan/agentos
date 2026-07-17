@@ -16,7 +16,7 @@ from .models import (
     Deployment,
     Environment,
 )
-from .schemas import AgentCreate, ApprovalCreate, DeploymentCreate, VersionCreate
+from .schemas import AgentCreate, ApprovalRequest, DeploymentCreate, VersionCreate
 
 
 async def get_version(
@@ -311,7 +311,7 @@ async def get_deployment(
 # -- approvals (#244, ADR-0010) -------------------------------------------------
 
 
-async def create_approval(session: AsyncSession, data: "ApprovalCreate") -> Approval:
+async def create_approval(session: AsyncSession, data: "ApprovalRequest") -> Approval:
     """Insert a pending approval. Raises IntegrityError on a dedupe_key replay;
     the router maps that to the existing record (idempotent creation)."""
 

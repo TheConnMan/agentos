@@ -1,6 +1,6 @@
 """F3 eval-stream consumer: run eval suites requested on the agentos:evals stream.
 
-The K1-API producer XADDs one stream field ``payload`` holding an ``EvalWorkItem``
+The K1-API producer XADDs one stream field ``payload`` holding an ``EvalJob``
 JSON (the dispatcher seam convention). This consumer runs a distinct consumer
 group (``agentos-eval-workers``) so it does not compete with the runs consumer.
 For each entry it:
@@ -35,9 +35,14 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-from aci_protocol import Budget
+from aci_protocol import (
+    STREAM_PAYLOAD_FIELD,
+    Budget,
+    EvalJob,
+    EvalReport,
+    parse_eval_job,
+)
 from plugin_format import safe_extract
-from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from ..binding import (
@@ -60,45 +65,18 @@ from .run import run_eval_suite
 
 logger = logging.getLogger(__name__)
 
+# ``EvalJob``/``EvalReport`` are the shared wire models (#492), re-exported so
+# this module stays the eval lane's seam for the stream payloads.
+__all__ = [
+    "EvalJob",
+    "EvalReport",
+    "EvalReporter",
+    "EvalStreamConsumer",
+    "load_suite_from_bundle",
+]
+
 # Pause before retrying the blocking eval read after a transient transport error.
 _EVAL_READ_ERROR_BACKOFF_S = 0.5
-
-STREAM_PAYLOAD_FIELD = "payload"
-
-
-class EvalWorkItem(BaseModel):
-    """One eval request from the agentos:evals stream (the K1-API seam).
-
-    ``model`` is the model this run should be evaluated under (#526): when set it
-    is booted into the provisioned eval sandbox (winning over the worker's default
-    ``config.model``) AND becomes the run's model dimension, so a caller can sweep
-    one suite across several models and read the comparison back off
-    ``GET /evals/matrix``. None keeps the legacy behaviour (the worker default),
-    and the ``target_url`` shortcut still evals whatever that runner already booted.
-    """
-
-    agent_id: uuid.UUID
-    version_id: uuid.UUID
-    sha: str
-    suite: str
-    bundle_ref: str | None = None
-    target_url: str | None = None
-    model: str | None = None
-    requested_at: str
-
-    @classmethod
-    def from_stream_fields(cls, fields: dict[str, str]) -> EvalWorkItem:
-        return cls.model_validate_json(fields[STREAM_PAYLOAD_FIELD])
-
-
-class EvalReport(BaseModel):
-    """The summary POSTed to the platform API for the GitHub check."""
-
-    repo_full_name: str
-    sha: str
-    passed_count: int
-    total: int
-    target_url: str | None = None
 
 
 class EvalReporter:
@@ -277,7 +255,10 @@ class EvalStreamConsumer(StreamConsumer):
         self._inflight_ids.add(entry_id)
         try:
             try:
-                item = EvalWorkItem.from_stream_fields(fields)
+                # The sanctioned tolerant decode: a newer API adding an optional
+                # field must not land in the poison-pill branch below, which
+                # would ack and DROP the job with no dead letter.
+                item = parse_eval_job(fields[STREAM_PAYLOAD_FIELD])
             except Exception:
                 # Poison pill: unprocessable on any redelivery, so ack and drop.
                 logger.exception("malformed eval work item %s; acking as poison", entry_id)
@@ -295,7 +276,7 @@ class EvalStreamConsumer(StreamConsumer):
         finally:
             self._inflight_ids.discard(entry_id)
 
-    async def _run_and_report(self, item: EvalWorkItem) -> EvalRunResult:
+    async def _run_and_report(self, item: EvalJob) -> EvalRunResult:
         repo = await self._repo_lookup.repo_full_name(item.agent_id)
         suite = await self._load_suite(item)
         if suite is None:
@@ -320,7 +301,7 @@ class EvalStreamConsumer(StreamConsumer):
         await self._report(item, repo, result)
         return result
 
-    async def _load_suite(self, item: EvalWorkItem) -> EvalSuite | None:
+    async def _load_suite(self, item: EvalJob) -> EvalSuite | None:
         if item.bundle_ref is None:
             return None
         try:
@@ -331,7 +312,7 @@ class EvalStreamConsumer(StreamConsumer):
         return load_suite_from_bundle(data, item.suite)
 
     async def _acquire_target(
-        self, item: EvalWorkItem
+        self, item: EvalJob
     ) -> tuple[str | None, str | None, str | None]:
         if item.target_url is not None:
             # dev/test shortcut: eval a given runner. Not a claim of ours, so no
@@ -349,7 +330,7 @@ class EvalStreamConsumer(StreamConsumer):
             return None, None, None
         return handle.base_url, release_key, handle.token or None
 
-    def _eval_model(self, item: EvalWorkItem) -> str | None:
+    def _eval_model(self, item: EvalJob) -> str | None:
         """The model dimension for this run: the caller-requested ``item.model``
         when set (#526, a sweep pins each run to a distinct model), else the model
         the eval's runner is booted with (``config.model``, the same value
@@ -364,7 +345,7 @@ class EvalStreamConsumer(StreamConsumer):
         return self._config.model or None
 
     def _boot_env(
-        self, item: EvalWorkItem, connector_secrets: dict[str, str] | None = None
+        self, item: EvalJob, connector_secrets: dict[str, str] | None = None
     ) -> dict[str, str]:
         budget = Budget(
             max_output_tokens_per_run=self._config.default_max_output_tokens_per_run,
@@ -394,7 +375,7 @@ class EvalStreamConsumer(StreamConsumer):
         return env
 
     async def _report_failed(
-        self, item: EvalWorkItem, repo: str | None, reason: str
+        self, item: EvalJob, repo: str | None, reason: str
     ) -> EvalRunResult:
         logger.error("eval %s @ %s failed: %s", item.suite, item.sha, reason)
         result = EvalRunResult(version=item.sha, suite=item.suite, results=[])
@@ -402,7 +383,7 @@ class EvalStreamConsumer(StreamConsumer):
         return result
 
     async def _report(
-        self, item: EvalWorkItem, repo: str | None, result: EvalRunResult
+        self, item: EvalJob, repo: str | None, result: EvalRunResult
     ) -> None:
         await self._reporter.report(
             EvalReport(

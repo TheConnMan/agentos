@@ -7,6 +7,8 @@ reconnect supervision. The queue payload is ``aci_protocol.QueuedTurn`` (issue
 dedupe) plus the Slack ingress.
 """
 
+from aci_protocol import STREAM_PAYLOAD_FIELD as STREAM_PAYLOAD_FIELD
+
 from .app import (
     SocketModeConnection,
     build_app,
@@ -16,7 +18,6 @@ from .app import (
 from .config import DispatcherConfig
 from .handlers import is_actionable, process_event, register_handlers
 from .queue import (
-    STREAM_PAYLOAD_FIELD,
     claim_event,
     enqueue,
     from_stream_fields,

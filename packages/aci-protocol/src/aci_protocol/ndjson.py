@@ -23,7 +23,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from .events import (
-    _READER_CONTEXT_KEY,
+    READER_CONTEXT,
     ErrorEvent,
     Final,
     InboundMessage,
@@ -34,8 +34,7 @@ from .events import (
 )
 from .turn import QueuedTurn
 from .version import PROTOCOL_VERSION, is_compatible
-
-_READER_CONTEXT = {_READER_CONTEXT_KEY: True}
+from .wire import EvalJob
 
 OutboundEventModel = TextDelta | ToolNote | Final | ErrorEvent | SideEffectFlag
 
@@ -77,7 +76,7 @@ def parse_ndjson_line(line: str) -> OutboundEventModel:
         raise ProtocolVersionError(
             f"unsupported protocol version {version!r}; this build speaks {PROTOCOL_VERSION!r}"
         )
-    return _OUTBOUND_ADAPTER.validate_python(raw, context=_READER_CONTEXT)
+    return _OUTBOUND_ADAPTER.validate_python(raw, context=READER_CONTEXT)
 
 
 def parse_ndjson(text: str) -> list[OutboundEventModel]:
@@ -98,7 +97,7 @@ def parse_inbound(raw: str | dict[str, Any]) -> Any:
     """Decode an inbound channel message (event or interrupt) from JSON."""
 
     data = json.loads(raw) if isinstance(raw, str) else raw
-    return _INBOUND_ADAPTER.validate_python(data, context=_READER_CONTEXT)
+    return _INBOUND_ADAPTER.validate_python(data, context=READER_CONTEXT)
 
 
 def to_inbound_json(message: Any) -> str:
@@ -118,7 +117,19 @@ def parse_queued_turn(raw: str | bytes) -> QueuedTurn:
     construct the model directly, where an unknown field is still an error.
     """
 
-    return QueuedTurn.model_validate_json(raw, context=_READER_CONTEXT)
+    return QueuedTurn.model_validate_json(raw, context=READER_CONTEXT)
+
+
+def parse_eval_job(raw: str | bytes) -> EvalJob:
+    """Decode an eval-job payload tolerantly (the sanctioned consumer decode).
+
+    The ``agentos:evals`` counterpart to ``parse_queued_turn``, with the same
+    policy for the same reason: a newer API adding an optional field must not
+    make an older worker reject the job. Carries no ``version`` field, so there
+    is no version gate -- a pure tolerant field decode. Producers stay strict.
+    """
+
+    return EvalJob.model_validate_json(raw, context=READER_CONTEXT)
 
 
 __all__ = [
@@ -132,4 +143,5 @@ __all__ = [
     "parse_inbound",
     "to_inbound_json",
     "parse_queued_turn",
+    "parse_eval_job",
 ]

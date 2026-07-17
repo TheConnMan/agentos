@@ -1,5 +1,135 @@
 {
   "$defs": {
+    "ApprovalRequest": {
+      "description": "A durable approval request (#244), created by the worker when a run ends\nawaiting-approval.\n\n``dedupe_key`` is the triggering event id, so a redelivered turn adopts the\nexisting record instead of forking a second one. ``route``/``card_channel``\n(#247) record the manifest route the request named and the channel the worker\nrouted the card to after binding resolution; the authorizer proves membership\nagainst ``card_channel``. ``gate_kind``/``granted_tool`` are the durable gate\nprovenance (#544, Decision C) written by the runner; both stay optional for\nthe rolling-deploy window.",
+      "properties": {
+        "agent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "author": {
+          "minLength": 1,
+          "title": "Author",
+          "type": "string"
+        },
+        "card_channel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Card Channel"
+        },
+        "conversation_id": {
+          "minLength": 1,
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "dedupe_key": {
+          "minLength": 1,
+          "title": "Dedupe Key",
+          "type": "string"
+        },
+        "expires_in_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires In Seconds"
+        },
+        "gate_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GateKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "granted_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Granted Tool"
+        },
+        "reply_channel": {
+          "minLength": 1,
+          "title": "Reply Channel",
+          "type": "string"
+        },
+        "reply_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reply Endpoint"
+        },
+        "reply_placeholder": {
+          "minLength": 1,
+          "title": "Reply Placeholder",
+          "type": "string"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "conversation_id",
+        "dedupe_key",
+        "reply_channel",
+        "reply_placeholder",
+        "summary"
+      ],
+      "title": "ApprovalRequest",
+      "type": "object"
+    },
     "Budget": {
       "description": "Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.\n\n``task_budget_hint`` is the optional hint passed through to the model so it\nself paces (section 6b); it is not a hard ceiling.",
       "properties": {
@@ -67,6 +197,119 @@
         "version"
       ],
       "title": "ErrorEvent",
+      "type": "object"
+    },
+    "EvalJob": {
+      "description": "One eval job: run ``suite`` against the version built from ``sha``.\n\nThe shared declaration of what the API enqueues onto the eval stream and the\nworker consumes off it (formerly the API's ``EvalJobRequest`` and the\nworker's ``EvalWorkItem``, which had drifted on ``bundle_ref``).",
+      "properties": {
+        "agent_id": {
+          "format": "uuid",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "bundle_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bundle Ref"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "requested_at": {
+          "title": "Requested At",
+          "type": "string"
+        },
+        "sha": {
+          "title": "Sha",
+          "type": "string"
+        },
+        "suite": {
+          "title": "Suite",
+          "type": "string"
+        },
+        "target_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Url"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "bundle_ref",
+        "requested_at",
+        "sha",
+        "suite",
+        "version_id"
+      ],
+      "title": "EvalJob",
+      "type": "object"
+    },
+    "EvalReport": {
+      "description": "An eval run's rollup, reported so the API can post the PR check.\n\nByte-identical across both lanes before this promotion, so it carries no\nsemantic decisions.",
+      "properties": {
+        "passed_count": {
+          "title": "Passed Count",
+          "type": "integer"
+        },
+        "repo_full_name": {
+          "title": "Repo Full Name",
+          "type": "string"
+        },
+        "sha": {
+          "title": "Sha",
+          "type": "string"
+        },
+        "target_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Url"
+        },
+        "total": {
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "passed_count",
+        "repo_full_name",
+        "sha",
+        "total"
+      ],
+      "title": "EvalReport",
       "type": "object"
     },
     "Event": {
@@ -186,6 +429,15 @@
       ],
       "title": "Final",
       "type": "object"
+    },
+    "GateKind": {
+      "description": "Which gate raised an approval: a permission gate or a policy gate.\n\nA ``StrEnum`` rather than a ``Literal`` for two reasons. It is what the Rust\ngenerator can express (a multi-valued ``Literal`` raises; the ``Enum`` branch\nis the sanctioned path, exactly as ``SessionStatus`` uses). And the field is\nauthority-bearing per #544/ADR-0046, so the value domain is a named, exported\npart of the contract rather than an inline annotation.",
+      "enum": [
+        "permission",
+        "policy"
+      ],
+      "title": "GateKind",
+      "type": "string"
     },
     "InboundMessage": {
       "discriminator": {
@@ -545,6 +797,6 @@
   },
   "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.2.1",
-  "title": "ACI Protocol v0.2.1"
+  "protocolVersion": "0.2.2",
+  "title": "ACI Protocol v0.2.2"
 }

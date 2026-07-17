@@ -410,134 +410,6 @@
         "title": "ApprovalAuditOut",
         "type": "object"
       },
-      "ApprovalCreate": {
-        "description": "A durable approval request (#244), created by the worker when a run ends\nawaiting-approval. ``dedupe_key`` is the triggering event id, so a\nredelivered turn adopts the existing record instead of forking a second one.\n``route``/``card_channel`` (#247) record the manifest route the request\nnamed and the channel the worker routed the card to after binding\nresolution; the authorizer proves membership against ``card_channel``.",
-        "properties": {
-          "agent_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Id"
-          },
-          "author": {
-            "minLength": 1,
-            "title": "Author",
-            "type": "string"
-          },
-          "card_channel": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Card Channel"
-          },
-          "conversation_id": {
-            "minLength": 1,
-            "title": "Conversation Id",
-            "type": "string"
-          },
-          "dedupe_key": {
-            "minLength": 1,
-            "title": "Dedupe Key",
-            "type": "string"
-          },
-          "expires_in_seconds": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires In Seconds"
-          },
-          "gate_kind": {
-            "anyOf": [
-              {
-                "enum": [
-                  "permission",
-                  "policy"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gate Kind"
-          },
-          "granted_tool": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Granted Tool"
-          },
-          "reply_channel": {
-            "minLength": 1,
-            "title": "Reply Channel",
-            "type": "string"
-          },
-          "reply_endpoint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reply Endpoint"
-          },
-          "reply_placeholder": {
-            "minLength": 1,
-            "title": "Reply Placeholder",
-            "type": "string"
-          },
-          "route": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Route"
-          },
-          "summary": {
-            "minLength": 1,
-            "title": "Summary",
-            "type": "string"
-          }
-        },
-        "required": [
-          "conversation_id",
-          "author",
-          "summary",
-          "reply_channel",
-          "reply_placeholder",
-          "dedupe_key"
-        ],
-        "title": "ApprovalCreate",
-        "type": "object"
-      },
       "ApprovalOut": {
         "properties": {
           "agent_id": {
@@ -714,6 +586,129 @@
           "resolved_at"
         ],
         "title": "ApprovalOut",
+        "type": "object"
+      },
+      "ApprovalRequest": {
+        "description": "A durable approval request (#244), created by the worker when a run ends\nawaiting-approval.\n\n``dedupe_key`` is the triggering event id, so a redelivered turn adopts the\nexisting record instead of forking a second one. ``route``/``card_channel``\n(#247) record the manifest route the request named and the channel the worker\nrouted the card to after binding resolution; the authorizer proves membership\nagainst ``card_channel``. ``gate_kind``/``granted_tool`` are the durable gate\nprovenance (#544, Decision C) written by the runner; both stay optional for\nthe rolling-deploy window.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "author": {
+            "minLength": 1,
+            "title": "Author",
+            "type": "string"
+          },
+          "card_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Channel"
+          },
+          "conversation_id": {
+            "minLength": 1,
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "dedupe_key": {
+            "minLength": 1,
+            "title": "Dedupe Key",
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Seconds"
+          },
+          "gate_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "granted_tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted Tool"
+          },
+          "reply_channel": {
+            "minLength": 1,
+            "title": "Reply Channel",
+            "type": "string"
+          },
+          "reply_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply Endpoint"
+          },
+          "reply_placeholder": {
+            "minLength": 1,
+            "title": "Reply Placeholder",
+            "type": "string"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          },
+          "summary": {
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "author",
+          "summary",
+          "reply_channel",
+          "reply_placeholder",
+          "dedupe_key"
+        ],
+        "title": "ApprovalRequest",
         "type": "object"
       },
       "ApprovalResolve": {
@@ -1260,7 +1255,7 @@
         "type": "object"
       },
       "EvalReport": {
-        "description": "An eval run's rollup, reported so the API can post the PR check.",
+        "description": "An eval run's rollup, reported so the API can post the PR check.\n\nByte-identical across both lanes before this promotion, so it carries no\nsemantic decisions.",
         "properties": {
           "passed_count": {
             "title": "Passed Count",
@@ -1319,7 +1314,7 @@
         "type": "object"
       },
       "EvalTriggerRequest": {
-        "description": "Ask for an on-demand platform eval run for an agent (issue #10).\n\nEnqueues the same EvalJobRequest the git-push fan-out uses, minus the\npush-only gate. With no version_id the agent's active dev deployment is\nevaluated; suite falls back to Settings.eval_default_suite when omitted.",
+        "description": "Ask for an on-demand platform eval run for an agent (issue #10).\n\nEnqueues the same EvalJob the git-push fan-out uses, minus the\npush-only gate. With no version_id the agent's active dev deployment is\nevaluated; suite falls back to Settings.eval_default_suite when omitted.",
         "properties": {
           "agent_id": {
             "format": "uuid",
@@ -1436,6 +1431,15 @@
         ],
         "title": "EvalTriggerResult",
         "type": "object"
+      },
+      "GateKind": {
+        "description": "Which gate raised an approval: a permission gate or a policy gate.\n\nA ``StrEnum`` rather than a ``Literal`` for two reasons. It is what the Rust\ngenerator can express (a multi-valued ``Literal`` raises; the ``Enum`` branch\nis the sanctioned path, exactly as ``SessionStatus`` uses). And the field is\nauthority-bearing per #544/ADR-0046, so the value domain is a named, exported\npart of the contract rather than an inline annotation.",
+        "enum": [
+          "permission",
+          "policy"
+        ],
+        "title": "GateKind",
+        "type": "string"
       },
       "GraderOut": {
         "description": "A deterministic grader, mirroring the frozen eval-case Grader shape\n(`apps/worker/schema/eval-cases.schema.json`). Do not let this drift from the\nworker's `Grader` model.",
@@ -4342,7 +4346,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApprovalCreate"
+                "$ref": "#/components/schemas/ApprovalRequest"
               }
             }
           },

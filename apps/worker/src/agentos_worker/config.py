@@ -23,8 +23,10 @@ from aci_protocol.service_config import (
     API_KEY_ENV,
     HEARTBEAT_FILE_ENV,
     HEARTBEAT_INTERVAL_ENV,
+    RUNS_STREAM_DEFAULT,
     SHIMMER_ENV,
     STREAM_ENV,
+    WORKER_GROUP_DEFAULT,
     AliasOnlyEnvSource,
     api_url_validation_alias,
     warn_if_deprecated_api_url_env,
@@ -152,10 +154,13 @@ class WorkerConfig(BaseSettings):
         validation_alias="AGENTOS_BOOTING_TEXT",
     )
 
-    # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM)
-    stream: str = Field(default="agentos:runs", validation_alias=STREAM_ENV)
+    # Stream / consumer group (must match the dispatcher's AGENTOS_STREAM). The
+    # defaults are the shared declarations (#492) so a rename cannot drift this
+    # lane out of sync with the dispatcher/API/CLI; the validation_alias keeps
+    # #496's env-override path intact.
+    stream: str = Field(default=RUNS_STREAM_DEFAULT, validation_alias=STREAM_ENV)
     consumer_group: str = Field(
-        default="agentos-workers", validation_alias="AGENTOS_CONSUMER_GROUP"
+        default=WORKER_GROUP_DEFAULT, validation_alias="AGENTOS_CONSUMER_GROUP"
     )
     consumer_name: str = Field(
         default_factory=_default_consumer_name,

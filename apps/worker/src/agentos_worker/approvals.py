@@ -17,35 +17,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
-from uuid import UUID
 
 import httpx
-from pydantic import BaseModel
+from aci_protocol import ApprovalRequest
 
-
-class ApprovalRequest(BaseModel):
-    """The creation payload, matching the API's ApprovalCreate schema."""
-
-    agent_id: UUID | None = None
-    conversation_id: str
-    author: str
-    summary: str
-    reply_channel: str
-    reply_placeholder: str
-    reply_endpoint: str | None = None
-    dedupe_key: str
-    # The manifest route the request named and the channel the card was routed
-    # to after binding resolution (#247); the authorizer proves membership
-    # against card_channel.
-    route: str | None = None
-    card_channel: str | None = None
-    # Gate provenance (#544, Decision C), carried verbatim from the run's final
-    # onto the durable record. ``gate_kind`` is 'permission' or 'policy';
-    # ``granted_tool`` is the denied tool name, only ever set for a permission
-    # gate. Field names match the API's ApprovalCreate schema (posted as-is).
-    gate_kind: str | None = None
-    granted_tool: str | None = None
-    expires_in_seconds: int | None = None
+# Re-exported so this module stays the kernel-facing seam for the approval
+# payload: ``ApprovalRequest`` is now the shared wire model (#492), not a
+# lane-local mirror of the API's schema.
+__all__ = [
+    "ApprovalBackendError",
+    "ApprovalClient",
+    "ApprovalCreator",
+    "ApprovalRequest",
+    "CreatedApproval",
+]
 
 
 @dataclass(frozen=True)

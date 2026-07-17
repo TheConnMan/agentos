@@ -29,6 +29,7 @@ from .events import OutboundEvent as OutboundEventUnion
 from .session import Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION, WIRE_VERSION_FIELD
+from .wire import ApprovalRequest, EvalJob, EvalReport
 
 
 # RootModel envelopes so the committed schema and generated TypeScript expose the
@@ -58,6 +59,9 @@ _MODELS = (
     SideEffectFlag,
     ReplyHandle,
     QueuedTurn,
+    EvalJob,
+    EvalReport,
+    ApprovalRequest,
 )
 
 SCHEMA_ID = "https://curie.tech/agentos/aci-protocol.schema.json"
