@@ -158,11 +158,18 @@ pub struct EvalModelSummary {
 }
 
 /// The eval matrix grid (`EvalMatrix` in openapi.json): `GET /evals/matrix`. The
-/// sweep reads only `model_summaries` (the model dimension); the version grid is
-/// carried but unused here.
+/// sweep reads `model_summaries` (the model dimension) plus `versions` (the shown
+/// version columns, newest first): a `--model` sweep uses `versions` to scope
+/// readiness to the run it just triggered, so a prior run's rows cannot satisfy
+/// the exit condition on the first poll (issue #608). The per-case `rows` grid is
+/// carried by the endpoint but unused here.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvalMatrix {
     pub suite: String,
+    /// The shown version columns (commit shas), most recent first. A triggered
+    /// run's sha appears here only once at least one of its traces has landed.
+    #[serde(default)]
+    pub versions: Vec<String>,
     #[serde(default)]
     pub model_summaries: Vec<EvalModelSummary>,
 }
