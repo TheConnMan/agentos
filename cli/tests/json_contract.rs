@@ -6,7 +6,9 @@
 
 use agentos::commands::{eval_json, status_json};
 use agentos::exit;
-use agentos::message::{message_dry_run_json, message_reply_json, message_timeout_json};
+use agentos::message::{
+    message_awaiting_approval_json, message_dry_run_json, message_reply_json, message_timeout_json,
+};
 use agentos::observability::{local_endpoints, Endpoint, ObservabilityOutput};
 use agentos::ui::{CliOutput, DryRunPlan};
 use agentos_aci_protocol::SessionStatus;
@@ -164,6 +166,8 @@ fn message_schema_variants_are_mutually_exclusive() {
     for value in [
         message_reply_json("1700000000.000100", Some("hi")),
         message_reply_json("1700000000.000100", None),
+        message_awaiting_approval_json("1700000000.000100", Some("awaiting approval")),
+        message_awaiting_approval_json("1700000000.000100", None),
         message_timeout_json(),
         message_dry_run_json("local", "s", Some("C1"), "http://x/api/"),
     ] {
@@ -172,6 +176,23 @@ fn message_schema_variants_are_mutually_exclusive() {
             "each builder output must satisfy the oneOf: {value}"
         );
     }
+}
+
+#[test]
+fn message_awaiting_approval_json_validates_and_is_distinct() {
+    // #529: the awaiting-approval object is finalized:false + awaiting_approval:true,
+    // a distinct terminal state from a reply or a timeout.
+    let schema = load_schema("message.schema.json");
+    let v = validator(&schema);
+    let awaiting = message_awaiting_approval_json("1700000000.000100", Some("card text"));
+    assert!(
+        v.is_valid(&awaiting),
+        "awaiting-approval must validate against message.schema.json: {awaiting}"
+    );
+    assert_eq!(awaiting["finalized"], serde_json::json!(false));
+    assert_eq!(awaiting["awaiting_approval"], serde_json::json!(true));
+    assert_eq!(awaiting["reply"], serde_json::json!("card text"));
+    assert_eq!(awaiting["thread"], serde_json::json!("1700000000.000100"));
 }
 
 #[test]

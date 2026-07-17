@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "agentos local|cluster message --json",
-  "description": "The agent-facing payload of `agentos local message --json` and `agentos cluster message --json`. Exactly one of three terminal-state shapes is emitted per invocation: a reply object (the model's final reply text, the thread the turn ran under, and whether a reply was captured), a timeout object (no reply captured before the deadline), or a dry-run descriptor (what a real run would enqueue). All keys are CLI-owned and locked.",
+  "description": "The agent-facing payload of `agentos local message --json` and `agentos cluster message --json`. Exactly one of four terminal-state shapes is emitted per invocation: a reply object (the model's final reply text, the thread the turn ran under, and whether a reply was captured), an awaiting-approval object (the turn parked on a human approval gate), a timeout object (no reply captured before the deadline), or a dry-run descriptor (what a real run would enqueue). All keys are CLI-owned and locked.",
   "oneOf": [
     {
       "title": "reply",
@@ -13,6 +13,19 @@
         "reply": { "type": ["string", "null"] },
         "thread": { "type": "string" },
         "finalized": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "awaiting-approval",
+      "description": "The turn parked on a human approval gate: the worker posted an approval card rather than finalizing, so `finalized` is false and `awaiting_approval` marks the terminal state. `reply` is the card's placeholder text if seen. The persisted Approval holds this run's ephemeral CLI reply endpoint, so the resumed reply strands once the command exits (#529).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reply", "thread", "finalized", "awaiting_approval"],
+      "properties": {
+        "reply": { "type": ["string", "null"] },
+        "thread": { "type": "string" },
+        "finalized": { "const": false },
+        "awaiting_approval": { "const": true }
       }
     },
     {

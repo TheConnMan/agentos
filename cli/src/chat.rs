@@ -49,6 +49,12 @@ const ACK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Bounded drain after the ack to catch a final edit still in flight.
 const FINAL_DRAIN: Duration = Duration::from_millis(100);
 
+/// The Block Kit action id on the approval card's Approve button
+/// (`agentos_dispatcher.approval_actions.APPROVE_ACTION_ID`). Its presence in a
+/// captured Slack call body is the unambiguous signal that a turn parked
+/// awaiting approval and posted a card (#529).
+pub const APPROVE_ACTION_ID: &str = "agentos-approval-approve";
+
 /// One captured Slack Web API call at the stub.
 #[derive(Debug, Clone)]
 pub struct SlackCall {
@@ -56,6 +62,9 @@ pub struct SlackCall {
     pub channel: Option<String>,
     pub ts: Option<String>,
     pub text: Option<String>,
+    /// True when the raw body carried the approval card's Approve action id, i.e.
+    /// the worker parked this turn awaiting approval and posted a card (#529).
+    pub approval_card: bool,
 }
 
 /// If this call is a `chat.update` editing `placeholder_ts`, its new text.
@@ -165,6 +174,10 @@ async fn handle_call(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
     let (channel, ts, text) = extract_fields(content_type, &body);
+    // The approval card's Approve button carries this action id in the blocks,
+    // which `extract_fields` does not parse -- match it on the raw body so an
+    // awaiting-approval turn is detectable regardless of encoding (#529).
+    let approval_card = body.contains(APPROVE_ACTION_ID);
     // chat.update echoes the existing ts; a hypothetical new-message call has no
     // ts, so synthesize one so the response still looks like Slack.
     let ts_out = ts
@@ -175,6 +188,7 @@ async fn handle_call(
         channel: channel.clone(),
         ts: ts.clone(),
         text: text.clone(),
+        approval_card,
     });
     Json(json!({ "ok": true, "ts": ts_out, "channel": channel, "text": text }))
 }
@@ -184,6 +198,12 @@ pub enum Outcome {
     Replied(String),
     /// The worker finished the turn but never edited the placeholder.
     CompletedNoEdit,
+    /// The turn parked awaiting human approval: the worker posted an approval
+    /// card (rather than finalizing) and persisted a durable `Approval` carrying
+    /// THIS run's reply endpoint. For `local`/`cluster message` that endpoint is
+    /// the CLI's throwaway stub, which dies when the command exits, so the resumed
+    /// reply has nowhere to land (#529). Carries the latest placeholder text seen.
+    AwaitingApproval(Option<String>),
     /// The deadline passed with no completion.
     TimedOut,
 }
@@ -201,11 +221,15 @@ pub async fn await_reply(
 ) -> Outcome {
     let deadline = Instant::now() + timeout;
     let mut latest: Option<String> = None;
+    // Whether the worker posted an approval card during this turn: the turn parked
+    // awaiting approval rather than finalizing normally (#529).
+    let mut awaiting_approval = false;
     let mut poll = tokio::time::interval(ACK_POLL_INTERVAL);
     loop {
         tokio::select! {
             call = stub.recv() => {
                 if let Some(call) = call {
+                    awaiting_approval |= call.approval_card;
                     if let Some(text) = placeholder_update_text(&call, placeholder_ts) {
                         latest = Some(text.to_string());
                     }
@@ -215,9 +239,13 @@ pub async fn await_reply(
                 if entry_acked(conn, stream, WORKER_GROUP, entry_id).await {
                     // Drain any final edit still in flight before deciding.
                     while let Ok(Some(call)) = tokio::time::timeout(FINAL_DRAIN, stub.recv()).await {
+                        awaiting_approval |= call.approval_card;
                         if let Some(text) = placeholder_update_text(&call, placeholder_ts) {
                             latest = Some(text.to_string());
                         }
+                    }
+                    if awaiting_approval {
+                        return Outcome::AwaitingApproval(latest);
                     }
                     return latest.map_or(Outcome::CompletedNoEdit, Outcome::Replied);
                 }
@@ -282,6 +310,7 @@ mod tests {
             channel: Some("C1".into()),
             ts: Some("1.2".into()),
             text: Some("the answer".into()),
+            approval_card: false,
         };
         assert_eq!(placeholder_update_text(&update, "1.2"), Some("the answer"));
         // Wrong ts (a different message).
