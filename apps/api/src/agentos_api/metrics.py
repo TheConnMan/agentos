@@ -60,6 +60,15 @@ def resolve_window(
     return start_dt.isoformat(), end_dt.isoformat()
 
 
+# Eval traces are named `eval:<suite>:<case_id>` by the worker's eval recorder.
+# They are real billed runs but they are NOT product traffic, so counting them in
+# the OB1 metrics/cost summary inflates runs/tokens/cost with eval activity (#547).
+# The eval matrix has its own surface (EvalModelSummary); exclude eval traces here.
+# Excluded via the same name column the agent filter matches on, so no untested
+# filter shape is introduced.
+_EVAL_TRACE_PREFIX = "eval:"
+
+
 def _filters(view: str, environment: str | None, agent: str | None) -> list[dict[str, Any]]:
     name_col = "name" if view == "traces" else "traceName"
     filters: list[dict[str, Any]] = []
@@ -71,6 +80,17 @@ def _filters(view: str, environment: str | None, agent: str | None) -> list[dict
         filters.append(
             {"column": name_col, "operator": "contains", "value": agent, "type": "string"}
         )
+    # Drop eval traces from the aggregate (#547). Harmless when `agent` is set (an
+    # agent's `agentos-run:` traces never carry the eval name), load-bearing on the
+    # summary tab where `agent` is None and every trace in the window is counted.
+    filters.append(
+        {
+            "column": name_col,
+            "operator": "does not contain",
+            "value": _EVAL_TRACE_PREFIX,
+            "type": "string",
+        }
+    )
     return filters
 
 
@@ -152,8 +172,39 @@ async def summary(
         latency_p95_ms=scalars["latency_p95_ms"],
         tokens=int(scalars["tokens"]),
         cost_usd=scalars["cost_usd"],
+        cost_known=_cost_known(scalars["tokens"], scalars["cost_usd"]),
         error_rate=_error_rate(level_rows),
     )
+
+
+def _cost_known(tokens: float, cost_usd: float) -> bool:
+    """Whether a summed cost of `cost_usd` is a real total or a priced-to-zero gap.
+
+    Langfuse returns a generation's cost by matching its model to a stored price
+    row; with no matching row it returns 0 even when tokens were spent. So a
+    ``cost_usd == 0`` with ``tokens > 0`` is "cost unknown" (a missing price row),
+    not "free" -- the exact $0.00-for-a-billed-run confusion in #547. A genuinely
+    zero-token window (no work) stays cost-known.
+    """
+
+    return not (tokens > 0 and cost_usd == 0.0)
+
+
+async def cost_known(
+    lf: LangfuseClient,
+    start: str,
+    end: str,
+    environment: str | None,
+    agent: str | None,
+) -> bool:
+    """The `cost_known` flag for a window, for callers (get_cost) that fetch cost
+    without the token total. Runs the one extra tokens query summary already has."""
+
+    cost_rows = await lf.query_metrics(_scalar_query("cost_usd", start, end, environment, agent))
+    token_rows = await lf.query_metrics(_scalar_query("tokens", start, end, environment, agent))
+    cost = _num(cost_rows[0], _SPEC["cost_usd"][3]) if cost_rows else 0.0
+    tokens = _num(token_rows[0], _SPEC["tokens"][3]) if token_rows else 0.0
+    return _cost_known(tokens, cost)
 
 
 async def series(
