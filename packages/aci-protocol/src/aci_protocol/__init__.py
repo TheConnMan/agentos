@@ -40,6 +40,8 @@ from .ndjson import (
 )
 from .reference import reference_producer
 from .service_config import (
+    EVAL_CONSUMER_GROUP_DEFAULT,
+    EVAL_STREAM_DEFAULT,
     RUNS_STREAM_DEFAULT,
     STREAM_PAYLOAD_FIELD,
     WORKER_GROUP_DEFAULT,
@@ -70,6 +72,8 @@ __all__ = [
     # shared transport literals (defaults + the stream payload field)
     "RUNS_STREAM_DEFAULT",
     "WORKER_GROUP_DEFAULT",
+    "EVAL_STREAM_DEFAULT",
+    "EVAL_CONSUMER_GROUP_DEFAULT",
     "STREAM_PAYLOAD_FIELD",
     # inbound
     "Event",
