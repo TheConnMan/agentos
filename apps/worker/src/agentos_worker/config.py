@@ -21,6 +21,8 @@ from typing import Annotated
 
 from aci_protocol.service_config import (
     API_KEY_ENV,
+    EVAL_CONSUMER_GROUP_DEFAULT,
+    EVAL_STREAM_DEFAULT,
     HEARTBEAT_FILE_ENV,
     HEARTBEAT_INTERVAL_ENV,
     RUNS_STREAM_DEFAULT,
@@ -282,10 +284,11 @@ class WorkerConfig(BaseSettings):
     # Eval stream (F3): a separate consumer group on agentos:evals runs eval
     # suites and reports results to the platform API and Langfuse.
     eval_stream: str = Field(
-        default="agentos:evals", validation_alias="AGENTOS_EVAL_STREAM"
+        default=EVAL_STREAM_DEFAULT, validation_alias="AGENTOS_EVAL_STREAM"
     )
     eval_consumer_group: str = Field(
-        default="agentos-eval-workers", validation_alias="AGENTOS_EVAL_CONSUMER_GROUP"
+        default=EVAL_CONSUMER_GROUP_DEFAULT,
+        validation_alias="AGENTOS_EVAL_CONSUMER_GROUP",
     )
     eval_consumer_name: str = Field(default_factory=_default_consumer_name)
     # On first creation the eval group starts at (now - this window) rather than

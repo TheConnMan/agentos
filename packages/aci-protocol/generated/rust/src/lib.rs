@@ -12,6 +12,10 @@ pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
 
 pub const WORKER_GROUP_DEFAULT: &str = "agentos-workers";
 
+pub const EVAL_STREAM_DEFAULT: &str = "agentos:evals";
+
+pub const EVAL_CONSUMER_GROUP_DEFAULT: &str = "agentos-eval-workers";
+
 pub const STREAM_PAYLOAD_FIELD: &str = "payload";
 
 fn parse_semver(value: &str) -> Option<(u64, u64)> {

@@ -29,6 +29,8 @@ from .events import (
     ToolNote,
 )
 from .service_config import (
+    EVAL_CONSUMER_GROUP_DEFAULT,
+    EVAL_STREAM_DEFAULT,
     RUNS_STREAM_DEFAULT,
     STREAM_PAYLOAD_FIELD,
     WORKER_GROUP_DEFAULT,
@@ -338,6 +340,8 @@ def render_rust() -> str:
         # JSON Schema and do not move the wire fingerprint.
         f'pub const RUNS_STREAM_DEFAULT: &str = "{RUNS_STREAM_DEFAULT}";',
         f'pub const WORKER_GROUP_DEFAULT: &str = "{WORKER_GROUP_DEFAULT}";',
+        f'pub const EVAL_STREAM_DEFAULT: &str = "{EVAL_STREAM_DEFAULT}";',
+        f'pub const EVAL_CONSUMER_GROUP_DEFAULT: &str = "{EVAL_CONSUMER_GROUP_DEFAULT}";',
         f'pub const STREAM_PAYLOAD_FIELD: &str = "{STREAM_PAYLOAD_FIELD}";',
         _VERSION_GUARD,
         _string_enum(

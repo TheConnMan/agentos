@@ -20,9 +20,9 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import redis.asyncio as redis
-from aci_protocol import STREAM_PAYLOAD_FIELD, EvalJob, parse_eval_job
+from aci_protocol import EVAL_STREAM_DEFAULT, STREAM_PAYLOAD_FIELD, EvalJob, parse_eval_job
 
-EVAL_STREAM = "agentos:evals"
+EVAL_STREAM = EVAL_STREAM_DEFAULT
 
 
 def to_stream_fields(job: EvalJob) -> dict[str, str]:

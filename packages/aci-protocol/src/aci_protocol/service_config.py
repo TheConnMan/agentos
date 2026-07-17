@@ -48,6 +48,15 @@ RUNS_STREAM_DEFAULT = "agentos:runs"
 WORKER_GROUP_DEFAULT = "agentos-workers"
 STREAM_PAYLOAD_FIELD = "payload"
 
+# The eval lane's twins of the two above (#626, the deliberate deferral from
+# #492). The eval stream and its own consumer group were still hand-mirrored per
+# lane (the API producer, the worker consumer), the same drift risk #492 closed
+# for the runs stream. Same treatment: one declaration here, env-overridable
+# through each lane's pydantic field (AGENTOS_EVAL_STREAM /
+# AGENTOS_EVAL_CONSUMER_GROUP). Not wire models either, so no protocol bump.
+EVAL_STREAM_DEFAULT = "agentos:evals"
+EVAL_CONSUMER_GROUP_DEFAULT = "agentos-eval-workers"
+
 
 def api_url_validation_alias() -> AliasChoices:
     """The ``validation_alias`` for the platform API base URL field: the canonical
