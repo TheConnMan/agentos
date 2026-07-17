@@ -1,9 +1,10 @@
-"""Session setup: the typed SessionConfig and its env-var (de)serialization.
+"""Session setup: the typed SessionConfig, the BootEnv superset, and their env
+(de)serialization.
 
-Mirrors the ACI contract v0.1 SESSION SETUP block (section 0). A session is
-configured through environment variables and mounted files; SessionConfig is the
-typed view of those variables, with helpers to render them to and parse them
-from a process environment.
+``SessionConfig`` mirrors the ACI contract v0.1 SESSION SETUP block (section 0).
+A session is configured through environment variables and mounted files;
+SessionConfig is the typed view of those variables, with helpers to render them
+to and parse them from a process environment.
 
 Env mapping:
     AGENTOS_PLUGIN_DIR     -> plugin_dir
@@ -13,9 +14,16 @@ Env mapping:
     AGENTOS_SANDBOX_ID     -> sandbox_id
     AGENTOS_BUDGET         -> budget            (JSON object)
     OTEL_EXPORTER_OTLP_*   -> otel              (endpoint / headers / protocol)
+
+``BootEnv`` (#488, ADR-0049) is the AgentOS-platform superset: SessionConfig
+COMPOSED as a field plus the platform-operational boot vars (runner token,
+bundle ref, approval plumbing, history port, model routing, the operator knobs).
+It is deliberately not an extension of SessionConfig -- see ADR-0049 and the
+class docstring.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, cast
 
 from pydantic import Field
 
@@ -109,4 +117,497 @@ class SessionConfig(_AciModel):
             memory_ref=env.get("AGENTOS_MEMORY_REF"),
             credentials_ref=env.get("AGENTOS_CREDENTIALS"),
             otel=otel,
+        )
+
+
+# The producers that write a boot-env key. A key may have SEVERAL: the chart
+# bakes a template default the worker then overrides per claim. What matters is
+# not the count but the AUTHORITY -- see ``BootEnv`` and ADR-0049.
+Producer = Literal["worker", "kernel", "substrate", "operator"]
+
+# Producer tags for the nine keys ``SessionConfig`` owns. They cannot be carried
+# on the fields themselves: SessionConfig is the frozen ACI section-0 contract
+# and stays byte-identical, so it grows no AgentOS-platform annotations. This
+# companion map is scoped to exactly those nine keys and is pinned by test
+# against what ``SessionConfig.to_env`` actually writes, so it cannot drift into
+# tagging a key the frozen model does not have.
+# Keyed by FIELD NAME (the SessionConfig/OtelConfig attribute) so ``env_key``
+# reaches these exactly as it reaches BootEnv's own fields; the OTel trio is
+# prefixed because ``endpoint`` alone would be ambiguous in a flat namespace.
+_SESSION_ENV: dict[str, tuple[str, tuple[Producer, ...]]] = {
+    # Worker-authoritative with a substrate fallback: the chart bakes a warm-pool
+    # default into the pod template and the worker's per-claim value wins under
+    # ``envVarsInjectionPolicy: Overrides``.
+    "plugin_dir": ("AGENTOS_PLUGIN_DIR", ("worker", "substrate")),
+    "session_id": ("AGENTOS_SESSION_ID", ("worker", "substrate")),
+    # Substrate-authoritative: the chart derives it from the pod name via
+    # ``fieldRef: metadata.name``. The worker must never write it.
+    "sandbox_id": ("AGENTOS_SANDBOX_ID", ("substrate",)),
+    "budget": ("AGENTOS_BUDGET", ("worker", "substrate")),
+    # Worker-only: absent from the runner container in the chart.
+    "memory_ref": ("AGENTOS_MEMORY_REF", ("worker",)),
+    "credentials_ref": ("AGENTOS_CREDENTIALS", ("worker", "substrate")),
+    "otel_endpoint": ("OTEL_EXPORTER_OTLP_ENDPOINT", ("substrate",)),
+    # Operator-owned: no code producer emits it. The chart writes only the
+    # endpoint and the protocol, and compose only the endpoint, so the reachable
+    # surface for collector auth headers is ``runner.extraEnv`` or a raw docker
+    # ``-e``.
+    "otel_headers": ("OTEL_EXPORTER_OTLP_HEADERS", ("operator",)),
+    "otel_protocol": ("OTEL_EXPORTER_OTLP_PROTOCOL", ("substrate",)),
+}
+
+
+def _env(key: str, *producers: Producer) -> dict[str, Any]:
+    """The json_schema_extra declaring a field's env key and its producers.
+
+    The key rides in the exported schema so codegen can emit the Rust constants
+    the CLI and the chart render-assert pin against; without it every lane would
+    retype the literal, which is the drift this contract exists to end.
+    """
+
+    return {"env": key, "producer": list(producers)}
+
+
+def _str_or_none(raw: str | None) -> str | None:
+    """A declared-but-empty var is "unset", never an empty value.
+
+    Exactly ``env.get(...) or None`` (runner config.py:105): the fake/local
+    no-key path must not present an empty bearer token. It deliberately does NOT
+    strip -- today a whitespace-only value is truthy and survives verbatim, so
+    stripping here would be an unrequested behavior change on a bearer-token
+    path. (A secret injected with a trailing newline breaking auth is a real bug,
+    but it is its own ticket, not a passenger on this freeze.)
+    """
+
+    return raw if raw else None
+
+
+def _fake_model_or_none(raw: str | None) -> bool | None:
+    """Absent means unset; otherwise mirror the runner's strict truthy set.
+
+    The only consumer of ``AGENTOS_FAKE_MODEL`` on the platform is the runner
+    (__main__.py:262), which accepts exactly ``1``/``true``/``yes``
+    case-insensitively and treats everything else as off. This parse mirrors that
+    set so ``BootEnv.from_env(env).fake_model`` cannot disagree with the running
+    sandbox: ``AGENTOS_FAKE_MODEL=false`` is off in both. A declared-but-empty
+    var stays ``None`` (unset), matching the other optional fields, so the
+    ``to_env`` round trip (``"1"``/``"0"``) survives unchanged.
+    """
+
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
+def _stripped_or_none(raw: str | None) -> str | None:
+    """Strip, then treat blank as unset.
+
+    The deliberate counterpart to ``_str_or_none``: the approval markers DO strip
+    today (config.py:88-92), so parity here means stripping. The two helpers
+    differ because the tree differs; unifying them would change one of them.
+    """
+
+    return raw.strip() if raw and raw.strip() else None
+
+
+def _list_or_none(raw: str | None) -> list[str] | None:
+    """Parse a comma-joined name list, exactly as config.py:82-86 does.
+
+    Items are stripped and blanks dropped, but an absent var is None while a
+    present-but-all-blank one is ``[]``, not None. That asymmetry is today's
+    (``[...] if raw else None``), and both are treated as "no gates" downstream.
+    """
+
+    if not raw:
+        return None
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _required_int(raw: str | None) -> int | None:
+    """Parse an int, RAISING on garbage. None when the var is absent.
+
+    The deliberate asymmetry against ``_tolerant_int``: ``AGENTOS_MAX_TURNS``
+    (config.py:98) and ``AGENTOS_RUNNER_PORT`` (config.py:104) use a bare
+    ``int()`` today and DO raise. Each var keeps the behavior it has -- unifying
+    the two would be a behavior change wearing a consistency costume.
+    """
+
+    return None if raw is None else int(raw)
+
+
+def _tolerant_int(raw: str | None) -> int | None:
+    """Parse an int, degrading to None on garbage AND on a nonpositive value.
+
+    Mirrors the runner's ``__main__._int_env`` (__main__.py:219-231) for the
+    history-window knobs: a typo in an operator's ``extraEnv`` must not become a
+    boot crash, and a nonpositive window is meaningless (``max_turns=0`` slices
+    every turn, a nonpositive byte budget can never be met), so it is rejected
+    like a bad parse. None hands the consumer its own default.
+    """
+
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+class BootEnv(_AciModel):
+    """The full worker-to-runner boot env: the ACI session plus platform ops.
+
+    ``session`` COMPOSES the frozen ``SessionConfig`` rather than extending it.
+    That nesting is the ACI-vs-platform boundary: a runner token, approval
+    plumbing, and a history port are AgentOS platform operations, not the
+    interface a third-party ACI-conformant runner implements. Inheriting would
+    tell every future implementer otherwise (ADR-0049).
+
+    **Multiple producers, one consumer.** The boot env is assembled by the worker
+    binding, the worker kernel's resume overlay, the substrate (chart/docker),
+    and the operator; only the runner consumes it. So ``from_env`` is the single
+    consumer parse of the whole union, while rendering is per-producer: there is
+    deliberately no whole-model ``to_env`` on the wire path. ``render_worker`` is
+    the one real render surface; ``to_env`` exists for round-trip checks only.
+
+    **Authority, not arity, is the invariant.** ``AGENTOS_SANDBOX_ID`` and
+    ``AGENTOS_RUNNER_PORT`` are substrate-authoritative: identity derives from
+    the pod name (``fieldRef: metadata.name``), and because the chart sets
+    ``envVarsInjectionPolicy: Overrides`` a worker write would REPLACE it and
+    break the "pod name IS the sandbox id" invariant that trace stamping relies
+    on. ``ANTHROPIC_BASE_URL`` is also multi-producer, but there the worker is
+    authoritative and worker-wins is the intended layering: the chart branch is a
+    baked template default, the worker's value is per-agent model routing. Do not
+    collapse either producer list to a single value.
+    """
+
+    session: SessionConfig
+
+    # The MinIO object key sandbox provisioning fetches into AGENTOS_PLUGIN_DIR.
+    bundle_ref: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_BUNDLE_REF", "worker")
+    )
+    # Per-claim bearer token the runner enforces on its ACI POST routes (#63).
+    # Enforced only when configured, so local/fake sandboxes are unaffected.
+    runner_token: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_RUNNER_TOKEN", "worker")
+    )
+    # The agent's pinned model (#254), overriding the worker default. The chart
+    # also bakes a template default (inference.model, or runner.model) so a warm
+    # pod boots resolvable; the per-claim value wins under Overrides.
+    model: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_MODEL", "worker", "substrate")
+    )
+    fake_model: bool | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_FAKE_MODEL", "worker", "substrate")
+    )
+    # This thread's transcript key on the state store (#20, ADR-0029).
+    # Deliberately NOT derived from memory_ref: memory is per-agent durable
+    # lessons, history is this thread's conversation (ADR-0025 keeps them apart).
+    history_ref: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_HISTORY_REF", "worker")
+    )
+    # Scoped ``state`` tokens (ADR-0033, #410), not the raw platform key.
+    history_token: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_HISTORY_TOKEN", "worker")
+    )
+    memory_token: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_MEMORY_TOKEN", "worker")
+    )
+    # Per-agent permission gates (#245, ADR-0010).
+    approval_required_tools: list[str] | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_REQUIRED_TOOLS", "worker")
+    )
+    # One-shot post-approval allowance (#430, ADR-0035) and the authority-free
+    # turn-end reconciliation marker (#544). Both are the kernel resume overlay's:
+    # the binding never writes them, only the resume path does.
+    approval_grant_tool: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_GRANT_TOOL", "kernel")
+    )
+    approval_resumed_kind: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_RESUMED_KIND", "kernel")
+    )
+    # Names which boot keys are per-agent connector secrets (ADR-0009, #429), so
+    # the k8s substrate strips those plaintext values off the claim CR. Declared
+    # here so the key is typed, exported, and parseable, but the worker's
+    # ``inject_connector_secrets`` stays its SOLE writer: its value is computed
+    # from the undeclared operator-named keys, which the model cannot see.
+    connector_secret_keys: list[str] | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_CONNECTOR_SECRET_KEYS", "worker")
+    )
+    # Substrate-authoritative; see the class docstring's anti-clobber note.
+    port: int | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_RUNNER_PORT", "substrate")
+    )
+    # Worker-authoritative with a chart fallback default.
+    base_url: str | None = Field(
+        default=None, json_schema_extra=_env("ANTHROPIC_BASE_URL", "worker", "substrate")
+    )
+    # The endpoint's declared wire protocol (#514, ADR-0047): named rather than
+    # inferred, so an OpenAI-shaped endpoint is rejected up front in the runner's
+    # sdk_auth instead of being silently mis-dialed.
+    api_backend: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_MODEL_API_BACKEND", "worker")
+    )
+    # Which env var(s) carry the model credential (#514): a bare name or a JSON
+    # array of them, walked in order. Unset, the runner falls back to
+    # AGENTOS_CREDENTIALS, which is today's behavior.
+    model_env_key: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_MODEL_ENV_KEY", "worker")
+    )
+    # Operator-owned bounds, reachable through the chart's ``runner.extraEnv``
+    # and docker ``-e``. No code producer emits them, and they hold no default
+    # here: a non-None default would render keys nobody sends and move the wire.
+    # The defaults live where the runner consumes the parsed value.
+    max_turns: int | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_MAX_TURNS", "operator")
+    )
+    history_max_turns: int | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_HISTORY_MAX_TURNS", "operator")
+    )
+    history_max_bytes: int | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_HISTORY_MAX_BYTES", "operator")
+    )
+
+    @classmethod
+    def _declared(cls) -> dict[str, tuple[str, tuple[Producer, ...]]]:
+        """Field name -> (env key, producers) for the whole flattened surface.
+
+        The single source both ``env_keys`` and ``env_key`` derive from, so the
+        two cannot disagree by construction: every name ``env_key`` returns is in
+        ``env_keys()`` and vice versa, with no assertion needed to keep them
+        honest.
+
+        Flattened means the nested ``SessionConfig``/OTel keys are included: the
+        chart bakes ``AGENTOS_RUNNER_PORT`` and the OTel keys into the runner
+        container itself, so a non-flattened list would fail the render-assert on
+        a default render.
+        """
+
+        out: dict[str, tuple[str, tuple[Producer, ...]]] = dict(_SESSION_ENV)
+        for name, field in cls.model_fields.items():
+            extra = field.json_schema_extra
+            if not isinstance(extra, dict) or "env" not in extra:
+                continue
+            key = extra["env"]
+            producers = extra.get("producer")
+            if not isinstance(key, str) or not isinstance(producers, list) or not producers:
+                # Not defensive padding: an untagged or mistyped key would be
+                # exported to Rust as a constant nobody owns, and would slip past
+                # the render-surface subset tests that derive their expectations
+                # from this map. Fail at import, not at boot.
+                raise TypeError(
+                    f"BootEnv field declaring env {key!r} must carry a non-empty "
+                    f"`producer` list; got {producers!r}"
+                )
+            if name in out:
+                # A BootEnv field shadowing a session field name would make
+                # env_key(name) ambiguous and silently return one of the two.
+                raise TypeError(f"BootEnv field {name!r} collides with a session field name")
+            out[name] = (key, cast(tuple[Producer, ...], tuple(producers)))
+        return out
+
+    @classmethod
+    def env_keys(cls, producer: Producer | None = None) -> tuple[str, ...]:
+        """The declared boot-env keys, sorted; optionally only ``producer``'s.
+
+        Sorted so the generated Rust const module cannot flap the drift gate,
+        which regenerates and runs ``git diff --exit-code``.
+        """
+
+        return tuple(
+            sorted(
+                key
+                for key, producers in cls._declared().values()
+                if producer is None or producer in producers
+            )
+        )
+
+    @classmethod
+    def env_key(cls, field: str) -> str:
+        """The env NAME one declared boot field travels as.
+
+        The per-key accessor a producer uses instead of retyping a literal, e.g.
+        ``BootEnv.env_key("model") == "AGENTOS_MODEL"``. It reaches the composed
+        ``SessionConfig``/OTel keys by their own field names
+        (``BootEnv.env_key("budget") == "AGENTOS_BUDGET"``) without touching that
+        frozen model, so a producer that cannot use ``render_worker`` -- the eval
+        consumer sets neither memory_ref nor history_ref and must not emit them --
+        still derives every name from this one declaration.
+
+        Raises ``KeyError`` on an unknown field: a typo must fail loudly at
+        import rather than return None and silently emit nothing.
+        """
+
+        declared = cls._declared()
+        if field not in declared:
+            raise KeyError(
+                f"{field!r} is not a declared boot-env field; "
+                f"known fields: {sorted(declared)}"
+            )
+        return declared[field][0]
+
+    @classmethod
+    def render_worker(
+        cls,
+        *,
+        plugin_dir: str,
+        session_id: str,
+        budget: Budget,
+        memory_ref: str,
+        history_ref: str,
+        bundle_ref: str | None = None,
+        runner_token: str | None = None,
+        model: str | None = None,
+        fake_model: bool | None = None,
+        credentials_ref: str | None = None,
+        base_url: str | None = None,
+        api_backend: str | None = None,
+        model_env_key: str | None = None,
+        history_token: str | None = None,
+        memory_token: str | None = None,
+        approval_required_tools: Sequence[str] | None = None,
+    ) -> dict[str, str]:
+        """Render the worker binding's boot-env subset.
+
+        The one real render surface. Its emitted keys are a subset of the
+        ``worker``-producer keys, with the difference exactly
+        ``{AGENTOS_CONNECTOR_SECRET_KEYS}`` -- the worker's
+        ``inject_connector_secrets`` sets that marker on the merged dict after
+        this returns, keeping the #457 order-independent filter and the #429
+        marker semantics byte-identical.
+
+        It never emits ``AGENTOS_SANDBOX_ID`` or ``AGENTOS_RUNNER_PORT``: both
+        are substrate-authoritative and ``envVarsInjectionPolicy: Overrides``
+        would make a worker write clobber the substrate's real value.
+
+        Unset optionals are omitted, never emitted empty.
+
+        Every key comes from ``env_key`` rather than a retyped literal, so a
+        rename of a declared env name moves this render with it BY
+        CONSTRUCTION. The per-field emit CONDITIONS are deliberately not
+        uniform (truthiness here, identity in ``to_env``) and each one is the
+        behavior its var has today; only the key's source is derived.
+        """
+
+        env: dict[str, str] = {
+            cls.env_key("plugin_dir"): plugin_dir,
+            cls.env_key("session_id"): session_id,
+            cls.env_key("budget"): budget.model_dump_json(),
+            cls.env_key("memory_ref"): memory_ref,
+            cls.env_key("history_ref"): history_ref,
+        }
+        if bundle_ref:
+            env[cls.env_key("bundle_ref")] = bundle_ref
+        if runner_token:
+            env[cls.env_key("runner_token")] = runner_token
+        if approval_required_tools:
+            env[cls.env_key("approval_required_tools")] = ",".join(approval_required_tools)
+        if fake_model:
+            env[cls.env_key("fake_model")] = "1"
+        if credentials_ref:
+            env[cls.env_key("credentials_ref")] = credentials_ref
+        if base_url:
+            env[cls.env_key("base_url")] = base_url
+        if api_backend:
+            env[cls.env_key("api_backend")] = api_backend
+        if model_env_key:
+            env[cls.env_key("model_env_key")] = model_env_key
+        if model:
+            env[cls.env_key("model")] = model
+        if history_token:
+            env[cls.env_key("history_token")] = history_token
+        if memory_token:
+            env[cls.env_key("memory_token")] = memory_token
+        return env
+
+    def to_env(self) -> dict[str, str]:
+        """Render the whole union, for round-trip checks only.
+
+        Nothing on the wire path calls this: the worker cannot build it (it does
+        not know ``sandbox_id``) and emitting the union from the worker is the
+        clobber path. Use ``render_worker`` to produce a real boot env.
+
+        Keys derive from ``env_key``; the nested frozen session keys stay
+        ``SessionConfig.to_env``'s own. As in ``render_worker``, only the key's
+        source is derived -- each field keeps the emit condition it has today.
+        """
+
+        env = self.session.to_env()
+        if self.bundle_ref is not None:
+            env[self.env_key("bundle_ref")] = self.bundle_ref
+        if self.runner_token is not None:
+            env[self.env_key("runner_token")] = self.runner_token
+        if self.model is not None:
+            env[self.env_key("model")] = self.model
+        if self.fake_model is not None:
+            env[self.env_key("fake_model")] = "1" if self.fake_model else "0"
+        if self.history_ref is not None:
+            env[self.env_key("history_ref")] = self.history_ref
+        if self.history_token is not None:
+            env[self.env_key("history_token")] = self.history_token
+        if self.memory_token is not None:
+            env[self.env_key("memory_token")] = self.memory_token
+        if self.approval_required_tools:
+            env[self.env_key("approval_required_tools")] = ",".join(self.approval_required_tools)
+        if self.approval_grant_tool is not None:
+            env[self.env_key("approval_grant_tool")] = self.approval_grant_tool
+        if self.approval_resumed_kind is not None:
+            env[self.env_key("approval_resumed_kind")] = self.approval_resumed_kind
+        if self.connector_secret_keys:
+            env[self.env_key("connector_secret_keys")] = ",".join(self.connector_secret_keys)
+        if self.port is not None:
+            env[self.env_key("port")] = str(self.port)
+        if self.base_url is not None:
+            env[self.env_key("base_url")] = self.base_url
+        if self.api_backend is not None:
+            env[self.env_key("api_backend")] = self.api_backend
+        if self.model_env_key is not None:
+            env[self.env_key("model_env_key")] = self.model_env_key
+        if self.max_turns is not None:
+            env[self.env_key("max_turns")] = str(self.max_turns)
+        if self.history_max_turns is not None:
+            env[self.env_key("history_max_turns")] = str(self.history_max_turns)
+        if self.history_max_bytes is not None:
+            env[self.env_key("history_max_bytes")] = str(self.history_max_bytes)
+        return env
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "BootEnv":
+        """Parse the runner's view of the whole pod env.
+
+        The runner is the single consumer of every producer's union, so this is
+        the one full parse. It inherits ``SessionConfig.from_env``'s fail-loud
+        requiredness, including the ``KeyError`` on a missing
+        ``AGENTOS_SANDBOX_ID`` -- every real boot surface supplies it, so a miss
+        means a genuinely broken substrate and the runner should refuse to boot.
+
+        Parse tolerance is deliberately NOT unified across the knobs: each var
+        keeps the behavior it has today (see ``_tolerant_int`` versus the bare
+        ``int`` on ``AGENTOS_MAX_TURNS``, which config.py:98 raises on).
+        """
+
+        return cls(
+            session=SessionConfig.from_env(env),
+            bundle_ref=_str_or_none(env.get("AGENTOS_BUNDLE_REF")),
+            runner_token=_str_or_none(env.get("AGENTOS_RUNNER_TOKEN")),
+            model=_str_or_none(env.get("AGENTOS_MODEL")),
+            fake_model=_fake_model_or_none(env.get("AGENTOS_FAKE_MODEL")),
+            history_ref=_str_or_none(env.get("AGENTOS_HISTORY_REF")),
+            history_token=_str_or_none(env.get("AGENTOS_HISTORY_TOKEN")),
+            memory_token=_str_or_none(env.get("AGENTOS_MEMORY_TOKEN")),
+            approval_required_tools=_list_or_none(env.get("AGENTOS_APPROVAL_REQUIRED_TOOLS")),
+            approval_grant_tool=_stripped_or_none(env.get("AGENTOS_APPROVAL_GRANT_TOOL")),
+            approval_resumed_kind=_stripped_or_none(env.get("AGENTOS_APPROVAL_RESUMED_KIND")),
+            connector_secret_keys=_list_or_none(env.get("AGENTOS_CONNECTOR_SECRET_KEYS")),
+            port=_required_int(env.get("AGENTOS_RUNNER_PORT")),
+            base_url=_str_or_none(env.get("ANTHROPIC_BASE_URL")),
+            # Empty is "not declared" for both, matching sdk_auth's own
+            # `env.get(...) or <default>` reads: an empty backend falls back to
+            # `messages`, an empty key list to (AGENTOS_CREDENTIALS,).
+            api_backend=_str_or_none(env.get("AGENTOS_MODEL_API_BACKEND")),
+            model_env_key=_str_or_none(env.get("AGENTOS_MODEL_ENV_KEY")),
+            max_turns=_required_int(env.get("AGENTOS_MAX_TURNS")),
+            history_max_turns=_tolerant_int(env.get("AGENTOS_HISTORY_MAX_TURNS")),
+            history_max_bytes=_tolerant_int(env.get("AGENTOS_HISTORY_MAX_BYTES")),
         )

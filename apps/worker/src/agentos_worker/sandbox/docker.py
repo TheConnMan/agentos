@@ -50,6 +50,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from aci_protocol import BootEnv
+
 from ..binding import (
     BASE_URL_ENV,
     BUNDLE_REF_ENV,
@@ -72,6 +74,12 @@ logger = logging.getLogger(__name__)
 # The runner listens on this fixed port inside every container; the host port it
 # is published to is Docker-assigned and read back per-container.
 RUNNER_CONTAINER_PORT = 8080
+
+# Declared boot keys this substrate produces. Docker is the OTel producer here
+# (the chart's env block is its Kubernetes counterpart), and the runner parses
+# both names out of the one declaration, so they are read from it (#488).
+_OTEL_ENDPOINT_ENV = BootEnv.env_key("otel_endpoint")
+_OTEL_PROTOCOL_ENV = BootEnv.env_key("otel_protocol")
 
 # The ambient SDK credential vars, forwarded into the container BY NAME (docker
 # reads the value from the worker env; this code never does, and no secret ever
@@ -282,9 +290,9 @@ class DockerSandboxClient:
         if self._otel_endpoint:
             args += [
                 "-e",
-                f"OTEL_EXPORTER_OTLP_ENDPOINT={self._otel_endpoint}",
+                f"{_OTEL_ENDPOINT_ENV}={self._otel_endpoint}",
                 "-e",
-                "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+                f"{_OTEL_PROTOCOL_ENV}=http/protobuf",
             ]
         for key, value in sorted(env.items()):
             if key not in _WORKER_OWNED_ENV:

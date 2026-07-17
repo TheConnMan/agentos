@@ -20,7 +20,7 @@ export type ExpiresInSeconds = number | null;
  * authority-bearing per #544/ADR-0046, so the value domain is a named, exported
  * part of the contract rather than an inline annotation.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "GateKind".
  */
 export type GateKind = "permission" | "policy";
@@ -30,16 +30,42 @@ export type ReplyEndpoint = string | null;
 export type ReplyPlaceholder = string;
 export type Route = string | null;
 export type Summary = string;
+export type ApiBackend = string | null;
+export type ApprovalGrantTool = string | null;
+export type ApprovalRequiredTools = string[] | null;
+export type ApprovalResumedKind = string | null;
+export type BaseUrl = string | null;
+export type BundleRef = string | null;
+export type ConnectorSecretKeys = string[] | null;
+export type FakeModel = boolean | null;
+export type HistoryMaxBytes = number | null;
+export type HistoryMaxTurns = number | null;
+export type HistoryRef = string | null;
+export type HistoryToken = string | null;
+export type MaxTurns = number | null;
+export type MemoryToken = string | null;
+export type Model = string | null;
+export type ModelEnvKey = string | null;
+export type Port = number | null;
+export type RunnerToken = string | null;
 export type MaxOutputTokensPerRun = number;
 export type MaxUsdPerDay = number;
 export type TaskBudgetHint = number | null;
+export type CredentialsRef = string | null;
+export type MemoryRef = string | null;
+export type Endpoint = string | null;
+export type Headers = string | null;
+export type Protocol = string | null;
+export type PluginDir = string;
+export type SandboxId = string;
+export type SessionId = string;
 export type Classification = string | null;
 export type Message = string;
 export type Type = "error";
 export type Version = string;
 export type AgentId1 = string;
-export type BundleRef = string | null;
-export type Model = string | null;
+export type BundleRef1 = string | null;
+export type Model1 = string | null;
 export type RequestedAt = string;
 export type Sha = string;
 export type Suite = string;
@@ -70,17 +96,14 @@ export type Text1 = string;
 export type Type2 = "final";
 export type Version1 = string;
 /**
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "InboundMessage".
  */
 export type InboundMessage = Event | Interrupt;
 export type Kind1 = "interrupt";
 export type Reason = string;
-export type Endpoint = string | null;
-export type Headers = string | null;
-export type Protocol = string | null;
 /**
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "OutboundEvent".
  */
 export type OutboundEvent = TextDelta | ToolNote | Final | ErrorEvent | SideEffectFlag;
@@ -103,23 +126,18 @@ export type Channel = string;
 export type Endpoint1 = string | null;
 export type Placeholder = string;
 export type Text4 = string;
-export type CredentialsRef = string | null;
-export type MemoryRef = string | null;
-export type PluginDir = string;
-export type SandboxId = string;
-export type SessionId = string;
 /**
  * Terminal or awaiting status of a session, from the output contract.
  *
  * Wire tokens follow the section 0 spelling; ``classified failure`` in prose
  * becomes the token ``classified-failure`` on the wire.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "SessionStatus".
  */
 export type SessionStatus1 = "done" | "idle-awaiting-input" | "classified-failure" | "awaiting-approval";
 
-export interface ACIProtocolV022 {
+export interface ACIProtocolV023 {
   [k: string]: unknown;
 }
 /**
@@ -134,7 +152,7 @@ export interface ACIProtocolV022 {
  * provenance (#544, Decision C) written by the runner; both stay optional for
  * the rolling-deploy window.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "ApprovalRequest".
  */
 export interface ApprovalRequest {
@@ -154,12 +172,83 @@ export interface ApprovalRequest {
   [k: string]: unknown;
 }
 /**
+ * The full worker-to-runner boot env: the ACI session plus platform ops.
+ *
+ * ``session`` COMPOSES the frozen ``SessionConfig`` rather than extending it.
+ * That nesting is the ACI-vs-platform boundary: a runner token, approval
+ * plumbing, and a history port are AgentOS platform operations, not the
+ * interface a third-party ACI-conformant runner implements. Inheriting would
+ * tell every future implementer otherwise (ADR-0049).
+ *
+ * **Multiple producers, one consumer.** The boot env is assembled by the worker
+ * binding, the worker kernel's resume overlay, the substrate (chart/docker),
+ * and the operator; only the runner consumes it. So ``from_env`` is the single
+ * consumer parse of the whole union, while rendering is per-producer: there is
+ * deliberately no whole-model ``to_env`` on the wire path. ``render_worker`` is
+ * the one real render surface; ``to_env`` exists for round-trip checks only.
+ *
+ * **Authority, not arity, is the invariant.** ``AGENTOS_SANDBOX_ID`` and
+ * ``AGENTOS_RUNNER_PORT`` are substrate-authoritative: identity derives from
+ * the pod name (``fieldRef: metadata.name``), and because the chart sets
+ * ``envVarsInjectionPolicy: Overrides`` a worker write would REPLACE it and
+ * break the "pod name IS the sandbox id" invariant that trace stamping relies
+ * on. ``ANTHROPIC_BASE_URL`` is also multi-producer, but there the worker is
+ * authoritative and worker-wins is the intended layering: the chart branch is a
+ * baked template default, the worker's value is per-agent model routing. Do not
+ * collapse either producer list to a single value.
+ *
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
+ * via the `definition` "BootEnv".
+ */
+export interface BootEnv {
+  api_backend?: ApiBackend;
+  approval_grant_tool?: ApprovalGrantTool;
+  approval_required_tools?: ApprovalRequiredTools;
+  approval_resumed_kind?: ApprovalResumedKind;
+  base_url?: BaseUrl;
+  bundle_ref?: BundleRef;
+  connector_secret_keys?: ConnectorSecretKeys;
+  fake_model?: FakeModel;
+  history_max_bytes?: HistoryMaxBytes;
+  history_max_turns?: HistoryMaxTurns;
+  history_ref?: HistoryRef;
+  history_token?: HistoryToken;
+  max_turns?: MaxTurns;
+  memory_token?: MemoryToken;
+  model?: Model;
+  model_env_key?: ModelEnvKey;
+  port?: Port;
+  runner_token?: RunnerToken;
+  session: SessionConfig;
+  [k: string]: unknown;
+}
+/**
+ * The typed session setup contract.
+ *
+ * ``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);
+ * section 0 describes these as per-tool secrets via K8s Secret refs, so the
+ * contract carries the reference, not the secret material itself.
+ *
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
+ * via the `definition` "SessionConfig".
+ */
+export interface SessionConfig {
+  budget: Budget;
+  credentials_ref?: CredentialsRef;
+  memory_ref?: MemoryRef;
+  otel?: OtelConfig;
+  plugin_dir: PluginDir;
+  sandbox_id: SandboxId;
+  session_id: SessionId;
+  [k: string]: unknown;
+}
+/**
  * Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.
  *
  * ``task_budget_hint`` is the optional hint passed through to the model so it
  * self paces (section 6b); it is not a hard ceiling.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "Budget".
  */
 export interface Budget {
@@ -169,9 +258,25 @@ export interface Budget {
   [k: string]: unknown;
 }
 /**
+ * The OTEL_EXPORTER_OTLP_* subset the runner needs to export traces.
+ *
+ * Section 0 lists OTEL_EXPORTER_OTLP_* as a wildcard. We capture the standard
+ * fields the prototype used (endpoint, headers, protocol); any others pass
+ * through as raw env vars untouched and are out of scope for this typed view.
+ *
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
+ * via the `definition` "OtelConfig".
+ */
+export interface OtelConfig {
+  endpoint?: Endpoint;
+  headers?: Headers;
+  protocol?: Protocol;
+  [k: string]: unknown;
+}
+/**
  * A classified failure surfaced to the platform.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "ErrorEvent".
  */
 export interface ErrorEvent {
@@ -188,13 +293,13 @@ export interface ErrorEvent {
  * worker consumes off it (formerly the API's ``EvalJobRequest`` and the
  * worker's ``EvalWorkItem``, which had drifted on ``bundle_ref``).
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "EvalJob".
  */
 export interface EvalJob {
   agent_id: AgentId1;
-  bundle_ref: BundleRef;
-  model?: Model;
+  bundle_ref: BundleRef1;
+  model?: Model1;
   requested_at: RequestedAt;
   sha: Sha;
   suite: Suite;
@@ -208,7 +313,7 @@ export interface EvalJob {
  * Byte-identical across both lanes before this promotion, so it carries no
  * semantic decisions.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "EvalReport".
  */
 export interface EvalReport {
@@ -222,7 +327,7 @@ export interface EvalReport {
 /**
  * An inbound event delivered into a live session (initial or follow-up).
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "Event".
  */
 export interface Event {
@@ -257,7 +362,7 @@ export interface Event {
  * Both ``None`` on every other status, and ``None`` from an older runner that
  * predates these fields (the worker falls back to the prefix parse then).
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "Final".
  */
 export interface Final {
@@ -274,7 +379,7 @@ export interface Final {
 /**
  * A hard stop delivered on the control channel, distinct from a steer.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "Interrupt".
  */
 export interface Interrupt {
@@ -283,25 +388,9 @@ export interface Interrupt {
   [k: string]: unknown;
 }
 /**
- * The OTEL_EXPORTER_OTLP_* subset the runner needs to export traces.
- *
- * Section 0 lists OTEL_EXPORTER_OTLP_* as a wildcard. We capture the standard
- * fields the prototype used (endpoint, headers, protocol); any others pass
- * through as raw env vars untouched and are out of scope for this typed view.
- *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
- * via the `definition` "OtelConfig".
- */
-export interface OtelConfig {
-  endpoint?: Endpoint;
-  headers?: Headers;
-  protocol?: Protocol;
-  [k: string]: unknown;
-}
-/**
  * A streamed chunk of assistant text.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "TextDelta".
  */
 export interface TextDelta {
@@ -313,7 +402,7 @@ export interface TextDelta {
 /**
  * A human readable note about a tool call the harness is making.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "ToolNote".
  */
 export interface ToolNote {
@@ -329,7 +418,7 @@ export interface ToolNote {
  * Its presence gates the no-retry-after-side-effects rule (section 2b): a
  * failed run carrying this flag escalates to a human instead of retrying.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "SideEffectFlag".
  */
 export interface SideEffectFlag {
@@ -347,7 +436,7 @@ export interface SideEffectFlag {
  * stream-encoding helpers live with the producer (the dispatcher), not on this
  * frozen model, so the contract stays transport-agnostic.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "QueuedTurn".
  */
 export interface QueuedTurn {
@@ -376,32 +465,12 @@ export interface QueuedTurn {
  * (its ``slack_api_base_url``, i.e. real Slack), so a producer that does not set
  * it keeps the pre-#19 behavior.
  *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
+ * This interface was referenced by `ACIProtocolV023`'s JSON-Schema
  * via the `definition` "ReplyHandle".
  */
 export interface ReplyHandle {
   channel: Channel;
   endpoint?: Endpoint1;
   placeholder: Placeholder;
-  [k: string]: unknown;
-}
-/**
- * The typed session setup contract.
- *
- * ``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);
- * section 0 describes these as per-tool secrets via K8s Secret refs, so the
- * contract carries the reference, not the secret material itself.
- *
- * This interface was referenced by `ACIProtocolV022`'s JSON-Schema
- * via the `definition` "SessionConfig".
- */
-export interface SessionConfig {
-  budget: Budget;
-  credentials_ref?: CredentialsRef;
-  memory_ref?: MemoryRef;
-  otel?: OtelConfig;
-  plugin_dir: PluginDir;
-  sandbox_id: SandboxId;
-  session_id: SessionId;
   [k: string]: unknown;
 }

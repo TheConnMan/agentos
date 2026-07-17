@@ -26,6 +26,8 @@ import secrets
 import time
 import uuid
 
+from aci_protocol import BootEnv
+
 from ..binding import RUNNER_TOKEN_ENV
 from .affinity import AffinityStore
 from .types import (
@@ -43,8 +45,13 @@ from .types import (
     SuspendedThreadError,
 )
 
-HISTORY_ENV = "AGENTOS_HISTORY_REF"
-SESSION_ENV = "AGENTOS_SESSION_ID"
+# The resume overlay writes these into the replacement claim's per-claim env, and
+# the runner reads them out of the same boot contract -- same consumer, so both
+# are named from the ONE declaration in ``aci_protocol.BootEnv`` (#488, ADR-0049)
+# rather than retyped. A local literal would drift silently on a rename: the
+# replacement sandbox boots and answers, having quietly lost its history.
+HISTORY_ENV = BootEnv.env_key("history_ref")
+SESSION_ENV = BootEnv.env_key("session_id")
 
 
 class SandboxSubstrate:

@@ -8,6 +8,9 @@ reader quietly stops checking it. These tests assert the rendered artifacts, not
 the private helpers, because the rendered artifact is the real contract.
 """
 
+import re
+
+from aci_protocol import BootEnv
 from aci_protocol.rust_export import render_rust
 from aci_protocol.schema_export import build_schema
 
@@ -31,4 +34,126 @@ def test_generated_rust_guards_the_version() -> None:
         # #[serde(default)] must NOT -- a defaulted version is the silent gutting.
         assert preceding == '#[serde(deserialize_with = "require_compatible_protocol_version")]', (
             f"version field is not guarded; preceding line was {preceding!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# BootEnv export (#488). The env key (AGENTOS_RUNNER_TOKEN) is not the field
+# name (runner_token), so the mapping has to ride in the schema for codegen to
+# emit constants the Rust CLI and the chart assert can pin against.
+# ---------------------------------------------------------------------------
+
+_ENV_KEYS_MODULE_RE = re.compile(r"pub mod env_keys \{\n(.*?)\n\}", re.DOTALL)
+
+
+def _env_keys_module() -> str:
+    match = _ENV_KEYS_MODULE_RE.search(render_rust())
+    assert match, "no `pub mod env_keys` module in the generated Rust"
+    return match.group(1)
+
+
+def test_boot_env_is_in_the_exported_schema() -> None:
+    boot = build_schema()["$defs"]["BootEnv"]
+    # The frozen SessionConfig is composed as a field, not flattened in.
+    assert "session" in boot["properties"]
+    assert "session" in boot["required"]
+
+
+def test_the_schema_carries_the_env_key_for_every_boot_field() -> None:
+    """Decision 2: the key mapping is machine-readable, so codegen can emit it.
+
+    Without the key in the schema, the Rust constants and the chart assert have
+    to retype the literals -- the third declaration site this change exists to
+    prevent.
+    """
+    props = build_schema()["$defs"]["BootEnv"]["properties"]
+    declared = {prop["env"] for prop in props.values() if "env" in prop}
+    # `session` nests SessionConfig rather than carrying a key of its own.
+    assert declared, "no field in the exported BootEnv carries an `env` key"
+    assert declared <= set(BootEnv.env_keys())
+
+
+def test_the_schema_carries_the_producers_alongside_every_env_key() -> None:
+    """Producer ownership is part of the exported contract, not just runtime.
+
+    The boot env has four producers and one consumer; the tag is what lets a
+    render surface be checked against the keys it is allowed to write. An
+    untagged key exported to Rust would be a key nobody owns.
+
+    ``producer`` is a COLLECTION: a key may have several producers (the chart
+    sets ANTHROPIC_BASE_URL as a fallback and the worker overrides it), so a
+    single scalar tag cannot express the tree as it actually is.
+    """
+    props = build_schema()["$defs"]["BootEnv"]["properties"]
+    keyed = [prop for prop in props.values() if "env" in prop]
+    assert keyed, "no field in the exported BootEnv carries an `env` key"
+    for prop in keyed:
+        producers = prop.get("producer")
+        assert isinstance(producers, list) and producers, (
+            f"{prop['env']} carries no producer list: {producers!r}"
+        )
+        assert set(producers) <= {"worker", "kernel", "substrate", "operator"}, (
+            f"{prop['env']} carries an unknown producer: {producers!r}"
+        )
+
+
+def test_the_schema_forbids_the_worker_from_owning_sandbox_identity_or_port() -> None:
+    """The anti-clobber finding, pinned at the exported-contract level too.
+
+    A `producer: worker` tag on either key would license exactly the render the
+    worker golden forbids (envVarsInjectionPolicy: Overrides, values.yaml:789).
+    """
+    for key in ("AGENTOS_SANDBOX_ID", "AGENTOS_RUNNER_PORT"):
+        assert key not in BootEnv.env_keys(producer="worker")
+        assert key in BootEnv.env_keys(producer="substrate")
+
+
+def test_generated_rust_exports_a_const_per_declared_env_key() -> None:
+    module = _env_keys_module()
+    for key in BootEnv.env_keys():
+        assert f'pub const {key}: &str = "{key}";' in module, (
+            f"{key} has no constant in the generated env_keys module"
+        )
+
+
+def test_generated_env_keys_module_declares_nothing_undeclared() -> None:
+    """A stale constant left behind by a removed field is a dead pin."""
+    emitted = re.findall(r"pub const (\w+): &str", _env_keys_module())
+    assert sorted(emitted) == sorted(BootEnv.env_keys())
+
+
+def test_generated_env_keys_module_is_sorted() -> None:
+    """Ordering must not depend on dict iteration, or the drift gate flaps.
+
+    check-contracts.sh regenerates and runs `git diff --exit-code`; a const
+    module ordered by field-declaration order would churn on every reorder.
+    """
+    emitted = re.findall(r"pub const (\w+): &str", _env_keys_module())
+    assert emitted == sorted(emitted)
+
+
+def test_generated_env_keys_module_is_deterministic() -> None:
+    assert render_rust() == render_rust()
+
+
+def test_generated_env_keys_are_flattened_to_include_session_and_otel_keys() -> None:
+    """The chart bakes AGENTOS_RUNNER_PORT and the OTel keys into the runner
+    container itself (agent-sandbox.yaml:430, 433, 435). A const list missing
+    the nested SessionConfig/OTel keys fails a default render's subset assert.
+    """
+    module = _env_keys_module()
+    for key in (
+        "AGENTOS_PLUGIN_DIR",
+        "AGENTOS_SESSION_ID",
+        "AGENTOS_SANDBOX_ID",
+        "AGENTOS_BUDGET",
+        "AGENTOS_MEMORY_REF",
+        "AGENTOS_CREDENTIALS",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "AGENTOS_RUNNER_PORT",
+    ):
+        assert f'pub const {key}: &str = "{key}";' in module, (
+            f"{key} is reachable in the runner container but absent from env_keys"
         )

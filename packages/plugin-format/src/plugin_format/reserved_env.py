@@ -61,8 +61,13 @@ _REDIRECT_CAPTURE_KEYS = frozenset(
 # The ``AGENTOS_``-prefixed boot/config keys the worker and runner own. Every one
 # is already caught by the prefix rule in ``is_reserved_boot_env_name``; they are
 # enumerated here for greppability and to make the completeness pin
-# membership-based. Cross-checked against ``binding.py`` (``*_ENV`` constants) and
-# ``sdk_auth.MODEL_BASE_URL_ENV``.
+# membership-based. Cross-checked against ``aci_protocol.BootEnv.env_keys()`` (the
+# declared boot contract since #488) and ``sdk_auth.MODEL_BASE_URL_ENV``.
+#
+# This list is enumeration, not enforcement: the prefix rule is what actually
+# reserves an ``AGENTOS_`` name, so adding or dropping an entry here is
+# policy-neutral (pinned by test). ``AGENTOS_AGENT_ID`` was dropped in #488 when
+# its write site went away; it stays reserved via the prefix.
 _AGENTOS_BOOT_KEYS = frozenset(
     {
         "AGENTOS_MODEL_BASE_URL",
@@ -73,7 +78,6 @@ _AGENTOS_BOOT_KEYS = frozenset(
         "AGENTOS_FAKE_MODEL",
         "AGENTOS_BUDGET",
         "AGENTOS_SESSION_ID",
-        "AGENTOS_AGENT_ID",
         "AGENTOS_BUNDLE_REF",
         "AGENTOS_PLUGIN_DIR",
         "AGENTOS_MEMORY_REF",

@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 import aiohttp
+from aci_protocol import BootEnv
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,9 @@ MEMORY_LOG_KEY = "log"
 
 # Runner-local env carrying the bearer the state API expects (X-API-Key). Not a
 # model credential and not part of the frozen ACI SessionConfig -- resolved the
-# same way as the other runner-local knobs in config.py.
-MEMORY_TOKEN_ENV = "AGENTOS_MEMORY_TOKEN"
+# same way as the other runner-local knobs in config.py. The worker declares and
+# renders it, so the name is read from that one declaration (#488).
+MEMORY_TOKEN_ENV = BootEnv.env_key("memory_token")
 
 
 class MemoryError(RuntimeError):

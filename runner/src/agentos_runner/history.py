@@ -41,13 +41,15 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 import aiohttp
+from aci_protocol import BootEnv
 
 logger = logging.getLogger(__name__)
 
 # Runner-local env carrying the bearer the state API expects (X-API-Key). Not a
 # model credential and not part of the frozen ACI SessionConfig -- resolved the
-# same way as AGENTOS_MEMORY_TOKEN and the other runner-local knobs.
-HISTORY_TOKEN_ENV = "AGENTOS_HISTORY_TOKEN"
+# same way as AGENTOS_MEMORY_TOKEN and the other runner-local knobs. The worker
+# declares and renders it, so the name is read from that one declaration (#488).
+HISTORY_TOKEN_ENV = BootEnv.env_key("history_token")
 
 
 class HistoryError(RuntimeError):

@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.2";
+pub const PROTOCOL_VERSION: &str = "0.2.3";
 
 pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
 
@@ -122,6 +122,80 @@ pub struct SessionConfig {
     pub credentials_ref: Option<String>,
     #[serde(default)]
     pub otel: OtelConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct BootEnv {
+    pub session: SessionConfig,
+    #[serde(default)]
+    pub bundle_ref: Option<String>,
+    #[serde(default)]
+    pub runner_token: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub fake_model: Option<bool>,
+    #[serde(default)]
+    pub history_ref: Option<String>,
+    #[serde(default)]
+    pub history_token: Option<String>,
+    #[serde(default)]
+    pub memory_token: Option<String>,
+    #[serde(default)]
+    pub approval_required_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub approval_grant_tool: Option<String>,
+    #[serde(default)]
+    pub approval_resumed_kind: Option<String>,
+    #[serde(default)]
+    pub connector_secret_keys: Option<Vec<String>>,
+    #[serde(default)]
+    pub port: Option<i64>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_backend: Option<String>,
+    #[serde(default)]
+    pub model_env_key: Option<String>,
+    #[serde(default)]
+    pub max_turns: Option<i64>,
+    #[serde(default)]
+    pub history_max_turns: Option<i64>,
+    #[serde(default)]
+    pub history_max_bytes: Option<i64>,
+}
+
+/// Boot-env variable names, generated from aci_protocol.session.BootEnv.
+/// The env key is the contract; the Rust CLI and the chart render-assert
+/// pin against these instead of retyping the literals.
+pub mod env_keys {
+    pub const AGENTOS_APPROVAL_GRANT_TOOL: &str = "AGENTOS_APPROVAL_GRANT_TOOL";
+    pub const AGENTOS_APPROVAL_REQUIRED_TOOLS: &str = "AGENTOS_APPROVAL_REQUIRED_TOOLS";
+    pub const AGENTOS_APPROVAL_RESUMED_KIND: &str = "AGENTOS_APPROVAL_RESUMED_KIND";
+    pub const AGENTOS_BUDGET: &str = "AGENTOS_BUDGET";
+    pub const AGENTOS_BUNDLE_REF: &str = "AGENTOS_BUNDLE_REF";
+    pub const AGENTOS_CONNECTOR_SECRET_KEYS: &str = "AGENTOS_CONNECTOR_SECRET_KEYS";
+    pub const AGENTOS_CREDENTIALS: &str = "AGENTOS_CREDENTIALS";
+    pub const AGENTOS_FAKE_MODEL: &str = "AGENTOS_FAKE_MODEL";
+    pub const AGENTOS_HISTORY_MAX_BYTES: &str = "AGENTOS_HISTORY_MAX_BYTES";
+    pub const AGENTOS_HISTORY_MAX_TURNS: &str = "AGENTOS_HISTORY_MAX_TURNS";
+    pub const AGENTOS_HISTORY_REF: &str = "AGENTOS_HISTORY_REF";
+    pub const AGENTOS_HISTORY_TOKEN: &str = "AGENTOS_HISTORY_TOKEN";
+    pub const AGENTOS_MAX_TURNS: &str = "AGENTOS_MAX_TURNS";
+    pub const AGENTOS_MEMORY_REF: &str = "AGENTOS_MEMORY_REF";
+    pub const AGENTOS_MEMORY_TOKEN: &str = "AGENTOS_MEMORY_TOKEN";
+    pub const AGENTOS_MODEL: &str = "AGENTOS_MODEL";
+    pub const AGENTOS_MODEL_API_BACKEND: &str = "AGENTOS_MODEL_API_BACKEND";
+    pub const AGENTOS_MODEL_ENV_KEY: &str = "AGENTOS_MODEL_ENV_KEY";
+    pub const AGENTOS_PLUGIN_DIR: &str = "AGENTOS_PLUGIN_DIR";
+    pub const AGENTOS_RUNNER_PORT: &str = "AGENTOS_RUNNER_PORT";
+    pub const AGENTOS_RUNNER_TOKEN: &str = "AGENTOS_RUNNER_TOKEN";
+    pub const AGENTOS_SANDBOX_ID: &str = "AGENTOS_SANDBOX_ID";
+    pub const AGENTOS_SESSION_ID: &str = "AGENTOS_SESSION_ID";
+    pub const ANTHROPIC_BASE_URL: &str = "ANTHROPIC_BASE_URL";
+    pub const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
+    pub const OTEL_EXPORTER_OTLP_HEADERS: &str = "OTEL_EXPORTER_OTLP_HEADERS";
+    pub const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "OTEL_EXPORTER_OTLP_PROTOCOL";
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

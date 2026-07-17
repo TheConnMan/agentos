@@ -15,7 +15,6 @@ import uuid
 
 import pytest
 from agentos_worker.binding import (
-    AGENT_ID_ENV,
     APPROVAL_REQUIRED_ENV,
     BUDGET_ENV,
     BUNDLE_REF_ENV,
@@ -147,7 +146,6 @@ def test_resolves_channel_to_active_deployment_and_builds_env() -> None:
             assert resolved.max_output_tokens_per_run == 4242
 
             env = _resolver(engine).boot_env(resolved, "thread-1")
-            assert env[AGENT_ID_ENV] == str(agent_id)
             assert env[BUNDLE_REF_ENV] == f"bundles/{token}.zip"
             assert '"max_usd_per_day":3.5' in env[BUDGET_ENV]
             assert '"max_output_tokens_per_run":4242' in env[BUDGET_ENV]

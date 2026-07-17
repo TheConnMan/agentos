@@ -26,7 +26,7 @@ from .events import (
 )
 from .events import InboundMessage as InboundMessageUnion
 from .events import OutboundEvent as OutboundEventUnion
-from .session import Budget, OtelConfig, SessionConfig
+from .session import BootEnv, Budget, OtelConfig, SessionConfig
 from .turn import QueuedTurn, ReplyHandle
 from .version import PROTOCOL_VERSION, WIRE_VERSION_FIELD
 from .wire import ApprovalRequest, EvalJob, EvalReport
@@ -46,6 +46,7 @@ class OutboundEvent(RootModel[OutboundEventUnion]):
 # Fixed model order so the generated $defs are deterministic.
 _MODELS = (
     SessionConfig,
+    BootEnv,
     Budget,
     OtelConfig,
     InboundMessage,
