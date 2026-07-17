@@ -344,9 +344,10 @@ mod tests {
         // Every kind it enumerates must round-trip through the Rust loader, so a
         // kind added to the schema but not to this crate's GraderKind enum fails
         // here rather than silently rejecting a valid platform-authored case.
-        let schema: serde_json::Value =
-            serde_json::from_str(include_str!("../../apps/worker/schema/eval-cases.schema.json"))
-                .expect("committed eval-cases schema is valid JSON");
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../apps/worker/schema/eval-cases.schema.json"
+        ))
+        .expect("committed eval-cases schema is valid JSON");
         let kinds = schema["$defs"]["GraderKind"]["enum"]
             .as_array()
             .expect("GraderKind enum is an array");
