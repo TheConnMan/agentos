@@ -19,7 +19,6 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
 
-    "baseUrl": ".",
     "paths": {
       "@aci/*": ["../../packages/aci-protocol/generated/ts/*"]
     }
