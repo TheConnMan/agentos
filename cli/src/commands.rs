@@ -961,6 +961,13 @@ pub async fn send(
     let ui = crate::ui::ui();
     let mut printer = TurnPrinter::default();
 
+    // Under `--json`, answer tokens are suppressed on stdout (they route through
+    // `ui.answer`), so a streamed turn would exit 0 with empty stdout (#485).
+    // Accumulate the full reply and emit one JSON object at the end instead. The
+    // human path is unchanged: it streams live and this buffer is never emitted.
+    let json = ui.json();
+    let mut reply = String::new();
+
     // A "thinking" spinner marks the wait for the first token; it is cleared the
     // instant streaming begins (committing no line) so the agent answer streams
     // clean. `streamed` tracks whether any answer token reached stdout;
@@ -991,7 +998,11 @@ pub async fn send(
                 // pace with no per-delta newline. Track mid-line state so a later
                 // note closes an un-terminated line first.
                 Some(TurnPart::Token(token)) => {
-                    ui.answer(&token);
+                    if json {
+                        reply.push_str(&token);
+                    } else {
+                        ui.answer(&token);
+                    }
                     streamed = true;
                     at_line_start = token.ends_with('\n');
                 }
@@ -1027,6 +1038,20 @@ pub async fn send(
     }
 
     if let Some(OutboundEvent::Final { status, .. }) = events.last() {
+        // Under `--json`, emit the one buffered turn object (reply + final
+        // status) rather than the streamed/human trailer (#485). Emit BEFORE any
+        // exit so a classified failure still carries its data to the consumer.
+        if json {
+            ui.emit(&SkillMessageOutput {
+                reply: std::mem::take(&mut reply),
+                status: status_str(status).to_string(),
+                finalized: true,
+            });
+            if *status == SessionStatus::ClassifiedFailure {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         // Close the streamed answer on stdout only if the last thing written was
         // un-terminated token text; if a note already added its own newline (or
         // the last token ended in one) skip it to avoid a blank line. The status
@@ -1040,6 +1065,33 @@ pub async fn send(
         }
     }
     Ok(())
+}
+
+/// Output of `skill message` under `--json`: the full buffered reply plus the
+/// final session status. The human path streams tokens live and never builds
+/// this; it exists so `--json` emits one object instead of empty stdout (#485).
+#[derive(Debug)]
+pub struct SkillMessageOutput {
+    pub reply: String,
+    pub status: String,
+    pub finalized: bool,
+}
+
+impl crate::ui::CliOutput for SkillMessageOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "reply": self.reply,
+            "status": self.status,
+            "finalized": self.finalized,
+        })
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        // Only reached if a caller routes this through the human path; mirror the
+        // streamed output as a single block for completeness.
+        ui.answer(&self.reply);
+        ui.note(&format!("-- final ({})", self.status));
+    }
 }
 
 pub async fn eval(
@@ -1393,7 +1445,7 @@ fn unbound_declared_secrets(declared: &[String], bound: &[String]) -> Vec<String
         .collect()
 }
 
-pub async fn deploy(opts: DeployOpts) -> Result<()> {
+pub async fn deploy(opts: DeployOpts) -> Result<DeployOutput> {
     let plugin_dir = opts
         .plugin_dir
         .canonicalize()
@@ -1499,19 +1551,6 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
         }
     };
 
-    ui.payload(&format!("deployed {plugin_name} {label} -> {env}"));
-    ui.kv(
-        "agent",
-        &format!("{} ({})", outcome.agent.name, ui.url(&outcome.agent.id)),
-    );
-    ui.kv(
-        "version",
-        &format!(
-            "{} ({})",
-            outcome.version.version_label,
-            ui.url(&outcome.version.id)
-        ),
-    );
     let channel = match &outcome.channel {
         ChannelOutcome::Created(channel) => channel.clone(),
         ChannelOutcome::Updated { from, to } => format!("updated to {to} (was {from})"),
@@ -1523,22 +1562,98 @@ pub async fn deploy(opts: DeployOpts) -> Result<()> {
             }
         }
     };
-    ui.kv("channel", &channel);
-    ui.kv(
-        "bundle",
-        &format!(
-            "{} sha256:{} {} bytes",
-            outcome.bundle.bundle_ref, outcome.bundle.bundle_sha256, outcome.bundle.size_bytes
-        ),
-    );
-    ui.kv(
-        "deployment",
-        &format!(
-            "{} [{}] {}",
-            outcome.deployment.id, outcome.deployment.environment, outcome.deployment.status
-        ),
-    );
-    Ok(())
+    Ok(DeployOutput {
+        plugin_name,
+        label,
+        env: env.to_string(),
+        agent_name: outcome.agent.name,
+        agent_id: outcome.agent.id,
+        version_label: outcome.version.version_label,
+        version_id: outcome.version.id,
+        channel,
+        bundle_ref: outcome.bundle.bundle_ref,
+        bundle_sha256: outcome.bundle.bundle_sha256,
+        bundle_size_bytes: outcome.bundle.size_bytes,
+        deployment_id: outcome.deployment.id,
+        deployment_environment: outcome.deployment.environment,
+        deployment_status: outcome.deployment.status,
+    })
+}
+
+/// Output of `<tier> deploy`: the deployed agent/version/channel/bundle/deployment
+/// summary. Owns its data so `to_json`/`render` outlive the `ApiClient`; the
+/// json-vs-human choice is made once in `Ui::emit` (#456, #485). Without this the
+/// real-path success emitted only `payload`/`kv`, which suppress under `--json`,
+/// so `deploy --json` exited 0 with empty stdout.
+#[derive(Debug)]
+pub struct DeployOutput {
+    pub plugin_name: String,
+    pub label: String,
+    pub env: String,
+    pub agent_name: String,
+    pub agent_id: String,
+    pub version_label: String,
+    pub version_id: String,
+    pub channel: String,
+    pub bundle_ref: String,
+    pub bundle_sha256: String,
+    pub bundle_size_bytes: u64,
+    pub deployment_id: String,
+    pub deployment_environment: String,
+    pub deployment_status: String,
+}
+
+impl crate::ui::CliOutput for DeployOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "plugin": self.plugin_name,
+            "label": self.label,
+            "environment": self.env,
+            "agent": {"name": self.agent_name, "id": self.agent_id},
+            "version": {"label": self.version_label, "id": self.version_id},
+            "channel": self.channel,
+            "bundle": {
+                "ref": self.bundle_ref,
+                "sha256": self.bundle_sha256,
+                "size_bytes": self.bundle_size_bytes,
+            },
+            "deployment": {
+                "id": self.deployment_id,
+                "environment": self.deployment_environment,
+                "status": self.deployment_status,
+            },
+        })
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        ui.payload(&format!(
+            "deployed {} {} -> {}",
+            self.plugin_name, self.label, self.env
+        ));
+        ui.kv(
+            "agent",
+            &format!("{} ({})", self.agent_name, ui.url(&self.agent_id)),
+        );
+        ui.kv(
+            "version",
+            &format!("{} ({})", self.version_label, ui.url(&self.version_id)),
+        );
+        ui.kv("channel", &self.channel);
+        ui.kv(
+            "bundle",
+            &format!(
+                "{} sha256:{} {} bytes",
+                self.bundle_ref, self.bundle_sha256, self.bundle_size_bytes
+            ),
+        );
+        ui.kv(
+            "deployment",
+            &format!(
+                "{} [{}] {}",
+                self.deployment_id, self.deployment_environment, self.deployment_status
+            ),
+        );
+    }
 }
 
 /// Shared flags for the agent-lifecycle verbs (`cluster kill|resume|budget|delete`).

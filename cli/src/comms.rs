@@ -222,7 +222,33 @@ pub fn require_connect_tokens(disconnect: bool, app_token: &str, bot_token: &str
     Ok(())
 }
 
-pub async fn comms(opts: CommsOpts) -> Result<()> {
+/// Output of `<tier> comms`: the dry-run plan, or the resulting Slack wiring
+/// state. `--json` emits a JSON object; the real path formerly emitted only
+/// stderr notes, so `comms --json` on success exited 0 with empty stdout (#485).
+#[derive(Debug)]
+pub enum CommsOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done { connected: bool },
+}
+
+impl crate::ui::CliOutput for CommsOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            CommsOutput::DryRun(plan) => plan.to_json(),
+            CommsOutput::Done { connected } => serde_json::json!({"connected": connected}),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        if let CommsOutput::DryRun(plan) = self {
+            plan.render(ui);
+        }
+        // The `Done` note is emitted live during execution (below), so nothing
+        // to render on the human path here.
+    }
+}
+
+pub async fn comms(opts: CommsOpts) -> Result<CommsOutput> {
     let ui = crate::ui::ui();
     require_connect_tokens(opts.disconnect, &opts.app_token, &opts.bot_token)?;
 
@@ -238,14 +264,13 @@ pub async fn comms(opts: CommsOpts) -> Result<()> {
     );
 
     if opts.common.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(CommsOutput::DryRun(crate::ui::DryRunPlan {
             lines: cmds
                 .iter()
                 .chain(rollout.iter())
                 .map(|cmd| cmd.display())
                 .collect(),
-        });
-        return Ok(());
+        }));
     }
 
     require_on_path("helm")?;
@@ -276,10 +301,12 @@ pub async fn comms(opts: CommsOpts) -> Result<()> {
     } else {
         ui.note("Slack connected");
     }
-    Ok(())
+    Ok(CommsOutput::Done {
+        connected: !opts.disconnect,
+    })
 }
 
-pub async fn local_comms(opts: LocalCommsOpts) -> Result<()> {
+pub async fn local_comms(opts: LocalCommsOpts) -> Result<CommsOutput> {
     let ui = crate::ui::ui();
     require_connect_tokens(opts.disconnect, &opts.app_token, &opts.bot_token)?;
     let cmds = if opts.disconnect {
@@ -289,10 +316,9 @@ pub async fn local_comms(opts: LocalCommsOpts) -> Result<()> {
     };
 
     if opts.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(CommsOutput::DryRun(crate::ui::DryRunPlan {
             lines: cmds.iter().map(|cmd| cmd.display()).collect(),
-        });
-        return Ok(());
+        }));
     }
 
     if opts.model_mode == ModelMode::FakePinnedDespiteCredential {
@@ -320,7 +346,9 @@ pub async fn local_comms(opts: LocalCommsOpts) -> Result<()> {
     } else {
         ui.note("Slack connected to the local stack (dispatcher running, worker on real Slack)");
     }
-    Ok(())
+    Ok(CommsOutput::Done {
+        connected: !opts.disconnect,
+    })
 }
 
 #[cfg(test)]

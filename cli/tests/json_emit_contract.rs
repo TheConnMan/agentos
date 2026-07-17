@@ -831,3 +831,123 @@ fn delete_output_json_shape_is_pinned() {
         json!({"agent": "weather", "deleted": true})
     );
 }
+
+// ---------------------------------------------------------------------------
+// The operator + deploy verbs' real-path `to_json` (#485)
+// ---------------------------------------------------------------------------
+//
+// These verbs' success path needs a live server/cluster, so the binary-driven
+// tests above cannot reach it. Pin their `to_json` shapes directly so a
+// dropped/renamed/added key fails here -- the same discipline the read verbs get.
+
+#[test]
+fn deploy_output_json_shape_is_pinned() {
+    use agentos::commands::DeployOutput;
+    assert_eq!(
+        DeployOutput {
+            plugin_name: "weather".to_string(),
+            label: "v1-123".to_string(),
+            env: "dev".to_string(),
+            agent_name: "weather".to_string(),
+            agent_id: "agt_1".to_string(),
+            version_label: "v1-123".to_string(),
+            version_id: "ver_1".to_string(),
+            channel: "unchanged (C123)".to_string(),
+            bundle_ref: "bundles/abc.tar.gz".to_string(),
+            bundle_sha256: "deadbeef00".to_string(),
+            bundle_size_bytes: 4096,
+            deployment_id: "dep_1".to_string(),
+            deployment_environment: "dev".to_string(),
+            deployment_status: "active".to_string(),
+        }
+        .to_json(),
+        json!({
+            "plugin": "weather",
+            "label": "v1-123",
+            "environment": "dev",
+            "agent": {"name": "weather", "id": "agt_1"},
+            "version": {"label": "v1-123", "id": "ver_1"},
+            "channel": "unchanged (C123)",
+            "bundle": {"ref": "bundles/abc.tar.gz", "sha256": "deadbeef00", "size_bytes": 4096},
+            "deployment": {"id": "dep_1", "environment": "dev", "status": "active"},
+        })
+    );
+}
+
+#[test]
+fn comms_output_json_shape_is_pinned() {
+    use agentos::comms::CommsOutput;
+    assert_eq!(
+        CommsOutput::DryRun(plan(&["helm upgrade"])).to_json(),
+        json!({"dry_run": true, "plan": ["helm upgrade"]})
+    );
+    // The disconnect case must emit `connected: false`, not omit the key.
+    assert_eq!(
+        CommsOutput::Done { connected: false }.to_json(),
+        json!({"connected": false})
+    );
+    assert_eq!(
+        CommsOutput::Done { connected: true }.to_json(),
+        json!({"connected": true})
+    );
+}
+
+#[test]
+fn cluster_up_down_output_json_shapes_are_pinned() {
+    use agentos::ops::{ClusterDownOutput, ClusterUpOutput};
+    assert_eq!(
+        ClusterUpOutput::Up {
+            namespace: "agentos".to_string(),
+            release: "agentos".to_string(),
+        }
+        .to_json(),
+        json!({"status": "up", "namespace": "agentos", "release": "agentos"})
+    );
+    assert_eq!(
+        ClusterDownOutput::Aborted.to_json(),
+        json!({"down": false, "aborted": true})
+    );
+    assert_eq!(
+        ClusterDownOutput::Down {
+            release_was_absent: false,
+        }
+        .to_json(),
+        json!({"down": true, "release_was_absent": false})
+    );
+}
+
+#[test]
+fn local_operator_output_json_shapes_are_pinned() {
+    use agentos::local::{LocalDownOutput, LocalStatusOutput, LocalUpOutput};
+    assert_eq!(
+        LocalUpOutput::Up {
+            endpoints: vec![("Console".to_string(), "http://localhost:28080".to_string())],
+            slack: false,
+        }
+        .to_json(),
+        json!({
+            "status": "up",
+            "endpoints": [{"name": "Console", "url": "http://localhost:28080"}],
+            "slack": false,
+        })
+    );
+    assert_eq!(
+        LocalStatusOutput::Services {
+            rows: vec!["NAME  STATUS".to_string()],
+        }
+        .to_json(),
+        json!({"services": ["NAME  STATUS"]})
+    );
+    assert_eq!(
+        LocalDownOutput::Down {
+            volumes_wiped: true,
+            reaped: 2,
+        }
+        .to_json(),
+        json!({"stopped": true, "volumes_wiped": true, "runners_reaped": 2})
+    );
+    assert_eq!(
+        LocalDownOutput::Aborted.to_json(),
+        json!({"stopped": false, "aborted": true})
+    );
+}

@@ -1160,7 +1160,39 @@ pub(crate) async fn run_step(
 // Verb handlers
 // ---------------------------------------------------------------------------
 
-pub async fn up(mut opts: UpOpts) -> Result<()> {
+/// Output of `cluster up`: the dry-run plan, or the installed release. `--json`
+/// emits a JSON object; the real path formerly ended in `ui.payload` (suppressed
+/// under `--json`, #485).
+#[derive(Debug)]
+pub enum ClusterUpOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Up { namespace: String, release: String },
+}
+
+impl crate::ui::CliOutput for ClusterUpOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ClusterUpOutput::DryRun(plan) => plan.to_json(),
+            ClusterUpOutput::Up { namespace, release } => serde_json::json!({
+                "status": "up",
+                "namespace": namespace,
+                "release": release,
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ClusterUpOutput::DryRun(plan) => plan.render(ui),
+            ClusterUpOutput::Up { .. } => {
+                ui.payload("agentos is up");
+                ui.note("Run `agentos cluster status` for pod health and URLs.");
+            }
+        }
+    }
+}
+
+pub async fn up(mut opts: UpOpts) -> Result<ClusterUpOutput> {
     let ui = crate::ui::ui();
     validate_web_egress_cidrs(&opts.allow_web_egress)
         .context("invalid --allow-web-egress value")?;
@@ -1263,10 +1295,9 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
         ));
     }
     if opts.common.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(ClusterUpOutput::DryRun(crate::ui::DryRunPlan {
             lines: cmds.iter().map(|cmd| cmd.display()).collect(),
-        });
-        return Ok(());
+        }));
     }
     require_on_path("helm")?;
     let cl = ui.checklist();
@@ -1274,21 +1305,104 @@ pub async fn up(mut opts: UpOpts) -> Result<()> {
     for cmd in &cmds {
         run_step(&cl, &label, "installed", cmd).await?;
     }
-    ui.payload("agentos is up");
-    ui.note("Run `agentos cluster status` for pod health and URLs.");
-    Ok(())
+    Ok(ClusterUpOutput::Up {
+        namespace: opts.common.namespace.clone(),
+        release: opts.common.release.clone(),
+    })
 }
 
-pub async fn status(opts: CommonOpts) -> Result<()> {
-    let ui = crate::ui::ui();
+/// Output of `cluster status`: the dry-run plan, or the release/pod/URL summary.
+/// `--json` emits one JSON object; the real path formerly printed via
+/// `ui.payload`/scattered helpers (all suppressed under `--json`, #485).
+#[derive(Debug)]
+pub enum ClusterStatusOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Status(Box<ClusterStatus>),
+}
+
+/// The assembled `cluster status` reading. Owns its data so `to_json`/`render`
+/// can run after every capture completes.
+#[derive(Debug)]
+pub struct ClusterStatus {
+    pub namespace: String,
+    pub revision: String,
+    pub release_state: String,
+    pub release_found: bool,
+    pub release_missing_note: Option<String>,
+    pub pods: Vec<PodRow>,
+    pub ready: usize,
+    pub total: usize,
+    pub unhealthy: Vec<String>,
+    pub pods_listed: bool,
+    pub urls: Vec<ServiceUrl>,
+}
+
+impl crate::ui::CliOutput for ClusterStatusOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ClusterStatusOutput::DryRun(plan) => plan.to_json(),
+            ClusterStatusOutput::Status(s) => {
+                let healthy = s.total > 0 && s.ready == s.total && s.unhealthy.is_empty();
+                serde_json::json!({
+                    "namespace": s.namespace,
+                    "revision": s.revision,
+                    "release_state": s.release_state,
+                    "release_found": s.release_found,
+                    "pods": {
+                        "ready": s.ready,
+                        "total": s.total,
+                        "unhealthy": s.unhealthy,
+                        "rows": s.pods.iter().map(PodRow::to_json).collect::<Vec<_>>(),
+                    },
+                    "urls": s.urls.iter().map(ServiceUrl::to_json).collect::<Vec<_>>(),
+                    "healthy": healthy,
+                })
+            }
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ClusterStatusOutput::DryRun(plan) => plan.render(ui),
+            ClusterStatusOutput::Status(s) => {
+                ui.payload(&format!(
+                    "agentos · namespace {} · revision {} · {}",
+                    s.namespace, s.revision, s.release_state
+                ));
+                if let Some(note) = &s.release_missing_note {
+                    ui.note(note);
+                }
+                render_pod_table(ui, &s.pods);
+                if !s.pods_listed {
+                    ui.warn(&format!("could not list pods in namespace {}", s.namespace));
+                }
+                for url in &s.urls {
+                    url.render(ui);
+                }
+                if s.total > 0 && s.ready == s.total && s.unhealthy.is_empty() {
+                    ui.success(&format!("healthy ({}/{} pods ready)", s.ready, s.total));
+                } else if s.total == 0 {
+                    ui.warn("no pods running");
+                } else {
+                    let mut msg = format!("{}/{} pods ready", s.ready, s.total);
+                    if !s.unhealthy.is_empty() {
+                        msg.push_str(&format!("; not ready: {}", s.unhealthy.join(", ")));
+                    }
+                    ui.warn(&msg);
+                }
+            }
+        }
+    }
+}
+
+pub async fn status(opts: CommonOpts) -> Result<ClusterStatusOutput> {
     if opts.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(ClusterStatusOutput::DryRun(crate::ui::DryRunPlan {
             lines: status_commands(&opts)
                 .iter()
                 .map(|cmd| cmd.display())
                 .collect(),
-        });
-        return Ok(());
+        }));
     }
     require_on_path("helm")?;
     require_on_path("kubectl")?;
@@ -1308,63 +1422,89 @@ pub async fn status(opts: CommonOpts) -> Result<()> {
     } else {
         ("not found".to_string(), "none".to_string())
     };
-    ui.payload(&format!(
-        "agentos · namespace {} · revision {} · {}",
-        opts.namespace, revision, release_state
-    ));
-    if !helm_ok {
-        ui.note(&format!(
+    let release_missing_note = (!helm_ok).then(|| {
+        format!(
             "release {} not found: {}",
             opts.release,
             helm_err.trim().lines().next().unwrap_or("no such release")
-        ));
-    }
+        )
+    });
 
     // (b) Pod health.
     let (ok, out, _) = run_capture(&pods_cmd(&opts)).await?;
-    let (ready, total, unhealthy) = if ok {
+    let (pods, ready, total, unhealthy) = if ok {
         let items: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&out)
             .ok()
             .and_then(|v| v.get("items").and_then(|i| i.as_array()).cloned())
             .unwrap_or_default();
-        print_pod_summary(&items)
+        collect_pod_summary(&items)
     } else {
-        ui.warn(&format!(
-            "could not list pods in namespace {}",
-            opts.namespace
-        ));
-        (0, 0, Vec::new())
+        (Vec::new(), 0, 0, Vec::new())
     };
 
     // (c) URL discovery.
     let host = discover_host().await;
-    print_service_url(&opts, "ui", "UI", &host, true).await;
-    print_service_url(&opts, "langfuse-web", "Langfuse", &host, false).await;
+    let urls = vec![
+        resolve_service_url(&opts, "ui", "UI", &host, true).await,
+        resolve_service_url(&opts, "langfuse-web", "Langfuse", &host, false).await,
+    ];
 
-    // (d) Overall verdict.
-    if total > 0 && ready == total && unhealthy.is_empty() {
-        ui.success(&format!("healthy ({ready}/{total} pods ready)"));
-    } else if total == 0 {
-        ui.warn("no pods running");
-    } else {
-        let mut msg = format!("{ready}/{total} pods ready");
-        if !unhealthy.is_empty() {
-            msg.push_str(&format!("; not ready: {}", unhealthy.join(", ")));
-        }
-        ui.warn(&msg);
-    }
-
-    Ok(())
+    Ok(ClusterStatusOutput::Status(Box::new(ClusterStatus {
+        namespace: opts.namespace.clone(),
+        revision,
+        release_state,
+        release_found: helm_ok,
+        release_missing_note,
+        pods,
+        ready,
+        total,
+        unhealthy,
+        pods_listed: ok,
+        urls,
+    })))
 }
 
-pub async fn down(opts: DownOpts) -> Result<()> {
+/// Output of `cluster down`: the dry-run plan, an operator abort, or the removed
+/// release. `--json` emits a JSON object; the real path formerly ended in
+/// `ui.payload` (suppressed under `--json`, #485).
+#[derive(Debug)]
+pub enum ClusterDownOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Aborted,
+    Down { release_was_absent: bool },
+}
+
+impl crate::ui::CliOutput for ClusterDownOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ClusterDownOutput::DryRun(plan) => plan.to_json(),
+            ClusterDownOutput::Aborted => serde_json::json!({"down": false, "aborted": true}),
+            ClusterDownOutput::Down { release_was_absent } => serde_json::json!({
+                "down": true,
+                "release_was_absent": release_was_absent,
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ClusterDownOutput::DryRun(plan) => plan.render(ui),
+            ClusterDownOutput::Aborted => ui.note("aborted"),
+            ClusterDownOutput::Down { .. } => {
+                ui.payload("agentos is down");
+                ui.note("The agents.x-k8s.io CRDs are left in place intentionally.");
+            }
+        }
+    }
+}
+
+pub async fn down(opts: DownOpts) -> Result<ClusterDownOutput> {
     let ui = crate::ui::ui();
     let cmds = down_commands(&opts.common);
     if opts.common.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(ClusterDownOutput::DryRun(crate::ui::DryRunPlan {
             lines: cmds.iter().map(|cmd| cmd.display()).collect(),
-        });
-        return Ok(());
+        }));
     }
     ui.warn(&format!(
         "this uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'",
@@ -1376,8 +1516,7 @@ pub async fn down(opts: DownOpts) -> Result<()> {
             opts.common.release, opts.common.namespace
         ))?
     {
-        ui.note("aborted");
-        return Ok(());
+        return Ok(ClusterDownOutput::Aborted);
     }
     require_on_path("helm")?;
     require_on_path("kubectl")?;
@@ -1408,9 +1547,9 @@ pub async fn down(opts: DownOpts) -> Result<()> {
     // Namespace sweep (runtime artifacts Helm does not own).
     run_step(&cl, "sweeping namespaces", "removed", &cmds[1]).await?;
 
-    ui.payload("agentos is down");
-    ui.note("The agents.x-k8s.io CRDs are left in place intentionally.");
-    Ok(())
+    Ok(ClusterDownOutput::Down {
+        release_was_absent: absent,
+    })
 }
 
 /// Read a y/N confirmation from stderr/stdin for `down` when `--yes` is absent.
@@ -1437,16 +1576,41 @@ pub(crate) fn confirm(prompt: &str) -> Result<bool> {
     Ok(matches!(line.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
-/// Render `kubectl get pods` output as a borderless table to stdout and return
-/// (ready count, steady state total, names of pods not Running) so the caller
-/// can summarise overall health. Terminal and terminating pods stay visible in
-/// the table but are excluded from the returned tally.
-fn print_pod_summary(pods: &[serde_json::Value]) -> (usize, usize, Vec<String>) {
-    let ui = crate::ui::ui();
+/// One pod's row in the `cluster status` table.
+#[derive(Debug)]
+pub struct PodRow {
+    pub name: String,
+    pub ready: String,
+    pub status: String,
+}
+
+impl PodRow {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({"pod": self.name, "ready": self.ready, "status": self.status})
+    }
+}
+
+/// Render the collected pod rows as a borderless table to stdout (human path).
+fn render_pod_table(ui: &crate::ui::Ui, pods: &[PodRow]) {
+    if pods.is_empty() {
+        return;
+    }
+    let rows: Vec<Vec<String>> = pods
+        .iter()
+        .map(|p| vec![p.name.clone(), p.ready.clone(), p.status.clone()])
+        .collect();
+    ui.payload_plain(&crate::ui::table(&["pod", "ready", "status"], &rows, &[]));
+}
+
+/// Summarise `kubectl get pods` output into (rows, ready count, steady-state
+/// total, names of pods not Running) WITHOUT printing, so the caller can render
+/// or serialize it (#485). Terminal and terminating pods stay in the rows but are
+/// excluded from the tally.
+fn collect_pod_summary(pods: &[serde_json::Value]) -> (Vec<PodRow>, usize, usize, Vec<String>) {
     let mut ready = 0usize;
     let mut total = 0usize;
     let mut unhealthy: Vec<String> = Vec::new();
-    let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut table_rows: Vec<PodRow> = Vec::new();
     for pod in pods {
         let name = pod
             .get("metadata")
@@ -1491,7 +1655,11 @@ fn print_pod_summary(pods: &[serde_json::Value]) -> (usize, usize, Vec<String>) 
         } else {
             phase
         };
-        table_rows.push(vec![name.clone(), ready_col, display_status.to_string()]);
+        table_rows.push(PodRow {
+            name: name.clone(),
+            ready: ready_col,
+            status: display_status.to_string(),
+        });
         if phase == "Succeeded" || reason == "Completed" || terminating {
             continue;
         }
@@ -1504,14 +1672,7 @@ fn print_pod_summary(pods: &[serde_json::Value]) -> (usize, usize, Vec<String>) 
             unhealthy.push(name);
         }
     }
-    if !table_rows.is_empty() {
-        ui.payload_plain(&crate::ui::table(
-            &["pod", "ready", "status"],
-            &table_rows,
-            &[],
-        ));
-    }
-    (ready, total, unhealthy)
+    (table_rows, ready, total, unhealthy)
 }
 
 /// Resolve a routable node host: kubeconfig cluster server hostname, falling
@@ -1662,41 +1823,126 @@ fn node_internal_ip(nodes_json: &str) -> Option<String> {
 
 /// Print one service's access URL: a NodePort URL when exposed, else the
 /// port-forward command to reach a ClusterIP service.
-async fn print_service_url(o: &CommonOpts, suffix: &str, label: &str, host: &str, api: bool) {
-    let ui = crate::ui::ui();
+/// One resolved service URL row for `cluster status`. Owns its data so the
+/// status reading can be rendered (byte-identical to the prior `ui.kv` output)
+/// or serialized under `--json` (#485), instead of printing inline.
+#[derive(Debug)]
+pub struct ServiceUrl {
+    label: String,
+    name: String,
+    namespace: String,
+    api: bool,
+    kind: ServiceUrlKind,
+}
+
+#[derive(Debug)]
+enum ServiceUrlKind {
+    NotFound,
+    NodePortUrl(String),
+    UnassignedNodePort,
+    PortForward { local: u16, port: u16 },
+    Unreadable,
+}
+
+impl ServiceUrl {
+    fn to_json(&self) -> serde_json::Value {
+        let (url, note): (Option<String>, Option<String>) = match &self.kind {
+            ServiceUrlKind::NodePortUrl(url) => (Some(url.clone()), None),
+            ServiceUrlKind::NotFound => (None, Some(format!("service {} not found", self.name))),
+            ServiceUrlKind::UnassignedNodePort => (
+                None,
+                Some(format!(
+                    "service {} is NodePort but exposes no nodePort yet",
+                    self.name
+                )),
+            ),
+            ServiceUrlKind::PortForward { local, port } => {
+                let suffix_path = api_suffix_path(self.api);
+                (
+                    None,
+                    Some(port_forward_hint_with(
+                        &self.namespace,
+                        &self.name,
+                        *local,
+                        *port,
+                        &format!("http://localhost:{local}{suffix_path}"),
+                    )),
+                )
+            }
+            ServiceUrlKind::Unreadable => {
+                (None, Some(format!("could not read service {}", self.name)))
+            }
+        };
+        serde_json::json!({"name": self.label, "url": url, "note": note})
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match &self.kind {
+            ServiceUrlKind::NodePortUrl(url) => ui.kv(&self.label, &ui.url(url)),
+            ServiceUrlKind::NotFound => {
+                ui.kv(&self.label, &format!("service {} not found", self.name))
+            }
+            ServiceUrlKind::UnassignedNodePort => ui.kv(
+                &self.label,
+                &format!(
+                    "service {} is NodePort but exposes no nodePort yet",
+                    self.name
+                ),
+            ),
+            ServiceUrlKind::PortForward { local, port } => {
+                let suffix_path = api_suffix_path(self.api);
+                ui.kv(
+                    &self.label,
+                    &port_forward_hint_with(
+                        &self.namespace,
+                        &self.name,
+                        *local,
+                        *port,
+                        &ui.url(&format!("http://localhost:{local}{suffix_path}")),
+                    ),
+                )
+            }
+            ServiceUrlKind::Unreadable => ui.kv(
+                &self.label,
+                &format!("could not read service {}", self.name),
+            ),
+        }
+    }
+}
+
+async fn resolve_service_url(
+    o: &CommonOpts,
+    suffix: &str,
+    label: &str,
+    host: &str,
+    api: bool,
+) -> ServiceUrl {
     let name = format!("{}-{}", o.release, suffix);
+    let mk = |kind| ServiceUrl {
+        label: label.to_string(),
+        name: name.clone(),
+        namespace: o.namespace.clone(),
+        api,
+        kind,
+    };
     let (ok, out, _) = match run_capture(&svc_cmd(o, suffix)).await {
         Ok(res) => res,
-        Err(_) => {
-            ui.kv(label, &format!("service {name} not found"));
-            return;
-        }
+        Err(_) => return mk(ServiceUrlKind::NotFound),
     };
     if !ok {
-        ui.kv(label, &format!("service {name} not found"));
-        return;
+        return mk(ServiceUrlKind::NotFound);
     }
-    let suffix_path = api_suffix_path(api);
-    // Same discovery core as `cluster observability` (#460); this formatter owns
-    // the wording, so the status output stays byte-identical.
-    match resolve_service_endpoint(&out, host, api) {
-        ServiceEndpoint::NodePortUrl(url) => ui.kv(label, &ui.url(&url)),
-        ServiceEndpoint::UnassignedNodePort => ui.kv(
-            label,
-            &format!("service {name} is NodePort but exposes no nodePort yet"),
-        ),
-        ServiceEndpoint::PortForwardHint { local, port } => ui.kv(
-            label,
-            &port_forward_hint_with(
-                &o.namespace,
-                &name,
-                local,
-                port,
-                &ui.url(&format!("http://localhost:{local}{suffix_path}")),
-            ),
-        ),
-        ServiceEndpoint::Unreadable => ui.kv(label, &format!("could not read service {name}")),
-    }
+    // Same discovery core as `cluster observability` (#460); this owns the
+    // wording, so the status output stays byte-identical.
+    let kind = match resolve_service_endpoint(&out, host, api) {
+        ServiceEndpoint::NodePortUrl(url) => ServiceUrlKind::NodePortUrl(url),
+        ServiceEndpoint::UnassignedNodePort => ServiceUrlKind::UnassignedNodePort,
+        ServiceEndpoint::PortForwardHint { local, port } => {
+            ServiceUrlKind::PortForward { local, port }
+        }
+        ServiceEndpoint::Unreadable => ServiceUrlKind::Unreadable,
+    };
+    mk(kind)
 }
 
 /// From `kubectl get svc -o json`, return (type, first nodePort, first port).
@@ -2748,7 +2994,7 @@ mod tests {
     fn pod_summary_does_not_panic_on_empty() {
         // No items: empty items array.
         let items: Vec<serde_json::Value> = Vec::new();
-        let _ = print_pod_summary(&items);
+        let _ = collect_pod_summary(&items);
     }
 
     #[test]
@@ -2771,7 +3017,8 @@ mod tests {
         ]"#;
 
         let items: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
-        assert_eq!(print_pod_summary(&items), (10, 10, vec![]));
+        let (_, ready, total, unhealthy) = collect_pod_summary(&items);
+        assert_eq!((ready, total, unhealthy), (10, 10, vec![]));
     }
 
     #[test]
@@ -2783,8 +3030,9 @@ mod tests {
         ]"#;
 
         let items: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
+        let (_, ready, total, unhealthy) = collect_pod_summary(&items);
         assert_eq!(
-            print_pod_summary(&items),
+            (ready, total, unhealthy),
             (2, 3, vec!["dispatcher0".to_string()])
         );
     }

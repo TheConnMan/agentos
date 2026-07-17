@@ -266,14 +266,61 @@ pub fn status_command(o: &LocalOpts) -> OpsCommand {
 // Verb handlers
 // ---------------------------------------------------------------------------
 
-pub async fn up(o: LocalOpts) -> Result<()> {
+/// Output of `local up`: the dry-run plan, or the started dev stack's advertised
+/// endpoints. Routes through `Ui::emit` so `--json` emits a JSON object instead
+/// of empty stdout (#485): the real path formerly ended in `ui.kv`, which
+/// suppresses under `--json`.
+#[derive(Debug)]
+pub enum LocalUpOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Up {
+        endpoints: Vec<(String, String)>,
+        slack: bool,
+    },
+}
+
+impl crate::ui::CliOutput for LocalUpOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            LocalUpOutput::DryRun(plan) => plan.to_json(),
+            LocalUpOutput::Up { endpoints, slack } => serde_json::json!({
+                "status": "up",
+                "endpoints": endpoints
+                    .iter()
+                    .map(|(name, url)| serde_json::json!({"name": name, "url": url}))
+                    .collect::<Vec<_>>(),
+                "slack": slack,
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            LocalUpOutput::DryRun(plan) => plan.render(ui),
+            LocalUpOutput::Up { endpoints, slack } => {
+                for (label, url) in endpoints {
+                    ui.kv(label, &ui.url(url));
+                }
+                if *slack {
+                    ui.note("Slack dispatcher started (Socket Mode; no host port).");
+                }
+                ui.note("Drive the local product loop (no Slack, no Kubernetes):");
+                ui.note(
+                    "  agentos local deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
+                );
+                ui.note("  agentos local message \"<your question>\"");
+            }
+        }
+    }
+}
+
+pub async fn up(o: LocalOpts) -> Result<LocalUpOutput> {
     let ui = crate::ui::ui();
     let cmd = up_command(&o);
     if o.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(LocalUpOutput::DryRun(crate::ui::DryRunPlan {
             lines: vec![cmd.display()],
-        });
-        return Ok(());
+        }));
     }
     require_on_path("docker")?;
     let cl = ui.checklist();
@@ -293,32 +340,55 @@ pub async fn up(o: LocalOpts) -> Result<()> {
             ),
         }
     }
-    for (label, url, is_core) in ENDPOINTS {
+    let endpoints = ENDPOINTS
+        .iter()
         // Under `--minimal` only the `core` services started, so advertise only
         // their endpoints; the `full`-only URLs would 404.
-        if !o.minimal || *is_core {
-            ui.kv(label, &ui.url(url));
-        }
-    }
-    if o.slack {
-        ui.note("Slack dispatcher started (Socket Mode; no host port).");
-    }
-    ui.note("Drive the local product loop (no Slack, no Kubernetes):");
-    ui.note(
-        "  agentos local deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
-    );
-    ui.note("  agentos local message \"<your question>\"");
-    Ok(())
+        .filter(|(_, _, is_core)| !o.minimal || *is_core)
+        .map(|(label, url, _)| (label.to_string(), url.to_string()))
+        .collect();
+    Ok(LocalUpOutput::Up {
+        endpoints,
+        slack: o.slack,
+    })
 }
 
-pub async fn status(o: LocalOpts) -> Result<()> {
+/// Output of `local status`: the dry-run plan, or the `docker compose ps` rows.
+/// `--json` emits `{"services":[...lines]}` rather than the empty stdout the
+/// former `payload_plain` loop produced (#485).
+#[derive(Debug)]
+pub enum LocalStatusOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Services { rows: Vec<String> },
+}
+
+impl crate::ui::CliOutput for LocalStatusOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            LocalStatusOutput::DryRun(plan) => plan.to_json(),
+            LocalStatusOutput::Services { rows } => serde_json::json!({"services": rows}),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            LocalStatusOutput::DryRun(plan) => plan.render(ui),
+            LocalStatusOutput::Services { rows } => {
+                for line in rows {
+                    ui.payload_plain(line);
+                }
+            }
+        }
+    }
+}
+
+pub async fn status(o: LocalOpts) -> Result<LocalStatusOutput> {
     let ui = crate::ui::ui();
     let cmd = status_command(&o);
     if o.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(LocalStatusOutput::DryRun(crate::ui::DryRunPlan {
             lines: vec![cmd.display()],
-        });
-        return Ok(());
+        }));
     }
     require_on_path("docker")?;
     // `docker compose ps` output is itself the payload table.
@@ -336,17 +406,64 @@ pub async fn status(o: LocalOpts) -> Result<()> {
         ui.failure(&format!("`docker compose ps` failed: {reason}"));
         bail!("`docker compose ps` exited nonzero");
     }
-    for line in out.lines() {
-        ui.payload_plain(line);
-    }
-    Ok(())
+    Ok(LocalStatusOutput::Services {
+        rows: out.lines().map(str::to_string).collect(),
+    })
 }
 
-pub async fn down(o: LocalDownOpts) -> Result<()> {
+/// Output of `local down`: the dry-run plan, an operator abort, or the stopped
+/// stack. `--json` emits a JSON object; the real path formerly ended in
+/// `ui.payload` (suppressed under `--json`, #485).
+#[derive(Debug)]
+pub enum LocalDownOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Aborted,
+    Down { volumes_wiped: bool, reaped: usize },
+}
+
+impl crate::ui::CliOutput for LocalDownOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            LocalDownOutput::DryRun(plan) => plan.to_json(),
+            LocalDownOutput::Aborted => serde_json::json!({"stopped": false, "aborted": true}),
+            LocalDownOutput::Down {
+                volumes_wiped,
+                reaped,
+            } => serde_json::json!({
+                "stopped": true,
+                "volumes_wiped": volumes_wiped,
+                "runners_reaped": reaped,
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            LocalDownOutput::DryRun(plan) => plan.render(ui),
+            LocalDownOutput::Aborted => ui.note("aborted"),
+            LocalDownOutput::Down {
+                volumes_wiped,
+                reaped,
+            } => {
+                if *reaped > 0 {
+                    ui.note(&format!("removed {reaped} runner container(s)"));
+                }
+                if *volumes_wiped {
+                    ui.payload("dev stack stopped; volumes wiped");
+                } else {
+                    ui.payload("dev stack stopped");
+                    ui.note("volumes kept (fast restart with `agentos local up`)");
+                }
+            }
+        }
+    }
+}
+
+pub async fn down(o: LocalDownOpts) -> Result<LocalDownOutput> {
     let ui = crate::ui::ui();
     let cmd = down_command(&o);
     if o.common.dry_run {
-        ui.emit(&crate::ui::DryRunPlan {
+        return Ok(LocalDownOutput::DryRun(crate::ui::DryRunPlan {
             lines: vec![
                 cmd.display(),
                 format!(
@@ -354,8 +471,7 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
                     docker::SANDBOX_LABEL
                 ),
             ],
-        });
-        return Ok(());
+        }));
     }
     if o.wipe {
         ui.warn(&format!(
@@ -368,8 +484,7 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
                 o.common.file
             ))?
         {
-            ui.note("aborted");
-            return Ok(());
+            return Ok(LocalDownOutput::Aborted);
         }
     }
     require_on_path("docker")?;
@@ -380,17 +495,11 @@ pub async fn down(o: LocalDownOpts) -> Result<()> {
         "stopping stack"
     };
     run_step(&cl, label, "stopped", &cmd).await?;
-    let count = docker::reap_labeled(docker::SANDBOX_LABEL).await?;
-    if count > 0 {
-        ui.note(&format!("removed {count} runner container(s)"));
-    }
-    if o.wipe {
-        ui.payload("dev stack stopped; volumes wiped");
-    } else {
-        ui.payload("dev stack stopped");
-        ui.note("volumes kept (fast restart with `agentos local up`)");
-    }
-    Ok(())
+    let reaped = docker::reap_labeled(docker::SANDBOX_LABEL).await?;
+    Ok(LocalDownOutput::Down {
+        volumes_wiped: o.wipe,
+        reaped,
+    })
 }
 
 #[cfg(test)]
