@@ -17,7 +17,6 @@ import anyio
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
-from .redact import install_log_redaction
 from .approval import (
     ApprovalGate,
     build_approval_server,
@@ -38,6 +37,7 @@ from .hooks import load_bundle_hooks
 from .memory import MemoryRecord, MemoryStore, format_memory_preamble, resolve_memory
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_bundle_system_prompt, load_plugins
+from .redact import install_log_redaction
 from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
