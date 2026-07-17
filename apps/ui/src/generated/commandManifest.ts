@@ -2796,6 +2796,37 @@ export const commandManifest = {
           "about": "Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`)",
           "hidden": false,
           "name": "plugin-compat"
+        },
+        {
+          "about": "Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml version, and appVersion (`bash scripts/check-version-consistency.sh`)",
+          "hidden": false,
+          "name": "version-check"
+        },
+        {
+          "about": "Set the release version across cli/Cargo.toml + Chart.yaml version/appVersion (and refresh the CLI lockfile) so a release cut can't leave the three out of sync. Does not commit or tag",
+          "args": [
+            {
+              "global": false,
+              "help": "The new release version: semver `X.Y.Z` or `X.Y.Z-rc.N`",
+              "id": "version",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Print the planned edits without writing anything",
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "bump-version"
         }
       ]
     },

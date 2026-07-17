@@ -265,13 +265,17 @@ jobs:
           persist-credentials: false
       - name: Add target
         run: rustup target add ${{ matrix.target }}
-      - name: Assert tag matches Cargo.toml version
-        working-directory: cli
+      - name: Assert tag matches the release-coupled versions
         run: |
+          set -euo pipefail
+          # The three fields (cli/Cargo.toml, Chart.yaml version + appVersion)
+          # must agree with each other AND with the tag; a stale appVersion ships
+          # a chart that pulls the wrong runner image (#489).
+          bash scripts/check-version-consistency.sh
           tag="${GITHUB_REF_NAME#v}"
-          pkg="$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          pkg="$(grep -m1 '^version' cli/Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
           if [ "$tag" != "$pkg" ]; then
-            echo "tag v$tag does not match cli/Cargo.toml version $pkg" >&2
+            echo "tag v$tag does not match the release version $pkg" >&2
             exit 1
           fi
       - name: Build release
