@@ -8,16 +8,32 @@ one external service the kernel tests mock; everything else runs for real.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Protocol
+from collections.abc import Awaitable, Callable
+from typing import Protocol, TypeVar
 
+import aiohttp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
+from slack_sdk.web.async_slack_response import AsyncSlackResponse
 
 from .behaviorpacks import NavPack
 from .blocks import render
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+# "Unreachable" reply-endpoint errors (#530): the endpoint's HOST did not answer
+# -- a dead CLI stub whose process exited, a wrong port, a network drop. These are
+# aiohttp transport errors and asyncio timeouts, NOT SlackApiError: a SlackApiError
+# means the endpoint IS reachable and answered with an error (auth/channel), which
+# must keep its own text-only fallback and must NOT trigger a transport fallback.
+_UNREACHABLE_ERRORS: tuple[type[BaseException], ...] = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+)
 
 
 class SlackSink(Protocol):
@@ -106,6 +122,46 @@ class AsyncSlackSink:
             self._clients[base_url] = client
         return client
 
+    async def _with_transport_fallback(
+        self,
+        endpoint: str | None,
+        op: Callable[[AsyncWebClient], Awaitable[_T]],
+        *,
+        describe: str,
+    ) -> _T:
+        """Run ``op`` against this turn's endpoint, falling back to the worker
+        DEFAULT transport when that endpoint is UNREACHABLE (#530).
+
+        The motivating case: an approval turn resumed long after the original
+        ``local``/``cluster message`` command exited finalizes against the reply
+        endpoint persisted on the durable ``Approval`` -- the CLI's throwaway stub,
+        now dead. Rather than let the connection error propagate (and dead-letter
+        the resume, losing the reply), retry the same call on the default transport.
+
+        Guarded so a reply is never misdirected: the fallback fires only when the
+        failing target was a real per-turn ``endpoint`` AND a default is configured
+        AND it differs from that endpoint. A ``SlackApiError`` (endpoint reachable,
+        call rejected) is not an unreachability and is never caught here.
+        """
+        primary = self._client_for(endpoint)
+        resolved = endpoint or self._default_base_url
+        has_distinct_default = bool(
+            endpoint and self._default_base_url and resolved != self._default_base_url
+        )
+        try:
+            return await op(primary)
+        except _UNREACHABLE_ERRORS as exc:
+            if not has_distinct_default:
+                raise
+            logger.warning(
+                "%s: reply endpoint %r is unreachable (%s); falling back to the "
+                "default Slack transport",
+                describe,
+                endpoint,
+                exc,
+            )
+            return await op(self._client_for(None))
+
     async def update(
         self,
         *,
@@ -122,23 +178,27 @@ class AsyncSlackSink:
         # malformed block falls back to text, so partials never show raw JSON.
         # ``nav`` (the agent's hub-button pack, threaded from the kernel) appends
         # the no-dead-ends hub button to a structured reply; None leaves it be.
-        client = self._client_for(endpoint)
         rendered_text, blocks = render(text, nav)
-        if blocks is not None:
-            # Slack rejects the whole message if a block exceeds a limit we did not
-            # clamp; fall back to a text-only update so the turn still completes and
-            # the stream entry is acked instead of re-enqueuing the paid model turn.
-            try:
-                await client.chat_update(
-                    channel=channel, ts=ts, text=rendered_text, blocks=blocks
-                )
-            except SlackApiError:
-                logger.warning(
-                    "chat_update with blocks rejected for %s; retrying text-only", ts
-                )
+
+        async def op(client: AsyncWebClient) -> None:
+            if blocks is not None:
+                # Slack rejects the whole message if a block exceeds a limit we did
+                # not clamp; fall back to a text-only update (on the SAME reachable
+                # client) so the turn still completes and the stream entry is acked
+                # instead of re-enqueuing the paid model turn.
+                try:
+                    await client.chat_update(
+                        channel=channel, ts=ts, text=rendered_text, blocks=blocks
+                    )
+                except SlackApiError:
+                    logger.warning(
+                        "chat_update with blocks rejected for %s; retrying text-only", ts
+                    )
+                    await client.chat_update(channel=channel, ts=ts, text=rendered_text)
+            else:
                 await client.chat_update(channel=channel, ts=ts, text=rendered_text)
-        else:
-            await client.chat_update(channel=channel, ts=ts, text=rendered_text)
+
+        await self._with_transport_fallback(endpoint, op, describe="chat_update")
 
     async def post(
         self,
@@ -152,23 +212,28 @@ class AsyncSlackSink:
         # A rejected Block Kit payload falls back to text-only, mirroring
         # ``update``: the card is the resolve UI, but a plain-text notice still
         # beats losing the message (the API resolve path works regardless).
-        client = self._client_for(endpoint)
-        try:
-            if blocks is not None:
-                response = await client.chat_postMessage(
-                    channel=channel, text=text, blocks=blocks, thread_ts=thread_ts
-                )
-            else:
-                response = await client.chat_postMessage(
+        async def op(client: AsyncWebClient) -> AsyncSlackResponse:
+            try:
+                if blocks is not None:
+                    return await client.chat_postMessage(
+                        channel=channel, text=text, blocks=blocks, thread_ts=thread_ts
+                    )
+                return await client.chat_postMessage(
                     channel=channel, text=text, thread_ts=thread_ts
                 )
-        except SlackApiError:
-            if blocks is None:
-                raise
-            logger.warning("chat_postMessage with blocks rejected; retrying text-only")
-            response = await client.chat_postMessage(
-                channel=channel, text=text, thread_ts=thread_ts
-            )
+            except SlackApiError:
+                if blocks is None:
+                    raise
+                logger.warning(
+                    "chat_postMessage with blocks rejected; retrying text-only"
+                )
+                return await client.chat_postMessage(
+                    channel=channel, text=text, thread_ts=thread_ts
+                )
+
+        response = await self._with_transport_fallback(
+            endpoint, op, describe="chat_postMessage"
+        )
         ts = response.get("ts")
         return str(ts) if ts else None
 
