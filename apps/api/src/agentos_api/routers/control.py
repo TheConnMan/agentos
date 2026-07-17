@@ -117,18 +117,17 @@ async def get_cost(
     # Cost is filtered by the agent's trace-name token: the runner names traces
     # agentos-run:agent-<id>-thread-<ts>, so we match traceName contains
     # `agent-<id>`. A fresh agent with no matching traces reads zero.
+    agent_filter = metrics_service.agent_trace_filter(agent.id)
     series = await metrics_service.series(
-        lf,
-        "cost_usd",
-        start_iso,
-        end_iso,
-        "day",
-        None,
-        metrics_service.agent_trace_filter(agent.id),
+        lf, "cost_usd", start_iso, end_iso, "day", None, agent_filter
     )
+    # A total of 0 over a window with token usage is a missing Langfuse price row,
+    # not a free agent -- flag it so the Cost view renders "unknown" not $0.00 (#547).
+    known = await metrics_service.cost_known(lf, start_iso, end_iso, None, agent_filter)
     return CostReport(
         start=start_iso,
         end=end_iso,
         total_usd=sum(point.value for point in series.points),
+        cost_known=known,
         points=series.points,
     )

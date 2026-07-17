@@ -3,12 +3,34 @@
 import uuid
 
 from agentos_api.metrics import (
+    _cost_known,
     _error_rate,
     _filters,
     _scalar_query,
     agent_trace_filter,
     resolve_window,
 )
+
+
+def test_filters_exclude_eval_traces_from_the_aggregate() -> None:
+    # #547: eval traces (`eval:<suite>:<case>`) are billed but not product
+    # traffic; the summary must exclude them so runs/tokens/cost aren't inflated.
+    for view, name_col in (("traces", "name"), ("observations", "traceName")):
+        filters = _filters(view, None, None)
+        assert {
+            "column": name_col,
+            "operator": "does not contain",
+            "value": "eval:",
+            "type": "string",
+        } in filters, view
+
+
+def test_cost_known_flags_priced_to_zero_as_unknown() -> None:
+    # #547: tokens spent but cost summed to exactly 0 => a missing Langfuse price
+    # row, not a free run. A genuinely zero-work window stays cost-known.
+    assert _cost_known(tokens=2576, cost_usd=0.0) is False
+    assert _cost_known(tokens=2576, cost_usd=0.0506) is True
+    assert _cost_known(tokens=0, cost_usd=0.0) is True
 
 
 def test_agent_trace_filter_is_the_agent_id_token() -> None:

@@ -615,6 +615,11 @@ class MetricsSummary(BaseModel):
     latency_p95_ms: float
     tokens: int
     cost_usd: float
+    # False when work happened (tokens > 0) but Langfuse priced it to exactly 0 --
+    # a missing model price row, not a genuinely free run (#547). Additive and
+    # defaulting True, so `cost_usd` stays a non-nullable float for existing
+    # clients; consumers render "unknown" rather than a misleading $0.00.
+    cost_known: bool = True
     error_rate: float
 
 
@@ -776,6 +781,10 @@ class CostReport(BaseModel):
     start: str
     end: str
     total_usd: float
+    # False when tokens were spent in the window but Langfuse priced them to 0
+    # (a missing model price row, not free usage) -- see MetricsSummary.cost_known
+    # (#547). Additive, defaults True; total_usd stays a non-nullable float.
+    cost_known: bool = True
     points: list[MetricPoint]
 
 

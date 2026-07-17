@@ -953,6 +953,11 @@
       "CostReport": {
         "description": "Daily spend series + total for an agent (L1 Cost view).",
         "properties": {
+          "cost_known": {
+            "default": true,
+            "title": "Cost Known",
+            "type": "boolean"
+          },
           "end": {
             "title": "End",
             "type": "string"
@@ -1735,6 +1740,11 @@
       "MetricsSummary": {
         "description": "Scalar totals for the Metrics tab stat row over a time window.",
         "properties": {
+          "cost_known": {
+            "default": true,
+            "title": "Cost Known",
+            "type": "boolean"
+          },
           "cost_usd": {
             "title": "Cost Usd",
             "type": "number"

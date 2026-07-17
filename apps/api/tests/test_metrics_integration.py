@@ -152,6 +152,17 @@ def test_summary_matches_langfuse_aggregates(
         {
             "view": "traces",
             "metrics": [{"measure": "count", "aggregation": "count"}],
+            # The summary excludes eval traces (#547), so the reference aggregate
+            # must exclude them too or the counts diverge when the shared Langfuse
+            # holds eval traces in the window.
+            "filters": [
+                {
+                    "column": "name",
+                    "operator": "does not contain",
+                    "value": "eval:",
+                    "type": "string",
+                }
+            ],
             "fromTimestamp": start,
             "toTimestamp": end,
         }
@@ -162,6 +173,16 @@ def test_summary_matches_langfuse_aggregates(
         {
             "view": "observations",
             "metrics": [{"measure": "totalCost", "aggregation": "sum"}],
+            # Same eval exclusion as the summary (#547); observations key on
+            # traceName.
+            "filters": [
+                {
+                    "column": "traceName",
+                    "operator": "does not contain",
+                    "value": "eval:",
+                    "type": "string",
+                }
+            ],
             "fromTimestamp": start,
             "toTimestamp": end,
         }
@@ -207,7 +228,14 @@ def test_environment_filter_passes_through(
             "view": "traces",
             "metrics": [{"measure": "count", "aggregation": "count"}],
             "filters": [
-                {"column": "environment", "operator": "=", "value": "default", "type": "string"}
+                {"column": "environment", "operator": "=", "value": "default", "type": "string"},
+                # The summary excludes eval traces (#547); match it here too.
+                {
+                    "column": "name",
+                    "operator": "does not contain",
+                    "value": "eval:",
+                    "type": "string",
+                },
             ],
             "fromTimestamp": start,
             "toTimestamp": end,
