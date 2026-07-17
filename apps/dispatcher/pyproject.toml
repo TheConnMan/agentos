@@ -5,7 +5,7 @@ description = "AgentOS dispatcher (Slack Bolt for Python, Socket Mode): ack + en
 requires-python = ">=3.13"
 dependencies = [
     "aci-protocol",
-    "slack-bolt>=1.21",
+    "slack-bolt>=1.30.0",
     "redis>=5.2",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
