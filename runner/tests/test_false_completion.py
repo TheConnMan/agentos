@@ -52,9 +52,8 @@ def _runner(script: list[object], *, check: bool) -> SessionRunner:
 def _drain(runner: SessionRunner) -> list[dict[str, object]]:
     async def go() -> list[dict[str, object]]:
         await runner.start()
-        lines = [
-            line async for line in runner.run_turn(Event(type="message", text="q", user="U", ts="0"))
-        ]
+        event = Event(type="message", text="q", user="U", ts="0")
+        lines = [line async for line in runner.run_turn(event)]
         return [json.loads(line) for line in lines]
 
     return anyio.run(go)
@@ -64,7 +63,8 @@ def _classifications(frames: list[dict[str, object]]) -> list[object]:
     return [f.get("classification") for f in frames if f.get("type") == "error"]
 
 
-_TEXT_ONLY = [_assistant(TextBlock(text="All set, nothing else to do.")), _result("All set, nothing else to do.")]
+_ANSWER = "All set, nothing else to do."
+_TEXT_ONLY = [_assistant(TextBlock(text=_ANSWER)), _result(_ANSWER)]
 
 
 def test_fires_on_done_with_answer_but_no_tool_call() -> None:
