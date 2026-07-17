@@ -145,7 +145,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Regenerate TypeScript from the committed schema and check for drift
@@ -173,7 +173,7 @@ jobs:
         with:
           version: 9
       - name: Install Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: pnpm
