@@ -68,6 +68,33 @@ def resolve_symbol(file_path: Path, dotted: str, cache: SymbolCache | None = Non
     return _resolve_in_body(tree.body, parts)
 
 
+def dataclass_fields(
+    file_path: Path, dotted: str, cache: SymbolCache | None = None
+) -> list[str] | None:
+    """Ordered annotated field names of the cited class (its ``AnnAssign``
+    targets), or ``None`` if ``dotted`` does not resolve to a class. Static ast
+    only, never imports. A class with no annotated fields returns ``[]``."""
+    tree = cache.parse(file_path) if cache is not None else _parse(file_path)
+    node = _find_class(tree.body, dotted.split("."))
+    if node is None:
+        return None
+    fields: list[str] = []
+    for stmt in node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            fields.append(stmt.target.id)
+    return fields
+
+
+def _find_class(body: list[ast.stmt], parts: list[str]) -> ast.ClassDef | None:
+    head, rest = parts[0], parts[1:]
+    for node in body:
+        if isinstance(node, ast.ClassDef) and node.name == head:
+            if not rest:
+                return node
+            return _find_class(node.body, rest)
+    return None
+
+
 def _resolve_in_body(body: list[ast.stmt], parts: list[str]) -> bool:
     head, rest = parts[0], parts[1:]
 

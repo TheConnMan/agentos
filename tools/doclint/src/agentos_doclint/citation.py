@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 # The single recognized extension list, shared by the path rule and the raw
 # line-ban rule. Two lists would drift, which is the whole subject of #452.
@@ -142,6 +143,99 @@ def find_code_spans(text: str) -> list[CodeSpan]:
                 line = start_line + 1 + line_offset if start_line is not None else None
                 spans.append(CodeSpan(content=child.content, line=line, href=current_href))
     return spans
+
+
+_FIELD_IDENT = re.compile(r"[a-z_][a-z0-9_]*")
+
+
+@dataclass(frozen=True)
+class FieldEnumeration:
+    citation: str  # the citation code-span text (path::Symbol)
+    fields: tuple[str, ...]
+    line: int | None
+
+
+def find_field_enumerations(text: str) -> list[FieldEnumeration]:
+    """Find sealed field lists of the form `` `path::Class`: `a`, `b`, `c`) ``.
+
+    A citation code-span immediately followed by a text ``:`` intro, then a run
+    of backticked bare identifiers separated only by ``,``/``and``/whitespace,
+    terminated by a ``)``. Only this sealed shape is returned, so a prose
+    sentence that happens to mention a field or two is not mistaken for a
+    complete enumeration (#615)."""
+    source_lines = text.split("\n")
+    results: list[FieldEnumeration] = []
+    for token in _MD.parse(text):
+        if token.type != "inline" or token.children is None:
+            continue
+        if token.map is not None:
+            start_line = token.map[0]
+            block_text = "\n".join(source_lines[token.map[0] : token.map[1]])
+        else:
+            start_line = None
+            block_text = ""
+        cursor = 0
+        children = token.children
+        # Pre-compute each code_inline's line by walking cursor in order.
+        line_by_index: dict[int, int | None] = {}
+        for idx, child in enumerate(children):
+            if child.type == "code_inline":
+                line_offset, cursor = _locate_span(block_text, child.content, cursor)
+                line_by_index[idx] = (
+                    start_line + 1 + line_offset if start_line is not None else None
+                )
+        for idx, child in enumerate(children):
+            if child.type != "code_inline":
+                continue
+            if "::" not in child.content:
+                continue
+            enum = _parse_field_run(children, idx)
+            if enum is not None:
+                results.append(
+                    FieldEnumeration(
+                        citation=child.content,
+                        fields=enum,
+                        line=line_by_index.get(idx),
+                    )
+                )
+    return results
+
+
+def _parse_field_run(children: list[Token], start_idx: int) -> tuple[str, ...] | None:
+    """Return the sealed field tuple following the citation at ``start_idx``, or
+    None if the shape is not `` : `field`, `field`, ... ) ``."""
+    intro = children[start_idx + 1] if start_idx + 1 < len(children) else None
+    if intro is None or intro.type != "text":
+        return None
+    text_after = intro.content
+    if ":" not in text_after:
+        return None
+    # Everything after the first ':' in the intro token must be blank (the
+    # fields are their own code spans). Rejects ": something prose".
+    if text_after.split(":", 1)[1].strip() != "":
+        return None
+    fields: list[str] = []
+    j = start_idx + 2
+    while j < len(children):
+        c = children[j]
+        if c.type == "code_inline":
+            if not _FIELD_IDENT.fullmatch(c.content):
+                return None
+            fields.append(c.content)
+            j += 1
+            continue
+        if c.type == "text":
+            if ")" in c.content:
+                before = c.content.split(")", 1)[0]
+                if before.strip(" ,") in ("", "and"):
+                    return tuple(fields) if fields else None
+                return None
+            if c.content.strip(" ,") in ("", "and"):
+                j += 1
+                continue
+            return None
+        return None
+    return None
 
 
 @dataclass(frozen=True)
