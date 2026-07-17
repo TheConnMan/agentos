@@ -481,8 +481,8 @@ fn cluster_comms_disconnect_dry_run_emits_plan_not_error() {
 
 use agentos::api::{MemoryEntry, Version};
 use agentos::commands::{
-    ApprovalsOutput, BudgetOutput, DeleteOutput, KillOutput, MemoryOutput, ResumeOutput,
-    VersionsOutput,
+    ApprovalsOutput, BudgetOutput, DeleteOutput, InitOutput, KillOutput, MemoryOutput,
+    ResumeOutput, VersionsOutput,
 };
 // `ObservabilityOutput` moved to the tier-aware `observability` seam (#460) so
 // both the local and cluster handlers return one type.
@@ -949,5 +949,156 @@ fn local_operator_output_json_shapes_are_pinned() {
     assert_eq!(
         LocalDownOutput::Aborted.to_json(),
         json!({"stopped": false, "aborted": true})
+    );
+}
+
+// ---------------------------------------------------------------------------
+// init --json (issue #485)
+// ---------------------------------------------------------------------------
+
+/// A minimal valid agent spec: one skill, one eval, no connectors. Enough for
+/// `parse`/`validate` to accept and `scaffold_from_spec` to write a bundle, so
+/// the binary-driven test below can exercise the real `init --from-spec`
+/// success path hermetically.
+const INIT_SPEC_JSON: &str = r#"{
+  "name": "deal-desk",
+  "description": "Prices and reviews deal desk requests.",
+  "skills": [
+    {
+      "name": "deal-desk",
+      "description": "Invoke when a rep submits a pricing exception request.",
+      "instructions": "Deal desk skill body.\n"
+    }
+  ],
+  "evals": [
+    { "id": "prices-a-deal", "input": "Quote 20% off for Acme", "grader": { "kind": "contains", "expected": "all done", "case_sensitive": false } }
+  ]
+}"#;
+
+/// Binary-driven: `agentos init --from-spec <spec> --json` on the real success
+/// path must emit ONE JSON object to stdout, not the 0-byte stdout it shipped
+/// with (issue #485). Asserting exit 0 alone is a FALSE GREEN here -- the bug
+/// was exit 0 WITH empty stdout -- so this asserts on the stdout BYTES. Hermetic:
+/// it writes a self-contained spec and scaffolds into a fresh tempdir, no network.
+#[test]
+fn init_from_spec_emits_json_object() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let spec_path = tmp.path().join("spec.json");
+    std::fs::write(&spec_path, INIT_SPEC_JSON).expect("write spec fixture");
+    let out_dir = tmp.path().join("bundle");
+
+    let output = Command::new(bin())
+        .args([
+            "init",
+            "--from-spec",
+            spec_path.to_str().unwrap(),
+            "--dir",
+            out_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("run agentos init --from-spec --json");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "init --from-spec is hermetic and must exit 0\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !stdout.trim().is_empty(),
+        "`agentos init --from-spec --json` must not emit empty stdout (issue #485)\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|e| panic!("must emit parseable JSON: {e}\nstdout: {stdout}"));
+    assert!(
+        parsed.is_object(),
+        "`agentos init --from-spec --json` must emit a JSON object, got: {stdout}"
+    );
+    // Agent-facing keys: the name comes from the spec, from_spec is the source
+    // path (never null on this branch), created lists the written files.
+    assert_eq!(parsed["initialized"], json!(true));
+    assert_eq!(parsed["name"], json!("deal-desk"));
+    assert_eq!(
+        parsed["from_spec"],
+        json!(spec_path.to_str().unwrap()),
+        "from_spec must carry the spec source path on the --from-spec branch"
+    );
+    assert!(
+        parsed["created"].as_array().is_some_and(|c| !c.is_empty()),
+        "created must list the scaffolded files: {stdout}"
+    );
+    // The human success line must NOT leak onto stdout under --json.
+    assert!(
+        !stdout.contains("initialized plugin bundle"),
+        "the human success line must stay on stderr under --json: {stdout}"
+    );
+}
+
+/// Exact key-shape pin for `InitOutput::to_json` (both branches). Renaming,
+/// dropping, or adding a key fails. The plain-name branch's `from_spec` must be
+/// an explicit `null`, not an omitted key: an agent reads null as "not
+/// spec-sourced", where a missing key is ambiguous.
+#[test]
+fn init_output_json_shape_is_pinned() {
+    use std::path::PathBuf;
+    assert_eq!(
+        InitOutput {
+            name: "deal-desk".to_string(),
+            dir: PathBuf::from("deal-desk"),
+            from_spec: Some(PathBuf::from("spec.json")),
+            created: vec![PathBuf::from("deal-desk/.claude-plugin/plugin.json")],
+            success_msg: "rendered only on the human path".to_string(),
+        }
+        .to_json(),
+        json!({
+            "initialized": true,
+            "name": "deal-desk",
+            "dir": "deal-desk",
+            "from_spec": "spec.json",
+            "created": ["deal-desk/.claude-plugin/plugin.json"],
+            "next": "cd deal-desk && agentos skill up"
+        })
+    );
+    assert_eq!(
+        InitOutput {
+            name: "weather".to_string(),
+            dir: PathBuf::from("./weather"),
+            from_spec: None,
+            created: vec![],
+            success_msg: String::new(),
+        }
+        .to_json(),
+        json!({
+            "initialized": true,
+            "name": "weather",
+            "dir": "./weather",
+            "from_spec": null,
+            "created": [],
+            "next": "cd ./weather && agentos skill up"
+        })
+    );
+}
+
+/// The `next` command shell-quotes a dir with a space so it stays a single valid
+/// `cd` target, not a broken two-token command. A kebab path stays bare (asserted
+/// above), so this only fires for special-char paths.
+#[test]
+fn init_output_next_shell_quotes_a_dir_with_a_space() {
+    use std::path::PathBuf;
+    let out = InitOutput {
+        name: "deal-desk".to_string(),
+        dir: PathBuf::from("my bundle"),
+        from_spec: None,
+        created: vec![],
+        success_msg: String::new(),
+    }
+    .to_json();
+    assert_eq!(
+        out["next"],
+        json!("cd 'my bundle' && agentos skill up"),
+        "a dir with a space must be shell-quoted in the next command: {out}"
     );
 }
