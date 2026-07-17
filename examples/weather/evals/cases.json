@@ -6,10 +6,10 @@
       "input": "What's the weather in San Francisco today? Give the high in Fahrenheit.",
       "grader": {
         "kind": "regex",
-        "expected": "\\d+\\s*°",
+        "expected": "\\d+\\s*(°|deg)",
         "case_sensitive": false
       },
-      "note": "Falsifiable: an agent that cannot fetch a matching forecast follows the SKILL rule and refuses ('I could not confirm a current forecast') with no temperature figure, which fails this grader -- unlike the old `contains: weather`, which the input itself guaranteed. LIMIT: a fake-model agent that INVENTS a plausible temperature still passes; proving the agent actually fetched a source needs the tool-call grader (ADR-0022 Phase 1)."
+      "note": "Falsifiable: an agent that cannot fetch a matching forecast follows the SKILL rule and refuses ('I could not confirm a current forecast') with no temperature figure, which fails this grader -- unlike the old `contains: weather`, which the input itself guaranteed. The pattern accepts a numeric high with either the degree glyph or the spelled-out unit, so '68 degrees Fahrenheit', '68 deg F', and '68°' all pass (#620; `deg` is a prefix of `degree`/`degrees`, case-folded). Two residual limits remain, neither expressible in the frozen exact|contains|regex taxonomy: (1) FALSE POSITIVE -- a fake-model agent that INVENTS a plausible temperature still passes; proving the agent actually fetched a source needs the tool-call grader (ADR-0022 Phase 1) and the semantic verifier (ADR-0042, #618, which #620 is a stopgap for); (2) FALSE NEGATIVE -- a correct answer that carries no numeric figure adjacent to a degree token (e.g. spelled-out 'sixty-eight Fahrenheit', or a bare '68F' with no glyph or 'deg') would still be graded red."
     }
   ]
 }

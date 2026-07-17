@@ -374,7 +374,23 @@ mod tests {
         // and the loader ignores the documentation-only `note` key on the case.
         assert_eq!(case.id, "reports-a-temperature");
         assert_eq!(case.grader.kind, GraderKind::Regex);
-        assert_eq!(case.grader.expected, "\\d+\\s*°");
+        assert_eq!(case.grader.expected, "\\d+\\s*(°|deg)");
+    }
+
+    #[test]
+    fn weather_grader_accepts_spelled_out_degrees_and_still_rejects_a_refusal() {
+        // #620: the glyph-only pattern graded a correct plain-English answer red.
+        // Drive the AC strings through the committed grader as `agentos skill eval`
+        // does, so the widened pattern is verified where the runtime grades.
+        let body = include_str!("../../examples/weather/evals/cases.json");
+        let (_dir, path) = write(body);
+        let grader = &load_suite(&path).unwrap().cases[0].grader;
+
+        assert!(grader.grade("The high in San Francisco today is 68 degrees Fahrenheit"));
+        assert!(grader.grade("High near 68 deg F"));
+        assert!(grader.grade("Today's high is 68°"));
+        // A refusal with no temperature figure must still fail closed.
+        assert!(!grader.grade("I could not confirm a current forecast"));
     }
 
     #[test]
