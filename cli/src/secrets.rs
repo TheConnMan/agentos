@@ -64,18 +64,30 @@ pub fn set(opts: SetSecretOpts) -> Result<()> {
 }
 
 pub fn list() -> Result<()> {
-    let names = list_names()?;
-    let ui = crate::ui::ui();
-    if ui.json() {
-        ui.emit_json(&serde_json::json!({ "secrets": names }));
-        return Ok(());
-    }
-    if names.is_empty() {
-        ui.note("no AgentOS secrets saved");
-    } else {
-        ui.payload_plain(&names.join("\n"));
-    }
+    crate::ui::ui().emit(&SecretsListOutput {
+        names: list_names()?,
+    });
     Ok(())
+}
+
+/// Output of `secrets list` (#474): the saved secret NAMEs. Routes through the
+/// one `Ui::emit` point rather than an inline `if json()` branch.
+struct SecretsListOutput {
+    names: Vec<String>,
+}
+
+impl crate::ui::CliOutput for SecretsListOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "secrets": self.names })
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        if self.names.is_empty() {
+            ui.note("no AgentOS secrets saved");
+        } else {
+            ui.payload_plain(&self.names.join("\n"));
+        }
+    }
 }
 
 pub fn unset(opts: UnsetSecretOpts) -> Result<()> {
