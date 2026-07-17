@@ -5,7 +5,6 @@ API client (the only two things faked, per test discipline), and assert the full
 lifecycle step: envelope -> ack -> in-thread placeholder -> XADD to real Valkey.
 """
 
-import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -15,32 +14,12 @@ from agentos_dispatcher.config import DispatcherConfig
 from agentos_dispatcher.queue import from_stream_fields
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack_bolt.authorization import AuthorizeResult
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.web import WebClient
 
+from .conftest import FakeSocketClient, _authorize
+
 BOT_TS = "555.000"
-
-
-def _authorize(**_kwargs: Any) -> AuthorizeResult:
-    return AuthorizeResult(
-        enterprise_id=None,
-        team_id="T1",
-        bot_token="xoxb-test",
-        bot_id="B1",
-        bot_user_id="U0BOT",
-    )
-
-
-class FakeSocketClient:
-    """Captures the envelope acks Bolt sends back over the socket."""
-
-    def __init__(self) -> None:
-        self.logger = logging.getLogger("fake-socket")
-        self.acked_envelope_ids: list[str] = []
-
-    def send_socket_mode_response(self, response: Any) -> None:
-        self.acked_envelope_ids.append(response.envelope_id)
 
 
 def _build(config: DispatcherConfig, redis_client: redis.Redis) -> tuple[App, WebClient]:

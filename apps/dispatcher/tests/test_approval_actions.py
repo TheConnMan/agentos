@@ -9,7 +9,6 @@ resolved by X", and the ordinary-button catch-all never double-handles an
 approval click.
 """
 
-import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -24,9 +23,10 @@ from agentos_dispatcher.approval_actions import (
 from agentos_dispatcher.config import DispatcherConfig
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack_bolt.authorization import AuthorizeResult
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.web import WebClient
+
+from .conftest import FakeSocketClient, _authorize
 
 APPROVAL_ID = "9a1e8a10-0000-0000-0000-000000000246"
 
@@ -56,25 +56,6 @@ _COULD_NOT_VERIFY_GROUP_REASON = (
     "could not verify approver group membership: this approval's route is "
     "bound to a Slack user group and the membership lookup failed"
 )
-
-
-def _authorize(**_kwargs: Any) -> AuthorizeResult:
-    return AuthorizeResult(
-        enterprise_id=None,
-        team_id="T1",
-        bot_token="xoxb-test",
-        bot_id="B1",
-        bot_user_id="U0BOT",
-    )
-
-
-class FakeSocketClient:
-    def __init__(self) -> None:
-        self.logger = logging.getLogger("fake-socket")
-        self.acked_envelope_ids: list[str] = []
-
-    def send_socket_mode_response(self, response: Any) -> None:
-        self.acked_envelope_ids.append(response.envelope_id)
 
 
 class ScriptedResolver:
