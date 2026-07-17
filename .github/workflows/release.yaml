@@ -415,6 +415,23 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: dist/*
+      # action-gh-release honors `draft:` only when it CREATES the release; if one
+      # already exists for the tag it reuses that release's own draft state
+      # (`draft: existingRelease.draft`) and uploads onto it. Every release this repo
+      # has published is draft=false, so re-running a published tag -- to clear a
+      # flake, say -- would push assets straight onto the live release and skip every
+      # check below. Refuse instead of silently bypassing the gate.
+      - name: Refuse to re-release an already-published tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft --jq .isDraft 2>/dev/null || echo absent)
+          if [ "$state" = "false" ]; then
+            echo "::error::$GITHUB_REF_NAME is already published. Re-running would upload assets onto the live release without verifying them. Delete the release and re-run, or cut a new tag." >&2
+            exit 1
+          fi
+          echo "tag state: $state (absent or draft) -- safe to stage a draft"
       # Created as a DRAFT. A draft's assets are not publicly downloadable, so
       # nothing reaches a user until verify-and-publish has re-verified the
       # published bytes and promoted the release. Publishing first and verifying
@@ -489,5 +506,8 @@ jobs:
         run: |
           latest=true
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then latest=false; fi   # rc tags never become latest
+          # --latest MUST keep the `=` form: the flag's NoOptDefVal is "true", so the
+          # space-separated `--latest false` would mean --latest=true plus a stray arg,
+          # and every rc would land as latest.
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --draft=false --latest="$latest"

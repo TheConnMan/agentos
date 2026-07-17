@@ -91,6 +91,13 @@ and a verified chart is not a verified stack until #62 lands.
   accept any tag's manifest and defeat the pin. A hardcoded tag would be worse
   than a placeholder -- it goes stale every release, and a stale tag sends people
   to a release whose integrity URLs 404.
+- Re-running the workflow against an already-published tag now fails rather than
+  re-uploading. `action-gh-release` honors `draft:` only on creation and otherwise
+  adopts the existing release's draft state, so a re-run of a published tag would
+  have uploaded onto the live release and skipped verification entirely -- the one
+  state where the draft gate silently does not apply. Recovering a bad release
+  means deleting it or cutting a new tag, which is the intended friction. A
+  re-run against a *stuck draft* is fine and repairs it.
 - These artifacts exist only on releases published after v0.4.0. Verification is
   not retroactive: v0.4.0 and earlier shipped bare binaries and always will, so
   the docs say plainly that those cannot be verified rather than implying the
