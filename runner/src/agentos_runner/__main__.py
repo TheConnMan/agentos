@@ -38,6 +38,7 @@ from .hooks import load_bundle_hooks
 from .memory import MemoryRecord, MemoryStore, format_memory_preamble, resolve_memory
 from .otel import RunTracer, build_tracer_provider
 from .plugin import load_bundle_system_prompt, load_plugins
+from .redact import install_stdout_redaction
 from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
@@ -274,6 +275,7 @@ def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    install_stdout_redaction()
     fake_model = os.environ.get("AGENTOS_FAKE_MODEL", "").lower() in ("1", "true", "yes")
     logger.info("runner starting fake_model=%s", fake_model)
     # A real session authenticates from the SDK's own credential env; map the
