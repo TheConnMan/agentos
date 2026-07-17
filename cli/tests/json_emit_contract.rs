@@ -620,23 +620,50 @@ fn approvals_output_json_shape_is_pinned() {
     );
     // No gates: `gated_tools` must still be an empty array, never null/absent --
     // an agent consumer branches on the array, not on key presence.
+    //
+    // Deliberate, reviewed contract EVOLUTION (#607), not a weakened pin: `agent`
+    // and `gated_tools` keep their exact meaning, and this still asserts EXACT
+    // equality against a literal. What joins them is the additive
+    // `manifest_unreadable`, which separates "the deployed manifest declares no
+    // gates" (null, below) from "the manifest could not be read" (a reason string).
+    // Without it an empty `gated_tools` is ambiguous, and the ambiguity resolves in
+    // the unsafe direction: an agent reads `[]` as "nothing pauses for approval".
     assert_eq!(
         ApprovalsOutput::Gates {
             agent: "weather".to_string(),
             gated_tools: vec![],
+            manifest_unreadable: None,
         }
         .to_json(),
-        json!({"agent": "weather", "gated_tools": []})
+        json!({"agent": "weather", "gated_tools": [], "manifest_unreadable": null})
     );
     assert_eq!(
         ApprovalsOutput::Gates {
             agent: "weather".to_string(),
             gated_tools: vec!["Bash".to_string(), "mcp__weather__forecast".to_string()],
+            manifest_unreadable: None,
         }
         .to_json(),
         json!({
             "agent": "weather",
             "gated_tools": ["Bash", "mcp__weather__forecast"],
+            "manifest_unreadable": null,
+        })
+    );
+    // The manifest lookup failed. `gated_tools` is what the platform field alone
+    // carried, and `manifest_unreadable` is the machine-readable disclosure that it
+    // may not be the whole set.
+    assert_eq!(
+        ApprovalsOutput::Gates {
+            agent: "weather".to_string(),
+            gated_tools: vec![],
+            manifest_unreadable: Some("listing the agent's deployments failed: 503".to_string()),
+        }
+        .to_json(),
+        json!({
+            "agent": "weather",
+            "gated_tools": [],
+            "manifest_unreadable": "listing the agent's deployments failed: 503",
         })
     );
 }
