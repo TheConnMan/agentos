@@ -17,6 +17,7 @@ import anyio
 from aiohttp import web
 
 from .adapter import ClaudeAgentSession, ModelSession, build_options
+from .redact import install_log_redaction
 from .approval import (
     ApprovalGate,
     build_approval_server,
@@ -265,6 +266,10 @@ def _load_history(config: RunnerConfig) -> tuple[TranscriptStore, str | None]:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    # Scrub credential-shaped tokens from every log line before it hits stdout
+    # (the worker captures runner stdout); defense-in-depth against an exception
+    # message echoing a forwarded secret (#518).
+    install_log_redaction()
     fake_model = os.environ.get("AGENTOS_FAKE_MODEL", "").lower() in ("1", "true", "yes")
     logger.info("runner starting fake_model=%s", fake_model)
     # A real session authenticates from the SDK's own credential env; map the

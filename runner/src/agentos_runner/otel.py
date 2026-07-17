@@ -30,7 +30,21 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind, Tracer
 
+from .redact import redact
+
 _SERVICE_NAME = "agentos-runner"
+
+
+def _set_str_attr(span: Any, key: str, value: str) -> None:
+    """Set a STRING span attribute, redacted (#518).
+
+    Every string span attribute the runner emits goes through here, so a secret
+    that lands in a model string, tool name, or trace/session/user id is scrubbed
+    before the span ships to Langfuse. New string attributes must use this helper,
+    not raw ``set_attribute`` -- integer attributes (token counts) need no scrub.
+    """
+
+    span.set_attribute(key, redact(value))
 
 
 def build_tracer_provider(
@@ -96,11 +110,11 @@ class RunTracer:
         """
 
         with self._tracer.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
-            root.set_attribute("langfuse.trace.name", trace_name)
+            _set_str_attr(root, "langfuse.trace.name", trace_name)
             if session_id:
-                root.set_attribute("langfuse.session.id", session_id)
+                _set_str_attr(root, "langfuse.session.id", session_id)
             if user_id:
-                root.set_attribute("langfuse.user.id", user_id)
+                _set_str_attr(root, "langfuse.user.id", user_id)
             with self._tracer.start_as_current_span("llm.generation") as gen:
                 span = _GenerationSpan(self._tracer, gen)
                 # Stamp the configured model at span open when AGENTOS_MODEL is
@@ -138,8 +152,8 @@ class _GenerationSpan:
 
         if self._model_recorded or not model:
             return
-        self._span.set_attribute("gen_ai.request.model", model)
-        self._span.set_attribute("model", model)
+        _set_str_attr(self._span, "gen_ai.request.model", model)
+        _set_str_attr(self._span, "model", model)
         self._model_recorded = True
 
     def record_usage(self, usage: Mapping[str, Any] | None) -> None:
@@ -170,5 +184,5 @@ class _GenerationSpan:
         """Emit a short ``execute_tool`` child span for one tool call."""
 
         with self._tracer.start_as_current_span("execute_tool") as tool:
-            tool.set_attribute("gen_ai.tool.name", tool_name)
+            _set_str_attr(tool, "gen_ai.tool.name", tool_name)
             tool.set_attribute("gen_ai.operation.name", "execute_tool")
