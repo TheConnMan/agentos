@@ -21,6 +21,7 @@ import redis
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from .approval_cards import ApprovalCardStore
 from .approvals import ApprovalClient
 from .binding import BindingResolver
 from .bundle_store import BundleStore
@@ -190,6 +191,7 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
         approvals=ApprovalClient(
             api_base_url=config.api_base_url, api_key=config.api_key, client=eval_http
         ),
+        card_store=ApprovalCardStore(async_redis, config),
     )
     killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
     kernel.attach_killswitch(killswitch)

@@ -85,6 +85,23 @@ class SlackSink(Protocol):
         approval card. Raises on failure so the caller decides best-effort."""
         ...
 
+    async def update_message(
+        self,
+        *,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, object]],
+        endpoint: str | None = None,
+    ) -> None:
+        """Edit an already-posted platform message's blocks in place (disabling
+        the expired approval card, #419).
+
+        Distinct from ``update`` (which renders reply Markdown through
+        ``render``) and ``post`` (a brand-new message): this replaces a known
+        message's blocks verbatim. Best-effort at the call site."""
+        ...
+
 
 class AsyncSlackSink:
     """A SlackSink backed by the Slack Web API (chat.update).
@@ -236,6 +253,34 @@ class AsyncSlackSink:
         )
         ts = response.get("ts")
         return str(ts) if ts else None
+
+    async def update_message(
+        self,
+        *,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, object]],
+        endpoint: str | None = None,
+    ) -> None:
+        # A rejected Block Kit payload falls back to text-only, mirroring
+        # ``post``/``update``: disabling the card is best-effort, but a plain-text
+        # expiry notice still beats leaving live-looking buttons.
+        async def op(client: AsyncWebClient) -> None:
+            try:
+                await client.chat_update(
+                    channel=channel, ts=ts, text=text, blocks=blocks
+                )
+            except SlackApiError:
+                logger.warning(
+                    "card chat_update with blocks rejected for %s; retrying text-only",
+                    ts,
+                )
+                await client.chat_update(channel=channel, ts=ts, text=text)
+
+        await self._with_transport_fallback(
+            endpoint, op, describe="chat_update(card)"
+        )
 
     async def set_status(
         self, *, channel: str, thread_ts: str, status: str, endpoint: str | None = None

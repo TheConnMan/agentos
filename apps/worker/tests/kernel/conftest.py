@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pytest
 import redis
 from aci_protocol import Final, OutboundEvent, SessionStatus
+from agentos_worker.approval_cards import ApprovalCardStore
 from agentos_worker.behaviorpacks import NavPack
 from agentos_worker.config import WorkerConfig
 from agentos_worker.kernel import Kernel
@@ -114,6 +115,11 @@ class FakeSink(SlackSink):
         self.posts: list[
             tuple[str, str, list[dict[str, object]] | None, str | None, str | None]
         ] = []
+        # In-place block edits of an already-posted message (the expired approval
+        # card, #419): (channel, ts, text, blocks, endpoint) per update_message.
+        self.card_updates: list[
+            tuple[str, str, str, list[dict[str, object]], str | None]
+        ] = []
 
     async def update(
         self,
@@ -149,6 +155,17 @@ class FakeSink(SlackSink):
     ) -> str | None:
         self.posts.append((channel, text, blocks, thread_ts, endpoint))
         return f"posted-{len(self.posts)}"
+
+    async def update_message(
+        self,
+        *,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, object]],
+        endpoint: str | None = None,
+    ) -> None:
+        self.card_updates.append((channel, ts, text, blocks, endpoint))
 
     @property
     def last_text(self) -> str | None:
@@ -334,6 +351,7 @@ class Harness:
     config: WorkerConfig
     async_redis: AsyncRedis
     fake_k8s: FakeK8s
+    card_store: ApprovalCardStore
     killswitch: object | None = None
 
 
@@ -391,6 +409,7 @@ async def kernel_harness(
     )
     sink = FakeSink()
     runner_client = RunnerClient(total_timeout_s=30.0)
+    card_store = ApprovalCardStore(async_redis, config)
     kernel = Kernel(
         substrate=substrate,
         runner=runner_client,
@@ -405,6 +424,7 @@ async def kernel_harness(
         config=config,
         binding=binding,  # type: ignore[arg-type]
         approvals=approvals,  # type: ignore[arg-type]
+        card_store=card_store,
     )
     killswitch = None
     if with_killswitch:
@@ -414,7 +434,15 @@ async def kernel_harness(
         kernel.attach_killswitch(killswitch)
     try:
         yield Harness(
-            substrate, kernel, sink, fake_runner, config, async_redis, fake_k8s, killswitch
+            substrate,
+            kernel,
+            sink,
+            fake_runner,
+            config,
+            async_redis,
+            fake_k8s,
+            card_store,
+            killswitch,
         )
     finally:
         with contextlib.suppress(Exception):
