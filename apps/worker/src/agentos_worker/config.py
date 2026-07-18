@@ -312,6 +312,25 @@ class WorkerConfig(BaseSettings):
     api_base_url: str = Field(
         default="http://localhost:8000", validation_alias=api_url_validation_alias()
     )
+    # The API base a SPAWNED RUNNER dials, distinct from api_base_url above, which
+    # is the worker's OWN self-dial URL (its /evals/report, binding resolve). The
+    # two diverge whenever the worker and the runner sit on different networks:
+    # in the docker substrate the worker runs host-net and reaches the API at the
+    # published localhost port, but the runner container it spawns joins the
+    # bridge runner network and can only reach the API by its in-network service
+    # name (compose: http://agentos-api:8000). AGENTOS_MEMORY_REF/AGENTOS_HISTORY_REF
+    # are minted for the runner, so they must be built from THIS base, not the
+    # worker's localhost self-dial (#678). Empty means "not split out": the ref
+    # falls back to api_base_url, byte-identical to the pre-#678 behavior. That
+    # fallback is correct wherever the worker's own api_base_url is already
+    # runner-reachable; it does NOT by itself make an unreachable api_base_url
+    # reachable. The k8s substrate is a separate case -- a default chart install
+    # wires neither AGENTOS_API_URL nor this on the worker, so its runner state
+    # refs are the same localhost gap in the opposite substrate, out of #678's
+    # docker scope -- see runner_facing_api_base_url.
+    runner_api_base_url: str = Field(
+        default="", validation_alias="AGENTOS_RUNNER_API_URL"
+    )
     api_key: str = Field(default="agentos-dev-key", validation_alias=API_KEY_ENV)
     report_max_attempts: int = 3
     report_backoff_base_s: float = Field(default=0.5, gt=0)
@@ -331,6 +350,21 @@ class WorkerConfig(BaseSettings):
     )
 
     key_prefix: str = "agentos:worker"
+
+    @property
+    def runner_facing_api_base_url(self) -> str:
+        """The API base a spawned runner dials, falling back to the self-dial URL.
+
+        ``runner_api_base_url`` overrides only when the runner sits on a different
+        network than the worker (the docker substrate: host-net worker, bridge-net
+        runner). When it is unset this falls back to api_base_url, byte-identical
+        to the pre-#678 behavior -- correct wherever the worker's own api_base_url
+        is already runner-reachable, but not itself a fix for a substrate where it
+        is not (see the field comment on the k8s gap). Callers minting
+        runner-facing refs (AGENTOS_MEMORY_REF / AGENTOS_HISTORY_REF) read this,
+        never api_base_url directly (#678).
+        """
+        return self.runner_api_base_url or self.api_base_url
 
     @property
     def valkey_socket_timeout_s(self) -> float:

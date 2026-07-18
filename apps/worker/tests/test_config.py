@@ -338,6 +338,79 @@ def test_model_api_backend_and_env_key_populate_by_field_name() -> None:
     assert config.model_env_key == "MY_PROVIDER_KEY"
 
 
+# --- Runner-facing API base (#678) -------------------------------------------
+#
+# A field distinct from api_base_url (the worker's self-dial URL): the API base a
+# SPAWNED RUNNER dials. Defaults to "" (undivided) and reads only its AGENTOS_*
+# alias. Kept out of the _WORKER_OVERRIDES parity oracle -- like the #514 fields,
+# it is new, not a port of the old hand-rolled from_env.
+
+
+def test_runner_api_base_url_defaults_to_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Undivided is the default: the runner reaches the API at the worker's own
+    self-dial URL (k8s in-cluster, single-host local)."""
+    _clear_all_config_env(monkeypatch)
+
+    config = WorkerConfig()
+
+    assert config.runner_api_base_url == ""
+
+
+def test_worker_config_reads_runner_api_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_RUNNER_API_URL", "http://agentos-api:8000")
+
+    config = WorkerConfig()
+
+    assert config.runner_api_base_url == "http://agentos-api:8000"
+
+
+def test_runner_api_base_url_ignores_bare_field_name_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aliased like every other AGENTOS_* knob: a stray bare-name env var in the
+    pod env must not leak in."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("RUNNER_API_BASE_URL", "http://stray:9000")
+
+    config = WorkerConfig()
+
+    assert config.runner_api_base_url == ""
+
+
+def test_runner_facing_api_base_url_falls_back_to_self_dial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset runner_api_base_url resolves to api_base_url, so k8s and single-host
+    local -- where the runner reaches the API at the worker's URL -- are unchanged."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_API_URL", "http://in-cluster-api:8000")
+
+    config = WorkerConfig()
+
+    assert config.runner_api_base_url == ""
+    assert config.runner_facing_api_base_url == "http://in-cluster-api:8000"
+
+
+def test_runner_facing_api_base_url_prefers_the_runner_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the two networks diverge (docker substrate), the runner-facing base
+    wins over the worker's localhost self-dial URL."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_API_URL", "http://localhost:28000")
+    monkeypatch.setenv("AGENTOS_RUNNER_API_URL", "http://agentos-api:8000")
+
+    config = WorkerConfig()
+
+    assert config.api_base_url == "http://localhost:28000"
+    assert config.runner_facing_api_base_url == "http://agentos-api:8000"
+
+
 def test_agentos_dead_letter_stream_reaches_the_dead_letter_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

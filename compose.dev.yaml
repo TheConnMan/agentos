@@ -454,6 +454,15 @@ services:
       - S3_SECRET_KEY=miniosecret
       - BUNDLE_BUCKET=agentos-bundles
       - AGENTOS_API_URL=http://localhost:28000
+      # The worker runs host-net, so it self-dials the API at the published
+      # localhost port above. But the runner containers it spawns join the
+      # bridge runner network (agentos_runner), where that localhost port is
+      # unreachable -- they reach the API only by its in-network service name.
+      # AGENTOS_MEMORY_REF/AGENTOS_HISTORY_REF are minted for the runner to
+      # dereference, so they must be built from this runner-facing base, not the
+      # worker's self-dial URL (#678). agentos-api joins agentos_runner (via its
+      # network membership), so this name resolves from a spawned runner.
+      - AGENTOS_RUNNER_API_URL=http://agentos-api:8000
       - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}
       # Fake model by default (no credential needed). `agentos local up` reaches
