@@ -22,7 +22,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 
 import anyio
 from aci_protocol import (
@@ -166,7 +166,21 @@ class SessionRunner:
         self._false_completion_check = false_completion_check
 
         self._session: ModelSession | None = None
-        self._turn_lock = anyio.Lock()
+        # One turn consumes the SDK generator at a time. This MUST be a
+        # Semaphore, not an anyio.Lock, to survive a cross-task teardown: if a
+        # run_turn generator is ever finalized by the asyncgen GC on a task
+        # other than the one that opened it (the client-disconnect race #679),
+        # anyio.Lock.release() from that non-owner task raises "current task is
+        # not holding this lock" and leaves _owner_task set -- wedging the lock
+        # permanently so every future turn blocks forever. A Semaphore's release
+        # is owner-agnostic, so it frees cleanly no matter which task closes the
+        # generator. The server's contextlib.aclosing (see server.py) is the
+        # primary fix -- it keeps finalization on the driving task -- and this is
+        # the defense-in-depth that keeps a stray cross-task close from wedging.
+        # max_value=1 keeps the loud double-release guard anyio.Lock gave us: a
+        # stray unbalanced release raises ValueError instead of silently
+        # over-permitting two concurrent turns on the single SDK generator.
+        self._turn_lock = anyio.Semaphore(1, max_value=1)
         self._interrupt_requested = False
         self._status = SessionStatus.IDLE_AWAITING_INPUT
         self._started = False
@@ -343,8 +357,13 @@ class SessionRunner:
         async for line in self.run_turn(message):
             yield line
 
-    async def run_turn(self, event: Event) -> AsyncIterator[str]:
-        """Run one turn, streaming ACI NDJSON lines and enforcing the budget."""
+    async def run_turn(self, event: Event) -> AsyncGenerator[str]:
+        """Run one turn, streaming ACI NDJSON lines and enforcing the budget.
+
+        Returns an async *generator* (not just an iterator): the server wraps it
+        in ``contextlib.aclosing`` so a client disconnect finalizes it on the
+        driving task, and ``aclosing`` requires the ``aclose`` a generator has.
+        """
 
         if self._session is None:
             raise RuntimeError("session not started")
