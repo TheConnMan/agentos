@@ -687,6 +687,7 @@ fn approvals_pending_and_resolved_json_shapes_are_pinned() {
         ApprovalsOutput::Pending {
             agent: "weather".to_string(),
             records: vec![record()],
+            truncated: false,
         }
         .to_json(),
         json!({
@@ -703,6 +704,8 @@ fn approvals_pending_and_resolved_json_shapes_are_pinned() {
                 "expires_at": "2026-07-16T00:00:00Z",
                 "resolved_by": null,
             }],
+            "count": 1,
+            "truncated": false,
         })
     );
     let mut resolved = record();

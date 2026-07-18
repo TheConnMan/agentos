@@ -235,6 +235,12 @@ fn warn_if_insecure(base_url: &str) {
 }
 
 impl ApiClient {
+    /// The server caps `/approvals` results at this many rows
+    /// (`apps/api/.../routers/approvals.py`: `min(max(limit, 1), 200)`); the CLI
+    /// requests exactly the cap so hitting it is how the caller detects possible
+    /// truncation of the pending list (#670).
+    pub const APPROVALS_LIST_LIMIT: usize = 200;
+
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
         warn_if_insecure(base_url);
         let http = reqwest::Client::builder()
@@ -593,15 +599,22 @@ impl ApiClient {
     }
 
     /// The pending approval records for an agent: `GET /approvals?status_filter=
-    /// pending&agent_id=<id>`. Hand-mirrors the committed `ApprovalOut` shape
-    /// (only the fields the CLI renders; serde ignores the rest), the same way
-    /// `Agent`/`KillState` mirror `openapi.json` (#506).
+    /// pending&agent_id=<id>&limit=<APPROVALS_LIST_LIMIT>`. Hand-mirrors the
+    /// committed `ApprovalOut` shape (only the fields the CLI renders; serde
+    /// ignores the rest), the same way `Agent`/`KillState` mirror
+    /// `openapi.json` (#506). The `limit` query param requests the server's max
+    /// page size explicitly rather than relying on its default (#670).
     pub async fn list_pending_approvals(&self, agent_id: &str) -> Result<Vec<ApprovalRecord>> {
+        let limit = Self::APPROVALS_LIST_LIMIT.to_string();
         let resp = self
             .http
             .get(format!("{}/approvals", self.base_url))
             .header("X-API-Key", &self.api_key)
-            .query(&[("status_filter", "pending"), ("agent_id", agent_id)])
+            .query(&[
+                ("status_filter", "pending"),
+                ("agent_id", agent_id),
+                ("limit", limit.as_str()),
+            ])
             .send()
             .await
             .context("GET /approvals")?;
