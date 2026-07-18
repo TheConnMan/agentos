@@ -755,9 +755,13 @@ fn find_repo_root() -> Option<PathBuf> {
 ///   untrusted, egress-rail-less container readable via /proc/1/environ.
 /// - an explicit non-empty AGENTOS_CREDENTIALS (`byo_credential`): the operator's
 ///   chosen BYO credential, forwarded ALONE so an ambient SDK token can neither
-///   shadow it nor ride into the sandbox. Kept even under a `base_url_override`:
-///   the runner routes an sk-or- OpenRouter key into ANTHROPIC_API_KEY with a
-///   preset base URL, so dropping it would break BYO OpenRouter.
+///   shadow it nor ride into the sandbox. Kept under a `base_url_override` when it
+///   is a provider key -- the runner routes an sk-or- OpenRouter key into
+///   ANTHROPIC_API_KEY with a preset base URL, so dropping it would break BYO
+///   OpenRouter -- but DROPPED under an override when it is OAuth-shaped
+///   (`sk-ant-oat`): the runner blanks such a token behind an override
+///   (runner sdk_auth.resolve_sdk_env), so forwarding it authenticates nothing and
+///   only lands a real token in the container's /proc/1/environ (issue #603).
 /// - otherwise: the ambient SDK creds for the legacy real-Anthropic path, each
 ///   only when `ambient_present` reports it, and only when there is no
 ///   `base_url_override` -- a local endpoint needs no real Anthropic token.
@@ -774,7 +778,13 @@ fn select_passthrough_env(
     if fake_model {
         return Vec::new();
     }
-    if byo_credential.is_some_and(|c| !c.is_empty()) {
+    if let Some(cred) = byo_credential.filter(|c| !c.is_empty()) {
+        // An OAuth-shaped token under a base-URL override authenticates nothing
+        // (the runner blanks it), so drop it rather than leave a real token inert
+        // in /proc/1/environ; a provider key is still routed and kept (issue #603).
+        if base_url_override && cred.starts_with(OAUTH_TOKEN_PREFIX) {
+            return Vec::new();
+        }
         return vec!["AGENTOS_CREDENTIALS".into()];
     }
     if base_url_override {
@@ -786,6 +796,12 @@ fn select_passthrough_env(
         .map(String::from)
         .collect()
 }
+
+/// A Claude Code OAuth token shares the sk-ant- prefix with an API key; this more
+/// specific prefix marks it (issue #603). A literal mirror of
+/// runner/src/agentos_runner/sdk_auth.py::OAUTH_TOKEN_PREFIX, the authority for the
+/// prefix semantics, and of the worker lane's `_OAUTH_TOKEN_PREFIX`.
+const OAUTH_TOKEN_PREFIX: &str = "sk-ant-oat";
 
 /// Append `--secret` env var NAMES to the model-credential passthrough list,
 /// de-duplicating. Unlike the model credential these are NOT suppressed under a
@@ -3552,6 +3568,38 @@ mod tests {
     }
 
     #[test]
+    fn oauth_shaped_byo_dropped_under_base_url_override() {
+        // An sk-ant-oat OAuth token authenticates nothing behind a base-URL
+        // override, so it is dropped rather than left inert in /proc/1/environ
+        // (issue #603). The ambient fallback is also suppressed under the override.
+        assert_eq!(
+            select_passthrough_env(false, true, Some("sk-ant-oat-x"), &all_ambient_present),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn provider_byo_kept_under_base_url_override() {
+        // A non-OAuth provider key (sk-or- OpenRouter) is routed into
+        // ANTHROPIC_API_KEY even behind a preset base URL, so it is still
+        // forwarded -- dropping it would break BYO OpenRouter (issue #603).
+        assert_eq!(
+            select_passthrough_env(false, true, Some("sk-or-x"), &all_ambient_present),
+            vec!["AGENTOS_CREDENTIALS".to_string()]
+        );
+    }
+
+    #[test]
+    fn oauth_shaped_byo_kept_without_override() {
+        // The OAuth drop is gated on the override: on the legacy real-Anthropic
+        // path an sk-ant-oat token is a valid credential and is forwarded alone.
+        assert_eq!(
+            select_passthrough_env(false, false, Some("sk-ant-oat-x"), &all_ambient_present),
+            vec!["AGENTOS_CREDENTIALS".to_string()]
+        );
+    }
+
+    #[test]
     fn empty_byo_credential_falls_back_to_sdk_vars() {
         // An empty AGENTOS_CREDENTIALS (a blank line in .env) is treated as unset,
         // so the ambient SDK vars carry the legacy real-Anthropic credential.
@@ -3597,6 +3645,7 @@ mod tests {
         fake_model: bool,
         base_url_override: bool,
         byo_credential: bool,
+        byo_oauth_shaped: bool,
         ambient_oauth: bool,
         ambient_api_key: bool,
         expected: Vec<String>,
@@ -3643,7 +3692,13 @@ mod tests {
                 "ANTHROPIC_API_KEY" => vector.ambient_api_key,
                 _ => false,
             };
-            let byo = vector.byo_credential.then_some("sk-or-PLACEHOLDER-byo");
+            // An OAuth-shaped BYO is sk-ant-oat; a provider key is sk-or-. Both are
+            // placeholders and forwarded by NAME, so neither value enters the argv.
+            let byo = vector.byo_credential.then_some(if vector.byo_oauth_shaped {
+                "sk-ant-oat-PLACEHOLDER-byo"
+            } else {
+                "sk-or-PLACEHOLDER-byo"
+            });
             assert_eq!(
                 select_passthrough_env(
                     vector.fake_model,

@@ -31,11 +31,14 @@ _VECTORS = (
 _AMBIENT_OAUTH = "sk-PLACEHOLDER-oauth"
 _AMBIENT_ANTHROPIC_CRED = "sk-ant-PLACEHOLDER-key"
 _BYO_CREDENTIAL = "sk-or-PLACEHOLDER-byo"
+# An OAuth-shaped BYO credential: the sk-ant-oat prefix is what the rule sniffs
+# to drop it under a base-URL override (issue #603). Still a placeholder value.
+_BYO_OAUTH_CREDENTIAL = "sk-ant-oat-PLACEHOLDER-byo"
 
 # Every key a vector row may carry. Checked exactly, so an unrecognized key is a
 # loud failure rather than an input this lane silently ignores: a row that grows
-# a sixth input would otherwise pass vacuously, which is the exact drift the gate
-# exists to catch. The Rust lane rejects unknown fields the same way, via
+# a seventh input would otherwise pass vacuously, which is the exact drift the
+# gate exists to catch. The Rust lane rejects unknown fields the same way, via
 # `#[serde(deny_unknown_fields)]` on its ForwardingVector.
 _EXPECTED_VECTOR_KEYS = frozenset(
     {
@@ -44,6 +47,7 @@ _EXPECTED_VECTOR_KEYS = frozenset(
         "fake_model",
         "base_url_override",
         "byo_credential",
+        "byo_oauth_shaped",
         "ambient_oauth",
         "ambient_api_key",
         "expected",
@@ -75,7 +79,9 @@ def _run_vector(vector: dict[str, object]) -> list[str]:
 
     environ: dict[str, str] = {}
     if vector["byo_credential"]:
-        environ["AGENTOS_CREDENTIALS"] = _BYO_CREDENTIAL
+        environ["AGENTOS_CREDENTIALS"] = (
+            _BYO_OAUTH_CREDENTIAL if vector["byo_oauth_shaped"] else _BYO_CREDENTIAL
+        )
     if vector["ambient_oauth"]:
         environ["CLAUDE_CODE_OAUTH_TOKEN"] = _AMBIENT_OAUTH
     if vector["ambient_api_key"]:
