@@ -334,6 +334,12 @@ def path_exists(repo_root: Path, rel_path: str) -> bool:
     return (repo_root / rel_path).is_file()
 
 
+def _is_external_url(href: str) -> bool:
+    """True when ``href`` is an absolute ``http(s)`` URL, not an in-tree path."""
+    lowered = href.strip().lower()
+    return lowered.startswith("http://") or lowered.startswith("https://")
+
+
 def link_target_matches_citation(
     repo_root: Path, doc_rel: str, cite_path: str, href: str
 ) -> bool:
@@ -345,16 +351,28 @@ def link_target_matches_citation(
     the citation does not describe -- the exact drift #575 left in ARCHITECTURE.md,
     where the text cited ``types.py`` but the link went to ``k8s.py``.
 
-    The href is resolved with normal markdown semantics (relative to the doc's
-    own directory) and compared to the citation resolved from the repo root.
-    A pure-anchor href (``#section``, no path) is a same-doc link, not a file
-    target, so it is treated as consistent.
+    A relative href is resolved with normal markdown semantics (relative to the
+    doc's own directory), while a leading-slash href is repo-root-anchored (as a
+    site serves ``/path``) and resolved from the repo root -- so a nested doc can
+    cite a file with a root-relative link without false-failing. The comparison
+    target is the citation resolved from the repo root.
+
+    Two hrefs describe no in-repo file to compare against and are treated as
+    consistent: a pure-anchor href (``#section``, no path) is a same-doc link,
+    and an absolute external URL (``http://``/``https://``) points outside the
+    tree entirely.
     """
+
+    if _is_external_url(href):
+        return True
 
     href_path = href.split("#", 1)[0].split("?", 1)[0].strip()
     if not href_path:
         return True
-    doc_dir = (repo_root / doc_rel).parent
-    href_abs = (doc_dir / href_path).resolve()
+    if href_path.startswith("/"):
+        href_abs = (repo_root / href_path.lstrip("/")).resolve()
+    else:
+        doc_dir = (repo_root / doc_rel).parent
+        href_abs = (doc_dir / href_path).resolve()
     cite_abs = (repo_root / cite_path).resolve()
     return href_abs == cite_abs
