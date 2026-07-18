@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 from agentos_worker.config import WorkerConfig
-from agentos_worker.run import _sandbox_client, _substrate_config, main
+from agentos_worker.run import _sandbox_client, _substrate_config, _supervise, main
 from agentos_worker.sandbox import DockerSandboxClient, SubstrateConfig
 
 _SUB = SubstrateConfig(namespace="default", warm_pool="pool")
@@ -203,3 +203,114 @@ def test_main_installs_dead_letter_alerting(
         for handler in original_handlers:
             source_logger.addHandler(handler)
         source_logger.propagate = original_propagate
+
+
+# -- _supervise: per-task restart + sibling isolation (#673) -----------------
+
+
+def test_supervise_restarts_a_crashing_task_until_shutdown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A consumer that crashes is restarted rather than allowed to escape. The
+    task settles once it returns cleanly (its own stop was requested)."""
+
+    async def go() -> None:
+        shutdown = asyncio.Event()
+        calls = {"n": 0}
+
+        async def factory() -> None:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise ConnectionError("boom")
+            # Third run behaves like a real consumer: return once stopped.
+            shutdown.set()
+
+        with caplog.at_level(logging.ERROR, logger="agentos_worker.run"):
+            await asyncio.wait_for(
+                _supervise("evals", factory, shutdown, restart_backoff_s=0),
+                timeout=2,
+            )
+
+        assert calls["n"] == 3  # crashed twice, restarted twice, then returned
+        restarts = [
+            r
+            for r in caplog.records
+            if r.name == "agentos_worker.run" and "crashed; restarting" in r.getMessage()
+        ]
+        assert len(restarts) == 2
+
+    asyncio.run(go())
+
+
+def test_supervise_does_not_restart_after_shutdown() -> None:
+    """A crash arriving as shutdown is requested must not trigger a restart, and
+    must not propagate out of the supervisor."""
+
+    async def go() -> None:
+        shutdown = asyncio.Event()
+        calls = {"n": 0}
+
+        async def factory() -> None:
+            calls["n"] += 1
+            shutdown.set()
+            raise ConnectionError("boom")
+
+        await asyncio.wait_for(
+            _supervise("runs", factory, shutdown, restart_backoff_s=0),
+            timeout=2,
+        )
+        assert calls["n"] == 1  # no restart after shutdown
+
+    asyncio.run(go())
+
+
+def test_supervise_returns_when_task_completes_cleanly() -> None:
+    async def go() -> None:
+        shutdown = asyncio.Event()
+        calls = {"n": 0}
+
+        async def factory() -> None:
+            calls["n"] += 1
+
+        await asyncio.wait_for(
+            _supervise("heartbeat", factory, shutdown, restart_backoff_s=0),
+            timeout=2,
+        )
+        assert calls["n"] == 1  # returned on first clean completion, no restart
+
+    asyncio.run(go())
+
+
+def test_crashing_supervised_task_does_not_cancel_its_siblings() -> None:
+    """The #673 core: one consumer crashing (and restarting) must not tear down a
+    sibling consumer sharing the same event loop under the top-level gather."""
+
+    async def go() -> None:
+        shutdown = asyncio.Event()
+        sibling_ran = {"ok": False}
+        crashes = {"n": 0}
+
+        async def crasher() -> None:
+            crashes["n"] += 1
+            if crashes["n"] >= 3:
+                shutdown.set()  # last crash also asks everything to stop
+            raise ConnectionError("boom")
+
+        async def sibling() -> None:
+            # Only completes if it was NOT cancelled by the crasher's failure.
+            await shutdown.wait()
+            sibling_ran["ok"] = True
+
+        await asyncio.wait_for(
+            asyncio.gather(
+                _supervise("crasher", crasher, shutdown, restart_backoff_s=0),
+                _supervise("sibling", sibling, shutdown, restart_backoff_s=0),
+                return_exceptions=True,
+            ),
+            timeout=2,
+        )
+
+        assert crashes["n"] == 3
+        assert sibling_ran["ok"] is True
+
+    asyncio.run(go())

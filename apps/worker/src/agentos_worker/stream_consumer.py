@@ -123,7 +123,28 @@ class StreamConsumer:
             streams = cast("list[tuple[str, list[StreamEntry]]]", resp)
             for _stream, entries in streams:
                 for entry_id, fields in entries:
-                    await handler(entry_id, fields)
+                    try:
+                        await handler(entry_id, fields)
+                    except Exception:
+                        # A handler-internal error must not escape this loop. The
+                        # realistic trigger is a transient transport fault (a Valkey
+                        # failover/blip) hit while a poison-pill entry is being
+                        # dead-lettered via XADD to ``<stream>:dead`` (#585 widened
+                        # this with a second eval dead-letter site). This loop shares
+                        # one event loop with the other consumers (runs, evals,
+                        # killswitch, heartbeat) under the top-level gather, so an
+                        # escaping exception would tear its siblings down (#673).
+                        # Log and continue: the entry is left un-acked in the PEL, so
+                        # the reclaim loop re-delivers it (and dead-letters it once the
+                        # delivery cap is hit) rather than being lost. ``CancelledError``
+                        # is a ``BaseException`` and still propagates, so cooperative
+                        # shutdown is unaffected.
+                        spec.logger.exception(
+                            "handler failed for entry %s on stream %s; "
+                            "left pending for reclaim",
+                            entry_id,
+                            spec.stream,
+                        )
 
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:

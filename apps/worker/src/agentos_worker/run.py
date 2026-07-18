@@ -12,7 +12,7 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -239,31 +239,76 @@ def build(config: WorkerConfig, env: Mapping[str, str]) -> Runtime:
     )
 
 
+async def _supervise(
+    name: str,
+    factory: Callable[[], Awaitable[None]],
+    shutdown: asyncio.Event,
+    *,
+    restart_backoff_s: float = 1.0,
+) -> None:
+    """Run a worker task, restarting it if it crashes, until shutdown is requested.
+
+    Each consumer's ``run()`` returns only when its own stop is requested. If one
+    instead raises -- a latent bug, or an error that escaped its own read loop --
+    restarting it keeps its siblings (runs, evals, killswitch, heartbeat) alive
+    rather than letting the exception propagate out of the top-level gather and
+    tear the whole worker down (#673). Paired with ``return_exceptions=True`` on
+    that gather, this is the defence-in-depth behind the per-entry isolation in
+    ``StreamConsumer._consume``. ``CancelledError`` is a ``BaseException`` and
+    still propagates, so cooperative shutdown is unaffected.
+
+    ``factory`` is a thunk (e.g. a bound ``run`` method) so each restart gets a
+    fresh coroutine; ``run()`` is re-entrant (group creation is BUSYGROUP-safe).
+    """
+    while not shutdown.is_set():
+        try:
+            await factory()
+            return
+        except Exception:
+            if shutdown.is_set():
+                return
+            logger.exception("worker task %s crashed; restarting", name)
+            try:
+                await asyncio.wait_for(shutdown.wait(), timeout=restart_backoff_s)
+            except TimeoutError:
+                pass
+
+
 async def _run(config: WorkerConfig, env: Mapping[str, str]) -> None:
     rt = build(config, env)
 
     loop = asyncio.get_running_loop()
 
-    # Liveness heartbeat runs on this same event loop, so a wedged loop stops
-    # touching the file and the k8s exec probe restarts the pod (issue #71).
-    hb_stop = asyncio.Event()
+    # A single shutdown flag governs every supervised task. The liveness
+    # heartbeat runs on this same event loop, so a wedged loop stops touching the
+    # file and the k8s exec probe restarts the pod (issue #71).
+    shutdown = asyncio.Event()
 
     def _stop() -> None:
         rt.consumer.request_stop()
         rt.killswitch.request_stop()
         rt.eval_consumer.request_stop()
-        hb_stop.set()
+        shutdown.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _stop)
 
     logging.getLogger("agentos_worker").info("worker starting")
     try:
+        # return_exceptions=True + per-task restart: a crash in one consumer must
+        # not cancel its siblings (#673). Supervisors only return on shutdown.
         await asyncio.gather(
-            rt.consumer.run(),
-            rt.killswitch.run(),
-            rt.eval_consumer.run(),
-            run_heartbeat(config.heartbeat_file, config.heartbeat_interval_s, hb_stop),
+            _supervise("runs", rt.consumer.run, shutdown),
+            _supervise("killswitch", rt.killswitch.run, shutdown),
+            _supervise("evals", rt.eval_consumer.run, shutdown),
+            _supervise(
+                "heartbeat",
+                lambda: run_heartbeat(
+                    config.heartbeat_file, config.heartbeat_interval_s, shutdown
+                ),
+                shutdown,
+            ),
+            return_exceptions=True,
         )
     finally:
         await rt.runner.close()
