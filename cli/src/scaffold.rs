@@ -225,7 +225,17 @@ pub fn scaffold_from_spec(dir: &Path, spec: &AgentSpec) -> Result<Vec<PathBuf>> 
         let gates: Vec<Value> = policy
             .gates
             .iter()
-            .map(|g| serde_json::json!({ "gate": g.gate, "route": g.route }))
+            .map(|g| {
+                // Emit `grantableViaPolicy` only when true so specs that don't
+                // use the opt-in keep a byte-identical default scaffold (#558).
+                let mut gate = serde_json::Map::new();
+                gate.insert("gate".into(), serde_json::json!(g.gate));
+                gate.insert("route".into(), serde_json::json!(g.route));
+                if g.grantable_via_policy {
+                    gate.insert("grantableViaPolicy".into(), serde_json::json!(true));
+                }
+                Value::Object(gate)
+            })
             .collect();
         manifest_obj.insert(
             "approvalPolicy".into(),

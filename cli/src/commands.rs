@@ -2885,6 +2885,13 @@ const MANIFEST_LOCATIONS: [&str; 2] = [".claude-plugin/plugin.json", "plugin.jso
 struct ApprovalGateDecl {
     gate: Option<String>,
     route: Option<String>,
+    /// Operator opt-in (#558). Unlike `gate`/`route`, collapsing absent/false is
+    /// intentional here: a bool with a safe default carries no absent-vs-empty
+    /// distinction worth preserving. Unread -- this struct only mirrors the
+    /// manifest shape for round-trip parsing on the display/parse path.
+    #[allow(dead_code)]
+    #[serde(default, rename = "grantableViaPolicy")]
+    grantable_via_policy: bool,
 }
 
 /// The manifest `approvalPolicy` object; mirrors `plugin_format.models.ApprovalPolicy`.
@@ -3349,7 +3356,7 @@ mod tests {
     use super::{
         merge_secret_env, parse_manifest_gates, replace_first_line, resolve_cases_path,
         seed_env_if_missing, select_in_force_deployment, select_passthrough_env,
-        validate_slack_channel, EnvSeed,
+        validate_slack_channel, ApprovalGateDecl, EnvSeed,
     };
     use serde::Deserialize;
     use std::path::{Path, PathBuf};
@@ -3997,6 +4004,22 @@ mod tests {
                 .expect("an empty gates list is a valid declaration of no gates"),
             Vec::new()
         );
+    }
+
+    #[test]
+    fn approval_gate_decl_parses_grantable_via_policy() {
+        // #558: the operator opt-in on a manifest gate. Absent -> defaults false
+        // (old manifests keep the no-grant baseline); present true -> parses.
+        let without: ApprovalGateDecl =
+            serde_json::from_str(r#"{"gate":"close_issue","route":"deal-desk"}"#)
+                .expect("a gate without grantableViaPolicy parses");
+        assert!(!without.grantable_via_policy);
+
+        let with: ApprovalGateDecl = serde_json::from_str(
+            r#"{"gate":"close_issue","route":"deal-desk","grantableViaPolicy":true}"#,
+        )
+        .expect("a gate with grantableViaPolicy:true parses");
+        assert!(with.grantable_via_policy);
     }
 
     #[tokio::test]

@@ -34,6 +34,11 @@ pub struct SkillSpec {
 pub struct ApprovalGateSpec {
     pub gate: String,
     pub route: String,
+    /// Operator opt-in: lets a policy-gate approval mint a one-shot tool grant
+    /// for this gate (#558). Unlike `gate`/`route`, where absent-vs-empty is
+    /// load-bearing, a bool with a safe default may collapse absent and false.
+    #[serde(default, rename = "grantableViaPolicy")]
+    pub grantable_via_policy: bool,
 }
 
 /// The `approvalPolicy` a spec declares. Mirrors `plugin_format.models.ApprovalPolicy`.

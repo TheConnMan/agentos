@@ -22,7 +22,7 @@ from .approval import (
     build_approval_gate,
     build_approval_server,
     build_can_use_tool,
-    load_approval_policy,
+    resolve_approval_policy,
 )
 from .config import RunnerConfig
 from .fake import FakeModelSession
@@ -103,17 +103,18 @@ def build_runner(
     # those calls pending approval; the gate object is shared with the
     # SessionRunner so a blocked call flips the turn's final to
     # awaiting-approval. Neither configured keeps the bypass posture.
-    # Both halves fail closed (#520): load_approval_policy raises rather than
+    # Both halves fail closed (#520): resolve_approval_policy raises rather than
     # degrading a declared-but-unarmable policy to "nothing gated", and
     # build_approval_gate refuses a bundle gate that would redefine the route
     # of a tool the operator already gated. Either raises before the first
     # turn, so a misdeclared policy never boots ungated.
     try:
-        policy_routes = load_approval_policy(config.session.plugin_dir)
+        resolution = resolve_approval_policy(config.session.plugin_dir)
         approval_gate = build_approval_gate(
             operator_tools=config.approval_required_tools,
-            policy_routes=policy_routes,
+            policy_routes=resolution.route_by_tool,
             grant_tool=config.approval_grant_tool,
+            grantable_by_route=resolution.grantable_by_route,
         )
     except ApprovalPolicyError as exc:
         # Log then re-raise, matching the module's other two fatal boot paths

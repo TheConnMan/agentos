@@ -204,10 +204,12 @@ class Approval(Base):
     # is ``'permission'`` when the tool-permission gate denied a real tool call,
     # ``'policy'`` when the model asked for a business-decision approval; it is
     # the column the worker branches on instead of sniffing the summary prefix.
-    # ``granted_tool`` is the tool name a resume-turn grant is bound to and is
-    # only ever set for ``gate_kind='permission'`` (a policy gate never authorizes
-    # a tool). Both NULL from an older runner that predates them, which is the
-    # rolling-deploy window the worker's prefix fallback covers.
+    # ``granted_tool`` is the tool name a resume-turn grant is bound to. It is set
+    # for ``gate_kind='permission'`` and, since #558, for a ``gate_kind='policy'``
+    # gate the operator opted into grantability (grantableViaPolicy) -- the runner
+    # stamps the manifest tool onto it for those gates and leaves it NULL for
+    # every other policy gate. Both NULL from an older runner that predates them,
+    # which is the rolling-deploy window the worker's prefix fallback covers.
     gate_kind: Mapped[str | None] = mapped_column(default=None)
     granted_tool: Mapped[str | None] = mapped_column(default=None)
 

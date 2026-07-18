@@ -243,15 +243,51 @@ def test_approved_policy_gate_never_grants() -> None:
     asyncio.run(go())
 
 
-def test_policy_gate_with_a_granted_tool_column_still_grants_nothing() -> None:
-    # Decision C's defence in depth. This row is IMPOSSIBLE from a correct
-    # runner -- Decision A means a policy gate never populates granted_tool. It
-    # exists anyway (a hand-edited row, a future runner bug), and the worker
-    # refuses it on gate_kind alone, regardless of what the column says.
-    #
-    # Deliberately redundant: this is the seam #430 and #410 were both filed
-    # against, and the invariant belongs stated at the point where the authority
-    # is actually handed out.
+def test_approved_policy_gate_with_granted_tool_grants_it() -> None:
+    # #558 SUPERSESSION of the old "policy gate grants nothing even with a
+    # granted_tool column" invariant. The operator opt-in `grantableViaPolicy`
+    # lets a policy approval mint a one-shot grant, and the runner writes the
+    # granted MANIFEST tool onto the row. So an approved policy row WITH a
+    # non-null granted_tool now RETURNS that tool. The value is still trusted
+    # (runner-written from the manifest, never model-supplied), so the forgery
+    # protection below is unaffected -- a model controls only the summary.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            await _skip_if_unreachable(engine)
+            agent_id = uuid.uuid4()
+            approval_id = uuid.uuid4()
+            await _seed_agent(engine, agent_id)
+            await _seed_approval(
+                engine,
+                approval_id=approval_id,
+                status="approved",
+                summary="Close the ACME issue",
+                agent_id=agent_id,
+                gate_kind="policy",
+                granted_tool="close_issue",  # the operator-opted-in grant
+            )
+            try:
+                tool = await _resolver(engine).approval_grant_tool(
+                    resume_event_id(approval_id), agent_id
+                )
+                assert tool == "close_issue", (
+                    "an approved grantable-policy row hands out its granted_tool "
+                    "column (#558)"
+                )
+            finally:
+                await _cleanup_agents(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_approved_policy_gate_with_null_granted_tool_grants_nothing() -> None:
+    # The default #544 behavior is PRESERVED: a policy approval the operator did
+    # NOT mark grantable carries a NULL granted_tool, and the worker returns
+    # None. This is the honest common case (most policy gates are not grantable),
+    # and it is the same NULL-column row the forgery guard below relies on.
     async def go() -> None:
         engine = create_async_engine(_DB_URL)
         try:
@@ -266,15 +302,14 @@ def test_policy_gate_with_a_granted_tool_column_still_grants_nothing() -> None:
                 summary="Give ACME a 20% discount",
                 agent_id=agent_id,
                 gate_kind="policy",
-                granted_tool="Bash",  # a corrupted / impossible row
+                granted_tool=None,
             )
             try:
                 tool = await _resolver(engine).approval_grant_tool(
                     resume_event_id(approval_id), agent_id
                 )
                 assert tool is None, (
-                    "gate_kind='policy' must refuse outright, whatever "
-                    "granted_tool contains"
+                    "a policy approval with no granted_tool mints no grant (#544)"
                 )
             finally:
                 await _cleanup_agents(engine, [agent_id])

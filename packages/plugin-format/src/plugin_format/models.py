@@ -103,12 +103,16 @@ class ApprovalGate(BaseModel):
     ``gate`` names the point at which the agent pauses for approval (e.g. a tool
     class or lifecycle point); ``route`` names the approval route that decides.
     Both are required — an incomplete gate is rejected at deploy.
+    ``grantableViaPolicy`` is the operator opt-in (#558): when true, a policy-gate
+    approval on this gate's route MAY mint a one-shot grant for the manifest tool
+    ``gate`` names; default false preserves #544's policy-never-grants behavior.
     """
 
     model_config = _LENIENT
 
     gate: str
     route: str
+    grantableViaPolicy: bool = False
 
 
 class ApprovalPolicy(BaseModel):

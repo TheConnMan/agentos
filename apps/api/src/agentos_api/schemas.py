@@ -528,8 +528,10 @@ class ApprovalOut(BaseModel):
     dedupe_key: str
     route: str | None
     card_channel: str | None
-    # Gate provenance (#544): which gate fired, and the tool a permission-gate
-    # grant is bound to. Both NULL for a policy gate or a pre-#544 row.
+    # Gate provenance (#544): which gate fired, and the tool a grant is bound to.
+    # Both NULL for a pre-#544 row. A permission gate carries granted_tool; a
+    # policy gate carries it too when the operator opted the manifest gate into
+    # grantability (grantableViaPolicy, #558), and NULL otherwise.
     gate_kind: str | None
     granted_tool: str | None
     status: str

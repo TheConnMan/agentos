@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from .approval_policy import grantable_routes
 from .manifest import resolve_manifest
 from .models import (
     _TRIGGER_TYPES,
@@ -428,6 +429,22 @@ def _validate_approval_policy(
                 _gate_not_namespaced_message(stripped_gate, manifest.name, mcp_servers or set()),
                 loc,
             )
+
+    # #558: an operator-opted grantable route claimed by more than one distinct
+    # tool would validate green yet arm no grant (the ambiguous route is excluded
+    # by the shared normalizer), so reject it here. grantable_routes is the SAME
+    # helper the runtime loader uses, so the validator and loader agree on which
+    # routes are grantable by construction (#453).
+    _, ambiguous = grantable_routes(policy.gates)
+    for route in sorted(ambiguous):
+        c.error(
+            "approval_policy.grant_route_ambiguous",
+            f"more than one grantableViaPolicy gate claims route {route!r} with a"
+            " different tool; it is ambiguous which tool a policy approval would"
+            " grant, so the route would validate but arm no grant. Make the"
+            " grantable gates on this route name the same tool, or drop the opt-in.",
+            "plugin.json (approvalPolicy)",
+        )
 
 
 def _gate_not_namespaced_message(gate: str, bundle: str, mcp_servers: set[str]) -> str:

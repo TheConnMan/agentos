@@ -621,6 +621,11 @@ class SessionRunner:
                 state.approval_gate_kind = None
             else:
                 state.approval_route = gate.policy_route
+                # #558: an operator-opted grantable gate mints the one-shot grant; the tool
+                # comes from the manifest (never the model's summary/route args). A
+                # non-grantable route resolves to None -> no grant, preserving #544's default.
+                # gate_kind stays 'policy' (stamped in translate.py).
+                state.approval_granted_tool = gate.grantable_tool_for_route(gate.policy_route)
 
         if gate.pending_summary and not state.approval_summary:
             state.approval_summary = gate.pending_summary

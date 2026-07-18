@@ -97,9 +97,14 @@ in code now:
   ADR-0035's summary-prefix discriminator): for a `gate_kind='permission'` row it injects
   `AGENTOS_APPROVAL_GRANT_TOOL=<granted_tool>` (`GRANT_TOOL_ENV`, the exact tool name
   `can_use_tool` denied, a trusted runner-authored value); for a `gate_kind='policy'` row it
-  **refuses outright** (a policy gate never mints a grant — the model's arguments can never
-  select which tool receives bypass authority, the #430 invariant now enforced by the column,
-  not the prefix); and only for a `gate_kind IS NULL` row (the rolling-deploy window where an
+  injects the same `AGENTOS_APPROVAL_GRANT_TOOL` from the `granted_tool` column **when that
+  column is non-null** — the runner sets it only for a manifest gate the operator opted into
+  grantability via `grantableViaPolicy` (#558, ADR-0056), with the granted tool sourced from
+  the manifest's `gate` value, **never a model-supplied string**, so the model's arguments still
+  can never select which tool receives bypass authority (the #430 invariant, now enforced by
+  the manifest opt-in and the column rather than the prefix). A policy gate the operator did
+  not mark grantable leaves `granted_tool` NULL and still grants nothing — the #544 default is
+  unchanged; and only for a `gate_kind IS NULL` row (the rolling-deploy window where an
   in-flight older runner image emitted no provenance) does it fall back to the OLD
   `summarize_tool_call` summary-prefix parse, byte-identical to prior behavior. The runner gate
   allows exactly one call to that tool on
@@ -107,8 +112,9 @@ in code now:
   grant on the next turn so an adopted warm-pod follow-up cannot inherit it. The grant is
   **tool-name-scoped** (a different gated tool, or a second call to the same one, still
   gates), **agent-bound** (delivered only when the approval's `agent_id` matches the
-  agent resolved for the channel, so a rebound channel cannot cross-grant), **permission-gate
-  only** (enforced by the `gate_kind` column; for the NULL-fallback window the
+  agent resolved for the channel, so a rebound channel cannot cross-grant), scoped to
+  **a permission gate, or an operator-opted (`grantableViaPolicy`) policy gate** (enforced by
+  the `gate_kind`/`granted_tool` columns; for the NULL-fallback window the
   `summarize_tool_call` prefix is still a RESERVED namespace, and the runner guards
   model-authored policy-gate summaries out of it via `guard_reserved_summary`, so a
   policy-gate request cannot forge a permission-gate grant in that window either), and

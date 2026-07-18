@@ -328,6 +328,65 @@ def test_builtin_tool_gate_passes(tmp_path: Path) -> None:
     assert not [i for i in result.errors if i.code.startswith("approval_policy.")]
 
 
+# --- grantable-via-policy gates (#558): an ambiguous grantable route is rejected -
+#
+# A gate the operator marks ``grantableViaPolicy: true`` opts that gate's policy
+# approval into minting a one-shot grant for the tool it names. When two grantable
+# gates claim the SAME route with DIFFERENT tools, the route cannot resolve to a
+# single grant tool, so it is rejected at deploy with
+# ``approval_policy.grant_route_ambiguous``.
+
+_GRANT_AMBIGUOUS_CODE = "approval_policy.grant_route_ambiguous"
+
+
+def test_single_grantable_gate_passes(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "approvalPolicy": {"gates": ['
+        '{"gate": "close_issue", "route": "deal-desk", "grantableViaPolicy": true}]}}',
+    )
+    result = validate_bundle(bundle)
+    assert result.valid, result.errors
+    assert _GRANT_AMBIGUOUS_CODE not in {i.code for i in result.errors}
+
+
+def test_two_grantable_gates_same_route_different_tool_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "approvalPolicy": {"gates": ['
+        '{"gate": "close_issue", "route": "deal-desk", "grantableViaPolicy": true}, '
+        '{"gate": "escalate", "route": "deal-desk", "grantableViaPolicy": true}]}}',
+    )
+    assert _GRANT_AMBIGUOUS_CODE in _codes(bundle)
+
+
+def test_two_grantable_gates_same_route_same_tool_is_not_ambiguous(
+    tmp_path: Path,
+) -> None:
+    # One route, one DISTINCT tool declared twice: a duplicate, not a conflict.
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "approvalPolicy": {"gates": ['
+        '{"gate": "close_issue", "route": "deal-desk", "grantableViaPolicy": true}, '
+        '{"gate": "close_issue", "route": "deal-desk", "grantableViaPolicy": true}]}}',
+    )
+    assert _GRANT_AMBIGUOUS_CODE not in _codes(bundle)
+
+
+def test_non_grantable_duplicate_route_pair_is_not_ambiguous(tmp_path: Path) -> None:
+    # Two gates share a route with different tools, but neither opts in, so the
+    # grant-ambiguity check ignores them entirely.
+    bundle = _bundle(
+        tmp_path,
+        '{"name": "demo", "approvalPolicy": {"gates": ['
+        '{"gate": "close_issue", "route": "deal-desk"}, '
+        '{"gate": "escalate", "route": "deal-desk"}]}}',
+    )
+    assert _GRANT_AMBIGUOUS_CODE not in _codes(bundle)
+
+
 def test_correctly_namespaced_gate_passes_without_asserting_the_tool(tmp_path: Path) -> None:
     # send_contract is a tool nothing declares and nothing could know without
     # running the server. The prefix is correct, so the gate passes: the suffix

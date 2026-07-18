@@ -143,6 +143,46 @@ fn scaffolds_secrets_and_approval_policy_into_the_manifest() {
     assert_eq!(manifest["approvalPolicy"]["gates"][0]["route"], "default");
 }
 
+/// A spec gate marked `grantableViaPolicy: true` scaffolds that flag verbatim
+/// into the emitted manifest's approvalPolicy gate (#558), so a deployed bundle
+/// carries the operator opt-in the runner/worker read to mint a one-shot grant.
+/// A gate that omits it scaffolds no `true` flag (default no-grant) and still
+/// validates.
+#[test]
+fn scaffolds_grantable_via_policy_flag_into_the_manifest() {
+    let body = r#"{
+      "name": "deal-desk",
+      "description": "Gated deal desk with a grantable gate.",
+      "skills": [
+        { "name": "deal-desk", "description": "Do it.", "instructions": "Body.\n" }
+      ],
+      "approvalPolicy": {
+        "gates": [
+          { "gate": "close_issue", "route": "deal-desk", "grantableViaPolicy": true },
+          { "gate": "escalate", "route": "managers" }
+        ]
+      },
+      "evals": [
+        { "id": "e1", "input": "hi", "grader": { "kind": "contains", "expected": "ok" } }
+      ]
+    }"#;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bundle");
+    let spec = parse(body).expect("grantable-gate spec parses");
+    scaffold_from_spec(&out, &spec).expect("scaffold succeeds");
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(".claude-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    let gates = &manifest["approvalPolicy"]["gates"];
+    // The opted-in gate carries the flag verbatim.
+    assert_eq!(gates[0]["gate"], "close_issue");
+    assert_eq!(gates[0]["grantableViaPolicy"], serde_json::json!(true));
+    // The non-opted gate scaffolds no `true` flag (omitted or false).
+    assert_ne!(gates[1]["grantableViaPolicy"], serde_json::json!(true));
+}
+
 /// A spec that declares neither omits both keys, so the default scaffold shape is
 /// unchanged (no empty `secrets: []` / `approvalPolicy` noise).
 #[test]
