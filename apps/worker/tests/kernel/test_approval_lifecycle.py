@@ -641,3 +641,38 @@ def test_resolve_resume_leaves_the_card_to_the_dispatcher(make_harness) -> None:
             assert not await h.async_redis.exists(h.config.approval_card_key(thread))
 
     asyncio.run(go())
+
+
+def test_resolve_authored_by_a_system_named_actor_does_not_expire_the_card(
+    make_harness,
+) -> None:
+    """#419 hardening: the expiry-vs-resolve discriminator is the platform text
+    marker, NOT the author. A resolver whose identity is literally "system" (the
+    codebase's reserved machine-actor name) must not get its RESOLVED card wrongly
+    stamped expired -- the ``[approval resolved]`` text keeps it off the expiry
+    path."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        thread = "th-system-resolver"
+        async with make_harness(approvals=approvals) as h:
+            h.runner.default_script = _awaiting_script("Refund order 42")
+            await h.kernel.process_event(_qevent("refund?", thread=thread))
+            assert await h.async_redis.exists(h.config.approval_card_key(thread))
+
+            h.runner.default_script = [Final(text="Refunded.", status=DONE)]
+            await h.kernel.process_event(
+                _resume_turn(
+                    "[approval resolved] approved by system",
+                    thread=thread,
+                    approval_id="appr-1",
+                    author="system",  # a resolver literally named "system"
+                )
+            )
+
+            # Author is "system" but the text says RESOLVED: the card is left to
+            # the dispatcher, never stamped expired by the worker.
+            assert h.sink.card_updates == []
+            assert not await h.async_redis.exists(h.config.approval_card_key(thread))
+
+    asyncio.run(go())

@@ -73,6 +73,17 @@ logger = logging.getLogger(__name__)
 # (budget-exceeded, model/server errors) escalates rather than looping.
 RETRYABLE_CLASSIFICATIONS = frozenset({"rate-limit", "runner-error"})
 
+# The platform-authored prefix that marks an approval resume turn as an EXPIRY
+# (vs a resolve). Set by ``resumequeue.build_expiry_resume_turn`` on both expiry
+# paths (the #412 sweeper and a past-SLA resolve); ``build_resume_turn`` uses
+# ``[approval resolved]`` instead. This text marker -- not the turn author -- is
+# the expiry discriminator: ``author`` is caller-supplied on a resolve
+# (``resolved_by``), and "system" is the codebase's reserved machine-actor name
+# (e.g. the sweeper's audit rows), so a resolver named "system" would otherwise
+# get its resolved card wrongly stamped expired. The marker is a stable
+# platform contract on a platform-authored turn -- not user-intent guessing.
+_EXPIRY_RESUME_MARKER = "[approval expired]"
+
 
 @dataclass
 class TurnOutcome:
@@ -660,23 +671,25 @@ class Kernel:
 
         The two expiry paths -- the #412 sweeper and a resolve attempt that
         arrives past the SLA -- both flip the record to ``expired`` and enqueue a
-        platform-authored resume turn (author "system"); neither ever touched the
-        card, so its Approve/Reject buttons kept looking live. Here the kernel,
-        which owns the card surface, pops the card it remembered at pause time and
-        edits it into its settled ``expired`` form -- the expiry mirror of the
-        dispatcher's resolved-card edit.
+        platform-authored resume turn prefixed ``[approval expired]``; neither
+        ever touched the card, so its Approve/Reject buttons kept looking live.
+        Here the kernel, which owns the card surface, pops the card it remembered
+        at pause time and edits it into its settled ``expired`` form -- the expiry
+        mirror of the dispatcher's resolved-card edit.
 
-        A RESOLVE resume (author is the resolver) only pops the memory to clean it
-        up; the dispatcher already edited that card from the click. Fully
-        best-effort: any failure here must never fail the resume, and the cheap
-        event-id check gates the Valkey pop so ordinary turns pay nothing.
+        A RESOLVE resume (``[approval resolved]``) only pops the memory to clean
+        it up; the dispatcher already edited that card from the click. The
+        expiry-vs-resolve discriminator is the platform-authored text marker, not
+        the turn author -- see ``_EXPIRY_RESUME_MARKER``. Fully best-effort: any
+        failure here must never fail the resume, and the cheap event-id check
+        gates the Valkey pop so ordinary turns pay nothing.
         """
 
         if self._card_store is None or not self._is_approval_resume(qevent.event_id):
             return
         try:
             ref = await self._card_store.pop(qevent.conversation_id)
-            if ref is None or qevent.author != "system":
+            if ref is None or not qevent.text.startswith(_EXPIRY_RESUME_MARKER):
                 return
             fallback, blocks = expired_approval_card(summary=ref.summary)
             await self._sink.update_message(
