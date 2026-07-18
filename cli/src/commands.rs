@@ -2509,6 +2509,11 @@ pub enum ApprovalsOutput {
     Pending {
         agent: String,
         records: Vec<crate::api::ApprovalRecord>,
+        /// `true` when `records.len()` hit the server's page-size cap
+        /// (`ApiClient::APPROVALS_LIST_LIMIT`), meaning more pending approvals
+        /// may exist beyond what was fetched (#670). Always present (never
+        /// conditionally omitted), per the repo's superset-JSON convention.
+        truncated: bool,
     },
     Resolved {
         record: crate::api::ApprovalRecord,
@@ -2543,9 +2548,15 @@ impl crate::ui::CliOutput for ApprovalsOutput {
                 "gated_tools": gated_tools,
                 "manifest_unreadable": manifest_unreadable,
             }),
-            ApprovalsOutput::Pending { agent, records } => serde_json::json!({
+            ApprovalsOutput::Pending {
+                agent,
+                records,
+                truncated,
+            } => serde_json::json!({
                 "agent": agent,
                 "pending": records.iter().map(approval_record_json).collect::<Vec<_>>(),
+                "count": records.len(),
+                "truncated": truncated,
             }),
             ApprovalsOutput::Resolved { record } => serde_json::json!({
                 "resolved": approval_record_json(record),
@@ -2570,7 +2581,11 @@ impl crate::ui::CliOutput for ApprovalsOutput {
                     ui.kv("gated", tool);
                 }
             }
-            ApprovalsOutput::Pending { agent, records } => {
+            ApprovalsOutput::Pending {
+                agent,
+                records,
+                truncated,
+            } => {
                 if records.is_empty() {
                     ui.payload(&format!("{agent}: no pending approvals"));
                 } else {
@@ -2586,6 +2601,13 @@ impl crate::ui::CliOutput for ApprovalsOutput {
                             ),
                         );
                     }
+                }
+                if *truncated {
+                    ui.payload(&format!(
+                        "this list is capped at {} (the server max) and more pending approvals \
+                         may exist; resolve some and re-run to see the rest",
+                        crate::api::ApiClient::APPROVALS_LIST_LIMIT
+                    ));
                 }
             }
             ApprovalsOutput::Resolved { record } => {
@@ -2679,17 +2701,21 @@ pub async fn approvals(
         if opts.dry_run {
             return Ok(ApprovalsOutput::DryRun(crate::ui::DryRunPlan {
                 lines: vec![format!(
-                    "GET {}/approvals?status_filter=pending&agent_id=<id>  (would resolve agent {:?} first)",
-                    opts.api_url, opts.agent
+                    "GET {}/approvals?status_filter=pending&agent_id=<id>&limit={}  (would resolve agent {:?} first)",
+                    opts.api_url,
+                    crate::api::ApiClient::APPROVALS_LIST_LIMIT,
+                    opts.agent
                 )],
             }));
         }
         let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
         let agent = client.find_agent(&opts.agent).await?;
         let records = client.list_pending_approvals(&agent.id).await?;
+        let truncated = records.len() >= crate::api::ApiClient::APPROVALS_LIST_LIMIT;
         return Ok(ApprovalsOutput::Pending {
             agent: agent.name,
             records,
+            truncated,
         });
     }
 
