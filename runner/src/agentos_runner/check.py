@@ -31,6 +31,7 @@ from typing import Any
 
 from aci_protocol import BootEnv
 from claude_agent_sdk import ClaudeSDKClient
+from plugin_format import resolve_manifest
 
 from .adapter import build_options
 from .plugin import PluginBundleError, load_plugins
@@ -114,7 +115,8 @@ def extract_declared(plugin_dir: str) -> list[dict[str, Any]]:
             )
             seen.add(name)
 
-    manifest = _read_json(root / ".claude-plugin" / "plugin.json")
+    manifest_path = resolve_manifest(root)
+    manifest = _read_json(manifest_path) if manifest_path is not None else None
     mcp = manifest.get("mcpServers") if isinstance(manifest, dict) else None
 
     if isinstance(mcp, dict):
