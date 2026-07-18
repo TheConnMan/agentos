@@ -92,6 +92,14 @@ _SDK_PASSTHROUGH_ENV = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_API_KEY",
 )
+# A Claude Code OAuth token shares the sk-ant- prefix with an API key; this more
+# specific prefix marks it. Under a base-URL override the runner blanks such a
+# token (runner sdk_auth.resolve_sdk_env), so forwarding it authenticates nothing
+# and only lands a real token in the container's /proc/1/environ. Kept a literal
+# mirror of runner/src/agentos_runner/sdk_auth.py::OAUTH_TOKEN_PREFIX -- the
+# authority for the prefix semantics -- and pinned across both lanes by the
+# `byo_oauth_shaped` vector input (issue #603).
+_OAUTH_TOKEN_PREFIX = "sk-ant-oat"
 # Env keys the worker sets explicitly or forwards specially, so the generic
 # value loop must not also emit them: the plugin dir and sandbox id are set
 # explicitly, the bundle ref named a MinIO object the worker already fetched
@@ -311,18 +319,27 @@ class DockerSandboxClient:
         # same-uid agent):
         #   - fake-model run (AGENTOS_FAKE_MODEL): the runner authenticates nothing,
         #     so forward no credential at all.
-        #   - base-URL-override / local run (ANTHROPIC_BASE_URL): drop only the
-        #     ambient SDK fallback -- a local endpoint needs no real Anthropic token.
-        #     An EXPLICIT AGENTOS_CREDENTIALS is still forwarded, because the runner
-        #     routes an sk-or- OpenRouter key into ANTHROPIC_API_KEY even with a
-        #     preset base URL (runner sdk_auth.resolve_sdk_env); suppressing it would
-        #     break BYO OpenRouter.
+        #   - base-URL-override / local run (ANTHROPIC_BASE_URL): drop the ambient
+        #     SDK fallback -- a local endpoint needs no real Anthropic token -- and
+        #     also drop an EXPLICIT AGENTOS_CREDENTIALS that is OAuth-shaped
+        #     (sk-ant-oat): the runner blanks such a token under the override
+        #     (runner sdk_auth.resolve_sdk_env), so forwarding it authenticates
+        #     nothing and only lands a real token in /proc/1/environ (issue #603).
+        #     A non-OAuth provider key (e.g. sk-or- OpenRouter) is still forwarded,
+        #     because the runner routes it into ANTHROPIC_API_KEY even with a preset
+        #     base URL; suppressing it would break BYO OpenRouter.
         fake_model = FAKE_MODEL_ENV in env
         base_url_override = BASE_URL_ENV in env
         if not fake_model:
-            if self._environ.get(CREDENTIALS_ENV):
+            byo = self._environ.get(CREDENTIALS_ENV)
+            drop_oauth_byo = (
+                base_url_override
+                and byo is not None
+                and byo.startswith(_OAUTH_TOKEN_PREFIX)
+            )
+            if byo and not drop_oauth_byo:
                 args += ["-e", CREDENTIALS_ENV]
-            elif not base_url_override:
+            elif not byo and not base_url_override:
                 for var in _SDK_PASSTHROUGH_ENV:
                     if var in self._environ:
                         args += ["-e", var]
