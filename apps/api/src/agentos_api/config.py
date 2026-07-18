@@ -7,8 +7,13 @@ environment variable for shared or production deployments.
 
 from functools import lru_cache
 
-from aci_protocol import RUNS_STREAM_DEFAULT
-from pydantic import model_validator
+from aci_protocol import (
+    DEAD_LETTER_STREAM_ENV,
+    RUNS_STREAM_DEFAULT,
+    STREAM_ENV,
+    derive_dead_letter_stream_name,
+)
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Dev-only default secrets. The production boot gate refuses to start when any of
@@ -86,20 +91,35 @@ class Settings(BaseSettings):
     # The runs stream approval resolutions enqueue resume turns onto (#244).
     # Must match the worker's AGENTOS_STREAM (its consumer side) -- which is why
     # the default is the shared declaration both lanes import (#492) rather than
-    # a literal mirrored here. Still overridable via RUNS_STREAM.
-    runs_stream: str = RUNS_STREAM_DEFAULT
+    # a literal mirrored here. Overridable via RUNS_STREAM (the API's historical
+    # name, which still wins if both are set) OR AGENTOS_STREAM (the worker's
+    # name), so an operator who moves the base stream on the worker side moves it
+    # here too and the two lanes agree on the graveyard derived from it (#668).
+    runs_stream: str = Field(
+        default=RUNS_STREAM_DEFAULT,
+        validation_alias=AliasChoices("RUNS_STREAM", STREAM_ENV),
+    )
 
     # Dead-letter graveyard watcher (#531). The worker moves a permanently-failing
-    # entry to `<runs_stream>:dead` (ADR-0039, #505) and acks it; this watcher is
-    # the reader that alerts on each new dead-letter so the observable-single-loss
+    # entry to the graveyard (ADR-0039, #505) and acks it; this watcher is the
+    # reader that alerts on each new dead-letter so the observable-single-loss
     # trade is actually observable. Interval <= 0 disables it (tests/off-switch).
-    # It derives the graveyard name from runs_stream, matching the worker's default
-    # `dead_letter_stream_name()`; a worker that overrides AGENTOS_DEAD_LETTER_STREAM
-    # must set the override here too.
+    # The graveyard name is derived by the shared `derive_dead_letter_stream_name`
+    # (#668), so the API now honors the same AGENTOS_DEAD_LETTER_STREAM /
+    # AGENTOS_STREAM overrides the worker does, natively: the operator and the API
+    # agree on the stream name with no manual sync.
     dead_letter_watch_interval_s: float = 30.0
 
+    # The API mirror of the worker's AGENTOS_DEAD_LETTER_STREAM override, so the
+    # graveyard watcher tracks the SAME stream the worker dead-letters to. Empty
+    # derives `<runs_stream>:dead`. DISTINCT from `resume_dead_letter_stream` below
+    # (the narrower ResumeQueue-only override); this is the general graveyard name.
+    dead_letter_stream: str = Field(
+        default="", validation_alias=DEAD_LETTER_STREAM_ENV
+    )
+
     def dead_letter_stream_name(self) -> str:
-        return f"{self.runs_stream}:dead"
+        return derive_dead_letter_stream_name(self.runs_stream, self.dead_letter_stream)
 
     # How often the expiry sweeper scans for lapsed pending approvals (#412) and
     # resumes their stranded sessions. Values <= 0 disable the sweeper (the

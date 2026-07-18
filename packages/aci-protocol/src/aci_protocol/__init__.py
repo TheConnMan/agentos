@@ -40,11 +40,14 @@ from .ndjson import (
 )
 from .reference import reference_producer
 from .service_config import (
+    DEAD_LETTER_STREAM_ENV,
     EVAL_CONSUMER_GROUP_DEFAULT,
     EVAL_STREAM_DEFAULT,
     RUNS_STREAM_DEFAULT,
+    STREAM_ENV,
     STREAM_PAYLOAD_FIELD,
     WORKER_GROUP_DEFAULT,
+    derive_dead_letter_stream_name,
 )
 from .session import BootEnv, Budget, OtelConfig, SessionConfig
 from .session import Producer as EnvProducer
@@ -75,10 +78,14 @@ __all__ = [
     "GateKind",
     # shared transport literals (defaults + the stream payload field)
     "RUNS_STREAM_DEFAULT",
+    "STREAM_ENV",
     "WORKER_GROUP_DEFAULT",
     "EVAL_STREAM_DEFAULT",
     "EVAL_CONSUMER_GROUP_DEFAULT",
     "STREAM_PAYLOAD_FIELD",
+    # the shared dead-letter graveyard derivation both lanes call (#668)
+    "DEAD_LETTER_STREAM_ENV",
+    "derive_dead_letter_stream_name",
     # inbound
     "Event",
     "Interrupt",
