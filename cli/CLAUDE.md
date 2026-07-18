@@ -30,11 +30,15 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   message` now return typed `CliOutput`s on their real-path success too (#485):
   the operator/deploy verbs route through `Ui::emit`, and `skill message` buffers
   the streamed reply into one `SkillMessageOutput` under `--json` (it still
-  streams live in the human path). One tracked exception remains: the
-  schema-gated ADR-0021 builders (`skill status`/`skill eval`, `skill check`,
-  `local message`/`cluster message`, `secrets list`, the error path, `guide`)
-  still inline their own `if json()` branch, sanctioned and tracked for migration
-  onto `Ui::emit` in #474.
+  streams live in the human path). The schema-gated ADR-0021 builders
+  (`skill status`/`skill eval`, `skill check`, `local message`/`cluster message`,
+  `secrets list`, `guide`) now route through `Ui::emit` too (#474): each returns a
+  typed `CliOutput` whose `to_json` delegates to its unchanged pure builder, so the
+  committed schemas stay byte-for-byte identical while the json-vs-human decision
+  lives only in `Ui::emit`. The one intentional non-`CliOutput` emit is the
+  centralized error path in `main.rs` (`error_json` under `--json`): errors are not
+  success-path values, so they stay on the error-emit mirror rather than the
+  success-path `CliOutput` contract.
 - **The command manifest is a committed artifact; regenerate it in the same
   change as any command-surface edit (console/CLI parity, epic #145).** Any
   change to a clap `Command`/subcommand or an `*Action` enum — a renamed verb,
