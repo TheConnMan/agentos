@@ -338,6 +338,22 @@ def test_model_api_backend_and_env_key_populate_by_field_name() -> None:
     assert config.model_env_key == "MY_PROVIDER_KEY"
 
 
+def test_agentos_dead_letter_stream_reaches_the_dead_letter_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTOS_DEAD_LETTER_STREAM (#505/#668) populates dead_letter_stream and
+    is reflected by dead_letter_stream_name(), the graveyard the API's
+    dead-letter watcher must agree with (see apps/api/tests/test_config_parity.py)."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_STREAM", "operations")
+    monkeypatch.setenv("AGENTOS_DEAD_LETTER_STREAM", "operations:dead")
+
+    config = WorkerConfig()
+
+    assert config.dead_letter_stream == "operations:dead"
+    assert config.dead_letter_stream_name() == "operations:dead"
+
+
 # --- Per-service bool divergence (review #178) -------------------------------
 #
 # The old worker ``_b`` accepted only ("1", "true", "yes") as truthy -- notably

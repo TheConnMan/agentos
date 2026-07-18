@@ -30,6 +30,7 @@ API_URL_ENV = "AGENTOS_API_URL"
 API_URL_ENV_DEPRECATED = "AGENTOS_API_BASE_URL"
 API_KEY_ENV = "AGENTOS_API_KEY"
 STREAM_ENV = "AGENTOS_STREAM"
+DEAD_LETTER_STREAM_ENV = "AGENTOS_DEAD_LETTER_STREAM"
 HEARTBEAT_FILE_ENV = "AGENTOS_HEARTBEAT_FILE"
 HEARTBEAT_INTERVAL_ENV = "AGENTOS_HEARTBEAT_INTERVAL_SECONDS"
 SHIMMER_ENV = "AGENTOS_SHIMMER"
@@ -56,6 +57,28 @@ STREAM_PAYLOAD_FIELD = "payload"
 # AGENTOS_EVAL_CONSUMER_GROUP). Not wire models either, so no protocol bump.
 EVAL_STREAM_DEFAULT = "agentos:evals"
 EVAL_CONSUMER_GROUP_DEFAULT = "agentos-eval-workers"
+
+
+def derive_dead_letter_stream_name(stream: str, override: str) -> str:
+    """The ONE dead-letter graveyard derivation both lanes must share (#668).
+
+    The worker's delivery cap (ADR-0039, #505) moves a permanently-failing entry
+    to this graveyard, and the API's dead-letter watcher (#531) plus the
+    ResumeQueue backstop (#532) READ it. Both sides derive the name from the same
+    two operator inputs -- the base runs stream (``AGENTOS_STREAM``) and the
+    explicit override (``AGENTOS_DEAD_LETTER_STREAM``) -- so the writer and the
+    readers can never point at different streams. That drift was issue #668: the
+    API hardcoded ``<runs_stream>:dead`` and ignored the override, so any operator
+    override silently blinded the watcher while the worker dead-lettered elsewhere.
+
+    An empty ``override`` derives ``<stream>:dead`` (the default graveyard); a
+    non-empty ``override`` is the graveyard name verbatim. This is a plain
+    function, NOT a wire/Pydantic model: like the transport-literal constants
+    above it is absent from the JSON Schema and the wire fingerprint, so it forces
+    no PROTOCOL_VERSION bump. Each lane binds ``stream``/``override`` through its
+    own pydantic config field (env-overridable), then calls this to resolve.
+    """
+    return override or f"{stream}:dead"
 
 
 def api_url_validation_alias() -> AliasChoices:

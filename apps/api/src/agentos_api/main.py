@@ -63,10 +63,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
     app.state.eval_queue = EvalQueue(valkey)
+    # resume_dead_letter_stream stays the narrower override that wins when set;
+    # its fallback is now the unified graveyard name (which honors
+    # AGENTOS_DEAD_LETTER_STREAM / AGENTOS_STREAM via the shared derivation, #668)
+    # instead of letting ResumeQueue re-derive `<runs_stream>:dead` from the base
+    # stream alone -- so the backstop scans the SAME graveyard the worker writes.
     app.state.resume_queue = ResumeQueue(
         valkey,
         stream=settings.runs_stream,
-        dead_letter_stream=settings.resume_dead_letter_stream or None,
+        dead_letter_stream=settings.resume_dead_letter_stream
+        or settings.dead_letter_stream_name(),
     )
     # The composition root for approvals (#420, ADR-0034): the only place that
     # names Slack to build the approver-set selector, so the authorizer and the

@@ -21,6 +21,7 @@ from typing import Annotated
 
 from aci_protocol.service_config import (
     API_KEY_ENV,
+    DEAD_LETTER_STREAM_ENV,
     EVAL_CONSUMER_GROUP_DEFAULT,
     EVAL_STREAM_DEFAULT,
     HEARTBEAT_FILE_ENV,
@@ -31,6 +32,7 @@ from aci_protocol.service_config import (
     WORKER_GROUP_DEFAULT,
     AliasOnlyEnvSource,
     api_url_validation_alias,
+    derive_dead_letter_stream_name,
     warn_if_deprecated_api_url_env,
 )
 from pydantic import BeforeValidator, Field, model_validator
@@ -197,7 +199,7 @@ class WorkerConfig(BaseSettings):
     # default cannot reference ``self.stream``. An explicit override equal to
     # ``stream`` is rejected outright -- see ``_reject_self_targeting_graveyard``.
     dead_letter_stream: str = Field(
-        default="", validation_alias="AGENTOS_DEAD_LETTER_STREAM"
+        default="", validation_alias=DEAD_LETTER_STREAM_ENV
     )
     # The graveyard is capped with an approximate MAXLEN on every XADD. The
     # unparseable-poison path dead-letters per INBOUND entry, so a wire-format
@@ -361,9 +363,11 @@ class WorkerConfig(BaseSettings):
         ``dead_letter_stream``'s Field default cannot reference ``self.stream``,
         so the derivation lives here rather than at the use site -- next to the
         other derived names, and next to ``_reject_self_targeting_graveyard``,
-        which reasons about the same name.
+        which reasons about the same name. The derivation itself now lives in the
+        shared ``derive_dead_letter_stream_name`` (#668) so the API's watcher and
+        this writer can never drift on the name.
         """
-        return self.dead_letter_stream or f"{self.stream}:dead"
+        return derive_dead_letter_stream_name(self.stream, self.dead_letter_stream)
 
     def eval_dead_letter_stream_name(self) -> str:
         """The eval lane's graveyard: ``<eval_stream>:dead`` (#535).

@@ -203,6 +203,10 @@ self-targeting graveyard would re-queue every failure onto the stream it was
 consumed from and hot-loop on an unparseable one. The derived default can never
 collide, so only an explicit override trips this.
 
+The API-side graveyard watcher now honors the same `AGENTOS_DEAD_LETTER_STREAM` /
+`AGENTOS_STREAM` override via the shared derivation, so the operator and the API
+agree on the graveyard stream name with no manual sync.
+
 The first `XADD` creates the stream; nothing pre-creates it. It is a sink, **not**
 a second processing lane: it has no consumer group, and nothing reads it
 automatically. Replay, if an operator wants it, is `XRANGE` plus a re-`XADD` onto
