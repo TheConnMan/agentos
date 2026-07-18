@@ -104,6 +104,78 @@ pub const DEFAULT_LOCAL_API_URL: &str = "http://localhost:28000";
 /// test pins the coupling.
 pub const DEFAULT_LOCAL_STUB_PORT: u16 = DEFAULT_LISTEN_PORT;
 
+/// Env override for the host the local-mode reply stub advertises to the compose
+/// worker (issue #680). Set it (e.g. `host.docker.internal`, or any routable
+/// host) for a topology this binary cannot infer from its own target OS -- most
+/// notably Docker Desktop running on a Linux host.
+pub const LOCAL_STUB_HOST_ENV: &str = "AGENTOS_LOCAL_STUB_HOST";
+
+/// How the local-mode Slack reply stub binds and advertises itself to the
+/// compose worker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalStubBinding {
+    /// Interface the stub binds. `127.0.0.1` shares the host loopback with a
+    /// native-Linux host-networked worker; `0.0.0.0` accepts the off-loopback
+    /// connection a Docker-Desktop VM worker makes.
+    pub bind_host: String,
+    /// Host advertised to the worker inside the reply-endpoint URL.
+    pub advertise_host: String,
+}
+
+/// Resolve how the local reply stub must bind and advertise so the compose
+/// worker can reach it (issue #680).
+///
+/// The compose worker runs `network_mode: host`. On native Linux Docker that
+/// shares the host's loopback, so `localhost` reaches the stub and `127.0.0.1`
+/// is the safe, loopback-only bind. Under Docker Desktop (macOS) `network_mode:
+/// host` is emulated inside the Docker VM, so the worker's `localhost` is the
+/// VM's loopback -- NOT the Mac host where this CLI bound the stub. There the
+/// worker reaches the host only via `host.docker.internal`, and the stub must
+/// bind `0.0.0.0` to accept that off-loopback connection. Without this, every
+/// synthetic turn's reply POST from the worker lands nowhere and the zero-Slack
+/// loop never completes on macOS (real-Slack turns are unaffected).
+///
+/// `AGENTOS_LOCAL_STUB_HOST` overrides the advertised host for any topology this
+/// binary cannot infer from its target OS (e.g. Docker Desktop on Linux); an
+/// explicit override also binds `0.0.0.0`, since a non-loopback advertised host
+/// is only reachable off the loopback.
+///
+/// Pure (env value + target OS passed in) so the selection is unit-testable
+/// without mutating this process's environment or platform.
+fn resolve_local_stub_binding(env_override: Option<String>, is_macos: bool) -> LocalStubBinding {
+    if let Some(host) = env_override.filter(|value| !value.is_empty()) {
+        return LocalStubBinding {
+            bind_host: "0.0.0.0".to_string(),
+            advertise_host: host,
+        };
+    }
+    if is_macos {
+        return LocalStubBinding {
+            bind_host: "0.0.0.0".to_string(),
+            advertise_host: "host.docker.internal".to_string(),
+        };
+    }
+    LocalStubBinding {
+        bind_host: "127.0.0.1".to_string(),
+        advertise_host: "localhost".to_string(),
+    }
+}
+
+/// Process-level wrapper over [`resolve_local_stub_binding`] reading the real
+/// `AGENTOS_LOCAL_STUB_HOST` and this binary's target OS.
+fn local_stub_binding() -> LocalStubBinding {
+    resolve_local_stub_binding(
+        env::var(LOCAL_STUB_HOST_ENV).ok(),
+        cfg!(target_os = "macos"),
+    )
+}
+
+/// The reply-endpoint URL the local stub advertises, built the same way the
+/// stub's own `base_api_url` is (`http://{host}:{port}/api/`).
+fn local_stub_reply_endpoint(advertise_host: &str) -> String {
+    format!("http://{advertise_host}:{DEFAULT_LOCAL_STUB_PORT}/api/")
+}
+
 /// In-cluster service ports the port-forwards target.
 const VALKEY_REMOTE_PORT: u16 = 6379;
 const API_REMOTE_PORT: u16 = 8000;
@@ -571,7 +643,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     let api_base = local_api_base(opts.api_url.as_deref());
 
     if opts.dry_run {
-        let reply_endpoint = format!("http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/");
+        let reply_endpoint = local_stub_reply_endpoint(&local_stub_binding().advertise_host);
         let channel_line = match opts.channel.as_deref() {
             Some(channel) => format!("channel {channel}"),
             None => format!("channel <the sole deployed agent via {api_base}/agents>"),
@@ -596,11 +668,20 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     // Connect Valkey up front so a down stack fails fast, before the stub binds.
     let mut conn = connect(&valkey_url).await?;
 
-    // Bind the stub on loopback at the fixed port the compose worker posts to.
-    // Host networking puts the worker on the same loopback, so 127.0.0.1 both
-    // binds and is reachable; the advertised host is cosmetic here (the worker's
-    // base URL is fixed in compose, not taken from this print).
-    let mut stub = SlackStub::start("127.0.0.1", DEFAULT_LOCAL_STUB_PORT, "localhost").await?;
+    // Bind the stub and advertise the reply endpoint so the compose worker can
+    // reach it. Native-Linux host networking shares the host loopback, so bind
+    // 127.0.0.1 and advertise `localhost`. Under Docker Desktop the worker sits
+    // in the VM netns, where `localhost` is the VM's loopback and not this Mac
+    // host, so bind 0.0.0.0 and advertise `host.docker.internal` instead (#680).
+    // Unlike the cluster path, the advertised host here is load-bearing: it is
+    // the per-turn reply endpoint carried on the QueuedTurn below.
+    let binding = local_stub_binding();
+    let mut stub = SlackStub::start(
+        &binding.bind_host,
+        DEFAULT_LOCAL_STUB_PORT,
+        &binding.advertise_host,
+    )
+    .await?;
     ui.note(&format!(
         "slack stub listening; the worker posts to {}",
         stub.base_api_url()
@@ -1548,7 +1629,15 @@ async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     }
 
     let mut conn = connect(&valkey_url).await?;
-    let mut stub = SlackStub::start("127.0.0.1", DEFAULT_LOCAL_STUB_PORT, "localhost").await?;
+    // Same VM-netns reachability rule as `message_local` (#680): bind + advertise
+    // per the host's Docker topology so the compose worker can post replies.
+    let binding = local_stub_binding();
+    let mut stub = SlackStub::start(
+        &binding.bind_host,
+        DEFAULT_LOCAL_STUB_PORT,
+        &binding.advertise_host,
+    )
+    .await?;
     ui.note(&format!(
         "slack stub listening; the worker posts to {}",
         stub.base_api_url()
@@ -1868,6 +1957,65 @@ mod tests {
         // (http://localhost:8155/api/); pin it so a change to one flags the other.
         assert_eq!(DEFAULT_LOCAL_STUB_PORT, 8155);
         assert_eq!(DEFAULT_LOCAL_STUB_PORT, DEFAULT_LISTEN_PORT);
+    }
+
+    /// Native Linux Docker: `network_mode: host` shares the host loopback, so the
+    /// worker reaches the stub on `localhost`, bound loopback-only. Preserves the
+    /// pre-#680 behavior on the platform where it always worked.
+    #[test]
+    fn local_stub_binding_is_loopback_on_native_linux() {
+        let binding = resolve_local_stub_binding(None, false);
+        assert_eq!(binding.bind_host, "127.0.0.1");
+        assert_eq!(binding.advertise_host, "localhost");
+    }
+
+    /// Issue #680: under Docker Desktop (macOS) the worker sits in the VM netns,
+    /// so `localhost` is the VM's loopback, not the Mac host stub. The worker-facing
+    /// reply endpoint must resolve to a VM-reachable host (`host.docker.internal`),
+    /// NOT `localhost`, and the stub must bind `0.0.0.0` to accept that off-loopback
+    /// connection.
+    #[test]
+    fn local_stub_binding_is_vm_reachable_on_docker_desktop() {
+        let binding = resolve_local_stub_binding(None, true);
+        assert_eq!(binding.bind_host, "0.0.0.0");
+        assert_eq!(binding.advertise_host, "host.docker.internal");
+
+        let endpoint = local_stub_reply_endpoint(&binding.advertise_host);
+        assert_eq!(endpoint, "http://host.docker.internal:8155/api/");
+        assert!(
+            !endpoint.contains("localhost"),
+            "the Docker-Desktop reply endpoint must not point at localhost: {endpoint}"
+        );
+    }
+
+    /// `AGENTOS_LOCAL_STUB_HOST` overrides the advertised host on any topology
+    /// this binary cannot infer (e.g. Docker Desktop on Linux), and an explicit
+    /// override binds `0.0.0.0` since a non-loopback host is only reachable off the
+    /// loopback -- on both the Linux and macOS target-OS branches.
+    #[test]
+    fn local_stub_binding_env_override_wins_on_every_os() {
+        for is_macos in [false, true] {
+            let binding = resolve_local_stub_binding(Some("host.docker.internal".into()), is_macos);
+            assert_eq!(binding.bind_host, "0.0.0.0", "is_macos={is_macos}");
+            assert_eq!(
+                binding.advertise_host, "host.docker.internal",
+                "is_macos={is_macos}"
+            );
+        }
+    }
+
+    /// An empty `AGENTOS_LOCAL_STUB_HOST` is absent, not an explicit choice (same
+    /// empty-is-unset rule as the api-key parser): it falls back to the OS default.
+    #[test]
+    fn local_stub_binding_ignores_empty_env_override() {
+        assert_eq!(
+            resolve_local_stub_binding(Some(String::new()), false),
+            resolve_local_stub_binding(None, false),
+        );
+        assert_eq!(
+            resolve_local_stub_binding(Some(String::new()), true),
+            resolve_local_stub_binding(None, true),
+        );
     }
 
     #[test]
