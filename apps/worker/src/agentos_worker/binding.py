@@ -424,7 +424,15 @@ class BindingResolver:
         # The memory ref (#264): the agent's scoped namespace on the durable
         # state store (#23/#248). The runner dereferences it at boot to load
         # prior memory and to append learned records with provenance.
-        base = self._config.api_base_url.rstrip("/")
+        #
+        # Minted from the RUNNER-facing API base, not the worker's self-dial
+        # api_base_url (#678): the runner dereferences these refs, and in the
+        # docker substrate it lives on the bridge runner network where the
+        # worker's host-net localhost URL is unreachable, so a self-dial base
+        # left every spawn "booting without memory/history". runner_facing_api_
+        # base_url falls back to api_base_url (byte-identical to before) when the
+        # runner-facing base is not split out.
+        base = self._config.runner_facing_api_base_url.rstrip("/")
         memory_ref = f"{base}/agents/{resolved.agent_id}/state/memory"
         # The history ref (#20, ADR-0029): this thread's transcript key on the
         # same state store. It is deterministic per (agent, thread), so a fresh,

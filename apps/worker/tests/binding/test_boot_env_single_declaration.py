@@ -111,6 +111,11 @@ _NON_BOOT_ALLOWLIST: frozenset[str] = frozenset(
         "AGENTOS_RUNNER_IMAGE",
         "AGENTOS_SANDBOX_SUBSTRATE",
         "AGENTOS_WARM_POOL",
+        # The runner-facing API base (#678): WorkerConfig reads it from the
+        # WORKER's env to MINT AGENTOS_MEMORY_REF/AGENTOS_HISTORY_REF (which ARE
+        # declared boot keys, rendered from the declaration). It is a worker-side
+        # knob for what URL those refs carry, never itself a sandbox boot key.
+        "AGENTOS_RUNNER_API_URL",
         # The local-model demo base URL: an operator knob on the WORKER and on the
         # runner's sdk_auth mapping. It is not a BootEnv field; the boot key the
         # worker actually emits from it is ANTHROPIC_BASE_URL.

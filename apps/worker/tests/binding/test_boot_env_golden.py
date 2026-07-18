@@ -94,6 +94,48 @@ def test_plain_bound_run_renders_the_frozen_boot_env() -> None:
     assert verify(token, "agentos-dev-key", agent=str(_AGENT), scope="memory") is False
 
 
+def test_state_refs_are_minted_from_the_runner_facing_base() -> None:
+    """#678: AGENTOS_MEMORY_REF/AGENTOS_HISTORY_REF are dereferenced by the
+    RUNNER, so they must be built from the runner-facing API base, never the
+    worker's self-dial URL.
+
+    In the docker substrate the worker runs host-net and self-dials the API at a
+    published localhost port, while the runner it spawns lives on the bridge
+    runner network and reaches the API only by its in-network service name. A ref
+    minted from the worker's localhost base is unreachable from the runner, which
+    boots "without memory/history" every spawn. When runner_api_base_url is set,
+    both refs must carry that host and not the localhost self-dial base.
+    """
+    config = WorkerConfig(
+        api_base_url="http://localhost:28000",
+        runner_api_base_url="http://agentos-api:8000",
+    )
+    env = _boot_env(config, _resolved())
+
+    assert env["AGENTOS_MEMORY_REF"] == (
+        f"http://agentos-api:8000/agents/{_AGENT}/state/memory"
+    )
+    assert env["AGENTOS_HISTORY_REF"] == (
+        f"http://agentos-api:8000/agents/{_AGENT}/state/transcript/{_THREAD}"
+    )
+    # The worker's own self-dial localhost base must not leak into either ref.
+    assert "localhost:28000" not in env["AGENTOS_MEMORY_REF"]
+    assert "localhost:28000" not in env["AGENTOS_HISTORY_REF"]
+
+
+def test_state_refs_fall_back_to_the_self_dial_base_when_undivided() -> None:
+    """With runner_api_base_url unset the runner reaches the API at the worker's
+    own URL (k8s in-cluster, single-host local), so the refs are unchanged."""
+    env = _boot_env(WorkerConfig(api_base_url="http://in-cluster-api:8000"), _resolved())
+
+    assert env["AGENTOS_MEMORY_REF"] == (
+        f"http://in-cluster-api:8000/agents/{_AGENT}/state/memory"
+    )
+    assert env["AGENTOS_HISTORY_REF"] == (
+        f"http://in-cluster-api:8000/agents/{_AGENT}/state/transcript/{_THREAD}"
+    )
+
+
 def test_fully_loaded_run_renders_the_frozen_boot_env() -> None:
     config = WorkerConfig(
         fake_model=True,
