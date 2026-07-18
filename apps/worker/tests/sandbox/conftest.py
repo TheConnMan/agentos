@@ -22,6 +22,34 @@ from agentos_worker.sandbox import (
     SandboxView,
     SubstrateConfig,
 )
+from agentos_worker.sandbox.docker import DockerSandboxClient
+
+
+class _FakeBundleStore:
+    def __init__(self, data: bytes = b"") -> None:
+        self._data = data
+        self.requested: list[str] = []
+
+    def get(self, key: str) -> bytes:
+        self.requested.append(key)
+        return self._data
+
+
+class _RecordingDocker(DockerSandboxClient):
+    """Captures every docker argv and returns canned stdout per subcommand."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.calls: list[list[str]] = []
+        self.outputs: dict[str, str] = {}
+
+    def _docker(self, args: list[str], *, check: bool = True) -> str:
+        self.calls.append(args)
+        return self.outputs.get(args[0], "")
+
+
+def _flag_values(argv: list[str], flag: str) -> list[str]:
+    return [argv[i + 1] for i, a in enumerate(argv) if a == flag and i + 1 < len(argv)]
 
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
 _VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))

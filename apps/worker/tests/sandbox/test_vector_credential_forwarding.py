@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentos_worker.sandbox.docker import DockerSandboxClient
+from .conftest import _FakeBundleStore, _flag_values, _RecordingDocker
 
 _VECTORS = (
     Path(__file__).resolve().parents[4]
@@ -49,33 +49,6 @@ _EXPECTED_VECTOR_KEYS = frozenset(
         "expected",
     }
 )
-
-
-class _FakeBundleStore:
-    def get(self, key: str) -> bytes:
-        return b""
-
-
-class _RecordingDocker(DockerSandboxClient):
-    """Captures every docker argv; the docker CLI is the one external dependency."""
-
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
-        self.calls: list[list[str]] = []
-
-    def _docker(self, args: list[str], *, check: bool = True) -> str:
-        self.calls.append(args)
-        return ""
-
-
-def _forwarded_names(argv: list[str]) -> list[str]:
-    """The by-name forwards: `-e NAME` args, not the `-e KEY=VALUE` pairs the
-    generic boot-env loop emits."""
-    return [
-        argv[i + 1]
-        for i, a in enumerate(argv)
-        if a == "-e" and i + 1 < len(argv) and "=" not in argv[i + 1]
-    ]
 
 
 def _assert_known_keys(vector: dict[str, object]) -> None:
@@ -114,7 +87,9 @@ def _run_vector(vector: dict[str, object]) -> list[str]:
     client.create_claim("t1", pool="pool", env=env)
     argv = client.calls[0]
     assert all("PLACEHOLDER" not in a for a in argv)  # no credential value in argv
-    return _forwarded_names(argv)
+    # The by-name forwards: `-e NAME` args, not the `-e KEY=VALUE` pairs the
+    # generic boot-env loop emits.
+    return [v for v in _flag_values(argv, "-e") if "=" not in v]
 
 
 def test_worker_matches_every_forwarding_vector() -> None:
