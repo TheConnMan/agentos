@@ -201,3 +201,58 @@ def test_link_target_matching_cited_path_passes(
     )
     code, _ = run_lint(clean_repo)
     assert code == 0
+
+
+def test_link_target_root_relative_href_from_nested_doc_passes(
+    clean_repo: Path, run_lint: RunLint
+) -> None:
+    # A decorated citation in a nested doc whose href is written repo-root-
+    # relative (leading slash) points at the cited file just as the text says.
+    # Doc-relative resolution would send it under the doc's own directory and
+    # false-fail; the href must be resolved from the repo root instead.
+    write(
+        clean_repo,
+        "docs/subsystem/notes.md",
+        "The gate is a "
+        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
+        "(/runner/src/agentos_runner/approval.py)).\n",
+    )
+    code, out = run_lint(clean_repo)
+    assert code == 0, out
+
+
+def test_link_target_external_url_href_passes(
+    clean_repo: Path, run_lint: RunLint
+) -> None:
+    # An http(s) href names no file inside the repo, so there is nothing to
+    # compare the cited path against; it is treated as consistent rather than
+    # resolved as a bogus relative filesystem path.
+    write(
+        clean_repo,
+        "docs/subsystem/notes.md",
+        "The gate is a "
+        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
+        "(https://github.com/curie-eng/agentos/blob/main/"
+        "runner/src/agentos_runner/approval.py)).\n",
+    )
+    code, out = run_lint(clean_repo)
+    assert code == 0, out
+
+
+def test_link_target_root_relative_href_still_catches_real_mismatch(
+    clean_repo: Path, run_lint: RunLint
+) -> None:
+    # Resolving a root-relative href from the repo root must not weaken the
+    # gate: a leading-slash target pointing at a genuinely different file than
+    # the citation text still fails.
+    write(
+        clean_repo,
+        "docs/subsystem/notes.md",
+        "The gate is a "
+        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
+        "(/cli/src/queue.rs)).\n",
+    )
+    code, out = run_lint(clean_repo)
+    assert code != 0
+    assert "cli/src/queue.rs" in out
+    assert "does not point at" in out.lower()
