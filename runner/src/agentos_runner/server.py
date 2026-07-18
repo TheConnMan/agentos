@@ -25,6 +25,7 @@ the open ``/v1/event`` stream, exactly as the PT-2 steering proof showed.
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 from typing import cast
 
@@ -146,8 +147,15 @@ async def _event(request: web.Request) -> web.StreamResponse:
 
     response = web.StreamResponse(status=200, headers={"Content-Type": _NDJSON})
     await response.prepare(request)
-    async for line in runner.run_turn(frame):
-        await response.write(line.encode("utf-8"))
+    # aclosing guarantees the generator is finalized on THIS driving task. On a
+    # client disconnect, response.write() raises from this frame; without
+    # aclosing the suspended generator would instead be closed later by the
+    # asyncgen GC on a different task, releasing the turn lock cross-task (see
+    # SessionRunner._turn_lock). aclosing keeps the teardown -- and the turn
+    # interrupt in run_turn's finally -- on the task that opened it.
+    async with contextlib.aclosing(runner.run_turn(frame)) as stream:
+        async for line in stream:
+            await response.write(line.encode("utf-8"))
     await response.write_eof()
     return response
 

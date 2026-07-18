@@ -378,6 +378,48 @@ def test_abandoned_stream_interrupts_the_sdk() -> None:
     assert fake.interrupts >= 1
 
 
+def test_cross_task_abandon_does_not_wedge_turn_lock() -> None:
+    # Client-disconnect mid-stream (#679): the server drives run_turn and, when
+    # response.write() raises on disconnect, the suspended generator is finalized
+    # by the asyncgen GC on a DIFFERENT task than the one that opened it. The turn
+    # lock must survive that cross-task teardown. An anyio.Lock released off-owner
+    # raises "current task is not holding this lock" AND leaves itself held,
+    # wedging every future turn forever; a Semaphore's owner-agnostic release does
+    # not. This closes the generator from a child task, then asserts a fresh turn
+    # still acquires the lock and runs to a terminal final.
+    runner, fake = _runner()
+
+    async def go() -> None:
+        await runner.start()
+        gen = runner.run_turn(Event(type="message", text="first", user="U", ts="1"))
+        await gen.__anext__()  # turn live; the lock is held by THIS task
+        assert runner.turn_active
+
+        # Finalize the abandoned generator on a different task, mimicking the
+        # asyncgen GC finalizer running off the driving frame. With the old
+        # anyio.Lock this raises and wedges the lock; the task group would then
+        # propagate the RuntimeError and fail the test here.
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(gen.aclose)
+        assert runner.turn_active is False
+
+        # The discriminator: a subsequent turn must acquire the lock and finish.
+        # fail_after turns a permanent wedge into a failure instead of a hang.
+        lines: list[str] = []
+        with anyio.fail_after(5):
+            async for line in runner.run_turn(
+                Event(type="message", text="second", user="U", ts="2")
+            ):
+                lines.append(line)
+
+        events = parse_ndjson("".join(lines))
+        assert events[-1].type == "final"
+        assert events[-1].status == SessionStatus.DONE
+
+    anyio.run(go)
+    assert fake.queries[-1] == "second"  # the second turn actually ran
+
+
 def test_build_options_carries_resume_ref() -> None:
     # Rehydrate-from-history (ADR-0003): a history ref becomes the SDK resume id.
     options = build_options(
