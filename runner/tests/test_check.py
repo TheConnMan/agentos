@@ -144,6 +144,23 @@ def test_extract_bare_mcp_json_form(tmp_path: Path) -> None:
     assert by_name["bare-probe"]["source"] == ".mcp.json"
 
 
+def test_extract_root_plugin_json_fallback_is_reported(tmp_path: Path) -> None:
+    # Root-level plugin.json (no .claude-plugin/ dir) is the accepted fallback
+    # location (packages/plugin-format's MANIFEST_LOCATIONS, issue #653); the
+    # resolver must find it and the declared server must still surface.
+    bundle = tmp_path / "root_manifest"
+    bundle.mkdir()
+    (bundle / "plugin.json").write_text(
+        json.dumps({"name": "root-bundle", "mcpServers": {"root-probe": {"command": "python3"}}}),
+        encoding="utf-8",
+    )
+    declared = extract_declared(str(bundle))
+    by_name = {d["name"]: d for d in declared}
+    assert "root-probe" in by_name
+    assert by_name["root-probe"]["form"] == "inline"
+    assert by_name["root-probe"]["source"] == "plugin.json"
+
+
 def test_extract_no_mcp_anywhere_is_empty(tmp_path: Path) -> None:
     bundle = _write_bundle(tmp_path / "nomcp", {"name": "no-mcp-bundle"})
     assert extract_declared(str(bundle)) == []
