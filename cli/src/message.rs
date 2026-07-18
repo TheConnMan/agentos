@@ -384,6 +384,99 @@ pub fn message_dry_run_json(
 }
 
 // ---------------------------------------------------------------------------
+// CliOutput adapters (#474)
+// ---------------------------------------------------------------------------
+//
+// Route the schema-gated `--json` builders above through the one success-path
+// emit shim (`Ui::emit`, ADR-0021) instead of each call site inlining its own
+// `if ui.json() { emit_json } else { .. }` branch. `to_json` delegates to the
+// pure builders unchanged, so the committed `cli/schema/message.schema.json`
+// stays byte-for-byte identical; `render` reproduces the exact human output.
+
+/// `local`/`cluster message --dry-run` output. `to_json` is the schema-gated
+/// `message_dry_run_json`; the human render is the plan lines the target built
+/// (they differ between local and cluster, so the caller supplies them).
+struct MessageDryRunOutput {
+    target: &'static str,
+    stream: String,
+    channel: Option<String>,
+    reply_endpoint: String,
+    human_lines: Vec<String>,
+}
+
+impl crate::ui::CliOutput for MessageDryRunOutput {
+    fn to_json(&self) -> serde_json::Value {
+        message_dry_run_json(
+            self.target,
+            &self.stream,
+            self.channel.as_deref(),
+            &self.reply_endpoint,
+        )
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        for line in &self.human_lines {
+            ui.payload_plain(line);
+        }
+    }
+}
+
+/// The terminal outcome of a real `local`/`cluster message` turn. `to_json` is
+/// the matching schema-gated builder; `render` reproduces the exact human view
+/// (the stdout answer for a reply, the stderr warning/diagnostics otherwise).
+enum MessageOutcomeOutput {
+    /// The worker finalized the turn with reply text.
+    Replied { thread: String, reply: String },
+    /// The worker finished the turn but never edited the placeholder.
+    NoEdit { thread: String },
+    /// The turn parked awaiting human approval.
+    AwaitingApproval {
+        thread: String,
+        reply: Option<String>,
+    },
+    /// The deadline elapsed with no reply. `diagnostics` carries the stream
+    /// diagnostics string on the human path; it stays `None` under `--json`
+    /// (which never gathers them), so no extra Valkey read happens there.
+    TimedOut { diagnostics: Option<String> },
+}
+
+impl crate::ui::CliOutput for MessageOutcomeOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            MessageOutcomeOutput::Replied { thread, reply } => {
+                message_reply_json(thread, Some(reply))
+            }
+            MessageOutcomeOutput::NoEdit { thread } => message_reply_json(thread, None),
+            MessageOutcomeOutput::AwaitingApproval { thread, reply } => {
+                message_awaiting_approval_json(thread, reply.as_deref())
+            }
+            MessageOutcomeOutput::TimedOut { .. } => message_timeout_json(),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            MessageOutcomeOutput::Replied { reply, .. } => {
+                ui.answer(reply);
+                ui.print_tokens("\n");
+            }
+            MessageOutcomeOutput::NoEdit { .. } => {
+                ui.warn("the worker finished the turn but never edited the placeholder");
+            }
+            MessageOutcomeOutput::AwaitingApproval { .. } => {
+                warn_approval_will_strand(ui);
+            }
+            MessageOutcomeOutput::TimedOut { diagnostics } => {
+                ui.note("stream diagnostics:");
+                if let Some(diag) = diagnostics {
+                    ui.note(diag);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Effectful helpers
 // ---------------------------------------------------------------------------
 
@@ -479,28 +572,24 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 
     if opts.dry_run {
         let reply_endpoint = format!("http://localhost:{DEFAULT_LOCAL_STUB_PORT}/api/");
-        if ui.json() {
-            ui.emit_json(&message_dry_run_json(
-                "local",
-                &opts.stream,
-                opts.channel.as_deref(),
-                &reply_endpoint,
-            ));
-            return Ok(());
-        }
-        ui.payload_plain("local mode (compose stack; no kubectl/helm)");
-        ui.payload_plain(&format!("enqueue onto redis {valkey_url}"));
-        ui.payload_plain(&format!("stub advertised at {reply_endpoint}"));
-        match opts.channel.as_deref() {
-            Some(channel) => ui.payload_plain(&format!("channel {channel}")),
-            None => ui.payload_plain(&format!(
-                "channel <the sole deployed agent via {api_base}/agents>"
-            )),
-        }
-        ui.payload_plain(&format!(
-            "enqueue a synthetic QueuedTurn on stream {}",
-            opts.stream
-        ));
+        let channel_line = match opts.channel.as_deref() {
+            Some(channel) => format!("channel {channel}"),
+            None => format!("channel <the sole deployed agent via {api_base}/agents>"),
+        };
+        let human_lines = vec![
+            "local mode (compose stack; no kubectl/helm)".to_string(),
+            format!("enqueue onto redis {valkey_url}"),
+            format!("stub advertised at {reply_endpoint}"),
+            channel_line,
+            format!("enqueue a synthetic QueuedTurn on stream {}", opts.stream),
+        ];
+        ui.emit(&MessageDryRunOutput {
+            target: "local",
+            stream: opts.stream.clone(),
+            channel: opts.channel.clone(),
+            reply_endpoint,
+            human_lines,
+        });
         return Ok(());
     }
 
@@ -569,47 +658,40 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            if ui.json() {
-                ui.emit_json(&message_reply_json(&thread_ts, Some(&reply)));
-            } else {
-                ui.answer(&reply);
-                ui.print_tokens("\n");
-            }
+            ui.emit(&MessageOutcomeOutput::Replied {
+                thread: thread_ts.clone(),
+                reply,
+            });
             persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
-            if ui.json() {
-                ui.emit_json(&message_reply_json(&thread_ts, None));
-            } else {
-                ui.warn("the worker finished the turn but never edited the placeholder");
-            }
+            ui.emit(&MessageOutcomeOutput::NoEdit {
+                thread: thread_ts.clone(),
+            });
             persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
         Outcome::AwaitingApproval(reply) => {
             step.done("awaiting approval");
-            if ui.json() {
-                ui.emit_json(&message_awaiting_approval_json(
-                    &thread_ts,
-                    reply.as_deref(),
-                ));
-            } else {
-                warn_approval_will_strand(ui);
-            }
+            ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+                thread: thread_ts.clone(),
+                reply,
+            });
             persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
-            if ui.json() {
-                ui.emit_json(&message_timeout_json());
+            // Gather diagnostics only on the human path; under `--json` the
+            // timeout object carries no diagnostics, so skip the extra Valkey read.
+            let diag = if ui.json() {
+                None
             } else {
-                ui.note("stream diagnostics:");
-                let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-                ui.note(&diag);
-            }
+                Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
+            };
+            ui.emit(&MessageOutcomeOutput::TimedOut { diagnostics: diag });
             // A timeout is retryable (the worker may still be working, or a
             // transient stall), so it maps to the transient exit code, not failure.
             std::process::exit(crate::exit::ExitClass::Transient.code());
@@ -647,18 +729,13 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             .listen_host
             .clone()
             .unwrap_or_else(|| "<auto-detected-local-ip>".to_string());
-        if ui.json() {
-            ui.emit_json(&message_dry_run_json(
-                "cluster",
-                &opts.stream,
-                opts.channel.as_deref(),
-                &advertised_url(&host, opts.listen_port),
-            ));
-            return Ok(());
-        }
-        for line in dry_run_lines(&opts, &host) {
-            ui.payload_plain(&line);
-        }
+        ui.emit(&MessageDryRunOutput {
+            target: "cluster",
+            stream: opts.stream.clone(),
+            channel: opts.channel.clone(),
+            reply_endpoint: advertised_url(&host, opts.listen_port),
+            human_lines: dry_run_lines(&opts, &host),
+        });
         return Ok(());
     }
 
@@ -763,47 +840,40 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     match outcome {
         Outcome::Replied(reply) => {
             step.done("");
-            if ui.json() {
-                ui.emit_json(&message_reply_json(&thread_ts, Some(&reply)));
-            } else {
-                ui.answer(&reply);
-                ui.print_tokens("\n");
-            }
+            ui.emit(&MessageOutcomeOutput::Replied {
+                thread: thread_ts.clone(),
+                reply,
+            });
             persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
         Outcome::CompletedNoEdit => {
             step.done("no edit");
-            if ui.json() {
-                ui.emit_json(&message_reply_json(&thread_ts, None));
-            } else {
-                ui.warn("the worker finished the turn but never edited the placeholder");
-            }
+            ui.emit(&MessageOutcomeOutput::NoEdit {
+                thread: thread_ts.clone(),
+            });
             persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
         Outcome::AwaitingApproval(reply) => {
             step.done("awaiting approval");
-            if ui.json() {
-                ui.emit_json(&message_awaiting_approval_json(
-                    &thread_ts,
-                    reply.as_deref(),
-                ));
-            } else {
-                warn_approval_will_strand(ui);
-            }
+            ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+                thread: thread_ts.clone(),
+                reply,
+            });
             persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
             Ok(())
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
-            if ui.json() {
-                ui.emit_json(&message_timeout_json());
+            // Gather diagnostics only on the human path; under `--json` the
+            // timeout object carries no diagnostics, so skip the extra Valkey read.
+            let diag = if ui.json() {
+                None
             } else {
-                ui.note("stream diagnostics:");
-                let diag = diagnostics(&mut conn, &opts.stream, &stream_id).await;
-                ui.note(&diag);
-            }
+                Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
+            };
+            ui.emit(&MessageOutcomeOutput::TimedOut { diagnostics: diag });
             // A timeout is retryable (the worker may still be working, or a
             // transient stall), so it maps to the transient exit code, not failure.
             std::process::exit(crate::exit::ExitClass::Transient.code());
