@@ -346,3 +346,32 @@ def approval_card(
         },
     ]
     return fallback, blocks
+
+
+def expired_approval_card(*, summary: str) -> tuple[str, list[dict[str, Any]]]:
+    """The approval card rebuilt in its EXPIRED, no-longer-actionable form (#419).
+
+    The same summary the live card showed, with the Approve/Reject actions block
+    dropped and an expiry line in its place -- so the card cannot be clicked and
+    reads as settled. This is the expiry mirror of the dispatcher's resolved-card
+    edit, rebuilt from the remembered summary because the worker does not keep the
+    original card's blocks. Returns ``(fallback_text, blocks)`` for ``chat.update``.
+    """
+
+    clamped = _truncate(to_mrkdwn(summary), _APPROVAL_SUMMARY_MAX)
+    fallback = _truncate(f"Approval expired: {summary}", _SLACK_TEXT_MAX)
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": _truncate("Approval expired", _HEADER_MAX),
+                "emoji": True,
+            },
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": clamped}},
+        _context_block(
+            "This request expired and can no longer be approved or rejected."
+        ),
+    ]
+    return fallback, blocks

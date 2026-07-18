@@ -46,6 +46,7 @@ from aci_protocol import (
 )
 from pydantic import ValidationError
 
+from .approval_cards import ApprovalCardStore
 from .approvals import ApprovalBackendError, ApprovalCreator, ApprovalRequest
 from .behaviorpacks import (
     BehaviorPacks,
@@ -56,7 +57,7 @@ from .behaviorpacks import (
     sample_tip,
 )
 from .binding import GRANT_TOOL_ENV, RESUMED_KIND_ENV, BindingResolver
-from .blocks import approval_card
+from .blocks import approval_card, expired_approval_card
 from .config import WorkerConfig
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -210,6 +211,7 @@ class Kernel:
         binding: BindingResolver | None = None,
         killswitch: KillSwitch | None = None,
         approvals: ApprovalCreator | None = None,
+        card_store: ApprovalCardStore | None = None,
     ) -> None:
         self._substrate = substrate
         self._runner = runner
@@ -226,6 +228,10 @@ class Kernel:
         # deployment without the API), an awaiting-approval run degrades to an
         # escalation instead of suspending a session nothing could ever resume.
         self._approvals = approvals
+        # Remembers where each suspended thread's approval card was posted so an
+        # EXPIRY can disable it (#419); absent (unwired tests) simply skips the
+        # card teardown -- the resolve-click path still heals a card on click.
+        self._card_store = card_store
         # Which threads are running which agent, so a kill interrupts the agent's
         # live turns. Populated while a turn owner streams.
         self._active_by_agent: dict[uuid.UUID, set[str]] = {}
@@ -266,6 +272,13 @@ class Kernel:
             if await self._markers.is_done(event_id):
                 logger.info("event %s already done; skipping", event_id)
                 return
+
+            # If this is the resume turn of an EXPIRED approval, disable its live
+            # approval card before running the continuation (#419). Best-effort and
+            # gated to the platform-authored expiry resume, so it never touches a
+            # resolved card (the dispatcher edits that from the click) or an
+            # ordinary turn.
+            await self._finalize_expired_card(qevent)
 
             # Crash-safety: a prior attempt executed a side effect but never
             # reached done (worker died mid-run). Do not auto-retry the action.
@@ -634,6 +647,55 @@ class Kernel:
             # up generic, without the agent's bundle.
             return await asyncio.to_thread(self._substrate.resume, thread, env=boot_env)
 
+    @staticmethod
+    def _is_approval_resume(event_id: str) -> bool:
+        # The deterministic key the API stamps on every approval resume turn
+        # (``approval-<id>-resolved``; resumequeue.resume_event_id). The suffix is
+        # a frozen historical contract shared by the resolve and expiry paths, so
+        # matching it here does not couple to a mutable string.
+        return event_id.startswith("approval-") and event_id.endswith("-resolved")
+
+    async def _finalize_expired_card(self, qevent: QueuedTurn) -> None:
+        """Disable the approval card when an EXPIRED approval resumes (#419).
+
+        The two expiry paths -- the #412 sweeper and a resolve attempt that
+        arrives past the SLA -- both flip the record to ``expired`` and enqueue a
+        platform-authored resume turn (author "system"); neither ever touched the
+        card, so its Approve/Reject buttons kept looking live. Here the kernel,
+        which owns the card surface, pops the card it remembered at pause time and
+        edits it into its settled ``expired`` form -- the expiry mirror of the
+        dispatcher's resolved-card edit.
+
+        A RESOLVE resume (author is the resolver) only pops the memory to clean it
+        up; the dispatcher already edited that card from the click. Fully
+        best-effort: any failure here must never fail the resume, and the cheap
+        event-id check gates the Valkey pop so ordinary turns pay nothing.
+        """
+
+        if self._card_store is None or not self._is_approval_resume(qevent.event_id):
+            return
+        try:
+            ref = await self._card_store.pop(qevent.conversation_id)
+            if ref is None or qevent.author != "system":
+                return
+            fallback, blocks = expired_approval_card(summary=ref.summary)
+            await self._sink.update_message(
+                channel=ref.channel,
+                ts=ref.ts,
+                text=fallback,
+                blocks=blocks,
+                endpoint=ref.endpoint,
+            )
+            logger.info(
+                "disabled expired approval card for thread %s", qevent.conversation_id
+            )
+        except Exception as exc:  # noqa: BLE001 - card teardown is best-effort
+            logger.warning(
+                "expired approval card teardown failed for thread %s: %s",
+                qevent.conversation_id,
+                exc,
+            )
+
     async def _pause_for_approval(
         self,
         qevent: QueuedTurn,
@@ -759,24 +821,40 @@ class Kernel:
         fallback, card_blocks = approval_card(
             approval_id=created.id, summary=summary, requested_by=qevent.author
         )
+        # In the requesting channel the card joins the thread and rides the
+        # trigger's transport; a route-bound channel has no such thread and is
+        # policy, not a per-turn reply, so it posts top-level over the worker's
+        # default Slack transport.
+        in_requesting_channel = card_channel == qevent.reply_handle.channel
+        card_endpoint = qevent.reply_handle.endpoint if in_requesting_channel else None
         try:
-            await self._sink.post(
+            card_ts = await self._sink.post(
                 channel=card_channel,
                 text=fallback,
                 blocks=card_blocks,
-                # In the requesting channel the card joins the thread and rides
-                # the trigger's transport; a route-bound channel has no such
-                # thread and is policy, not a per-turn reply, so it posts
-                # top-level over the worker's default Slack transport.
-                thread_ts=thread if card_channel == qevent.reply_handle.channel else None,
-                endpoint=(
-                    qevent.reply_handle.endpoint
-                    if card_channel == qevent.reply_handle.channel
-                    else None
-                ),
+                thread_ts=thread if in_requesting_channel else None,
+                endpoint=card_endpoint,
             )
         except Exception as exc:  # noqa: BLE001 - the pause stands without the card
             logger.warning("approval card post failed for %s: %s", created.id, exc)
+        else:
+            # Remember where the card landed so an EXPIRY -- which, unlike a
+            # resolve, carries no click to locate the card -- can disable it
+            # later (#419). Best-effort: a lost memory only means the card is not
+            # auto-disabled, and the resolve-click path still heals it.
+            if card_ts and self._card_store is not None:
+                try:
+                    await self._card_store.remember(
+                        thread,
+                        channel=card_channel,
+                        ts=card_ts,
+                        summary=summary,
+                        endpoint=card_endpoint,
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort memory
+                    logger.warning(
+                        "remembering approval card for %s failed: %s", created.id, exc
+                    )
         logger.info(
             "thread %s suspended awaiting approval %s", thread, created.id
         )

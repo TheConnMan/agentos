@@ -390,3 +390,24 @@ def test_approval_card_clamps_oversized_summary() -> None:
     # Section mrkdwn stays under Slack's 3000-char cap; fallback under 40k.
     assert len(card[1]["text"]["text"]) <= 2900
     assert len(fallback) <= 39000
+
+
+def test_expired_approval_card_drops_buttons_and_marks_expired() -> None:
+    # #419: the expired form keeps the summary but has NO actions block, and
+    # states it can no longer be resolved -- so the card cannot be clicked.
+    from agentos_worker.blocks import expired_approval_card
+
+    fallback, card = expired_approval_card(summary="Give ACME a 20% discount")
+    assert "Give ACME a 20% discount" in fallback
+    assert card[0]["type"] == "header"
+    assert "Give ACME a 20% discount" in card[1]["text"]["text"]
+    assert all(block.get("type") != "actions" for block in card)
+    assert "expired" in str(card[-1]).lower()
+
+
+def test_expired_approval_card_clamps_oversized_summary() -> None:
+    from agentos_worker.blocks import expired_approval_card
+
+    fallback, card = expired_approval_card(summary="x" * 10000)
+    assert len(card[1]["text"]["text"]) <= 2900
+    assert len(fallback) <= 39000

@@ -540,3 +540,104 @@ def test_card_routed_to_requesting_channel_keeps_the_trigger_endpoint(
             assert endpoint == _CLI_STUB
 
     asyncio.run(go())
+
+
+# --- Expired-approval card teardown (#419) ------------------------------------
+
+
+def _resume_turn(
+    text: str, *, thread: str, approval_id: str, author: str
+) -> QueuedTurn:
+    """The API's approval resume turn: the deterministic ``approval-<id>-resolved``
+    event id both the resolve and expiry paths stamp, replayed into the same
+    placeholder. The expiry path authors it as "system"; a resolve names the
+    resolver."""
+
+    return QueuedTurn(
+        event_id=f"approval-{approval_id}-resolved",
+        conversation_id=thread,
+        author=author,
+        text=text,
+        reply_handle=ReplyHandle(channel="C1", placeholder="p-1", endpoint=None),
+        received_at="2026-07-14T00:00:00+00:00",
+    )
+
+
+def test_expiry_resume_disables_the_approval_card(make_harness) -> None:
+    """#419: an EXPIRED approval's resume turn (author "system", enqueued by the
+    #412 sweeper or a past-SLA resolve attempt) disables the live card in place --
+    buttons gone, an expiry line in their stead -- mirroring the resolved-card
+    edit, since no click will ever arrive to do it."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        thread = "th-expire-card"
+        async with make_harness(approvals=approvals) as h:
+            h.runner.default_script = _awaiting_script("Give ACME a 20% discount")
+            await h.kernel.process_event(_qevent("please discount", thread=thread))
+
+            # The live card was posted and its location remembered, because an
+            # expiry (unlike a resolve) carries no click to locate the card.
+            assert len(h.sink.posts) == 1
+            assert await h.async_redis.exists(h.config.approval_card_key(thread))
+            card_ts = "posted-1"  # the FakeSink's returned ts for the first post
+
+            # The expiry resume turn the sweeper enqueues (author "system").
+            h.runner.default_script = [Final(text="Acknowledged the expiry.", status=DONE)]
+            await h.kernel.process_event(
+                _resume_turn(
+                    "[approval expired] not approved in time",
+                    thread=thread,
+                    approval_id="appr-1",
+                    author="system",
+                )
+            )
+
+            # The card was edited in place: same ts, no actions block, an expiry
+            # line where the Approve/Reject buttons were.
+            assert len(h.sink.card_updates) == 1
+            channel, ts, text, blocks, endpoint = h.sink.card_updates[0]
+            assert (channel, ts) == ("C1", card_ts)
+            assert endpoint is None
+            assert all(b.get("type") != "actions" for b in blocks)
+            assert "expired" in text.lower()
+            assert any("expired" in str(b).lower() for b in blocks)
+
+            # The memory was consumed (GETDEL), so a redelivery no-ops.
+            assert not await h.async_redis.exists(h.config.approval_card_key(thread))
+
+            # The continuation still streamed into the placeholder.
+            assert h.sink.last_text == "Acknowledged the expiry."
+
+    asyncio.run(go())
+
+
+def test_resolve_resume_leaves_the_card_to_the_dispatcher(make_harness) -> None:
+    """#419: a RESOLVE resume (author is the resolver) must NOT edit the card --
+    the dispatcher already did from the click -- but it still consumes the
+    remembered card so no stale memory lingers into a later approval."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        thread = "th-resolve-card"
+        async with make_harness(approvals=approvals) as h:
+            h.runner.default_script = _awaiting_script("Refund order 42")
+            await h.kernel.process_event(_qevent("refund?", thread=thread))
+            assert await h.async_redis.exists(h.config.approval_card_key(thread))
+
+            h.runner.default_script = [Final(text="Refunded.", status=DONE)]
+            await h.kernel.process_event(
+                _resume_turn(
+                    "[approval resolved] approved by U9",
+                    thread=thread,
+                    approval_id="appr-1",
+                    author="U9",
+                )
+            )
+
+            # No worker-side card edit (the dispatcher owns the resolved card)...
+            assert h.sink.card_updates == []
+            # ...but the memory was cleaned up so a later approval cannot collide.
+            assert not await h.async_redis.exists(h.config.approval_card_key(thread))
+
+    asyncio.run(go())
