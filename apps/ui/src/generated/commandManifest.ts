@@ -2884,6 +2884,11 @@ export const commandManifest = {
           "name": "e2e"
         },
         {
+          "about": "Run the cold-start parity ladder across the skill, local, and cluster tiers, fake model by default (#690, `bash cli/scripts/e2e-ladder.sh`)",
+          "hidden": false,
+          "name": "e2e-ladder"
+        },
+        {
           "about": "Lint the interface catalog docs (`bash scripts/check-docs.sh`)",
           "hidden": false,
           "name": "docs-lint"

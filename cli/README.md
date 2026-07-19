@@ -203,6 +203,7 @@ they error clearly -- a release binary has no dev scripts.
 | `agentos dev contracts` | `bash scripts/check-contracts.sh` -- check the frozen contracts. |
 | `agentos dev chart-check` | `bash charts/agentos/ci/render-assertions.sh` -- render-assert the Helm chart. |
 | `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
+| `agentos dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
 
 ## `skill` target: runner-only, fully offline
 
@@ -543,8 +544,30 @@ bash cli/scripts/e2e.sh
 # with the compose stack + a local API:
 AGENTOS_E2E_NETWORK=agentos_default \
 AGENTOS_E2E_OTEL=http://otel-collector:4318 \
-AGENTOS_E2E_API_URL=http://localhost:8000 bash cli/scripts/e2e.sh
+AGENTOS_E2E_API_URL=http://localhost:28000 bash cli/scripts/e2e.sh
 ```
 
 Requires an `agentos-runner` image (`docker build -f runner/Dockerfile -t
 agentos-runner .` from the repo root).
+
+The cold-start parity ladder (`agentos dev e2e-ladder`, `cli/scripts/e2e-ladder.sh`)
+runs the same skill-tier script as rung 1, then adds a local rung (`local up
+--minimal` -> `local deploy` -> `local message` with the reply asserted ->
+`local down`) and a cluster rung (`cluster deploy` then `cluster message`, a
+real round trip with no manual port-forward) against a pre-installed release.
+Two env knobs configure it:
+
+- `AGENTOS_E2E_TIERS` -- which rungs to run. Defaults to `skill,local`
+  (credential-free, CI-safe); `all` runs `skill,local,cluster`. A tier named
+  explicitly is required, and its absence fails the run; a tier not named is
+  skipped.
+- `AGENTOS_E2E_LIVE` -- unset or `0` runs the fake model (credential-free, the
+  default); `1` runs the live-credential variant for pre-release manual passes
+  and fails fast if no model credential is present. It governs the local and
+  cluster rungs only; the skill rung stays fake.
+
+The one-command pre-release gate:
+
+```bash
+AGENTOS_E2E_TIERS=all agentos dev e2e-ladder
+```
