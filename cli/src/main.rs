@@ -292,6 +292,10 @@ enum DevAction {
     /// goes RED -- the falsifiability gate's real-path negative control (#619,
     /// `bash cli/scripts/eval-falsifiability.sh`). Offline, no credential.
     EvalFalsifiability,
+    /// Assert every `Deserialize` struct in `cli/src/api.rs` is declared in
+    /// `cli/api-mirrors.json` and covers its API model's fields (#691,
+    /// `bash cli/scripts/check-field-parity.sh`). Offline, no credential.
+    FieldParity,
     /// Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml
     /// version, and appVersion (`bash scripts/check-version-consistency.sh`).
     VersionCheck,
@@ -1292,6 +1296,9 @@ async fn run(command: Option<Command>) -> Result<()> {
             DevAction::PluginCompat => commands::dev_script("scripts/check-plugin-compat.sh").await,
             DevAction::EvalFalsifiability => {
                 commands::dev_script("cli/scripts/eval-falsifiability.sh").await
+            }
+            DevAction::FieldParity => {
+                commands::dev_script("cli/scripts/check-field-parity.sh").await
             }
             DevAction::VersionCheck => {
                 commands::dev_script("scripts/check-version-consistency.sh").await

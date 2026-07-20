@@ -2901,6 +2901,11 @@
           "name": "eval-falsifiability"
         },
         {
+          "about": "Assert every `Deserialize` struct in `cli/src/api.rs` is declared in `cli/api-mirrors.json` and covers its API model's fields (#691, `bash cli/scripts/check-field-parity.sh`). Offline, no credential",
+          "hidden": false,
+          "name": "field-parity"
+        },
+        {
           "about": "Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml version, and appVersion (`bash scripts/check-version-consistency.sh`)",
           "hidden": false,
           "name": "version-check"

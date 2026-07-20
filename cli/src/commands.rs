@@ -2359,11 +2359,13 @@ impl crate::ui::CliOutput for VersionsOutput {
                     .iter()
                     .map(|v| {
                         serde_json::json!({
+                            "id": v.id,
                             "version_label": v.version_label,
                             "commit_sha": v.commit_sha,
                             "bundle_sha256": v.bundle_sha256,
                             "created_by": v.created_by,
                             "created_at": v.created_at,
+                            "bundle_ref": v.bundle_ref,
                         })
                     })
                     .collect();

@@ -204,6 +204,7 @@ they error clearly -- a release binary has no dev scripts.
 | `agentos dev chart-check` | `bash charts/agentos/ci/render-assertions.sh` -- render-assert the Helm chart. |
 | `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
 | `agentos dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
+| `agentos dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI api.rs mirror structs cover their platform API model fields (#691). |
 
 ## `skill` target: runner-only, fully offline
 

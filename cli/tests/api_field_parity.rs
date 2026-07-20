@@ -1,0 +1,375 @@
+// Field-parity gate (issue #691): every CLI struct that mirrors a platform API
+// model must carry that model's fields, and every deliberate omission must be
+// declared and justified in `cli/api-mirrors.json`. This binary asserts that
+// invariant on the real tree and drives the real comparator over drifted
+// fixtures to prove it rejects each violation class by execution (AC5).
+//
+// ─── Shared comparator contract (Stream A implements this VERBATIM) ──────────
+// The helper lives at `cli/tests/support/field_parity.rs`, reached below via a
+// `#[path = ...]` include. Its ENTIRE public surface is one pure function plus
+// one enum. Copy both exactly; tests assert on `Violation` variants + payload,
+// never on message strings.
+//
+//   pub fn violations(
+//       rust_src: &str,                  // contents of the Rust source to walk
+//       openapi: &serde_json::Value,     // parsed OpenAPI doc (components.schemas)
+//       manifest: &serde_json::Value,    // parsed api-mirrors.json manifest
+//   ) -> Vec<Violation>;
+//
+//   #[derive(Debug, Clone, PartialEq, Eq)]
+//   pub enum Violation {
+//       /// Schema defines a property the struct neither carries nor allowlists.
+//       MissingField { struct_name: String, schema: String, field: String },
+//       /// Struct carries a wire field the schema does not define.
+//       UnknownField { struct_name: String, schema: String, field: String },
+//       /// A `Deserialize` struct in the source is in neither `mirrors` nor `non_mirrors`.
+//       UndeclaredStruct { struct_name: String },
+//       /// A manifest entry names a struct the source walk never found.
+//       StructNotFound { struct_name: String },
+//       /// A dishonest omission: struct actually carries the field, the schema no
+//       /// longer has it, or the omission's `why` is blank/missing.
+//       StaleOmission { struct_name: String, schema: String, field: String },
+//       /// A manifest `schema` is absent from `components.schemas`.
+//       SchemaNotFound { struct_name: String, schema: String },
+//       /// The schema (object-level `allOf`/`anyOf`) or the struct (a
+//       /// `#[serde(flatten)]` field) cannot be decomposed field-by-field.
+//       UnsupportedShape { struct_name: String, schema: String },
+//       /// Two `Deserialize` structs share one bare name; the manifest keys by
+//       /// name, so only the first is ever field-checked.
+//       DuplicateStruct { struct_name: String },
+//       /// A manifest entry lacks a required key (`struct`/`schema`), so its
+//       /// struct would silently escape field comparison.
+//       MalformedManifestEntry { detail: String },
+//   }
+//
+// Precedence rules Stream A MUST honor so each fixture triggers one variant:
+//  - A struct with any `#[serde(flatten)]` field => emit `UnsupportedShape` for
+//    that struct and do NOT run field comparison on it.
+//  - An object-level `allOf`/`anyOf` schema => `UnsupportedShape`; skip field
+//    comparison (a naive read would see zero required fields and pass silently).
+//  - An omission entry suppresses `MissingField` for its field regardless of the
+//    `why` content; a blank/missing `why` is reported as `StaleOmission` (NOT
+//    `MissingField`).
+//  - Wire name governs coverage: `#[serde(rename = "x")]` maps the field to `x`;
+//    `rename_all` applies the container transform; a bare field uses its ident.
+//  - The walk recognizes both derive spellings (`Deserialize` and
+//    `serde::Deserialize`) and recurses into items nested in fn/impl bodies.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[path = "support/field_parity.rs"]
+mod field_parity;
+
+use field_parity::{violations, Violation};
+use serde_json::Value;
+
+// ─── Loaders ─────────────────────────────────────────────────────────────────
+
+fn repo_text(rel: &str) -> String {
+    let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+}
+
+fn repo_json(rel: &str) -> Value {
+    let raw = repo_text(rel);
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {rel}: {e}"))
+}
+
+fn fixture_text(name: &str) -> String {
+    let path = format!(
+        "{}/tests/data/field-parity/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    );
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+}
+
+fn fixture_json(name: &str) -> Value {
+    let raw = fixture_text(name);
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {name}: {e}"))
+}
+
+/// The drifted fixture triple that drives every rejection case.
+fn fixtures() -> (String, Value, Value) {
+    (
+        fixture_text("drifted-api.rs"),
+        fixture_json("drifted-openapi.json"),
+        fixture_json("drifted-mirrors.json"),
+    )
+}
+
+// ─── Payload matchers (variant + payload, never message strings) ─────────────
+
+fn has_missing_field(vs: &[Violation], struct_name: &str, field: &str) -> bool {
+    vs.iter().any(|v| {
+        matches!(v, Violation::MissingField { struct_name: s, field: f, .. }
+            if s == struct_name && f == field)
+    })
+}
+
+fn has_unknown_field(vs: &[Violation], struct_name: &str, field: &str) -> bool {
+    vs.iter().any(|v| {
+        matches!(v, Violation::UnknownField { struct_name: s, field: f, .. }
+            if s == struct_name && f == field)
+    })
+}
+
+fn has_stale_omission(vs: &[Violation], struct_name: &str, field: &str) -> bool {
+    vs.iter().any(|v| {
+        matches!(v, Violation::StaleOmission { struct_name: s, field: f, .. }
+            if s == struct_name && f == field)
+    })
+}
+
+fn has_undeclared_struct(vs: &[Violation], struct_name: &str) -> bool {
+    vs.iter()
+        .any(|v| matches!(v, Violation::UndeclaredStruct { struct_name: s } if s == struct_name))
+}
+
+fn has_struct_not_found(vs: &[Violation], struct_name: &str) -> bool {
+    vs.iter()
+        .any(|v| matches!(v, Violation::StructNotFound { struct_name: s } if s == struct_name))
+}
+
+fn has_schema_not_found(vs: &[Violation], struct_name: &str, schema: &str) -> bool {
+    vs.iter().any(|v| {
+        matches!(v, Violation::SchemaNotFound { struct_name: s, schema: sc }
+            if s == struct_name && sc == schema)
+    })
+}
+
+fn has_unsupported_shape(vs: &[Violation], struct_name: &str) -> bool {
+    vs.iter().any(
+        |v| matches!(v, Violation::UnsupportedShape { struct_name: s, .. } if s == struct_name),
+    )
+}
+
+fn has_duplicate_struct(vs: &[Violation], struct_name: &str) -> bool {
+    vs.iter()
+        .any(|v| matches!(v, Violation::DuplicateStruct { struct_name: s } if s == struct_name))
+}
+
+fn has_malformed_manifest_entry(vs: &[Violation], needle: &str) -> bool {
+    vs.iter().any(
+        |v| matches!(v, Violation::MalformedManifestEntry { detail } if detail.contains(needle)),
+    )
+}
+
+fn mentions_struct(vs: &[Violation], struct_name: &str) -> bool {
+    vs.iter().any(|v| match v {
+        Violation::MissingField { struct_name: s, .. }
+        | Violation::UnknownField { struct_name: s, .. }
+        | Violation::UndeclaredStruct { struct_name: s }
+        | Violation::StructNotFound { struct_name: s }
+        | Violation::StaleOmission { struct_name: s, .. }
+        | Violation::SchemaNotFound { struct_name: s, .. }
+        | Violation::DuplicateStruct { struct_name: s }
+        | Violation::UnsupportedShape { struct_name: s, .. } => s == struct_name,
+        Violation::MalformedManifestEntry { .. } => false,
+    })
+}
+
+// ─── Real-tree assertions (AC1, AC3) ─────────────────────────────────────────
+
+#[test]
+fn real_tree_has_no_field_parity_violations() {
+    let src = repo_text("cli/src/api.rs");
+    let openapi = repo_json("apps/api/openapi.json");
+    let manifest = repo_json("cli/api-mirrors.json");
+
+    let vs = violations(&src, &openapi, &manifest);
+    assert!(
+        vs.is_empty(),
+        "cli/src/api.rs has drifted from apps/api/openapi.json. Each entry below \
+         is fixed by either adding the field to the struct or declaring the \
+         omission (with a justification) in cli/api-mirrors.json:\n{vs:#?}"
+    );
+}
+
+#[test]
+fn version_struct_carries_the_full_version_out() {
+    // The issue's named drift: `Version` must cover `agent_id` and `bundle_ref`.
+    // Checked independently of the generic sweep so a manifest mistake cannot
+    // hide it.
+    let src = repo_text("cli/src/api.rs");
+    let openapi = repo_json("apps/api/openapi.json");
+    let manifest = repo_json("cli/api-mirrors.json");
+
+    let vs = violations(&src, &openapi, &manifest);
+    let version_violations: Vec<&Violation> = vs
+        .iter()
+        .filter(|v| match v {
+            Violation::MissingField { struct_name, .. }
+            | Violation::UnknownField { struct_name, .. }
+            | Violation::UndeclaredStruct { struct_name }
+            | Violation::StructNotFound { struct_name }
+            | Violation::StaleOmission { struct_name, .. }
+            | Violation::SchemaNotFound { struct_name, .. }
+            | Violation::DuplicateStruct { struct_name }
+            | Violation::UnsupportedShape { struct_name, .. } => struct_name == "Version",
+            Violation::MalformedManifestEntry { .. } => false,
+        })
+        .collect();
+    assert!(
+        version_violations.is_empty(),
+        "Version does not fully mirror VersionOut (expected agent_id + bundle_ref \
+         covered, zero omissions):\n{version_violations:#?}"
+    );
+}
+
+// ─── Guard-rejects-a-violating-input demonstrations (AC5) ────────────────────
+
+#[test]
+fn rejects_a_struct_missing_a_required_schema_field() {
+    // case 1
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_missing_field(&vs, "MissingFieldMirror", "dropped"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_a_stale_allowlist_entry() {
+    // case 2: an omission for a field the struct actually carries.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_stale_omission(&vs, "StaleCarriesMirror", "beta"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_an_allowlist_entry_for_a_field_the_schema_no_longer_has() {
+    // case 3
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_stale_omission(&vs, "StaleShrunkMirror", "delta"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_an_undeclared_deserialize_struct() {
+    // case 4: D2's teeth — a Deserialize struct in neither list.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_undeclared_struct(&vs, "UndeclaredMirror"), "{vs:#?}");
+}
+
+#[test]
+fn rejects_a_struct_field_absent_from_the_schema() {
+    // case 5: a CLI field with no API field behind it is always a bug.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_unknown_field(&vs, "UnknownFieldMirror", "phantom"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_a_missing_schema() {
+    // case 6: a named schema absent from components.schemas -> not a skip.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_schema_not_found(&vs, "MissingSchemaMirror", "NoSuchSchema"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_an_unsupported_schema_shape() {
+    // case 7: an object-level allOf schema must fail closed, never pass silently.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_unsupported_shape(&vs, "AllOfMirror"), "{vs:#?}");
+}
+
+#[test]
+fn rejects_serde_flatten() {
+    // case 8: flatten makes the wire-name mapping non-local -> UnsupportedShape.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_unsupported_shape(&vs, "FlattenMirror"), "{vs:#?}");
+}
+
+#[test]
+fn rejects_an_empty_omission_justification() {
+    // case 9: an omission with a blank `why` is not a justified omission.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_stale_omission(&vs, "BlankWhyMirror", "q"), "{vs:#?}");
+}
+
+#[test]
+fn honors_serde_rename_on_both_sides() {
+    // case 10: paired positive/negative — proves the gate reads the WIRE name.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    // Positive: the renamed field covers the schema -> no violation for it.
+    assert!(
+        !mentions_struct(&vs, "RenamePositive"),
+        "renamed field should satisfy coverage:\n{vs:#?}"
+    );
+    // Negative: the same ident without the rename leaves `fooBar` uncovered.
+    assert!(
+        has_missing_field(&vs, "RenameNegative", "fooBar"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_an_undeclared_deserialize_struct_inside_a_fn_body() {
+    // case 11: the nested-item walk proof — a `serde::Deserialize` struct declared
+    // inside an impl-method body, absent from the manifest.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_undeclared_struct(&vs, "NestedUndeclared"), "{vs:#?}");
+}
+
+#[test]
+fn rejects_a_manifest_entry_for_a_struct_the_source_does_not_have() {
+    // case 12: the symmetric fail-closed twin of case 6 — a dangling manifest
+    // entry makes a walk defect observable instead of silently shrinking the set.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_struct_not_found(&vs, "GhostStruct"), "{vs:#?}");
+}
+
+#[test]
+fn rejects_a_skip_deserializing_field_as_non_coverage() {
+    // case 13: `#[serde(skip_deserializing)]` drops the field from the wire (the
+    // decoder fills it from Default), so it must NOT satisfy coverage for the
+    // schema property it names -> MissingField.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_missing_field(&vs, "SkipDeserMirror", "discarded"),
+        "{vs:#?}"
+    );
+}
+
+#[test]
+fn rejects_a_duplicated_struct_name() {
+    // case 14: two `Deserialize` structs share one bare name; the manifest keys by
+    // name so the second is never field-checked -> DuplicateStruct, fail-closed.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(has_duplicate_struct(&vs, "DupNameMirror"), "{vs:#?}");
+}
+
+#[test]
+fn rejects_a_manifest_entry_missing_a_required_key() {
+    // case 15: a `mirrors` entry lacking `schema` would silently skip field
+    // comparison for its struct -> MalformedManifestEntry, fail-closed.
+    let (src, oa, mf) = fixtures();
+    let vs = violations(&src, &oa, &mf);
+    assert!(
+        has_malformed_manifest_entry(&vs, "MalformedEntryMirror"),
+        "{vs:#?}"
+    );
+}

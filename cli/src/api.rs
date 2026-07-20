@@ -85,6 +85,14 @@ pub struct Version {
     pub created_by: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    /// `VersionOut.agent_id` (#691). `VersionOut` marks it required, but the
+    /// deploy path tolerates lean responses, so `#[serde(default)]` is kept
+    /// consistent with the other extra fields above.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// `VersionOut.bundle_ref` (#691). Same lean-response tolerance as above.
+    #[serde(default)]
+    pub bundle_ref: Option<String>,
 }
 
 /// One learned memory entry (`MemoryEntryOut`) for the `memory` listing verb.

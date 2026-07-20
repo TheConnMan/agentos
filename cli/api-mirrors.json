@@ -1,0 +1,107 @@
+{
+  "_comment": "Declared mirrors of apps/api committed openapi.json models. See issue #691. Every Deserialize struct in cli/src/api.rs must appear in exactly one of mirrors or non_mirrors. Each omission names the CLI consumer path and why it does not read the field. Check with: agentos dev field-parity",
+  "openapi": "apps/api/openapi.json",
+  "source": "cli/src/api.rs",
+  "mirrors": [
+    {
+      "struct": "Version",
+      "schema": "VersionOut",
+      "omissions": []
+    },
+    {
+      "struct": "Agent",
+      "schema": "AgentOut",
+      "omissions": [
+        { "field": "repo_full_name", "why": "The deploy flow (ApiClient::resolve_agent/find_agent) matches and creates agents by name and reconciles slack_channel; it never reads the agent's linked git repo, so repo_full_name is not deserialized." },
+        { "field": "behavior_packs", "why": "No CLI path reads an agent's behavior-pack list; deploy uploads a bundle rather than composing packs, so behavior_packs is never consumed." },
+        { "field": "model", "why": "The CLI never displays or acts on an agent's default model (model routing is server- and claim-time bound, #473); the deploy and lifecycle verbs read only id/name/slack_channel." },
+        { "field": "approval_routes", "why": "The approvals verbs drive per-record gates via ApprovalRecord; the agent-level route roster (approval_routes) is enforced server-side and never read by the CLI." },
+        { "field": "secrets", "why": "update_agent_secrets WRITES connector-secret names; the CLI never reads the stored secrets list back, so the response field is not modeled." },
+        { "field": "created_at", "why": "No CLI verb prints an agent's creation timestamp; the deploy summary and lifecycle verbs render id/name/slack_channel only." }
+      ]
+    },
+    {
+      "struct": "ApprovalRecord",
+      "schema": "ApprovalOut",
+      "omissions": [
+        { "field": "agent_id", "why": "The approvals verbs (commands::approvals) already scope the query by --agent, so the record's echoed agent_id is redundant to what the caller passed and is not rendered." },
+        { "field": "reply_channel", "why": "Slack reply-routing (reply_channel) is consumed by the worker to post the approval card, not by the CLI, which renders the record for a human operator." },
+        { "field": "reply_placeholder", "why": "The card placeholder text is a worker/Slack rendering detail; the approvals listing shows summary/gate, not the card body." },
+        { "field": "reply_endpoint", "why": "The reply callback endpoint routes a Slack action back to the API; the CLI resolve path posts to /approvals/{id}/resolve directly and never reads it." },
+        { "field": "dedupe_key", "why": "The idempotency key is a server-side dedupe concern; the CLI neither displays it nor resubmits on it." },
+        { "field": "card_channel", "why": "Where the approval card was posted is a Slack-delivery detail; the operator-facing listing renders conversation_id/summary, not the card channel." },
+        { "field": "resolution_note", "why": "resolve_approval SENDS a note via --note; it does not read back the stored resolution_note when listing pending approvals." },
+        { "field": "created_at", "why": "The listing shows expires_at (the actionable deadline), not the creation timestamp, which the operator does not act on." },
+        { "field": "resolved_at", "why": "list_pending_approvals filters to status=pending, which by definition carry no resolution timestamp, so resolved_at is never populated on the records the CLI renders." }
+      ]
+    },
+    {
+      "struct": "MemoryEntry",
+      "schema": "MemoryEntryOut",
+      "omissions": [
+        { "field": "provenance", "why": "The memory list verb renders index/content/version; provenance is a nested MemoryProvenanceOut $ref with no CLI mirror, and carrying it would require a second struct out of this gate's scope." }
+      ]
+    },
+    {
+      "struct": "Bundle",
+      "schema": "BundleOut",
+      "omissions": [
+        { "field": "version_id", "why": "upload_bundle returns the bundle to the deploy summary, which already holds the Version it just created (ApiClient::deploy), so the bundle's echoed version_id is redundant." }
+      ]
+    },
+    {
+      "struct": "Deployment",
+      "schema": "DeploymentOut",
+      "omissions": [
+        { "field": "agent_id", "why": "list_deployments/create_deployment are already agent-scoped by the caller, so the record's echoed agent_id adds nothing the deploy summary or approvals-gate read uses." },
+        { "field": "commit_sha", "why": "The deploy summary and the approvals gate read resolve the in-force version via version_id; the deployment's commit_sha is not read. Follow-up parity candidate (same family as #548), flagged in the PR body, not added here." }
+      ]
+    },
+    {
+      "struct": "BundleFile",
+      "schema": "BundleFile",
+      "omissions": []
+    },
+    {
+      "struct": "BundleFiles",
+      "schema": "BundleFiles",
+      "omissions": []
+    },
+    {
+      "struct": "KillState",
+      "schema": "KillState",
+      "omissions": []
+    },
+    {
+      "struct": "BudgetConfig",
+      "schema": "BudgetConfig",
+      "omissions": []
+    },
+    {
+      "struct": "EvalTriggerResult",
+      "schema": "EvalTriggerResult",
+      "omissions": [
+        { "field": "agent_id", "why": "trigger_eval is called with the agent the caller chose; the sweep pairs the enqueued job to its matrix row by stream_id/sha, so the echoed agent_id is unused." },
+        { "field": "version_id", "why": "The sweep scopes readiness by the run's sha column on the matrix, not by version_id; the trigger's version_id is never read." },
+        { "field": "bundle_ref", "why": "The artifact pointer is surfaced on the version/bundle path, not off the eval trigger; the sweep reads only stream_id/sha/suite/model here." }
+      ]
+    },
+    {
+      "struct": "EvalModelSummary",
+      "schema": "EvalModelSummary",
+      "omissions": [
+        { "field": "plumbing", "why": "RISK: plumbing marks a fixture/plumbing-only row (#612/#606). The model sweep (cli/src/evals.rs) reads model/passed/total/cost_usd and cannot today distinguish a plumbing-fixture row from a real subject-under-test row. Not wired in this PR; filed as follow-up F2 (sweep scoping, #608)." }
+      ]
+    },
+    {
+      "struct": "EvalMatrix",
+      "schema": "EvalMatrix",
+      "omissions": [
+        { "field": "cases", "why": "The sweep reads the per-model rollup (model_summaries) and the version columns (versions); the per-case identifiers (cases) that label the grid are not read by the CLI." },
+        { "field": "rows", "why": "The per-case pass/fail grid (rows) is carried by the endpoint but unused by the sweep, which needs only the per-model rollup; the existing doc comment on EvalMatrix already states this." },
+        { "field": "models", "why": "The model dimension the CLI acts on is model_summaries[].model; the separate models label list is not read." }
+      ]
+    }
+  ],
+  "non_mirrors": []
+}

@@ -1,0 +1,84 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "field-parity fixture", "version": "0.0.0" },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "MissingFieldSchema": {
+        "type": "object",
+        "properties": {
+          "kept": { "type": "string" },
+          "dropped": { "type": "string" }
+        },
+        "required": ["kept", "dropped"]
+      },
+      "StaleCarriesSchema": {
+        "type": "object",
+        "properties": {
+          "alpha": { "type": "string" },
+          "beta": { "type": "string" }
+        }
+      },
+      "StaleShrunkSchema": {
+        "type": "object",
+        "properties": {
+          "gamma": { "type": "string" }
+        }
+      },
+      "UnknownFieldSchema": {
+        "type": "object",
+        "properties": {
+          "known": { "type": "string" }
+        }
+      },
+      "AllOfBase": {
+        "type": "object",
+        "properties": {
+          "base_field": { "type": "string" }
+        }
+      },
+      "AllOfSchema": {
+        "allOf": [
+          { "$ref": "#/components/schemas/AllOfBase" },
+          {
+            "type": "object",
+            "properties": { "z": { "type": "string" } }
+          }
+        ]
+      },
+      "FlattenSchema": {
+        "type": "object",
+        "properties": {
+          "base": { "type": "string" }
+        }
+      },
+      "BlankWhySchema": {
+        "type": "object",
+        "properties": {
+          "p": { "type": "string" },
+          "q": { "type": "string" }
+        }
+      },
+      "RenamePositiveSchema": {
+        "type": "object",
+        "properties": {
+          "fooBar": { "type": "string" }
+        }
+      },
+      "RenameNegativeSchema": {
+        "type": "object",
+        "properties": {
+          "fooBar": { "type": "string" }
+        }
+      },
+      "SkipDeserSchema": {
+        "type": "object",
+        "properties": {
+          "kept": { "type": "string" },
+          "discarded": { "type": "string" }
+        },
+        "required": ["kept", "discarded"]
+      }
+    }
+  }
+}
