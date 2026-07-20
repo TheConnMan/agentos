@@ -149,6 +149,10 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   Deployment exists (a real workspace is connected) unless `--force-wire`. Do
   not drop that guard: the stub wiring is cluster-wide and would divert a live
   workspace's replies.
+- **A new `Deserialize` struct in `cli/src/api.rs` must be declared in
+  `cli/api-mirrors.json`** (as a `mirrors` entry with its allowlisted field
+  omissions, or a `non_mirrors` entry with a one-line reason). `agentos dev
+  field-parity` is the check (#691).
 
 ## Verify
 

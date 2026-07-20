@@ -72,3 +72,8 @@ jsonschema = { version = "0.48", default-features = false }
 # The frozen ACI types are a normal dependency of the lib, but integration test
 # crates need them by name to build a SessionStatus for the status_json contract.
 agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
+# AST parse of cli/src/api.rs for the --json field-parity gate (#691): resolve
+# serde rename/skip/flatten and derive spellings exactly. `full` parses fn
+# bodies, `visit` recurses into fn/impl-body items (the method-local BundleFiles),
+# `extra-traits` gives the PartialEq the walk relies on.
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }

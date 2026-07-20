@@ -523,8 +523,12 @@ fn versions_output_json_shape_is_pinned() {
         json!({"agent": "weather", "versions": []})
     );
     // Two versions, one with every optional field `None` and one with them all
-    // `Some`, so the null-vs-value rendering of each optional is pinned. `id` is
-    // deliberately NOT emitted; adding it would fail this exact-match.
+    // `Some`, so the null-vs-value rendering of each optional is pinned. Per
+    // issue #691 / E1, each element emits exactly: `id`, `version_label`,
+    // `commit_sha`, `bundle_sha256`, `created_by`, `created_at`, `bundle_ref`.
+    // `id` and `bundle_ref` are now emitted (an agent needs `id` to address the
+    // version); `agent_id` is carried on the struct but deliberately NOT emitted
+    // (the payload already carries `agent`, the query was agent-scoped).
     assert_eq!(
         VersionsOutput::List {
             agent: "weather".to_string(),
@@ -536,6 +540,8 @@ fn versions_output_json_shape_is_pinned() {
                     bundle_sha256: None,
                     created_by: None,
                     created_at: None,
+                    agent_id: None,
+                    bundle_ref: None,
                 },
                 Version {
                     id: "ver_2".to_string(),
@@ -544,6 +550,8 @@ fn versions_output_json_shape_is_pinned() {
                     bundle_sha256: Some("deadbeef00".to_string()),
                     created_by: Some("bconn".to_string()),
                     created_at: Some("2026-07-16T00:00:00Z".to_string()),
+                    agent_id: Some("agt_1".to_string()),
+                    bundle_ref: Some("bundles/abc.tar.gz".to_string()),
                 },
             ],
         }
@@ -552,18 +560,22 @@ fn versions_output_json_shape_is_pinned() {
             "agent": "weather",
             "versions": [
                 {
+                    "id": "ver_1",
                     "version_label": "v1",
                     "commit_sha": null,
                     "bundle_sha256": null,
                     "created_by": null,
                     "created_at": null,
+                    "bundle_ref": null,
                 },
                 {
+                    "id": "ver_2",
                     "version_label": "v2",
                     "commit_sha": "abc1234",
                     "bundle_sha256": "deadbeef00",
                     "created_by": "bconn",
                     "created_at": "2026-07-16T00:00:00Z",
+                    "bundle_ref": "bundles/abc.tar.gz",
                 },
             ],
         })

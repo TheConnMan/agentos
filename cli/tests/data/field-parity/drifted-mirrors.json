@@ -1,0 +1,29 @@
+{
+  "_comment": "Fixture manifest for cli/tests/api_field_parity.rs (issue #691). Deliberately drifted so each entry triggers exactly one Violation; see the case map in that test. `openapi`/`source` are informational here (the comparator receives all three inputs directly).",
+  "openapi": "drifted-openapi.json",
+  "source": "drifted-api.rs",
+  "mirrors": [
+    { "struct": "MissingFieldMirror", "schema": "MissingFieldSchema", "omissions": [] },
+    { "struct": "StaleCarriesMirror", "schema": "StaleCarriesSchema", "omissions": [
+      { "field": "beta", "why": "deploy path reads alpha only" }
+    ] },
+    { "struct": "StaleShrunkMirror", "schema": "StaleShrunkSchema", "omissions": [
+      { "field": "delta", "why": "field removed from the API model; this entry is now stale" }
+    ] },
+    { "struct": "UnknownFieldMirror", "schema": "UnknownFieldSchema", "omissions": [] },
+    { "struct": "MissingSchemaMirror", "schema": "NoSuchSchema", "omissions": [] },
+    { "struct": "AllOfMirror", "schema": "AllOfSchema", "omissions": [] },
+    { "struct": "FlattenMirror", "schema": "FlattenSchema", "omissions": [] },
+    { "struct": "BlankWhyMirror", "schema": "BlankWhySchema", "omissions": [
+      { "field": "q", "why": "" }
+    ] },
+    { "struct": "RenamePositive", "schema": "RenamePositiveSchema", "omissions": [] },
+    { "struct": "RenameNegative", "schema": "RenameNegativeSchema", "omissions": [] },
+    { "struct": "SkipDeserMirror", "schema": "SkipDeserSchema", "omissions": [] },
+    { "struct": "MalformedEntryMirror", "omissions": [] }
+  ],
+  "non_mirrors": [
+    { "struct": "GhostStruct", "why": "manifest entry for a struct the source no longer declares" },
+    { "struct": "DupNameMirror", "why": "duplicate-name pair; only DuplicateStruct should fire" }
+  ]
+}
