@@ -1829,6 +1829,48 @@ fn unbound_declared_secrets(declared: &[String], bound: &[String]) -> Vec<String
         .collect()
 }
 
+/// The kubectl port-forward the auto `cluster deploy` path opens to the
+/// release's api service (ADR-0057, superseding ADR-0024's deploy transport).
+/// When no `--api-url` is given, deploy self-plumbs this loopback tunnel and
+/// posts to `localhost:<local>`, so the discovered strong release key travels
+/// only in the X-API-Key header over the tunnel, never over the cleartext UI
+/// `/api` NodePort proxy. An explicit `--api-url` direct-dials the given URL, so
+/// no tunnel is built (`None`).
+pub fn deploy_port_forward(
+    api_url: Option<&str>,
+    namespace: &str,
+    release: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> Option<crate::ops::OpsCommand> {
+    match api_url {
+        Some(_) => None,
+        None => Some(crate::message::port_forward_command(
+            namespace,
+            release,
+            "api",
+            local_port,
+            remote_port,
+        )),
+    }
+}
+
+/// True when `cluster deploy` must auto-discover the release Secret key: no
+/// explicit `--api-key`/`AGENTOS_API_KEY` was given. An explicit key wins and
+/// skips discovery (ADR-0057).
+pub fn deploy_needs_key_discovery(explicit_api_key: Option<&str>) -> bool {
+    explicit_api_key.is_none()
+}
+
+/// An empty `--api-key`/`AGENTOS_API_KEY=""` is absent, not a key: normalize
+/// `Some("")` (after trim) to `None` so a blank value triggers discovery like
+/// an omitted flag instead of posting an empty key (401). Same empty-credential
+/// rule settled in `message::api_key_or_default` and
+/// `ops::resolve_up_credentials`.
+pub fn normalize_deploy_api_key(api_key: Option<String>) -> Option<String> {
+    api_key.filter(|k| !k.trim().is_empty())
+}
+
 pub async fn deploy(opts: DeployOpts) -> Result<DeployOutput> {
     let plugin_dir = opts
         .plugin_dir
@@ -2505,6 +2547,7 @@ pub struct ApprovalCmd {
     pub as_actor: Option<String>,
     pub reject: bool,
     pub note: Option<String>,
+    pub actor_channel: Option<String>,
 }
 
 /// Output of `<tier> approvals <agent>`: the dry-run plan, the gate list (empty
@@ -2704,7 +2747,13 @@ pub async fn approvals(
         }
         let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
         let record = client
-            .resolve_approval(&approval_id, decision, &actor, cmd.note.as_deref())
+            .resolve_approval(
+                &approval_id,
+                decision,
+                &actor,
+                cmd.note.as_deref(),
+                cmd.actor_channel.as_deref(),
+            )
             .await?;
         return Ok(ApprovalsOutput::Resolved { record });
     }

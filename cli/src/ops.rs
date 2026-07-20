@@ -1042,16 +1042,20 @@ pub(crate) fn kubeconfig_host_cmd() -> OpsCommand {
     )
 }
 
-fn nodes_cmd() -> OpsCommand {
+pub(crate) fn nodes_cmd() -> OpsCommand {
     OpsCommand::new(
         "kubectl",
         vec![plain("get"), plain("nodes"), plain("-o"), plain("json")],
     )
 }
 
-/// `helm uninstall` then a namespace sweep of the release and the
-/// agent-sandbox-system namespace (runtime sandboxes, PVCs and job pods Helm
-/// does not own).
+/// `helm uninstall` then a namespace sweep of only the namespaces THIS release
+/// created (runtime sandboxes, PVCs and job pods Helm does not own). #707: the
+/// sweep is scoped by the release ownership label `up` stamped
+/// (`agentos.dev/created-by=<release>`) rather than a hardcoded namespace pair,
+/// so a pre-existing (unlabeled) namespace is never deleted. `--ignore-not-found`
+/// keeps a partial teardown re-runnable and the label selector tolerates zero
+/// matches. CRDs are never targeted (retention is by-construction).
 pub fn down_commands(o: &CommonOpts) -> Vec<OpsCommand> {
     vec![
         OpsCommand::new(
@@ -1068,12 +1072,77 @@ pub fn down_commands(o: &CommonOpts) -> Vec<OpsCommand> {
             vec![
                 plain("delete"),
                 plain("namespace"),
-                plain(&o.namespace),
-                plain("agent-sandbox-system"),
+                plain("-l"),
+                plain(format!("agentos.dev/created-by={}", o.release)),
                 plain("--ignore-not-found"),
             ],
         ),
     ]
+}
+
+/// #707 ownership stamp. Returns the single `kubectl label namespace` step that
+/// records THIS release as the creator of `o.namespace`, but ONLY when `up`
+/// actually created the namespace (`namespace_existed == false`); an empty vec
+/// when the namespace pre-existed, so a namespace `up` merely adopted is never
+/// stamped and therefore never swept by a later `down`. A release-scoped label
+/// (not a per-invocation run-id) is what lets a separate `down` invocation match
+/// what `up` created. `--overwrite` keeps a re-run idempotent, so an `up`
+/// interrupted after create but before stamp fails safe toward retention.
+fn ownership_label_commands(o: &CommonOpts, namespace_existed: bool) -> Vec<OpsCommand> {
+    if namespace_existed {
+        return Vec::new();
+    }
+    vec![OpsCommand::new(
+        "kubectl",
+        vec![
+            plain("label"),
+            plain("namespace"),
+            plain(&o.namespace),
+            plain(format!("agentos.dev/created-by={}", o.release)),
+            plain("--overwrite"),
+        ],
+    )]
+}
+
+/// Whether `up` should attempt the ownership stamp for a candidate namespace,
+/// given whether it existed BEFORE the install and whether it exists AFTER.
+/// A namespace that pre-existed is never stamped (adopted, not created).
+/// A namespace that did not exist before AND still does not exist after is
+/// also never stamped: `agent-sandbox-system` is chart-conditional (created
+/// only when `agentSandbox.controller.deploy` is true), so under
+/// `--set agentSandbox.controller.deploy=false` it stays absent through the
+/// whole install and `kubectl label namespace <missing>` would fail. Only a
+/// namespace this run actually brought into existence gets stamped.
+fn should_stamp_ownership(existed_before: bool, exists_after: bool) -> bool {
+    !existed_before && exists_after
+}
+
+/// Re-targets `opts` at namespace `ns` with an explicit `dry_run`, for the two
+/// `up()` ownership-stamping call sites (`--dry-run` preview and the post-helm
+/// stamp attempt) that otherwise duplicate the same `CommonOpts` construction.
+fn ns_common(opts: &CommonOpts, ns: &str, dry_run: bool) -> CommonOpts {
+    CommonOpts {
+        namespace: ns.to_string(),
+        release: opts.release.clone(),
+        dry_run,
+    }
+}
+
+/// `kubectl get namespace <ns>`: the pre-existence probe `up` runs before the
+/// install so it stamps ownership only on namespaces it creates.
+fn namespace_get_cmd(namespace: &str) -> OpsCommand {
+    OpsCommand::new(
+        "kubectl",
+        vec![plain("get"), plain("namespace"), plain(namespace)],
+    )
+}
+
+/// Whether `namespace` already exists on the cluster. A nonzero `kubectl get`
+/// (typically NotFound) reads as absent, so `up` treats it as fresh and stamps
+/// it; any other transport error surfaces later on the install itself.
+async fn namespace_exists(namespace: &str) -> Result<bool> {
+    let (ok, _out, _err) = run_capture(&namespace_get_cmd(namespace)).await?;
+    Ok(ok)
 }
 
 /// Parse the hostname out of a kubeconfig `cluster.server` URL
@@ -1265,7 +1334,48 @@ pub async fn up(mut opts: UpOpts) -> Result<ClusterUpOutput> {
         }
     }
 
-    let cmds = up_commands(&opts);
+    let mut cmds = up_commands(&opts);
+
+    // #707 record ownership only on namespaces THIS run creates, so a later
+    // `down` sweeps exactly what `up` made and leaves pre-existing state alone.
+    // `up` may create the release namespace (via `helm --create-namespace`) and
+    // the chart-created `agent-sandbox-system` -- but the latter is
+    // chart-conditional (created only when `agentSandbox.controller.deploy` is
+    // true), so a `--set agentSandbox.controller.deploy=false` release never
+    // creates it. Probe each candidate BEFORE the install so a namespace that
+    // already existed is adopted, not stamped (`existed_before`, recorded in
+    // `ownership_candidates`); the actual stamp attempt is gated a SECOND time
+    // AFTER the install (see `should_stamp_ownership` below, run once `cmds` has
+    // executed) against whether the namespace exists now, so a namespace the
+    // chart never created is simply not stamped instead of failing `kubectl
+    // label namespace <missing>`. Mirror the resolve_generated_secrets
+    // existing/fresh split: both runtime probes live here in the executor, the
+    // argv stays in the pure `ownership_label_commands` builder. `--dry-run`
+    // stays offline and previews the fresh-install stamp for every candidate
+    // (existed == false), never touching the cluster and never running the
+    // post-install probe.
+    let mut owned_namespaces = vec![opts.common.namespace.clone()];
+    if opts.common.namespace != "agent-sandbox-system" {
+        owned_namespaces.push("agent-sandbox-system".to_string());
+    }
+    if !opts.common.dry_run {
+        require_on_path("kubectl")?;
+    }
+    let mut ownership_candidates: Vec<(String, bool)> = Vec::new();
+    for ns in owned_namespaces {
+        let existed_before = if opts.common.dry_run {
+            false
+        } else {
+            namespace_exists(&ns).await?
+        };
+        if opts.common.dry_run {
+            // existed_before is provably false on this branch (set above).
+            let common = ns_common(&opts.common, &ns, true);
+            cmds.extend(ownership_label_commands(&common, false));
+        }
+        ownership_candidates.push((ns, existed_before));
+    }
+
     // Provider egress is opened iff a provider was named: on a live run
     // resolve_provider_egress_cidrs bails on an empty/failed resolution (so a
     // non-empty allow_egress_host always yields non-empty resolved_egress_cidrs),
@@ -1305,6 +1415,30 @@ pub async fn up(mut opts: UpOpts) -> Result<ClusterUpOutput> {
     for cmd in &cmds {
         run_step(&cl, &label, "installed", cmd).await?;
     }
+
+    // #707 stamp ownership only on namespaces this run actually created. A
+    // candidate that did not exist before the install may still not exist
+    // after it -- `agent-sandbox-system` under
+    // `--set agentSandbox.controller.deploy=false` is the concrete case, since
+    // the chart only creates that namespace when the sandbox controller
+    // subchart is deployed -- so re-probe existence here, post-helm, and skip
+    // the label attempt for anything still absent rather than let `kubectl
+    // label namespace <missing>` fail the whole `up`. A namespace that
+    // pre-existed is never re-probed or stamped at all.
+    for (ns, existed_before) in &ownership_candidates {
+        if *existed_before {
+            continue;
+        }
+        let exists_after = namespace_exists(ns).await?;
+        if !should_stamp_ownership(false, exists_after) {
+            continue;
+        }
+        let common = ns_common(&opts.common, ns, false);
+        for cmd in ownership_label_commands(&common, false) {
+            run_step(&cl, &label, "installed", &cmd).await?;
+        }
+    }
+
     Ok(ClusterUpOutput::Up {
         namespace: opts.common.namespace.clone(),
         release: opts.common.release.clone(),
@@ -1507,13 +1641,13 @@ pub async fn down(opts: DownOpts) -> Result<ClusterDownOutput> {
         }));
     }
     ui.warn(&format!(
-        "this uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'",
-        opts.common.release, opts.common.namespace
+        "this uninstalls release '{0}' and deletes the namespaces it created (labeled agentos.dev/created-by={0}), leaving any pre-existing namespaces untouched",
+        opts.common.release
     ));
     if !opts.yes
         && !confirm(&format!(
-            "This uninstalls release '{}' and deletes namespaces '{}' and 'agent-sandbox-system'. Continue? [y/N] ",
-            opts.common.release, opts.common.namespace
+            "This uninstalls release '{0}' and deletes the namespaces it created (labeled agentos.dev/created-by={0}). Continue? [y/N] ",
+            opts.common.release
         ))?
     {
         return Ok(ClusterDownOutput::Aborted);
@@ -2877,14 +3011,115 @@ mod tests {
         assert!(default_route_egress_warning(&["10.0.0.10/24".into()]).is_none());
     }
 
+    // A fixture whose release differs from its namespace, so an assertion on the
+    // ownership label VALUE unambiguously locks it to the release (not the ns).
+    fn common_distinct_release() -> CommonOpts {
+        CommonOpts {
+            namespace: "agent-ns".into(),
+            release: "prod-release".into(),
+            dry_run: false,
+        }
+    }
+
+    // #707 ownership-aware teardown. `down` deletes only the namespaces THIS
+    // release created (carrying the release-scoped ownership label `up` stamped),
+    // instead of the old hardcoded `agentos agent-sandbox-system` literal sweep.
+    // A pre-existing (unlabeled) namespace is left untouched.
     #[test]
-    fn down_sweeps_release_and_sandbox_namespace() {
-        let cmds = down_commands(&common());
+    fn down_deletes_only_release_owned_namespaces_by_label() {
+        let cmds = down_commands(&common_distinct_release());
         assert_eq!(cmds.len(), 2);
-        assert_eq!(cmds[0].display(), "helm uninstall agentos -n agentos");
+        assert_eq!(cmds[0].display(), "helm uninstall prod-release -n agent-ns");
+        let sweep = cmds[1].display();
+        // Label-selector-scoped delete keyed on THIS release's ownership label.
         assert_eq!(
-            cmds[1].display(),
-            "kubectl delete namespace agentos agent-sandbox-system --ignore-not-found"
+            sweep,
+            "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found"
+        );
+        // Negative case: the pre-existing shared namespace is no longer an
+        // unconditional delete target (that would strand pre-existing state).
+        assert!(!sweep.contains("agent-sandbox-system"), "{sweep}");
+        // ignore-not-found preserved so a partial teardown stays re-runnable.
+        assert!(sweep.contains("--ignore-not-found"), "{sweep}");
+    }
+
+    // #707 CRD retention is by-construction; lock it so no future edit sweeps the
+    // agents.x-k8s.io CRDs during teardown.
+    #[test]
+    fn down_never_deletes_crds() {
+        let cmds = down_commands(&common_distinct_release());
+        for cmd in &cmds {
+            let line = cmd.display();
+            assert!(
+                !line.contains("delete crd"),
+                "CRD deletion must never appear: {line}"
+            );
+            assert!(
+                !line.to_lowercase().contains("customresourcedefinition"),
+                "{line}"
+            );
+        }
+    }
+
+    // #707 the up-side ownership SEAM (both branches mandatory). INTENDED
+    // PRODUCTION SYMBOL, not yet implemented -- the implementer adds a pure
+    // builder that gates the ownership stamp on the pre-existence probe result:
+    //
+    //   fn ownership_label_commands(o: &CommonOpts, namespace_existed: bool) -> Vec<OpsCommand>
+    //
+    // It returns the `kubectl label namespace` stamp step ONLY when `up` created
+    // the namespace (namespace_existed == false); an empty vec when the namespace
+    // pre-existed. `up()` gates the runtime probe (mirror the resolve_generated_secrets
+    // existing/fresh split), keeping this builder pure and unit-testable.
+    // These tests fail to compile until that symbol exists -- the intended RED.
+    #[test]
+    fn up_stamps_ownership_label_when_namespace_created() {
+        let cmds = ownership_label_commands(&common_distinct_release(), false);
+        assert_eq!(cmds.len(), 1);
+        // namespace arg is the namespace; the label VALUE is the release.
+        assert_eq!(
+            cmds[0].display(),
+            "kubectl label namespace agent-ns agentos.dev/created-by=prod-release --overwrite"
+        );
+    }
+
+    #[test]
+    fn up_does_not_stamp_ownership_label_when_namespace_preexisting() {
+        let cmds = ownership_label_commands(&common_distinct_release(), true);
+        assert!(
+            cmds.is_empty(),
+            "a pre-existing namespace must not be stamped (would adopt then delete pre-existing state): {:?}",
+            cmds.iter().map(OpsCommand::display).collect::<Vec<_>>()
+        );
+    }
+
+    // #707 code-reviewer finding A2: `agent-sandbox-system` is chart-conditional
+    // (created only when `agentSandbox.controller.deploy` is true), so under a
+    // `--set agentSandbox.controller.deploy=false` release it is absent both
+    // BEFORE and AFTER the helm install. `up()` gates the actual stamp attempt
+    // on `should_stamp_ownership(existed_before, exists_after)`, re-probed AFTER
+    // `cmds` executes -- this is the pure decision table that gate encodes, unit
+    // tested directly since `up()` itself needs a live cluster to exercise.
+    #[test]
+    fn should_stamp_ownership_only_when_created_by_this_run() {
+        // Created by this run: absent before, present after -> stamp.
+        assert!(
+            should_stamp_ownership(false, true),
+            "a namespace this run created must be stamped"
+        );
+        // Pre-existing: present before (and therefore still present after) ->
+        // never stamp, regardless of the post-install probe.
+        assert!(
+            !should_stamp_ownership(true, true),
+            "a pre-existing namespace must never be stamped"
+        );
+        // controller.deploy=false: absent before AND still absent after -- the
+        // chart never created it (e.g. agent-sandbox-system with the sandbox
+        // controller subchart disabled). Must not stamp: `kubectl label
+        // namespace <missing>` would fail and break `up`.
+        assert!(
+            !should_stamp_ownership(false, false),
+            "a namespace the chart never created must not be stamped"
         );
     }
 

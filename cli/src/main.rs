@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use agentos::api;
 use agentos::artifacts;
 use agentos::commands::{
     self, AgentActionOpts, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT,
@@ -656,6 +657,11 @@ enum LocalAction {
         /// model and reports the per-model pass-rate from `GET /evals/matrix`.
         #[arg(long = "model")]
         model: Vec<String>,
+        /// Number of eval cases to run concurrently. Sequential (1) is the only
+        /// supported value today; parallel dispatch is tracked in #709, so any
+        /// value above 1 is refused rather than silently run sequentially.
+        #[arg(long, default_value_t = 1)]
+        concurrency: usize,
         /// Print the plan that a real run would produce, and exit.
         #[arg(long)]
         dry_run: bool,
@@ -730,6 +736,10 @@ enum LocalAction {
         /// Optional note recorded with the resolution (with --resolve).
         #[arg(long)]
         note: Option<String>,
+        /// Channel id asserting the operator's membership, required by
+        /// channel-authorized approval gates (with --resolve).
+        #[arg(long)]
+        actor_channel: Option<String>,
     },
     /// Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
     Observability {
@@ -1062,6 +1072,11 @@ enum ClusterAction {
         /// model and reports the per-model pass-rate from `GET /evals/matrix`.
         #[arg(long = "model")]
         model: Vec<String>,
+        /// Number of eval cases to run concurrently. Sequential (1) is the only
+        /// supported value today; parallel dispatch is tracked in #709, so any
+        /// value above 1 is refused rather than silently run sequentially.
+        #[arg(long, default_value_t = 1)]
+        concurrency: usize,
         /// Print the kubectl commands, stub URL, and enqueue description that a
         /// real run would produce, and exit without executing anything.
         #[arg(long)]
@@ -1072,20 +1087,23 @@ enum ClusterAction {
         /// Plugin bundle directory.
         #[arg(long, default_value = ".")]
         plugin_dir: PathBuf,
-        /// Platform API base URL. Omit to auto-discover the deployed release's UI
-        /// `/api` proxy (NodePort + node host); no port-forward. AGENTOS_API_URL or
-        /// an explicit value is dialed as given.
+        /// Platform API base URL. Omit to self-plumb a kubectl port-forward to
+        /// the release's api service (a loopback tunnel); AGENTOS_API_URL or an
+        /// explicit value direct-dials the given URL with no tunnel.
         #[arg(long, env = "AGENTOS_API_URL")]
         api_url: Option<String>,
-        /// Kubernetes namespace of the release (for UI proxy discovery). Default: agentos.
+        /// Kubernetes namespace of the release (for the port-forward + key discovery). Default: agentos.
         #[arg(long, default_value = "agentos")]
         namespace: String,
-        /// Helm release name (for UI proxy discovery). Default: agentos.
+        /// Helm release name (for the port-forward + key discovery). Default: agentos.
         #[arg(long, default_value = "agentos")]
         release: String,
-        /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
-        api_key: String,
+        /// Platform API key. Omit to auto-discover the release Secret key
+        /// (`<release>-secrets`); the discovered key travels only in the
+        /// X-API-Key header over the loopback tunnel, never over the cleartext
+        /// NodePort proxy (ADR-0057). An explicit value wins.
+        #[arg(long, env = "AGENTOS_API_KEY", hide_env_values = true)]
+        api_key: Option<String>,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
         /// omitting it leaves the deployed agent's channel untouched.
@@ -1196,6 +1214,10 @@ enum ClusterAction {
         /// Optional note recorded with the resolution (with --resolve).
         #[arg(long)]
         note: Option<String>,
+        /// Channel id asserting the operator's membership, required by
+        /// channel-authorized approval gates (with --resolve).
+        #[arg(long)]
+        actor_channel: Option<String>,
     },
 }
 
@@ -1545,6 +1567,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 stream,
                 timeout_secs,
                 model,
+                concurrency,
                 dry_run,
             } => {
                 message::eval(message::EvalOpts {
@@ -1565,6 +1588,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     local: true,
                     api_url,
                     models: model,
+                    concurrency,
                 })
                 .await
             }
@@ -1608,6 +1632,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 as_actor,
                 reject,
                 note,
+                actor_channel,
             } => emit(
                 commands::approvals(
                     target.into(),
@@ -1619,6 +1644,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                         as_actor,
                         reject,
                         note,
+                        actor_channel,
                     },
                 )
                 .await?,
@@ -1907,6 +1933,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 stream,
                 timeout_secs,
                 model,
+                concurrency,
                 dry_run,
             } => {
                 message::eval(message::EvalOpts {
@@ -1927,6 +1954,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     local: false,
                     api_url: None,
                     models: model,
+                    concurrency,
                 })
                 .await
             }
@@ -1954,16 +1982,74 @@ async fn run(command: Option<Command>) -> Result<()> {
                          --secret, or use `agentos local deploy --secret` for a local end-to-end run."
                     );
                 }
-                // An explicit --api-url / AGENTOS_API_URL is dialed as given;
-                // otherwise reach the platform API through the deployed release's
-                // UI `/api` NodePort proxy (never self-plumb a port-forward).
-                let api_url = match api_url {
-                    Some(url) => url,
-                    None => ops::discover_ui_api_url(&namespace, &release).await?,
+                let api_key = commands::normalize_deploy_api_key(api_key);
+                // ADR-0057 (supersedes ADR-0024's deploy transport): with no
+                // explicit --api-key, discover the release's strong Secret key;
+                // an explicit key wins.
+                let key_auto_discovered = commands::deploy_needs_key_discovery(api_key.as_deref());
+                let api_key = if key_auto_discovered {
+                    ops::discover_api_key(&namespace, &release).await?
+                } else {
+                    api_key.expect("explicit key present when discovery not needed")
                 };
-                let connect_hint = format!(
-                    "the platform API at {api_url} is unreachable. `cluster deploy` reaches the API through the UI /api proxy (no port-forward); confirm the release is healthy with `agentos cluster status`, or pass --api-url to target the API directly."
-                );
+                // An explicit --api-url / AGENTOS_API_URL direct-dials the given
+                // URL. Otherwise self-plumb a kubectl port-forward to the
+                // release's api service so the discovered strong key travels only
+                // over the loopback tunnel, never over the cleartext UI /api
+                // NodePort proxy. Hold the child until after deploy returns;
+                // kill_on_drop tears it down on every exit path.
+                let local_port = message::DEFAULT_API_LOCAL_PORT;
+                let _deploy_pf;
+                // Tracks which transport produced `api_url`, so the unreachable
+                // hint below describes the RIGHT recovery: the auto path really
+                // self-plumbed a tunnel; the explicit path direct-dialed and did
+                // not. Mirrors the same `Some`/`None` discriminant
+                // `deploy_port_forward` keys on below.
+                let self_plumbed = api_url.is_none();
+                let api_url = match commands::deploy_port_forward(
+                    api_url.as_deref(),
+                    &namespace,
+                    &release,
+                    local_port,
+                    message::API_REMOTE_PORT,
+                ) {
+                    Some(pf_cmd) => {
+                        _deploy_pf = Some(
+                            message::start_port_forward(&pf_cmd, local_port, "deploy api").await?,
+                        );
+                        // svc/<release>-api serves the platform API at ROOT, so the
+                        // base URL has NO /api suffix (the /api in ADR-0024 was only
+                        // because the request went through the UI pod).
+                        format!("http://localhost:{local_port}")
+                    }
+                    None => {
+                        _deploy_pf = None;
+                        let url = api_url.expect("explicit url when no port-forward");
+                        // #705: the strong auto-discovered key must never egress
+                        // cleartext. An explicit non-loopback `http://` --api-url
+                        // would leak it on the wire, and no loopback tunnel is in
+                        // play here to protect it. Refuse rather than warn, unless
+                        // the operator opted in with an explicit --api-key.
+                        if key_auto_discovered && api::is_insecure_endpoint(&url) {
+                            bail!(
+                                "refusing to send the auto-discovered release key over cleartext \
+                                 HTTP to {url}: the strong key would leak on the wire. Pass \
+                                 --api-key explicitly to acknowledge, use an https:// URL, or omit \
+                                 --api-url to reach the release over the loopback port-forward."
+                            );
+                        }
+                        url
+                    }
+                };
+                let connect_hint = if self_plumbed {
+                    format!(
+                        "the platform API at {api_url} is unreachable. `cluster deploy` self-plumbs a kubectl port-forward to svc/{release}-api; confirm the release is healthy with `agentos cluster status`, or pass --api-url to dial the API directly."
+                    )
+                } else {
+                    format!(
+                        "the platform API at {api_url} (from --api-url/AGENTOS_API_URL) is unreachable. `cluster deploy` dialed it directly with no port-forward; confirm that URL is reachable and the release is healthy with `agentos cluster status`, or omit --api-url to self-plumb a loopback port-forward to svc/{release}-api."
+                    )
+                };
                 emit(
                     commands::deploy(DeployOpts {
                         plugin_dir,
@@ -2104,6 +2190,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 as_actor,
                 reject,
                 note,
+                actor_channel,
             } => {
                 let ClusterAgentTarget {
                     agent,
@@ -2127,6 +2214,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                             as_actor,
                             reject,
                             note,
+                            actor_channel,
                         },
                     )
                     .await?,

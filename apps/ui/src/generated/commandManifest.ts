@@ -893,6 +893,17 @@ export const commandManifest = {
               "required": false
             },
             {
+              "default_values": [
+                "1"
+              ],
+              "global": false,
+              "help": "Number of eval cases to run concurrently. Sequential (1) is the only supported value today; parallel dispatch is tracked in #709, so any value above 1 is refused rather than silently run sequentially",
+              "id": "concurrency",
+              "long": "concurrency",
+              "positional": false,
+              "required": false
+            },
+            {
               "global": false,
               "help": "Print the plan that a real run would produce, and exit",
               "id": "dry_run",
@@ -1191,6 +1202,14 @@ export const commandManifest = {
               "help": "Optional note recorded with the resolution (with --resolve)",
               "id": "note",
               "long": "note",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Channel id asserting the operator's membership, required by channel-authorized approval gates (with --resolve)",
+              "id": "actor_channel",
+              "long": "actor-channel",
               "positional": false,
               "required": false
             }
@@ -2073,6 +2092,17 @@ export const commandManifest = {
               "required": false
             },
             {
+              "default_values": [
+                "1"
+              ],
+              "global": false,
+              "help": "Number of eval cases to run concurrently. Sequential (1) is the only supported value today; parallel dispatch is tracked in #709, so any value above 1 is refused rather than silently run sequentially",
+              "id": "concurrency",
+              "long": "concurrency",
+              "positional": false,
+              "required": false
+            },
+            {
               "global": false,
               "help": "Print the kubectl commands, stub URL, and enqueue description that a real run would produce, and exit without executing anything",
               "id": "dry_run",
@@ -2105,7 +2135,7 @@ export const commandManifest = {
             {
               "env": "AGENTOS_API_URL",
               "global": false,
-              "help": "Platform API base URL. Omit to auto-discover the deployed release's UI `/api` proxy (NodePort + node host); no port-forward. AGENTOS_API_URL or an explicit value is dialed as given",
+              "help": "Platform API base URL. Omit to self-plumb a kubectl port-forward to the release's api service (a loopback tunnel); AGENTOS_API_URL or an explicit value direct-dials the given URL with no tunnel",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
@@ -2116,7 +2146,7 @@ export const commandManifest = {
                 "agentos"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release (for UI proxy discovery). Default: agentos",
+              "help": "Kubernetes namespace of the release (for the port-forward + key discovery). Default: agentos",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2127,19 +2157,16 @@ export const commandManifest = {
                 "agentos"
               ],
               "global": false,
-              "help": "Helm release name (for UI proxy discovery). Default: agentos",
+              "help": "Helm release name (for the port-forward + key discovery). Default: agentos",
               "id": "release",
               "long": "release",
               "positional": false,
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key",
+              "help": "Platform API key. Omit to auto-discover the release Secret key (`<release>-secrets`); the discovered key travels only in the X-API-Key header over the loopback tunnel, never over the cleartext NodePort proxy (ADR-0057). An explicit value wins",
               "id": "api_key",
               "long": "api-key",
               "positional": false,
@@ -2740,6 +2767,14 @@ export const commandManifest = {
               "help": "Optional note recorded with the resolution (with --resolve)",
               "id": "note",
               "long": "note",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Channel id asserting the operator's membership, required by channel-authorized approval gates (with --resolve)",
+              "id": "actor_channel",
+              "long": "actor-channel",
               "positional": false,
               "required": false
             }
