@@ -2091,6 +2091,47 @@ def test_builtin_and_already_effective_operator_gates_pass_verbatim() -> None:
     anyio.run(go)
 
 
+def test_bare_non_builtin_operator_gate_warns_it_may_be_a_silent_no_op(caplog) -> None:
+    """#712: a bare (non-mcp__) operator gate name that ISN'T a well-known
+    built-in tool is still armed verbatim (unchanged behavior -- we cannot
+    fail closed here without an authoritative built-in tool list), but it
+    must no longer be SILENT. This is exactly the shape that bit revenue-leak:
+    `AGENTOS_APPROVAL_REQUIRED_TOOLS=resolve_leak` (meant as shorthand for an
+    in-bundle MCP tool) armed a literal name the SDK's `can_use_tool` callback
+    can never match, with zero signal anywhere that the gate does nothing.
+    """
+    with caplog.at_level("WARNING"):
+        gate = build_approval_gate(
+            operator_tools=["resolve_leak"],
+            policy_routes={},
+            bundle_name="revenue-leak",
+            mcp_servers={"revenue-leak-engine"},
+        )
+    assert gate is not None
+    assert gate.required == frozenset({"resolve_leak"})  # unchanged: still arms verbatim
+    assert any(
+        "resolve_leak" in r.getMessage() and "mcp__" in r.getMessage()
+        for r in caplog.records
+    ), caplog.text
+
+
+def test_known_builtin_operator_gate_does_not_warn(caplog) -> None:
+    """#712 (no false positives): a real built-in tool name (Bash) must not
+    trigger the "does not match any well-known built-in" warning -- it is a
+    legitimate, common gate target, not a mistake."""
+    with caplog.at_level("WARNING"):
+        gate = build_approval_gate(
+            operator_tools=["Bash"],
+            policy_routes={},
+            bundle_name="revenue-leak",
+            mcp_servers={"revenue-leak-engine"},
+        )
+    assert gate is not None
+    assert not any(
+        "does not match any well-known" in r.getMessage() for r in caplog.records
+    )
+
+
 def test_manifest_gate_half_stays_fail_closed_after_operator_normalization(
     tmp_path,
 ) -> None:
