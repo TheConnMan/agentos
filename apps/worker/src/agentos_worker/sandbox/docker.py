@@ -544,12 +544,41 @@ class DockerSandboxClient:
         )
         if proc.returncode != 0:
             if check:
+                stderr = proc.stderr.strip()
                 # Never echo args: they may carry AGENTOS_CREDENTIALS.
                 raise DockerError(
-                    f"docker {args[0]} failed ({proc.returncode}): {proc.stderr.strip()}"
+                    f"docker {args[0]} failed ({proc.returncode}): {stderr}"
+                    f"{self._network_remediation_hint(stderr)}"
                 )
             return ""
         return proc.stdout
+
+    def _network_remediation_hint(self, stderr: str) -> str:
+        """An actionable one-liner appended when ``stderr`` names our own
+        configured docker network as missing (#715).
+
+        A stack whose compose topology has drifted (e.g. a service was
+        recreated individually, bypassing `docker compose up`'s network
+        reconciliation) surfaces this as a bare `docker: Error response from
+        daemon: failed to set up container networking: network <name> not
+        found` with nothing to act on beyond raw container logs -- exactly
+        what escalated as an opaque runner-error while getting a real agent
+        working locally. This does not auto-heal (the substrate has no compose
+        project to reconcile from); it only turns the dead end into a next
+        step for whoever is reading the worker's logs."""
+        if (
+            self._network
+            and "network" in stderr
+            and self._network in stderr
+            and "not found" in stderr
+        ):
+            return (
+                " -- the docker network the sandbox substrate expects"
+                f" ({self._network!r}) does not exist; run `agentos local up`"
+                " (or the cluster/compose equivalent) to reconcile the stack's"
+                " topology, then retry"
+            )
+        return ""
 
     def ensure_image(self) -> None:
         """Pre-pull the runner image if absent (IfNotPresent semantics).
