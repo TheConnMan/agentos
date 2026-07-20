@@ -83,9 +83,11 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
 - `agentos cluster status` reports release health, pod readiness, and the access URLs;
   the UI URL carries `?api=1`, so it opens wired to the in-cluster API (the
   deployed UI proxies `/api/` there).
-- `agentos cluster down` uninstalls the release and sweeps its runtime namespaces; the
-  `agents.x-k8s.io` CRDs are left in place. It prompts before deleting unless
-  `--yes` is passed.
+- `agentos cluster down` uninstalls the release and deletes only the namespaces
+  this release created, identified by the ownership label `up` stamped on them
+  (`agentos.dev/created-by=<release>`); pre-existing (unlabeled) namespaces and
+  the `agents.x-k8s.io` CRDs are left untouched. It prompts before deleting
+  unless `--yes` is passed.
 
 ## Connecting Slack
 
@@ -153,33 +155,34 @@ the stack.
 ## Deploy a bundle to the cluster
 
 Before `agentos cluster message` can drive an agent, a bundle must be deployed to
-the in-cluster platform API with `agentos cluster deploy`. The `agentos-api`
-service is ClusterIP, but the UI is exposed on a NodePort and its nginx
-reverse-proxies `/api/` to the in-cluster API. With no `--api-url`, `cluster
-deploy` auto-discovers that UI `/api` NodePort proxy (reading the `<release>-ui`
-service and resolving a routable node host) and dials it -- no port-forward and no
-manual URL:
+the in-cluster platform API with `agentos cluster deploy`. Per ADR-0057, with no
+`--api-url`, `cluster deploy` self-plumbs a `kubectl port-forward` to
+`svc/<release>-api` (a loopback tunnel) and dials `http://localhost:<port>` --
+no manual port-forward and no UI NodePort proxy involved:
 
 ```bash
-agentos cluster deploy --plugin-dir <bundle-dir> --api-key agentos-dev-key
+agentos cluster deploy --plugin-dir <bundle-dir>
 ```
 
-An explicit `--api-url` (e.g. `http://<node>:30080/api`) or `AGENTOS_API_URL` is
-honored exactly as given, overriding discovery.
+With no `--api-key`/`AGENTOS_API_KEY` either, the key is auto-discovered by
+reading `api.apiKey` out of the release's `<release>-secrets` Secret (decoded
+server-side, so the plaintext never lands in argv); the discovered key travels
+only in the `X-API-Key` header over the loopback tunnel, never over the
+cleartext UI `/api` NodePort proxy that ADR-0024 used for this path. Pass
+`--api-key` explicitly (or set `AGENTOS_API_KEY`) to override discovery with
+your own key.
 
-Discovery fails with a usage error telling you to pass `--api-url` when the UI is
-not NodePort-exposed (installed with `--no-expose`) or a routable node host can't
-be determined -- for example a managed/multi-node cluster whose kubeconfig points
-at a control-plane endpoint that does not expose NodePorts. `cluster deploy` does
-not self-plumb a port-forward, so in that case pass `--api-url` explicitly (a node
-URL, or a ClusterIP you forward yourself). If you must forward the ClusterIP:
+An explicit `--api-url` (e.g. `http://<node>:30080/api`, ADR-0024's UI proxy
+still available as the escape hatch) or `AGENTOS_API_URL` direct-dials the given
+URL exactly as given, with no tunnel. If the auto-discovered key would then
+travel over plain `http://`, `cluster deploy` refuses rather than leak it on the
+wire -- pass `--api-key` explicitly to acknowledge, use an `https://` URL, or
+omit `--api-url` to go back over the loopback tunnel.
 
-```bash
-kubectl port-forward svc/agentos-api 8000:8000 -n agentos &
-agentos cluster deploy --plugin-dir <bundle-dir> \
-  --api-url http://localhost:8000 --api-key agentos-dev-key
-kill %1   # cluster message plumbs its own forwards, so this one is no longer needed
-```
+Key discovery fails with a usage error telling you to pass `--api-key` when the
+release's `<release>-secrets` Secret cannot be read. The port-forward itself
+fails with a hint to check `agentos cluster status` if the release is not
+healthy.
 
 Without a deploy, `agentos cluster message` fails with `no agents are deployed on
 the platform API`.

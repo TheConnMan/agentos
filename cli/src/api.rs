@@ -206,7 +206,12 @@ pub struct DeployOutcome {
 /// Whether this endpoint would send the `X-API-Key` over cleartext HTTP to a
 /// non-loopback host (a forgotten `https://` that leaks the key on the wire).
 /// Local dev over `http://localhost` is expected and returns false.
-fn is_insecure_endpoint(base_url: &str) -> bool {
+///
+/// Pure and public so `cluster deploy` can REFUSE (not merely warn) egressing an
+/// auto-discovered strong release key to a cleartext non-loopback endpoint
+/// (#705): the same classifier that drives [`warn_if_insecure`] gates the refusal,
+/// so warn and refuse can never disagree.
+pub fn is_insecure_endpoint(base_url: &str) -> bool {
     let lower = base_url.trim().to_ascii_lowercase();
     if lower.starts_with("https://") {
         return false;
@@ -644,10 +649,14 @@ impl ApiClient {
         decision: &str,
         resolved_by: &str,
         note: Option<&str>,
+        actor_channel: Option<&str>,
     ) -> Result<ApprovalRecord> {
         let mut body = json!({ "decision": decision, "resolved_by": resolved_by });
         if let Some(note) = note {
             body["note"] = json!(note);
+        }
+        if let Some(chan) = actor_channel {
+            body["actor_channel"] = json!(chan);
         }
         let resp = self
             .http

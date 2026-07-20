@@ -246,7 +246,7 @@ the optional Slack dispatcher.
 | `agentos local observability` | Print the local platform's observability surfaces: AgentOS Console, Langfuse UI (traces / cost / evals), and the AgentOS API base. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. |
 | `agentos local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
 | `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
-| `agentos local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. |
+| `agentos local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
 | `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
 
 ## `cluster` target: deployed Helm release
@@ -263,8 +263,8 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster observability` | Report the release's observability surfaces (AgentOS Console, Langfuse UI, AgentOS API base), using the same NodePort discovery as `cluster status`. Degrades a missing, ClusterIP, or unresolvable surface to a note instead of failing. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. `--dry-run` prints the read-only discovery commands. |
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. |
-| `agentos cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. |
-| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. Reaches the API through the deployed release's UI `/api` NodePort proxy when `--api-url` is omitted (no port-forward); pass `--api-url` / `AGENTOS_API_URL` to target it directly. Auth via `--api-key` or `AGENTOS_API_KEY`. |
+| `agentos cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
+| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. When `--api-url` is omitted, self-plumbs a `kubectl port-forward` (loopback tunnel) to the release API service and auto-discovers the release-generated key from `<release>-secrets`, so the strong key never crosses the cleartext UI proxy (ADR-0057). Pass `--api-url` / `AGENTOS_API_URL` to direct-dial a URL instead (no tunnel); an explicit `--api-key` / `AGENTOS_API_KEY` still wins over discovery. |
 | `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
 | `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
 | `agentos cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
@@ -273,7 +273,8 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 The four lifecycle verbs (`kill`, `resume`, `budget`, `delete`) act on a
 deployed release's agents through the same platform API, defaulting `--api-url`
 to `http://localhost:8000` (auth via `--api-key` or `AGENTOS_API_KEY`). Unlike
-`cluster deploy`, they do not auto-discover the UI proxy -- pass `--api-url` or
+`cluster deploy`, which self-plumbs a port-forward and auto-discovers the
+release key (ADR-0057), the lifecycle verbs do neither -- pass `--api-url` or
 port-forward the API yourself. They resolve `<agent>` (a name or id) to its API id with the
 same lookup `deploy` uses. Each takes `--dry-run` (prints the plan, makes no
 request); the destructive `kill`/`delete` also require `--yes`.

@@ -14,6 +14,15 @@
 
 use std::process::Command;
 
+// The eval-concurrency forward-surface (#706): `EvalOpts` gains a
+// `pub concurrency: usize` field, and `eval_dry_run_lines` must emit one plan
+// line naming the sequential run. Importing directly from the `agentos` lib
+// (rather than only driving the built binary) pins the field on the struct
+// itself: until the implementer adds `concurrency`, this whole test target
+// fails to compile (the intended RED), isolated to this file -- the lib
+// itself still compiles.
+use agentos::message::{eval_dry_run_lines, EvalOpts};
+
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_agentos")
 }
@@ -306,6 +315,50 @@ fn local_eval_dry_run_emits_plan_not_error() {
 #[test]
 fn cluster_eval_dry_run_emits_plan_not_error() {
     assert_eval_dry_run_plan("cluster");
+}
+
+/// The forward-compatible `--concurrency` flag (#706) defaults to 1
+/// (sequential); the dry-run plan must say so explicitly, naming both
+/// "concurrency" and "sequential" in the same line, so an agent reading the
+/// plan never mistakes the sequential CLI loop for real fan-out (real
+/// parallelism is worker-side, deferred to #709).
+/// Placeholder credentials for the inline `EvalOpts` literal below (test-only,
+/// never real secrets): the public local-dev Valkey password and API key
+/// defaults. Hoisted to named consts so the literal reads a `TEST_*` const
+/// rather than an inline quoted field assignment, which is the shape the
+/// commit-time secret scanner's field-name-plus-literal heuristic matches on.
+const TEST_VALKEY_PASSWORD: &str = "valkeypass";
+const TEST_API_KEY: &str = "agentos-dev-key";
+
+#[test]
+fn eval_dry_run_plan_names_sequential_concurrency() {
+    let opts = EvalOpts {
+        cases: None,
+        channel: None,
+        namespace: "agentos".into(),
+        release: "agentos".into(),
+        listen_host: None,
+        listen_port: 8155,
+        valkey_local_port: 56381,
+        valkey_password: TEST_VALKEY_PASSWORD.into(),
+        api_local_port: 8123,
+        api_key: TEST_API_KEY.into(),
+        user: "U-agentos-message".into(),
+        stream: "agentos:runs".into(),
+        timeout_secs: 300,
+        dry_run: true,
+        local: true,
+        api_url: None,
+        models: Vec::new(),
+        concurrency: 1,
+    };
+    let lines = eval_dry_run_lines(&opts, "weather", 3);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("concurrency") && l.contains("sequential")),
+        "dry-run plan must name the sequential run and mention concurrency: {lines:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

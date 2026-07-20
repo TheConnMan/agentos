@@ -178,7 +178,7 @@ fn local_stub_reply_endpoint(advertise_host: &str) -> String {
 
 /// In-cluster service ports the port-forwards target.
 const VALKEY_REMOTE_PORT: u16 = 6379;
-const API_REMOTE_PORT: u16 = 8000;
+pub const API_REMOTE_PORT: u16 = 8000;
 
 /// Options for the shared target noun message forms, mirroring their clap
 /// flags.
@@ -591,13 +591,13 @@ fn detect_local_ip(host: &str, port: u16) -> Option<std::net::IpAddr> {
 
 /// Spawn a `kubectl port-forward` child (killed on drop via `kill_on_drop`) and
 /// block until its local port accepts TCP, so callers can use it immediately.
-async fn start_port_forward(
+pub async fn start_port_forward(
     cmd: &OpsCommand,
     local_port: u16,
     label: &str,
 ) -> Result<tokio::process::Child> {
     crate::ui::ui().plumbing(&format!("+ {}", cmd.display()));
-    let child = tokio::process::Command::new(&cmd.program)
+    let mut child = tokio::process::Command::new(&cmd.program)
         .args(cmd.argv())
         .kill_on_drop(true)
         .stdout(Stdio::null())
@@ -607,6 +607,19 @@ async fn start_port_forward(
     wait_for_tcp(local_port, Duration::from_secs(15))
         .await
         .with_context(|| format!("the {label} port-forward never opened localhost:{local_port}"))?;
+    // The port accepting TCP is not proof WE bound it. If another process was
+    // already listening on localhost:{local_port}, kubectl could not bind, so it
+    // exited, and the socket that just answered is the squatter's -- a caller
+    // that then posts a discovered key would leak it to that process. If the
+    // child has already exited by the time TCP connects, it never held the port;
+    // refuse and name the conflict. A child still alive is the happy path (this
+    // stays race-tolerant: only a definitely-exited child trips the guard).
+    if child.try_wait()?.is_some() {
+        bail!(
+            "the {label} port-forward exited immediately; localhost:{local_port} is already in \
+             use by another process. Free that port or stop the conflicting process, then retry."
+        );
+    }
     Ok(child)
 }
 
@@ -995,6 +1008,70 @@ pub struct EvalOpts {
     /// `POST /evals/trigger` per model, then poll `GET /evals/matrix` for the
     /// per-model pass-rate so the run lands in the matrix sliced by model.
     pub models: Vec<String>,
+    /// Requested eval concurrency (#706). The CLI eval loop is sequential today;
+    /// real parallel dispatch is worker-side and tracked in #709, so any value
+    /// above 1 is refused up front rather than silently run sequentially.
+    pub concurrency: usize,
+}
+
+/// Resolve the requested eval concurrency to the only value the CLI eval loop
+/// supports today: sequential (1). Real parallel dispatch is worker-side and
+/// tracked in #709, so any request above 1 is refused loudly rather than
+/// silently downgraded to sequential without telling the caller (issue #706).
+/// `0` is likewise refused rather than normalized to 1: it is not a valid
+/// concurrency (there is no such thing as running zero cases at a time), so
+/// silently accepting it as sequential would misreport the plan (a `--dry-run`
+/// would otherwise print "sequential (0)").
+pub fn resolve_eval_concurrency(requested: usize) -> anyhow::Result<usize> {
+    if requested == 0 {
+        return Err(anyhow::anyhow!(
+            "concurrency must be at least 1 (0 is not a valid eval concurrency)"
+        ));
+    }
+    if requested == 1 {
+        return Ok(1);
+    }
+    Err(anyhow::anyhow!(
+        "concurrency > 1 not yet supported; parallel eval dispatch is tracked in #709"
+    ))
+}
+
+/// Count the nodes a run could actually be scheduled onto from the stdout of
+/// `kubectl get nodes -o json`: a node counts only when it is Ready (a
+/// `status.conditions` entry with `type=Ready` and `status=True`) AND not
+/// cordoned (`spec.unschedulable` absent or false). Malformed, empty, or absent
+/// JSON yields 0 rather than panicking, so a probe failure never masquerades as
+/// a healthy multi-node cluster (issue #706).
+pub fn schedulable_node_count(nodes_json: &str) -> usize {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(nodes_json) else {
+        return 0;
+    };
+    let Some(items) = root.get("items").and_then(|v| v.as_array()) else {
+        return 0;
+    };
+    items
+        .iter()
+        .filter(|node| {
+            let cordoned = node
+                .get("spec")
+                .and_then(|spec| spec.get("unschedulable"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if cordoned {
+                return false;
+            }
+            node.get("status")
+                .and_then(|status| status.get("conditions"))
+                .and_then(|c| c.as_array())
+                .map(|conditions| {
+                    conditions.iter().any(|cond| {
+                        cond.get("type").and_then(|t| t.as_str()) == Some("Ready")
+                            && cond.get("status").and_then(|s| s.as_str()) == Some("True")
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .count()
 }
 
 /// Grade one tier turn's reply with the SAME grader `skill eval` uses, gated on
@@ -1110,6 +1187,7 @@ pub fn eval_dry_run_lines(opts: &EvalOpts, suite_name: &str, case_count: usize) 
             advertised_url(&host, opts.listen_port)
         ));
     }
+    lines.push(format!("concurrency: sequential ({})", opts.concurrency));
     lines.push(format!(
         "enqueue one synthetic QueuedTurn per case on stream {}",
         opts.stream
@@ -1171,7 +1249,11 @@ async fn run_eval_turns(
         let output = match &outcome {
             Outcome::Replied(reply) => reply.clone(),
             Outcome::AwaitingApproval(reply) => reply.clone().unwrap_or_default(),
-            Outcome::CompletedNoEdit | Outcome::TimedOut => String::new(),
+            Outcome::CompletedNoEdit => String::new(),
+            // A timed-out case surfaces the stream/consumer diagnostics the same
+            // way the non-eval message path does (#706), so the failure is not a
+            // silent empty string but the stream state that explains it.
+            Outcome::TimedOut => diagnostics(conn, &opts.stream, &stream_id).await,
         };
         results.push((
             case.id.clone(),
@@ -1194,6 +1276,10 @@ async fn run_eval_turns(
 /// so a suite that passes at `skill` can be re-asserted verbatim at `local` and
 /// `cluster` (issue #344, the per-tier parity gate).
 pub async fn eval(opts: EvalOpts) -> Result<()> {
+    // Refuse `--concurrency > 1` before any enqueue or work (#706): the CLI eval
+    // loop is sequential and real parallel dispatch is tracked in #709, so a
+    // request above 1 fails fast rather than silently running sequentially.
+    let _ = resolve_eval_concurrency(opts.concurrency)?;
     // A `--model` sweep (#526) is the platform eval plane, not the in-CLI parity
     // gate: it triggers a matrix-producing run per model and reads the comparison
     // back off GET /evals/matrix. It is orthogonal to the tier's message path.
@@ -1659,6 +1745,46 @@ async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     crate::commands::report_eval(&results)
 }
 
+/// Whether a surfaced enqueue/await error looks like a timeout or a stalled
+/// `XADD onto ...` on the runs stream (queue.rs) -- the shape a single-node
+/// cluster saturated by concurrent sandbox claims produces (issue #706).
+fn looks_like_enqueue_timeout(err: &anyhow::Error) -> bool {
+    let chain = format!("{err:#}").to_lowercase();
+    chain.contains("timed out") || chain.contains("timeout") || chain.contains("xadd onto")
+}
+
+/// Enrich a cluster-eval enqueue/await timeout with a single-node-saturation
+/// hint. The opaque `XADD onto agentos:runs` error does not name the most common
+/// cause on a dev cluster: one schedulable node saturated by concurrent sandbox
+/// claims. When there is at most one schedulable node (or the count cannot be
+/// read from `kubectl get nodes`), point the operator at `agentos cluster
+/// status`. The original error stays as the anyhow cause; it is never swallowed.
+async fn enrich_cluster_enqueue_timeout(err: anyhow::Error) -> anyhow::Error {
+    if !looks_like_enqueue_timeout(&err) {
+        return err;
+    }
+    let hint = match crate::ops::run_capture(&crate::ops::nodes_cmd()).await {
+        // Count read cleanly and the cluster has at most one schedulable node.
+        Ok((true, out, _)) if schedulable_node_count(&out) <= 1 => Some(
+            "this cluster has at most one schedulable node, which a run can saturate with \
+             concurrent sandbox claims; check `agentos cluster status` for node and sandbox \
+             pressure",
+        ),
+        // Count read cleanly and there is real headroom: no single-node hint.
+        Ok((true, _, _)) => None,
+        // The node count could not be determined; add the hint softly rather
+        // than fail, since single-node saturation is the usual cause here.
+        _ => Some(
+            "this often indicates a single-node cluster saturated by concurrent sandbox claims; \
+             check `agentos cluster status`",
+        ),
+    };
+    match hint {
+        Some(hint) => err.context(hint.to_string()),
+        None => err,
+    }
+}
+
 async fn eval_cluster(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     let ui = crate::ui::ui();
 
@@ -1726,7 +1852,10 @@ async fn eval_cluster(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     );
     let mut conn = connect(&valkey_url).await?;
 
-    let results = run_eval_turns(&opts, &channel, &suite, &mut conn, &mut stub).await?;
+    let results = match run_eval_turns(&opts, &channel, &suite, &mut conn, &mut stub).await {
+        Ok(results) => results,
+        Err(err) => return Err(enrich_cluster_enqueue_timeout(err).await),
+    };
     crate::commands::report_eval(&results)
 }
 
@@ -2133,6 +2262,7 @@ mod tests {
             local,
             api_url: None,
             models: Vec::new(),
+            concurrency: 1,
         }
     }
 
