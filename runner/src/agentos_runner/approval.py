@@ -48,6 +48,8 @@ from claude_agent_sdk.types import (
 from plugin_format import (
     ApprovalPolicy,
     PluginManifest,
+    declared_mcp_server_names,
+    effective_operator_gate,
     grantable_routes,
     resolve_manifest,
 )
@@ -461,10 +463,21 @@ class ApprovalPolicyResolution:
     an operator marked ``grantableViaPolicy`` to the MANIFEST tool a policy
     approval on that route may grant. An honest empty policy yields
     ``ApprovalPolicyResolution({}, {})``.
+
+    ``bundle_name`` and ``mcp_servers`` carry the bundle identity
+    ``build_approval_gate`` needs to normalize an operator gate name to its
+    effective plugin-prefixed runtime form (#703). They are populated even when
+    the bundle declares no ``approvalPolicy``, because an operator may still gate
+    a bundle MCP tool by the ``AGENTOS_APPROVAL_REQUIRED_TOOLS`` shorthand.
+    ``mcp_servers`` is ``None`` when the declared-server set is unknowable (the
+    ``declared_mcp_server_names`` poison), which fails an ``mcp__`` shorthand
+    closed. Both are ``None`` when there is no bundle/manifest to read.
     """
 
     route_by_tool: dict[str, str]
     grantable_by_route: dict[str, str]
+    bundle_name: str | None = None
+    mcp_servers: set[str] | None = None
 
 
 def resolve_approval_policy(plugin_dir: str | None) -> ApprovalPolicyResolution:
@@ -514,8 +527,18 @@ def resolve_approval_policy(plugin_dir: str | None) -> ApprovalPolicyResolution:
             f"cannot read the bundle manifest at {manifest_path} to determine whether"
             f" it declares an approvalPolicy; refusing to boot ungated ({exc})"
         ) from exc
+    # Bundle identity for operator gate-name normalization (#703): the runner must
+    # resolve an operator mcp__<server>__<tool> shorthand to its effective
+    # plugin-prefixed runtime name, so read the bundle name and declared MCP
+    # servers even when the bundle declares no approvalPolicy of its own -- an
+    # operator may still gate a bundle MCP tool via the env knob.
+    name = raw.get("name") if isinstance(raw, dict) else None
+    bundle_name = name if isinstance(name, str) else None
+    mcp_servers = declared_mcp_server_names(root)
     if not isinstance(raw, dict) or raw.get("approvalPolicy") is None:
-        return ApprovalPolicyResolution({}, {})
+        return ApprovalPolicyResolution(
+            {}, {}, bundle_name=bundle_name, mcp_servers=mcp_servers
+        )
     # An approvalPolicy IS declared. From here every failure is fail-closed:
     # the intent is established and a parse error cannot revoke it.
     try:
@@ -548,7 +571,9 @@ def resolve_approval_policy(plugin_dir: str | None) -> ApprovalPolicyResolution:
     # ignored here (arm no ambiguous grant); the deploy validator already rejects
     # it, so this is belt-and-braces, not the enforcement point.
     grantable_by_route, _ambiguous = grantable_routes(policy.gates)
-    return ApprovalPolicyResolution(routes, grantable_by_route)
+    return ApprovalPolicyResolution(
+        routes, grantable_by_route, bundle_name=bundle_name, mcp_servers=mcp_servers
+    )
 
 
 def load_approval_policy(plugin_dir: str | None) -> dict[str, str]:
@@ -569,6 +594,8 @@ def build_approval_gate(
     policy_routes: dict[str, str],
     grant_tool: str | None = None,
     grantable_by_route: dict[str, str] | None = None,
+    bundle_name: str | None = None,
+    mcp_servers: set[str] | None = None,
 ) -> ApprovalGate | None:
     """Merge the operator's gated tools with the bundle's declared gates.
 
@@ -598,7 +625,36 @@ def build_approval_gate(
     resume re-derives the same config. See ADR-0050.
     """
 
-    operator = frozenset(operator_tools or ())
+    # Normalize each operator-supplied name to its effective runtime form BEFORE
+    # the overlap computation (#703, decision A2). The SDK plugin-prefixes a
+    # bundle MCP tool to mcp__plugin_<bundle>_<server>__<tool>, so an operator
+    # shorthand mcp__<server>__<tool> must be rewritten or the gate arms a literal
+    # the runtime name never matches -- a silent fail-open. Built-ins and
+    # already-effective mcp__plugin_ names pass verbatim (the manifest-half
+    # policy_routes are already deploy-validated to effective form and are NOT
+    # re-normalized here). An mcp__-shaped name that resolves to no declared
+    # server fails CLOSED (raise), matching resolve_approval_policy's #520 posture
+    # -- it never degrades to ungated (the anti-hollow-out union still never
+    # subtracts). Normalizing before ``redefined`` makes the ADR-0050 overlap warn
+    # fire on effective names, so an operator shorthand and its manifest twin
+    # collide correctly.
+    normalized: list[str] = []
+    for raw_name in operator_tools or ():
+        name = raw_name.strip()
+        if not name:
+            continue
+        effective = effective_operator_gate(bundle_name, mcp_servers, name)
+        if effective is None:
+            raise ApprovalPolicyError(
+                f"operator approval gate {name!r} names an MCP tool that cannot be"
+                " resolved to a declared bundle server; refusing to boot with a"
+                " gate that would arm nothing. Namespace it to its live"
+                " mcp__plugin_<bundle>_<server>__<tool> name, or check the bundle"
+                f" declares that server (declared servers: {mcp_servers})"
+            )
+        normalized.append(effective)
+
+    operator = frozenset(normalized)
     redefined = sorted(operator & set(policy_routes))
     if redefined:
         logger.warning(

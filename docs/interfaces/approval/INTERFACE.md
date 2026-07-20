@@ -186,20 +186,26 @@ in code now:
   `GET /approvals/{id}/audit`): actor, channel evidence, decision, and the authorizer
   snapshot -- who resolved, and why they counted (or were refused).
 
-### Arming a gate: use the fully-namespaced tool name
+### Arming a gate: bare MCP shorthand is normalized; unresolvable names fail closed
 
-The permission gate (`agents.approval_required_tools`, the runner's `can_use_tool`
-callback) matches a configured tool name by exact string equality -- no
-normalization, no prefix matching. The name you arm must be the tool's LIVE,
-fully-namespaced name, not the bare tool name.
-
-For a bundle-declared MCP tool that live name is
+The permission gate (`agents.approval_required_tools`, forwarded as
+`AGENTOS_APPROVAL_REQUIRED_TOOLS`) matches a tool by its LIVE, fully-namespaced
+runtime name. For a bundle-declared MCP tool that live name is
 `mcp__plugin_<bundle>_<server>__<tool>`, where `<bundle>` is the
 .claude-plugin/plugin.json `name` and `<server>` is the `.mcp.json` server key,
-for example `mcp__plugin_github-issues_github__create_issue`. The bare form
-`mcp__<server>__<tool>` (e.g. `mcp__github__create_issue`) does NOT match: a gate
-armed with it silently never intercepts the call, and a destructive tool runs
-with no approval whatsoever.
+for example `mcp__plugin_github-issues_github__create_issue`.
+
+**Since #703**, `build_approval_gate` (`runner/src/agentos_runner/approval.py`)
+normalizes each operator-supplied name to its effective form before arming:
+a bare `mcp__<server>__<tool>` shorthand is rewritten to the
+`mcp__plugin_<bundle>_<server>__<tool>` name when `<server>` matches a
+bundle-declared MCP server. Built-in tool names and already-effective
+`mcp__plugin_...` names pass through verbatim. There is no verbatim carve-out
+for an `mcp__`-shaped name that names no other server form. If an
+`mcp__`-shaped name cannot be resolved to a declared bundle server, the
+runner refuses to boot with `ApprovalPolicyError` rather than arming nothing
+-- previously this failed open: an unresolvable shorthand silently never
+matched and the gated tool ran with no approval whatsoever.
 
 Confirm the exact live name before arming a gate rather than guessing it.
 `agentos skill check` prints a `match: <server> -> plugin:<bundle>:<server>`

@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from .approval_policy import grantable_routes
+from .approval_policy import declared_mcp_server_names, effective_tool_prefix, grantable_routes
 from .manifest import resolve_manifest
 from .models import (
     _TRIGGER_TYPES,
@@ -181,18 +181,19 @@ def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> set[st
     path, or a config that failed to validate); it poisons the union, because a
     single unreadable source makes the declared-server set unknowable. An empty
     set is a different fact: a declaration was read and named no servers.
+
+    The declaration objects are still walked here for their error layering (the
+    ``_Collector`` messages), but the RETURNED set -- which
+    ``_validate_approval_policy`` builds gate prefixes from -- comes from the
+    shared ``declared_mcp_server_names`` derivation the runtime loader also uses,
+    so the deploy validator and the runner normalize gate names identically by
+    construction (#453/#703). Deriving both from one function is the anti-drift
+    guarantee; the per-source walks below only produce actionable errors.
     """
 
     declared = manifest.mcpServers
-    servers: set[str] = set()
-    unreadable = False
-
     if isinstance(declared, dict):
-        result = _validate_mcp_object(declared, "plugin.json (mcpServers)", c)
-        if result is None:
-            unreadable = True
-        else:
-            servers |= result
+        _validate_mcp_object(declared, "plugin.json (mcpServers)", c)
     elif isinstance(declared, str):
         c.error(
             "mcp.declared_pointer",
@@ -201,22 +202,12 @@ def _validate_mcp(root: Path, manifest: PluginManifest, c: _Collector) -> set[st
             'object instead: "mcpServers": {"<name>": {"command": "..."}}.',
             "plugin.json",
         )
-        # An unreadable declaration, not an empty one: poison the set so the
-        # approval-gate cross-check stays silent instead of stacking a
-        # misleading "gate names an undeclared server" error on top of this.
-        unreadable = True
 
     root_mcp = root / ".mcp.json"
     if root_mcp.is_file():
-        result = _validate_mcp_file(root_mcp, ".mcp.json", c)
-        if result is None:
-            unreadable = True
-        else:
-            servers |= result
+        _validate_mcp_file(root_mcp, ".mcp.json", c)
 
-    if unreadable:
-        return None
-    return servers
+    return declared_mcp_server_names(root)
 
 
 def _validate_mcp_file(path: Path, location: str, c: _Collector) -> set[str] | None:
@@ -393,7 +384,7 @@ def _validate_approval_policy(
     # (_NAME_RE) but a server key can, so parsing mcp__plugin_a_b_c__t is
     # ambiguous. Constructing and testing startswith sidesteps that entirely.
     expected_prefixes: set[str] | None = (
-        {f"mcp__plugin_{manifest.name}_{s}__" for s in mcp_servers}
+        {effective_tool_prefix(manifest.name, s) for s in mcp_servers}
         if mcp_servers is not None
         else None
     )
@@ -452,7 +443,7 @@ def _gate_not_namespaced_message(gate: str, bundle: str, mcp_servers: set[str]) 
 
     if mcp_servers:
         declared = "Expected one of: " + ", ".join(
-            sorted(f"mcp__plugin_{bundle}_{s}__<tool>" for s in mcp_servers)
+            sorted(f"{effective_tool_prefix(bundle, s)}<tool>" for s in mcp_servers)
         )
     else:
         declared = "This bundle declares no MCP servers"
@@ -460,8 +451,14 @@ def _gate_not_namespaced_message(gate: str, bundle: str, mcp_servers: set[str]) 
         f"approval gate {gate!r} is not a live MCP tool name. A bundle-declared "
         f"MCP tool's live name is mcp__plugin_{bundle}_<server>__<tool>. "
         f"{declared}. A built-in tool gate (e.g. Bash) carries no mcp__ prefix. "
-        "To arm a live tool name this bundle does not declare, add it to the "
-        "per-agent AGENTOS_APPROVAL_REQUIRED_TOOLS env knob."
+        "A MANIFEST approvalPolicy gate must be the fully-namespaced live name "
+        "(this deploy gate does not normalize it). The per-agent "
+        "AGENTOS_APPROVAL_REQUIRED_TOOLS env knob is more lenient (#703): the runner "
+        "normalizes a bare mcp__<server>__<tool> shorthand for a DECLARED server to "
+        "its effective name, and also accepts an already-namespaced "
+        "mcp__plugin_<bundle>_<server>__<tool> or a built-in name -- but only for a "
+        "server the bundle declares; it never arms a name that names no declared "
+        "server. Namespace this manifest gate to its live name."
     )
 
 

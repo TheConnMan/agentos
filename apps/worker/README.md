@@ -193,6 +193,18 @@ Rules (detailed-architecture 2b), each with an integration test that provokes it
   every later turn. **Transient failures are unaffected:** a worker that crashes
   mid-turn still has its entry reclaimed, retried, and acked exactly as before;
   only an exhausted delivery budget dead-letters.
+- **Exception: best-effort reply on an approval-resume turn, pure-offline
+  loop** (#708). The scenario above is exactly an approval-resume turn whose
+  reply endpoint (the CLI's throwaway stub) died with the process that
+  created it. When there is genuinely no default Slack transport configured
+  (`self._default_base_url is None`), that unreachable reply no longer
+  dead-letters the resume: the kernel marks the turn `best_effort` and
+  `AsyncSlackSink._with_transport_fallback` logs and swallows the
+  unreachable-endpoint error instead of raising, so the already-granted tool
+  call still executes and the turn ACKs (the reply is still captured in the
+  transcript, just not delivered). A reply over a *configured* default
+  transport, and any non-resume turn, still raises on an unreachable
+  endpoint and follows the normal retry/dead-letter path above.
 
 ### The dead-letter graveyard
 

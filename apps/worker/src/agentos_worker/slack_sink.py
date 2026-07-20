@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 import aiohttp
 from slack_sdk.errors import SlackApiError
@@ -53,6 +53,7 @@ class SlackSink(Protocol):
         text: str,
         nav: NavPack | None = None,
         endpoint: str | None = None,
+        best_effort_unreachable: bool = False,
     ) -> None: ...
 
     async def set_status(
@@ -145,6 +146,7 @@ class AsyncSlackSink:
         op: Callable[[AsyncWebClient], Awaitable[_T]],
         *,
         describe: str,
+        best_effort_unreachable: bool = False,
     ) -> _T:
         """Run ``op`` against this turn's endpoint, falling back to the worker
         DEFAULT transport when that endpoint is UNREACHABLE (#530).
@@ -159,6 +161,23 @@ class AsyncSlackSink:
         failing target was a real per-turn ``endpoint`` AND a default is configured
         AND it differs from that endpoint. A ``SlackApiError`` (endpoint reachable,
         call rejected) is not an unreachability and is never caught here.
+
+        ``best_effort_unreachable`` (#708) covers the pure-offline case: on a
+        resume turn (kernel gates it via ``_is_approval_resume``) whose reply
+        endpoint is dead and where there is genuinely NO default configured at all
+        (``self._default_base_url is None`` -- the pure-offline local loop), log
+        and RETURN instead of re-raising, so the resolved approval's
+        already-executed turn ACKs instead of dead-lettering. The reply is still
+        durably captured in the transcript, so it is not lost. When a default IS
+        configured, the swallow never fires: a per-turn endpoint takes the #530
+        default fallback above, and a reply already targeting the configured
+        default that is unreachable is a genuine outage that stays LOUD.
+
+        Best-effort delivery intentionally covers BOTH resume flavors -- the
+        ``[approval resolved]`` resolve path and the ``[approval expired]`` expiry
+        path -- because both carry the same ``approval-<id>-resolved`` event_id the
+        kernel matches with ``_is_approval_resume``. That shared coverage is
+        deliberate and plan-ratified, not an oversight.
         """
         primary = self._client_for(endpoint)
         resolved = endpoint or self._default_base_url
@@ -168,16 +187,41 @@ class AsyncSlackSink:
         try:
             return await op(primary)
         except _UNREACHABLE_ERRORS as exc:
-            if not has_distinct_default:
-                raise
-            logger.warning(
-                "%s: reply endpoint %r is unreachable (%s); falling back to the "
-                "default Slack transport",
-                describe,
-                endpoint,
-                exc,
-            )
-            return await op(self._client_for(None))
+            if has_distinct_default:
+                logger.warning(
+                    "%s: reply endpoint %r is unreachable (%s); falling back to the "
+                    "default Slack transport",
+                    describe,
+                    endpoint,
+                    exc,
+                )
+                return await op(self._client_for(None))
+            # The best-effort swallow (#708) fires ONLY in the pure-offline case
+            # where there is genuinely NO configured default transport at all
+            # (``self._default_base_url is None``). It must NOT key off
+            # ``not has_distinct_default``: that is also False when the reply is
+            # going over a CONFIGURED default (``endpoint`` is None or equals the
+            # default), where the target is a real, reachable-in-principle Slack.
+            # An unreachable-class error there is a genuine transient OUTAGE that
+            # must stay LOUD (raise -> reclaim -> retry per ADR-0039), never be
+            # silently swallowed and acked. A resumed turn that then hits ANOTHER
+            # approval gate or fails posts via ``_pause_for_approval``/``_escalate``
+            # with ``best_effort_unreachable=False`` and therefore stays loud
+            # (dead-letters) even in this offline loop -- a second approval card or
+            # an escalation must never be silently dropped; surfacing via
+            # dead-letter is correct, and completing those offline is out of scope
+            # for #708.
+            if best_effort_unreachable and self._default_base_url is None:
+                logger.warning(
+                    "%s: reply endpoint %r is unreachable (%s) with no default "
+                    "transport; completing the resume turn best-effort without "
+                    "delivering the reply",
+                    describe,
+                    endpoint,
+                    exc,
+                )
+                return cast(_T, None)
+            raise
 
     async def update(
         self,
@@ -187,6 +231,7 @@ class AsyncSlackSink:
         text: str,
         nav: NavPack | None = None,
         endpoint: str | None = None,
+        best_effort_unreachable: bool = False,
     ) -> None:
         # The runner emits Markdown; Slack renders mrkdwn. ``render`` converts to
         # mrkdwn and, if the reply carries a complete ``agentos-reply`` block,
@@ -215,7 +260,12 @@ class AsyncSlackSink:
             else:
                 await client.chat_update(channel=channel, ts=ts, text=rendered_text)
 
-        await self._with_transport_fallback(endpoint, op, describe="chat_update")
+        await self._with_transport_fallback(
+            endpoint,
+            op,
+            describe="chat_update",
+            best_effort_unreachable=best_effort_unreachable,
+        )
 
     async def post(
         self,

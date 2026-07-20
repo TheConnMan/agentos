@@ -18,6 +18,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 
+import aiohttp
 import pytest
 import redis
 from aci_protocol import Final, OutboundEvent, SessionStatus
@@ -120,6 +121,16 @@ class FakeSink(SlackSink):
         self.card_updates: list[
             tuple[str, str, str, list[dict[str, object]], str | None]
         ] = []
+        # #708 test infra: endpoints whose HOST is dead (a CLI stub that exited).
+        # A reply-delivery ``update`` to one models the pure-offline local loop --
+        # no distinct default transport -- so it RAISES the same aiohttp transport
+        # error ``_with_transport_fallback`` re-raises (#530), UNLESS the caller
+        # opts into best-effort delivery (``best_effort_unreachable=True``), which
+        # logs-and-returns. This is what proves the flag -- not luck -- is what
+        # converts a resume turn's dead-letter into a terminal ACK.
+        self.dead_endpoints: set[str] = set()
+        # Reply deliveries that were swallowed best-effort (channel, ts, text).
+        self.swallowed: list[tuple[str, str, str]] = []
 
     async def update(
         self,
@@ -129,7 +140,13 @@ class FakeSink(SlackSink):
         text: str,
         nav: NavPack | None = None,
         endpoint: str | None = None,
+        best_effort_unreachable: bool = False,
     ) -> None:
+        if endpoint is not None and endpoint in self.dead_endpoints:
+            if best_effort_unreachable:
+                self.swallowed.append((channel, ts, text))
+                return
+            raise aiohttp.ClientError(f"reply endpoint {endpoint!r} is unreachable")
         self.updates.append((channel, ts, text))
         self.update_navs.append(nav)
         self.update_endpoints.append(endpoint)
