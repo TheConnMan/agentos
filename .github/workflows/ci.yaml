@@ -369,3 +369,101 @@ jobs:
         env:
           AGENTOS_BIN: cli/target/release/agentos
         run: bash cli/scripts/eval-falsifiability.sh
+
+  # COLD-START PARITY LADDER (issue #690), skill + local rungs only. A
+  # meta-analysis of all 41 bug issues filed against this repo found roughly
+  # 18 were caught ONLY by a manual cold-start dogfood run and never surfaced
+  # by unit tests, review, or existing CI -- whole classes of bug had no
+  # lower-tier signal at all: compose env wiring (#545), profile asymmetry
+  # (#233, #342), deploy-then-message reachability (#352, #359), and
+  # fake/live model defaults (#343). The ladder drives the real `agentos`
+  # verbs end to end (rung 1: the skill-tier `e2e.sh`; rung 2: `local
+  # up --minimal` -> `local deploy` -> `local message` with the reply
+  # asserted -> `local down`) against a real runner container, sealed with
+  # the fake model, so this class of bug fails CI instead of surviving to
+  # the next manual dogfood pass.
+  #
+  # The cluster rung is NOT run here and is NOT covered by this job. It needs
+  # a real cluster, a Helm install, the runner prewarm DaemonSet, and a
+  # host-reachable reply stub -- none of which exist in this workflow today.
+  # It is verified by hand against k8scratch; the PR body carries the
+  # follow-up issue that tracks wiring it into CI on a kind cluster. Do not
+  # read this job as full-ladder coverage.
+  #
+  # Rung 2 brings up the `core` compose profile for real, unlike the Python
+  # job above (which never starts agentos-api/worker to dodge private-registry
+  # pulls). `agentos-api` and `agentos-migrate` pull
+  # `ghcr.io/curie-eng/agentos-api:latest`, a private GHCR image this workflow
+  # has no credentials for, so it is built locally first and tagged to match
+  # -- compose only pulls a tag that is absent from the local image store, so
+  # a matching local tag satisfies both services with no registry auth.
+  # `agentos-worker` builds from source at `up` time via
+  # compose/worker-local.Dockerfile, but that Dockerfile's own FROM is
+  # `ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` (default `latest`), another
+  # private pull one layer down that the compose file has no build-arg wired
+  # to override. The same local-tag trick applies: build the worker base image
+  # from source and tag it `ghcr.io/curie-eng/agentos-worker:latest` so the
+  # overlay's FROM resolves locally too. Both are the same pattern the
+  # `worker-local-image` job above already uses for its own base build, and
+  # both builds are throwaway (this runner's Docker daemon is discarded at job
+  # end; nothing here is ever pushed).
+  #
+  # Rung 2's worker spawns sibling runner containers through the mounted
+  # Docker socket (network_mode: host, AGENTOS_SANDBOX_SUBSTRATE=docker); the
+  # runner image it spawns must already exist on the host daemon, which it
+  # does once the `agentos-runner` build below completes. GitHub-hosted
+  # runners support Docker-in-Docker this way, but this is confirmed by the
+  # first green live run of this job in CI, not asserted from first
+  # principles -- if that first run does not go green, treat the
+  # docker-socket path as unverified rather than assuming the theory above is
+  # right.
+  #
+  # A third private-image seam, easy to miss because it is not a compose
+  # `image:` pull: compose.dev.yaml sets AGENTOS_RUNNER_IMAGE=
+  # ghcr.io/curie-eng/agentos-runner:latest on the worker service, and
+  # apps/worker/src/agentos_worker/run.py reads that env var (falling back to
+  # bare `agentos-runner` only when it is unset) to name the image it spawns
+  # per message. Rung 1 (skill) and the CLI's own dev-build default both use
+  # the bare `agentos-runner` tag the build step below produces, but rung 2's
+  # worker asks for the ghcr.io-qualified tag instead. Retag the same local
+  # build under both names rather than building twice, so one rung's image
+  # choice cannot silently break the other.
+  #
+  # Reuses the release binary the Rust job already built and uploaded. The
+  # local rung needs a working Docker daemon for `docker compose`;
+  # ubuntu-latest ships one, the same assumption the `compose` job above
+  # already relies on. `AGENTOS_E2E_TIERS` and `AGENTOS_E2E_LIVE` are left
+  # unset, so the script's own defaults apply: skill + local rungs, fake
+  # model, credential-free. Expect this to be the slowest job in the
+  # workflow -- three image builds (runner, api, worker base) plus one more
+  # (the worker-local overlay) that compose triggers itself, on top of the
+  # actual up/deploy/message/down round trip; `local up --wait` alone can run
+  # up to compose's 300s default wait timeout if a service is slow to report
+  # healthy.
+  e2e-ladder:
+    name: E2E parity ladder (skill + local, fake model)
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download the agentos binary built by the Rust job
+        uses: actions/download-artifact@v7
+        with:
+          name: agentos-x86_64-linux-${{ github.sha }}
+          path: cli/target/release
+      - name: Make the binary executable
+        run: chmod +x cli/target/release/agentos
+      - name: Build the runner image locally
+        run: docker build -t agentos-runner -f runner/Dockerfile .
+      - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
+        run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
+      - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
+        run: docker build -t ghcr.io/curie-eng/agentos-api:latest -f apps/api/Dockerfile .
+      - name: Build the worker base image locally (satisfies the worker-local overlay's FROM, no registry auth)
+        run: docker build -t ghcr.io/curie-eng/agentos-worker:latest -f apps/worker/Dockerfile .
+      - name: Parity ladder (skill + local rungs, fake model, credential-free)
+        env:
+          AGENTOS_BIN: cli/target/release/agentos
+        run: bash cli/scripts/e2e-ladder.sh

@@ -165,10 +165,24 @@ exercises the deploy leg:
 ```bash
 AGENTOS_E2E_NETWORK=agentos_default \
 AGENTOS_E2E_OTEL=http://otel-collector:4318 \
-AGENTOS_E2E_API_URL=http://localhost:8000 bash cli/scripts/e2e.sh
+AGENTOS_E2E_API_URL=http://localhost:28000 bash cli/scripts/e2e.sh
 ```
 Both require the `agentos-runner` image built once from the repo root
 (`docker build -f runner/Dockerfile -t agentos-runner .`).
+
+Cold-start parity ladder (issue #690, `agentos dev e2e-ladder` ->
+`cli/scripts/e2e-ladder.sh`) -- an E2E test, same as the scripted E2E above, not
+the falsifiability gate below it. It chains three rungs: rung 1 delegates to
+`e2e.sh` unchanged; rung 2 drives `local up --minimal` -> `local deploy` ->
+`local message` (reply asserted) -> `local down`; rung 3 drives `cluster
+deploy` -> `cluster message` against a pre-installed release, a real round
+trip with no manual port-forward. `AGENTOS_E2E_TIERS` (default `skill,local`,
+or `all` for `skill,local,cluster`) selects rungs; `AGENTOS_E2E_LIVE` (default
+fake, `1` for live) governs the local and cluster rungs only, since the skill
+rung stays fake. One-command pre-release gate:
+```bash
+AGENTOS_E2E_TIERS=all agentos dev e2e-ladder
+```
 
 Falsifiability gate (issue #619) -- a gate, NOT an E2E test: it never runs a real
 agent or makes a model call. Its real-path half boots the FAKE model and asserts

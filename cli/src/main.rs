@@ -281,6 +281,9 @@ enum DevAction {
     ChartCheck,
     /// Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`).
     E2e,
+    /// Run the cold-start parity ladder across the skill, local, and cluster
+    /// tiers, fake model by default (#690, `bash cli/scripts/e2e-ladder.sh`).
+    E2eLadder,
     /// Lint the interface catalog docs (`bash scripts/check-docs.sh`).
     DocsLint,
     /// Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`).
@@ -1284,6 +1287,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 commands::dev_script("charts/agentos/ci/render-assertions.sh").await
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
+            DevAction::E2eLadder => commands::dev_script("cli/scripts/e2e-ladder.sh").await,
             DevAction::DocsLint => commands::dev_script("scripts/check-docs.sh").await,
             DevAction::PluginCompat => commands::dev_script("scripts/check-plugin-compat.sh").await,
             DevAction::EvalFalsifiability => {
@@ -2362,6 +2366,24 @@ mod tests {
                 action: DevAction::EvalFalsifiability
             })
         ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "e2e-ladder"])
+            .expect("dev e2e-ladder should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Dev {
+                action: DevAction::E2eLadder
+            })
+        ));
+    }
+
+    // Proves the `dev` verb set is closed: an unrecognized verb must fail to
+    // parse rather than silently falling through. Without this negative case,
+    // a typo'd verb name (e.g. a future rename that missed a call site) could
+    // ship without ever being caught by the positive-path tests above.
+    #[test]
+    fn dev_unknown_subcommand_rejected() {
+        let result = Cli::try_parse_from(["agentos", "dev", "e2e-ladder-typo"]);
+        assert!(result.is_err());
     }
 
     #[test]
