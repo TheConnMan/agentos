@@ -512,6 +512,78 @@
           "name": "up"
         },
         {
+          "about": "Rebuild + recreate ONE compose service (e.g. after a code change) without losing the stack's already-resolved credential/model-mode wiring",
+          "args": [
+            {
+              "global": false,
+              "help": "The compose service to rebuild, e.g. `agentos-worker`",
+              "id": "service",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override",
+              "id": "file",
+              "long": "file",
+              "positional": false,
+              "required": false,
+              "short": "f"
+            },
+            {
+              "global": false,
+              "help": "Print the docker compose command and exit without executing",
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Match how `local up` brought the stack up (core-only vs full)",
+              "id": "minimal",
+              "long": "minimal",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Match how `local up` brought the stack up (--local-model, if used)",
+              "id": "local_model",
+              "long": "local-model",
+              "num_args": {
+                "max": 1,
+                "min": 0
+              },
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Match how `local up` brought the stack up (--slack, if used)",
+              "id": "slack",
+              "long": "slack",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "long_about": "Rebuild + recreate ONE compose service (e.g. after a code change) without losing the stack's already-resolved credential/model-mode wiring.\n\nA raw `docker compose up --no-deps <service>` silently reverts that one service to compose's fake-model/dev-stub defaults, because compose's `${VAR-default}` substitution reads THIS invocation's shell, not what the rest of the stack is running with -- export the same credential / AGENTOS_FAKE_MODEL you want, same as `local up`.",
+          "name": "rebuild"
+        },
+        {
           "about": "Stop the dev stack (docker compose down), keeping volumes",
           "args": [
             {
