@@ -83,7 +83,15 @@ and commit the regenerated files; CI runs the same check (`scripts/check-docs.sh
 Test discipline: test-first for behavior-bearing code; mock ONLY external
 services (Slack, Anthropic, GitHub); NEVER mock Postgres/Valkey/Langfuse -- run
 integration tests against the dev stack below. A change that only makes tests
-pass by weakening assertions is a regression.
+pass by weakening assertions is a regression. At parity seams, include at least
+one negative or secondary-path test per AC (see the parity-seam registry).
+Assertions about an external API or SDK's shape or auth must be grounded in
+provider docs or observed behavior, cited in a test comment, never in the
+implementation's own assumption. Any read-modify-write on a versioned row needs a
+stale-version conflict test (match the CAS pattern in
+`apps/api/src/agentos_api/routers/state.py`). Every stream consumer lane derives
+bounded delivery + dead-letter from the shared transport; a lane without a
+delivery cap is a bug.
 
 ## The dev stack: compose.dev.yaml
 
@@ -166,6 +174,42 @@ its own reviewed, backward-compatible change first, before dependent lanes
 proceed. This also applies whenever an adopted component (Langfuse, Agent
 Sandbox, Bolt) cannot do what a spec claims: stop and raise it with the evidence
 rather than silently diverging.
+
+## Parity seams: cover the sibling or file it
+
+Sibling-path drift is the dominant historical bug class here: logic or hardening
+lands on one side of a structural seam while its twin keeps the old behavior.
+Known seam pairs:
+
+- worker vs CLI credential forwarding -- `_SDK_PASSTHROUGH_ENV`
+  (`apps/worker/src/agentos_worker/sandbox/docker.py`) and the CLI picker
+  (`cli/src/commands.rs`) can't share code across Python/Rust, so they are frozen
+  together in `tests/vectors/model-credential-forwarding.json`.
+- real SDK vs fake model session in the runner (`FakeModelSession`, `runner/src/agentos_runner/fake.py`).
+- runs lane vs eval lane stream consumers (`apps/worker/src/agentos_worker/consumer.py` vs `eval/stream.py`, both on the shared `stream_consumer.py`).
+- CLI-side vs API-side input validation (validate at the API/persistence boundary, mirror in the CLI).
+- `local up` vs `local down` compose profile sets.
+- `compose.dev.yaml` vs the generated release compose.
+- `core` vs `full` compose profiles.
+- `local` vs `cluster` verb pairs (reachability defaults, outcome enums).
+- CLI `--json` DTOs vs the API models they mirror.
+- deploy-time validators vs the runtime loaders that re-parse the same value (share normalization code).
+
+A PR touching one side of a seam must route the behavior through a shared helper
+both sides call, change both sides in the same PR, or name the sibling in the PR
+body with a follow-up issue number. Prefer parity by construction over remembered
+duplication. Ship a test that arms the behavior via the secondary path only
+(bundle-manifest-only gate, fake-tier-only, minimal-profile-only) and asserts it
+matches the primary path.
+
+## Guards are outcome-tested
+
+A new or modified gate, validator, denylist, or preflight lands only with a
+demonstration that it rejects a violating input by execution, not by reading the
+code. Its regression test asserts the outcome through the real consumer path (the
+filter the user hits, the loader that re-parses the value), never an internal
+struct field. No doc or comment may claim a protection that no code realizes -- a
+claimed-but-absent guard is worse than none.
 
 ## E2E verification is mandatory
 
@@ -254,6 +298,10 @@ Two different tools; do not conflate them.
   before touching that area. An ADR is not just what we chose; it **must record what
   we decided against and why** (the alternatives and their rejection). If no real
   alternative is being closed off, it is not an ADR.
+- An ADR or plan whose rationale claims observability, convergence, protection, or
+  parity must name the code path that realizes the claim in the same change, or
+  name the tracked follow-up issue that will. A rationale that says "this becomes
+  observable" without a consumer or alert is an unmet claim and blocks acceptance.
 - Write a **GitHub issue** (with a rich description) for a **feature**, however
   large. A new CLI command, a UI surface, a connector: it may be a lot of code, but
   it is deletable and does not change the architecture, so it is a feature, not an
