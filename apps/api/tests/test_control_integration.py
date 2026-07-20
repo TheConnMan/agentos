@@ -80,6 +80,47 @@ def test_kill_sets_flag_and_publishes_event(
         valkey.delete(key)
 
 
+def test_reset_thread_queues_a_pending_request(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+) -> None:
+    """#713: the endpoint queues the thread for the worker's maintenance tick
+    to drain -- it does not (cannot, from the API process) release the
+    sandbox itself. Real Valkey, real SADD, no mocking."""
+    from agentos_api.threadreset import THREAD_RESET_SET
+
+    agent_id = _make_agent(client, auth_headers)
+    valkey.srem(THREAD_RESET_SET, "t-reset-1")
+    try:
+        resp = client.post(
+            f"/agents/{agent_id}/threads/t-reset-1/reset", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"requested": True}
+        assert valkey.sismember(THREAD_RESET_SET, "t-reset-1")
+
+        # Idempotent: requesting an already-pending thread again is a no-op.
+        again = client.post(
+            f"/agents/{agent_id}/threads/t-reset-1/reset", headers=auth_headers
+        )
+        assert again.status_code == 200
+        assert valkey.scard(THREAD_RESET_SET) >= 1
+    finally:
+        valkey.srem(THREAD_RESET_SET, "t-reset-1")
+
+
+def test_reset_thread_requires_a_real_agent(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    resp = client.post(
+        "/agents/00000000-0000-0000-0000-000000000000/threads/t-x/reset",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
 def test_budget_round_trips_through_postgres(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:

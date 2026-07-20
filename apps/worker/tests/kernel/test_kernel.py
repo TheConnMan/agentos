@@ -622,3 +622,57 @@ def test_booting_update_failure_never_fails_the_turn(make_harness) -> None:
             assert await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())
+
+
+def test_release_thread_force_releases_a_live_route(make_harness) -> None:
+    """#713: an operator can force-release a thread's sandbox even though it
+    has a live (not suspended, not dead) route -- the whole point is to evict
+    a sandbox that is up and answering but running stale env, not just one
+    that already died on its own (that path -- claim()'s stale-sandbox
+    eviction -- already existed)."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tRelease"))
+            assert h.substrate.lookup("tRelease") is not None  # the route is live
+
+            released = await h.kernel.release_thread("tRelease")
+            assert released is True
+            assert h.substrate.lookup("tRelease") is None  # gone: next claim is fresh
+
+    asyncio.run(go())
+
+
+def test_release_thread_interrupts_a_live_turn_first(make_harness) -> None:
+    """Releasing a thread mid-turn interrupts it first rather than yanking the
+    claim out from under a running turn silently."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            hold = asyncio.Event()
+            h.runner.hold = hold
+            h.runner.default_script = [TextDelta(text="thinking")]
+            h.runner.tail = [Final(text="stopped", status=IDLE)]
+
+            e1 = _qevent("start", thread="tReleaseMidTurn")
+            t1 = asyncio.create_task(h.kernel.process_event(e1))
+            await _wait_until(lambda: h.runner.turn_active)
+
+            released = await h.kernel.release_thread("tReleaseMidTurn")
+            assert released is True
+            assert h.runner.interrupts == 1  # interrupted, not silently abandoned
+
+            hold.set()
+            await t1
+
+    asyncio.run(go())
+
+
+def test_release_thread_with_no_route_is_a_noop(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            released = await h.kernel.release_thread("never-seen-thread")
+            assert released is False
+
+    asyncio.run(go())

@@ -2119,6 +2119,20 @@
         "title": "StateEntryPut",
         "type": "object"
       },
+      "ThreadResetState": {
+        "description": "Whether a thread has a pending forced-sandbox-release request (#713).",
+        "properties": {
+          "requested": {
+            "title": "Requested",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requested"
+        ],
+        "title": "ThreadResetState",
+        "type": "object"
+      },
       "TipsPackConfig": {
         "description": "Rotating capability tips for one agent (mirrors behaviorpacks.TipsPack).\nSeparate from LoadPackConfig: a load line is what the agent is doing now, a\ntip advertises what it can do.",
         "properties": {
@@ -3884,6 +3898,75 @@
         "summary": "Append State",
         "tags": [
           "state"
+        ]
+      }
+    },
+    "/agents/{agent_id}/threads/{thread_key}/reset": {
+      "post": {
+        "description": "Force the thread's sandbox to be released (#713): the worker's next\nmaintenance tick deletes its claim and route, so the NEXT message on this\nthread cold-creates a fresh sandbox instead of adopting one that may be\nrunning stale env (a rotated credential, an unpicked-up redeploy, a wedge\nfrom a partial local-stack upgrade). A live turn on the thread, if any, is\ninterrupted first -- see ``Kernel.release_thread``. Does not delete\nconversation history: a fresh sandbox still rehydrates from the durable\ntranscript on its next claim, same as any other cold-create.\n\n``agent_id`` scopes the action to a specific agent's registration (matching\nevery other verb on this router) but is not itself required to resolve the\nthread -- the release is purely thread-keyed, mirroring\n``SandboxSubstrate.release``.",
+        "operationId": "reset_thread_agents__agent_id__threads__thread_key__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "thread_key",
+            "required": true,
+            "schema": {
+              "title": "Thread Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadResetState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Thread",
+        "tags": [
+          "control"
         ]
       }
     },

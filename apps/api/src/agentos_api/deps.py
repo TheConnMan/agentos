@@ -14,6 +14,7 @@ from .killswitch import KillSwitch
 from .langfuse import LangfuseClient
 from .resumequeue import ResumeQueue
 from .storage import ObjectStore
+from .threadreset import ThreadResetRequests
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -62,6 +63,11 @@ def get_resume_queue(request: Request) -> ResumeQueue:
     return resume_queue
 
 
+def get_thread_reset_requests(request: Request) -> ThreadResetRequests:
+    requests: ThreadResetRequests = request.app.state.thread_reset_requests
+    return requests
+
+
 def get_approver_sets(request: Request) -> ApproverSetSelector:
     """Picks the approver set a route binding calls for (#420).
 
@@ -83,3 +89,6 @@ EvalQueueDep = Annotated[EvalQueue, Depends(get_eval_queue)]
 GitHubReporterDep = Annotated[GitHubStatusReporter, Depends(get_github_reporter)]
 ResumeQueueDep = Annotated[ResumeQueue, Depends(get_resume_queue)]
 ApproverSetSelectorDep = Annotated[ApproverSetSelector, Depends(get_approver_sets)]
+ThreadResetRequestsDep = Annotated[
+    ThreadResetRequests, Depends(get_thread_reset_requests)
+]

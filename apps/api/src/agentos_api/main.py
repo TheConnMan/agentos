@@ -40,6 +40,7 @@ from .slack_approvers import SlackApproverSetSelector
 from .slack_usergroups import SlackUserGroupClient
 from .storage import BundleStore
 from .sweeper import run_expiry_sweeper
+from .threadreset import ThreadResetRequests
 
 
 @asynccontextmanager
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     valkey: redis.Redis = redis.from_url(settings.valkey_dsn())
     app.state.valkey = valkey
     app.state.kill_switch = KillSwitch(valkey)
+    app.state.thread_reset_requests = ThreadResetRequests(valkey)
     app.state.eval_queue = EvalQueue(valkey)
     # resume_dead_letter_stream stays the narrower override that wins when set;
     # its fallback is now the unified graveyard name (which honors

@@ -460,6 +460,21 @@ class Kernel:
         await self._runner.interrupt(handle.base_url, reason, token=handle.token or None)
         return True
 
+    async def release_thread(self, thread_key: str) -> bool:
+        """Force-release the thread's sandbox (#713, an operator action): delete
+        its substrate claim and route so the next message cold-creates fresh,
+        picking up current model/Slack config instead of adopting a sandbox
+        that may be running stale env from when it first booted. History is
+        not lost -- a cold-created sandbox rehydrates its transcript from the
+        durable state store on claim, the same as any other fresh claim.
+
+        Any live turn is interrupted first (best-effort: `interrupt_thread`
+        already no-ops safely when nothing is live) so `release` never yanks
+        the claim out from under a running turn without at least trying to
+        stop it cleanly. True if a route existed to release."""
+        await self.interrupt_thread(thread_key, "operator requested a sandbox reset")
+        return await asyncio.to_thread(self._substrate.release, thread_key)
+
     def attach_killswitch(self, killswitch: KillSwitch) -> None:
         """Wire the kill switch after construction (it needs interrupt_agent)."""
         self._killswitch = killswitch
