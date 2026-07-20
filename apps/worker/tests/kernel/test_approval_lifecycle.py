@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import aiohttp
+import pytest
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_worker.approvals import ApprovalBackendError, ApprovalRequest, CreatedApproval
 from agentos_worker.sandbox.types import RouteState
@@ -674,5 +676,109 @@ def test_resolve_authored_by_a_system_named_actor_does_not_expire_the_card(
             # the dispatcher, never stamped expired by the worker.
             assert h.sink.card_updates == []
             assert not await h.async_redis.exists(h.config.approval_card_key(thread))
+
+    asyncio.run(go())
+
+
+# --- Best-effort resume reply when the CLI stub endpoint is dead (#708) --------
+
+
+def test_resume_reply_best_effort_completes_offline_when_endpoint_is_dead(
+    make_harness,
+) -> None:
+    """AC-708-1/2 (#708, PRIMARY): a resolved approval's resume turn whose per-turn
+    reply endpoint is the now-dead CLI stub, delivered on a worker with NO distinct
+    default transport (the pure-offline local loop), must still COMPLETE -- the
+    granted tool executes exactly once and the turn reaches terminal ACK -- instead
+    of dead-lettering because the reply cannot be delivered.
+
+    Today the reply-delivery ``update`` raises the aiohttp transport error
+    ``_with_transport_fallback`` re-raises when there is no distinct default (#530
+    only rescues the has-default case), so ``process_event`` escapes; the consumer
+    then leaves the entry pending, redelivers it to the delivery cap, and
+    dead-letters it (#505) -- a full re-run per redelivery and the resolved approval
+    never completes. The done marker is the proof it did NOT: it is written only
+    once the turn is terminally handled (the consumer then acks it).
+
+    The fix makes a resume turn's reply best-effort: the kernel gates the new
+    ``best_effort_unreachable`` flag on ``_is_approval_resume(event_id)`` for the
+    reply-delivery ``update`` calls (streaming edits + final reply). The resume
+    ``event_id`` shape (``approval-<uuid>-resolved``) is authored by
+    ``resumequeue.resume_event_id`` -- the format authority the worker recognizer
+    keys off across the api/worker seam.
+    """
+
+    async def go() -> None:
+        from agentos_api.resumequeue import resume_event_id
+
+        grant_event = resume_event_id(uuid.uuid4())
+        binding = GrantBinding(
+            grant_event_id=grant_event, grant_tool="mcp__github__create_issue"
+        )
+        async with make_harness(binding=binding) as h:
+            # Offline local loop: the reply endpoint (the CLI stub) is dead, and the
+            # worker sink has NO distinct default transport to fall back to.
+            h.sink.dead_endpoints.add(_CLI_STUB)
+
+            # The granted tool runs to done in the runner during the resume turn.
+            h.runner.default_script = [Final(text="Issue created.", status=DONE)]
+            resume_turn = QueuedTurn(
+                event_id=grant_event,
+                conversation_id="th-offline-resume",
+                author="U9",
+                text="[approval resolved] approved by U9",
+                reply_handle=ReplyHandle(
+                    channel="C1", placeholder="p-1", endpoint=_CLI_STUB
+                ),
+                received_at="2026-07-14T00:00:00+00:00",
+            )
+
+            # Must NOT raise: a dead reply endpoint on a resume turn no longer
+            # dead-letters the resolved approval.
+            await h.kernel.process_event(resume_turn)
+
+            # Terminal ACK, not dead-letter.
+            assert await h.async_redis.exists(h.config.done_key(grant_event))
+
+            # The granted tool executed exactly once: the resume turn opened a
+            # single runner turn, and that claim carried the one-shot #430 grant.
+            assert h.runner.opened == ["[approval resolved] approved by U9"]
+            resumed_env = h.fake_k8s.claim_envs[-1]
+            assert resumed_env is not None
+            assert (
+                resumed_env.get("AGENTOS_APPROVAL_GRANT_TOOL")
+                == "mcp__github__create_issue"
+            )
+
+    asyncio.run(go())
+
+
+def test_normal_turn_reply_stays_loud_when_endpoint_is_dead(make_harness) -> None:
+    """AC-708-4 (#708): the best-effort swallow is scoped to resume turns. A NORMAL
+    (non ``approval-<uuid>-resolved``) turn hitting the same dead endpoint + no
+    distinct default must STILL fail loudly -- a fresh local turn whose stub crashed
+    mid-turn is a genuine failure that must surface, not silently complete. Extends
+    ``test_no_fallback_when_no_default_is_configured``'s intent to the kernel.
+
+    The transport error propagates out of ``process_event`` (leaving the entry
+    pending for reclaim), so the turn is NOT marked done -- the inverse of the
+    resume case above."""
+
+    async def go() -> None:
+        async with make_harness() as h:  # no binding -> a plain, non-resume turn
+            h.sink.dead_endpoints.add(_CLI_STUB)
+            h.runner.default_script = [Final(text="done", status=DONE)]
+            ev = _qevent(
+                "hello",
+                thread="th-normal-dead",
+                event_id="ev-normal-1",  # not the resume shape
+                endpoint=_CLI_STUB,
+            )
+
+            with pytest.raises(aiohttp.ClientError):
+                await h.kernel.process_event(ev)
+
+            # Not silently completed: no done marker was written.
+            assert not await h.async_redis.exists(h.config.done_key(ev.event_id))
 
     asyncio.run(go())

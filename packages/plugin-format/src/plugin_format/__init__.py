@@ -6,7 +6,11 @@ is a frozen interface (see the package README); a change stops the task and
 escalates to the orchestrator.
 """
 
-from .approval_policy import grantable_routes
+from .approval_policy import (
+    declared_mcp_server_names,
+    effective_operator_gate,
+    grantable_routes,
+)
 from .archive import UnsupportedArchive, bundle_root, safe_extract
 from .manifest import MANIFEST_LOCATIONS, resolve_manifest
 from .models import (
@@ -43,6 +47,8 @@ __all__ = [
     "ApprovalPolicy",
     "ApprovalGate",
     "grantable_routes",
+    "declared_mcp_server_names",
+    "effective_operator_gate",
     "validate_bundle",
     "ValidationResult",
     "ValidationIssue",

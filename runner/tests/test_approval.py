@@ -1976,3 +1976,190 @@ def test_resumed_policy_turn_that_halted_on_budget_does_not_warn() -> None:
         )
 
     anyio.run(go)
+
+
+# --- #703: operator gate-name normalization + fail-closed ------------------------
+#
+# AGENTOS_APPROVAL_REQUIRED_TOOLS is taken verbatim, but the SDK plugin-prefixes a
+# bundle MCP tool to mcp__plugin_<bundle>_<server>__<tool>. So an operator who
+# writes the natural shorthand mcp__<server>__<tool> never matches the effective
+# runtime name and the guarded call runs UNAPPROVED (a fail-open). build_approval_gate
+# gains bundle_name/mcp_servers and normalizes each operator name to its effective
+# form against the bundle's declared servers, failing closed (ApprovalPolicyError)
+# on any mcp__-shaped name that is not already mcp__plugin_-prefixed AND names an
+# undeclared server. The plugin-prefix shape is the exact form the deploy validator
+# asserts (validate.py:
+#   expected_prefixes = {f"mcp__plugin_{manifest.name}_{s}__" for s in mcp_servers}
+# ), so operator and manifest halves normalize identically by construction (#453).
+
+
+def test_operator_shorthand_gate_denies_the_effective_runtime_name() -> None:
+    """AC-703-1: an operator gate written as the mcp__<server>__<tool> shorthand
+    must intercept the SDK's plugin-prefixed effective runtime name.
+
+    The operator shorthand mcp__github__update_issue must normalize to
+    mcp__plugin_b_github__update_issue and DENY the effective call. Today the gate
+    arms the un-prefixed literal, the effective name never matches, and the call
+    runs unapproved (PermissionResultAllow) -- the fail-open this closes. Driven
+    through the public can_use_tool callback, not a set-membership peek.
+    """
+
+    async def go() -> None:
+        gate = build_approval_gate(
+            operator_tools=["mcp__github__update_issue"],
+            policy_routes={},
+            bundle_name="b",
+            mcp_servers={"github"},
+        )
+        assert gate is not None
+        callback = build_can_use_tool(gate)
+        result = await callback(
+            "mcp__plugin_b_github__update_issue",
+            {"issue": 1},
+            ToolPermissionContext(),
+        )
+        assert isinstance(result, PermissionResultDeny)
+
+    anyio.run(go)
+
+
+def test_operator_mcp_gate_naming_undeclared_server_fails_closed() -> None:
+    """AC-703-2: an mcp__-shaped operator gate that cannot resolve to a declared
+    bundle server must RAISE ApprovalPolicyError, never build a silently-unarming
+    gate.
+
+    Fail closed on the unresolvable, matching resolve_approval_policy's #520
+    posture. Covered both when the bundle declares no matching server
+    (mcp_servers=set()) and when no MCP declaration was readable (mcp_servers=None,
+    the _validate_mcp poison). Today build_approval_gate silently builds a gate
+    whose literal name never fires.
+    """
+
+    for servers in (set(), None):
+        with pytest.raises(ApprovalPolicyError):
+            build_approval_gate(
+                operator_tools=["mcp__github__update_issue"],
+                policy_routes={},
+                bundle_name="b",
+                mcp_servers=servers,
+            )
+
+
+def test_builtin_and_already_effective_operator_gates_pass_verbatim() -> None:
+    """AC-703-4: names that need no rewrite arm verbatim and never raise.
+
+    (a) a built-in (Bash) carries no mcp__ prefix -> armed by raw name;
+    (b) an already-effective mcp__plugin_<bundle>_<server>__<tool> name is passed
+        through unchanged (mirrors validate.py, which only asserts the
+        mcp__plugin_ prefix; the tool suffix is unknowable without the server) and
+        does NOT raise.
+    """
+
+    async def go() -> None:
+        # (a) built-in passes verbatim and denies the raw call.
+        builtin = build_approval_gate(
+            operator_tools=["Bash"],
+            policy_routes={},
+            bundle_name="b",
+            mcp_servers={"github"},
+        )
+        assert builtin is not None
+        assert isinstance(
+            await build_can_use_tool(builtin)(
+                "Bash", {"command": "x"}, ToolPermissionContext()
+            ),
+            PermissionResultDeny,
+        )
+
+        # (b) already-effective passes verbatim, denies, and does not raise.
+        effective = build_approval_gate(
+            operator_tools=["mcp__plugin_b_github__update_issue"],
+            policy_routes={},
+            bundle_name="b",
+            mcp_servers={"github"},
+        )
+        assert effective is not None
+        assert isinstance(
+            await build_can_use_tool(effective)(
+                "mcp__plugin_b_github__update_issue",
+                {"issue": 1},
+                ToolPermissionContext(),
+            ),
+            PermissionResultDeny,
+        )
+
+    anyio.run(go)
+
+
+def test_manifest_gate_half_stays_fail_closed_after_operator_normalization(
+    tmp_path,
+) -> None:
+    """AC-703-3 (sibling / #453 no-regression): normalizing the OPERATOR half must
+    not weaken the MANIFEST half.
+
+    (1) A manifest approvalPolicy gate already in the effective form
+        mcp__plugin_b_github__update_issue still arms and denies unchanged when
+        build_approval_gate is called with the new bundle_name/mcp_servers params
+        (the manifest half is deploy-validated to effective form and rides
+        policy_routes verbatim, never re-normalized).
+    (2) A manifest gate carrying the bare mcp__github__update_issue shorthand still
+        FAILS validate_bundle (the deploy gate), proving the manifest half stays
+        fail-closed. Reuses the #453 validator pattern
+        (validate.py: approval_policy.gate_not_namespaced).
+    """
+
+    # (2) the deploy validator still rejects the bare shorthand manifest gate.
+    bundle = _write_manifest(
+        tmp_path,
+        json.dumps(
+            {
+                "name": "b",
+                "mcpServers": {"github": {"command": "gh-server"}},
+                "approvalPolicy": {
+                    "gates": [
+                        {"gate": "mcp__github__update_issue", "route": "legal"}
+                    ]
+                },
+            }
+        ),
+    )
+    result = validate_bundle(bundle)
+    assert not result.valid
+    assert "approval_policy.gate_not_namespaced" in {i.code for i in result.errors}
+
+    # (1) the effective manifest gate arms and denies, unchanged by normalization.
+    async def go() -> None:
+        gate = build_approval_gate(
+            operator_tools=None,
+            policy_routes={"mcp__plugin_b_github__update_issue": "legal"},
+            bundle_name="b",
+            mcp_servers={"github"},
+        )
+        assert gate is not None
+        denied = await build_can_use_tool(gate)(
+            "mcp__plugin_b_github__update_issue",
+            {"issue": 1},
+            ToolPermissionContext(),
+        )
+        assert isinstance(denied, PermissionResultDeny)
+
+    anyio.run(go)
+
+
+def test_already_prefixed_operator_gate_naming_wrong_bundle_fails_closed() -> None:
+    """AC-703-2 (residual fail-open): an already mcp__plugin_-prefixed operator
+    gate is NOT trusted verbatim -- it must name a DECLARED server's expected
+    prefix, else it arms a literal the runtime name never matches (fail OPEN).
+
+    A typo'd mcp__plugin_wrongbundle_wrongserver__tool against a bundle "b"
+    declaring only "github" must RAISE ApprovalPolicyError, not silently build a
+    gate that arms nothing. Mirrors validate.py's expected_prefixes assertion.
+    """
+
+    with pytest.raises(ApprovalPolicyError):
+        build_approval_gate(
+            operator_tools=["mcp__plugin_wrongbundle_wrongserver__tool"],
+            policy_routes={},
+            bundle_name="b",
+            mcp_servers={"github"},
+        )

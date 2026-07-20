@@ -598,12 +598,18 @@ def test_booting_update_failure_never_fails_the_turn(make_harness) -> None:
                 text: str,
                 nav: NavPack | None = None,
                 endpoint: str | None = None,
+                best_effort_unreachable: bool = False,
             ) -> None:
                 if text == booting and fired["n"] == 0:
                     fired["n"] += 1
                     raise RuntimeError("injected Slack failure on booting update")
                 await original_update(
-                    channel=channel, ts=ts, text=text, nav=nav, endpoint=endpoint
+                    channel=channel,
+                    ts=ts,
+                    text=text,
+                    nav=nav,
+                    endpoint=endpoint,
+                    best_effort_unreachable=best_effort_unreachable,
                 )
 
             h.sink.update = flaky_update  # type: ignore[method-assign]

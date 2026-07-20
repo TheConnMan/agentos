@@ -159,6 +159,7 @@ class _ThrottledReply:
         nav: NavPack | None = None,
         no_edit: bool = False,
         endpoint: str | None = None,
+        best_effort: bool = False,
     ) -> None:
         self._sink = sink
         self._channel = channel
@@ -167,6 +168,12 @@ class _ThrottledReply:
         self._no_edit = no_edit
         self._last = 0.0
         self._last_text: str | None = None
+        # Whether this turn's reply delivery is best-effort (#708): set only for an
+        # approval-resume turn (the caller derives it from _is_approval_resume). The
+        # granted tool already ran in the runner, so an undeliverable reply to a
+        # now-dead CLI stub with no default transport completes the turn rather than
+        # dead-lettering the resolved approval. Threaded to the sink per update.
+        self._best_effort = best_effort
         # The bound agent's hub-button pack, forwarded to the sink so a render of
         # a COMPLETE structured reply can add the no-dead-ends hub button (in
         # practice the final flush, which is the update that carries one). None
@@ -192,6 +199,7 @@ class _ThrottledReply:
             text=text,
             nav=self._nav,
             endpoint=self._endpoint,
+            best_effort_unreachable=self._best_effort,
         )
 
     async def finalize(self, text: str) -> None:
@@ -204,6 +212,7 @@ class _ThrottledReply:
             text=text or "(no response)",
             nav=self._nav,
             endpoint=self._endpoint,
+            best_effort_unreachable=self._best_effort,
         )
 
 
@@ -884,6 +893,18 @@ class Kernel:
             nav=nav,
             no_edit=self._config.slack_no_edit_streaming,
             endpoint=qevent.reply_handle.endpoint,
+            # Reply delivery is best-effort ONLY on an approval-resume turn (the
+            # granted tool has already executed in the runner): a dead reply
+            # endpoint with no default transport completes the turn instead of
+            # dead-lettering the resolved approval. Recognized structurally by the
+            # resume event_id, the same platform-authored resume signal the #419
+            # card teardown keys off (see the marker note above _is_approval_resume).
+            # This intentionally covers BOTH resume flavors -- the ``[approval
+            # resolved]`` resolve path and the ``[approval expired]`` expiry path --
+            # since both carry the ``approval-<id>-resolved`` event_id matched by
+            # _is_approval_resume. That shared coverage is deliberate and
+            # plan-ratified, not an oversight.
+            best_effort=self._is_approval_resume(qevent.event_id),
         )
         try:
             # ``async with`` releases the aiohttp response on every exit path

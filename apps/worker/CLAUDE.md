@@ -58,6 +58,12 @@ simplification.
   flag-clean retry *classification* inside one delivery. Do not conflate them.
 - **Transient failure is unchanged**: a mid-turn crash still reclaims, retries,
   and acks. Only an exhausted budget dead-letters.
+- **Exception (#708): approval-resume reply is best-effort in the pure-offline
+  loop.** When an approval-resume turn's reply endpoint is unreachable AND no
+  default Slack transport is configured, `AsyncSlackSink` swallows the
+  unreachable error instead of raising -- the turn ACKs without delivering the
+  reply instead of dead-lettering. A configured default transport, or any
+  non-resume turn, still raises and dead-letters normally.
 - **The graveyard has no consumer group, but it IS bounded** by an approximate
   `MAXLEN` (`AGENTOS_DEAD_LETTER_MAXLEN`, default 10000) on every `XADD`. The
   unparseable path dead-letters per inbound entry, so an unbounded graveyard hands

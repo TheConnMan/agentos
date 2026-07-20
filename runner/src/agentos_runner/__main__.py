@@ -115,6 +115,10 @@ def build_runner(
             policy_routes=resolution.route_by_tool,
             grant_tool=config.approval_grant_tool,
             grantable_by_route=resolution.grantable_by_route,
+            # Bundle identity so an operator mcp__<server>__<tool> shorthand
+            # normalizes to its effective plugin-prefixed runtime name (#703).
+            bundle_name=resolution.bundle_name,
+            mcp_servers=resolution.mcp_servers,
         )
     except ApprovalPolicyError as exc:
         # Log then re-raise, matching the module's other two fatal boot paths

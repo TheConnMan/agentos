@@ -314,3 +314,121 @@ def test_no_fallback_when_no_default_is_configured() -> None:
             sink.update(channel="C1", ts="1.1", text="hi", endpoint="http://stub:2/api/")
         )
     assert default_hits == [], "real-Slack default is not a safe fallback for a CLI-stub endpoint"
+
+
+# --- #708: best-effort resume reply when the endpoint is unreachable and there is
+# no distinct default (the pure-offline local loop). The swallow POLICY lives in the
+# sink; the "is this a resume turn" DECISION lives in the kernel (_is_approval_resume)
+# and reaches the sink as ``best_effort_unreachable``.
+
+
+def test_best_effort_unreachable_swallows_when_no_default() -> None:
+    # A resume turn's reply is best-effort: with no distinct default (offline loop)
+    # and a dead per-turn endpoint, best_effort_unreachable makes update
+    # log-and-return instead of re-raising, so the resolved approval's turn ACKs
+    # instead of dead-lettering. It must also never misroute to the real-Slack
+    # default (there is no safe fallback for a CLI-stub endpoint).
+    sink = AsyncSlackSink("xoxb-test")  # no base_url -> no distinct default
+    default_hits: list[str] = []
+    sink._client_for("http://stub:2/api/").chat_update = _raise_connection_error()  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _record_call(default_hits, "default")  # type: ignore[method-assign]
+
+    # Must NOT raise.
+    asyncio.run(
+        sink.update(
+            channel="C1",
+            ts="1.1",
+            text="hi",
+            endpoint="http://stub:2/api/",
+            best_effort_unreachable=True,
+        )
+    )
+    assert default_hits == [], "best-effort swallow must not misroute to the default"
+
+
+def test_best_effort_false_still_raises_when_no_default() -> None:
+    # The discriminator guard: without the flag (the default False, i.e. every
+    # non-resume turn and the loud _drop_with_message/_escalate paths), a dead
+    # endpoint with no default still raises loudly -- unchanged from
+    # test_no_fallback_when_no_default_is_configured.
+    sink = AsyncSlackSink("xoxb-test")
+    sink._client_for("http://stub:2/api/").chat_update = _raise_connection_error()  # type: ignore[method-assign]
+
+    with pytest.raises(aiohttp.ClientError):
+        asyncio.run(
+            sink.update(
+                channel="C1",
+                ts="1.1",
+                text="hi",
+                endpoint="http://stub:2/api/",
+                best_effort_unreachable=False,
+            )
+        )
+
+
+def test_slack_api_error_not_swallowed_even_with_best_effort() -> None:
+    # A SlackApiError means the endpoint IS reachable but rejected the call; it is
+    # NOT an unreachability, so best_effort_unreachable must NOT swallow it (that
+    # would hide a real delivery rejection). Only transport-unreachable errors
+    # (_UNREACHABLE_ERRORS) are in scope for the best-effort resume swallow.
+    sink = AsyncSlackSink("xoxb-test")
+
+    async def _reject(**_kwargs):
+        raise SlackApiError("nope", response={"error": "channel_not_found"})
+
+    sink._client_for("http://stub:2/api/").chat_update = _reject  # type: ignore[method-assign]
+
+    with pytest.raises(SlackApiError):
+        asyncio.run(
+            sink.update(
+                channel="C1",
+                ts="1.1",
+                text="hi",
+                endpoint="http://stub:2/api/",
+                best_effort_unreachable=True,
+            )
+        )
+
+
+def test_best_effort_stays_loud_when_default_transport_is_the_dead_target() -> None:
+    # F1 (side-effects HIGH): the best-effort swallow must fire ONLY in the pure
+    # no-default-configured case. Here a default IS configured and the reply is
+    # going over that CONFIGURED default (endpoint=None), so an unreachable error
+    # is a genuine transient OUTAGE of a real Slack transport -- it must stay LOUD
+    # (raise -> reclaim -> retry per ADR-0039), NOT be swallowed and acked. Even
+    # though has_distinct_default is False here, best_effort must not swallow.
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    sink._client_for(None).chat_update = _raise_connection_error()  # type: ignore[method-assign]
+
+    with pytest.raises(aiohttp.ClientError):
+        asyncio.run(
+            sink.update(
+                channel="C1",
+                ts="1.1",
+                text="hi",
+                endpoint=None,
+                best_effort_unreachable=True,
+            )
+        )
+
+
+def test_best_effort_still_falls_back_to_default_when_present() -> None:
+    # #530 stays byte-for-byte: with a distinct default configured, a dead per-turn
+    # endpoint on a resume turn STILL falls back to the default transport. The new
+    # flag only governs the no-distinct-default branch; it must not alter the
+    # has-default path (the reply still LANDS on the default, it is not swallowed).
+    sink = AsyncSlackSink("xoxb-test", base_url="http://default:1/api/")
+    landed: list[str] = []
+    sink._client_for("http://stub:2/api/").chat_update = _raise_connection_error()  # type: ignore[method-assign]
+    sink._client_for(None).chat_update = _record_call(landed, "default")  # type: ignore[method-assign]
+
+    asyncio.run(
+        sink.update(
+            channel="C1",
+            ts="1.1",
+            text="hi",
+            endpoint="http://stub:2/api/",
+            best_effort_unreachable=True,
+        )
+    )
+    assert landed == ["default"], "the flag must not bypass the #530 default-transport fallback"
