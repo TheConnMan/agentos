@@ -163,6 +163,12 @@ pub struct LocalDownOpts {
     pub yes: bool,
 }
 
+pub struct LocalRebuildOpts {
+    pub common: LocalOpts,
+    /// The compose service to rebuild + recreate, e.g. `agentos-worker`.
+    pub service: String,
+}
+
 // ---------------------------------------------------------------------------
 // Command builders (pure; unit-tested below)
 // ---------------------------------------------------------------------------
@@ -229,6 +235,68 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
     // the `core`-profile collector suppression. This sits AFTER the branch
     // above, not inside it, because the `--local-model` arm does not fall
     // through to the else: `--minimal --local-model` needs suppressing too.
+    env.extend(otel_endpoint_env_override(o.minimal));
+    if !env.is_empty() {
+        cmd = cmd.with_env(env);
+    }
+    cmd
+}
+
+/// `docker compose --profile <core|full> [--profile local-model] [--profile slack]
+/// -f <file> up -d --build --force-recreate --no-deps <service>` (#714).
+///
+/// A targeted single-service rebuild -- e.g. picking up a code change to just
+/// `agentos-worker` -- carries the SAME env injection as `up_command`
+/// (credential/model-mode parity, the core-profile OTel suppression). Without
+/// it, a raw `docker compose up --no-deps <service>` silently reverts that one
+/// service to compose's fake-model/dev-stub defaults, because compose's
+/// `${VAR-default}` substitution reads the INVOKING shell's env, not whatever
+/// the rest of the stack was already running with -- exactly the footgun that
+/// cost a debugging session getting a real agent working locally. `--no-deps`
+/// keeps the blast radius to the one named service; `--build` picks up a local
+/// code change before recreating.
+pub fn rebuild_command(o: &LocalOpts, service: &str) -> OpsCommand {
+    let profile = if o.minimal { "core" } else { "full" };
+    let mut args = vec![plain("compose"), plain("--profile"), plain(profile)];
+    if o.local_model.is_some() {
+        args.push(plain("--profile"));
+        args.push(plain("local-model"));
+    }
+    if o.slack {
+        args.push(plain("--profile"));
+        args.push(plain("slack"));
+    }
+    args.extend([
+        plain("-f"),
+        plain(&o.file),
+        plain("up"),
+        plain("-d"),
+        plain("--build"),
+        plain("--force-recreate"),
+        plain("--no-deps"),
+        plain(service),
+    ]);
+    let mut cmd = OpsCommand::new("docker", args);
+    // Identical env-injection precedence to `up_command` (local-model env is
+    // mutually exclusive with the credential-driven live injection; see that
+    // function's comment for why) -- duplicated rather than shared because
+    // `up_command`'s tail differs (`--wait`, no per-service targeting) and this
+    // is the smaller, lower-risk change than reshaping a heavily-tested
+    // existing function's internals.
+    let mut env: Vec<(String, String)> = if let Some(model) = &o.local_model {
+        vec![
+            ("AGENTOS_FAKE_MODEL".into(), "0".into()),
+            (
+                "AGENTOS_MODEL_BASE_URL".into(),
+                format!("http://ollama:{OLLAMA_PORT}"),
+            ),
+            ("AGENTOS_MODEL".into(), model.clone()),
+            ("AGENTOS_DOCKER_NETWORK".into(), "agentos_runner".into()),
+            ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
+        ]
+    } else {
+        fake_model_env_override(o.model_mode).into_iter().collect()
+    };
     env.extend(otel_endpoint_env_override(o.minimal));
     if !env.is_empty() {
         cmd = cmd.with_env(env);
@@ -356,6 +424,82 @@ pub async fn up(o: LocalOpts) -> Result<LocalUpOutput> {
     Ok(LocalUpOutput::Up {
         endpoints,
         slack: o.slack,
+    })
+}
+
+/// Output of `local rebuild`: the dry-run plan, or which service was rebuilt
+/// and which model mode it came back up running (#714).
+#[derive(Debug)]
+pub enum LocalRebuildOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Rebuilt {
+        service: String,
+        model_mode: ModelMode,
+    },
+}
+
+impl crate::ui::CliOutput for LocalRebuildOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            LocalRebuildOutput::DryRun(plan) => plan.to_json(),
+            LocalRebuildOutput::Rebuilt {
+                service,
+                model_mode,
+            } => serde_json::json!({
+                "status": "rebuilt",
+                "service": service,
+                "model_mode": format!("{model_mode:?}"),
+            }),
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            LocalRebuildOutput::DryRun(plan) => plan.render(ui),
+            LocalRebuildOutput::Rebuilt {
+                service,
+                model_mode,
+            } => {
+                ui.note(&format!("Rebuilt and recreated `{service}`."));
+                match model_mode {
+                    ModelMode::LiveFromCredential => ui.note(
+                        "Came back up on the LIVE model: a credential is set in your shell.",
+                    ),
+                    ModelMode::FakePinnedDespiteCredential => ui.warn(
+                        "Came back up on the FAKE model despite a credential in your shell: AGENTOS_FAKE_MODEL is pinned on.",
+                    ),
+                    ModelMode::DefaultFake => ui.note(
+                        "Came back up on the fake model (no credential set in this shell).",
+                    ),
+                }
+            }
+        }
+    }
+}
+
+/// `agentos local rebuild <service>`: rebuild + recreate ONE compose service
+/// (e.g. after a code change) without losing the stack's already-resolved
+/// credential/model-mode wiring (#714) -- see `rebuild_command`'s doc comment
+/// for the footgun this exists to close. Re-resolves `ModelMode` from THIS
+/// invocation's shell exactly as `local up` does, rather than trying to read
+/// back whatever the rest of the stack is currently running with (not
+/// generally recoverable from outside the containers) -- so the credential
+/// this rebuild applies is whatever is exported in the shell running the
+/// command, same as any other worker-restarting verb.
+pub async fn rebuild(o: LocalRebuildOpts) -> Result<LocalRebuildOutput> {
+    let cmd = rebuild_command(&o.common, &o.service);
+    if o.common.dry_run {
+        return Ok(LocalRebuildOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![cmd.display()],
+        }));
+    }
+    require_on_path("docker")?;
+    let ui = crate::ui::ui();
+    let cl = ui.checklist();
+    run_step(&cl, &format!("rebuilding {}", o.service), "rebuild", &cmd).await?;
+    Ok(LocalRebuildOutput::Rebuilt {
+        service: o.service,
+        model_mode: o.common.model_mode,
     })
 }
 
@@ -669,6 +813,70 @@ mod tests {
                 cmd.env
             );
         }
+    }
+
+    /// #714: the argv shape is `up -d --build --force-recreate --no-deps
+    /// <service>` (not `up_command`'s `up -d --wait`), and the named service
+    /// lands as the final token.
+    #[test]
+    fn rebuild_command_targets_one_service() {
+        let cmd = rebuild_command(&opts(DEFAULT_COMPOSE_FILE), "agentos-worker");
+        let display = cmd.display();
+        assert!(display.contains("up -d --build --force-recreate --no-deps agentos-worker"));
+        assert!(!display.contains("--wait"));
+    }
+
+    /// #714: the whole point -- a credential in the shell must still flip
+    /// AGENTOS_FAKE_MODEL=0 on a targeted rebuild, exactly like `local up`,
+    /// instead of the rebuilt service silently reverting to compose's fake
+    /// default.
+    #[test]
+    fn rebuild_command_carries_live_model_parity() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.model_mode = ModelMode::LiveFromCredential;
+        let cmd = rebuild_command(&o, "agentos-worker");
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+    }
+
+    #[test]
+    fn rebuild_command_default_fake_injects_nothing() {
+        let cmd = rebuild_command(&opts(DEFAULT_COMPOSE_FILE), "agentos-worker");
+        assert!(cmd.env.is_empty(), "env={:?}", cmd.env);
+    }
+
+    #[test]
+    fn rebuild_command_carries_local_model_wiring() {
+        let cmd = rebuild_command(
+            &opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b"),
+            "agentos-worker",
+        );
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+        assert!(cmd
+            .env
+            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+    }
+
+    #[test]
+    fn rebuild_command_minimal_suppresses_otel_endpoint() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.minimal = true;
+        let cmd = rebuild_command(&o, "agentos-worker");
+        assert!(cmd
+            .env
+            .contains(&(String::from("OTEL_EXPORTER_OTLP_ENDPOINT"), String::new())));
+        assert!(cmd.display().contains("--profile core"));
+    }
+
+    #[test]
+    fn rebuild_command_respects_slack_profile() {
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.slack = true;
+        let display = rebuild_command(&o, "agentos-dispatcher").display();
+        assert!(display.contains("--profile slack"));
     }
 
     #[test]

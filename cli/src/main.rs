@@ -509,6 +509,37 @@ enum LocalAction {
         #[arg(long)]
         slack: bool,
     },
+    /// Rebuild + recreate ONE compose service (e.g. after a code change) without
+    /// losing the stack's already-resolved credential/model-mode wiring.
+    ///
+    /// A raw `docker compose up --no-deps <service>` silently reverts that one
+    /// service to compose's fake-model/dev-stub defaults, because compose's
+    /// `${VAR-default}` substitution reads THIS invocation's shell, not what the
+    /// rest of the stack is running with -- export the same credential /
+    /// AGENTOS_FAKE_MODEL you want, same as `local up`.
+    Rebuild {
+        /// The compose service to rebuild, e.g. `agentos-worker`.
+        service: String,
+        /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
+        #[arg(short = 'f', long)]
+        file: Option<String>,
+        /// Print the docker compose command and exit without executing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Match how `local up` brought the stack up (core-only vs full).
+        #[arg(long)]
+        minimal: bool,
+        /// Match how `local up` brought the stack up (--local-model, if used).
+        #[arg(
+            long,
+            num_args = 0..=1,
+            default_missing_value = commands::DEFAULT_LOCAL_MODEL
+        )]
+        local_model: Option<String>,
+        /// Match how `local up` brought the stack up (--slack, if used).
+        #[arg(long)]
+        slack: bool,
+    },
     /// Stop the dev stack (docker compose down), keeping volumes.
     Down {
         /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
@@ -1427,6 +1458,30 @@ async fn run(command: Option<Command>) -> Result<()> {
                         local_model,
                         slack,
                         model_mode: local::model_mode_from_env(),
+                    })
+                    .await?,
+                )
+            }
+            LocalAction::Rebuild {
+                service,
+                file,
+                dry_run,
+                minimal,
+                local_model,
+                slack,
+            } => {
+                let file = resolve_compose_file(file, dry_run).await?;
+                emit(
+                    local::rebuild(local::LocalRebuildOpts {
+                        common: LocalOpts {
+                            file,
+                            dry_run,
+                            minimal,
+                            local_model,
+                            slack,
+                            model_mode: local::model_mode_from_env(),
+                        },
+                        service,
                     })
                     .await?,
                 )
