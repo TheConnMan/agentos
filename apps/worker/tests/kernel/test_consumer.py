@@ -13,6 +13,7 @@ from collections.abc import Callable
 import redis.exceptions
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_dispatcher.queue import to_stream_fields
+from agentos_worker import consumer as consumer_module
 from agentos_worker import kernel as kernel_module
 from agentos_worker.consumer import THREAD_RESET_SET, Consumer
 
@@ -324,5 +325,93 @@ def test_maintenance_tick_thread_reset_one_failure_does_not_block_the_rest(
             assert h.substrate.lookup("tOk") is None  # still processed despite tBoom's failure
             assert await h.async_redis.scard(THREAD_RESET_SET) == 0  # both popped either way
             assert any("tBoom" in r.getMessage() for r in caplog.records)
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_reset_drain_has_a_per_tick_budget_and_defers_the_rest(
+    make_harness, monkeypatch
+) -> None:
+    """#743: a large operator-populated batch of wedged resets must not cost
+    N x the per-request release bound inline in one maintenance tick -- that
+    re-crosses the same multi-hundred-second stall #739 set out to eliminate,
+    just scaled by batch size instead of by the runner's HTTP timeout. The
+    drain now stops once its per-tick time budget is spent and leaves
+    whatever is left in THREAD_RESET_SET for a later tick, so one call to
+    ``_drain_thread_reset_requests`` never blocks proportionally to N."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            budget_s = 0.2
+            monkeypatch.setattr(consumer_module, "_THREAD_RESET_DRAIN_BUDGET_S", budget_s)
+
+            processed: list[str] = []
+
+            async def slow_release_thread(thread_key: str) -> bool:
+                processed.append(thread_key)
+                await asyncio.sleep(0.05)  # each request "wedged" for a while
+                return True
+
+            h.kernel.release_thread = slow_release_thread  # type: ignore[method-assign]
+
+            # A batch large enough that draining it all at 0.05s/request would
+            # take roughly 1s -- five times the budget.
+            keys = [f"tBatch{i}" for i in range(20)]
+            await h.async_redis.sadd(THREAD_RESET_SET, *keys)
+
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            start = time.monotonic()
+            await asyncio.wait_for(consumer._drain_thread_reset_requests(), timeout=2.0)
+            elapsed = time.monotonic() - start
+
+            # Bounded by the budget (plus slack for the one in-flight request
+            # that pushed the check past it), not by N * per-request cost.
+            assert elapsed < 0.6
+            assert len(processed) < len(keys)  # did not drain the whole batch in one pass
+            remaining = await h.async_redis.scard(THREAD_RESET_SET)
+            assert remaining > 0  # the rest is left for the next tick, not lost
+
+            # A later tick picks up where this one left off: draining again
+            # (with the budget restored to a generous value) finishes the batch.
+            monkeypatch.setattr(consumer_module, "_THREAD_RESET_DRAIN_BUDGET_S", 30.0)
+            await asyncio.wait_for(consumer._drain_thread_reset_requests(), timeout=5.0)
+            assert await h.async_redis.scard(THREAD_RESET_SET) == 0
+            assert len(processed) == len(keys)
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_thread_reset_is_not_stalled_by_a_hanging_substrate_release(
+    make_harness, monkeypatch
+) -> None:
+    """#743: the courtesy interrupt bound (#739) only covers a wedged runner.
+    `release_thread`'s own substrate release runs on a bare `asyncio.to_thread`
+    with no timeout, so a hang in the K8s control plane -- a claim delete that
+    never returns -- would stall the tick just as unboundedly. The release
+    call must be bounded the same way the interrupt already is."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tHangRelease"))
+            assert h.substrate.lookup("tHangRelease") is not None
+
+            monkeypatch.setattr(kernel_module, "_RESET_RELEASE_TIMEOUT_S", 0.2)
+
+            def hanging_release(thread_key: str) -> bool:
+                time.sleep(5.0)  # never returns within the test's window
+                return True
+
+            monkeypatch.setattr(h.substrate, "release", hanging_release)
+
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await h.async_redis.sadd(THREAD_RESET_SET, "tHangRelease")
+
+            # Must finish well under the 5s hang, bounded instead by the
+            # (monkeypatched) release timeout.
+            await asyncio.wait_for(consumer._drain_thread_reset_requests(), timeout=2.0)
+
+            # The request was popped either way; a fresh reset is needed to retry.
+            assert await h.async_redis.scard(THREAD_RESET_SET) == 0
 
     asyncio.run(go())

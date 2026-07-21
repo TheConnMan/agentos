@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import cast
 
@@ -69,6 +70,18 @@ _CAP_SCAN_PAGE = 1000
 # administrative signal has no ordering/redelivery/dead-letter needs, so a
 # plain Valkey SET is enough.
 THREAD_RESET_SET = "agentos:thread-reset-requests"
+
+# Per-tick time budget for draining THREAD_RESET_SET (#743, follow-up to
+# #739). #739 bounded the courtesy interrupt to 5s per *request*, but the
+# drain itself is a serial `while True` over the whole set, inline in
+# `_maintenance_loop` alongside `_reclaim_once`/`reap_orphans` -- so N wedged
+# resets in one tick still cost N x the per-request bound of no stream
+# reclaim and no orphan reaping, just scaled by operator batch size instead
+# of by the runner's timeout. Once this budget is spent, the drain stops for
+# this tick; `SPOP` only removes what it actually pops, so anything still in
+# the set is picked up on the next tick rather than blocking the rest of the
+# maintenance work behind an arbitrarily large batch.
+_THREAD_RESET_DRAIN_BUDGET_S = 30.0
 
 
 class Consumer(StreamConsumer):
@@ -305,7 +318,16 @@ class Consumer(StreamConsumer):
         logged and does not block the rest of the batch; the request is
         already popped, so a release that fails needs a fresh request to
         retry -- acceptable for a manual operator action, unlike the queue's
-        own bounded-retry delivery guarantee."""
+        own bounded-retry delivery guarantee.
+
+        The loop is also bounded by ``_THREAD_RESET_DRAIN_BUDGET_S`` (#743): a
+        large operator-populated batch of wedged resets stops draining once
+        the budget is spent, rather than serially paying every request's
+        release bound inline in this tick. Members not yet popped simply stay
+        in ``THREAD_RESET_SET`` and are drained on a later tick -- safe
+        because ``SPOP`` never removes a member without this loop taking
+        ownership of it in the same step."""
+        start = time.monotonic()
         while True:
             raw = await self._valkey.spop(THREAD_RESET_SET)
             if raw is None:
@@ -325,6 +347,13 @@ class Consumer(StreamConsumer):
                 )
             except Exception:
                 logger.exception("thread reset failed for %s", thread_key)
+            if time.monotonic() - start >= _THREAD_RESET_DRAIN_BUDGET_S:
+                logger.warning(
+                    "thread reset drain: per-tick budget (%.0fs) spent; "
+                    "deferring any remaining requests to the next maintenance tick",
+                    _THREAD_RESET_DRAIN_BUDGET_S,
+                )
+                return
 
     async def _reclaim_once(self) -> int:
         """Reclaim entries pending too long from any (dead) consumer and retry.
