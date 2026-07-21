@@ -1,10 +1,12 @@
-//! Integration (#767): drive the REAL `agentos::ops::down` through fake
+//! Integration (#767, #768): drive the REAL `agentos::ops::down` through fake
 //! `helm`/`kubectl` on PATH to prove the fail-forward WIRING that the ops-module
 //! unit tests cannot exercise: the namespace sweep runs UNCONDITIONALLY after a
 //! failed helm uninstall (the core anti-regression, since a revert to `bail!`
 //! skips it), the human-visible error message carries the resume command (P1),
-//! and the exit class tracks the failure kind (connectivity -> Transient exit 3,
-//! permanent RBAC -> Failure exit 1, P2).
+//! the exit class tracks the failure kind (connectivity -> Transient exit 3,
+//! permanent RBAC -> Failure exit 1, P2), a zero-match sweep is never worded as
+//! an actual removal (#768), and the emitted resume command's own exit status
+//! genuinely aggregates both steps when actually executed (#768).
 //!
 //! EVERYTHING lives in ONE test fn. `down()` resolves `helm`/`kubectl` off the
 //! process PATH, so the test mutates process-global PATH (and a SWEEP_MARKER env
@@ -114,9 +116,11 @@ async fn cluster_down_fails_forward_through_real_down() {
     );
 
     // ----- Scenario 2: permanent RBAC failure -----
-    // Fake helm fails forbidden. Fake kubectl sweeps clean (exit 0), so only the
-    // helm record remains, and a permanent failure must be a plain Failure (exit
-    // 1), not a retryable transient. The sweep still ran (marker present).
+    // Fake helm fails forbidden. Fake kubectl actually sweeps (exit 0 AND prints
+    // a "namespace ... deleted" line, so `down()` reads this as a real removal,
+    // not a #768 zero-match), so only the helm record remains, and a permanent
+    // failure must be a plain Failure (exit 1), not a retryable transient. The
+    // sweep still ran (marker present).
     let dir2 = tempfile::tempdir().expect("tempdir");
     let marker2 = dir2.path().join("sweep-ran-2");
     std::env::set_var("SWEEP_MARKER", &marker2);
@@ -130,7 +134,7 @@ async fn cluster_down_fails_forward_through_real_down() {
     write_exec(
         dir2.path(),
         "kubectl",
-        "#!/bin/sh\ntouch \"$SWEEP_MARKER\"\nexit 0\n",
+        "#!/bin/sh\ntouch \"$SWEEP_MARKER\"\necho 'namespace \"prod-release-agent-sandbox\" deleted'\nexit 0\n",
     );
     // Drop scenario 1's fakes: reset to the original PATH, then prepend dir2.
     restore_path(&original_path);
@@ -152,6 +156,148 @@ async fn cluster_down_fails_forward_through_real_down() {
     );
     assert_eq!(class.code(), 1);
     assert_ne!(class, ExitClass::Transient);
+    // The sweep really did remove something here, so the message is allowed to
+    // (and does) say "swept" -- this is the actual-removal case #768 must be
+    // distinguished FROM in scenario 3 below.
+    let shown = err.to_string();
+    assert!(
+        shown.contains("swept"),
+        "a real removal must still be worded as swept: {shown}"
+    );
+
+    // ----- Scenario 3 (#768): zero-match sweep, not an actual removal -----
+    // Fake helm fails (transient connectivity). Fake kubectl exits 0 but prints
+    // NOTHING to stdout, exactly what `kubectl delete namespace -l ...
+    // --ignore-not-found` does when the label selector matches no namespace
+    // (the pre-existing-namespace case from #707: it was never stamped, so a
+    // release's own down never touches it). Before #768 this was
+    // indistinguishable from scenario 2's real removal and produced the same
+    // "were swept" message even though nothing was actually deleted and the
+    // failed release's own compute may still be running.
+    let dir3 = tempfile::tempdir().expect("tempdir");
+    let marker3 = dir3.path().join("sweep-ran-3");
+    std::env::set_var("SWEEP_MARKER", &marker3);
+    let unreachable3 =
+        "Error: Kubernetes cluster unreachable: Get \"https://h:6443/version\": connection refused";
+    write_exec(
+        dir3.path(),
+        "helm",
+        &format!("#!/bin/sh\necho '{unreachable3}' >&2\nexit 1\n"),
+    );
+    write_exec(
+        dir3.path(),
+        "kubectl",
+        "#!/bin/sh\ntouch \"$SWEEP_MARKER\"\nexit 0\n",
+    );
+    restore_path(&original_path);
+    prepend_path(dir3.path());
+
+    let err = down(down_opts())
+        .await
+        .expect_err("a stale helm record after a zero-match sweep is still incomplete");
+
+    assert!(
+        marker3.exists(),
+        "the zero-match sweep still ran unconditionally"
+    );
+    let shown = err.to_string();
+    // The #768 anti-regression: must NOT be worded like scenario 2's real
+    // removal, since nothing actually matched the selector here.
+    assert!(
+        !shown.contains("were swept"),
+        "a zero-match sweep must never be worded as an actual removal: {shown}"
+    );
+    // Must still surface the helm-only resume command so the operator can
+    // finish teardown.
+    assert!(
+        shown.contains("helm uninstall prod-release -n agent-ns"),
+        "the message must still carry the helm-only resume command: {shown}"
+    );
+
+    // ----- Scenario 4 (#768): the resume command's own exit status aggregates
+    // BOTH steps when actually executed, even when the LAST command (the
+    // sweep) succeeds -----
+    // Both fakes fail on their FIRST invocation (so the initial `down()` call
+    // sees both steps outstanding and emits the two-step resume line), then
+    // fake helm keeps failing forever while fake kubectl SUCCEEDS on every
+    // invocation after its first. That flip means: when the emitted resume
+    // line is actually re-executed, helm fails again but the sweep (the LAST
+    // command in the line) succeeds. Under the OLD "; " join this would read
+    // as exit 0 (the last command's status) even though helm is still broken
+    // -- exactly the bug #768 reports. Each fake also appends a line to its own
+    // log file on every invocation, so the test can additionally prove BOTH
+    // commands actually ran during the re-execution (not short-circuited).
+    let dir4 = tempfile::tempdir().expect("tempdir");
+    let helm_log = dir4.path().join("helm.log");
+    let kubectl_log = dir4.path().join("kubectl.log");
+    let kubectl_switched = dir4.path().join("kubectl-switched");
+    write_exec(
+        dir4.path(),
+        "helm",
+        &format!(
+            "#!/bin/sh\necho x >> '{}'\necho 'Kubernetes cluster unreachable: connection refused' >&2\nexit 1\n",
+            helm_log.display()
+        ),
+    );
+    write_exec(
+        dir4.path(),
+        "kubectl",
+        &format!(
+            "#!/bin/sh\necho x >> '{log}'\nif [ -f '{switched}' ]; then\n  echo 'namespace \"x\" deleted'\n  exit 0\nelse\n  touch '{switched}'\n  echo 'Kubernetes cluster unreachable: connection refused' >&2\n  exit 1\nfi\n",
+            log = kubectl_log.display(),
+            switched = kubectl_switched.display(),
+        ),
+    );
+    restore_path(&original_path);
+    prepend_path(dir4.path());
+
+    let err = down(down_opts())
+        .await
+        .expect_err("both steps failing on the first pass is still an incomplete teardown");
+    let (_class, fix) = classify(&err);
+    let resume_cmd = fix.expect("a fail-forward teardown carries a resume command");
+    assert!(
+        resume_cmd.contains("helm uninstall") && resume_cmd.contains("kubectl delete namespace"),
+        "expected the two-step resume line since both steps failed on the first pass: {resume_cmd}"
+    );
+    assert_eq!(
+        fs::read_to_string(&helm_log).unwrap().lines().count(),
+        1,
+        "helm should have run exactly once so far"
+    );
+    assert_eq!(
+        fs::read_to_string(&kubectl_log).unwrap().lines().count(),
+        1,
+        "kubectl should have run exactly once so far"
+    );
+
+    // Actually EXECUTE the emitted resume command through a real shell, with the
+    // SAME fakes still on PATH, exactly as an operator pasting it or CI running
+    // the `--json` `fix` verbatim would. This time kubectl (the LAST command in
+    // the line) succeeds, while helm (the FIRST) fails again.
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&resume_cmd)
+        .status()
+        .expect("run the emitted resume command");
+    assert!(
+        !status.success(),
+        "helm is still broken, so the resume line's own exit status must be nonzero even \
+         though the trailing sweep succeeded (the old \"; \" join misreported exit 0 here): \
+         {resume_cmd}"
+    );
+    // Both commands must have run a SECOND time during that re-execution (not
+    // short-circuited by helm's failure, and not skipped by the aggregation).
+    assert_eq!(
+        fs::read_to_string(&helm_log).unwrap().lines().count(),
+        2,
+        "helm must run again when the resume command is re-executed"
+    );
+    assert_eq!(
+        fs::read_to_string(&kubectl_log).unwrap().lines().count(),
+        2,
+        "the sweep must still run unconditionally even though helm failed again"
+    );
 
     // Restore PATH so nothing else in this process observes the fakes.
     restore_path(&original_path);

@@ -1089,10 +1089,19 @@ enum HelmOutcome {
     Failed,
 }
 
-/// Outcome of the label-scoped namespace sweep step.
+/// Outcome of the label-scoped namespace sweep step. `NoMatch` (#768) is the
+/// zero-match case: the selector's `kubectl delete` exits 0 (success) but
+/// deleted nothing, because it printed nothing to stdout. This happens by
+/// design when AgentOS was installed into a PRE-EXISTING namespace (#707
+/// deliberately leaves that namespace unlabeled, so it is never a sweep
+/// target). `NoMatch` counts as a completed step, same as `Removed`
+/// (`outstanding_steps` never re-queues it), but it is NOT the same as
+/// `Removed` for messaging: a `NoMatch` sweep stopped no compute, so
+/// `teardown_result` must not describe it as "swept".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SweepOutcome {
     Removed,
+    NoMatch,
     Failed,
 }
 
@@ -1118,29 +1127,34 @@ fn outstanding_steps(helm: HelmOutcome, sweep: SweepOutcome) -> Vec<TeardownStep
     out
 }
 
-/// Pure builder (#767): the exact copy-pasteable resume command for the
-/// outstanding steps, mapping each back to its `down_commands(o)` entry
-/// (index 0 = HelmUninstall, 1 = NamespaceSweep).
+/// Pure builder (#767, aggregation #768): the exact copy-pasteable resume
+/// command for the outstanding steps, mapping each back to its
+/// `down_commands(o)` entry (index 0 = HelmUninstall, 1 = NamespaceSweep).
 ///
 /// When BOTH steps are outstanding the emitted ORDER matches `down()`'s own
-/// execution order: the HELM UNINSTALL FIRST, then the namespace sweep, joined
-/// with "; ". Helm first because Helm stores its release metadata as Secrets
-/// INSIDE the release namespace, and this chart owns cluster-scoped resources
+/// execution order: the HELM UNINSTALL FIRST, then the namespace sweep. Helm
+/// first because Helm stores its release metadata as Secrets INSIDE the
+/// release namespace, and this chart owns cluster-scoped resources
 /// (ClusterRole/ClusterRoleBinding). Sweeping the namespace first would destroy
 /// that metadata, the following `helm uninstall` would report "not found"
 /// (which this code reads as already-absent success), and the cluster-scoped
-/// resources would be orphaned with no cleanup path. The "; " join means the
-/// compute-stopping sweep still runs even when helm fails again, which is the
-/// ticket's core safety property.
+/// resources would be orphaned with no cleanup path.
 ///
-/// Known limitation: "; " returns only the LAST command's status, so the
-/// resume line does not aggregate the exit status of both commands. That is an
-/// accepted trade for the unconditional sweep, tracked as a follow-up.
+/// #768: a plain "; " join runs both commands unconditionally (the compute-
+/// stopping sweep is never skipped by a repeated helm failure), but a shell
+/// only returns the LAST command's exit status, so an agent or CI executing
+/// the resume line verbatim could read exit 0 even though helm failed. A
+/// naive "&&" join would fix the status but reintroduce the fail-hard hazard
+/// this whole feature exists to remove (a repeated helm failure would again
+/// skip the sweep). Instead the two-step remainder is wrapped so each
+/// command's status is captured into its own shell variable, both commands
+/// still run unconditionally, and the final expression is nonzero UNLESS both
+/// succeeded -- runs-both-aggregates-nonzero, not runs-both-or-skips-second.
 ///
 /// The argv itself comes from `down_commands`, which stays the single source of
 /// truth for the teardown commands, so the resume line cannot drift from what
 /// would actually finish the job. A single-step remainder is one command with
-/// no join; an empty remainder yields the empty string.
+/// no wrapper; an empty remainder yields the empty string.
 fn resume_command(remaining: &[TeardownStep], o: &CommonOpts) -> String {
     let cmds = down_commands(o);
     let mut steps: Vec<&TeardownStep> = remaining.iter().collect();
@@ -1149,7 +1163,7 @@ fn resume_command(remaining: &[TeardownStep], o: &CommonOpts) -> String {
         TeardownStep::HelmUninstall => 0,
         TeardownStep::NamespaceSweep => 1,
     });
-    steps
+    let lines: Vec<String> = steps
         .iter()
         .map(|step| {
             let idx = match step {
@@ -1158,8 +1172,17 @@ fn resume_command(remaining: &[TeardownStep], o: &CommonOpts) -> String {
             };
             cmds[idx].display()
         })
-        .collect::<Vec<_>>()
-        .join("; ")
+        .collect();
+    match lines.as_slice() {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first, second] => {
+            format!("{first}; s1=$?; {second}; s2=$?; [ \"$s1\" -eq 0 ] && [ \"$s2\" -eq 0 ]")
+        }
+        // `remaining` only ever holds HelmUninstall and/or NamespaceSweep, so a
+        // third element is unreachable; stay defensive rather than panic.
+        _ => lines.join("; "),
+    }
 }
 
 /// Classifies whether a shelled-out `helm`/`kubectl` subprocess's stderr names a
@@ -1219,13 +1242,17 @@ fn failure_reason(stderr: &str) -> &str {
         .unwrap_or("command failed")
 }
 
-/// Pure decision (#767): turn the two teardown-step outcomes plus their stderr
-/// into the `cluster down` result. An empty remainder is success. Otherwise it is
-/// a fail-forward error carrying the exact resume command in BOTH the human
-/// Display message (P1: `main` renders Display and drops the fix) and the `fix`
-/// (for `--json`). The exit class is Transient (exit 3, safe to retry) IFF every
-/// outstanding failed step's stderr is a connectivity failure; any permanent
-/// outstanding failure makes it a plain Failure (exit 1, P2).
+/// Pure decision (#767, #768): turn the two teardown-step outcomes plus their
+/// stderr into the `cluster down` result. An empty remainder is success.
+/// Otherwise it is a fail-forward error carrying the exact resume command in
+/// BOTH the human Display message (P1: `main` renders Display and drops the
+/// fix) and the `fix` (for `--json`). The exit class is Transient (exit 3, safe
+/// to retry) IFF every outstanding failed step's stderr is a connectivity
+/// failure; any permanent outstanding failure makes it a plain Failure (exit 1,
+/// P2). #768: a `SweepOutcome::NoMatch` (the label selector matched nothing,
+/// e.g. a pre-existing namespace #707 never stamped) is a distinct case from
+/// `Removed` -- it must never be worded as having swept/removed compute, since
+/// nothing was actually deleted.
 fn teardown_result(
     helm: HelmOutcome,
     sweep: SweepOutcome,
@@ -1271,6 +1298,14 @@ fn teardown_result(
         // Sweep succeeded (compute stopped); only the stale helm record remains.
         format!(
             "helm uninstall failed ({reason}) but the run-created namespaces were swept; the release record remains. Resume with: {cmd}"
+        )
+    } else if matches!(sweep, SweepOutcome::NoMatch) {
+        // #768: the sweep's label selector matched nothing -- this release never
+        // created (or was installed into a pre-existing) namespace, so nothing
+        // was actually removed. This is NOT the swept case above: do not claim
+        // compute was stopped, since it may still be running.
+        format!(
+            "helm uninstall failed ({reason}); no run-created namespaces matched the sweep, so no compute was stopped (this release may be running in a pre-existing namespace); the release record remains. Resume with: {cmd}"
         )
     } else if transient {
         format!(
@@ -1897,9 +1932,21 @@ pub async fn down(opts: DownOpts) -> Result<ClusterDownOutput> {
     ui.plumbing(&format!("+ {}", sweep.display()));
     let step = cl.step("sweeping namespaces");
     let (ok, out, sweep_err) = run_capture(sweep).await?;
+    // #768: `--ignore-not-found` makes a zero-match selector exit 0 with EMPTY
+    // stdout (no "namespace ... deleted" line), the same exit code an actual
+    // removal gets. That is exactly the pre-existing-namespace case (#707
+    // deliberately never stamps it), so a bare `ok` check cannot tell "nothing
+    // to do" apart from "removed it"; only the stdout content can. Distinguish
+    // them into their own outcome so `teardown_result` never claims compute was
+    // stopped when the sweep matched nothing.
     let sweep_outcome = if ok {
-        step.done("removed");
-        SweepOutcome::Removed
+        if out.trim().is_empty() {
+            step.done("no matching namespaces");
+            SweepOutcome::NoMatch
+        } else {
+            step.done("removed");
+            SweepOutcome::Removed
+        }
     } else {
         step.fail("failed");
         SweepOutcome::Failed
@@ -2103,6 +2150,49 @@ fn api_key_usage_err(msg: impl Into<String>) -> anyhow::Error {
 /// wins (the caller only reaches here when neither was supplied). The value is
 /// never printed — it flows straight into the `X-API-Key` header.
 pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> {
+    read_release_secret(namespace, release, "apiKey")
+        .await
+        .ok_or_else(|| {
+            api_key_usage_err(format!(
+                "could not read the API key from secret {release}-secrets in namespace {namespace}; \
+                 pass --api-key or set AGENTOS_API_KEY to the release's api.apiKey"
+            ))
+        })
+}
+
+/// A usage error (exit 2) whose fix hint points the operator at
+/// `--valkey-password`, the escape hatch when the release's Valkey password
+/// cannot be read from its Secret.
+fn valkey_password_usage_err(msg: impl Into<String>) -> anyhow::Error {
+    crate::exit::CliError::usage(msg)
+        .with_fix("pass --valkey-password")
+        .into()
+}
+
+/// Discover a Helm release's Valkey password from the same chart Secret
+/// (`<release>-secrets`, data key `valkeyPassword`). `cluster message` enqueues
+/// onto the release's Valkey, whose password `cluster up` randomizes, so without
+/// this the dev sentinel `valkeypass` reaches a strong-secrets install and the
+/// connection fails authentication (#786). An explicit
+/// `--valkey-password`/`AGENTOS_VALKEY_PASSWORD` still wins (the caller only
+/// reaches here when neither was supplied); the value is never printed.
+pub async fn discover_valkey_password(namespace: &str, release: &str) -> Result<String> {
+    read_release_secret(namespace, release, "valkeyPassword")
+        .await
+        .ok_or_else(|| {
+            valkey_password_usage_err(format!(
+                "could not read the Valkey password from secret {release}-secrets in namespace \
+                 {namespace}; pass --valkey-password or set AGENTOS_VALKEY_PASSWORD to the \
+                 release's valkey.password"
+            ))
+        })
+}
+
+/// Read one data key out of a release's chart Secret, decoded server-side by
+/// kubectl's `base64decode` so the plaintext never lands in argv (#524). `None`
+/// when the Secret, the key, or the cluster is unreachable; the caller turns
+/// that into an actionable error naming its own escape-hatch flag.
+async fn read_release_secret(namespace: &str, release: &str, data_key: &str) -> Option<String> {
     let cmd = OpsCommand::new(
         "kubectl",
         vec![
@@ -2112,15 +2202,14 @@ pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> 
             plain("secret"),
             plain(format!("{release}-secrets")),
             plain("-o"),
-            plain("go-template={{ index .data \"apiKey\" | base64decode }}"),
+            plain(format!(
+                "go-template={{{{ index .data \"{data_key}\" | base64decode }}}}"
+            )),
         ],
     );
     match run_capture(&cmd).await {
-        Ok((true, out, _)) if !out.trim().is_empty() => Ok(out.trim().to_string()),
-        _ => Err(api_key_usage_err(format!(
-            "could not read the API key from secret {release}-secrets in namespace {namespace}; \
-             pass --api-key or set AGENTOS_API_KEY to the release's api.apiKey"
-        ))),
+        Ok((true, out, _)) if !out.trim().is_empty() => Some(out.trim().to_string()),
+        _ => None,
     }
 }
 
@@ -3355,30 +3444,34 @@ mod tests {
         );
     }
 
-    // #767 fail-forward teardown. PRODUCTION SYMBOLS: two pure functions plus
-    // three small enums so `cluster down` runs both teardown steps to
-    // completion and then decides the exit from the combined result, instead
-    // of bailing the instant `helm uninstall` returns a non-"not found"
-    // nonzero exit:
+    // #767 fail-forward teardown (aggregation hardened by #768). PRODUCTION
+    // SYMBOLS: two pure functions plus three small enums so `cluster down` runs
+    // both teardown steps to completion and then decides the exit from the
+    // combined result, instead of bailing the instant `helm uninstall` returns a
+    // non-"not found" nonzero exit:
     //
     //   enum HelmOutcome { Removed, Absent, Failed }
-    //   enum SweepOutcome { Removed, Failed }
+    //   enum SweepOutcome { Removed, NoMatch, Failed }
     //   enum TeardownStep { HelmUninstall, NamespaceSweep }  // derive Debug, PartialEq, Eq
     //   fn outstanding_steps(helm: HelmOutcome, sweep: SweepOutcome) -> Vec<TeardownStep>
     //   fn resume_command(remaining: &[TeardownStep], o: &CommonOpts) -> String
     //
     // `outstanding_steps` is the pure decision function: Removed/Absent helm is
-    // done, Failed helm leaves HelmUninstall outstanding; Removed sweep is done,
-    // Failed sweep leaves NamespaceSweep outstanding; order is HelmUninstall
-    // before NamespaceSweep (matching `down_commands` order). `resume_command`
-    // maps the outstanding steps back to the matching `down_commands(o)` entries.
-    // When BOTH steps are outstanding it emits the HELM UNINSTALL FIRST, then
-    // the namespace sweep, joined with "; ": helm first because Helm's release
-    // metadata lives as Secrets inside the release namespace, so sweeping first
-    // would destroy it and orphan the chart's cluster-scoped resources; "; " so
-    // the compute-stopping sweep still runs even if helm fails again. The "; "
-    // join does not aggregate exit status, an accepted limitation tracked as a
-    // follow-up.
+    // done, Failed helm leaves HelmUninstall outstanding; Removed/NoMatch sweep
+    // is done, Failed sweep leaves NamespaceSweep outstanding; order is
+    // HelmUninstall before NamespaceSweep (matching `down_commands` order).
+    // `resume_command` maps the outstanding steps back to the matching
+    // `down_commands(o)` entries. When BOTH steps are outstanding it emits the
+    // HELM UNINSTALL FIRST, then the namespace sweep: helm first because Helm's
+    // release metadata lives as Secrets inside the release namespace, so
+    // sweeping first would destroy it and orphan the chart's cluster-scoped
+    // resources. #768: the two commands are still run unconditionally (never
+    // gated behind "&&", which would let a repeated helm failure block the
+    // sweep), but each command's own exit status is now captured into a shell
+    // variable ($?), and the resume line ends with a boolean expression that is
+    // nonzero unless BOTH captured statuses were 0 -- fixing the old "; " join's
+    // silent-exit-0-on-helm-failure bug without reintroducing the "&&" fail-hard
+    // hazard.
 
     // AC: an exact resumable cleanup command is surfaced. `resume_command`
     // renders the exact copy-pasteable line for a helm-only remainder.
@@ -3410,16 +3503,21 @@ mod tests {
         assert!(cmd.contains("--ignore-not-found"), "{cmd}");
     }
 
-    // AC + review: both steps outstanding -> the HELM UNINSTALL FIRST, then the
-    // namespace sweep, joined with "; ". Ordering rationale: Helm stores its
-    // release metadata as Secrets inside the release namespace, and the chart
-    // owns cluster-scoped resources (ClusterRole/ClusterRoleBinding); sweeping
-    // the namespace first would destroy that metadata, the subsequent helm
-    // uninstall would report "not found", and those cluster-scoped resources
-    // would be orphaned. Join rationale: "; " keeps the compute-stopping sweep
-    // unconditional so it still runs even if helm fails again. A " && " join
-    // would let a repeated helm failure block the sweep, so it is explicitly
-    // rejected. ("; " does not aggregate exit status, an accepted limitation.)
+    // AC + review (#768 aggregation): both steps outstanding -> the HELM
+    // UNINSTALL FIRST, then the namespace sweep, both run unconditionally, with
+    // each captured exit status aggregated into a nonzero-unless-both-succeeded
+    // trailing expression. Ordering rationale: Helm stores its release metadata
+    // as Secrets inside the release namespace, and the chart owns cluster-scoped
+    // resources (ClusterRole/ClusterRoleBinding); sweeping the namespace first
+    // would destroy that metadata, the subsequent helm uninstall would report
+    // "not found", and those cluster-scoped resources would be orphaned.
+    // Aggregation rationale: a plain "; " join runs both commands unconditionally
+    // but only returns the LAST command's exit status, so a helm failure
+    // followed by a successful sweep silently reads as exit 0. A " && " join
+    // would fix the status but let a repeated helm failure short-circuit and
+    // block the compute-stopping sweep, so it is explicitly rejected. The
+    // wrapper here keeps both commands unconditional and only combines their
+    // CAPTURED statuses afterward.
     #[test]
     fn resume_command_both_runs_both_steps_helm_first() {
         let o = common_distinct_release();
@@ -3427,10 +3525,14 @@ mod tests {
             &[TeardownStep::HelmUninstall, TeardownStep::NamespaceSweep],
             &o,
         );
+        let helm_cmd = "helm uninstall prod-release -n agent-ns";
+        let sweep_cmd =
+            "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found";
         assert_eq!(
             cmd,
-            "helm uninstall prod-release -n agent-ns; \
-             kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found"
+            format!(
+                "{helm_cmd}; s1=$?; {sweep_cmd}; s2=$?; [ \"$s1\" -eq 0 ] && [ \"$s2\" -eq 0 ]"
+            )
         );
         // The helm uninstall must appear BEFORE the sweep, so Helm's release
         // metadata (in the release namespace) survives long enough for helm to
@@ -3441,11 +3543,19 @@ mod tests {
             helm_at < sweep_at,
             "helm uninstall must run before the sweep: {cmd}"
         );
-        // The join must NOT be " && ": a repeated helm failure would short-circuit
-        // and block the compute-stopping sweep.
+        // The two commands themselves are joined by a plain "; " immediately
+        // followed by capturing their own exit status -- NOT " && " -- so a
+        // repeated helm failure can never short-circuit and block the sweep.
         assert!(
-            !cmd.contains(" && "),
-            "join must not let a helm failure block the sweep: {cmd}"
+            cmd.starts_with(&format!("{helm_cmd}; s1=$?; {sweep_cmd}; s2=$?;")),
+            "helm and the sweep must both run unconditionally, not gated behind &&: {cmd}"
+        );
+        // The trailing "&&" combines two `[ ... -eq 0 ]` tests over the ALREADY
+        // captured statuses; it does not gate whether the sweep runs, only
+        // whether the whole line's own exit status reports both as successful.
+        assert!(
+            cmd.ends_with("[ \"$s1\" -eq 0 ] && [ \"$s2\" -eq 0 ]"),
+            "the resume line's own exit status must aggregate both captured statuses: {cmd}"
         );
         // The sweep half stays label-scoped even when combined with helm.
         assert!(cmd.contains("agentos.dev/created-by=prod-release"), "{cmd}");
@@ -3491,6 +3601,21 @@ mod tests {
         assert_eq!(
             outstanding_steps(HelmOutcome::Removed, SweepOutcome::Failed),
             vec![NamespaceSweep]
+        );
+        // #768: a zero-match sweep (pre-existing namespace, never labeled by
+        // #707) is a completed step, same as an actual removal -- there is
+        // nothing left for THIS step to do, so it must not be outstanding.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Removed, SweepOutcome::NoMatch),
+            Vec::<TeardownStep>::new()
+        );
+        // #768: helm failed and the sweep matched nothing -> only the helm
+        // record is outstanding; the sweep is done (there was nothing to sweep),
+        // but critically it did NOT stop any compute, unlike the Removed case
+        // above.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Failed, SweepOutcome::NoMatch),
+            vec![HelmUninstall]
         );
     }
 
@@ -3683,6 +3808,70 @@ mod tests {
         // ... and the fix is exactly the helm-only line for `--json`.
         let fix = fix.expect("a fail-forward teardown carries a resume command");
         assert_eq!(fix, "helm uninstall prod-release -n agent-ns");
+    }
+
+    // #768 core anti-regression: a zero-match sweep is NOT the same as an
+    // actual removal. When AgentOS was installed into a pre-existing namespace
+    // (#707 never labels it), the label-scoped sweep exits 0 with nothing
+    // matched. Before #768 this was mapped to the same `SweepOutcome::Removed`
+    // as a real deletion, so a failed helm uninstall paired with a zero-match
+    // sweep produced the exact same "the run-created namespaces were swept"
+    // message as a real removal, even though the pre-existing namespace's
+    // workloads (and the failed release's compute) may still be running. This
+    // test locks the fix: `SweepOutcome::NoMatch` must NEVER be worded as
+    // "swept", and the message must say plainly that no compute was stopped.
+    #[test]
+    fn teardown_result_zero_match_sweep_never_claims_compute_was_removed() {
+        let o = common_distinct_release();
+        let helm_err = "Kubernetes cluster unreachable: net/http: TLS handshake timeout";
+        let err = teardown_result(HelmOutcome::Failed, SweepOutcome::NoMatch, helm_err, "", &o)
+            .expect_err("a stale helm record is still an incomplete teardown");
+
+        let shown = err.to_string();
+        // The core anti-regression: must NOT claim the run-created namespaces
+        // were swept, since nothing actually matched the selector.
+        assert!(
+            !shown.contains("were swept"),
+            "a zero-match sweep must never be worded as an actual removal: {shown}"
+        );
+        // Must plainly say no compute was stopped, so an operator does not
+        // mistakenly believe the failed release's workloads are gone.
+        assert!(
+            shown.to_lowercase().contains("no compute was stopped")
+                || shown.to_lowercase().contains("no run-created namespaces matched"),
+            "the message must not imply compute was removed when the sweep matched nothing: {shown}"
+        );
+        // The sweep itself is done (nothing to sweep), so only the helm step is
+        // outstanding -- the resume command is the helm-only line, exactly like
+        // the real-removal ("swept") case, in both the message and the fix.
+        assert!(
+            shown.contains("helm uninstall prod-release -n agent-ns"),
+            "the message must carry the helm-only resume line: {shown}"
+        );
+        assert!(
+            !shown.contains("delete namespace"),
+            "a zero-match sweep has nothing outstanding, so the sweep must not be listed as a resume step: {shown}"
+        );
+        let (_, fix) = crate::exit::classify(&err);
+        let fix = fix.expect("a fail-forward teardown carries a resume command");
+        assert_eq!(fix, "helm uninstall prod-release -n agent-ns");
+    }
+
+    // #768: a zero-match sweep still counts as a COMPLETED step when helm itself
+    // succeeds -- the pre-existing namespace was correctly left untouched (#707),
+    // so `cluster down` overall succeeds exactly as it would if the release had
+    // created and then swept its own namespace.
+    #[test]
+    fn teardown_result_zero_match_sweep_with_helm_removed_is_still_success() {
+        let o = common_distinct_release();
+        let res = teardown_result(HelmOutcome::Removed, SweepOutcome::NoMatch, "", "", &o)
+            .expect("a zero-match sweep alongside a clean helm uninstall is a complete teardown");
+        assert!(matches!(
+            res,
+            ClusterDownOutput::Down {
+                release_was_absent: false
+            }
+        ));
     }
 
     // P2: permanent failures (RBAC, authz) are NOT retryable. Both steps failed

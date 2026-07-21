@@ -138,6 +138,15 @@ jobs:
   merge:
     name: Merge ${{ matrix.name }} manifest
     needs: [build]
+    # A skip propagates through the WHOLE ancestor graph, not just the direct
+    # `needs:` edge: with authorize-release skipped on an ordinary main push,
+    # this job was skipped too even though `build` reported success, which froze
+    # the sha/latest manifests at the last tag push (#787). Naming a status
+    # function opts the job out of that propagation, and the explicit result
+    # check keeps it as strict as the implicit one: a `build` that failed or was
+    # cancelled still stops the manifest, and on the tag path a refused
+    # authorize-release skips `build`, which stops this job too.
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -181,6 +190,10 @@ jobs:
   worker-local-build:
     name: Build worker-local overlay (${{ matrix.platform }})
     needs: [merge]
+    # Same ancestor-graph skip as `merge` above, one level further down (#787):
+    # this overlay builds FROM the manifest `merge` just pushed, so it runs only
+    # when that job actually succeeded.
+    if: always() && needs.merge.result == 'success'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -247,6 +260,9 @@ jobs:
   worker-local-merge:
     name: Merge worker-local manifest
     needs: [worker-local-build]
+    # Same ancestor-graph skip again (#787); both arch legs must have pushed
+    # their digest before this job assembles the overlay's manifest.
+    if: always() && needs.worker-local-build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Download digests

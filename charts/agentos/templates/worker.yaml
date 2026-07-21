@@ -70,6 +70,9 @@ spec:
       {{- if .Values.worker.serviceAccount.create }}
       serviceAccountName: {{ include "agentos.fullname" . }}-worker
       {{- end }}
+      {{- with .Values.priorityClasses.platform.name }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.worker.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

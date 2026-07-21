@@ -153,6 +153,16 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/tenant-capacity-assertions.sh
 
+      # Prove every sandbox container (runner, both bundle init containers, and
+      # the litellm sidecar when enabled) declares an ephemeral-storage request
+      # AND limit (ADR-0059 decision 1, issue #755), and that the ceiling is
+      # operator-overridable (decision 6). Before this, disk was the one
+      # resource dimension with no ceiling at all.
+      - name: helm render assertions (ephemeral-storage ceilings)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/ephemeral-storage-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail

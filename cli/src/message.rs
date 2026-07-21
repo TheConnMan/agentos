@@ -92,6 +92,67 @@ fn resolve_api_key(raw: &str, env_value: Option<String>) -> String {
         .unwrap_or_else(|| DEFAULT_API_KEY.to_string())
 }
 
+/// clap `value_parser` for the CLUSTER tier's `--api-key` / `--valkey-password`
+/// (issue #786).
+///
+/// The local/compose tier binds the dev constants as clap defaults because that
+/// tier does not generate secrets. The cluster tier must not: `cluster up`
+/// randomizes both credentials per release, so a defaulted dev sentinel reaches
+/// a real install and 401s (API) or fails Valkey auth. These declarations
+/// therefore carry NO `default_value` and land as `Option<String>`; an empty
+/// string means absent, exactly as [`api_key_or_default`] settled for #540, and
+/// the handler reads the real value out of the release's Secret instead.
+pub fn cluster_api_key(raw: &str) -> Result<String, String> {
+    Ok(resolve_supplied_credential(
+        raw,
+        env::var("AGENTOS_API_KEY").ok(),
+    ))
+}
+
+/// Cluster-tier `--valkey-password` parser; see [`cluster_api_key`].
+pub fn cluster_valkey_password(raw: &str) -> Result<String, String> {
+    Ok(resolve_supplied_credential(
+        raw,
+        env::var("AGENTOS_VALKEY_PASSWORD").ok(),
+    ))
+}
+
+/// The pure core of the cluster credential parsers, with the env source passed
+/// in so it is unit-testable without mutating this process's environment. An
+/// explicit non-empty flag wins, then a non-empty env value, and an empty
+/// result means "nothing was supplied" (the caller discovers it instead).
+fn resolve_supplied_credential(raw: &str, env_value: Option<String>) -> String {
+    if !raw.is_empty() {
+        return raw.to_string();
+    }
+    env_value
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+/// Resolve one cluster-tier credential: an explicit flag/env value wins,
+/// otherwise read it from the release (issue #786).
+///
+/// `--dry-run` never contacts the cluster, so it keeps the dev default: the plan
+/// it prints does not carry the credential, and discovering a real secret just
+/// to discard it would break dry-run's offline contract.
+pub async fn resolve_cluster_credential<F, Fut>(
+    supplied: Option<String>,
+    dry_run: bool,
+    dev_default: &str,
+    discover: F,
+) -> Result<String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String>>,
+{
+    match supplied.filter(|value| !value.is_empty()) {
+        Some(value) => Ok(value),
+        None if dry_run => Ok(dev_default.to_string()),
+        None => discover().await,
+    }
+}
+
 /// Local mode (`--local`): the compose Valkey's published host port
 /// (`compose.dev.yaml`), where the CLI enqueues and the compose worker consumes.
 pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 26379;
@@ -693,6 +754,35 @@ async fn wait_for_tcp(port: u16, timeout: Duration) -> Result<()> {
     }
 }
 
+/// Hard cap on the best-effort diagnostics gather run after a timeout.
+/// `diagnostics` reads straight from the SAME Valkey the worker never acked
+/// against, with no timeout of its own -- unlike every other post-deadline
+/// Valkey read on this path (`chat::ACK_CALL_TIMEOUT`,
+/// `chat::RESUME_SCAN_CALL_TIMEOUT`), which are deliberately bounded so a
+/// stalled Valkey cannot push past `--timeout-secs`. If Valkey itself is what
+/// caused the turn to time out in the first place (a stall or partition is a
+/// common cause), an unbounded diagnostics read can hang the CLI indefinitely
+/// AFTER the turn has already timed out (#751) -- the process just sits there,
+/// still alive, which is the "linger" an operator has to find and kill by
+/// hand. Capping it means the worst case is a diagnostics printout that says
+/// the read timed out, not a wedged process.
+const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Best-effort stream diagnostics bounded by [`DIAGNOSTICS_TIMEOUT`] (#751).
+async fn bounded_diagnostics(
+    conn: &mut MultiplexedConnection,
+    stream: &str,
+    stream_id: &str,
+) -> String {
+    tokio::time::timeout(DIAGNOSTICS_TIMEOUT, diagnostics(conn, stream, stream_id))
+        .await
+        .unwrap_or_else(|_| {
+            format!(
+                "  diagnostics unavailable: Valkey did not respond within {DIAGNOSTICS_TIMEOUT:?}"
+            )
+        })
+}
+
 /// The `agentos local message` handler: drive the compose stack directly.
 ///
 /// The cluster path's self-plumbing (kubectl port-forwards) is cluster-specific,
@@ -859,9 +949,12 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
                         ResumeExit::Done => Ok(()),
                         // Still parked: the durable approval stays pending and is
                         // resolvable later, so this is retryable. Local mode holds
-                        // no port-forward children, so exiting here leaks nothing.
+                        // no port-forward children, but it DOES still hold the
+                        // Slack stub -- move it into `exit_after_drop` so its
+                        // listener is torn down before exit rather than leaked
+                        // (#751).
                         ResumeExit::Transient => {
-                            std::process::exit(crate::exit::ExitClass::Transient.code());
+                            exit_after_drop(crate::exit::ExitClass::Transient, stub);
                         }
                     }
                 }
@@ -879,25 +972,38 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
                         channel: channel.clone(),
                     });
                     persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
-                    std::process::exit(crate::exit::ExitClass::Transient.code());
+                    // Drop the Slack stub first so its listener is not leaked past
+                    // this non-unwinding exit (#751).
+                    exit_after_drop(crate::exit::ExitClass::Transient, stub);
                 }
             }
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            // Drop the Slack stub's listener IMMEDIATELY on timeout, before
+            // anything else -- in particular before the diagnostics gather right
+            // below, which reads from the SAME Valkey the worker never acked
+            // against and can itself stall (bounded by `DIAGNOSTICS_TIMEOUT`, but
+            // that is still seconds during which a not-yet-dropped stub would
+            // keep holding the port). Releasing the stub first means the very
+            // next `local message` can bind successfully right away regardless of
+            // how long anything after this line takes (#751).
+            drop(stub);
             // Gather diagnostics only on the human path; under `--json` the
             // timeout object carries no diagnostics, so skip the extra Valkey read.
             let diag = if ui.json() {
                 None
             } else {
-                Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
+                Some(bounded_diagnostics(&mut conn, &opts.stream, &stream_id).await)
             };
             ui.emit(&MessageOutcomeOutput::TimedOut {
                 diagnostics: diag,
                 resume_note: None,
             });
             // A timeout is retryable (the worker may still be working, or a
-            // transient stall), so it maps to the transient exit code, not failure.
+            // transient stall), so it maps to the transient exit code, not
+            // failure. The stub is already dropped above; nothing else to tear
+            // down for local mode ("Local mode holds no port-forward children").
             std::process::exit(crate::exit::ExitClass::Transient.code());
         }
     }
@@ -975,6 +1081,28 @@ enum ResumeExit {
     /// is retryable: the caller drops its port-forward guards and exits with the
     /// transient class.
     Transient,
+}
+
+/// Exit the process with `class`, after dropping `guards` first.
+///
+/// `std::process::exit` does not unwind the stack, so any `Drop` impl still in
+/// scope at the call site -- the Slack stub's listener/server task
+/// ([`SlackStub`](crate::chat::SlackStub)), a `kubectl port-forward` child --
+/// would otherwise never run, leaking whatever it holds (#751: a timed-out
+/// `local message`/`cluster message` used to leak the stub's bound port this
+/// way, wedging every subsequent turn with "Address already in use").
+///
+/// Every exit site in this module that needs to tear down a guard before
+/// exiting routes through here instead of calling `std::process::exit`
+/// directly: `guards` is taken BY VALUE, so the compiler forces the caller to
+/// move ownership in (a `SlackStub`, a `tokio::process::Child`, or a tuple of
+/// several) rather than merely borrowing it, and this function drops it before
+/// the process actually exits. That makes the guard-then-exit ordering
+/// structural rather than something a future call site has to remember to do
+/// by hand.
+fn exit_after_drop<T>(class: crate::exit::ExitClass, guards: T) -> ! {
+    drop(guards);
+    std::process::exit(class.code());
 }
 
 /// Keep the reply stub alive after a turn parked awaiting approval and wait for
@@ -1318,12 +1446,14 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                     {
                         ResumeExit::Done => Ok(()),
                         ResumeExit::Transient => {
-                            // Drop the Valkey port-forward FIRST: `process::exit`
-                            // does not unwind, so without this explicit drop its
-                            // `kill_on_drop` guard never fires and the `kubectl
-                            // port-forward` child is orphaned to init (#766).
-                            drop(_valkey_pf);
-                            std::process::exit(crate::exit::ExitClass::Transient.code());
+                            // Drop the Slack stub AND the Valkey port-forward first:
+                            // `process::exit` does not unwind, so without dropping
+                            // them explicitly here neither the stub's listener nor
+                            // the `kill_on_drop` port-forward child guard would ever
+                            // run, leaking the stub's bound port (#751) and
+                            // orphaning the `kubectl port-forward` child to init
+                            // (#766).
+                            exit_after_drop(crate::exit::ExitClass::Transient, (stub, _valkey_pf));
                         }
                     }
                 }
@@ -1331,8 +1461,9 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                     // No parseable approval id, so we never entered the resume wait.
                     // Same parked terminal as the timeout arm, so exit with the SAME
                     // transient class (not 0) for a deterministic scripted contract
-                    // (#766, N5). Drop the port-forward first so its child is not
-                    // orphaned by the non-unwinding `process::exit`.
+                    // (#766, N5). Drop the stub and port-forward first so neither is
+                    // leaked/orphaned by the non-unwinding `process::exit` (#751,
+                    // #766).
                     ui.emit(&MessageOutcomeOutput::AwaitingApproval {
                         thread: thread_ts.clone(),
                         reply,
@@ -1341,29 +1472,33 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                         channel: channel.clone(),
                     });
                     persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
-                    drop(_valkey_pf);
-                    std::process::exit(crate::exit::ExitClass::Transient.code());
+                    exit_after_drop(crate::exit::ExitClass::Transient, (stub, _valkey_pf));
                 }
             }
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            // Drop the Slack stub's listener IMMEDIATELY on timeout, before the
+            // diagnostics gather below -- same reasoning as `message_local`'s
+            // TimedOut arm (#751). The Valkey port-forward (`_valkey_pf`) must
+            // stay alive a bit longer: `diagnostics` still needs it for `conn`.
+            drop(stub);
             // Gather diagnostics only on the human path; under `--json` the
             // timeout object carries no diagnostics, so skip the extra Valkey read.
             let diag = if ui.json() {
                 None
             } else {
-                Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
+                Some(bounded_diagnostics(&mut conn, &opts.stream, &stream_id).await)
             };
             ui.emit(&MessageOutcomeOutput::TimedOut {
                 diagnostics: diag,
                 resume_note: None,
             });
             // A timeout is retryable (the worker may still be working, or a
-            // transient stall), so it maps to the transient exit code, not failure.
-            // Drop the Valkey port-forward FIRST for the same non-unwinding reason.
-            drop(_valkey_pf);
-            std::process::exit(crate::exit::ExitClass::Transient.code());
+            // transient stall), so it maps to the transient exit code, not
+            // failure. Drop the Valkey port-forward now, for the same
+            // non-unwinding reason as the stub above (#766).
+            exit_after_drop(crate::exit::ExitClass::Transient, _valkey_pf);
         }
     }
 }
@@ -2400,6 +2535,97 @@ mod tests {
         assert_eq!(resolve_api_key("sk-real-key-123", None), "sk-real-key-123");
         // Including a key that happens to look like whitespace-padded input.
         assert_eq!(resolve_api_key(" ", real()), " ");
+    }
+
+    /// The cluster tier's parsers carry no dev default, so "nothing supplied"
+    /// must survive as an empty string for the handler to discover instead
+    /// (#786); an explicit flag still beats the env source.
+    #[test]
+    fn cluster_credential_parser_reports_an_unsupplied_credential_as_empty() {
+        let env = || Some("from-env".to_string());
+
+        assert_eq!(resolve_supplied_credential("", None), "");
+        assert_eq!(resolve_supplied_credential("", Some(String::new())), "");
+        assert_eq!(resolve_supplied_credential("", env()), "from-env");
+        assert_eq!(resolve_supplied_credential("explicit", env()), "explicit");
+        assert_eq!(resolve_supplied_credential("explicit", None), "explicit");
+    }
+
+    /// An explicit credential is used as-is and the release is never read.
+    #[tokio::test]
+    async fn cluster_credential_prefers_the_supplied_value_over_discovery() {
+        let mut discovered = false;
+        let resolved = resolve_cluster_credential(
+            Some("supplied-key".to_string()),
+            false,
+            DEFAULT_API_KEY,
+            || {
+                discovered = true;
+                async { Ok("secret-key".to_string()) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "supplied-key");
+        assert!(
+            !discovered,
+            "an explicit credential must not hit the cluster"
+        );
+    }
+
+    /// The #786 defect: with nothing supplied, the cluster tier reads the
+    /// release's generated credential instead of sending the dev sentinel.
+    #[tokio::test]
+    async fn cluster_credential_falls_back_to_release_discovery() {
+        let resolved = resolve_cluster_credential(None, false, DEFAULT_API_KEY, || async {
+            Ok("generated-from-the-release".to_string())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "generated-from-the-release");
+
+        // An empty env value is absent, not "explicitly supplied", so it
+        // discovers too (the #540 rule, held at this seam as well).
+        let resolved = resolve_cluster_credential(
+            Some(String::new()),
+            false,
+            DEFAULT_VALKEY_PASSWORD,
+            || async { Ok("generated-valkey-password".to_string()) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "generated-valkey-password");
+    }
+
+    /// A discovery failure surfaces its actionable error rather than silently
+    /// degrading to the dev default.
+    #[tokio::test]
+    async fn cluster_credential_propagates_a_discovery_failure() {
+        let err = resolve_cluster_credential(None, false, DEFAULT_API_KEY, || async {
+            Err(anyhow::anyhow!(
+                "could not read the API key from secret agentos-secrets in namespace agentos"
+            ))
+        })
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("agentos-secrets"), "{err}");
+    }
+
+    /// `--dry-run` stays offline: no cluster read, and the printed plan carries
+    /// the dev default it always did.
+    #[tokio::test]
+    async fn cluster_credential_stays_offline_under_dry_run() {
+        let resolved = resolve_cluster_credential(None, true, DEFAULT_VALKEY_PASSWORD, || async {
+            panic!("--dry-run must not read the release secret")
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, DEFAULT_VALKEY_PASSWORD);
     }
 
     #[test]

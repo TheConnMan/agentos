@@ -97,6 +97,18 @@ _EXPIRY_RESUME_MARKER = "[approval expired]"
 # silently change which error an operator sees in the log.
 _RESET_INTERRUPT_TIMEOUT_S = 5.0
 
+# The substrate release itself (#743) runs on `asyncio.to_thread`, which is not
+# cancellable -- a hang in the K8s control plane (as opposed to a wedged
+# runner, already bounded above) would otherwise park the maintenance tick on
+# this await indefinitely, the same stall shape as an unbounded interrupt.
+# Wrapping it in `asyncio.wait_for` cannot stop the underlying thread (the
+# executor slot stays occupied until the call actually returns), but it does
+# return control to the caller so the tick is not held hostage by it; a timed
+# out release surfaces as any other release failure does -- logged by the
+# drain loop's per-request handler, with the request already popped so a
+# fresh reset request is needed to retry.
+_RESET_RELEASE_TIMEOUT_S = 5.0
+
 
 @dataclass
 class TurnOutcome:
@@ -499,6 +511,14 @@ class Kernel:
         release then runs unconditionally. `CancelledError` is deliberately not
         swallowed, so worker shutdown still cuts through.
 
+        The release itself is also bounded, to `_RESET_RELEASE_TIMEOUT_S` (#743):
+        a hang in the K8s control plane rather than the runner would otherwise
+        stall this `asyncio.to_thread` -- and therefore the whole maintenance
+        tick behind it -- indefinitely too, since `to_thread` is not
+        cancellable. A timed-out release is NOT swallowed here; it propagates
+        like any other release failure, which the drain loop's per-request
+        handler already logs and isolates from the rest of the batch.
+
         The failure log is an ERROR, not a warning: it is the only record that a
         sandbox was pulled out from under a turn that may still be running, and
         there is no retry that would produce a second, louder signal. The two
@@ -541,7 +561,10 @@ class Kernel:
                 logger.info(
                     "reset: no live runner to interrupt on thread %s", thread_key
                 )
-        return await asyncio.to_thread(self._substrate.release, thread_key)
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._substrate.release, thread_key),
+            _RESET_RELEASE_TIMEOUT_S,
+        )
 
     def attach_killswitch(self, killswitch: KillSwitch) -> None:
         """Wire the kill switch after construction (it needs interrupt_agent)."""

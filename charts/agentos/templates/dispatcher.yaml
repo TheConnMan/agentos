@@ -25,6 +25,9 @@ spec:
         {{- include "agentos.labels" . | nindent 8 }}
         {{- include "agentos.selectorLabels" (dict "root" . "component" "dispatcher") | nindent 8 }}
     spec:
+      {{- with .Values.priorityClasses.platform.name }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.dispatcher.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

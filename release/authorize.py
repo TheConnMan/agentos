@@ -10,12 +10,15 @@ pipeline, and it fails closed on either of two questions:
             feature branch, a rebased-away commit, or anything that bypassed a
             merged PR is refused here, before any image builds.
 
-  checks    Does that commit's check-runs list show every check successful (or
-            neutral/skipped)? A commit that is on main but was never checked,
-            or was checked and failed, is refused the same way. Zero check-runs
-            is also a failure -- absence of checks is not evidence they passed.
-            The gate's own workflow run is excluded from that list (issue
-            #732): it is itself an in-progress check-run on the tagged SHA and
+  checks    Does that commit's check-runs list show every REQUIRED_CHECK_NAMES
+            entry successful (or neutral/skipped)? An explicit allowlist,
+            not "some checks, all green" (issue #733): a commit with only an
+            unrelated passing check-run and no sign its real CI ever ran
+            must be refused, the same as one that is on main but was never
+            checked, or was checked and failed. Zero check-runs is also a
+            failure -- absence of checks is not evidence they passed. The
+            gate's own workflow run is excluded from that list (issue #732):
+            it is itself an in-progress check-run on the tagged SHA and
             would otherwise wait on itself forever.
 
 Both live as separately-testable functions so the negative case -- an
@@ -35,6 +38,43 @@ import sys
 from pathlib import Path
 
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
+
+# The check-run names that must be present and green before a tag may
+# publish (issue #733). These are the job `name:` fields from
+# `.github/workflows/ci.yaml` -- the workflow that gates every PR/push to
+# `main` -- restricted to the jobs that speak to release confidence: the
+# three language/test jobs, the generated-artifact drift checks, the
+# release-compose validation, every first-party image actually building
+# (including the worker-local overlay and the dispatcher's own import
+# smoke-test), and the two behavioral gates (eval falsifiability, the E2E
+# parity ladder) that ci.yaml's own comments describe as catching bug
+# classes no unit test does. Checks from other workflows (CodeQL, the
+# dependency/secret scanners, release.yaml's own jobs) are deliberately
+# excluded -- they matter, but are not what this gate is asserting about
+# *this* commit's CI.
+#
+# This list is a plain constant, not derived from ci.yaml at runtime -- the
+# simpler of the two options ADR-0058 left open (issue #733). A renamed or
+# removed ci.yaml job needs a matching edit here; there is no drift check
+# tying the two together yet.
+REQUIRED_CHECK_NAMES = frozenset(
+    {
+        "Python (ruff + mypy + pytest)",
+        "Rust (fmt + clippy + test)",
+        "Contracts (generated TypeScript compiles)",
+        "UI (lint + vitest + build + Playwright)",
+        "Compose (release stack validates)",
+        "Build runner image (no push)",
+        "Build api image (no push)",
+        "Build dispatcher image (no push)",
+        "Build worker image (no push)",
+        "Build ui image (no push)",
+        "Build worker-local overlay image (no push)",
+        "Dispatcher image imports resolve",
+        "Eval falsifiability gate (fake model, offline)",
+        "E2E parity ladder (skill + local, fake model)",
+    }
+)
 
 
 class AuthorizationError(Exception):
@@ -58,15 +98,47 @@ def commit_is_on_reviewed_main(
     return result.returncode == 0
 
 
-def required_checks_passed(check_runs: list[dict[str, object]]) -> bool:
-    """Did every check-run for the commit conclude successfully?
+def missing_required_checks(
+    check_runs: list[dict[str, object]],
+    required_names: frozenset[str] | None = None,
+) -> set[str]:
+    """Which `required_names` have no passing check-run for this commit?
 
-    An empty list fails: no checks having run is not the same as them passing,
-    and a commit racing ahead of its own CI must not slip through on that gap.
+    A name only counts as satisfied if some check-run with that exact `name`
+    concluded `success`/`neutral`/`skipped`; a same-named entry that is still
+    running, failed, or never ran at all leaves its name in the returned set.
+    Names outside `required_names` are ignored entirely -- an unrelated
+    check-run, passing or not, has no bearing on this gate (issue #733): the
+    point is asserting the checks that matter actually ran and passed, not
+    that everything present happened to be green.
+
+    `required_names` defaults to the module-level `REQUIRED_CHECK_NAMES`,
+    looked up here rather than bound as the parameter's default value so that
+    tests can override the module constant and have every caller (including
+    `main()`, which never passes this through explicitly) pick it up.
+    """
+    if required_names is None:
+        required_names = REQUIRED_CHECK_NAMES
+    passed_names = {
+        run.get("name") for run in check_runs if run.get("conclusion") in PASSING_CONCLUSIONS
+    }
+    return set(required_names) - passed_names
+
+
+def required_checks_passed(
+    check_runs: list[dict[str, object]],
+    required_names: frozenset[str] | None = None,
+) -> bool:
+    """Did every one of `required_names` conclude successfully for this commit?
+
+    An empty check-run list fails trivially: none of the required names can be
+    satisfied by nothing, so absence of checks is not evidence they passed. A
+    non-empty list where some unrelated check-run passed but a required one
+    never ran is the exact case issue #733 closes -- it also fails here.
     """
     if not check_runs:
         return False
-    return all(run.get("conclusion") in PASSING_CONCLUSIONS for run in check_runs)
+    return not missing_required_checks(check_runs, required_names)
 
 
 def exclude_current_workflow_run(
@@ -100,6 +172,7 @@ def authorize(
     *,
     cwd: Path | None = None,
     exclude_run_id: str | None = None,
+    required_names: frozenset[str] | None = None,
 ) -> None:
     """Raise AuthorizationError unless `sha` may publish a release."""
     if not commit_is_on_reviewed_main(sha, main_ref, cwd=cwd):
@@ -109,23 +182,35 @@ def authorize(
             "PR; refusing to authorize this tag."
         )
     other_runs = exclude_current_workflow_run(check_runs, exclude_run_id)
-    if not required_checks_passed(other_runs):
+    missing = missing_required_checks(other_runs, required_names)
+    if missing:
         raise AuthorizationError(
-            f"commit {sha} does not have a fully successful set of check-runs "
-            f"({len(other_runs)} found, excluding this workflow run's own). "
-            "Refusing to authorize this tag until its required checks are "
-            "current and green."
+            f"commit {sha} is missing {len(missing)} required check-run(s) "
+            f"({len(other_runs)} check-runs found for the commit, excluding "
+            "this workflow run's own): "
+            f"{', '.join(sorted(missing))}. Refusing to authorize this tag "
+            "until its required checks are current and green."
         )
 
 
-def fetch_check_runs(sha: str, repo: str) -> list[dict[str, object]]:
+def fetch_check_runs(
+    sha: str, repo: str, *, per_page: int = 100
+) -> list[dict[str, object]]:
     """The commit's check-runs via `gh api`, which carries GITHUB_TOKEN auth.
 
-    `per_page=100` without pagination: this repo's own CI (see release.yaml's
-    check list) runs well under 20 checks per commit, so a single page always
-    covers it, and parsing one JSON object is simpler than merging paginated
-    array-under-a-key responses (this endpoint's top level is an object, not
-    an array, so `gh api --paginate` does not auto-merge it).
+    Paginates explicitly rather than assuming one page covers it (issue
+    #733): a real commit on this repo's `main` was measured with dozens of
+    check-runs (CodeQL, dependency/secret scanners, and every ci.yaml job,
+    several of them matrixed), comfortably past the endpoint's own default
+    page size of 30, and there is no ceiling on that growing further as more
+    workflows land. `per_page=100` shrinks the common case to one request,
+    but the loop below keeps requesting subsequent pages -- using the
+    response's own `total_count` as the stopping point -- until every
+    check-run has been collected, so correctness does not depend on staying
+    under any particular count. This endpoint's top level is an object, not
+    an array (`total_count` + `check_runs`), so `gh api --paginate` would not
+    auto-merge it even if used; paging by hand and concatenating `check_runs`
+    across responses is the simpler route.
 
     `-X GET` is load-bearing, not decoration: `gh api` defaults to GET but
     switches to POST as soon as any `-f`/`-F` flag is present, and
@@ -133,22 +218,37 @@ def fetch_check_runs(sha: str, repo: str) -> list[dict[str, object]]:
     (issue #732). The live observation pinning this is cited in
     `release/tests/test_authorize.py::TestFetchCheckRuns`.
     """
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            "-X",
-            "GET",
-            f"repos/{repo}/commits/{sha}/check-runs",
-            "-f",
-            "per_page=100",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    payload = json.loads(result.stdout)
-    runs: list[dict[str, object]] = payload["check_runs"]
+    runs: list[dict[str, object]] = []
+    total_count: int | None = None
+    page = 1
+    while total_count is None or len(runs) < total_count:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                "-X",
+                "GET",
+                f"repos/{repo}/commits/{sha}/check-runs",
+                "-f",
+                f"per_page={per_page}",
+                "-f",
+                f"page={page}",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        payload = json.loads(result.stdout)
+        if total_count is None:
+            total_count = payload["total_count"]
+        page_runs = payload["check_runs"]
+        if not page_runs:
+            # A page reporting nothing ends the loop even if total_count
+            # implied more remained -- a stale/wrong total_count must not
+            # spin this forever.
+            break
+        runs.extend(page_runs)
+        page += 1
     return runs
 
 
