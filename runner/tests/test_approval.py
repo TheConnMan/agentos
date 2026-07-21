@@ -2092,7 +2092,10 @@ def test_builtin_and_already_effective_operator_gates_pass_verbatim() -> None:
 
 
 def test_bare_non_builtin_operator_gate_warns_it_may_be_a_silent_no_op(caplog) -> None:
-    """#712: a bare (non-mcp__) operator gate name that ISN'T a well-known
+    """#736 also relies on this test as its anti-hollow-out guard: widening the
+    known-built-in set must not amount to deleting the check.
+
+    #712: a bare (non-mcp__) operator gate name that ISN'T a well-known
     built-in tool is still armed verbatim (unchanged behavior -- we cannot
     fail closed here without an authoritative built-in tool list), but it
     must no longer be SILENT. This is exactly the shape that bit revenue-leak:
@@ -2130,6 +2133,74 @@ def test_known_builtin_operator_gate_does_not_warn(caplog) -> None:
     assert not any(
         "does not match any well-known" in r.getMessage() for r in caplog.records
     )
+
+
+# Provenance and inclusion criterion for these names (#736): see the comment
+# above `_KNOWN_BUILTIN_TOOLS` in runner/src/agentos_runner/approval.py.
+@pytest.mark.parametrize(
+    "builtin",
+    [
+        "Skill",
+        "AskUserQuestion",
+        "ListMcpResourcesTool",
+        "ReadMcpResourceTool",
+        "MultiEdit",
+        "NotebookRead",
+        "CronDelete",
+        "CronList",
+        "StructuredOutput",
+    ],
+)
+def test_real_builtin_operator_gates_do_not_warn(caplog, builtin: str) -> None:
+    """#736: the built-in list drifted behind the bundled CLI, so correctly
+    configured gates on real built-ins (Skill, AskUserQuestion, the canonical
+    MCP-resource tools) were falsely warned as probable no-ops.
+    MultiEdit/NotebookRead have no registry entry in CLI 2.1.206 but are still
+    recognized by its permission matcher, so gating them is not an operator
+    mistake either."""
+    with caplog.at_level("WARNING"):
+        gate = build_approval_gate(
+            operator_tools=[builtin],
+            policy_routes={},
+            bundle_name="revenue-leak",
+            mcp_servers={"revenue-leak-engine"},
+        )
+    assert gate is not None
+    assert gate.required == frozenset({builtin})
+    assert not any(
+        "does not match any well-known" in r.getMessage() for r in caplog.records
+    ), caplog.text
+
+
+@pytest.mark.parametrize(
+    "alias",
+    ["Task", "BashOutput", "KillShell", "ListMcpResources"],
+)
+def test_cli_alias_operator_gates_still_warn(caplog, alias: str) -> None:
+    """#736 anti-regression guard: CLI alias names must KEEP warning.
+
+    These names live in the bundled CLI's alias-to-canonical map (Task -> Agent,
+    BashOutput -> TaskOutput, KillShell -> TaskStop, ListMcpResources ->
+    ListMcpResourcesTool). The CLI normalizes them only on its permission-RULE
+    parsing path (the settings.json allow/deny path), which this approval gate
+    does not use: build_approval_gate arms the name verbatim and
+    build_can_use_tool compares the SDK-reported tool name by exact equality,
+    and the SDK reports the CANONICAL name. So a gate armed with an alias
+    matches nothing at all, the warning is a true positive, and adding these
+    names back to _KNOWN_BUILTIN_TOOLS would restore a silent fail-open.
+    """
+    with caplog.at_level("WARNING"):
+        gate = build_approval_gate(
+            operator_tools=[alias],
+            policy_routes={},
+            bundle_name="revenue-leak",
+            mcp_servers={"revenue-leak-engine"},
+        )
+    assert gate is not None
+    assert gate.required == frozenset({alias})
+    assert any(
+        "does not match any well-known" in r.getMessage() for r in caplog.records
+    ), caplog.text
 
 
 def test_manifest_gate_half_stays_fail_closed_after_operator_normalization(
