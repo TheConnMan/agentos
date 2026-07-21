@@ -1090,3 +1090,59 @@ security:
   # and would rotate live store credentials -- pin them via `--set`/`existingSecret`
   # (or use the `helm install/upgrade` path / `agentos cluster up`) in that case.
   allowDevDefaults: false
+
+# ---------------------------------------------------------------------------
+# Tenant capacity ceiling (ADR-0059 decision 4). ADR-0008 decides
+# namespace-per-tenant compute, which bounds REACHABILITY; these two objects
+# complete it with a bound on CONSUMPTION, because nodes are shared beneath
+# the namespace boundary and one tenant's sandboxes can otherwise exhaust node
+# capacity another tenant's sandboxes depend on. See
+# docs/adr/0059-sandbox-is-a-bounded-resource-envelope.md.
+# ---------------------------------------------------------------------------
+# ResourceQuota: an aggregate cpu/memory/ephemeral-storage + sandbox pod-count
+# ceiling for the tenant namespace, so a tenant cannot exceed its allocation
+# regardless of how many sandboxes it claims.
+resourceQuota:
+  enabled: true
+  # The PriorityClass name this quota's scopeSelector keys on, so the quota
+  # binds only sandbox pods -- NOT the platform pods (api/worker/dispatcher)
+  # or the data tier, which in the N=1 self-host topology share this same
+  # release namespace. This is the sandbox PriorityClass ADR-0059 decision 5 /
+  # issue #759 defines; #759 is being implemented in parallel and this is an
+  # assumed name pending that PR landing. If #759 ships a different name,
+  # override this value (or reconcile the two constant strings) so the
+  # scopeSelector actually matches. A name that matches no pod yet (#759 not
+  # merged) makes this quota inertly present rather than an error -- Kubernetes
+  # does not validate a scopeSelector's PriorityClass name against an existing
+  # object.
+  sandboxPriorityClassName: agentos-sandbox
+  hard:
+    requestsCpu: "4"
+    requestsMemory: 8Gi
+    requestsEphemeralStorage: 20Gi
+    limitsCpu: "8"
+    limitsMemory: 16Gi
+    limitsEphemeralStorage: 40Gi
+    # Aggregate sandbox pod count, scoped by the same scopeSelector -- closes
+    # the "claim more, smaller sandboxes" route around the limits above.
+    sandboxPodCount: "50"
+# LimitRange: per-container defaults (request + limit) so a sandbox pod
+# created outside this chart's own SandboxTemplate -- and, as a floor, any
+# first-party container that omits a dimension -- still inherits a ceiling
+# rather than running unbounded. Has no scopeSelector (LimitRange does not
+# support one), so it applies namespace-wide; this is safe for the N=1
+# self-host control plane because every first-party component in this chart
+# already declares its own cpu+memory request/limit, so these defaults only
+# ever fill the one dimension nothing in the chart sets today,
+# `ephemeral-storage` -- they never override an already-declared value.
+limitRange:
+  enabled: true
+  container:
+    defaultRequest:
+      cpu: 50m
+      memory: 128Mi
+      ephemeralStorage: 256Mi
+    default:
+      cpu: "1"
+      memory: 1Gi
+      ephemeralStorage: 2Gi

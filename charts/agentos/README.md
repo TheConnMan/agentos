@@ -358,6 +358,7 @@ sandbox and renders whenever an in-chart store is deployed.
 | 3. Non-root / read-only rootfs | Pod + container securityContext on the runner: `runAsNonRoot`, uid 1000, `readOnlyRootFilesystem`, drop ALL caps, no privilege escalation, RuntimeDefault seccomp, plus writable emptyDir scratch (`/tmp`, `/home/runner`) and `HOME`. | `agentSandbox.runner.hardening.*` |
 | 4. gVisor kernel isolation | `runtimeClassName` on runner pods, driven by the `security.gvisor.mode` tri-state (`auto`/`require`/`off`) + a preflight that fails the install if the RuntimeClass is missing or downgraded, firing in `require` (always) and in `auto` for real-model runs + an optional RuntimeClass object. | `security.gvisor.*`, `security.gvisorPreflight.*` |
 | 5. Data-tier ingress isolation | Per deployed store (Postgres, MinIO, ClickHouse, Valkey): a default-deny-ingress NetworkPolicy plus a scoped-allow that permits ingress on the store's ports ONLY from this release's app pods (`name`+`instance` label). Blocks any co-tenant pod from opening `Postgres:5432` etc. | `security.dataTierNetworkPolicy.*` |
+| 6. Tenant capacity ceiling | A `ResourceQuota` bounding aggregate cpu/memory/ephemeral-storage and sandbox pod count, plus a `LimitRange` supplying per-container defaults so a sandbox pod created outside this chart's own templates still inherits a ceiling. Renders whenever `agentSandbox.deploy: true`. | `resourceQuota.*`, `limitRange.*` |
 
 **Fail-closed egress.** `security.networkPolicy.allowedEgress` is EMPTY by
 default: a fresh install denies all egress except DNS until the operator declares
@@ -411,6 +412,24 @@ non-enforcing CNI.
 The class name and handler live on `security.gvisor.runtimeClassName` / `.handler`;
 set `security.gvisor.installRuntimeClass=true` to have the chart create the
 RuntimeClass object (the node must still provide the runtime).
+
+**Tenant capacity ceiling (ADR-0059 decision 4).** ADR-0008 makes the namespace
+a reachability boundary (namespace-per-tenant compute); the `ResourceQuota` and
+`LimitRange` complete it with a bound on consumption, since nodes are shared
+beneath the namespace and one tenant's sandboxes can otherwise exhaust node
+capacity another tenant's sandboxes depend on. The `ResourceQuota` is scoped
+via `scopeSelector` to the sandbox `PriorityClass` name
+(`resourceQuota.sandboxPriorityClassName`, default `agentos-sandbox` -- the
+name ADR-0059 decision 5's `PriorityClass` is expected to define), so it binds
+only sandbox pods and not the control plane or data tier that, in the N=1
+self-host topology, share this same release namespace. The `LimitRange` has no
+scope (Kubernetes does not support one on `LimitRange`) and so applies
+namespace-wide, but ships `default`/`defaultRequest` only -- never `min`/`max`
+-- so it only ever fills a resource dimension a container leaves undeclared
+(today, `ephemeral-storage` everywhere in the chart) and can never reject an
+already-configured control-plane pod at admission time. Both objects are
+independently toggleable (`resourceQuota.enabled`, `limitRange.enabled`,
+each default `true`) and every ceiling is overridable, per ADR-0059 decision 6.
 
 **Verifying the rails.** The security-boundary probe suite re-runs as a `helm test`:
 

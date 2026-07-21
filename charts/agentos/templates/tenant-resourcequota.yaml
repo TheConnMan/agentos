@@ -1,0 +1,61 @@
+{{/*
+Tenant capacity ceiling, part 1: ResourceQuota (ADR-0059 decision 4).
+
+ADR-0008 makes the namespace a reachability boundary (namespace-per-tenant
+compute); this completes it with a capacity boundary. Nodes are shared beneath
+the namespace, so without a namespace-level cap one tenant's sandboxes can
+exhaust node cpu/memory/disk that another tenant's sandboxes depend on -- a
+namespace alone does not stop that, because ResourceQuota is the object that
+actually bounds aggregate consumption inside it.
+
+Self-host wrinkle (ADR-0059 decision 4, and decision 5's PriorityClass): in the
+N=1 topology this release's sandboxes share the release namespace with the
+platform pods (api, worker, dispatcher, and the data tier), none of which
+declare `ephemeral-storage` today. A plain namespace-wide ResourceQuota
+would therefore bind the control plane and data tier too -- exactly what
+`resourceQuota.enabled` must NOT do. `scopeSelector` on the `PriorityClass`
+scope restricts every `hard` line in this object (including the pod count) to
+pods carrying that priority class, so only sandbox pods are counted and the
+control plane renders unconstrained by this quota.
+
+That priority class is the one decision 5 / issue #759 defines for sandbox
+pods. This template does not depend on #759's chart objects or values existing
+in this branch -- `scopeSelector` matches purely on the STRING name a pod's
+`priorityClassName` resolves to, which Kubernetes does not validate against an
+existing PriorityClass object at ResourceQuota-admission time. So this quota
+renders and behaves correctly whether #759 has landed yet or not:
+  - #759 not yet merged / no pod sets this priorityClassName: the scope simply
+    matches no pods yet (an inert-but-present quota), never an error.
+  - #759 merged with a DIFFERENT sandbox PriorityClass name than the default
+    guessed here (`resourceQuota.sandboxPriorityClassName`, default
+    "agentos-sandbox"): override this value (or align the two names) so the
+    scope actually matches; see the PR notes for the coordination point.
+*/}}
+{{- if and .Values.agentSandbox.deploy .Values.resourceQuota.enabled }}
+{{- $rq := .Values.resourceQuota }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "agentos.fullname" . }}-sandbox-quota
+  labels:
+    {{- include "agentos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-capacity
+spec:
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values:
+          - {{ $rq.sandboxPriorityClassName | quote }}
+  hard:
+    requests.cpu: {{ $rq.hard.requestsCpu | quote }}
+    requests.memory: {{ $rq.hard.requestsMemory | quote }}
+    requests.ephemeral-storage: {{ $rq.hard.requestsEphemeralStorage | quote }}
+    limits.cpu: {{ $rq.hard.limitsCpu | quote }}
+    limits.memory: {{ $rq.hard.limitsMemory | quote }}
+    limits.ephemeral-storage: {{ $rq.hard.limitsEphemeralStorage | quote }}
+    # Scoped by the same scopeSelector, so this bounds sandbox pod COUNT, not
+    # every pod in the namespace -- a tenant cannot route around the
+    # cpu/memory/disk ceiling above by simply claiming more, smaller sandboxes.
+    pods: {{ $rq.hard.sandboxPodCount | quote }}
+{{- end }}
