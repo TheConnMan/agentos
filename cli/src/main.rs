@@ -341,6 +341,12 @@ enum DevAction {
     /// Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml
     /// version, and appVersion (`bash scripts/check-version-consistency.sh`).
     VersionCheck,
+    /// Assert every direct `ClassName.model_validate*(...)` call on an
+    /// `_AciModel` subclass threads `READER_CONTEXT` or is a declared
+    /// exception in `tools/wire-tolerance-gate/allowlist.json` (#625, following
+    /// #492's forgotten-context bug, `bash scripts/check-wire-tolerance.sh`).
+    /// Offline, no credential.
+    WireTolerance,
     /// Set the release version across cli/Cargo.toml + Chart.yaml
     /// version/appVersion (and refresh the CLI lockfile) so a release cut can't
     /// leave the three out of sync. Does not commit or tag.
@@ -1455,6 +1461,9 @@ async fn run(command: Option<Command>) -> Result<()> {
             }
             DevAction::VersionCheck => {
                 commands::dev_script("scripts/check-version-consistency.sh").await
+            }
+            DevAction::WireTolerance => {
+                commands::dev_script("scripts/check-wire-tolerance.sh").await
             }
             DevAction::BumpVersion { version, dry_run } => {
                 commands::bump_version(&version, dry_run).await

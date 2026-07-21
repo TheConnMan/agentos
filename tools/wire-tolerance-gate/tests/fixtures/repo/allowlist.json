@@ -1,0 +1,10 @@
+{
+  "_comment": "Fixture allowlist for the gate's own test suite, not the real repo allowlist.",
+  "entries": [
+    {
+      "path": "apps/fake/site_allowlisted.py",
+      "symbol": "Widget.model_validate",
+      "why": "Fixture exercising the allowlist-excuses-a-call-site path."
+    }
+  ]
+}
