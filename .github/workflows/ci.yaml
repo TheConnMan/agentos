@@ -440,8 +440,22 @@ jobs:
   # actual up/deploy/message/down round trip; `local up --wait` alone can run
   # up to compose's 300s default wait timeout if a service is slow to report
   # healthy.
+  #
+  # Additive on top of the above: a `local-release` rung (issue #695) runs the
+  # SAME local round trip again, this time against compose/generate_release_compose.py's
+  # OUTPUT (compose.release.yaml) instead of the checked-in compose.dev.yaml --
+  # the artifact a release binary's `agentos local up` actually runs. The
+  # `compose` job elsewhere in this workflow already asserts that generated
+  # file parses and renders the right service counts; it never runs a turn
+  # through it, which is exactly the gap #545-class compose-env-wiring bugs
+  # hide in. Reuses the SAME agentos-api/agentos-worker local builds above
+  # (no second Dockerfile build for those), just tags/builds the two additional
+  # refs the DEFAULT (no --version) generation pins: agentos-api:latest (the
+  # dev file's own unset-override outcome) and the worker-local overlay image
+  # the generator's T1 substitutes for the build directive, both resolved
+  # locally so `local up` never attempts a pull against a private GHCR ref.
   e2e-ladder:
-    name: E2E parity ladder (skill + local, fake model)
+    name: E2E parity ladder (skill + local + local-release, fake model)
     runs-on: ubuntu-latest
     needs: rust
     steps:
@@ -473,4 +487,13 @@ jobs:
         env:
           AGENTOS_BIN: cli/target/release/agentos
           AGENTOS_BASE_TAG: ci-local
+        run: bash cli/scripts/e2e-ladder.sh
+      - name: Tag the api image for the generated release compose (ghcr.io/curie-eng/agentos-api:latest, no registry auth)
+        run: docker tag ghcr.io/curie-eng/agentos-api:ci-local ghcr.io/curie-eng/agentos-api:latest
+      - name: Build the worker-local overlay for the generated release compose (ghcr.io/curie-eng/agentos-worker-local:latest, no registry auth)
+        run: docker build --build-arg BASE_TAG=ci-local -t ghcr.io/curie-eng/agentos-worker-local:latest -f compose/worker-local.Dockerfile compose
+      - name: Parity ladder (local-release rung against generated compose.release.yaml, fake model, credential-free)
+        env:
+          AGENTOS_BIN: cli/target/release/agentos
+          AGENTOS_E2E_TIERS: local-release
         run: bash cli/scripts/e2e-ladder.sh

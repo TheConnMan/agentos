@@ -580,18 +580,27 @@ agentos-runner .` from the repo root).
 The cold-start parity ladder (`agentos dev e2e-ladder`, `cli/scripts/e2e-ladder.sh`)
 runs the same skill-tier script as rung 1, then adds a local rung (`local up
 --minimal` -> `local deploy` -> `local message` with the reply asserted ->
-`local down`) and a cluster rung (`cluster deploy` then `cluster message`, a
-real round trip with no manual port-forward) against a pre-installed release.
-Two env knobs configure it:
+`local down`, against `compose.dev.yaml`) and a cluster rung (`cluster deploy`
+then `cluster message`, a real round trip with no manual port-forward) against
+a pre-installed release. A `local-release` rung repeats the local rung's exact
+round trip against the generated `compose.release.yaml` instead -- the
+artifact a release binary's `agentos local up` actually runs -- so the CI
+config-only check on that file (`compose/generate_release_compose.py` +
+`docker compose config`) is not the only coverage it gets. It needs the
+release-pinned `ghcr.io/curie-eng/agentos-api` and `-worker-local` images
+already built and tagged locally (it preflights and fails with a fix hint
+otherwise). Two env knobs configure it:
 
 - `AGENTOS_E2E_TIERS` -- which rungs to run. Defaults to `skill,local`
   (credential-free, CI-safe); `all` runs `skill,local,cluster`. A tier named
   explicitly is required, and its absence fails the run; a tier not named is
-  skipped.
+  skipped. `local-release` is a fourth tier, named explicitly (e.g.
+  `skill,local,local-release`) -- it is not folded into `all` since it needs
+  the extra images built first.
 - `AGENTOS_E2E_LIVE` -- unset or `0` runs the fake model (credential-free, the
   default); `1` runs the live-credential variant for pre-release manual passes
-  and fails fast if no model credential is present. It governs the local and
-  cluster rungs only; the skill rung stays fake.
+  and fails fast if no model credential is present. It governs the local,
+  local-release, and cluster rungs only; the skill rung stays fake.
 
 The one-command pre-release gate:
 

@@ -5,9 +5,16 @@
 # deployment tier with the tier's own real verbs and asserts a turn actually
 # finalized. Rung 1 (skill) is the existing `cli/scripts/e2e.sh`, invoked as is
 # so the skill leg has exactly one implementation. Rung 2 (local) is
-# `local up --minimal` -> `local deploy` -> `local message` -> `local down`.
-# Rung 3 (cluster) is `cluster deploy` -> `cluster message` against a release
-# that is ALREADY installed; the ladder never installs or uninstalls one.
+# `local up --minimal` -> `local deploy` -> `local message` -> `local down`,
+# against `compose.dev.yaml`. The `local-release` mode is the same round trip
+# against `compose.release.yaml` instead -- the generated, checkout-free
+# artifact `agentos local up` runs on a release binary (issue #695), one half
+# of the `compose.dev.yaml` / generated-release-compose parity seam named in
+# AGENTS.md. CI validates that generated file today only by `docker compose
+# config` and service-count assertions (the `compose` job), never by running a
+# turn through it -- exactly the gap this mode closes. Rung 3 (cluster) is
+# `cluster deploy` -> `cluster message` against a release that is ALREADY
+# installed; the ladder never installs or uninstalls one.
 #
 # What it is NOT: it is not a compose test and not a helm test. Every step goes
 # through an `agentos` verb, because the point is to catch a tier whose verb
@@ -35,7 +42,17 @@
 #   AGENTOS_E2E_TIERS        comma list of rungs (default skill,local; `all` =
 #                            skill,local,cluster). A NAMED tier is REQUIRED: if
 #                            cluster is named and no release responds, exit 1.
-#   AGENTOS_E2E_LIVE         1 = real model on rungs 2 and 3 (rung 1 stays fake)
+#                            `local-release` is a fourth, separately-named rung
+#                            (the same local round trip against the generated
+#                            compose.release.yaml instead of compose.dev.yaml);
+#                            it is NOT folded into `all` because it needs the
+#                            release-pinned images (ghcr.io/curie-eng/agentos-api
+#                            and -worker-local) built and tagged locally first,
+#                            a step `all`'s existing skill/local/cluster rungs
+#                            don't require -- name it explicitly, e.g.
+#                            AGENTOS_E2E_TIERS=skill,local,local-release.
+#   AGENTOS_E2E_LIVE         1 = real model on rungs 2, local-release, and 3
+#                            (rung 1 stays fake)
 #   AGENTOS_BIN              path to a prebuilt agentos binary (skip cargo build)
 set -euo pipefail
 
@@ -398,6 +415,119 @@ rung_local() {
     fi
 }
 
+# local-release mode: the same local round trip as rung_local, but against the
+# GENERATED compose.release.yaml (compose/generate_release_compose.py) instead
+# of the checked-in compose.dev.yaml -- the artifact a release binary's
+# `agentos local up` actually runs, per the compose.dev.yaml / generated
+# release compose parity seam (issue #695, AGENTS.md). CI's existing `compose`
+# job already asserts this generated file parses and renders the right service
+# counts; this mode is the missing half, that a real turn survives it.
+rung_local_release() {
+    echo
+    echo "########## rung: local-release (compose, generated release artifact) ##########"
+
+    local release_compose="$WORKDIR/compose.release.yaml"
+    echo
+    echo "=== generate compose.release.yaml from compose.dev.yaml ==="
+    # No --version: same invocation as the `compose` CI job's config-only
+    # check, so this rung exercises the SAME generated text that job only
+    # parses, not a differently-pinned variant of it. Run with cwd=$REPO_ROOT:
+    # the generator reads compose.dev.yaml and otel/collector-config.yaml by
+    # relative path.
+    (cd "$REPO_ROOT" && python3 compose/generate_release_compose.py) > "$release_compose"
+
+    # The generated file has no build directives (generate_release_compose.py's
+    # T1 replaces the agentos-worker build overlay with a pinned
+    # ghcr.io/curie-eng/agentos-worker-local image, and agentos-api/-migrate
+    # were already a pull, never a build) -- every agentos-owned image it needs
+    # must already exist locally under the tag the generator pinned, or `local
+    # up` will try to pull a private GHCR image with no credentials. Check only
+    # the core profile's images (--minimal is what this rung brings up) and
+    # only the agentos-owned ones: postgres/valkey/minio are public and pulled
+    # on demand same as rung_local already assumes.
+    local missing=0 image
+    while IFS= read -r image; do
+        [[ "$image" == ghcr.io/curie-eng/agentos-* ]] || continue
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+            echo "error: image '$image' is required by compose.release.yaml's core profile and is not present locally." >&2
+            missing=1
+        fi
+    done < <(docker compose -f "$release_compose" --profile core config --images)
+    if (( missing )); then
+        echo "fix: build and tag the missing image(s) locally under the tag compose.release.yaml pins (see .github/workflows/ci.yaml's e2e-ladder job for the exact build+tag steps CI uses), then re-run." >&2
+        return 1
+    fi
+
+    assert_stub_port_free
+
+    if [[ -n "$(docker ps -q --filter 'name=agentos-api' 2>/dev/null)" ]]; then
+        # Reuse it and do NOT tear it down, matching rung_local's rule: the
+        # thread that brought a stack up owns tearing it down.
+        echo "a compose stack is already running; reusing it and leaving teardown to whoever started it"
+        if [[ "$LIVE" == "1" ]]; then
+            echo "warning: AGENTOS_E2E_LIVE=1, but the reused stack's model mode was fixed by whoever ran \`local up\` and is NOT verified here." >&2
+            echo "warning: if that stack was started with the fake model, this 'live' rung runs sealed; \`local down\` then re-run to be sure." >&2
+        fi
+    else
+        echo
+        echo "=== clear any stale volumes from a prior non-wiped teardown ==="
+        # compose.dev.yaml and compose.release.yaml pin the SAME compose
+        # project name (`agentos`), so a prior `local down` (rung_local's, kept
+        # deliberately non-destructive) can leave this rung's Postgres/Valkey
+        # state non-empty. Nothing is running (checked above), so this can only
+        # ever touch a stack this run itself would otherwise create -- never a
+        # stack this run is about to reuse. Wiping first makes this rung an
+        # actual cold start rather than one that might silently inherit state
+        # and mask the exact compose-env-wiring drift (#545) it exists to catch.
+        "$BIN" local down --wipe --yes -f "$release_compose" >/dev/null 2>&1 || true
+
+        echo
+        echo "=== agentos local up --minimal -f compose.release.yaml ==="
+        LOCAL_STACK_OWNED=1
+        "$BIN" local up --minimal -f "$release_compose"
+    fi
+
+    echo
+    echo "=== agentos local deploy (release-compose stack) ==="
+    # A separate bundle copy from rung_local's, never the same directory: deploy
+    # records state into the bundle dir, and reusing rung_local's copy here
+    # would carry over its recorded agent/version ids instead of a fresh
+    # cold-start deploy.
+    "$BIN" local deploy --plugin-dir "$WORKDIR/bundle-release"
+
+    echo
+    echo "=== agentos local message --json (release-compose stack) ==="
+    assert_stub_port_free
+    local out
+    out="$("$BIN" --json local message "$PROMPT" || true)"
+    printf '%s\n' "$out"
+    assert_finalized_reply "local-release" "$out"
+
+    if (( LOCAL_STACK_OWNED )); then
+        echo
+        echo "=== agentos local down -f compose.release.yaml ==="
+        "$BIN" local down -f "$release_compose"
+        LOCAL_STACK_OWNED=0
+
+        echo
+        echo "=== assert nothing agentos-related survived ==="
+        local survivors
+        survivors="$(docker ps --filter 'label=com.docker.compose.project=agentos' --format '{{.Names}}')"
+        if [[ -n "$survivors" ]]; then
+            echo "local down left compose services running:" >&2
+            printf '%s\n' "$survivors" >&2
+            return 1
+        fi
+        survivors="$(docker ps --filter "label=$SANDBOX_LABEL" --format '{{.Names}}')"
+        if [[ -n "$survivors" ]]; then
+            echo "sibling sandbox containers survived teardown:" >&2
+            printf '%s\n' "$survivors" >&2
+            return 1
+        fi
+        echo "no agentos containers running"
+    fi
+}
+
 # Rung 3: the deployed release. Requires one to already exist; it is never
 # installed or torn down here, because the cluster is shared.
 rung_cluster() {
@@ -456,29 +586,33 @@ if [[ "$TIERS" == "all" ]]; then
 fi
 RUN_SKILL=0
 RUN_LOCAL=0
+RUN_LOCAL_RELEASE=0
 RUN_CLUSTER=0
 IFS=',' read -r -a SELECTED <<< "$TIERS"
 for tier in "${SELECTED[@]}"; do
     case "$tier" in
         skill) RUN_SKILL=1 ;;
         local) RUN_LOCAL=1 ;;
+        local-release) RUN_LOCAL_RELEASE=1 ;;
         cluster) RUN_CLUSTER=1 ;;
         "") ;;
         *)
             echo "error: unknown tier '$tier' in AGENTOS_E2E_TIERS." >&2
-            echo "fix: use a comma list of skill, local, cluster, or the shorthand 'all'." >&2
+            echo "fix: use a comma list of skill, local, local-release, cluster, or the shorthand 'all' (skill, local, cluster)." >&2
             exit 1 ;;
     esac
 done
-if (( ! RUN_SKILL && ! RUN_LOCAL && ! RUN_CLUSTER )); then
+if (( ! RUN_SKILL && ! RUN_LOCAL && ! RUN_LOCAL_RELEASE && ! RUN_CLUSTER )); then
     echo "error: AGENTOS_E2E_TIERS selected no rungs." >&2
-    echo "fix: set it to a comma list of skill, local, cluster, or 'all'." >&2
+    echo "fix: set it to a comma list of skill, local, local-release, cluster, or 'all'." >&2
     exit 1
 fi
 
-# A throwaway COPY of the bundle: deploy records state into the bundle dir, and
-# that must never land in the tree.
+# Throwaway COPIES of the bundle: deploy records state into the bundle dir, and
+# that must never land in the tree. Separate copies for rung_local and
+# rung_local_release so neither carries the other's recorded deploy state.
 cp -r "$BUNDLE_SRC" "$WORKDIR/bundle"
+cp -r "$BUNDLE_SRC" "$WORKDIR/bundle-release"
 
 # Rungs run strictly in order and never in parallel: they share host ports, and
 # rung 1 must release its runner container before rung 2 starts.
@@ -493,6 +627,14 @@ if (( RUN_LOCAL )); then
 else
     echo
     echo "SKIPPING rung 2 (local): not named in AGENTOS_E2E_TIERS."
+fi
+if (( RUN_LOCAL_RELEASE )); then
+    rung_local_release
+else
+    echo
+    echo "SKIPPING rung (local-release): not named in AGENTOS_E2E_TIERS. Needs the"
+    echo "release-pinned images built and tagged locally first; name it explicitly,"
+    echo "e.g. AGENTOS_E2E_TIERS=skill,local,local-release."
 fi
 if (( RUN_CLUSTER )); then
     rung_cluster
