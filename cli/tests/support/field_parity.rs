@@ -79,10 +79,14 @@ pub enum Violation {
 /// One `Deserialize` struct recovered from the source: its bare name, the set of
 /// wire field names (rename/rename_all/skip applied), and whether it has a
 /// `#[serde(flatten)]` field (which makes it undecomposable).
-struct CollectedStruct {
-    name: String,
-    wire_fields: BTreeSet<String>,
-    has_flatten: bool,
+///
+/// `pub(crate)` (rather than private): the emit-hop gate (#699,
+/// `support/emit_parity.rs`) reuses this exact struct inventory as the source
+/// of truth for a mirror struct's OWN fields, one hop upstream of its check.
+pub(crate) struct CollectedStruct {
+    pub(crate) name: String,
+    pub(crate) wire_fields: BTreeSet<String>,
+    pub(crate) has_flatten: bool,
 }
 
 /// serde attributes distilled from a field's (or container's) `#[serde(...)]`
@@ -246,7 +250,7 @@ impl<'ast> Visit<'ast> for StructCollector {
     }
 }
 
-fn walk_structs(rust_src: &str) -> Vec<CollectedStruct> {
+pub(crate) fn walk_structs(rust_src: &str) -> Vec<CollectedStruct> {
     let file = match syn::parse_file(rust_src) {
         Ok(f) => f,
         // A source we cannot parse yields no structs; the real-tree test would
