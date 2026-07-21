@@ -104,6 +104,14 @@ GRANT_TOOL_ENV = BootEnv.env_key("approval_grant_tool")
 # confers nothing -- the runner reads it only to decide whether to emit an
 # observe-only warning when the approved business action never ran.
 RESUMED_KIND_ENV = BootEnv.env_key("approval_resumed_kind")
+# #517/#669 opt-in false-completion check: a runner-local, authority-free,
+# observe-only knob, NOT a declared BootEnv field (unlike the keys above, which
+# all go through BootEnv.env_key). runner/src/agentos_runner/config.py reads
+# this as a direct env lookup rather than through the frozen ACI contract, so
+# the literal is spelled out here rather than sourced from BootEnv.env_keys().
+# Operator scope, like API_BACKEND_ENV/MODEL_ENV_KEY_ENV: forwarded from
+# WorkerConfig.false_completion_check, never per-agent.
+FALSE_COMPLETION_CHECK_ENV = "AGENTOS_FALSE_COMPLETION_CHECK"
 # the worker re-mints every turn; this only bounds a leaked-token window (ADR-0033)
 SANDBOX_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
@@ -484,6 +492,14 @@ class BindingResolver:
             history_token=state_token,
             memory_token=state_token,
         )
+        # #517/#669 opt-in false-completion check: NOT a BootEnv.render_worker
+        # kwarg (it is deliberately kept out of the frozen ACI contract, see
+        # FALSE_COMPLETION_CHECK_ENV above), so it is written directly here
+        # rather than threaded through the render call above. Operator scope
+        # only, mirrored in apply_model_env for the eval lane so both boot
+        # paths agree.
+        if self._config.false_completion_check:
+            env[FALSE_COMPLETION_CHECK_ENV] = "1"
         # Deliver the agent's connector secrets (ADR-0009, #429): named secret
         # values the bundle's authed MCP servers read from the sandbox env, where
         # `.mcp.json` `${VAR}` expansion consumes them. Injected by value; the
@@ -517,6 +533,10 @@ def apply_model_env(
     (#514) come from WorkerConfig only and take no override: they select which
     wire protocol is dialed and which env var a credential is read from, so a
     lower-privileged agent author must not be able to set them.
+
+    Also layers the false-completion check (#517, #669): another operator-only,
+    no-override knob, forwarded here so the eval lane's boot env agrees with
+    ``BindingResolver.boot_env``'s direct write of the same key.
     """
     if config.fake_model:
         env[FAKE_MODEL_ENV] = "1"
@@ -531,6 +551,8 @@ def apply_model_env(
     model = model_override if model_override is not None else config.model
     if model:
         env[MODEL_ENV] = model
+    if config.false_completion_check:
+        env[FALSE_COMPLETION_CHECK_ENV] = "1"
 
 
 def inject_connector_secrets(

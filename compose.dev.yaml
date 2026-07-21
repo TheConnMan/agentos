@@ -498,6 +498,11 @@ services:
       - AGENTOS_MODEL_API_BACKEND=${AGENTOS_MODEL_API_BACKEND:-}
       - AGENTOS_MODEL_ENV_KEY=${AGENTOS_MODEL_ENV_KEY:-}
       - AGENTOS_MODEL=${AGENTOS_MODEL:-}
+      # Opt-in false-completion check (#517, #669): observe-only, so it defaults
+      # off here exactly like local up preserves every other feature's current
+      # behavior. Set AGENTOS_FALSE_COMPLETION_CHECK=1 in your shell to forward
+      # it to the worker, which forwards it into every claim's boot env.
+      - AGENTOS_FALSE_COMPLETION_CHECK=${AGENTOS_FALSE_COMPLETION_CHECK:-}
       - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-agentos_runner}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
     restart: unless-stopped
