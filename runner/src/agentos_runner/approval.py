@@ -63,24 +63,137 @@ logger = logging.getLogger(__name__)
 # version; a name missing from here is not an error, just an unwarned pass,
 # and a name present here that isn't actually offered in a given session is
 # similarly harmless (it just arms nothing, same as today).
+#
+# Provenance (#736): the names below are read out of the CLI the SDK actually
+# ships, not guessed. runner/pyproject.toml pins claude-agent-sdk>=0.2.115; that
+# version bundles Claude Code CLI 2.1.206 (claude_agent_sdk/_cli_version.py),
+# binary at claude_agent_sdk/_bundled/claude. Two reproducible sources:
+#
+# 1. Tool-name string constants. Note the extraction pattern must NOT anchor on
+#    "var ": the minified bundle chains declarators, e.g.
+#    var gH="CronCreate",gU="CronDelete",CVt="CronList" , so a var-anchored
+#    regex captures only the first name and silently drops its siblings (that
+#    is how CronDelete/CronList went missing on the first pass). Use:
+#      grep -ao '[A-Za-z_$][A-Za-z_$0-9]*="[A-Z][A-Za-z]*"[,;]' <binary> \
+#        | sed 's/.*="//;s/"[,;]//' | sort -u
+# 2. The alias-to-canonical map, reproducible with:
+#      grep -ao '.\{300\}BashOutputTool:"TaskOutput".\{0,400\}' <binary>
+#    which yields verbatim:
+#      {Task:"Agent",KillShell:"TaskStop",KillBash:"TaskStop",
+#       AgentOutputTool:"TaskOutput",BashOutputTool:"TaskOutput",
+#       AgentOutput:"TaskOutput",BashOutput:"TaskOutput",
+#       ListPeers:"ListAgents",Brief:"SendUserMessage",
+#       ListMcpResources:"ListMcpResourcesTool",
+#       ReadMcpResource:"ReadMcpResourceTool",
+#       ReadMcpResourceDir:"ReadMcpResourceDirTool"}
+#
+# The bound: this set holds ONLY names the SDK ``can_use_tool`` callback can
+# actually observe, which is the CANONICAL tool-name set. It is deliberately NOT
+# the CLI's whole recognition surface, because the two differ on alias keys.
+#
+# Why the alias map above is EXCLUDED rather than included. The bundled CLI
+# consumes that map through a resolver, ``R2(e){return Object.hasOwn(Hti,e)?
+# Hti[e]:e}``, and calls it only from its permission-RULE string parser
+# (``{toolName:R2(e)}``) -- the settings.json allow/deny path. AgentOS's operator
+# approval gate does not go through that path at all: ``build_approval_gate``
+# arms names verbatim into ``gate.required`` and ``build_can_use_tool`` compares
+# the SDK-reported tool name by exact equality, and the SDK reports the CANONICAL
+# name. So an operator gating an alias (``ListMcpResources``, canonical
+# ``ListMcpResourcesTool``) arms a literal that never matches: the gate silently
+# arms nothing. For this gate an alias name IS a probable no-op, so its warning
+# is a TRUE positive, not the false positive #736 set out to fix, and suppressing
+# it would be exactly the silent fail-open #712 built the warning to surface.
+# ``Task``, ``BashOutput``, and ``KillShell`` were in the historical pre-#736 set
+# and are dropped for this reason (they are alias keys for ``Agent``,
+# ``TaskOutput``, and ``TaskStop``); the canonical names stay.
+#
+# The inclusion criterion (apply this, do not re-derive it). A name is included
+# when the bundled CLI does either of:
+#   (a) declares it as a tool-name string constant AND carries a tool marker
+#       next to it: a tool description string, a userFacingName(), or an
+#       aliases:[...] registry entry, AND it is the canonical name rather than an
+#       alias key from the map above; or
+#   (b) still recognizes it in a permission-matcher list (the MultiEdit /
+#       NotebookRead case).
+# A bare capitalized string constant with no tool marker does NOT qualify, and an
+# alias key NEVER qualifies.
+#
+# Recorded exclusions, so the raw-sweep diff is pre-resolved:
+#   SlashCommand      zero occurrences of the literal in the binary.
+#   TestingPermission real registry entry, but isEnabled(){return!1}, so it is
+#                     never offered.
+#   ConnectGitHub     name constant with no tool marker next to it, fails (a).
+#   everything else the raw sweep returns (error classes, HTTP verbs,
+#   credential types, Zod types, syntax-highlighter language names) fails (a).
+#
+# MultiEdit and NotebookRead are retained without a registry entry in 2.1.206:
+# they have no tool description or name constant, but the CLI's live permission
+# matcher still lists them (filePatternTools includes NotebookRead, and the
+# write-tool deny set includes MultiEdit), so they remain legacy names the CLI
+# recognizes in permission rules and gating them is not an operator mistake.
 _KNOWN_BUILTIN_TOOLS = frozenset(
     {
-        "Task",
+        # Canonical tool names: criterion (a).
+        "Agent",
+        "Artifact",
+        "AskUserQuestion",
         "Bash",
-        "BashOutput",
-        "KillShell",
-        "Read",
-        "Write",
+        "Cd",
+        "ClaudeDesign",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "DesignSync",
         "Edit",
-        "MultiEdit",
+        "EndConversation",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
         "Glob",
         "Grep",
+        "LSP",
+        "ListAgents",
+        "ListConnectors",
+        "ListMcpResourcesTool",
+        "Monitor",
+        "NotebookEdit",
+        "ObserverReport",
+        "PowerShell",
+        "Projects",
+        "PushNotification",
+        "REPL",
+        "Read",
+        "ReadMcpResourceDirTool",
+        "ReadMcpResourceTool",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SearchMcpRegistry",
+        "SendMessage",
+        "SendUserFile",
+        "SendUserMessage",
+        "ShareOnboardingGuide",
+        "ShowOnboardingRolePicker",
+        "Skill",
+        "StructuredOutput",
+        "SuggestConnectors",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "TodoWrite",
+        "ToolSearch",
+        "WaitForMcpServers",
         "WebFetch",
         "WebSearch",
-        "NotebookEdit",
+        "Workflow",
+        "Write",
+        # Legacy names the permission matcher still recognizes: criterion (b).
+        "MultiEdit",
         "NotebookRead",
-        "TodoWrite",
-        "ExitPlanMode",
     }
 )
 

@@ -213,6 +213,19 @@ line; rewrite that `plugin:<bundle>:<server>` value into the
 `mcp__plugin_<bundle>_<server>__<tool>` prefix and append the tool name. A
 tool-call trace also shows the exact live name directly.
 
+A related trap sits on the built-in side: the bundled Claude Code CLI keeps
+an alias-to-canonical map for some of its tool names (for example `Task` to
+`Agent`, `BashOutput` to `TaskOutput`, `KillShell` to `TaskStop`,
+`ListMcpResources` to `ListMcpResourcesTool`). That map is consumed only by
+the CLI's own permission-rule parser (the settings.json allow/deny path); it
+is not in the path this gate uses. The SDK `can_use_tool` callback that
+`build_can_use_tool` compares against always reports the canonical name, so
+an operator who gates on an alias arms a literal that never matches and the
+gate silently arms nothing. Gate on the canonical name. Since #736,
+`build_approval_gate` (`runner/src/agentos_runner/approval.py`) treats alias
+names as unrecognized on purpose, so arming one still trips the existing
+"may be a silent no-op" warning.
+
 ## Implementations today
 
 **One authorizer** (`apps/api/src/agentos_api/authorizer.py`, pure policy with no Slack in
