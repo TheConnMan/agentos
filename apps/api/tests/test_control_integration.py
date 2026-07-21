@@ -111,14 +111,54 @@ def test_reset_thread_queues_a_pending_request(
         valkey.srem(THREAD_RESET_SET, "t-reset-1")
 
 
+def test_thread_reset_state_is_pollable_until_the_worker_drains(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+) -> None:
+    """#735: the POST only *queues* a reset; the release lands on the worker's
+    maintenance tick, up to reclaim_interval_s (30s) later. GET .../reset exposes
+    that pending state (wiring the previously-uncalled ``is_pending``) so the
+    operator workflow "reset the thread, then message to confirm" can poll to
+    completion instead of adopting the still-live pre-reset sandbox and reading a
+    stale answer. Real Valkey, real SADD/SREM, no mocking."""
+    from agentos_api.threadreset import THREAD_RESET_SET
+
+    agent_id = _make_agent(client, auth_headers)
+    thread = "t-reset-poll-1"
+    url = f"/agents/{agent_id}/threads/{thread}/reset"
+    valkey.srem(THREAD_RESET_SET, thread)
+    try:
+        # Nothing outstanding yet.
+        before = client.get(url, headers=auth_headers)
+        assert before.status_code == 200
+        assert before.json() == {"requested": False}
+
+        # POST enqueues; the poll now reports the reset as still outstanding.
+        assert client.post(url, headers=auth_headers).json() == {"requested": True}
+        pending = client.get(url, headers=auth_headers)
+        assert pending.status_code == 200
+        assert pending.json() == {"requested": True}
+
+        # Simulate the worker's maintenance tick draining THIS thread's request
+        # (it SPOPs the member, then releases the sandbox). The poll then reads
+        # False -- the signal the CLI waits on before it reports success.
+        valkey.srem(THREAD_RESET_SET, thread)
+        released = client.get(url, headers=auth_headers)
+        assert released.status_code == 200
+        assert released.json() == {"requested": False}
+    finally:
+        valkey.srem(THREAD_RESET_SET, thread)
+
+
 def test_reset_thread_requires_a_real_agent(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
-    resp = client.post(
-        "/agents/00000000-0000-0000-0000-000000000000/threads/t-x/reset",
-        headers=auth_headers,
-    )
-    assert resp.status_code == 404
+    missing = "/agents/00000000-0000-0000-0000-000000000000/threads/t-x/reset"
+    assert client.post(missing, headers=auth_headers).status_code == 404
+    # The poll surface (#735) is scoped to a real agent the same way.
+    assert client.get(missing, headers=auth_headers).status_code == 404
 
 
 def test_budget_round_trips_through_postgres(

@@ -609,6 +609,34 @@ impl ApiClient {
             .context("decoding thread reset state")
     }
 
+    /// Poll whether a thread's forced reset is still outstanding: `GET
+    /// /agents/{id}/threads/{thread_key}/reset` (#735). `requested` stays true
+    /// from the POST until the worker's maintenance tick releases the sandbox,
+    /// then flips to false -- so a caller can wait for the release to actually
+    /// land (and the next message to be safe from adopting the pre-reset
+    /// sandbox) before it acts. Mirrors the POST above.
+    pub async fn thread_reset_state(
+        &self,
+        agent_id: &str,
+        thread_key: &str,
+    ) -> Result<ThreadResetState> {
+        let resp = self
+            .http
+            .get(format!(
+                "{}/agents/{agent_id}/threads/{thread_key}/reset",
+                self.base_url
+            ))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("GET /agents/{id}/threads/{thread_key}/reset")?;
+        Self::expect_ok(resp, "polling the thread reset state")
+            .await?
+            .json()
+            .await
+            .context("decoding thread reset state")
+    }
+
     /// Set the agent budget: `PUT /agents/{id}/budget` with a `BudgetConfig` body.
     pub async fn set_budget(&self, agent_id: &str, budget: &BudgetConfig) -> Result<BudgetConfig> {
         let resp = self

@@ -3907,6 +3907,73 @@
       }
     },
     "/agents/{agent_id}/threads/{thread_key}/reset": {
+      "get": {
+        "description": "Poll whether a forced reset (the POST above) is still outstanding for\nthis thread (#735). ``requested`` is True from the moment the POST enqueues\nthe request until the worker's next maintenance tick drains it and releases\nthe sandbox, then False.\n\nWhy this exists: the POST returns as soon as the request is *queued*, but the\nrelease only happens on the worker's maintenance tick (up to\n``reclaim_interval_s`` -- 30s by default -- later). Without a way to observe\ncompletion, the natural operator workflow \"reset the thread, then send a\nmessage to confirm\" adopts the still-live pre-reset sandbox and reads a\nstale answer, indistinguishable from \"the reset did not work\" (#735). A\ncaller that must not adopt the pre-reset sandbox polls this until it reads\nFalse before sending the next message; the CLI ``reset-thread`` verb does\nexactly that on the operator's behalf. Mirrors ``GET .../kill``.\n\nCaveat: the worker removes the request from the drain set (atomic ``SPOP``)\nimmediately *before* it runs the release, so this can read False a few\nmilliseconds ahead of ``release_thread`` finishing the teardown. That\nresidual window is milliseconds against the up-to-30s wait this makes\nobservable; shrinking the tick latency itself (a wake nudge, like the kill\nswitch's pub/sub) is a separate follow-up.",
+        "operationId": "get_thread_reset_state_agents__agent_id__threads__thread_key__reset_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "thread_key",
+            "required": true,
+            "schema": {
+              "title": "Thread Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadResetState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Thread Reset State",
+        "tags": [
+          "control"
+        ]
+      },
       "post": {
         "description": "Force the thread's sandbox to be released (#713): the worker's next\nmaintenance tick deletes its claim and route, so the NEXT message on this\nthread cold-creates a fresh sandbox instead of adopting one that may be\nrunning stale env (a rotated credential, an unpicked-up redeploy, a wedge\nfrom a partial local-stack upgrade). A live turn on the thread, if any, is\ninterrupted first -- see ``Kernel.release_thread``. Does not delete\nconversation history: a fresh sandbox still rehydrates from the durable\ntranscript on its next claim, same as any other cold-create.\n\n``agent_id`` scopes the action to a specific agent's registration (matching\nevery other verb on this router) but is not itself required to resolve the\nthread -- the release is purely thread-keyed, mirroring\n``SandboxSubstrate.release``.",
         "operationId": "reset_thread_agents__agent_id__threads__thread_key__reset_post",

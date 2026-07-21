@@ -2941,7 +2941,12 @@ pub enum ResetThreadOutput {
     Done {
         agent: String,
         thread_key: String,
+        /// The reset was accepted and queued (always true on the `Done` path).
         requested: bool,
+        /// The CLI polled `GET .../reset` and observed the worker actually
+        /// release the sandbox within the wait window (#735). False means the
+        /// release is still pending -- queued, but not yet confirmed drained.
+        released: bool,
     },
 }
 
@@ -2953,8 +2958,9 @@ impl crate::ui::CliOutput for ResetThreadOutput {
                 agent,
                 thread_key,
                 requested,
+                released,
             } => {
-                serde_json::json!({"agent": agent, "thread_key": thread_key, "requested": requested})
+                serde_json::json!({"agent": agent, "thread_key": thread_key, "requested": requested, "released": released})
             }
         }
     }
@@ -2965,18 +2971,33 @@ impl crate::ui::CliOutput for ResetThreadOutput {
             ResetThreadOutput::Done {
                 agent,
                 thread_key,
-                requested,
+                released,
+                ..
             } => {
-                ui.payload(&format!(
-                    "thread {thread_key} on agent {agent} reset requested={requested}"
-                ));
-                ui.note(
-                    "The worker's next maintenance tick releases the sandbox; the next message on this thread cold-creates a fresh one.",
-                );
+                if *released {
+                    ui.payload(&format!(
+                        "thread {thread_key} on agent {agent}: reset complete, sandbox released"
+                    ));
+                    ui.note("The next message on this thread cold-creates a fresh sandbox.");
+                } else {
+                    ui.payload(&format!(
+                        "thread {thread_key} on agent {agent}: reset queued, release still pending"
+                    ));
+                    ui.note(
+                        "The worker did not confirm the release within the wait window; its next maintenance tick will release the sandbox. Poll GET .../reset (or re-run) to confirm before the next message.",
+                    );
+                }
             }
         }
     }
 }
+
+/// How long `reset-thread` waits for the worker to actually release the sandbox
+/// before it reports the release as still pending (#735). Comfortably covers the
+/// worker's default 30s `reclaim_interval_s` drain tick.
+const RESET_RELEASE_TIMEOUT: Duration = Duration::from_secs(45);
+/// How often `reset-thread` re-polls `GET .../reset` while waiting (#735).
+const RESET_RELEASE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// `agentos <tier> reset-thread <agent> --thread-key <key> --yes`: force the
 /// thread's sandbox to be released (`POST
@@ -3009,20 +3030,43 @@ pub async fn reset_thread(
     let agent = client.find_agent(&opts.agent).await?;
     let cl = ui.checklist();
     let step = cl.step(&format!("resetting thread {thread_key} on {}", agent.name));
-    let state = match client.reset_thread(&agent.id, &thread_key).await {
-        Ok(state) => {
-            step.done("reset requested");
-            state
+    if let Err(err) = client.reset_thread(&agent.id, &thread_key).await {
+        step.fail("failed");
+        return Err(err);
+    }
+    step.done("reset requested");
+
+    // The POST only *queues* the release; the worker drains it on its next
+    // maintenance tick (up to `reclaim_interval_s`, 30s by default). Poll the
+    // reset state to completion so this command -- and therefore the operator --
+    // does not move on until the sandbox has actually been released, closing the
+    // window where the next message adopts the pre-reset sandbox (#735). A poll
+    // failure never fails an already-accepted reset: it degrades to "release
+    // unconfirmed, still pending".
+    let wait = cl.step("waiting for the sandbox to be released");
+    let deadline = Instant::now() + RESET_RELEASE_TIMEOUT;
+    let released = loop {
+        match client.thread_reset_state(&agent.id, &thread_key).await {
+            Ok(state) if !state.requested => break true,
+            Ok(_) => {}
+            Err(_) => break false,
         }
-        Err(err) => {
-            step.fail("failed");
-            return Err(err);
+        if Instant::now() >= deadline {
+            break false;
         }
+        tokio::time::sleep(RESET_RELEASE_POLL_INTERVAL).await;
     };
+    if released {
+        wait.done("released");
+    } else {
+        wait.done("still pending");
+    }
+
     Ok(ResetThreadOutput::Done {
         agent: agent.name,
         thread_key,
-        requested: state.requested,
+        requested: true,
+        released,
     })
 }
 

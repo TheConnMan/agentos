@@ -203,11 +203,16 @@ async fn budget_handler_resolves_then_puts_the_limit() {
 }
 
 #[tokio::test]
-async fn reset_thread_handler_resolves_by_name_then_resets() {
+async fn reset_thread_handler_resolves_then_resets_and_waits_for_release() {
     let server = serve(|req| match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/agents") => agent_list(),
         ("POST", p) if *p == format!("/agents/{AGENT_ID}/threads/t-1/reset") => {
             Response::json(200, r#"{"requested":true}"#)
+        }
+        // #735: after the POST the handler polls this until the worker reports
+        // the release actually landed; the stub reports released on first poll.
+        ("GET", p) if *p == format!("/agents/{AGENT_ID}/threads/t-1/reset") => {
+            Response::json(200, r#"{"requested":false}"#)
         }
         other => panic!("unexpected request: {other:?}"),
     });
@@ -230,6 +235,10 @@ async fn reset_thread_handler_resolves_by_name_then_resets() {
             ("GET".to_string(), "/agents".to_string()),
             (
                 "POST".to_string(),
+                format!("/agents/{AGENT_ID}/threads/t-1/reset")
+            ),
+            (
+                "GET".to_string(),
                 format!("/agents/{AGENT_ID}/threads/t-1/reset")
             ),
         ]
