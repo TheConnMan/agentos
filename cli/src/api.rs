@@ -139,6 +139,14 @@ pub struct KillState {
     pub killed: bool,
 }
 
+/// Whether a thread has a pending forced-sandbox-release request
+/// (`ThreadResetState` in openapi.json): the response of
+/// `POST /agents/{id}/threads/{thread_key}/reset` (#737).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadResetState {
+    pub requested: bool,
+}
+
 /// The enqueued eval job's identity (`EvalTriggerResult` in openapi.json): the
 /// response of `POST /evals/trigger`. `sha` keys the run's matrix column and
 /// `model` echoes the requested model (#526) so a sweep can pair each job to the
@@ -558,6 +566,28 @@ impl ApiClient {
             .json()
             .await
             .context("decoding kill state")
+    }
+
+    /// Force a thread's sandbox to be released: `POST
+    /// /agents/{id}/threads/{thread_key}/reset` (no request body, #737). The
+    /// worker's next maintenance tick deletes the thread's claim and route, so
+    /// its next message cold-creates a fresh sandbox.
+    pub async fn reset_thread(&self, agent_id: &str, thread_key: &str) -> Result<ThreadResetState> {
+        let resp = self
+            .http
+            .post(format!(
+                "{}/agents/{agent_id}/threads/{thread_key}/reset",
+                self.base_url
+            ))
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("POST /agents/{id}/threads/{thread_key}/reset")?;
+        Self::expect_ok(resp, "resetting the thread")
+            .await?
+            .json()
+            .await
+            .context("decoding thread reset state")
     }
 
     /// Set the agent budget: `PUT /agents/{id}/budget` with a `BudgetConfig` body.

@@ -13,6 +13,8 @@ import zipfile
 from pathlib import Path
 
 from plugin_format import (
+    DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_UNCOMPRESSED_BYTES,
     MANIFEST_LOCATIONS,
     UnsupportedArchive,
     ValidationResult,
@@ -58,16 +60,29 @@ def detect_format(data: bytes) -> tuple[str, str]:
     raise UnsupportedArchive("upload is not a zip or tar(.gz) archive")
 
 
-def extract_and_validate(data: bytes, dest: Path) -> tuple[str, str, ValidationResult]:
+def extract_and_validate(
+    data: bytes,
+    dest: Path,
+    *,
+    max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+) -> tuple[str, str, ValidationResult]:
     """Detect, extract, and validate. Returns (extension, content_type, result).
 
-    Extraction (with the traversal/symlink/special-file guards) and the
-    single-wrapper-dir unwrap live in ``plugin_format``; this only adds the
-    storage-key/content-type detection the upload path needs.
+    Extraction (with the traversal/symlink/special-file and size/ratio guards)
+    and the single-wrapper-dir unwrap live in ``plugin_format``; this only adds
+    the storage-key/content-type detection the upload path needs. The size/ratio
+    caps default to ``plugin_format``'s generous fallbacks; ``deploy.py`` passes
+    the operator-configured ``Settings`` values instead.
     """
 
     extension, content_type = detect_format(data)
-    safe_extract(data, dest)
+    safe_extract(
+        data,
+        dest,
+        max_uncompressed_bytes=max_uncompressed_bytes,
+        max_compression_ratio=max_compression_ratio,
+    )
     result = validate_bundle(bundle_root(dest))
     return extension, content_type, result
 

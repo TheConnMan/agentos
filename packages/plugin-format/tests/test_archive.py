@@ -13,7 +13,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from plugin_format import UnsupportedArchive, bundle_root, safe_extract
+from plugin_format import (
+    UnsupportedArchive,
+    bundle_root,
+    check_archive_bounds,
+    safe_extract,
+)
 
 MANIFEST = '{"name": "demo-plugin", "version": "0.1.0"}'
 
@@ -174,3 +179,81 @@ def test_flat_zip_bundle_extracts(tmp_path: Path) -> None:
 def test_non_archive_bytes_rejected(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedArchive):
         safe_extract(b"not an archive", tmp_path)
+
+
+# --- ADR-0059 decision 3: size + compression-ratio bounds ----------------
+
+
+def _zip_bomb_shaped(name: str = "zeros.bin", size: int = 200_000) -> bytes:
+    """A single highly-compressible entry: small on disk, huge once expanded.
+
+    ``size`` zero bytes deflate down to a few hundred bytes, so this trips the
+    default 100x compression-ratio cap while staying nowhere near the default
+    1 GiB uncompressed-size cap -- isolating the ratio guard from the size
+    guard, at a size cheap enough to run in CI (no real multi-GB bomb needed).
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(name, b"\x00" * size)
+    return buf.getvalue()
+
+
+def test_zip_bomb_shaped_archive_is_refused_with_nothing_written(
+    tmp_path: Path,
+) -> None:
+    data = _zip_bomb_shaped()
+    # Sanity check the fixture is actually bomb-shaped before asserting the guard.
+    assert len(data) < 2_000
+    with pytest.raises(UnsupportedArchive, match="compression ratio"):
+        safe_extract(data, tmp_path)
+    # Nothing was written: the bound check runs before extractall.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tar_gz_bomb_shaped_archive_is_refused_with_nothing_written(
+    tmp_path: Path,
+) -> None:
+    info, payload = _reg("zeros.bin", b"\x00" * 200_000)
+    data = _tar([info], {"zeros.bin": payload})
+    with pytest.raises(UnsupportedArchive, match="compression ratio"):
+        safe_extract(data, tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_oversized_uncompressed_total_is_refused(tmp_path: Path) -> None:
+    # Random bytes barely compress, so the ratio stays near 1x and only the
+    # uncompressed-size cap (set well below the payload here) is exercised.
+    import os
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("random.bin", os.urandom(2_000))
+    data = buf.getvalue()
+
+    with pytest.raises(UnsupportedArchive, match="1000 byte limit"):
+        safe_extract(data, tmp_path, max_uncompressed_bytes=1_000)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_archive_within_bounds_is_accepted(tmp_path: Path) -> None:
+    # A normal small bundle stays well under both defaults.
+    safe_extract(_tar_files(_valid_files()), tmp_path)
+    assert (tmp_path / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_check_archive_bounds_rejects_bomb_without_extracting(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(UnsupportedArchive, match="compression ratio"):
+        check_archive_bounds(_zip_bomb_shaped())
+    # check_archive_bounds never takes a dest at all -- nothing to write.
+
+
+def test_check_archive_bounds_accepts_a_valid_bundle() -> None:
+    check_archive_bounds(_tar_files(_valid_files()))  # does not raise
+
+
+def test_check_archive_bounds_still_rejects_unsafe_entries() -> None:
+    # The size/ratio check does not bypass the existing traversal guard.
+    with pytest.raises(UnsupportedArchive):
+        check_archive_bounds(_zip({"../escape": "pwn"}))

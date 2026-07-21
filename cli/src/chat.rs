@@ -172,7 +172,28 @@ impl SlackStub {
     pub async fn start(bind_host: &str, port: u16, advertise_host: &str) -> Result<Self> {
         let listener = TcpListener::bind(format!("{bind_host}:{port}"))
             .await
-            .with_context(|| format!("binding the Slack stub on {bind_host}:{port}"))?;
+            .with_context(|| {
+                // A bound `port` (not 0) means the caller pinned a fixed listen
+                // port, so a bind failure here is almost always "someone else is
+                // already listening there" rather than an OS-level refusal. Two
+                // things look identical from this error alone: another `local`/
+                // `cluster message` that is legitimately running right now, or a
+                // stale CLI process left over from a prior run whose stub never got
+                // torn down (the #751 leak this fixes: a timed-out turn used to
+                // exit via `std::process::exit`, which skips `Drop` and leaves the
+                // listener bound). We cannot tell those apart from here, so name
+                // both possibilities and point at how to check rather than
+                // overclaiming which one it is.
+                format!(
+                    "binding the Slack stub on {bind_host}:{port}: the port is already in use. \
+                     Either another `local message`/`cluster message` is genuinely running right \
+                     now (safe to wait for it to finish, or rerun with a different \
+                     --listen-port), or a previous invocation left a stale process still holding \
+                     the port. Find the holder with `lsof -nP -iTCP:{port} -sTCP:LISTEN` (macOS) \
+                     or `ss -ltnp 'sport = :{port}'` (Linux); if it is not a `message` invocation \
+                     you expect to still be running, kill it and retry."
+                )
+            })?;
         let addr = listener
             .local_addr()
             .context("reading the stub's local addr")?;
@@ -690,5 +711,76 @@ mod tests {
              Awaiting approval ({id}): run the deploy"
         );
         assert_eq!(parse_approval_id(&text), None);
+    }
+
+    // --- SlackStub teardown on a timed-out turn (#751) ----------------------
+    //
+    // A timed-out `local message`/`cluster message` used to hold this stub's
+    // bound port for as long as the timeout arm's post-timeout diagnostics
+    // gather took -- and that gather read straight from the SAME Valkey the
+    // worker never acked against, with no timeout of its own, so a stalled
+    // Valkey (a likely cause of the original timeout) could hang it
+    // indefinitely. The fix (`message::message_local` / `message::message`)
+    // now drops the stub's listener FIRST, before that gather even starts, so
+    // the port is released no matter how long (or whether) anything after it
+    // takes. `SlackStub::drop` aborts the server task, which is cooperative
+    // cancellation (the task actually unbinds the listener once the runtime
+    // next schedules it, not necessarily synchronously) -- this test confirms
+    // that happens promptly: start the stub, drop it exactly as the timeout
+    // arm now does immediately on detecting `Outcome::TimedOut`, then confirm
+    // the port becomes bindable again in this same process well within a
+    // fraction of a second, rather than staying held for however long a
+    // downstream diagnostics hang would otherwise last.
+
+    #[tokio::test]
+    async fn dropping_the_stub_after_a_timed_out_turn_frees_the_port_promptly() {
+        let stub = SlackStub::start("127.0.0.1", 0, "127.0.0.1")
+            .await
+            .expect("binding an ephemeral port must succeed");
+        // Recover the actually-bound port from the advertised URL (ephemeral
+        // port 0 resolves to whatever the OS assigned), the same way a real
+        // `local message` turn's stub would carry its port forward.
+        let port: u16 = stub
+            .base_api_url()
+            .rsplit_once("127.0.0.1:")
+            .and_then(|(_, rest)| rest.split('/').next())
+            .and_then(|p| p.parse().ok())
+            .expect("base_api_url carries the bound port");
+
+        // A second bind while the stub is still alive must fail -- otherwise
+        // this test would not be exercising the real OS-level port hold at all.
+        assert!(
+            TcpListener::bind(("127.0.0.1", port)).await.is_err(),
+            "the port must be genuinely held while the stub is alive"
+        );
+
+        // This is the exact first step the timeout arms now take on detecting
+        // `Outcome::TimedOut`, before the diagnostics gather that used to be
+        // able to hang: drop the stub's listener.
+        drop(stub);
+
+        // Task abortion is cooperative -- the server task unbinds the listener
+        // once the runtime schedules it, which is not guaranteed to have
+        // happened by the very next instruction. Poll for a short, bounded
+        // window rather than asserting on the first attempt; a real leak would
+        // never clear across this whole window, while the fix clears it almost
+        // immediately.
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        let rebound = loop {
+            match TcpListener::bind(("127.0.0.1", port)).await {
+                Ok(listener) => break Ok(listener),
+                Err(_) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    continue;
+                }
+                Err(err) => break Err(err),
+            }
+        };
+        assert!(
+            rebound.is_ok(),
+            "the port must become free within a fraction of a second of the stub being dropped, \
+             not leaked past a timed-out turn (#751): {:?}",
+            rebound.err()
+        );
     }
 }
