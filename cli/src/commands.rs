@@ -2780,6 +2780,100 @@ pub async fn budget(opts: AgentActionOpts, limit: f64) -> Result<BudgetOutput> {
     })
 }
 
+/// Output of `<tier> reset-thread <agent> --thread-key <key>`: the dry-run
+/// plan, or the resulting reset-request state. Owns its data so it outlives
+/// the `ApiClient`.
+#[derive(Debug)]
+pub enum ResetThreadOutput {
+    DryRun(crate::ui::DryRunPlan),
+    Done {
+        agent: String,
+        thread_key: String,
+        requested: bool,
+    },
+}
+
+impl crate::ui::CliOutput for ResetThreadOutput {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ResetThreadOutput::DryRun(plan) => plan.to_json(),
+            ResetThreadOutput::Done {
+                agent,
+                thread_key,
+                requested,
+            } => {
+                serde_json::json!({"agent": agent, "thread_key": thread_key, "requested": requested})
+            }
+        }
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        match self {
+            ResetThreadOutput::DryRun(plan) => plan.render(ui),
+            ResetThreadOutput::Done {
+                agent,
+                thread_key,
+                requested,
+            } => {
+                ui.payload(&format!(
+                    "thread {thread_key} on agent {agent} reset requested={requested}"
+                ));
+                ui.note(
+                    "The worker's next maintenance tick releases the sandbox; the next message on this thread cold-creates a fresh one.",
+                );
+            }
+        }
+    }
+}
+
+/// `agentos <tier> reset-thread <agent> --thread-key <key> --yes`: force the
+/// thread's sandbox to be released (`POST
+/// /agents/{id}/threads/{thread_key}/reset`, #737). Interrupts a live turn on
+/// the thread first, so it refuses without `--yes`, mirroring `kill`.
+/// `--dry-run` returns the plan and makes no request.
+pub async fn reset_thread(
+    opts: AgentActionOpts,
+    thread_key: String,
+    yes: bool,
+) -> Result<ResetThreadOutput> {
+    let ui = crate::ui::ui();
+    if opts.dry_run {
+        return Ok(ResetThreadOutput::DryRun(crate::ui::DryRunPlan {
+            lines: vec![format!(
+                "POST {}/agents/<id>/threads/{}/reset  (would resolve agent {:?} first)",
+                opts.api_url, thread_key, opts.agent
+            )],
+        }));
+    }
+    if !yes {
+        return Err(crate::exit::CliError::usage(format!(
+            "`agentos ... reset-thread {} --thread-key {}` interrupts any live turn on the thread; re-run with --yes to confirm",
+            opts.agent, thread_key
+        ))
+        .with_fix("re-run with --yes")
+        .into());
+    }
+    let client = ApiClient::new(&opts.api_url, &opts.api_key)?;
+    let agent = client.find_agent(&opts.agent).await?;
+    let cl = ui.checklist();
+    let step = cl.step(&format!("resetting thread {thread_key} on {}", agent.name));
+    let state = match client.reset_thread(&agent.id, &thread_key).await {
+        Ok(state) => {
+            step.done("reset requested");
+            state
+        }
+        Err(err) => {
+            step.fail("failed");
+            return Err(err);
+        }
+    };
+    Ok(ResetThreadOutput::Done {
+        agent: agent.name,
+        thread_key,
+        requested: state.requested,
+    })
+}
+
 /// Output of `<tier> delete <agent>`: the dry-run plan, or the deleted agent's
 /// name. Owns its data so it outlives the `ApiClient`.
 #[derive(Debug)]

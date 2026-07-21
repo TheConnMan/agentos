@@ -1,9 +1,9 @@
-//! Integration: the agent-lifecycle verbs (`cluster kill|resume|budget|delete`,
-//! #149) against the committed platform-API contract shapes (apps/api
-//! openapi.json), served by the wire-level test server. Covers both the
-//! `ApiClient` methods (correct HTTP method + path + body) and the command
-//! handlers (`--yes` gate on the destructive verbs, `--dry-run` makes no
-//! request).
+//! Integration: the agent-lifecycle verbs (`cluster kill|resume|budget|delete|
+//! reset-thread`, #149, #737) against the committed platform-API contract
+//! shapes (apps/api openapi.json), served by the wire-level test server.
+//! Covers both the `ApiClient` methods (correct HTTP method + path + body) and
+//! the command handlers (`--yes` gate on the destructive verbs, `--dry-run`
+//! makes no request).
 
 mod support;
 
@@ -102,6 +102,26 @@ async fn set_budget_puts_the_limit_as_max_usd_per_day() {
 }
 
 #[tokio::test]
+async fn reset_thread_posts_to_reset_endpoint_with_empty_body() {
+    let server = serve(|req| match (req.method.as_str(), req.path.as_str()) {
+        ("POST", p) if *p == format!("/agents/{AGENT_ID}/threads/t-1/reset") => {
+            Response::json(200, r#"{"requested":true}"#)
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let client = ApiClient::new(&server.base_url, "k").unwrap();
+    let state = client.reset_thread(AGENT_ID, "t-1").await.unwrap();
+    assert!(state.requested);
+
+    let rec = server.recorded();
+    assert_eq!(rec.len(), 1);
+    assert_eq!(rec[0].method, "POST");
+    assert_eq!(rec[0].path, format!("/agents/{AGENT_ID}/threads/t-1/reset"));
+    assert!(rec[0].body.is_empty(), "reset sends no body");
+    assert_eq!(rec[0].header("x-api-key"), Some("k"));
+}
+
+#[tokio::test]
 async fn delete_agent_issues_a_delete() {
     let server = serve(|req| match (req.method.as_str(), req.path.as_str()) {
         ("DELETE", p) if *p == format!("/agents/{AGENT_ID}") => Response {
@@ -183,6 +203,57 @@ async fn budget_handler_resolves_then_puts_the_limit() {
 }
 
 #[tokio::test]
+async fn reset_thread_handler_resolves_by_name_then_resets() {
+    let server = serve(|req| match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/agents") => agent_list(),
+        ("POST", p) if *p == format!("/agents/{AGENT_ID}/threads/t-1/reset") => {
+            Response::json(200, r#"{"requested":true}"#)
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    commands::reset_thread(
+        opts(&server.base_url, "deal-desk", false),
+        "t-1".to_string(),
+        true,
+    )
+    .await
+    .unwrap();
+
+    let flow: Vec<(String, String)> = server
+        .recorded()
+        .iter()
+        .map(|r| (r.method.clone(), r.path.clone()))
+        .collect();
+    assert_eq!(
+        flow,
+        vec![
+            ("GET".to_string(), "/agents".to_string()),
+            (
+                "POST".to_string(),
+                format!("/agents/{AGENT_ID}/threads/t-1/reset")
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn reset_thread_without_yes_refuses_and_makes_no_request() {
+    let server = serve(|req| panic!("no request expected, got {} {}", req.method, req.path));
+    let err = commands::reset_thread(
+        opts(&server.base_url, "deal-desk", false),
+        "t-1".to_string(),
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("--yes"), "{err}");
+    assert!(
+        server.recorded().is_empty(),
+        "a refused reset-thread must make no request"
+    );
+}
+
+#[tokio::test]
 async fn kill_without_yes_refuses_and_makes_no_request() {
     let server = serve(|req| panic!("no request expected, got {} {}", req.method, req.path));
     let err = commands::kill(opts(&server.base_url, "deal-desk", false), false)
@@ -217,6 +288,9 @@ async fn dry_run_makes_no_request_for_any_verb() {
     commands::resume(opts(base, "a", true)).await.unwrap();
     commands::budget(opts(base, "a", true), 5.0).await.unwrap();
     commands::delete(opts(base, "a", true), false)
+        .await
+        .unwrap();
+    commands::reset_thread(opts(base, "a", true), "t-1".to_string(), false)
         .await
         .unwrap();
     assert!(

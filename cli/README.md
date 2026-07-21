@@ -16,12 +16,14 @@ disk and targets no environment.
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
 |---|---|---|---|---|---|
 | `skill` | Just the runner container on the host Docker daemon. No platform, no queue, no API, no Slack. Fully offline. | none | none | `up` `check` `down` `status` `message` `eval` | Iterate a plugin/skill against a local runner, the fastest loop. |
-| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `eval` `deploy` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
-| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `eval` `deploy` `kill` `resume` `budget` `delete` | Operate and drive a deployed cluster release, and control its agents' lifecycle. |
+| `local` | The full platform via docker compose (Postgres + Valkey + Langfuse + API + worker). | stub by default, optional real Slack with `--slack` | none | `up` `down` `status` `comms` `message` `eval` `deploy` `reset-thread` | Exercise the real queue -> worker -> sandbox -> reply product loop with zero Slack and zero Kubernetes. Its API is published on host port `28000`. |
+| `cluster` | The platform on Kubernetes (a Helm release). | optional | yes | `up` `down` `status` `comms` `message` `eval` `deploy` `kill` `resume` `budget` `reset-thread` `delete` | Operate and drive a deployed cluster release, and control its agents' lifecycle. |
 
 The universal quartet `up`/`down`/`status`/`message` is on all three targets;
 `skill` adds `eval`, while `local` and `cluster` add `comms`, `eval`, plus `deploy`; `cluster`
-further adds the agent-lifecycle verbs `kill`/`resume`/`budget`/`delete`. `eval` is on
+further adds the agent-lifecycle verbs `kill`/`resume`/`budget`/`delete`, and both `local`
+and `cluster` add `reset-thread` to force a stuck thread's sandbox to be released
+(#737). `eval` is on
 all three: it runs the SAME `evals/cases.json` with the SAME grader at each tier (the
 per-tier parity gate), so a suite that passes at `skill` can be re-asserted verbatim at
 `local` and `cluster`. The distinction
@@ -250,6 +252,7 @@ the optional Slack dispatcher.
 | `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
 | `agentos local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
 | `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
+| `agentos local reset-thread <agent> --thread-key <key> --yes` | Force a stuck thread's sandbox to be released via the compose platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick releases the thread's claim and route, so its next message cold-creates a fresh sandbox; conversation history is not deleted. Interrupts a live turn on the thread first, so it refuses without `--yes`. |
 
 ## `cluster` target: deployed Helm release
 
@@ -270,16 +273,18 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
 | `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
 | `agentos cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
+| `agentos cluster reset-thread <agent> --thread-key <key> --yes` | Force a stuck thread's sandbox to be released via the platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick releases the thread's claim and route, so its next message cold-creates a fresh sandbox; conversation history is not deleted. Interrupts a live turn on the thread first, so it refuses without `--yes`. |
 | `agentos cluster delete <agent> --yes` | Delete an agent via the platform API (`DELETE /agents/{id}`). Destructive and irreversible: refuses without `--yes`. |
 
-The four lifecycle verbs (`kill`, `resume`, `budget`, `delete`) act on a
-deployed release's agents through the same platform API, defaulting `--api-url`
-to `http://localhost:8000` (auth via `--api-key` or `AGENTOS_API_KEY`). Unlike
-`cluster deploy`, which self-plumbs a port-forward and auto-discovers the
-release key (ADR-0057), the lifecycle verbs do neither -- pass `--api-url` or
-port-forward the API yourself. They resolve `<agent>` (a name or id) to its API id with the
-same lookup `deploy` uses. Each takes `--dry-run` (prints the plan, makes no
-request); the destructive `kill`/`delete` also require `--yes`.
+The five lifecycle verbs (`kill`, `resume`, `budget`, `reset-thread`, `delete`)
+act on a deployed release's agents through the same platform API, defaulting
+`--api-url` to `http://localhost:8000` (auth via `--api-key` or
+`AGENTOS_API_KEY`). Unlike `cluster deploy`, which self-plumbs a port-forward
+and auto-discovers the release key (ADR-0057), the lifecycle verbs do neither
+-- pass `--api-url` or port-forward the API yourself. They resolve `<agent>`
+(a name or id) to its API id with the same lookup `deploy` uses. Each takes
+`--dry-run` (prints the plan, makes no request); the destructive
+`kill`/`reset-thread`/`delete` also require `--yes`.
 
 ### Bundle packing exclusions
 
@@ -512,7 +517,8 @@ control flow are machine-first.
 **`--json`** (global) makes every agent-facing verb emit a single
 machine-readable JSON object on **stdout** instead of empty output: the
 read/query verbs (`versions`, `memory`, `approvals`, `observability`), the
-lifecycle result verbs (`kill`, `resume`, `budget`, `delete`), and every verb's
+lifecycle result verbs (`kill`, `resume`, `budget`, `reset-thread`, `delete`),
+and every verb's
 `--dry-run` plan (uniform shape `{"dry_run": true, "plan": [<lines>]}`) all
 route through one centralized emitter. The `message` verbs keep their own,
 more specific shapes: `agentos local message` and `agentos cluster message`
@@ -546,8 +552,9 @@ parsing output:
 | 4    | unsupported | The verb was understood, but the concept it inspects does not exist at this tier by construction (`agentos skill versions`, `agentos skill memory`). No input and no retry changes that -- the same argv never succeeds here; the `fix` hint names the tier that does answer it. |
 
 **Non-interactive by default.** Every mutating command has a non-interactive
-path (`--yes` on `cluster down`/`kill`/`delete` and `local down --wipe`); none
-block on stdin. A confirmation prompt that would otherwise read stdin refuses
+path (`--yes` on `cluster down`/`kill`/`delete`/`reset-thread`, `local
+reset-thread`, and `local down --wipe`); none block on stdin. A confirmation
+prompt that would otherwise read stdin refuses
 with a usage error (exit 2) when the session is not a terminal, rather than
 hanging.
 
