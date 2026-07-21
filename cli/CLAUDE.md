@@ -164,14 +164,7 @@ Scripted E2E (real runner container, fake model, fully offline):
 ```bash
 bash cli/scripts/e2e.sh
 ```
-With the compose stack + a local `apps/api` up, the same script also
-exercises the deploy leg:
-```bash
-AGENTOS_E2E_NETWORK=agentos_default \
-AGENTOS_E2E_OTEL=http://otel-collector:4318 \
-AGENTOS_E2E_API_URL=http://localhost:28000 bash cli/scripts/e2e.sh
-```
-Both require the `agentos-runner` image built once from the repo root
+Requires the `agentos-runner` image built once from the repo root
 (`docker build -f runner/Dockerfile -t agentos-runner .`).
 
 Cold-start parity ladder (issue #690, `agentos dev e2e-ladder` ->

@@ -538,15 +538,10 @@ hanging.
 cd cli && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-The scripted E2E (real runner container, fake model, offline) plus an optional
-deploy leg against a locally-run apps/api:
+The scripted E2E (real runner container, fake model, offline):
 
 ```bash
 bash cli/scripts/e2e.sh
-# with the compose stack + a local API:
-AGENTOS_E2E_NETWORK=agentos_default \
-AGENTOS_E2E_OTEL=http://otel-collector:4318 \
-AGENTOS_E2E_API_URL=http://localhost:28000 bash cli/scripts/e2e.sh
 ```
 
 Requires an `agentos-runner` image (`docker build -f runner/Dockerfile -t
