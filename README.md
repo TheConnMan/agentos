@@ -198,7 +198,14 @@ release you are installing, from the
 
 ```bash
 VERSION=vX.Y.Z                            # the release you are installing
-ASSET=agentos-x86_64-unknown-linux-gnu    # macOS Apple silicon: agentos-aarch64-apple-darwin
+# Resolve the right asset for this machine. The release ships Linux x86_64 and
+# macOS Apple silicon; anything else builds from source (see cli/).
+ASSET=
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64)                 ASSET=agentos-x86_64-unknown-linux-gnu ;;
+  Darwin/arm64|Darwin/aarch64)  ASSET=agentos-aarch64-apple-darwin ;;
+esac
+: "${ASSET:?no prebuilt binary for this platform; build the CLI from source in cli/}"
 BASE="https://github.com/curie-eng/agentos/releases/download/$VERSION"
 curl -fsSLO "$BASE/$ASSET" -O "$BASE/checksums.txt" -O "$BASE/checksums.txt.sigstore.json"
 
@@ -231,7 +238,7 @@ and the per-asset SBOMs.
 
 > **macOS: "unidentified developer"?** The release binaries are not yet
 > notarized by Apple, so a copy downloaded through a browser is quarantined and
-> Gatekeeper blocks it on first launch. The `curl -L` command above avoids this
+> Gatekeeper blocks it on first launch. The `curl` command above avoids this
 > entirely (curl does not set the quarantine flag). If you already downloaded it
 > in a browser, clear the flag once with
 > `xattr -d com.apple.quarantine ./agentos-aarch64-apple-darwin`, or right-click
@@ -282,12 +289,21 @@ image from GHCR on first run — nothing to build:
 ```bash
 agentos   # optional full-screen terminal UI for the same workflows
 agentos init my-agent && cd my-agent
-# Real model is the default. Export a credential first (forwarded into the runner
-# container): CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or AGENTOS_CREDENTIALS.
+agentos skill up --fake-model    # offline scripted model, no credential
+agentos skill message "hello"
+agentos skill down
+```
+
+`agentos skill eval` runs the bundle's eval cases through the same runner
+(under `--fake-model` it checks plumbing only, not answer quality).
+
+For a real model, drop `--fake-model` and export a credential first (it is
+forwarded into the runner container): one of `CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY`, or `AGENTOS_CREDENTIALS`.
+
+```bash
 export CLAUDE_CODE_OAUTH_TOKEN=...
 agentos skill up
-agentos skill message "hello"
-agentos skill eval
 ```
 
 From a source checkout instead (contributor path): `cd cli && cargo build
