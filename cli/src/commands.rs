@@ -16,7 +16,8 @@ use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
 use crate::bundle::pack_tar_gz;
 use crate::docker::{self, CheckSpec, StartSpec};
 use crate::evals::{
-    graded_answer, load_suite, outcome_label, rollup_line, turn_outcome, CaseOutcome, EvalSuite,
+    graded_answer, load_suite, outcome_label, rollup_line, turn_completed, turn_outcome,
+    CaseOutcome, EvalSuite,
 };
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
@@ -1902,7 +1903,10 @@ pub async fn eval(
     let client = RunnerClient::new(&url)?;
     let ui = crate::ui::ui();
     let bar = ui.progress_bar(suite.cases.len() as u64, "running evals");
-    let results = run_suite_cases(&client, &suite, fake, |_| bar.inc(1)).await?;
+    // `run_suite_cases` also tallies completion for the `--model` sweep path;
+    // the single-runner report doesn't need the count (it already reports the
+    // per-case `Fail` either way and exits on any of them), so it is discarded.
+    let (results, _completed) = run_suite_cases(&client, &suite, fake, |_| bar.inc(1)).await?;
     bar.finish();
 
     report_eval(&results)
@@ -1924,17 +1928,22 @@ fn drives_a_fake_runner(saved: Option<&state::RunnerState>, explicit_url: Option
 }
 
 /// Run every case in `suite` against a runner, returning `(id, outcome, seconds,
-/// output)` rows. `fake` says the runner is the fake model, in which case the
-/// cases are not graded at all. `on_case` is called once per completed case
-/// (progress). Shared by the single-runner path and the per-model sweep so both
-/// judge identically.
+/// output)` rows plus how many cases *completed* (reached a `final` matching
+/// `expect_status`, independent of whether the grader then agreed). `fake` says
+/// the runner is the fake model, in which case the cases are not graded at all.
+/// `on_case` is called once per completed case (progress). Shared by the
+/// single-runner path and the per-model sweep so both judge identically; the
+/// completed count is what lets the sweep tell a real 0% apart from a model
+/// that never produced one completed turn (#622, #526 AC4) -- `CaseOutcome`
+/// alone collapses both into the same `Fail`.
 async fn run_suite_cases(
     client: &RunnerClient,
     suite: &EvalSuite,
     fake: bool,
     mut on_case: impl FnMut(usize),
-) -> Result<Vec<EvalRow>> {
+) -> Result<(Vec<EvalRow>, usize)> {
     let mut results = Vec::with_capacity(suite.cases.len());
+    let mut completed = 0usize;
     for (i, case) in suite.cases.iter().enumerate() {
         // Fresh conversation by default (#550): reset the runner before a case so
         // it cannot answer from an earlier case's history instead of actually
@@ -1953,6 +1962,9 @@ async fn run_suite_cases(
             .send_event(EventType::EvalCase, &case.input, "U-eval", |_| {})
             .await?;
         let elapsed = started.elapsed().as_secs_f64();
+        if turn_completed(case, &events) {
+            completed += 1;
+        }
         // Capture the graded answer -- the exact text `turn_outcome` judged -- so
         // a red case can be diagnosed from `--json` without a manual re-run
         // (#548). A fake row carries its canned reply for the same reason.
@@ -1964,7 +1976,7 @@ async fn run_suite_cases(
         ));
         on_case(i);
     }
-    Ok(results)
+    Ok((results, completed))
 }
 
 /// Boot a throwaway runner for one model on `port`, forwarding the model
@@ -2042,17 +2054,31 @@ async fn boot_eval_runner(
     Ok(url)
 }
 
-/// One model's row in a `--model` sweep report: pass-rate, total, and how many
-/// of its rows were plumbing-only (ran but never graded, ADR-0055, #612/#606).
+/// One model's row in a `--model` sweep report: pass-rate, total, how many
+/// completed (issue #622, #526 AC4), and how many of its rows were
+/// plumbing-only (ran but never graded, ADR-0055, #612/#606). `completed` is
+/// a subset of `total`: the graded rows whose turn actually reached a verdict
+/// (`expect_status` matched, whatever the grader then said -- see
+/// `evals::turn_completed`), as opposed to a graded fail that never completed
+/// at all (a classified failure, the wrong terminal status, or a
+/// transport/runner exception). `total > 0 && completed == 0` is a model that
+/// never produced one completed turn across the whole suite -- distinct from
+/// a real 0%, which the sweep reports and never gates on; `CaseOutcome` alone
+/// cannot tell the two apart, since `turn_outcome` collapses both into `Fail`.
 /// `plumbing` is always `0` on the in-CLI skill sweep (`eval_sweep` below,
 /// which always boots a real, non-fake runner); it is populated from the
 /// platform eval matrix's `EvalModelSummary.plumbing` on the `local`/`cluster`
 /// `--model` sweep (`message.rs`'s `scoped_rows`), where a fake-model tier row
-/// can legitimately have `total == 0` and `plumbing > 0` (#700).
+/// can legitimately have `total == 0` and `plumbing > 0` (#700). Shared by all
+/// three tiers: the skill sweep boots throwaway runners and grades in-CLI,
+/// local/cluster read the platform's `EvalModelSummary` -- `report_sweep` is
+/// the single point that renders and gates a sweep however its rows were
+/// produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SweepRow {
     pub model: String,
     pub passed: usize,
+    pub completed: usize,
     pub total: usize,
     pub plumbing: usize,
 }
@@ -2065,6 +2091,23 @@ impl SweepRow {
     /// keeps a plumbing-only model from reading as a failing real result.
     pub fn is_plumbing_only(&self) -> bool {
         self.total == 0 && self.plumbing > 0
+    }
+
+    /// A model that produced zero completed turns across the whole suite: the
+    /// distinct "never answered" outcome, not a real (if unlucky) 0%. Guarded
+    /// on `total > 0` so a row with no cases at all is never mistaken for
+    /// this -- and, since a plumbing-only row also has `total == 0`, this and
+    /// `is_plumbing_only` are mutually exclusive by construction.
+    pub fn never_completed(&self) -> bool {
+        self.total > 0 && self.completed == 0
+    }
+
+    fn pass_rate(&self) -> f64 {
+        if self.total > 0 {
+            self.passed as f64 / self.total as f64
+        } else {
+            0.0
+        }
     }
 }
 
@@ -2107,16 +2150,25 @@ async fn eval_sweep(
         // so this in-CLI path never produces a plumbing-only row.
         let run = run_suite_cases(&client, suite, false, |_| {}).await;
         let _ = docker::remove_container(&name).await;
-        let results = run?;
+        let (results, completed) = run?;
         let passed = results
             .iter()
             .filter(|(_, o, _, _)| *o == CaseOutcome::Pass)
             .count();
-        step.done(&format!("{passed}/{}", suite.cases.len()));
+        let total = suite.cases.len();
+        // Immediate per-model feedback (#622): a model that never completed a
+        // single case is a boot/resolution problem, not a graded loss, so the
+        // checklist marks it failed rather than "done" with a misleading score.
+        if completed == 0 {
+            step.fail(&format!("0/{total} completed -- {model} never answered"));
+        } else {
+            step.done(&format!("{passed}/{total}"));
+        }
         rows.push(SweepRow {
             model: model.clone(),
             passed,
-            total: suite.cases.len(),
+            completed,
+            total,
             plumbing: 0,
         });
     }
@@ -2127,15 +2179,21 @@ async fn eval_sweep(
 /// is unit-testable without a process-level stdout capture. Carries the raw
 /// `plumbing` count (mirroring the API field) plus a `plumbing_only` boolean
 /// derived from `SweepRow::is_plumbing_only` for a scripted consumer to filter
-/// fixture rows out of a real model comparison (#700).
+/// fixture rows out of a real model comparison (#700), and the raw
+/// `completed` count plus a `never_completed` boolean (#622, #526 AC4) so a
+/// model that never produced one completed turn is distinguishable from a
+/// real 0%. `pass_rate` is withheld (null) on a never-completed row rather
+/// than a fabricated 0.0, since there is no comparison to rate.
 fn sweep_json_row(row: &SweepRow) -> serde_json::Value {
     serde_json::json!({
         "model": row.model,
         "passed": row.passed,
+        "completed": row.completed,
         "total": row.total,
-        "pass_rate": if row.total > 0 { row.passed as f64 / row.total as f64 } else { 0.0 },
+        "pass_rate": if row.never_completed() { None } else { Some(row.pass_rate()) },
         "plumbing": row.plumbing,
         "plumbing_only": row.is_plumbing_only(),
+        "never_completed": row.never_completed(),
     })
 }
 
@@ -2144,18 +2202,21 @@ fn sweep_json_row(row: &SweepRow) -> serde_json::Value {
 /// than blended into the pass-rate list: the model name gets a `(plumbing)`
 /// suffix and the rate column reads `n/a` instead of a misleading `0%`, since
 /// every case for that model was a fixture, never graded, not a real failure.
+/// A never-completed row (#622) takes priority over both: the rate column
+/// reads `NEVER COMPLETED` rather than a percentage, since the model produced
+/// zero completed turns across the whole suite -- not a real, if unlucky, 0%.
 fn sweep_table_row(row: &SweepRow) -> Vec<String> {
     let model = if row.is_plumbing_only() {
         format!("{} (plumbing)", row.model)
     } else {
         row.model.clone()
     };
-    let rate = if row.is_plumbing_only() {
+    let rate = if row.never_completed() {
+        "NEVER COMPLETED".to_string()
+    } else if row.is_plumbing_only() {
         "n/a".to_string()
-    } else if row.total > 0 {
-        format!("{:.0}%", row.passed as f64 / row.total as f64 * 100.0)
     } else {
-        "0%".to_string()
+        format!("{:.0}%", row.pass_rate() * 100.0)
     };
     let plumbing = if row.plumbing > 0 {
         row.plumbing.to_string()
@@ -2172,21 +2233,57 @@ fn sweep_table_row(row: &SweepRow) -> Vec<String> {
 
 /// Render a model-sweep roll-up: pass-rate per model. Under `--json` the whole
 /// comparison is one payload; otherwise a table. A sweep is a comparison, not a
-/// gate, so it never exits non-zero on a model that scored below 100%.
+/// gate, so it never exits non-zero on a model that scored below 100% -- a real
+/// 0% still reports as `0/N (0%)` and exits `Ok`.
+///
+/// The one exception (#622, #526 AC4): a row whose model produced ZERO
+/// completed turns across the whole suite is not a comparison result at all --
+/// it means the model never answered (an unresolvable id, a missing credential,
+/// a runner that never came up for it), and reporting it as `0%` is
+/// indistinguishable from a real failing model. That row is rendered distinctly
+/// (never as a percentage) and turns the whole sweep into an `Err` naming every
+/// such model, so the caller's normal `?`-propagation exits non-zero at every
+/// tier without skipping any guard the caller still holds (a kept-alive
+/// port-forward at local/cluster) -- this function never calls
+/// `std::process::exit` itself.
 pub fn report_sweep(rows: &[SweepRow]) -> Result<()> {
     let ui = crate::ui::ui();
     if ui.json() {
         let models: Vec<serde_json::Value> = rows.iter().map(sweep_json_row).collect();
         ui.emit_json(&serde_json::json!({ "sweep": models }));
+    } else {
+        let table: Vec<Vec<String>> = rows.iter().map(sweep_table_row).collect();
+        ui.payload_plain(&crate::ui::table(
+            &["model", "passed", "pass rate", "plumbing"],
+            &table,
+            &[1, 2, 3],
+        ));
+    }
+
+    let never_completed: Vec<&SweepRow> = rows.iter().filter(|r| r.never_completed()).collect();
+    if never_completed.is_empty() {
         return Ok(());
     }
-    let table: Vec<Vec<String>> = rows.iter().map(sweep_table_row).collect();
-    ui.payload_plain(&crate::ui::table(
-        &["model", "passed", "pass rate", "plumbing"],
-        &table,
-        &[1, 2, 3],
-    ));
-    Ok(())
+    // Name the model AND the likely cause -- the whole point of #622 is that
+    // this must not read like a graded 0%, and must not point at the eval
+    // consumer the way the local/cluster sweep timeout used to (#526's AC4).
+    let detail = never_completed
+        .iter()
+        .map(|r| format!("{} (0/{} completed)", r.model, r.total))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(anyhow::Error::from(
+        crate::exit::CliError::failure(format!(
+            "{detail}: produced zero completed turns across the suite. This is not a real 0% \
+             score -- the model most likely never resolved (a typo'd or unregistered id, a \
+             missing/invalid credential, or a runner that never came up for it), so the sweep is \
+             failing loudly instead of reporting a comparison that never happened."
+        ))
+        .with_fix(
+            "verify each named model's id and credential (or its BYO endpoint registration), \
+             then re-run the sweep",
+        ),
+    ))
 }
 
 /// Render a finished eval run identically for every tier (`skill`, `local`,
@@ -4041,13 +4138,76 @@ pub fn skill_memory_unavailable() -> anyhow::Error {
 mod tests {
     use super::{
         absent_container_note, merge_secret_env, parse_manifest_gates, plan_recorded_state,
-        plan_recorded_teardown, plan_skill_down, replace_first_line, resolve_cases_path,
-        seed_env_if_missing, select_in_force_deployment, select_passthrough_env, sweep_json_row,
-        sweep_table_row, validate_slack_channel, ApprovalGateDecl, DownPlan, EnvSeed,
-        RecordedStatePlan, RecordedTeardown, SweepRow,
+        plan_recorded_teardown, plan_skill_down, replace_first_line, report_sweep,
+        resolve_cases_path, seed_env_if_missing, select_in_force_deployment,
+        select_passthrough_env, sweep_json_row, sweep_table_row, validate_slack_channel,
+        ApprovalGateDecl, DownPlan, EnvSeed, RecordedStatePlan, RecordedTeardown, SweepRow,
     };
     use serde::Deserialize;
     use std::path::{Path, PathBuf};
+
+    fn row(model: &str, passed: usize, completed: usize, total: usize) -> SweepRow {
+        SweepRow {
+            model: model.into(),
+            passed,
+            completed,
+            total,
+            plumbing: 0,
+        }
+    }
+
+    #[test]
+    fn never_completed_requires_a_nonempty_row_with_zero_completions() {
+        // The distinct #622 outcome: cases ran, none completed.
+        assert!(row("bogus", 0, 0, 5).never_completed());
+        // A real 0% (every case completed and lost on the grader) is NOT this
+        // outcome -- the negative control the acceptance criteria calls out.
+        assert!(!row("opus", 0, 5, 5).never_completed());
+        // A model that completed and passed some cases is obviously not this
+        // outcome either.
+        assert!(!row("opus", 3, 5, 5).never_completed());
+        // An empty row (no cases at all) must not be misread as never-completed;
+        // there is nothing to have failed to complete.
+        assert!(!row("opus", 0, 0, 0).never_completed());
+    }
+
+    #[test]
+    fn a_real_zero_percent_model_still_exits_ok_and_reports_zero_percent() {
+        // Negative control (acceptance criterion 4): a model that legitimately
+        // scores 0% -- every case completed, the grader just disagreed -- must
+        // still report 0% and exit 0. A sweep stays a comparison, not a gate.
+        let rows = vec![row("opus", 0, 5, 5), row("sonnet", 2, 5, 5)];
+        assert!(report_sweep(&rows).is_ok());
+    }
+
+    #[test]
+    fn a_model_with_zero_completed_turns_fails_the_sweep_loudly() {
+        // The bug this issue fixes: an unresolvable model must not read as an
+        // indistinguishable 0%. `report_sweep` returns `Err` (never
+        // `std::process::exit` itself, so a caller's port-forward guard still
+        // drops via normal unwind) and the message names the model and a likely
+        // cause instead of the eval consumer.
+        let rows = vec![row("bogus-model-xyz", 0, 0, 5), row("opus", 3, 5, 5)];
+        let err = report_sweep(&rows).expect_err("a never-completed row must fail the sweep");
+        let msg = err.to_string();
+        assert!(msg.contains("bogus-model-xyz"), "{msg}");
+        assert!(!msg.contains("eval consumer"), "{msg}");
+        assert!(
+            msg.contains("never resolved") || msg.contains("zero completed turns"),
+            "{msg}"
+        );
+        let (class, _fix) = crate::exit::classify(&err);
+        assert_eq!(class, crate::exit::ExitClass::Failure);
+    }
+
+    #[test]
+    fn every_model_never_completed_still_names_every_one() {
+        let rows = vec![row("model-alpha", 0, 0, 3), row("model-beta", 0, 0, 3)];
+        let err = report_sweep(&rows).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("model-alpha"), "{msg}");
+        assert!(msg.contains("model-beta"), "{msg}");
+    }
 
     #[test]
     fn replace_clears_a_stale_record_for_the_very_container_it_replaces() {
@@ -5468,6 +5628,9 @@ mod tests {
         SweepRow {
             model: model.to_string(),
             passed,
+            // Every case in these plumbing-focused fixtures actually completed;
+            // that axis is #622's concern, not this one's.
+            completed: total,
             total,
             plumbing: 0,
         }
@@ -5477,6 +5640,7 @@ mod tests {
         SweepRow {
             model: model.to_string(),
             passed: 0,
+            completed: 0,
             total: 0,
             plumbing,
         }

@@ -686,6 +686,17 @@ class EvalModelSummary(BaseModel):
     100% and counted as fails it reads 0%, both fabricated. The count keeps those
     rows visible instead of silently dropping them, so a model whose only rows are
     plumbing still appears with ``total == 0``.
+
+    ``completed`` counts the graded rows (within ``total``) whose turn actually
+    reached a verdict, as opposed to a graded FAIL that never completed at all
+    (a classified failure, a turn that ended in the wrong terminal status, or a
+    transport/runner exception -- see ``EvalCaseResult.error`` in the worker).
+    ``total`` alone cannot tell a real 0% (every case completed and the grader
+    said no) apart from a model that never produced one completed turn (issue
+    #622, #526 AC4): a model whose id does not resolve, or whose runner boots but
+    never answers, drives every case through the SAME classified-failure path a
+    real model's bad answer never touches. A sweep row with ``total > 0`` and
+    ``completed == 0`` is that distinct outcome, not a real (if unlucky) 0%.
     """
 
     model: str | None = None
@@ -693,6 +704,7 @@ class EvalModelSummary(BaseModel):
     total: int
     cost_usd: float | None = None
     plumbing: int = 0
+    completed: int = 0
 
     @property
     def pass_rate(self) -> float:

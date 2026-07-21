@@ -1229,8 +1229,13 @@
         "type": "object"
       },
       "EvalModelSummary": {
-        "description": "A per-model rollup across the suite: pass-rate and total cost.\n\nThe model dimension of the matrix (issue #255): the same suite run across\nmodels is sliceable here into ``passed/total`` pass-rate and summed\n``cost_usd`` per model, so BYO-model work can compare which models a use case\ntolerates and at what cost. ``cost_usd`` is ``None`` when no case under this\nmodel reported a cost (e.g. the fake-model path), rather than a misleading 0.\n\n``plumbing`` counts the rows that ran but were never graded (ADR-0055). They\nare excluded from ``passed``/``total``: counted as passes the fake model reads\n100% and counted as fails it reads 0%, both fabricated. The count keeps those\nrows visible instead of silently dropping them, so a model whose only rows are\nplumbing still appears with ``total == 0``.",
+        "description": "A per-model rollup across the suite: pass-rate and total cost.\n\nThe model dimension of the matrix (issue #255): the same suite run across\nmodels is sliceable here into ``passed/total`` pass-rate and summed\n``cost_usd`` per model, so BYO-model work can compare which models a use case\ntolerates and at what cost. ``cost_usd`` is ``None`` when no case under this\nmodel reported a cost (e.g. the fake-model path), rather than a misleading 0.\n\n``plumbing`` counts the rows that ran but were never graded (ADR-0055). They\nare excluded from ``passed``/``total``: counted as passes the fake model reads\n100% and counted as fails it reads 0%, both fabricated. The count keeps those\nrows visible instead of silently dropping them, so a model whose only rows are\nplumbing still appears with ``total == 0``.\n\n``completed`` counts the graded rows (within ``total``) whose turn actually\nreached a verdict, as opposed to a graded FAIL that never completed at all\n(a classified failure, a turn that ended in the wrong terminal status, or a\ntransport/runner exception -- see ``EvalCaseResult.error`` in the worker).\n``total`` alone cannot tell a real 0% (every case completed and the grader\nsaid no) apart from a model that never produced one completed turn (issue\n#622, #526 AC4): a model whose id does not resolve, or whose runner boots but\nnever answers, drives every case through the SAME classified-failure path a\nreal model's bad answer never touches. A sweep row with ``total > 0`` and\n``completed == 0`` is that distinct outcome, not a real (if unlucky) 0%.",
         "properties": {
+          "completed": {
+            "default": 0,
+            "title": "Completed",
+            "type": "integer"
+          },
           "cost_usd": {
             "anyOf": [
               {

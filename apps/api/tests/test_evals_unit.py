@@ -156,9 +156,13 @@ def _otrace(
     outcome: str,
     model: str | None = None,
     passed: Any = ...,
+    error: str | None = None,
 ) -> dict[str, Any]:
     """A trace as the recorder writes it post-#606: an ``outcome`` alongside the
-    derived ``passed``. ``passed`` can be forced to prove which one the grid reads."""
+    derived ``passed``. ``passed`` can be forced to prove which one the grid reads.
+    ``error`` mirrors ``EvalCaseResult.error`` (#622): set on a FAIL trace whose
+    turn never completed (a classified failure, wrong terminal status, or a
+    transport/runner exception), left ``None`` for a FAIL the grader judged."""
     tags = ["eval", f"version:{version}", "suite:s"]
     if model:
         tags.append(f"model:{model}")
@@ -172,6 +176,7 @@ def _otrace(
         "outcome": outcome,
         "passed": passed,
         "model": model,
+        "error": error,
     }
     return {"id": tid, "timestamp": ts, "tags": tags, "metadata": meta}
 
@@ -280,3 +285,88 @@ def test_a_plumbing_row_does_not_dilute_its_own_model_pass_rate() -> None:
     assert opus.total == 1  # the plumbing row is not a denominator
     assert opus.pass_rate == 1.0
     assert opus.plumbing == 1
+
+
+def test_a_real_zero_percent_model_is_completed_but_not_passed() -> None:
+    """A model that answered every case wrong is still `total > 0, completed ==
+    total`: the negative control for #622. `passed == 0` alone must not be read
+    as "never completed"."""
+    traces = [
+        _otrace("o1", "shaA", "c1", "2026-07-01T00:00:00Z", "fail", "opus"),
+        _otrace("o2", "shaA", "c2", "2026-07-01T00:00:00Z", "fail", "opus"),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    opus = next(m for m in matrix.model_summaries if m.model == "opus")
+    assert opus.passed == 0
+    assert opus.total == 2
+    assert opus.completed == 2  # every case reached a verdict; it just lost
+
+
+def test_a_model_that_never_completed_a_turn_is_distinct_from_a_real_zero(
+) -> None:
+    """A FAIL whose turn never completed (classified failure, wrong terminal
+    status, a transport error) carries `error` in its metadata (issue #622).
+    `total > 0` and `completed == 0` is the "never answered" outcome the CLI
+    reports distinctly and fails on, not a real 0%."""
+    traces = [
+        _otrace(
+            "b1",
+            "shaA",
+            "c1",
+            "2026-07-01T00:00:00Z",
+            "fail",
+            "bogus-model-xyz",
+            error="runner reported a classified failure",
+        ),
+        _otrace(
+            "b2",
+            "shaA",
+            "c2",
+            "2026-07-01T00:00:00Z",
+            "fail",
+            "bogus-model-xyz",
+            error="runner reported a classified failure",
+        ),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    bogus = next(m for m in matrix.model_summaries if m.model == "bogus-model-xyz")
+    assert bogus.passed == 0
+    assert bogus.total == 2
+    assert bogus.completed == 0
+
+
+def test_a_partially_completed_model_counts_only_the_completed_rows() -> None:
+    """Mixed within one model: some cases complete (graded fail), some never do
+    (error set). `completed` counts only the former, so a model that is flaky
+    rather than wholly unresolvable is not miscategorized as never-completed."""
+    traces = [
+        _otrace("g1", "shaA", "c1", "2026-07-01T00:00:00Z", "fail", "flaky"),
+        _otrace(
+            "g2",
+            "shaA",
+            "c2",
+            "2026-07-01T00:00:00Z",
+            "fail",
+            "flaky",
+            error="turn ended classified-failure, expected status 'done'",
+        ),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    flaky = next(m for m in matrix.model_summaries if m.model == "flaky")
+    assert flaky.total == 2
+    assert flaky.completed == 1
+
+
+def test_legacy_traces_with_no_error_key_read_as_completed() -> None:
+    """A pre-#622 trace never wrote `error` at all; there is nothing in it to say
+    the turn did not complete, so it must not retroactively read as `completed ==
+    0` and trip the new outcome on historical data."""
+    traces = [_trace("t1", "shaA", "c1", "2026-07-01T00:00:00Z", passed=False)]
+    matrix = build_matrix(traces, "s", 5)
+
+    unlabelled = next(m for m in matrix.model_summaries if m.model is None)
+    assert unlabelled.total == 1
+    assert unlabelled.completed == 1
