@@ -30,10 +30,15 @@ permissions:
 jobs:
   # Gates the ENTIRE tag-triggered publish pipeline (issue #628). A `v*` tag push
   # proves nothing about the tagged commit on its own, so nothing below may run
-  # for one until this job says the commit is reviewed, on main, and green --
-  # see ADR-0058 for the full design and the two admin-only settings (a `v*` tag
-  # protection rule, required reviewers on the `release-publish` environment)
-  # that hardens this further once a maintainer configures them.
+  # for one until this job says the commit is reviewed, on main, and green.
+  # See ADR-0058 for the ancestry/checks design and ADR-0065 for the trust
+  # boundary this job actually sits behind: it stops an accidentally-tagged
+  # commit, not a write actor willing to edit the gate itself, because both
+  # this workflow file and (absent the resolve step below) `release/` are read
+  # from the tagged ref on a push trigger. The controls that bind such an actor
+  # -- a `v*` tag protection rule, required reviewers on the `release-publish`
+  # environment -- are admin-only settings, unconfigured, and tracked as
+  # blocking work in ADR-0065, not as a hardening follow-up.
   #
   # `if:` makes this a no-op (skipped) for ordinary pushes to `main`, so the
   # continuous sha/latest image builds below are unaffected. `environment:` has
@@ -51,9 +56,27 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # Full history: an ancestor commit deep in main's log must stay
-          # reachable, which a shallow clone would hide.
+          # reachable, which a shallow clone would hide. This materializes the
+          # TAGGED commit's tree (GitHub Actions checks out the triggering ref
+          # on a push trigger), origin/main included as a remote-tracking ref
+          # by the same fetch-depth: 0.
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve release/ from origin/main, not the tagged ref
+        # Without this, release/authorize.py is read from the commit it is
+        # about to judge (ADR-0065): a write actor could edit `authorize()` on
+        # a branch, tag that commit, and have the gate run their own
+        # cooperative copy of itself. Overlaying just release/ from
+        # origin/main means the script making the decision is always the
+        # reviewed one. This narrows, not closes, the self-reference: on a
+        # tag push, GitHub Actions still resolves this workflow file itself
+        # from the tagged ref before any step here runs, and no checkout step
+        # inside the workflow can redirect that. An actor who instead edits
+        # release.yaml (e.g. drops the `needs: [authorize-release]` guards)
+        # is unaffected by which copy of authorize.py exists, because their
+        # tampered workflow never calls it. See ADR-0065 for the full trust
+        # boundary this does and does not cover.
+        run: git checkout origin/main -- release/
       - name: Tag's commit must be reviewed, on main, and fully checked
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -94,4 +94,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0062 | [Harness conformance has teeth](0062-harness-conformance-has-teeth.md) | Proposed |
 | 0063 | [Message-driven approval reply surface](0063-message-driven-approval-reply-surface.md) | Accepted |
 | 0064 | [Fail-forward cluster teardown](0064-fail-forward-cluster-teardown.md) | Accepted |
+| 0065 | [Tag protection, not the workflow gate, binds a write actor](0065-tag-protection-not-the-workflow-gate-binds-a-write-actor.md) | Accepted |
 <!-- END GENERATED: adr-index -->
