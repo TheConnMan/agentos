@@ -882,6 +882,32 @@ enum LocalAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Force a stuck thread's sandbox to be released (`POST
+    /// /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next
+    /// maintenance tick deletes the thread's claim and route, so its next
+    /// message cold-creates a fresh sandbox instead of adopting one that may be
+    /// running stale env. Interrupts a live turn on the thread first, so it
+    /// requires --yes; does not delete conversation history.
+    ResetThread {
+        /// Agent name or id (scopes the action; the release is thread-keyed).
+        agent: String,
+        /// The thread key to reset (e.g. the Slack thread ts).
+        #[arg(long, value_name = "THREAD_KEY")]
+        thread_key: String,
+        #[arg(
+            long,
+            default_value = "http://localhost:28000",
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        api_key: String,
+        /// Confirm the action; it interrupts any live turn on the thread.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1243,6 +1269,27 @@ enum ClusterAction {
         limit: f64,
         #[command(flatten)]
         conn: ClusterConn,
+        /// Print what would be done and exit without making a request.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Force a stuck thread's sandbox to be released via the platform API
+    /// (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's
+    /// next maintenance tick deletes the thread's claim and route, so its next
+    /// message cold-creates a fresh sandbox instead of adopting one that may be
+    /// running stale env. Interrupts a live turn on the thread first, so it
+    /// requires --yes; does not delete conversation history.
+    ResetThread {
+        /// Agent name or id (scopes the action; the release is thread-keyed).
+        agent: String,
+        /// The thread key to reset (e.g. the Slack thread ts).
+        #[arg(long, value_name = "THREAD_KEY")]
+        thread_key: String,
+        #[command(flatten)]
+        conn: ClusterConn,
+        /// Confirm the action; it interrupts any live turn on the thread.
+        #[arg(long)]
+        yes: bool,
         /// Print what would be done and exit without making a request.
         #[arg(long)]
         dry_run: bool,
@@ -1808,6 +1855,26 @@ async fn run(command: Option<Command>) -> Result<()> {
                 })
                 .await?,
             ),
+            LocalAction::ResetThread {
+                agent,
+                thread_key,
+                api_url,
+                api_key,
+                yes,
+                dry_run,
+            } => emit(
+                commands::reset_thread(
+                    AgentActionOpts {
+                        api_url,
+                        api_key,
+                        agent,
+                        dry_run,
+                    },
+                    thread_key,
+                    yes,
+                )
+                .await?,
+            ),
         },
         Some(Command::Cluster { action }) => match action {
             ClusterAction::Up {
@@ -2231,6 +2298,28 @@ async fn run(command: Option<Command>) -> Result<()> {
                             dry_run,
                         },
                         limit,
+                    )
+                    .await?,
+                )
+            }
+            ClusterAction::ResetThread {
+                agent,
+                thread_key,
+                conn,
+                yes,
+                dry_run,
+            } => {
+                let (api_url, api_key) = resolve_cluster_conn(conn).await?;
+                emit(
+                    commands::reset_thread(
+                        AgentActionOpts {
+                            api_url,
+                            api_key,
+                            agent,
+                            dry_run,
+                        },
+                        thread_key,
+                        yes,
                     )
                     .await?,
                 )
@@ -2925,6 +3014,73 @@ mod tests {
     }
 
     #[test]
+    fn cluster_reset_thread_parses_agent_thread_key_and_yes() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "reset-thread",
+            "deal-desk",
+            "--thread-key",
+            "1234.5678",
+            "--yes",
+        ])
+        .expect("cluster reset-thread should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::ResetThread {
+                        agent,
+                        thread_key,
+                        yes,
+                        ..
+                    },
+            }) => {
+                assert_eq!(agent, "deal-desk");
+                assert_eq!(thread_key, "1234.5678");
+                assert!(yes);
+            }
+            _ => panic!("expected cluster reset-thread command"),
+        }
+    }
+
+    #[test]
+    fn cluster_reset_thread_defaults_yes_and_dry_run_off() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "reset-thread",
+            "a",
+            "--thread-key",
+            "t1",
+        ])
+        .expect("cluster reset-thread without flags should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::ResetThread {
+                        agent,
+                        thread_key,
+                        yes,
+                        dry_run,
+                        ..
+                    },
+            }) => {
+                assert_eq!(agent, "a");
+                assert_eq!(thread_key, "t1");
+                assert!(!yes);
+                assert!(!dry_run);
+            }
+            _ => panic!("expected cluster reset-thread command"),
+        }
+    }
+
+    #[test]
+    fn cluster_reset_thread_requires_thread_key() {
+        // --thread-key has no default; omitting it must be a parse error.
+        assert!(Cli::try_parse_from(["agentos", "cluster", "reset-thread", "a", "--yes"]).is_err());
+    }
+
+    #[test]
     fn local_platform_verbs_parse() {
         // The inspection/governance verbs mirrored onto the local tier.
         assert!(matches!(
@@ -2954,6 +3110,63 @@ mod tests {
         // local budget/kill/resume are the mirrored lifecycle verbs.
         assert!(Cli::try_parse_from(["agentos", "local", "budget", "gh", "--limit", "1"]).is_ok());
         assert!(Cli::try_parse_from(["agentos", "local", "kill", "gh", "--yes"]).is_ok());
+    }
+
+    #[test]
+    fn local_reset_thread_parses_agent_thread_key_and_yes() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "local",
+            "reset-thread",
+            "gh",
+            "--thread-key",
+            "1234.5678",
+            "--yes",
+        ])
+        .expect("local reset-thread should parse");
+        match cli.command {
+            Some(Command::Local {
+                action:
+                    LocalAction::ResetThread {
+                        agent,
+                        thread_key,
+                        yes,
+                        dry_run,
+                        ..
+                    },
+            }) => {
+                assert_eq!(agent, "gh");
+                assert_eq!(thread_key, "1234.5678");
+                assert!(yes);
+                assert!(!dry_run);
+            }
+            _ => panic!("expected local reset-thread command"),
+        }
+    }
+
+    #[test]
+    fn local_reset_thread_dry_run_skips_yes_requirement_at_parse_time() {
+        // --dry-run parses fine without --yes; the refusal-without-yes check
+        // happens in commands::reset_thread, not at the clap layer.
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "local",
+            "reset-thread",
+            "gh",
+            "--thread-key",
+            "t1",
+            "--dry-run",
+        ])
+        .expect("local reset-thread --dry-run should parse");
+        match cli.command {
+            Some(Command::Local {
+                action: LocalAction::ResetThread { dry_run, yes, .. },
+            }) => {
+                assert!(dry_run);
+                assert!(!yes);
+            }
+            _ => panic!("expected local reset-thread command"),
+        }
     }
 
     // -----------------------------------------------------------------------

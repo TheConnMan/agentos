@@ -1490,6 +1490,73 @@ export const commandManifest = {
           ],
           "hidden": false,
           "name": "resume"
+        },
+        {
+          "about": "Force a stuck thread's sandbox to be released (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick deletes the thread's claim and route, so its next message cold-creates a fresh sandbox instead of adopting one that may be running stale env. Interrupts a live turn on the thread first, so it requires --yes; does not delete conversation history",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id (scopes the action; the release is thread-keyed)",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "The thread key to reset (e.g. the Slack thread ts)",
+              "id": "thread_key",
+              "long": "thread-key",
+              "positional": false,
+              "required": true
+            },
+            {
+              "default_values": [
+                "http://localhost:28000"
+              ],
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos-dev-key"
+              ],
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Confirm the action; it interrupts any live turn on the thread",
+              "id": "yes",
+              "long": "yes",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "reset-thread"
         }
       ]
     },
@@ -2526,6 +2593,92 @@ export const commandManifest = {
           ],
           "hidden": false,
           "name": "budget"
+        },
+        {
+          "about": "Force a stuck thread's sandbox to be released via the platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick deletes the thread's claim and route, so its next message cold-creates a fresh sandbox instead of adopting one that may be running stale env. Interrupts a live turn on the thread first, so it requires --yes; does not delete conversation history",
+          "args": [
+            {
+              "global": false,
+              "help": "Agent name or id (scopes the action; the release is thread-keyed)",
+              "id": "agent",
+              "positional": true,
+              "required": true
+            },
+            {
+              "global": false,
+              "help": "The thread key to reset (e.g. the Slack thread ts)",
+              "id": "thread_key",
+              "long": "thread-key",
+              "positional": false,
+              "required": true
+            },
+            {
+              "env": "AGENTOS_API_URL",
+              "global": false,
+              "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
+              "id": "api_url",
+              "long": "api-url",
+              "positional": false,
+              "required": false
+            },
+            {
+              "env": "AGENTOS_API_KEY",
+              "global": false,
+              "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
+              "id": "api_key",
+              "long": "api-key",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Kubernetes namespace of the release. Default: agentos",
+              "id": "namespace",
+              "long": "namespace",
+              "positional": false,
+              "required": false
+            },
+            {
+              "default_values": [
+                "agentos"
+              ],
+              "global": false,
+              "help": "Helm release name. Default: agentos",
+              "id": "release",
+              "long": "release",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Confirm the action; it interrupts any live turn on the thread",
+              "id": "yes",
+              "long": "yes",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Print what would be done and exit without making a request",
+              "id": "dry_run",
+              "long": "dry-run",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            }
+          ],
+          "hidden": false,
+          "name": "reset-thread"
         },
         {
           "about": "Delete an agent via the platform API (`DELETE /agents/{id}`)",

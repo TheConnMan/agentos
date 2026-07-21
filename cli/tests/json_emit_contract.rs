@@ -535,7 +535,7 @@ fn cluster_comms_disconnect_dry_run_emits_plan_not_error() {
 use agentos::api::{MemoryEntry, Version};
 use agentos::commands::{
     ApprovalsOutput, BudgetOutput, DeleteOutput, InitOutput, KillOutput, MemoryOutput,
-    ResumeOutput, VersionsOutput,
+    ResetThreadOutput, ResumeOutput, VersionsOutput,
 };
 // `ObservabilityOutput` moved to the tier-aware `observability` seam (#460) so
 // both the local and cluster handlers return one type.
@@ -955,6 +955,23 @@ fn budget_output_json_shape_is_pinned() {
         }
         .to_json(),
         json!({"agent": "weather", "max_usd_per_day": null})
+    );
+}
+
+#[test]
+fn reset_thread_output_json_shape_is_pinned() {
+    assert_eq!(
+        ResetThreadOutput::DryRun(plan(&["POST <api>/agents/<id>/threads/<key>/reset"])).to_json(),
+        json!({"dry_run": true, "plan": ["POST <api>/agents/<id>/threads/<key>/reset"]})
+    );
+    assert_eq!(
+        ResetThreadOutput::Done {
+            agent: "weather".to_string(),
+            thread_key: "t-1".to_string(),
+            requested: true,
+        }
+        .to_json(),
+        json!({"agent": "weather", "thread_key": "t-1", "requested": true})
     );
 }
 
