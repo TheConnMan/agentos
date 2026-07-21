@@ -693,6 +693,35 @@ async fn wait_for_tcp(port: u16, timeout: Duration) -> Result<()> {
     }
 }
 
+/// Hard cap on the best-effort diagnostics gather run after a timeout.
+/// `diagnostics` reads straight from the SAME Valkey the worker never acked
+/// against, with no timeout of its own -- unlike every other post-deadline
+/// Valkey read on this path (`chat::ACK_CALL_TIMEOUT`,
+/// `chat::RESUME_SCAN_CALL_TIMEOUT`), which are deliberately bounded so a
+/// stalled Valkey cannot push past `--timeout-secs`. If Valkey itself is what
+/// caused the turn to time out in the first place (a stall or partition is a
+/// common cause), an unbounded diagnostics read can hang the CLI indefinitely
+/// AFTER the turn has already timed out (#751) -- the process just sits there,
+/// still alive, which is the "linger" an operator has to find and kill by
+/// hand. Capping it means the worst case is a diagnostics printout that says
+/// the read timed out, not a wedged process.
+const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Best-effort stream diagnostics bounded by [`DIAGNOSTICS_TIMEOUT`] (#751).
+async fn bounded_diagnostics(
+    conn: &mut MultiplexedConnection,
+    stream: &str,
+    stream_id: &str,
+) -> String {
+    tokio::time::timeout(DIAGNOSTICS_TIMEOUT, diagnostics(conn, stream, stream_id))
+        .await
+        .unwrap_or_else(|_| {
+            format!(
+                "  diagnostics unavailable: Valkey did not respond within {DIAGNOSTICS_TIMEOUT:?}"
+            )
+        })
+}
+
 /// The `agentos local message` handler: drive the compose stack directly.
 ///
 /// The cluster path's self-plumbing (kubectl port-forwards) is cluster-specific,
@@ -859,9 +888,12 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
                         ResumeExit::Done => Ok(()),
                         // Still parked: the durable approval stays pending and is
                         // resolvable later, so this is retryable. Local mode holds
-                        // no port-forward children, so exiting here leaks nothing.
+                        // no port-forward children, but it DOES still hold the
+                        // Slack stub -- move it into `exit_after_drop` so its
+                        // listener is torn down before exit rather than leaked
+                        // (#751).
                         ResumeExit::Transient => {
-                            std::process::exit(crate::exit::ExitClass::Transient.code());
+                            exit_after_drop(crate::exit::ExitClass::Transient, stub);
                         }
                     }
                 }
@@ -879,25 +911,38 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
                         channel: channel.clone(),
                     });
                     persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
-                    std::process::exit(crate::exit::ExitClass::Transient.code());
+                    // Drop the Slack stub first so its listener is not leaked past
+                    // this non-unwinding exit (#751).
+                    exit_after_drop(crate::exit::ExitClass::Transient, stub);
                 }
             }
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            // Drop the Slack stub's listener IMMEDIATELY on timeout, before
+            // anything else -- in particular before the diagnostics gather right
+            // below, which reads from the SAME Valkey the worker never acked
+            // against and can itself stall (bounded by `DIAGNOSTICS_TIMEOUT`, but
+            // that is still seconds during which a not-yet-dropped stub would
+            // keep holding the port). Releasing the stub first means the very
+            // next `local message` can bind successfully right away regardless of
+            // how long anything after this line takes (#751).
+            drop(stub);
             // Gather diagnostics only on the human path; under `--json` the
             // timeout object carries no diagnostics, so skip the extra Valkey read.
             let diag = if ui.json() {
                 None
             } else {
-                Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
+                Some(bounded_diagnostics(&mut conn, &opts.stream, &stream_id).await)
             };
             ui.emit(&MessageOutcomeOutput::TimedOut {
                 diagnostics: diag,
                 resume_note: None,
             });
             // A timeout is retryable (the worker may still be working, or a
-            // transient stall), so it maps to the transient exit code, not failure.
+            // transient stall), so it maps to the transient exit code, not
+            // failure. The stub is already dropped above; nothing else to tear
+            // down for local mode ("Local mode holds no port-forward children").
             std::process::exit(crate::exit::ExitClass::Transient.code());
         }
     }
@@ -975,6 +1020,28 @@ enum ResumeExit {
     /// is retryable: the caller drops its port-forward guards and exits with the
     /// transient class.
     Transient,
+}
+
+/// Exit the process with `class`, after dropping `guards` first.
+///
+/// `std::process::exit` does not unwind the stack, so any `Drop` impl still in
+/// scope at the call site -- the Slack stub's listener/server task
+/// ([`SlackStub`](crate::chat::SlackStub)), a `kubectl port-forward` child --
+/// would otherwise never run, leaking whatever it holds (#751: a timed-out
+/// `local message`/`cluster message` used to leak the stub's bound port this
+/// way, wedging every subsequent turn with "Address already in use").
+///
+/// Every exit site in this module that needs to tear down a guard before
+/// exiting routes through here instead of calling `std::process::exit`
+/// directly: `guards` is taken BY VALUE, so the compiler forces the caller to
+/// move ownership in (a `SlackStub`, a `tokio::process::Child`, or a tuple of
+/// several) rather than merely borrowing it, and this function drops it before
+/// the process actually exits. That makes the guard-then-exit ordering
+/// structural rather than something a future call site has to remember to do
+/// by hand.
+fn exit_after_drop<T>(class: crate::exit::ExitClass, guards: T) -> ! {
+    drop(guards);
+    std::process::exit(class.code());
 }
 
 /// Keep the reply stub alive after a turn parked awaiting approval and wait for
@@ -1318,12 +1385,14 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                     {
                         ResumeExit::Done => Ok(()),
                         ResumeExit::Transient => {
-                            // Drop the Valkey port-forward FIRST: `process::exit`
-                            // does not unwind, so without this explicit drop its
-                            // `kill_on_drop` guard never fires and the `kubectl
-                            // port-forward` child is orphaned to init (#766).
-                            drop(_valkey_pf);
-                            std::process::exit(crate::exit::ExitClass::Transient.code());
+                            // Drop the Slack stub AND the Valkey port-forward first:
+                            // `process::exit` does not unwind, so without dropping
+                            // them explicitly here neither the stub's listener nor
+                            // the `kill_on_drop` port-forward child guard would ever
+                            // run, leaking the stub's bound port (#751) and
+                            // orphaning the `kubectl port-forward` child to init
+                            // (#766).
+                            exit_after_drop(crate::exit::ExitClass::Transient, (stub, _valkey_pf));
                         }
                     }
                 }
@@ -1331,8 +1400,9 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                     // No parseable approval id, so we never entered the resume wait.
                     // Same parked terminal as the timeout arm, so exit with the SAME
                     // transient class (not 0) for a deterministic scripted contract
-                    // (#766, N5). Drop the port-forward first so its child is not
-                    // orphaned by the non-unwinding `process::exit`.
+                    // (#766, N5). Drop the stub and port-forward first so neither is
+                    // leaked/orphaned by the non-unwinding `process::exit` (#751,
+                    // #766).
                     ui.emit(&MessageOutcomeOutput::AwaitingApproval {
                         thread: thread_ts.clone(),
                         reply,
@@ -1341,29 +1411,33 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                         channel: channel.clone(),
                     });
                     persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
-                    drop(_valkey_pf);
-                    std::process::exit(crate::exit::ExitClass::Transient.code());
+                    exit_after_drop(crate::exit::ExitClass::Transient, (stub, _valkey_pf));
                 }
             }
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
+            // Drop the Slack stub's listener IMMEDIATELY on timeout, before the
+            // diagnostics gather below -- same reasoning as `message_local`'s
+            // TimedOut arm (#751). The Valkey port-forward (`_valkey_pf`) must
+            // stay alive a bit longer: `diagnostics` still needs it for `conn`.
+            drop(stub);
             // Gather diagnostics only on the human path; under `--json` the
             // timeout object carries no diagnostics, so skip the extra Valkey read.
             let diag = if ui.json() {
                 None
             } else {
-                Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
+                Some(bounded_diagnostics(&mut conn, &opts.stream, &stream_id).await)
             };
             ui.emit(&MessageOutcomeOutput::TimedOut {
                 diagnostics: diag,
                 resume_note: None,
             });
             // A timeout is retryable (the worker may still be working, or a
-            // transient stall), so it maps to the transient exit code, not failure.
-            // Drop the Valkey port-forward FIRST for the same non-unwinding reason.
-            drop(_valkey_pf);
-            std::process::exit(crate::exit::ExitClass::Transient.code());
+            // transient stall), so it maps to the transient exit code, not
+            // failure. Drop the Valkey port-forward now, for the same
+            // non-unwinding reason as the stub above (#766).
+            exit_after_drop(crate::exit::ExitClass::Transient, _valkey_pf);
         }
     }
 }
