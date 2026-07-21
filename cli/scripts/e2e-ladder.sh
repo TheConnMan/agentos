@@ -27,10 +27,13 @@
 # belongs to another session, and so do that session's sandboxes.
 #
 # Fake model by default, so a default run is credential-free even on a box that
-# HAS credentials. Under AGENTOS_E2E_LIVE=1 the ladder runs the real model and
-# requires a credential up front. Under fake it asserts PLUMBING only -- that a
-# turn finalized and a reply came back -- never reply CONTENT (ADR-0055, #612):
-# an assertion tuned to the fake's canned reply manufactures a green.
+# HAS credentials. Under AGENTOS_E2E_LIVE=1 the ladder runs the real model on
+# every rung and requires a credential up front. Under fake, the local and
+# cluster rungs assert PLUMBING only -- that a turn finalized and a reply came
+# back -- never reply CONTENT (ADR-0055, #612): an assertion tuned to the
+# fake's canned reply manufactures a green. Rung 1 (skill) runs its own real
+# eval graders against whichever model it booted (cli/scripts/e2e.sh), fake or
+# live, since that leg is acceptance evidence for #325, not a plumbing probe.
 #
 # Requirements: docker, a cargo toolchain (or $AGENTOS_BIN), and an
 # agentos-runner image (`agentos build`). Rung 3 additionally needs a reachable
@@ -51,8 +54,9 @@
 #                            a step `all`'s existing skill/local/cluster rungs
 #                            don't require -- name it explicitly, e.g.
 #                            AGENTOS_E2E_TIERS=skill,local,local-release.
-#   AGENTOS_E2E_LIVE         1 = real model on rungs 2, local-release, and 3
-#                            (rung 1 stays fake)
+#   AGENTOS_E2E_LIVE         1 = real model on every named rung, including
+#                            rung 1 (cli/scripts/e2e.sh reads this same var
+#                            itself rather than being told by the ladder).
 #   AGENTOS_BIN              path to a prebuilt agentos binary (skip cargo build)
 set -euo pipefail
 
@@ -154,9 +158,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # The ONE place the fake/live asymmetry is stated. There is no shared
-# fake-model control across tiers: skill takes a `--fake-model` flag, local
+# fake-model control across tiers: skill reads AGENTOS_E2E_LIVE itself (see
+# cli/scripts/e2e.sh) and derives its own `--fake-model` flag from it, local
 # reads AGENTOS_FAKE_MODEL, and cluster bakes it into the install. Keeping the
-# translation here means the seam is written down once.
+# local/cluster translation here means that seam is written down once; skill
+# is exempt because AGENTOS_E2E_LIVE is already in this process's environment
+# by the time `bash e2e.sh` is invoked below, so it needs no translation.
 apply_model_mode() {
     if [[ "$LIVE" == "1" ]]; then
         if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${AGENTOS_CREDENTIALS:-}" ]]; then
@@ -167,7 +174,7 @@ apply_model_mode() {
         # Live means live: an inherited AGENTOS_FAKE_MODEL=1 would silently seal
         # a run the operator asked to be real.
         unset AGENTOS_FAKE_MODEL
-        echo "model mode: LIVE (real model on the local and cluster rungs)"
+        echo "model mode: LIVE (real model on the skill, local, and cluster rungs)"
     else
         # Exported, not merely defaulted: a developer shell that happens to carry
         # ANTHROPIC_API_KEY must still get the sealed run. That is what
@@ -175,7 +182,6 @@ apply_model_mode() {
         export AGENTOS_FAKE_MODEL=1
         echo "model mode: FAKE (sealed; AGENTOS_FAKE_MODEL=1 exported for the local rung)"
     fi
-    echo "note: the skill rung is fake either way -- cli/scripts/e2e.sh hardcodes --fake-model."
     echo "note: the cluster rung's model is a property of the installed release (cluster up --fake-model), not of this run."
 }
 

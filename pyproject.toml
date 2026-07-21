@@ -26,6 +26,7 @@ members = [
     "apps/worker",
     "runner",
     "tools/doclint",
+    "tools/wire-tolerance-gate",
 ]
 
 [tool.uv.sources]
@@ -37,10 +38,12 @@ agentos-dispatcher = { workspace = true }
 agentos-worker = { workspace = true }
 agentos-runner = { workspace = true }
 agentos-doclint = { workspace = true }
+agentos-wire-tolerance-gate = { workspace = true }
 
 [dependency-groups]
 dev = [
     "agentos-doclint",
+    "agentos-wire-tolerance-gate",
     "pytest>=8.3",
     "ruff>=0.15.22",
     "mypy>=2.3.0",
@@ -63,6 +66,7 @@ testpaths = [
     "release/tests",
     "examples/tests",
     "tools/doclint/tests",
+    "tools/wire-tolerance-gate/tests",
     # Only the offline harness unit tests -- NOT the whole tree: the cluster
     # scenario in test_soak_resilience.py stays out of default collection and
     # runs only under AGENTOS_SOAK=1 (#499).
@@ -98,6 +102,7 @@ mypy_path = [
     "apps/worker/src",
     "runner/src",
     "tools/doclint/src",
+    "tools/wire-tolerance-gate/src",
 ]
 files = [
     "packages/aci-protocol/src",
@@ -108,6 +113,7 @@ files = [
     "apps/worker/src",
     "runner/src",
     "tools/doclint/src",
+    "tools/wire-tolerance-gate/src",
 ]
 
 # The official kubernetes client ships no type stubs; keep its boundary typed

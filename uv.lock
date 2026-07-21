@@ -17,6 +17,7 @@ members = [
     "agentos-dispatcher",
     "agentos-doclint",
     "agentos-runner",
+    "agentos-wire-tolerance-gate",
     "agentos-worker",
     "agentos-workspace",
     "plugin-format",
@@ -153,6 +154,11 @@ requires-dist = [
 ]
 
 [[package]]
+name = "agentos-wire-tolerance-gate"
+version = "0.0.0"
+source = { editable = "tools/wire-tolerance-gate" }
+
+[[package]]
 name = "agentos-worker"
 version = "0.0.0"
 source = { editable = "apps/worker" }
@@ -206,6 +212,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "agentos-doclint" },
+    { name = "agentos-wire-tolerance-gate" },
     { name = "mypy" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
@@ -228,6 +235,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "agentos-doclint", editable = "tools/doclint" },
+    { name = "agentos-wire-tolerance-gate", editable = "tools/wire-tolerance-gate" },
     { name = "mypy", specifier = ">=2.3.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.29" },
     { name = "opentelemetry-sdk", specifier = ">=1.44.0" },

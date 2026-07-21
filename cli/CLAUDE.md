@@ -165,12 +165,17 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
 cd cli && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-Scripted E2E (real runner container, fake model, fully offline):
+Scripted E2E (real runner container, fake model, fully offline by default):
 ```bash
 bash cli/scripts/e2e.sh
 ```
 Requires the `agentos-runner` image built once from the repo root
-(`docker build -f runner/Dockerfile -t agentos-runner .`).
+(`docker build -f runner/Dockerfile -t agentos-runner .`) and a cargo
+toolchain (or `$AGENTOS_BIN` pointed at a prebuilt binary, which skips the
+`cargo build --release`). `AGENTOS_E2E_LIVE=1` drops `--fake-model` and runs
+the skill rung against a real model, requiring a credential
+(`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`) in
+the environment.
 
 Cold-start parity ladder (issue #690, `agentos dev e2e-ladder` ->
 `cli/scripts/e2e-ladder.sh`) -- an E2E test, same as the scripted E2E above, not
@@ -198,8 +203,8 @@ compose-env-wiring bug class (#545) a config-only check cannot.
 selects rungs; `local-release` is NOT folded into `all` since it needs those
 extra images built first, so name it explicitly (e.g.
 `skill,local,local-release`). `AGENTOS_E2E_LIVE` (default fake, `1` for live)
-governs the local, local-release, and cluster rungs only, since the skill rung
-stays fake. One-command pre-release gate:
+governs every named rung, including rung 1 -- `e2e.sh` reads the same env var
+directly rather than being told by the ladder. One-command pre-release gate:
 ```bash
 AGENTOS_E2E_TIERS=all agentos dev e2e-ladder
 ```

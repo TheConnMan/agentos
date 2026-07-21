@@ -61,7 +61,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from aci_protocol import QueuedTurn
+from aci_protocol import parse_queued_turn
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -87,7 +87,11 @@ def _parse_dead_lettered_resume(
     if payload is None:
         return None
     try:
-        turn = QueuedTurn.model_validate_json(payload)
+        # Tolerant decode (#625): this reads a queue-boundary payload the
+        # worker produced, the same consumer-side case parse_queued_turn
+        # already covers, so an unknown field a newer producer added must not
+        # sink a dead-lettered row that would otherwise be recovered.
+        turn = parse_queued_turn(payload)
     except ValidationError:
         return None
     approval_id = parse_resume_event_id(turn.event_id)

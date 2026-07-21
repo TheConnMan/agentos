@@ -45,6 +45,12 @@ jobs:
       # right after ruff/mypy and before the dev stack boots.
       - name: Interface catalog docs (generate + drift + citation lint)
         run: bash scripts/check-docs.sh
+      # _AciModel tolerant-decode gate (#625, following #492): every direct
+      # ClassName.model_validate*(...) call on an _AciModel subclass must thread
+      # READER_CONTEXT or be a declared allowlist exception. Another cheap,
+      # cluster-free static gate, so it runs alongside the docs gate.
+      - name: Wire tolerance gate (_AciModel model_validate call sites)
+        run: bash scripts/check-wire-tolerance.sh
       # Integration tests dial the real dev stack (Postgres 25432, Valkey 26379,
       # MinIO 29000, Langfuse 23000 + ClickHouse + OTel Collector). Boot it after
       # ruff/mypy so cheap failures stay fast. The first up starts the one-shot
@@ -454,6 +460,20 @@ jobs:
   # dev file's own unset-override outcome) and the worker-local overlay image
   # the generator's T1 substitutes for the build directive, both resolved
   # locally so `local up` never attempts a pull against a private GHCR ref.
+  #
+  # This job's three builds share the `images` job's gha cache store above:
+  # neither job passes an explicit `scope` to cache-from/cache-to, so both
+  # default to buildkit's own "buildkit" scope, and runner/Dockerfile,
+  # apps/api/Dockerfile, and apps/worker/Dockerfile are the same files the
+  # `images` matrix already built on this commit. There is no `needs` edge
+  # between `images` and `e2e-ladder` (this job only waits on `rust`), so the
+  # cache hit here is NOT guaranteed by job ordering -- it happens in practice
+  # because `images`'s cache-warmed builds are far quicker than `rust`'s full
+  # cargo build/test/release, so `images` has almost always finished writing
+  # its cache well before `rust` unblocks this job. If that assumption ever
+  # flips (a slower images job or a much faster rust job), the first CI run on
+  # a new commit's shas would fall back to a cold build here, same as today,
+  # and only later runs of the same shas would see the hit.
   e2e-ladder:
     name: E2E parity ladder (skill + local + local-release, fake model)
     runs-on: ubuntu-latest
@@ -462,6 +482,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Download the agentos binary built by the Rust job
         uses: actions/download-artifact@v7
         with:
@@ -470,7 +492,7 @@ jobs:
       - name: Make the binary executable
         run: chmod +x cli/target/release/agentos
       - name: Build the runner image locally
-        run: docker build -t agentos-runner -f runner/Dockerfile .
+        run: docker buildx build --load -t agentos-runner -f runner/Dockerfile --cache-from type=gha --cache-to type=gha .
       - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
         run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
       # Tagged :ci-local (the worker-local-image job's own convention), not
@@ -480,9 +502,9 @@ jobs:
       # retag its from-source builds over whatever `:latest` meant in the local
       # Docker image store before this job ran.
       - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
-        run: docker build -t ghcr.io/curie-eng/agentos-api:ci-local -f apps/api/Dockerfile .
+        run: docker buildx build --load -t ghcr.io/curie-eng/agentos-api:ci-local -f apps/api/Dockerfile --cache-from type=gha --cache-to type=gha .
       - name: Build the worker base image locally (satisfies the worker-local overlay's FROM, no registry auth)
-        run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
+        run: docker buildx build --load -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile --cache-from type=gha --cache-to type=gha .
       - name: Parity ladder (skill + local rungs, fake model, credential-free)
         env:
           AGENTOS_BIN: cli/target/release/agentos
