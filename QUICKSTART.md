@@ -11,9 +11,16 @@ the runner container on your host Docker daemon, talking straight to the agent.
   your platform from the latest release (no Rust toolchain required):
 
   ```bash
-  # Linux (x86_64); for macOS Apple silicon swap in agentos-aarch64-apple-darwin
-  curl -L -o agentos \
-    https://github.com/curie-eng/agentos/releases/latest/download/agentos-x86_64-unknown-linux-gnu
+  # Resolve the right asset for this machine. The release ships Linux x86_64 and
+  # macOS Apple silicon; anything else builds from source (see cli/).
+  ASSET=
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64)                 ASSET=agentos-x86_64-unknown-linux-gnu ;;
+    Darwin/arm64|Darwin/aarch64)  ASSET=agentos-aarch64-apple-darwin ;;
+  esac
+  : "${ASSET:?no prebuilt binary for this platform; build the CLI from source in cli/}"
+  curl -fsSL -o agentos \
+    "https://github.com/curie-eng/agentos/releases/latest/download/$ASSET"
   chmod +x agentos && sudo mv agentos /usr/local/bin/
   ```
 
