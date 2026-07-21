@@ -21,7 +21,9 @@ from aci_protocol import (
     SideEffectFlag,
     TextDelta,
 )
+from agentos_worker import kernel as kernel_module
 from agentos_worker.behaviorpacks import BehaviorPacks, NavPack
+from agentos_worker.runner_client import RunnerError
 
 DONE = SessionStatus.DONE
 IDLE = SessionStatus.IDLE_AWAITING_INPUT
@@ -666,6 +668,70 @@ def test_release_thread_interrupts_a_live_turn_first(make_harness) -> None:
 
             hold.set()
             await t1
+
+    asyncio.run(go())
+
+
+def test_release_thread_releases_when_the_runner_never_answers_the_interrupt(
+    make_harness, monkeypatch
+) -> None:
+    """#739: a WEDGED runner accepts the TCP connect and then never answers
+    ``/v1/interrupt``. The interrupt is a courtesy, not a precondition, so the
+    release must not be hostage to it: the sandbox is still released and the
+    route-existed answer still comes back, bounded to a few seconds rather than
+    the runner client's own 600s request timeout. Without the bound the operator
+    reset is lost entirely (the substrate release line is never reached) and the
+    maintenance tick that drove it stalls for the whole window.
+
+    The hang is injected at the runner-client seam (the external HTTP call) with
+    an event that is never set, so the wedge is deterministic rather than timing
+    dependent. The generous 10s ceiling below only has to prove the call is
+    bounded to seconds, not to pin the exact constant."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tWedged"))
+            assert h.substrate.lookup("tWedged") is not None  # the route is live
+
+            monkeypatch.setattr(kernel_module, "_RESET_INTERRUPT_TIMEOUT_S", 0.2)
+
+            wedged = asyncio.Event()  # never set: the runner answers nothing, ever
+
+            async def never_answers(base_url: str, reason: str, token: str | None = None) -> None:
+                await wedged.wait()
+
+            monkeypatch.setattr(h.kernel._runner, "interrupt", never_answers)
+
+            released = await asyncio.wait_for(h.kernel.release_thread("tWedged"), timeout=2.0)
+
+            assert released is True
+            assert h.substrate.lookup("tWedged") is None  # released despite the wedged runner
+
+    asyncio.run(go())
+
+
+def test_release_thread_releases_when_the_interrupt_raises(make_harness, monkeypatch) -> None:
+    """#739, the other half of the wedged-runner shape: the runner answers, but
+    with a transport error or a non-200. The release is an operator's explicit
+    "give me a fresh sandbox", so a failed courtesy interrupt is logged and
+    swallowed rather than aborting the release and stranding the stale sandbox."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tInterruptBoom"))
+            assert h.substrate.lookup("tInterruptBoom") is not None
+
+            async def boom(base_url: str, reason: str, token: str | None = None) -> None:
+                raise RunnerError("/v1/interrupt -> 500: runner is wedged")
+
+            monkeypatch.setattr(h.kernel._runner, "interrupt", boom)
+
+            released = await h.kernel.release_thread("tInterruptBoom")
+
+            assert released is True
+            assert h.substrate.lookup("tInterruptBoom") is None
 
     asyncio.run(go())
 

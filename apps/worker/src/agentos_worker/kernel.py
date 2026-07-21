@@ -84,6 +84,19 @@ RETRYABLE_CLASSIFICATIONS = frozenset({"rate-limit", "runner-error"})
 # platform contract on a platform-authored turn -- not user-intent guessing.
 _EXPIRY_RESUME_MARKER = "[approval expired]"
 
+# How long an operator-requested reset waits on the courtesy interrupt before
+# giving up and releasing anyway (#739). Deliberately seconds, not minutes: the
+# runner client's own request timeout is 600s, and a wedged runner accepts the
+# TCP connect then answers nothing, so an unbounded await there blocks the whole
+# maintenance tick. A healthy runner answers an interrupt in well under a second.
+# Note the coupling this creates with `RunnerClient.connect_timeout_s` (10.0, see
+# runner_client.py): on this path 5s always fires first, so a runner that is not
+# even accepting connections surfaces as this timeout rather than as the client's
+# connect error. That is fine here because the release runs either way, but keep
+# the two in mind together -- dropping the connect timeout below this value would
+# silently change which error an operator sees in the log.
+_RESET_INTERRUPT_TIMEOUT_S = 5.0
+
 
 @dataclass
 class TurnOutcome:
@@ -468,11 +481,66 @@ class Kernel:
         not lost -- a cold-created sandbox rehydrates its transcript from the
         durable state store on claim, the same as any other fresh claim.
 
-        Any live turn is interrupted first (best-effort: `interrupt_thread`
-        already no-ops safely when nothing is live) so `release` never yanks
-        the claim out from under a running turn without at least trying to
-        stop it cleanly. True if a route existed to release."""
-        await self.interrupt_thread(thread_key, "operator requested a sandbox reset")
+        Any live turn is interrupted first so `release` never yanks the claim
+        out from under a running turn without at least trying to stop it
+        cleanly, but the interrupt is a courtesy and never a precondition
+        (#739). The case that matters is a live handle whose runner is
+        unresponsive: a wedged runner accepts the TCP connect and then answers
+        `/v1/interrupt` never, so the call rides `RunnerClient`'s own 600s
+        request timeout. That is exactly the sandbox an operator is resetting,
+        and awaiting it unbounded costs twice: the release line below is never
+        reached, and the reset request has already been SPOPped off the pending
+        set by the maintenance tick, so a raise loses it permanently rather
+        than retrying next tick. The same tick also owns stream reclaim and
+        orphan reaping, which stall for the whole window behind it.
+
+        So the interrupt is bounded to `_RESET_INTERRUPT_TIMEOUT_S` and any
+        failure (timeout, transport error, non-200) is logged and swallowed; the
+        release then runs unconditionally. `CancelledError` is deliberately not
+        swallowed, so worker shutdown still cuts through.
+
+        The failure log is an ERROR, not a warning: it is the only record that a
+        sandbox was pulled out from under a turn that may still be running, and
+        there is no retry that would produce a second, louder signal. The two
+        success shapes are logged apart from it (and from each other) so an
+        operator can tell "the live turn was killed" from "nothing was running"
+        from "we released blind".
+
+        Behavioral note for the unconditional release: when the thread really did
+        have a live turn, tearing its sandbox down mid-run drops the turn stream,
+        which `_consume` classifies as `runner-error`. That is in
+        `RETRYABLE_CLASSIFICATIONS`, so the driving loop in `_run_event` retries
+        the turn, and the retry re-claims, which cold-creates a fresh sandbox on
+        current config -- exactly the state the reset was asking for. The
+        no-auto-retry-after-side-effects rule still holds: an attempt that saw a
+        `SideEffectFlag` escalates to a human instead of replaying. So a reset of
+        a live thread is a replay on a fresh sandbox, not a lost turn, and the
+        thread is never left routeless.
+
+        True if a route existed to release."""
+        try:
+            interrupted = await asyncio.wait_for(
+                self.interrupt_thread(thread_key, "operator requested a sandbox reset"),
+                _RESET_INTERRUPT_TIMEOUT_S,
+            )
+        except Exception:
+            logger.error(
+                "reset: interrupt did not land for thread %s (timed out or errored); "
+                "releasing the sandbox anyway, so a turn that is still live loses it "
+                "mid-run and replays on a fresh sandbox",
+                thread_key,
+                exc_info=True,
+            )
+        else:
+            if interrupted:
+                logger.info(
+                    "reset: interrupted the live turn on thread %s before releasing",
+                    thread_key,
+                )
+            else:
+                logger.info(
+                    "reset: no live runner to interrupt on thread %s", thread_key
+                )
         return await asyncio.to_thread(self._substrate.release, thread_key)
 
     def attach_killswitch(self, killswitch: KillSwitch) -> None:

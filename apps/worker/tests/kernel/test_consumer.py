@@ -13,6 +13,7 @@ from collections.abc import Callable
 import redis.exceptions
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_dispatcher.queue import to_stream_fields
+from agentos_worker import kernel as kernel_module
 from agentos_worker.consumer import THREAD_RESET_SET, Consumer
 
 DONE = SessionStatus.DONE
@@ -244,6 +245,41 @@ def test_maintenance_tick_drains_pending_thread_reset_requests(make_harness) -> 
 
             assert h.substrate.lookup("tDrain") is None  # released
             assert await h.async_redis.scard(THREAD_RESET_SET) == 0  # popped, not left behind
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_thread_reset_is_not_stalled_by_a_wedged_runner(
+    make_harness, monkeypatch
+) -> None:
+    """#739: the maintenance tick runs stream reclaim, orphan reaping, and the
+    thread-reset drain in one pass, so a reset whose runner never answers the
+    courtesy interrupt would otherwise block all three for the runner client's
+    full 600s request timeout -- and the request is already SPOPped off the set,
+    so it is lost rather than retried on the next tick. The drain must therefore
+    finish in seconds and the sandbox must actually be gone afterwards."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tWedgedDrain"))
+            assert h.substrate.lookup("tWedgedDrain") is not None
+
+            monkeypatch.setattr(kernel_module, "_RESET_INTERRUPT_TIMEOUT_S", 0.2)
+
+            wedged = asyncio.Event()  # never set
+
+            async def never_answers(base_url: str, reason: str, token: str | None = None) -> None:
+                await wedged.wait()
+
+            monkeypatch.setattr(h.kernel._runner, "interrupt", never_answers)
+
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await h.async_redis.sadd(THREAD_RESET_SET, "tWedgedDrain")
+
+            await asyncio.wait_for(consumer._drain_thread_reset_requests(), timeout=2.0)
+
+            assert h.substrate.lookup("tWedgedDrain") is None  # the reset was not lost
 
     asyncio.run(go())
 
