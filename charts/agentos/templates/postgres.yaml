@@ -32,6 +32,9 @@ spec:
         {{- include "agentos.labels" . | nindent 8 }}
         {{- include "agentos.selectorLabels" (dict "root" . "component" "postgres") | nindent 8 }}
     spec:
+      {{- with .Values.priorityClasses.platform.name }}
+      priorityClassName: {{ . }}
+      {{- end }}
       securityContext:
         fsGroup: {{ .Values.postgres.podSecurityContext.fsGroup }}
       {{- if not .Values.postgres.persistence.enabled }}

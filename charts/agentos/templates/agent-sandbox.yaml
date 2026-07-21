@@ -126,6 +126,9 @@ spec:
       serviceAccountName: {{ include "agentos.fullname" . }}-runner
       automountServiceAccountToken: {{ $runner.serviceAccount.automountToken }}
       {{- end }}
+      {{- with .Values.priorityClasses.sandbox.name }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- $gvisorClass := include "agentos.gvisor.runtimeClassName" . }}
       {{- if $gvisorClass }}
       # Kernel-isolation RuntimeClass from security.gvisor.mode. In `auto` this is

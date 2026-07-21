@@ -25,6 +25,36 @@ global:
   storageClass: ""
 
 # ---------------------------------------------------------------------------
+# PriorityClass (ADR-0059 decision 5): ranks the control plane -- worker, api,
+# dispatcher, and the data tier (postgres, valkey, clickhouse, minio) -- above
+# sandbox pods for node-pressure eviction, so the components that supervise,
+# drain, and reclaim a sandbox are never themselves preferred for eviction over
+# the sandboxes they manage. Priority is a ranking and preemption lever, not
+# immunity: a node fully out of a resource (e.g. disk) can still take anything
+# down regardless of priority.
+#
+# Both names are cluster-scoped (PriorityClass has no namespace), so installing
+# a second agentos release into the SAME cluster must override one release's
+# names to avoid an ownership conflict. `sandbox.name` is also the intended
+# `scopeSelector` handle for the sandbox-namespace ResourceQuota (issue #758) --
+# keep the two in sync if you rename it.
+# ---------------------------------------------------------------------------
+priorityClasses:
+  platform:
+    # Renders the PriorityClass and sets priorityClassName on every
+    # control-plane pod. Set false (and repoint `name` at an existing class) if
+    # the cluster/another release already defines an equivalent one.
+    create: true
+    name: agentos-platform
+    value: 1000000
+  sandbox:
+    # Renders the PriorityClass and sets priorityClassName on the sandbox
+    # runner pod template.
+    create: true
+    name: agentos-sandbox
+    value: 100000
+
+# ---------------------------------------------------------------------------
 # Langfuse app (web + worker). The observability + eval backbone. Its backing
 # stores (Postgres, ClickHouse, Valkey, MinIO) are the separate blocks below so
 # each can be toggled or BYO'd independently.
