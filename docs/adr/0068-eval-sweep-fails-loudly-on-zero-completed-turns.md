@@ -1,4 +1,4 @@
-# 67. A `--model` sweep row with zero completed turns fails loudly instead of reporting 0%
+# 68. A `--model` sweep row with zero completed turns fails loudly instead of reporting 0%
 
 Date: 2026-07-21
 
