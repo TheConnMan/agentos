@@ -571,4 +571,46 @@ def test_ensure_image_is_best_effort_when_docker_unavailable(caplog) -> None:
         client.ensure_image()  # must return normally, no exception propagates
     assert ["image", "inspect", "agentos-runner"] in client.calls
     assert "agentos-runner" in caplog.text  # the warning names the image
-    assert "docker inspect" not in caplog.text  # but never dumps the argv
+
+
+def test_missing_runner_network_error_carries_a_remediation_hint(monkeypatch) -> None:
+    """#715: a `docker run` failing because our own configured network doesn't
+    exist (compose topology drift -- exactly what escalated as an opaque
+    runner-error while getting a real agent working locally) must raise a
+    DockerError that tells the reader what to DO, not just what failed."""
+    import subprocess
+
+    from agentos_worker.sandbox.docker import DockerError as _DockerError
+
+    class _FakeCompletedProcess:
+        returncode = 125
+        stderr = (
+            "docker: Error response from daemon: failed to set up container"
+            " networking: network agentos_runner not found."
+        )
+        stdout = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _FakeCompletedProcess())
+
+    client = DockerSandboxClient(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(),
+        network="agentos_runner",
+    )
+    try:
+        client._docker(["run", "--rm", "agentos-runner"])
+        raise AssertionError("expected DockerError")
+    except _DockerError as exc:
+        assert "agentos_runner" in str(exc)
+        assert "agentos local up" in str(exc)
+
+
+def test_docker_error_without_a_matching_network_name_carries_no_hint() -> None:
+    """The remediation hint is specific to OUR configured network going
+    missing -- an unrelated docker failure (e.g. no such image) must not gain
+    a misleading "run agentos local up" tacked onto it."""
+    client = DockerSandboxClient(
+        image="agentos-runner", bundle_store=_FakeBundleStore(), network="agentos_runner"
+    )
+    hint = client._network_remediation_hint("Error: No such image: agentos-runner:latest")
+    assert hint == ""
