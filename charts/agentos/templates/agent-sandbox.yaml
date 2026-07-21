@@ -175,20 +175,29 @@ spec:
         {{- end }}
         {{- if $bf.enabled }}
         # Shared bundle volume: the init pair populates <mountPath>/current, the
-        # runner reads it as AGENTOS_PLUGIN_DIR.
+        # runner reads it as AGENTOS_PLUGIN_DIR. sizeLimit is ADR-0059 decision
+        # 2 -- a fast-writer can still briefly overshoot it (kubelet enforces by
+        # periodic measurement, not a write-time cap), but it bounds an
+        # oversized or zip-bomb-shaped bundle to its own pod's eviction rather
+        # than node-wide DiskPressure.
         - name: bundles
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: {{ $bf.sizeLimit | quote }}
         # mc writes the MinIO credential in cleartext to its config dir. Keep
         # that dir on an init-only volume the runner never mounts, so untrusted
         # agent code cannot read the store credential off the shared bundles
         # volume.
         - name: mc-config
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: {{ $bf.mcConfigSizeLimit | quote }}
         {{- end }}
         {{- if $runner.hardening.enabled }}
         {{- range $i, $p := $runner.hardening.writablePaths }}
+        # sizeLimit is ADR-0059 decision 2 (see hardening.writablePathSizeLimit
+        # in values.yaml for the periodic-measurement caveat).
         - name: writable-{{ $i }}
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: {{ $runner.hardening.writablePathSizeLimit | quote }}
         {{- end }}
         {{- end }}
       {{- end }}
