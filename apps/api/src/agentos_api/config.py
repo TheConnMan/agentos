@@ -55,6 +55,28 @@ class Settings(BaseSettings):
     s3_secret_key: str = "miniosecret"
     s3_region: str = "us-east-1"
     bundle_bucket: str = "agentos-bundles"
+    # Bundle ingestion bounds (ADR-0059 decision 3). Three independent caps:
+    # - bundle_upload_max_bytes gates the raw upload body, enforced before it
+    #   is fully read into memory (routers/bundles.py's `_read_bounded_upload`,
+    #   mirroring `_read_bounded_body` below). 200 MiB comfortably covers a
+    #   real plugin bundle (source, skill docs, small fixtures) while bounding
+    #   a runaway upload.
+    # - bundle_max_uncompressed_bytes and bundle_max_compression_ratio gate
+    #   `safe_extract`/`check_archive_bounds` (`plugin_format.archive`): the
+    #   total size the archive would extract to, and its overall compression
+    #   ratio. A legitimate source/text bundle rarely compresses past ~10x; a
+    #   zip-bomb-shaped archive routinely clears 1000x, so 100x sits well
+    #   above real bundles and well below a bomb. These two also gate
+    #   `deploy.revalidate_stored_bundle`'s deploy-time recheck of an
+    #   already-stored bundle against the CURRENT caps (the legacy-bundle
+    #   backward-compatibility case).
+    # Mirrored in the worker's `WorkerConfig` (apps/worker/src/agentos_worker/
+    # config.py) under the same names/defaults -- the worker's Docker-substrate
+    # bundle-fetch and the eval-stream suite loader apply the same caps to the
+    # same stored bytes, so keep the two in sync (a parity seam per AGENTS.md).
+    bundle_upload_max_bytes: int = 200 * 1024 * 1024  # 200 MiB
+    bundle_max_uncompressed_bytes: int = 1024 * 1024 * 1024  # 1 GiB
+    bundle_max_compression_ratio: float = 100.0
 
     # Git flow (J1). The webhook secret authenticates inbound GitHub events; the
     # two bot identities are the routing targets recorded on each deployment.

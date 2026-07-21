@@ -290,5 +290,116 @@ if check_runner_env "$MUTANT" "mutant (AGENTOS_SANDBOX_ID -> AGENTOS_SANBOX_ID)"
 fi
 echo "  ok: misspelled runner env name is rejected (the assert can fail)"
 
+echo "=== Assertion 8: priorityClassName on every control-plane pod + the sandbox (ADR-0059 decision 5, #759) ==="
+# The control plane (worker, api, dispatcher, data tier: postgres, valkey,
+# clickhouse, minio) must outrank sandbox pods for node-pressure eviction, so
+# the components that supervise, drain, and reclaim a sandbox are never
+# themselves preferred for eviction over the sandboxes they manage. Render with
+# the dispatcher enabled (it needs both Slack tokens to render at all) so every
+# control-plane pod is present in one pass.
+PRIO_OUT="$(mktemp -d -p "$TMP")"
+helm template "$CHART" --output-dir "$PRIO_OUT" \
+  --set dispatcher.slack.appToken=xapp-render-assert \
+  --set dispatcher.slack.botToken=xoxb-render-assert \
+  > /dev/null
+
+PRIO_CHECK="$TMP/check_priority_class.py"
+cat > "$PRIO_CHECK" <<'PYEOF'
+"""Assert priorityClassName on every control-plane pod template and the
+sandbox pod template.
+
+argv: <rendered-dir> <expected-platform-name> <expected-sandbox-name>
+Exits 0 on pass, 1 naming the offending workload on failure.
+"""
+import pathlib
+import sys
+
+import yaml
+
+rendered, platform_name, sandbox_name = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# Deployment/StatefulSet name suffix -> expected priorityClassName. The data
+# tier (postgres/valkey/clickhouse/minio) and the three first-party services
+# (worker, api, dispatcher) are all control plane per ADR-0059 decision 5;
+# langfuse/ui/inference/otel are deliberately out of scope (not named in the
+# decision).
+EXPECTED = {
+    "-worker": platform_name,
+    "-api": platform_name,
+    "-dispatcher": platform_name,
+    "-postgres": platform_name,
+    "-valkey": platform_name,
+    "-clickhouse": platform_name,
+    "-minio": platform_name,
+}
+
+found = {}
+sandbox_found = []
+for path in sorted(pathlib.Path(rendered).rglob("*.yaml")):
+    for doc in yaml.safe_load_all(path.read_text()):
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        if kind in ("Deployment", "StatefulSet"):
+            name = doc.get("metadata", {}).get("name", "")
+            spec = (
+                doc.get("spec", {})
+                .get("template", {})
+                .get("spec", {})
+            )
+            for suffix in EXPECTED:
+                if name.endswith(suffix):
+                    found[suffix] = (name, spec.get("priorityClassName"))
+        elif kind == "SandboxTemplate":
+            spec = doc.get("spec", {}).get("podTemplate", {}).get("spec", {})
+            sandbox_found.append((doc.get("metadata", {}).get("name", ""), spec.get("priorityClassName")))
+
+missing = sorted(set(EXPECTED) - set(found))
+if missing:
+    sys.stderr.write(f"render is missing expected control-plane workload(s): {missing}\n")
+    sys.exit(1)
+
+mismatched = [
+    (suffix, name, got, EXPECTED[suffix])
+    for suffix, (name, got) in found.items()
+    if got != EXPECTED[suffix]
+]
+if mismatched:
+    for suffix, name, got, want in mismatched:
+        sys.stderr.write(
+            f"workload '{name}' (matched by suffix '{suffix}') has "
+            f"priorityClassName={got!r}, expected {want!r}\n")
+    sys.exit(1)
+
+if not sandbox_found:
+    sys.stderr.write("found no SandboxTemplate in the render; the sandbox assert would pass vacuously\n")
+    sys.exit(1)
+
+sandbox_mismatched = [(n, got) for n, got in sandbox_found if got != sandbox_name]
+if sandbox_mismatched:
+    for name, got in sandbox_mismatched:
+        sys.stderr.write(
+            f"SandboxTemplate '{name}' has priorityClassName={got!r}, expected {sandbox_name!r}\n")
+    sys.exit(1)
+
+print(f"  ok: {len(found)} control-plane workloads carry priorityClassName={platform_name!r}; "
+      f"SandboxTemplate carries priorityClassName={sandbox_name!r}")
+PYEOF
+
+python3 "$PRIO_CHECK" "$PRIO_OUT" "agentos-platform" "agentos-sandbox" \
+  || fail "default render did not set the expected priorityClassName on every control-plane pod and the sandbox."
+
+echo "=== Assertion 9: priorityClassName names are operator-overridable (additive values, #759) ==="
+PRIO_OVERRIDE_OUT="$(mktemp -d -p "$TMP")"
+helm template "$CHART" --output-dir "$PRIO_OVERRIDE_OUT" \
+  --set dispatcher.slack.appToken=xapp-render-assert \
+  --set dispatcher.slack.botToken=xoxb-render-assert \
+  --set priorityClasses.platform.name=custom-platform-class \
+  --set priorityClasses.sandbox.name=custom-sandbox-class \
+  > /dev/null
+python3 "$PRIO_CHECK" "$PRIO_OVERRIDE_OUT" "custom-platform-class" "custom-sandbox-class" \
+  || fail "overriding priorityClasses.platform.name/sandbox.name did not propagate to priorityClassName on the rendered pods."
+echo "  ok: overriding priorityClasses.platform.name/sandbox.name propagates to every control-plane pod and the sandbox"
+
 echo
-echo "PASS: sealed render generates strong values for all 9 keys (encryptionKey 64-hex); dev overlay keeps published defaults; explicit override wins on the sealed path; every runner boot-env name is a declared contract key (proven by a failing negative control)."
+echo "PASS: sealed render generates strong values for all 9 keys (encryptionKey 64-hex); dev overlay keeps published defaults; explicit override wins on the sealed path; every runner boot-env name is a declared contract key (proven by a failing negative control); every control-plane pod and the sandbox render with the expected priorityClassName, including under operator override."

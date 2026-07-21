@@ -32,6 +32,9 @@ spec:
         {{- include "agentos.labels" . | nindent 8 }}
         {{- include "agentos.selectorLabels" (dict "root" . "component" "valkey") | nindent 8 }}
     spec:
+      {{- with .Values.priorityClasses.platform.name }}
+      priorityClassName: {{ . }}
+      {{- end }}
       securityContext:
         fsGroup: 999
       {{- if not .Values.valkey.persistence.enabled }}

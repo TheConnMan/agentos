@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aci_protocol import BootEnv
+from plugin_format import DEFAULT_MAX_COMPRESSION_RATIO, DEFAULT_MAX_UNCOMPRESSED_BYTES
 
 from ..binding import (
     BASE_URL_ENV,
@@ -228,6 +229,8 @@ class DockerSandboxClient:
         healthz_timeout_s: float = 0.5,
         hardening: RunnerHardening | None = None,
         environ: Mapping[str, str] | None = None,
+        bundle_max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
+        bundle_max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
     ) -> None:
         self._image = image
         self._bundles = bundle_store
@@ -236,6 +239,12 @@ class DockerSandboxClient:
         self._host = host
         self._default_plugin_dir = default_plugin_dir
         self._healthz_timeout_s = healthz_timeout_s
+        # Extraction bounds (ADR-0059 decision 3), forwarded to
+        # ``extract_bundle`` at claim time below. Defaults to plugin_format's
+        # generous fallbacks; ``run.py`` passes the operator-configured
+        # ``WorkerConfig`` values instead.
+        self._bundle_max_uncompressed_bytes = bundle_max_uncompressed_bytes
+        self._bundle_max_compression_ratio = bundle_max_compression_ratio
         # Container isolation (read-only rootfs, dropped caps, no-new-privileges,
         # bounded resources). Defaults to the K8s-mirroring RunnerHardening; a
         # None means "use the on-by-default set", never "no hardening".
@@ -430,7 +439,12 @@ class DockerSandboxClient:
         data = self._bundles.get(ref)
         tmp = tempfile.mkdtemp(prefix="agentos-bundle-")
         try:
-            root = extract_bundle(data, Path(tmp))
+            root = extract_bundle(
+                data,
+                Path(tmp),
+                max_uncompressed_bytes=self._bundle_max_uncompressed_bytes,
+                max_compression_ratio=self._bundle_max_compression_ratio,
+            )
             # The mount is read-only and the runner is non-root (uid 1000), so the
             # staged bundle must be group/other readable+traversable; mkdtemp
             # defaults to 0700, which the non-root runner cannot enter.
