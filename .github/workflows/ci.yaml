@@ -393,20 +393,20 @@ jobs:
   # Rung 2 brings up the `core` compose profile for real, unlike the Python
   # job above (which never starts agentos-api/worker to dodge private-registry
   # pulls). `agentos-api` and `agentos-migrate` pull
-  # `ghcr.io/curie-eng/agentos-api:latest`, a private GHCR image this workflow
-  # has no credentials for, so it is built locally first and tagged to match
-  # -- compose only pulls a tag that is absent from the local image store, so
-  # a matching local tag satisfies both services with no registry auth.
-  # `agentos-worker` builds from source at `up` time via
-  # compose/worker-local.Dockerfile, but that Dockerfile's own FROM is
+  # `ghcr.io/curie-eng/agentos-api:${AGENTOS_BASE_TAG:-latest}`, a private GHCR
+  # image this workflow has no credentials for, so it is built locally first and
+  # tagged to match. `agentos-worker` builds from source at `up` time via
+  # compose/worker-local.Dockerfile, whose own FROM is
   # `ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` (default `latest`), another
-  # private pull one layer down that the compose file has no build-arg wired
-  # to override. The same local-tag trick applies: build the worker base image
-  # from source and tag it `ghcr.io/curie-eng/agentos-worker:latest` so the
-  # overlay's FROM resolves locally too. Both are the same pattern the
-  # `worker-local-image` job above already uses for its own base build, and
-  # both builds are throwaway (this runner's Docker daemon is discarded at job
-  # end; nothing here is ever pushed).
+  # private pull one layer down -- compose.dev.yaml threads the same
+  # AGENTOS_BASE_TAG through as that build stanza's BASE_TAG arg (issue #698),
+  # so one override variable drives all three. This job sets AGENTOS_BASE_TAG=
+  # ci-local (the same convention the `worker-local-image` job above already
+  # uses for its own base build) and tags its from-source builds to match,
+  # rather than retagging over whatever `:latest` meant in the local image
+  # store before this job ran -- `:latest` is not shadowed. Both builds are
+  # throwaway (this runner's Docker daemon is discarded at job end; nothing
+  # here is ever pushed).
   #
   # Rung 2's worker spawns sibling runner containers through the mounted
   # Docker socket (network_mode: host, AGENTOS_SANDBOX_SUBSTRATE=docker); the
@@ -459,11 +459,18 @@ jobs:
         run: docker build -t agentos-runner -f runner/Dockerfile .
       - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
         run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
+      # Tagged :ci-local (the worker-local-image job's own convention), not
+      # :latest -- compose.dev.yaml's AGENTOS_BASE_TAG override (set below) points
+      # agentos-api/agentos-migrate's `image:` and the worker-local overlay's
+      # BASE_TAG build arg at this tag directly, so this job no longer needs to
+      # retag its from-source builds over whatever `:latest` meant in the local
+      # Docker image store before this job ran.
       - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
-        run: docker build -t ghcr.io/curie-eng/agentos-api:latest -f apps/api/Dockerfile .
+        run: docker build -t ghcr.io/curie-eng/agentos-api:ci-local -f apps/api/Dockerfile .
       - name: Build the worker base image locally (satisfies the worker-local overlay's FROM, no registry auth)
-        run: docker build -t ghcr.io/curie-eng/agentos-worker:latest -f apps/worker/Dockerfile .
+        run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
       - name: Parity ladder (skill + local rungs, fake model, credential-free)
         env:
           AGENTOS_BIN: cli/target/release/agentos
+          AGENTOS_BASE_TAG: ci-local
         run: bash cli/scripts/e2e-ladder.sh

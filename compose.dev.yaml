@@ -280,8 +280,17 @@ services:
   # image ships the Alembic tree but its CMD only runs uvicorn, so migrations
   # run here (mirrors the chart's api migrate init container). Migration 0001
   # creates the `agentos` schema, so this also gates on Postgres being reachable.
+  #
+  # AGENTOS_BASE_TAG overrides the tag pulled for the api image (and, below,
+  # the worker-local overlay's FROM base) in one shot. Defaults to `latest`
+  # (today's pull-based behavior, unchanged for anyone who doesn't set it). A
+  # run with no registry auth -- e.g. CI building images from source -- can set
+  # AGENTOS_BASE_TAG to a tag it built and tagged locally (the `ci-local`
+  # convention the `worker-local-image` CI job already uses) so compose
+  # resolves that local image instead of pulling, and instead of retagging the
+  # build to `:latest` and silently shadowing whatever `:latest` meant before.
   agentos-migrate:
-    image: ghcr.io/curie-eng/agentos-api:latest
+    image: ghcr.io/curie-eng/agentos-api:${AGENTOS_BASE_TAG:-latest}
     profiles: *core_profiles
     depends_on:
       postgres:
@@ -296,7 +305,9 @@ services:
   # service name. Published on host 28000 for the CLI (`agentos local deploy`, and the
   # `agentos local message` channel lookup).
   agentos-api:
-    image: ghcr.io/curie-eng/agentos-api:latest
+    # Same AGENTOS_BASE_TAG override as agentos-migrate above (both pull the
+    # same image); kept in sync deliberately, not duplicated by accident.
+    image: ghcr.io/curie-eng/agentos-api:${AGENTOS_BASE_TAG:-latest}
     profiles: *core_profiles
     # Multi-homed onto agentos_runner (#631): the runner's documented `state`
     # dependency is the API's /agents/.../state endpoints, so the API is the one
@@ -413,6 +424,15 @@ services:
     build:
       context: compose
       dockerfile: worker-local.Dockerfile
+      # Threads AGENTOS_BASE_TAG through to the overlay's own ARG BASE_TAG
+      # (compose/worker-local.Dockerfile), which pins its `FROM
+      # ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` base. Without this the
+      # arg was never wired, so the Dockerfile silently fell back to its own
+      # `latest` default regardless of what the api/migrate override above was
+      # set to. Same variable, same default, so one override can drive all
+      # three services uniformly.
+      args:
+        BASE_TAG: ${AGENTOS_BASE_TAG:-latest}
     profiles: *core_profiles
     depends_on:
       postgres:
