@@ -94,9 +94,7 @@
     {
       "struct": "EvalModelSummary",
       "schema": "EvalModelSummary",
-      "omissions": [
-        { "field": "plumbing", "why": "RISK: plumbing marks a fixture/plumbing-only row (#612/#606). The model sweep (cli/src/evals.rs) reads model/passed/total/cost_usd and cannot today distinguish a plumbing-fixture row from a real subject-under-test row. Not wired in this PR; filed as follow-up F2 (sweep scoping, #608)." }
-      ]
+      "omissions": []
     },
     {
       "struct": "EvalMatrix",
