@@ -1080,6 +1080,216 @@ pub fn down_commands(o: &CommonOpts) -> Vec<OpsCommand> {
     ]
 }
 
+/// Outcome of the `helm uninstall` teardown step. `Absent` is the existing
+/// already-absent ("not found") case, which counts as done, never outstanding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HelmOutcome {
+    Removed,
+    Absent,
+    Failed,
+}
+
+/// Outcome of the label-scoped namespace sweep step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SweepOutcome {
+    Removed,
+    Failed,
+}
+
+/// A teardown step that can remain outstanding after a fail-forward `down`.
+#[derive(Debug, PartialEq, Eq)]
+enum TeardownStep {
+    HelmUninstall,
+    NamespaceSweep,
+}
+
+/// Pure decision (#767): which teardown steps did NOT complete. A `Removed` or
+/// `Absent` helm is done; a `Failed` helm leaves `HelmUninstall` outstanding. A
+/// `Removed` sweep is done; a `Failed` sweep leaves `NamespaceSweep`
+/// outstanding. Order matches `down_commands` (helm before sweep).
+fn outstanding_steps(helm: HelmOutcome, sweep: SweepOutcome) -> Vec<TeardownStep> {
+    let mut out = Vec::new();
+    if matches!(helm, HelmOutcome::Failed) {
+        out.push(TeardownStep::HelmUninstall);
+    }
+    if matches!(sweep, SweepOutcome::Failed) {
+        out.push(TeardownStep::NamespaceSweep);
+    }
+    out
+}
+
+/// Pure builder (#767): the exact copy-pasteable resume command for the
+/// outstanding steps, mapping each back to its `down_commands(o)` entry
+/// (index 0 = HelmUninstall, 1 = NamespaceSweep).
+///
+/// When BOTH steps are outstanding the emitted ORDER matches `down()`'s own
+/// execution order: the HELM UNINSTALL FIRST, then the namespace sweep, joined
+/// with "; ". Helm first because Helm stores its release metadata as Secrets
+/// INSIDE the release namespace, and this chart owns cluster-scoped resources
+/// (ClusterRole/ClusterRoleBinding). Sweeping the namespace first would destroy
+/// that metadata, the following `helm uninstall` would report "not found"
+/// (which this code reads as already-absent success), and the cluster-scoped
+/// resources would be orphaned with no cleanup path. The "; " join means the
+/// compute-stopping sweep still runs even when helm fails again, which is the
+/// ticket's core safety property.
+///
+/// Known limitation: "; " returns only the LAST command's status, so the
+/// resume line does not aggregate the exit status of both commands. That is an
+/// accepted trade for the unconditional sweep, tracked as a follow-up.
+///
+/// The argv itself comes from `down_commands`, which stays the single source of
+/// truth for the teardown commands, so the resume line cannot drift from what
+/// would actually finish the job. A single-step remainder is one command with
+/// no join; an empty remainder yields the empty string.
+fn resume_command(remaining: &[TeardownStep], o: &CommonOpts) -> String {
+    let cmds = down_commands(o);
+    let mut steps: Vec<&TeardownStep> = remaining.iter().collect();
+    // Helm before sweep, matching `down_commands` execution order.
+    steps.sort_by_key(|step| match step {
+        TeardownStep::HelmUninstall => 0,
+        TeardownStep::NamespaceSweep => 1,
+    });
+    steps
+        .iter()
+        .map(|step| {
+            let idx = match step {
+                TeardownStep::HelmUninstall => 0,
+                TeardownStep::NamespaceSweep => 1,
+            };
+            cmds[idx].display()
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Classifies whether a shelled-out `helm`/`kubectl` subprocess's stderr names a
+/// transient connectivity failure (the API server was unreachable) rather than a
+/// permanent one (RBAC, authz, invalid context, a failed hook). Subprocess-stderr
+/// sibling of `crate::exit::is_transient_reqwest`, the HTTP-client side's single
+/// definition of unreachable; the two cover the two transports and should stay
+/// conceptually aligned. Only CONCRETE network signatures count: Helm wraps
+/// permanent auth/exec-plugin/kubeconfig errors as `Kubernetes cluster
+/// unreachable: ...`, so a bare `unreachable`/`timeout` prefix is not a reliable
+/// transient signal and is deliberately excluded (a permanent error wearing that
+/// generic prefix must classify false).
+///
+/// A host RESOLUTION failure is a permanent override checked BEFORE the marker
+/// scan: `dial tcp: lookup bad-host: no such host` carries the `dial tcp`
+/// connectivity marker but names a kubeconfig hostname that does not resolve,
+/// a deterministic configuration error that retrying can never fix. The
+/// override list is kept to the single `no such host` signature (the Go
+/// resolver's permanent NXDOMAIN wording that both helm and kubectl surface);
+/// broader DNS wordings such as `temporary failure in name resolution` name a
+/// DNS-SERVER problem, which really is transient, so they stay out. `no route
+/// to host` is a routing/connectivity failure, not name resolution, and is
+/// deliberately not matched by the override.
+fn is_connectivity_failure(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    const PERMANENT_RESOLUTION: &[&str] = &["no such host"];
+    if PERMANENT_RESOLUTION
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        return false;
+    }
+    const MARKERS: &[&str] = &[
+        "connection refused",
+        "tls handshake",
+        "no route to host",
+        "i/o timeout",
+        "network is unreachable",
+        "could not connect",
+        "dial tcp",
+        "connection reset",
+        "context deadline exceeded",
+    ];
+    MARKERS.iter().any(|marker| lower.contains(marker))
+}
+
+/// One-line reason drawn from a captured stderr: the last non-empty trimmed
+/// line, or a short default when the stderr is empty. Pure standalone sibling of
+/// the `run_step` failure line, so a failing teardown's Display message names
+/// WHY it failed instead of dropping the stderr to `--debug` plumbing.
+fn failure_reason(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("command failed")
+}
+
+/// Pure decision (#767): turn the two teardown-step outcomes plus their stderr
+/// into the `cluster down` result. An empty remainder is success. Otherwise it is
+/// a fail-forward error carrying the exact resume command in BOTH the human
+/// Display message (P1: `main` renders Display and drops the fix) and the `fix`
+/// (for `--json`). The exit class is Transient (exit 3, safe to retry) IFF every
+/// outstanding failed step's stderr is a connectivity failure; any permanent
+/// outstanding failure makes it a plain Failure (exit 1, P2).
+fn teardown_result(
+    helm: HelmOutcome,
+    sweep: SweepOutcome,
+    helm_err: &str,
+    sweep_err: &str,
+    o: &CommonOpts,
+) -> anyhow::Result<ClusterDownOutput> {
+    let remaining = outstanding_steps(helm, sweep);
+    if remaining.is_empty() {
+        return Ok(ClusterDownOutput::Down {
+            release_was_absent: matches!(helm, HelmOutcome::Absent),
+        });
+    }
+    let cmd = resume_command(&remaining, o);
+
+    // Transient only when every OUTSTANDING failed step is a connectivity failure;
+    // a non-failed step never blocks retryability, a permanent failed step always
+    // does.
+    let helm_retryable = !matches!(helm, HelmOutcome::Failed) || is_connectivity_failure(helm_err);
+    let sweep_retryable =
+        !matches!(sweep, SweepOutcome::Failed) || is_connectivity_failure(sweep_err);
+    let transient = helm_retryable && sweep_retryable;
+
+    // The one-line reason drawn from the failed step that DETERMINES the class,
+    // composed into the message so the human Display (P1) names WHY teardown
+    // failed. On a non-transient result at least one failed step is permanent,
+    // and that is the actionable one the operator must fix, so it wins over a
+    // merely transient sibling (helm preferred when both are permanent). On a
+    // transient result every failed step is connectivity, so prefer helm.
+    let reason = if transient {
+        if matches!(helm, HelmOutcome::Failed) {
+            failure_reason(helm_err)
+        } else {
+            failure_reason(sweep_err)
+        }
+    } else if !helm_retryable {
+        failure_reason(helm_err)
+    } else {
+        failure_reason(sweep_err)
+    };
+
+    let message = if matches!(sweep, SweepOutcome::Removed) {
+        // Sweep succeeded (compute stopped); only the stale helm record remains.
+        format!(
+            "helm uninstall failed ({reason}) but the run-created namespaces were swept; the release record remains. Resume with: {cmd}"
+        )
+    } else if transient {
+        format!(
+            "cluster down could not complete; the API server is unreachable. Resume with: {cmd}"
+        )
+    } else {
+        format!(
+            "cluster down could not complete; teardown did not finish ({reason}). Resume with: {cmd}"
+        )
+    };
+
+    let err = if transient {
+        crate::exit::CliError::transient(message).with_fix(cmd)
+    } else {
+        crate::exit::CliError::failure(message).with_fix(cmd)
+    };
+    Err(err.into())
+}
+
 /// #707 ownership stamp. Returns the single `kubectl label namespace` step that
 /// records THIS release as the creator of `o.namespace`, but ONLY when `up`
 /// actually created the namespace (`namespace_existed == false`); an empty vec
@@ -1657,33 +1867,56 @@ pub async fn down(opts: DownOpts) -> Result<ClusterDownOutput> {
 
     let cl = ui.checklist();
 
-    // helm uninstall, tolerating an already-absent release.
+    // helm uninstall, tolerating an already-absent release. On any OTHER failure
+    // (e.g. a transient API-server blip) we do NOT bail: keep the stderr and fall
+    // through to the sweep, so the run-created namespaces are never orphaned
+    // (#767 fail-forward).
     let uninstall = &cmds[0];
     ui.plumbing(&format!("+ {}", uninstall.display()));
     let step = cl.step("uninstalling release");
-    let (ok, out, err) = run_capture(uninstall).await?;
-    let absent = !ok && (err.contains("not found") || out.contains("not found"));
-    if ok {
+    let (ok, out, helm_err) = run_capture(uninstall).await?;
+    let helm_outcome = if ok {
         step.done("removed");
-    } else if absent {
+        HelmOutcome::Removed
+    } else if helm_err.contains("not found") || out.contains("not found") {
         step.done("already absent");
+        HelmOutcome::Absent
     } else {
         step.fail("failed");
-    }
-    for line in out.lines().chain(err.lines()) {
+        HelmOutcome::Failed
+    };
+    for line in out.lines().chain(helm_err.lines()) {
         ui.plumbing(line);
     }
-    if !ok && !absent {
-        ui.failure(&format!("helm uninstall failed: {}", err.trim()));
-        bail!("helm uninstall failed");
+
+    // Namespace sweep (runtime artifacts Helm does not own). Runs
+    // UNCONDITIONALLY: it is Helm-independent by design (#707) and is what
+    // actually stops compute, so a failed helm uninstall must not skip it. Not
+    // `run_step`, which bails on a nonzero exit; here we tolerate and classify.
+    let sweep = &cmds[1];
+    ui.plumbing(&format!("+ {}", sweep.display()));
+    let step = cl.step("sweeping namespaces");
+    let (ok, out, sweep_err) = run_capture(sweep).await?;
+    let sweep_outcome = if ok {
+        step.done("removed");
+        SweepOutcome::Removed
+    } else {
+        step.fail("failed");
+        SweepOutcome::Failed
+    };
+    for line in out.lines().chain(sweep_err.lines()) {
+        ui.plumbing(line);
     }
 
-    // Namespace sweep (runtime artifacts Helm does not own).
-    run_step(&cl, "sweeping namespaces", "removed", &cmds[1]).await?;
-
-    Ok(ClusterDownOutput::Down {
-        release_was_absent: absent,
-    })
+    // Pure decision (#767): success on a complete teardown, else a fail-forward
+    // error whose exit class and message follow from the outcomes plus stderr.
+    teardown_result(
+        helm_outcome,
+        sweep_outcome,
+        &helm_err,
+        &sweep_err,
+        &opts.common,
+    )
 }
 
 /// Read a y/N confirmation from stderr/stdin for `down` when `--yes` is absent.
@@ -3061,17 +3294,16 @@ mod tests {
         }
     }
 
-    // #707 the up-side ownership SEAM (both branches mandatory). INTENDED
-    // PRODUCTION SYMBOL, not yet implemented -- the implementer adds a pure
-    // builder that gates the ownership stamp on the pre-existence probe result:
+    // #707 the up-side ownership SEAM (both branches mandatory). PRODUCTION
+    // SYMBOL: a pure builder that gates the ownership stamp on the
+    // pre-existence probe result:
     //
     //   fn ownership_label_commands(o: &CommonOpts, namespace_existed: bool) -> Vec<OpsCommand>
     //
     // It returns the `kubectl label namespace` stamp step ONLY when `up` created
     // the namespace (namespace_existed == false); an empty vec when the namespace
-    // pre-existed. `up()` gates the runtime probe (mirror the resolve_generated_secrets
+    // pre-existed. `up()` gates the runtime probe (mirrors the resolve_generated_secrets
     // existing/fresh split), keeping this builder pure and unit-testable.
-    // These tests fail to compile until that symbol exists -- the intended RED.
     #[test]
     fn up_stamps_ownership_label_when_namespace_created() {
         let cmds = ownership_label_commands(&common_distinct_release(), false);
@@ -3120,6 +3352,423 @@ mod tests {
         assert!(
             !should_stamp_ownership(false, false),
             "a namespace the chart never created must not be stamped"
+        );
+    }
+
+    // #767 fail-forward teardown. PRODUCTION SYMBOLS: two pure functions plus
+    // three small enums so `cluster down` runs both teardown steps to
+    // completion and then decides the exit from the combined result, instead
+    // of bailing the instant `helm uninstall` returns a non-"not found"
+    // nonzero exit:
+    //
+    //   enum HelmOutcome { Removed, Absent, Failed }
+    //   enum SweepOutcome { Removed, Failed }
+    //   enum TeardownStep { HelmUninstall, NamespaceSweep }  // derive Debug, PartialEq, Eq
+    //   fn outstanding_steps(helm: HelmOutcome, sweep: SweepOutcome) -> Vec<TeardownStep>
+    //   fn resume_command(remaining: &[TeardownStep], o: &CommonOpts) -> String
+    //
+    // `outstanding_steps` is the pure decision function: Removed/Absent helm is
+    // done, Failed helm leaves HelmUninstall outstanding; Removed sweep is done,
+    // Failed sweep leaves NamespaceSweep outstanding; order is HelmUninstall
+    // before NamespaceSweep (matching `down_commands` order). `resume_command`
+    // maps the outstanding steps back to the matching `down_commands(o)` entries.
+    // When BOTH steps are outstanding it emits the HELM UNINSTALL FIRST, then
+    // the namespace sweep, joined with "; ": helm first because Helm's release
+    // metadata lives as Secrets inside the release namespace, so sweeping first
+    // would destroy it and orphan the chart's cluster-scoped resources; "; " so
+    // the compute-stopping sweep still runs even if helm fails again. The "; "
+    // join does not aggregate exit status, an accepted limitation tracked as a
+    // follow-up.
+
+    // AC: an exact resumable cleanup command is surfaced. `resume_command`
+    // renders the exact copy-pasteable line for a helm-only remainder.
+    #[test]
+    fn resume_command_helm_only_is_the_exact_uninstall_line() {
+        let o = common_distinct_release();
+        let cmd = resume_command(&[TeardownStep::HelmUninstall], &o);
+        assert_eq!(cmd, "helm uninstall prod-release -n agent-ns");
+    }
+
+    // AC (preserves #707): a sweep-only remainder renders the exact
+    // ownership-label-scoped delete, never an unscoped `delete namespace`.
+    #[test]
+    fn resume_command_sweep_only_is_label_scoped() {
+        let o = common_distinct_release();
+        let cmd = resume_command(&[TeardownStep::NamespaceSweep], &o);
+        assert_eq!(
+            cmd,
+            "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found"
+        );
+        // #707 ownership-scope invariant: the sweep stays keyed on THIS release's
+        // label and is never widened to an unconditional namespace delete.
+        assert!(cmd.contains("agentos.dev/created-by=prod-release"), "{cmd}");
+        assert!(
+            !cmd.contains("delete namespace prod-release"),
+            "must never be an unscoped delete: {cmd}"
+        );
+        // ignore-not-found preserved so the resume stays re-runnable.
+        assert!(cmd.contains("--ignore-not-found"), "{cmd}");
+    }
+
+    // AC + review: both steps outstanding -> the HELM UNINSTALL FIRST, then the
+    // namespace sweep, joined with "; ". Ordering rationale: Helm stores its
+    // release metadata as Secrets inside the release namespace, and the chart
+    // owns cluster-scoped resources (ClusterRole/ClusterRoleBinding); sweeping
+    // the namespace first would destroy that metadata, the subsequent helm
+    // uninstall would report "not found", and those cluster-scoped resources
+    // would be orphaned. Join rationale: "; " keeps the compute-stopping sweep
+    // unconditional so it still runs even if helm fails again. A " && " join
+    // would let a repeated helm failure block the sweep, so it is explicitly
+    // rejected. ("; " does not aggregate exit status, an accepted limitation.)
+    #[test]
+    fn resume_command_both_runs_both_steps_helm_first() {
+        let o = common_distinct_release();
+        let cmd = resume_command(
+            &[TeardownStep::HelmUninstall, TeardownStep::NamespaceSweep],
+            &o,
+        );
+        assert_eq!(
+            cmd,
+            "helm uninstall prod-release -n agent-ns; \
+             kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found"
+        );
+        // The helm uninstall must appear BEFORE the sweep, so Helm's release
+        // metadata (in the release namespace) survives long enough for helm to
+        // remove the chart-owned cluster-scoped resources.
+        let helm_at = cmd.find("helm uninstall").expect("helm present");
+        let sweep_at = cmd.find("kubectl delete namespace").expect("sweep present");
+        assert!(
+            helm_at < sweep_at,
+            "helm uninstall must run before the sweep: {cmd}"
+        );
+        // The join must NOT be " && ": a repeated helm failure would short-circuit
+        // and block the compute-stopping sweep.
+        assert!(
+            !cmd.contains(" && "),
+            "join must not let a helm failure block the sweep: {cmd}"
+        );
+        // The sweep half stays label-scoped even when combined with helm.
+        assert!(cmd.contains("agentos.dev/created-by=prod-release"), "{cmd}");
+        assert!(cmd.contains("--ignore-not-found"), "{cmd}");
+    }
+
+    // Nothing remaining -> nothing to resume -> the empty string.
+    #[test]
+    fn resume_command_empty_remainder_is_empty_string() {
+        let o = common_distinct_release();
+        assert_eq!(resume_command(&[], &o), "");
+    }
+
+    // AC: helm-uninstall failure no longer aborts before the sweep. The decision
+    // table proves the sweep runs (and is scored) even when helm failed, and
+    // that a swept-but-helm-stale run surfaces only the helm step as outstanding.
+    #[test]
+    fn outstanding_steps_decision_table() {
+        use TeardownStep::*;
+
+        // Happy path: helm removed, sweep clean -> nothing outstanding.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Removed, SweepOutcome::Removed),
+            Vec::<TeardownStep>::new()
+        );
+        // Already-absent release, sweep clean -> still nothing outstanding.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Absent, SweepOutcome::Removed),
+            Vec::<TeardownStep>::new()
+        );
+        // Fail-forward win: helm failed but the sweep removed the namespaces
+        // (compute stopped); only the stale helm release record remains.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Failed, SweepOutcome::Removed),
+            vec![HelmUninstall]
+        );
+        // Nothing could be removed; the API server is still unreachable.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Failed, SweepOutcome::Failed),
+            vec![HelmUninstall, NamespaceSweep]
+        );
+        // Helm removed but the sweep failed -> only the sweep is outstanding.
+        assert_eq!(
+            outstanding_steps(HelmOutcome::Removed, SweepOutcome::Failed),
+            vec![NamespaceSweep]
+        );
+    }
+
+    // #767 fail-forward HARDENING. PRODUCTION SYMBOLS: a connectivity
+    // classifier and the pure teardown-result decision that `down()` calls
+    // AFTER running both teardown steps and capturing their outcomes plus
+    // stderr:
+    //
+    //   fn is_connectivity_failure(stderr: &str) -> bool
+    //   fn teardown_result(
+    //       helm: HelmOutcome,
+    //       sweep: SweepOutcome,
+    //       helm_err: &str,
+    //       sweep_err: &str,
+    //       o: &CommonOpts,
+    //   ) -> anyhow::Result<ClusterDownOutput>
+    //
+    // `is_connectivity_failure` lower-cases stderr and matches only concrete
+    // network signatures (connection refused, tls handshake, no route to
+    // host, i/o timeout, network is unreachable, could not connect, dial tcp,
+    // connection reset, context deadline exceeded). Bare "unreachable" and
+    // "timeout" are deliberately excluded: Helm wraps permanent
+    // auth/exec-plugin/kubeconfig errors as `Kubernetes cluster unreachable:
+    // ...`, so that generic prefix alone is not a reliable transient signal.
+    // Permanent errors (forbidden, rbac, unauthorized, invalid, not
+    // authorized) stay false so they are never mislabeled retryable.
+    // `teardown_result` is the pure decision: an empty remainder returns
+    // Ok(Down{release_was_absent}); otherwise it builds the resume command (via
+    // resume_command), composes it INTO the message so the human Display carries
+    // it (P1: `main` renders Display and drops the fix), attaches it as the fix for
+    // `--json`, and tags the exit class Transient IFF an outstanding failed step's
+    // stderr is a connectivity failure, else a plain Failure (P2).
+
+    // P2: recognized connectivity stderrs are transient (retryable).
+    #[test]
+    fn is_connectivity_failure_true_for_unreachable_markers() {
+        assert!(is_connectivity_failure(
+            "Kubernetes cluster unreachable: Get \"https://h:6443/version\": net/http: TLS handshake timeout"
+        ));
+        assert!(is_connectivity_failure(
+            "dial tcp 1.2.3.4:6443: connect: connection refused"
+        ));
+        assert!(is_connectivity_failure("i/o timeout"));
+        assert!(is_connectivity_failure("no route to host"));
+    }
+
+    // P2: permanent failures (RBAC, authz, invalid) are NOT connectivity, so they
+    // must classify as a plain Failure, never a retryable transient.
+    #[test]
+    fn is_connectivity_failure_false_for_permanent_errors() {
+        assert!(!is_connectivity_failure(
+            "Error: query: failed to query with labels: namespaces is forbidden: User cannot list resource"
+        ));
+        assert!(!is_connectivity_failure("Error: rbac: access denied"));
+        assert!(!is_connectivity_failure("error: You must be logged in"));
+        assert!(!is_connectivity_failure(""));
+    }
+
+    // Codex P2: Helm wraps permanent errors (auth, exec-plugin, kubeconfig) as
+    // "Kubernetes cluster unreachable: ...", so the bare "unreachable"/"timeout"
+    // prefix is NOT a reliable transient signal. Only concrete network signatures
+    // (connection refused, tls handshake, no route to host, i/o timeout, dial tcp,
+    // network is unreachable, connection reset, context deadline exceeded) count;
+    // a permanent error wearing Helm's generic prefix must classify FALSE.
+    #[test]
+    fn is_connectivity_failure_false_for_helm_wrapped_permanent_errors() {
+        // Auth exec-plugin failure wrapped by Helm's generic prefix.
+        assert!(!is_connectivity_failure(
+            "Error: Kubernetes cluster unreachable: Get \"https://h:6443/version\": getting credentials: exec plugin: exec: \"gke-gcloud-auth-plugin\": executable file not found in $PATH"
+        ));
+        // RBAC/authz failure wrapped by Helm's generic prefix.
+        assert!(!is_connectivity_failure(
+            "Error: Kubernetes cluster unreachable: namespaces is forbidden: User cannot list resource \"namespaces\""
+        ));
+        // Bare unreachable with no concrete network signature at all.
+        assert!(!is_connectivity_failure(
+            "Error: Kubernetes cluster unreachable"
+        ));
+    }
+
+    // Review: a host that does not RESOLVE is a deterministic configuration error
+    // (a bad kubeconfig hostname), not a transient network blip. Retrying cannot
+    // fix it, so it must classify FALSE even though the stderr also carries the
+    // "dial tcp" marker; otherwise automation retries forever instead of fixing
+    // the context.
+    #[test]
+    fn is_connectivity_failure_false_for_permanent_host_resolution_errors() {
+        assert!(!is_connectivity_failure(
+            "Error: Kubernetes cluster unreachable: Get \"https://bad-host:6443/version\": dial tcp: lookup bad-host: no such host"
+        ));
+        assert!(!is_connectivity_failure(
+            "dial tcp: lookup bad-host on 127.0.0.53:53: no such host"
+        ));
+    }
+
+    // Both teardown steps completed: success, release present.
+    #[test]
+    fn teardown_result_all_removed_is_success() {
+        let o = common_distinct_release();
+        let res = teardown_result(HelmOutcome::Removed, SweepOutcome::Removed, "", "", &o)
+            .expect("a complete teardown is Ok");
+        assert!(matches!(
+            res,
+            ClusterDownOutput::Down {
+                release_was_absent: false
+            }
+        ));
+    }
+
+    // Already-absent release, sweep clean: success, release_was_absent true.
+    #[test]
+    fn teardown_result_absent_release_is_success_absent() {
+        let o = common_distinct_release();
+        let res = teardown_result(HelmOutcome::Absent, SweepOutcome::Removed, "", "", &o)
+            .expect("an already-absent release still completes");
+        assert!(matches!(
+            res,
+            ClusterDownOutput::Down {
+                release_was_absent: true
+            }
+        ));
+    }
+
+    // P1 + P2: both steps failed on an unreachable API server. Transient (exit 3),
+    // and the label-scoped resume command rides in BOTH the human Display message
+    // (P1: `main` renders Display, so a no-json operator must still see it) and the
+    // fix (for `--json`).
+    #[test]
+    fn teardown_result_connectivity_both_failed_is_transient_with_resume_in_message_and_fix() {
+        let o = common_distinct_release();
+        let helm_err =
+            "Kubernetes cluster unreachable: Get \"https://h:6443/version\": net/http: TLS handshake timeout";
+        let sweep_err = "Kubernetes cluster unreachable: connection refused";
+        let err = teardown_result(
+            HelmOutcome::Failed,
+            SweepOutcome::Failed,
+            helm_err,
+            sweep_err,
+            &o,
+        )
+        .expect_err("an incomplete teardown is an error");
+
+        let (class, fix) = crate::exit::classify(&err);
+        assert_eq!(class, crate::exit::ExitClass::Transient);
+        assert_eq!(class.code(), 3);
+
+        // P1: the resume command is IN the human Display message, not only the fix.
+        let shown = err.to_string();
+        assert!(
+            shown.contains("agentos.dev/created-by=prod-release"),
+            "the human message must carry the label-scoped resume command: {shown}"
+        );
+
+        // --json path: the fix carries the same label-scoped resume command.
+        let fix = fix.expect("a fail-forward teardown carries a resume command");
+        assert!(
+            fix.contains("agentos.dev/created-by=prod-release"),
+            "fix must carry the label-scoped resume command: {fix}"
+        );
+    }
+
+    // Fail-forward win: helm failed (unreachable) but the sweep removed the
+    // namespaces, so only the stale helm release record remains. Transient, the
+    // message distinguishes the swept case (stable substring "swept"), and the
+    // resume command is the helm-only line in both message and fix.
+    #[test]
+    fn teardown_result_connectivity_helm_only_failed_surfaces_swept_and_helm_resume() {
+        let o = common_distinct_release();
+        let helm_err = "Kubernetes cluster unreachable: net/http: TLS handshake timeout";
+        let err = teardown_result(HelmOutcome::Failed, SweepOutcome::Removed, helm_err, "", &o)
+            .expect_err("a stale helm record is still an incomplete teardown");
+
+        let (class, fix) = crate::exit::classify(&err);
+        assert_eq!(class, crate::exit::ExitClass::Transient);
+
+        let shown = err.to_string();
+        // Distinguishes the swept-but-helm-stale case.
+        assert!(shown.contains("swept"), "{shown}");
+        // Only the helm step is outstanding, so the helm-only resume line rides in
+        // the message (P1) ...
+        assert!(
+            shown.contains("helm uninstall prod-release -n agent-ns"),
+            "the message must carry the helm-only resume line: {shown}"
+        );
+        // ... and must not drag in the (completed) sweep command.
+        assert!(
+            !shown.contains("delete namespace"),
+            "a swept run must not list the sweep as outstanding: {shown}"
+        );
+        // ... and the fix is exactly the helm-only line for `--json`.
+        let fix = fix.expect("a fail-forward teardown carries a resume command");
+        assert_eq!(fix, "helm uninstall prod-release -n agent-ns");
+    }
+
+    // P2: permanent failures (RBAC, authz) are NOT retryable. Both steps failed
+    // with a forbidden error, so the class is a plain Failure (exit 1), NOT a
+    // transient, while still failing forward: the resume command rides in message
+    // and fix.
+    #[test]
+    fn teardown_result_permanent_failure_is_plain_failure_not_transient() {
+        let o = common_distinct_release();
+        let forbidden =
+            "Error: query: failed to query with labels: namespaces is forbidden: User cannot list resource \"namespaces\"";
+        let err = teardown_result(
+            HelmOutcome::Failed,
+            SweepOutcome::Failed,
+            forbidden,
+            forbidden,
+            &o,
+        )
+        .expect_err("an incomplete teardown is an error");
+
+        let (class, fix) = crate::exit::classify(&err);
+        assert_eq!(
+            class,
+            crate::exit::ExitClass::Failure,
+            "an RBAC/permanent failure must classify as Failure, not Transient"
+        );
+        assert_eq!(class.code(), 1);
+        assert_ne!(class, crate::exit::ExitClass::Transient);
+
+        // Fail-forward still surfaces the resume command in message and fix.
+        let shown = err.to_string();
+        assert!(
+            shown.contains("agentos.dev/created-by=prod-release"),
+            "even a permanent failure surfaces the label-scoped resume command: {shown}"
+        );
+        // Codex P2: the permanent-failure message must surface the underlying
+        // reason drawn from the failed step's stderr, not a generic line that
+        // drops it to --debug plumbing. The operator must see WHY teardown failed.
+        assert!(
+            shown.contains("forbidden"),
+            "the permanent-failure message must surface the underlying stderr reason: {shown}"
+        );
+        let fix = fix.expect("a fail-forward teardown carries a resume command");
+        assert!(fix.contains("agentos.dev/created-by=prod-release"), "{fix}");
+    }
+
+    // Codex P2: in a MIXED failure the surfaced reason must be the failure that
+    // DETERMINES the exit class (the permanent, actionable problem the operator
+    // must fix), not merely the first failed step. Here helm fails transiently
+    // (connectivity) but the sweep then fails permanently (RBAC): the permanent
+    // sweep failure blocks retry, so the class is Failure (exit 1), and the
+    // message must name the permanent sweep reason (`forbidden`), not hide it
+    // behind the transient helm connectivity reason.
+    #[test]
+    fn teardown_result_mixed_failure_surfaces_the_determining_permanent_reason() {
+        let o = common_distinct_release();
+        let helm_err =
+            "Error: Kubernetes cluster unreachable: Get \"https://h:6443/version\": dial tcp 10.0.0.1:6443: connect: connection refused";
+        let sweep_err =
+            "Error: namespaces is forbidden: User \"sa\" cannot delete resource \"namespaces\" in API group";
+        let err = teardown_result(
+            HelmOutcome::Failed,
+            SweepOutcome::Failed,
+            helm_err,
+            sweep_err,
+            &o,
+        )
+        .expect_err("an incomplete teardown is an error");
+
+        let (class, _fix) = crate::exit::classify(&err);
+        // The permanent sweep failure blocks retry: Failure (exit 1), not Transient.
+        assert_eq!(
+            class,
+            crate::exit::ExitClass::Failure,
+            "the permanent sweep failure must classify as Failure, not Transient"
+        );
+        assert_eq!(class.code(), 1);
+        assert_ne!(class, crate::exit::ExitClass::Transient);
+
+        // The message must surface the DETERMINING permanent reason (`forbidden`),
+        // not just the transient helm connectivity reason. It is acceptable if the
+        // message also includes the helm reason, but `forbidden` must be present.
+        let shown = err.to_string();
+        assert!(
+            shown.contains("forbidden"),
+            "the determining permanent sweep reason must be surfaced: {shown}"
         );
     }
 

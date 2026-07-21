@@ -93,4 +93,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0061 | [The harness boundary is an out-of-process adapter, wire-compatible with Omnigent](0061-out-of-process-harness-boundary.md) | Proposed (gated on a spike, see Decision 5) |
 | 0062 | [Harness conformance has teeth](0062-harness-conformance-has-teeth.md) | Proposed |
 | 0063 | [Message-driven approval reply surface](0063-message-driven-approval-reply-surface.md) | Accepted |
+| 0064 | [Fail-forward cluster teardown](0064-fail-forward-cluster-teardown.md) | Accepted |
 <!-- END GENERATED: adr-index -->

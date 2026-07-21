@@ -87,7 +87,13 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   this release created, identified by the ownership label `up` stamped on them
   (`agentos.dev/created-by=<release>`); pre-existing (unlabeled) namespaces and
   the `agents.x-k8s.io` CRDs are left untouched. It prompts before deleting
-  unless `--yes` is passed.
+  unless `--yes` is passed. If `helm uninstall` fails (for example a transient
+  API-server blip), teardown does not abort: the ownership-scoped namespace
+  sweep still runs so compute is not left orphaned. If teardown still cannot
+  complete, the command exits nonzero (exit 3 for a transient/retryable
+  failure, exit 1 otherwise) and prints an exact resumable cleanup command,
+  also carried in the `--json` `{error, fix}` payload, to run once the API
+  server is reachable. See ADR-0064 (`docs/adr/0064-fail-forward-cluster-teardown.md`).
 
 ## Connecting Slack
 

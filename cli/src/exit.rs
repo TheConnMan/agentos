@@ -62,6 +62,15 @@ impl CliError {
         }
     }
 
+    /// A genuine runtime failure (exit 1).
+    pub fn failure(msg: impl Into<String>) -> Self {
+        CliError {
+            message: msg.into(),
+            fix: None,
+            class: ExitClass::Failure,
+        }
+    }
+
     /// A retryable condition (exit 3).
     pub fn transient(msg: impl Into<String>) -> Self {
         CliError {
