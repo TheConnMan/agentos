@@ -141,6 +141,18 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/dispatcher-api-wiring-assertions.sh
 
+      # Prove the tenant capacity ceiling (issue #758, ADR-0059 decision 4): the
+      # ResourceQuota scopes to the sandbox PriorityClass with the published
+      # (overridable) hard ceilings, the LimitRange ships safe default-only
+      # per-container defaults, both toggle independently and with
+      # agentSandbox.deploy, and the N=1 self-host control plane stays fully
+      # self-declared on cpu/memory (so the new LimitRange defaults never
+      # engage for it).
+      - name: helm render assertions (tenant capacity: ResourceQuota + LimitRange)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/tenant-capacity-assertions.sh
+
       - name: helm template + kubeconform (values-dev overlay)
         run: |
           set -euo pipefail
