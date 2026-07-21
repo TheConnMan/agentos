@@ -3539,18 +3539,78 @@ struct ApprovalPolicyDecl {
 /// arms zero gates, so a narrower struct that parsed happily would report gates
 /// the runner never arms.
 ///
-/// KNOWN LIMITATION (ADR-0041): this validates only the approval-relevant subset
-/// of the manifest. The runner parses the WHOLE `PluginManifest`, so a manifest
-/// that is valid here but invalid in an unrelated modeled field (say `commands:
-/// 123`) makes `load_approval_policy` return `{}` -- the runner arms ZERO gates
-/// while this view still lists them. Closing that properly needs a shared or
-/// drift-gated manifest parser; hand-mirroring every `PluginManifest` field here
-/// would just add a second ungated mirror to drift.
+/// FORMERLY A KNOWN LIMITATION (ADR-0041), closed by #701: this struct still
+/// validates only the approval-relevant subset of the manifest -- `name` +
+/// `approvalPolicy` -- so on its own a manifest invalid in some OTHER modeled
+/// field (say `commands: 123`) would parse into it happily and report gates as
+/// armed for a manifest the runner's `PluginManifest.model_validate` rejects
+/// outright. `parse_manifest_gates` closes that gap by additionally validating
+/// the RAW manifest against the frozen `packages/plugin-format` JSON Schema
+/// (`validate_against_plugin_format_schema`) whenever `approvalPolicy` is
+/// declared -- the same condition under which the runner's
+/// `resolve_approval_policy` promotes to full-manifest validation (ADR-0041
+/// decision 1). That is schema-driven, not a hand-mirror of every
+/// `PluginManifest` field, so it tracks the frozen contract with no manual
+/// upkeep here. `cli/plugin-format-mirrors.json` + `agentos dev field-parity`
+/// (which now also runs `cli/tests/plugin_format_field_parity.rs`) separately
+/// gate that THIS struct's own fields (and its sibling mirrors in
+/// `cli/src/spec.rs`) stay honest about which `plugin_format` fields they
+/// cover.
 #[derive(Deserialize)]
 struct ManifestApprovals {
     name: Option<String>,
     #[serde(rename = "approvalPolicy")]
     approval_policy: Option<ApprovalPolicyDecl>,
+}
+
+/// The frozen `packages/plugin-format` JSON Schema (issue #701), embedded at
+/// compile time. Committed and drift-checked by `plugin-format`'s own
+/// `test_schema_compat.py` (the export is regenerated and diffed against this
+/// exact file at CI), so this constant tracks the frozen contract with zero
+/// manual upkeep on the Rust side: a schema change picks up automatically the
+/// next time the CLI is built against this checkout.
+const PLUGIN_FORMAT_SCHEMA: &str =
+    include_str!("../../packages/plugin-format/schema/plugin-format.schema.json");
+
+/// Validate a RAW parsed `.claude-plugin/plugin.json` body against the frozen
+/// `PluginManifest` schema (issue #701, sibling of #691 on the `plugin_format`
+/// seam).
+///
+/// `ManifestApprovals` deliberately reads only `name` + `approvalPolicy` (see
+/// its doc comment): hand-mirroring every `PluginManifest` field in Rust would
+/// itself be a second ungated mirror of a Python model, which is the drift
+/// class this repo already tracks elsewhere (ADR-0041). Validating the raw
+/// JSON against the committed schema instead means an invalid OTHER field
+/// (e.g. `commands: 123`) is caught here, matching the runner's
+/// `PluginManifest.model_validate` failing on the exact same input, without
+/// this Rust code needing to know that field exists at all.
+///
+/// Returns the joined validator error messages on failure so the CLI's error
+/// names the actual offending field/type rather than an approximation of one.
+fn validate_against_plugin_format_schema(
+    raw: &serde_json::Value,
+) -> std::result::Result<(), String> {
+    static VALIDATOR: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
+    let validator = VALIDATOR.get_or_init(|| {
+        let mut doc: serde_json::Value = serde_json::from_str(PLUGIN_FORMAT_SCHEMA).expect(
+            "packages/plugin-format/schema/plugin-format.schema.json is committed and valid JSON",
+        );
+        // The committed document's root is the bare `$defs` container (no
+        // `type`/`required` of its own); point the root at `PluginManifest`
+        // instead. Same document, same `$defs`, different entry point.
+        doc["$ref"] = serde_json::Value::String("#/$defs/PluginManifest".to_string());
+        jsonschema::validator_for(&doc)
+            .expect("plugin-format.schema.json's PluginManifest def compiles to a validator")
+    });
+    let errors: Vec<String> = validator
+        .iter_errors(raw)
+        .map(|e| format!("{e} (at instance path {})", e.instance_path()))
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Output of `skill approvals`: the bundle's declared gates, or the env
@@ -3690,15 +3750,33 @@ fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
 /// subset, so this reports a usage error for both. `source` labels the manifest in
 /// errors. Shared by the skill tier (manifest on local disk) and the local/cluster
 /// tiers (manifest pulled from the deployed bundle over the API, #546) so both
-/// read gates identically.
+/// read gates identically. Also validates the raw manifest against the frozen
+/// `plugin_format` schema once a policy is declared (#701) -- see
+/// `validate_against_plugin_format_schema`.
 fn parse_manifest_gates(body: &str, source: &str) -> Result<Vec<(String, String)>> {
     let invalid = |problem: &str| {
         crate::exit::usage(format!(
             "invalid plugin manifest {source}: {problem}. The runner rejects this manifest and arms ZERO approval gates, including any well-formed ones"
         ))
     };
-    let manifest: ManifestApprovals =
+    let raw: serde_json::Value =
         serde_json::from_str(body).map_err(|e| invalid(&format!("not valid JSON ({e})")))?;
+    // #701: the runner only promotes to full-`PluginManifest` validation once
+    // `approvalPolicy` is actually declared (an absent or explicit-null policy
+    // returns the honest empty policy without reading the rest of the
+    // manifest, matching `resolve_approval_policy`'s early return). Mirror that
+    // gate exactly: only above this line would a manifest invalid in some
+    // OTHER field silently slip past, since `ManifestApprovals` below never
+    // looks at it.
+    if raw.get("approvalPolicy").is_some_and(|v| !v.is_null()) {
+        if let Err(detail) = validate_against_plugin_format_schema(&raw) {
+            return Err(invalid(&format!(
+                "manifest fails plugin_format schema validation ({detail})"
+            )));
+        }
+    }
+    let manifest: ManifestApprovals = serde_json::from_value(raw)
+        .map_err(|e| invalid(&format!("does not match the expected manifest shape ({e})")))?;
     if manifest.name.is_none() {
         return Err(invalid("missing the required `name` field"));
     }
@@ -4869,6 +4947,70 @@ mod tests {
                 .expect("an empty gates list is a valid declaration of no gates"),
             Vec::new()
         );
+    }
+
+    #[test]
+    fn parse_manifest_gates_refuses_a_manifest_invalid_in_an_unrelated_field() {
+        // NEGATIVE CONTROL for issue #701 (sibling of #691, ADR-0041's formerly
+        // "known limitation"). `ManifestApprovals` reads only `name` +
+        // `approvalPolicy`, so a manifest with a well-formed policy but a
+        // TYPE-INVALID unrelated modeled field (`commands` must be a string, a
+        // list of strings, or null per `plugin_format.models.PluginManifest`)
+        // used to parse straight through: this view would report `Bash` as
+        // armed while the runner's own `PluginManifest.model_validate` raises
+        // and refuses to boot with ANY of the declared gates armed -- the
+        // exact silent-drift class #691 closed on the api.rs seam, reproduced
+        // here on the plugin_format seam. Deleting
+        // `validate_against_plugin_format_schema`'s call in
+        // `parse_manifest_gates` makes this test fail (back to `Ok(vec![("Bash",
+        // "eng")])`).
+        let body = r#"{
+            "name": "deal-desk",
+            "commands": 123,
+            "approvalPolicy": {"gates": [{"gate": "Bash", "route": "eng"}]}
+        }"#;
+        let err = parse_manifest_gates(body, "test manifest").expect_err(
+            "a manifest invalid in an unrelated modeled field must not report gates as armed",
+        );
+        assert_eq!(usage_class(&err), crate::exit::ExitClass::Usage);
+    }
+
+    #[test]
+    fn parse_manifest_gates_tolerates_an_unmodeled_extra_field() {
+        // Positive control paired with the test above: `plugin_format`'s models
+        // are deliberately lenient (`extra="allow"`) so a real bundle carrying a
+        // field this schema does not model yet (e.g. a future Claude Code key)
+        // must still validate and report its gates -- the gate here is on TYPE
+        // validity of MODELED fields, never on the presence of an unmodeled one.
+        let body = r#"{
+            "name": "deal-desk",
+            "someFutureClaudeCodeKey": {"nested": true},
+            "approvalPolicy": {"gates": [{"gate": "Bash", "route": "eng"}]}
+        }"#;
+        assert_eq!(
+            parse_manifest_gates(body, "test manifest")
+                .expect("an unmodeled extra field must not be rejected"),
+            vec![("Bash".to_string(), "eng".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_manifest_gates_skips_full_validation_when_no_policy_is_declared() {
+        // A manifest with no `approvalPolicy` (or an explicit `null`) never
+        // reaches the runner's full-`PluginManifest` validation either (see
+        // `resolve_approval_policy`'s early return), so an unrelated
+        // type-invalid field must not be surfaced here -- there is no policy to
+        // falsely report as armed, so the honest answer stays the empty list.
+        for body in [
+            r#"{"name": "deal-desk", "commands": 123}"#,
+            r#"{"name": "deal-desk", "commands": 123, "approvalPolicy": null}"#,
+        ] {
+            assert_eq!(
+                parse_manifest_gates(body, "test manifest")
+                    .expect("no declared policy must not trip the full-manifest schema gate"),
+                Vec::new()
+            );
+        }
     }
 
     #[test]

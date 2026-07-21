@@ -62,13 +62,18 @@ tokio = { version = "1", features = [
 ] }
 keyring = "4.1.5"
 rpassword = "7.5.4"
+# JSON Schema validation. Originally a test-only dependency for the agent-facing
+# `--json` contract gate (ADR-0021); promoted to a real dependency by #701 so
+# `skill_approvals` can validate a plugin manifest against the frozen
+# `packages/plugin-format` schema at runtime (`commands::parse_manifest_gates`),
+# closing the ADR-0041 known limitation without hand-mirroring every
+# `PluginManifest` field in Rust. Default features pull reqwest + a second TLS
+# stack for remote `$ref` resolution neither use case needs; the committed
+# schemas are self-contained, so keep it lean.
+jsonschema = { version = "0.48", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
-# JSON Schema validation for the agent-facing --json contract gate (ADR-0021).
-# Default features pull reqwest + a second TLS stack for remote $ref resolution
-# we never use; the committed schemas are self-contained, so keep it lean.
-jsonschema = { version = "0.48", default-features = false }
 # The frozen ACI types are a normal dependency of the lib, but integration test
 # crates need them by name to build a SessionStatus for the status_json contract.
 agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
