@@ -42,6 +42,8 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 | `agentos secrets unset <NAME>` | Remove a saved local secret. |
 | `agentos guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
 | `agentos build` | Build the runner image locally: `docker build -f runner/Dockerfile -t agentos-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
+| `agentos list-agents` | List the plugin bundles under `agents/`, a personal, gitignored directory (sibling of `examples/`, source checkout only) for in-progress agent projects. Empty, not an error, when the directory doesn't exist. |
+| `agentos deploy-local <folder>` | Deploy `agents/<folder>` to the local platform by name -- shorthand for `agentos local deploy --plugin-dir agents/<folder>` (identical operation, same flags minus `--plugin-dir`). Local tier only; use `agentos cluster deploy --plugin-dir agents/<folder>` for the cluster tier. The interactive "How to deploy to Slack" workflow offers the same `agents/` bundles as a picker. |
 
 ### `init --from-spec` spec shape
 

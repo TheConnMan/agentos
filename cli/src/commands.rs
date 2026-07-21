@@ -559,6 +559,138 @@ pub async fn dev_script(rel_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// `agentos list-agents`: list the plugin bundles under `agents/`, a personal,
+/// gitignored directory (sibling of `examples/`) for in-progress agent
+/// projects ready to hand to `agentos deploy-local <folder>`. A release binary has
+/// no checkout to scan, so this errors clearly outside one, same as `dev_script`.
+pub async fn list_agents() -> Result<()> {
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos list-agents` \
+         from an agentos source checkout.",
+    )?;
+    let bundles = crate::discover::discover_bundles(&root.join("agents"))?;
+    crate::ui::ui().emit(&ListAgentsOutput {
+        agents: bundles
+            .into_iter()
+            .map(|b| LocalAgentSummary {
+                name: b.name,
+                description: b.description,
+                directory: b.directory.display().to_string(),
+            })
+            .collect(),
+    });
+    Ok(())
+}
+
+struct LocalAgentSummary {
+    name: String,
+    description: String,
+    directory: String,
+}
+
+/// Output of `list-agents`. Routes through the one `Ui::emit` point rather
+/// than an inline `if json()` branch (mirrors `secrets list`'s
+/// `SecretsListOutput`).
+struct ListAgentsOutput {
+    agents: Vec<LocalAgentSummary>,
+}
+
+impl crate::ui::CliOutput for ListAgentsOutput {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "agents": self.agents.iter().map(|a| serde_json::json!({
+                "name": a.name,
+                "description": a.description,
+                "directory": a.directory,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn render(&self, ui: &crate::ui::Ui) {
+        if self.agents.is_empty() {
+            ui.note("no local agents under agents/ (none found, or the directory doesn't exist)");
+        } else {
+            let lines: Vec<String> = self
+                .agents
+                .iter()
+                .map(|a| format!("{} -- {} ({})", a.name, a.description, a.directory))
+                .collect();
+            ui.payload_plain(&lines.join("\n"));
+        }
+    }
+}
+
+/// Resolve `agents/<folder>` under the repo root to a bundle directory for
+/// `agentos deploy-local <folder>`. Errors with the available folder names (from
+/// `discover::discover_bundles`) when `folder` doesn't match one, so a typo
+/// doesn't dead-end without a next step.
+fn resolve_agent_folder(folder: &str) -> Result<std::path::PathBuf> {
+    let root = find_repo_root().context(
+        "runner/Dockerfile not found here or in any parent directory. Run `agentos deploy-local` from \
+         an agentos source checkout.",
+    )?;
+    let agents_root = root.join("agents");
+    let dir = agents_root.join(folder);
+    if dir.join(".claude-plugin/plugin.json").is_file() {
+        return Ok(dir);
+    }
+    let available = crate::discover::discover_bundles(&agents_root)?;
+    if available.is_empty() {
+        bail!(
+            "no agent bundle named {folder:?} under agents/ (the directory has no bundles yet -- \
+             create one with `agentos init` inside agents/{folder})"
+        );
+    }
+    let names: Vec<String> = available
+        .iter()
+        .filter_map(|b| b.directory.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .collect();
+    bail!(
+        "no agent bundle named {folder:?} under agents/. Available: {}",
+        names.join(", ")
+    );
+}
+
+/// `agentos deploy-local <folder>`: shorthand for
+/// `agentos local deploy --plugin-dir agents/<folder>` -- same underlying
+/// `deploy()` call, just resolved by name instead of a hand-typed path. Local
+/// tier only: cluster deploy's API-key discovery and port-forward
+/// self-plumbing (`main.rs`'s `ClusterAction::Deploy` arm) is not duplicated
+/// here; use `agentos cluster deploy --plugin-dir agents/<folder>` directly
+/// for that tier.
+pub async fn deploy_named(folder: &str, opts: DeployNamedOpts) -> Result<DeployOutput> {
+    let plugin_dir = resolve_agent_folder(folder)?;
+    let connect_hint = format!(
+        "the platform API at {} is unreachable. Start the local stack first with `agentos local \
+         up`, then re-run (or pass --api-url if your API is elsewhere).",
+        opts.api_url
+    );
+    deploy(DeployOpts {
+        plugin_dir,
+        api_url: opts.api_url,
+        api_key: opts.api_key,
+        slack_channel: opts.slack_channel,
+        env: opts.env,
+        label: opts.label,
+        secret: opts.secret,
+        secret_binding_supported: true,
+        connect_hint,
+    })
+    .await
+}
+
+/// The `agentos deploy-local <folder>` flags, mirroring `local deploy`'s minus
+/// `plugin_dir` (resolved from `folder` instead).
+pub struct DeployNamedOpts {
+    pub api_url: String,
+    pub api_key: String,
+    pub slack_channel: Option<String>,
+    pub env: DeployEnv,
+    pub label: Option<String>,
+    pub secret: Vec<String>,
+}
+
 /// `agentos dev bump-version <X.Y.Z>`: set the release-coupled version across
 /// cli/Cargo.toml + Chart.yaml version/appVersion in one shot, so a release cut
 /// cannot leave the three out of sync (the drift the #489 consistency gate

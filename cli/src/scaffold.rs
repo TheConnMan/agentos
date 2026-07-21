@@ -284,7 +284,7 @@ pub fn scaffold_from_spec(dir: &Path, spec: &AgentSpec) -> Result<Vec<PathBuf>> 
 /// their error messages) live in one place. Returns the resolved manifest path
 /// alongside the parsed value so callers can keep referencing it (e.g. `name`)
 /// in their own error messages.
-fn load_manifest_json(dir: &Path) -> Result<(std::path::PathBuf, serde_json::Value)> {
+pub(crate) fn load_manifest_json(dir: &Path) -> Result<(std::path::PathBuf, serde_json::Value)> {
     let path = [".claude-plugin/plugin.json", "plugin.json"]
         .iter()
         .map(|rel| dir.join(rel))
