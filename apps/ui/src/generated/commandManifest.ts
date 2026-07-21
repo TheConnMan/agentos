@@ -3266,6 +3266,11 @@ export const commandManifest = {
           "name": "version-check"
         },
         {
+          "about": "Assert every direct `ClassName.model_validate*(...)` call on an `_AciModel` subclass threads `READER_CONTEXT` or is a declared exception in `tools/wire-tolerance-gate/allowlist.json` (#625, following #492's forgotten-context bug, `bash scripts/check-wire-tolerance.sh`). Offline, no credential",
+          "hidden": false,
+          "name": "wire-tolerance"
+        },
+        {
           "about": "Set the release version across cli/Cargo.toml + Chart.yaml version/appVersion (and refresh the CLI lockfile) so a release cut can't leave the three out of sync. Does not commit or tag",
           "args": [
             {

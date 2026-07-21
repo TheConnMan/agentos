@@ -45,6 +45,12 @@ jobs:
       # right after ruff/mypy and before the dev stack boots.
       - name: Interface catalog docs (generate + drift + citation lint)
         run: bash scripts/check-docs.sh
+      # _AciModel tolerant-decode gate (#625, following #492): every direct
+      # ClassName.model_validate*(...) call on an _AciModel subclass must thread
+      # READER_CONTEXT or be a declared allowlist exception. Another cheap,
+      # cluster-free static gate, so it runs alongside the docs gate.
+      - name: Wire tolerance gate (_AciModel model_validate call sites)
+        run: bash scripts/check-wire-tolerance.sh
       # Integration tests dial the real dev stack (Postgres 25432, Valkey 26379,
       # MinIO 29000, Langfuse 23000 + ClickHouse + OTel Collector). Boot it after
       # ruff/mypy so cheap failures stay fast. The first up starts the one-shot
