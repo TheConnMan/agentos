@@ -432,6 +432,14 @@ enum SkillAction {
         /// `--secret GITHUB_PERSONAL_ACCESS_TOKEN` with that var exported.
         #[arg(long = "secret", value_name = "NAME")]
         secret: Vec<String>,
+        /// Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST-
+        /// priority model-credential source, so the bundle boots live with no
+        /// `set -a; source .env` step. Precedence: shell env > stored secret
+        /// (`agentos secrets set`) > this file. Only AGENTOS_CREDENTIALS,
+        /// CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other
+        /// key in the file is ignored (#749).
+        #[arg(long = "env-file", value_name = "PATH")]
+        env_file: Option<PathBuf>,
         /// Remove a leftover container of the same name before booting, instead
         /// of failing on the conflict.
         #[arg(long)]
@@ -1491,6 +1499,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 model,
                 local_model,
                 secret,
+                env_file,
                 replace,
             } => {
                 let image = artifacts::resolve_image(
@@ -1510,6 +1519,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     model,
                     local_model,
                     secret,
+                    env_file,
                     replace,
                 })
                 .await
