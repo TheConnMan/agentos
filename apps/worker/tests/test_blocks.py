@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 
 from agentos_worker.behaviorpacks import NavPack
-from agentos_worker.blocks import Reply, chunk, parse_reply, render, to_blocks
+from agentos_worker.blocks import Reply, _reply_from_message, chunk, parse_reply, render, to_blocks
+from channel_protocol import Action, ChoiceIntent, ConfirmIntent, OutboundMessage
 
 # An enabled nav pack, same shape as tests/test_behaviorpacks.py.
 _NAV = NavPack(enabled=True, hub_label="Help", hub_command="help")
@@ -56,6 +57,73 @@ def test_to_blocks_sorts_nav_buttons_leftmost() -> None:
     actions = next(b for b in to_blocks(reply) if b["type"] == "actions")
     labels = [e["text"]["text"] for e in actions["elements"]]
     assert labels == ["← Back", "Details"]  # nav sorted to the front
+
+
+def test_confirm_intent_prompt_reaches_the_reply() -> None:
+    """#454: ConfirmIntent's `prompt` -- the actual question -- must not be
+    dropped when projecting the channel-neutral contract into this Slack
+    renderer's Reply. Before this fix, an approver saw bare Approve/Cancel
+    buttons with no question attached."""
+    message = OutboundMessage(
+        version="1.0",
+        text="Ready when you are.",
+        interaction=ConfirmIntent(
+            kind="confirm",
+            id="deploy",
+            prompt="Deploy revenue-leak to prod?",
+            confirm=Action(label="Deploy", value="deploy"),
+            cancel=Action(label="Cancel", value="cancel"),
+        ),
+    )
+    reply = _reply_from_message(message)
+    assert reply.action_prompt == "Deploy revenue-leak to prod?"
+
+
+def test_choice_intent_prompt_reaches_the_reply() -> None:
+    message = OutboundMessage(
+        version="1.0",
+        text="Pick one.",
+        interaction=ChoiceIntent(
+            kind="choice",
+            id="repo",
+            prompt="Which repository?",
+            options=[Action(label="AgentOS", value="curie-eng/agentos")],
+        ),
+    )
+    reply = _reply_from_message(message)
+    assert reply.action_prompt == "Which repository?"
+
+
+def test_choice_intent_with_no_prompt_reaches_the_reply_as_none() -> None:
+    # ChoiceIntent.prompt is optional (ConfirmIntent.prompt is not); a choice
+    # with no prompt renders no extra section, not an empty one.
+    message = OutboundMessage(
+        version="1.0",
+        text="Pick one.",
+        interaction=ChoiceIntent(
+            kind="choice",
+            id="repo",
+            options=[Action(label="AgentOS", value="curie-eng/agentos")],
+        ),
+    )
+    reply = _reply_from_message(message)
+    assert reply.action_prompt is None
+
+
+def test_action_prompt_renders_as_its_own_section_before_the_actions_block() -> None:
+    reply = Reply(
+        text="body",
+        buttons=[("Deploy", "deploy"), ("Cancel", "cancel")],
+        action_prompt="Deploy revenue-leak to prod?",
+    )
+    blocks = to_blocks(reply)
+    assert _types(blocks) == ["section", "section", "actions"]
+    assert blocks[1]["text"]["text"] == "Deploy revenue-leak to prod?"
+
+
+def test_no_action_prompt_adds_no_extra_section() -> None:
+    reply = Reply(text="body", buttons=[("Go", "go")])
+    assert _types(to_blocks(reply)) == ["section", "actions"]
 
 
 def test_chunk_splits_long_text_under_limit() -> None:

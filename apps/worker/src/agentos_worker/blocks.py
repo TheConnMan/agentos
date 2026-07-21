@@ -78,6 +78,11 @@ class Reply:
     buttons: list[tuple[str, str]] = field(default_factory=list)
     links: list[tuple[str, str]] = field(default_factory=list)
     footer: str | None = None
+    # The question attached to `buttons` (ChoiceIntent/ConfirmIntent's `prompt`,
+    # #454) -- distinct from `text`, the reply's main body. Rendered immediately
+    # before the actions block so an approver/chooser sees the actual question
+    # next to the buttons, not just bare labels.
+    action_prompt: str | None = None
 
 
 def chunk(text: str, limit: int = _CHUNK_TARGET) -> list[str]:
@@ -147,8 +152,8 @@ def _link_button(label: str, url: str) -> dict[str, Any]:
 
 def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
     """Render a ``Reply`` to a Block Kit blocks array. Order: status (context) ->
-    header -> fields -> body section(s) (chunked) -> buttons (nav-leftmost) ->
-    links (URL buttons) -> footer.
+    header -> fields -> body section(s) (chunked) -> action prompt (chunked) ->
+    buttons (nav-leftmost) -> links (URL buttons) -> footer.
 
     ``nav`` is the agent's no-dead-ends hub button: when present and enabled, the
     hub button is appended to the reply's buttons (via ``ensure_hub_button``, the
@@ -175,6 +180,13 @@ def to_blocks(reply: Reply, nav: NavPack | None = None) -> list[dict[str, Any]]:
         )
     for piece in chunk(to_mrkdwn(reply.text)):
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": piece}})
+    # The question attached to the buttons (#454) -- rendered as its own section
+    # immediately before the actions block, never merged into `reply.text`, so a
+    # ConfirmIntent/ChoiceIntent's `prompt` reaches the approver/chooser instead
+    # of showing bare button labels with no question attached.
+    if reply.action_prompt:
+        for piece in chunk(to_mrkdwn(reply.action_prompt)):
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": piece}})
     # ``reply.buttons`` are already (label, action_id) pairs, the same (label,
     # command) shape ensure_hub_button operates on, so no conversion is needed.
     buttons = (
@@ -213,13 +225,16 @@ def _pairs(raw: Any) -> list[tuple[str, str]]:
 def _reply_from_message(message: OutboundMessage) -> Reply:
     """Project the channel-neutral contract into this Slack renderer's inputs."""
     buttons: list[tuple[str, str]] = []
+    action_prompt: str | None = None
     if isinstance(message.interaction, ChoiceIntent):
         buttons = [(option.label, option.value) for option in message.interaction.options]
+        action_prompt = message.interaction.prompt
     elif isinstance(message.interaction, ConfirmIntent):
         buttons = [
             (message.interaction.confirm.label, message.interaction.confirm.value),
             (message.interaction.cancel.label, message.interaction.cancel.value),
         ]
+        action_prompt = message.interaction.prompt
     return Reply(
         text=message.text,
         status=message.status,
@@ -228,6 +243,7 @@ def _reply_from_message(message: OutboundMessage) -> Reply:
         buttons=buttons,
         links=[(item.label, item.url) for item in message.links],
         footer=message.footer,
+        action_prompt=action_prompt,
     )
 
 
