@@ -34,7 +34,8 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 use crate::queue::{
-    self, entry_acked, synthetic_channel, synthetic_thread_and_placeholder, WORKER_GROUP,
+    self, entry_acked, find_entry_by_event_id, synthetic_channel, synthetic_thread_and_placeholder,
+    WORKER_GROUP,
 };
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
@@ -48,6 +49,43 @@ pub const DEFAULT_LISTEN_PORT: u16 = 0;
 const ACK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Bounded drain after the ack to catch a final edit still in flight.
 const FINAL_DRAIN: Duration = Duration::from_millis(100);
+
+/// Hard per-call budget for the ack check inside [`await_reply`]. The check is
+/// awaited in the poll arm's BODY, so while it is pending the deadline arm is not
+/// polled and a half-open Valkey could hang the CLI (and its stub) well past
+/// `--timeout-secs`. Bounding it makes an overrun read as "not acked yet" so the
+/// loop re-checks the deadline, and the budget is further capped at the time LEFT
+/// of that deadline. Four poll intervals is far beyond any healthy-latency
+/// ack check on a multiplexed connection, so it cannot produce a false negative
+/// under normal conditions.
+const ACK_CALL_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How often the keep-alive resume wait re-scans the runs stream for the
+/// approval's resume entry (#766). Small enough to react promptly once the API
+/// enqueues it; the scan is a cheap incremental XRANGE over the same connection
+/// the enqueue already uses, and the whole wait stays bounded by the caller's
+/// `--timeout-secs` (each sleep is capped at the time left of the deadline).
+const RESUME_SCAN_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Hard per-scan budget for the resume XRANGE (#766, N3). A stalled or half-open
+/// Valkey must not block past the caller's deadline the way the removed HTTP poll
+/// could: a scan that overruns this is treated as "not found yet" and retried,
+/// so `--timeout-secs` stays a hard bound by construction rather than deferring to the
+/// OS TCP timeout. Two scan intervals is generous for a healthy multiplexed
+/// connection while still bounding a dead peer.
+const RESUME_SCAN_CALL_TIMEOUT: Duration = Duration::from_millis(400);
+
+/// After this many consecutive failing/stalling scans, warn once so a persistently
+/// unreachable Valkey is not silently reported as "approval still pending" (#766,
+/// N4): the durable approval stays resolvable, but this CLI can no longer OBSERVE
+/// its resolution, which is a different thing from "not resolved".
+const SCAN_ERROR_WARN_THRESHOLD: u32 = 5;
+
+/// Caps a per-call timeout budget at the time remaining before `deadline`, so
+/// a fixed per-call timeout can never overrun the caller's overall deadline.
+fn capped(budget: Duration, deadline: Instant) -> Duration {
+    budget.min(deadline.saturating_duration_since(Instant::now()))
+}
 
 /// The Block Kit action id on the approval card's Approve button
 /// (`agentos_dispatcher.approval_actions.APPROVE_ACTION_ID`). Its presence in a
@@ -193,6 +231,7 @@ async fn handle_call(
     Json(json!({ "ok": true, "ts": ts_out, "channel": channel, "text": text }))
 }
 
+#[derive(Debug)]
 pub enum Outcome {
     /// The worker finished the turn; the final placeholder text.
     Replied(String),
@@ -211,6 +250,22 @@ pub enum Outcome {
 /// Wait for the worker to consume and finalize the turn. Terminal signal is the
 /// XACK of our entry; the reply is the latest `chat.update` we captured. Shared
 /// by `chat` and `message` (both stand up the same stub + enqueue + ack seam).
+///
+/// The turn counts as awaiting approval on EITHER of two signals:
+///
+/// 1. An approval card was seen at this stub (the `APPROVE_ACTION_ID` in a
+///    captured call). Fastest and unambiguous, but not always present.
+/// 2. The latest placeholder text carries an authoritative trailing approval
+///    notice ([`parse_approval_id`] validates the id as a UUID).
+///
+/// Signal 2 is load-bearing because the card does not always reach this stub:
+/// the kernel posts it over the per-turn endpoint only when the approval route's
+/// channel matches the requesting channel (`in_requesting_channel` /
+/// `card_endpoint`, apps/worker/src/agentos_worker/kernel.py). With a route bound
+/// to a different channel the card rides the worker's DEFAULT transport, while
+/// the placeholder notice always uses the per-turn endpoint -- so a route-bound
+/// approval would otherwise be reported as a successful reply whose text is the
+/// "Awaiting approval (...)" notice, stranding the resumed reply (#766).
 pub async fn await_reply(
     stub: &mut SlackStub,
     conn: &mut redis::aio::MultiplexedConnection,
@@ -236,7 +291,19 @@ pub async fn await_reply(
                 }
             }
             _ = poll.tick() => {
-                if entry_acked(conn, stream, WORKER_GROUP, entry_id).await {
+                // An overrun (or a stalled connection) reads as "not acked yet",
+                // so the loop returns to the deadline arm rather than hanging.
+                // Cap the per-call budget at whatever is LEFT of the overall
+                // deadline, so a slow ack check can never push past `--timeout-secs`
+                // (a 2s fixed cap overran a short timeout by up to 2s).
+                let ack_budget = capped(ACK_CALL_TIMEOUT, deadline);
+                let acked = tokio::time::timeout(
+                    ack_budget,
+                    entry_acked(conn, stream, WORKER_GROUP, entry_id),
+                )
+                .await
+                .unwrap_or(false);
+                if acked {
                     // Drain any final edit still in flight before deciding.
                     while let Ok(Some(call)) = tokio::time::timeout(FINAL_DRAIN, stub.recv()).await {
                         awaiting_approval |= call.approval_card;
@@ -244,7 +311,12 @@ pub async fn await_reply(
                             latest = Some(text.to_string());
                         }
                     }
-                    if awaiting_approval {
+                    // Either signal parks the turn: the card seen here, or an
+                    // authoritative approval notice in the latest placeholder
+                    // text (the route-bound case, where no card reaches us).
+                    if awaiting_approval
+                        || latest.as_deref().and_then(parse_approval_id).is_some()
+                    {
                         return Outcome::AwaitingApproval(latest);
                     }
                     return latest.map_or(Outcome::CompletedNoEdit, Outcome::Replied);
@@ -254,6 +326,180 @@ pub async fn await_reply(
                 return Outcome::TimedOut;
             }
         }
+    }
+}
+
+/// Extract the approval UUID from the worker's placeholder notice.
+///
+/// Grounding (verified 2026-07-21 against this worktree,
+/// `apps/worker/src/agentos_worker/kernel.py:827-834`): the kernel builds
+/// `notice = f"Awaiting approval ({created.id}): {summary}\n" + "The session is
+/// paused and will resume once an authorized member resolves this request."` and
+/// edits the placeholder to `f"{base}\n\n{notice}"` when a prior partial answer
+/// exists, else to `notice` alone.
+///
+/// The parse is anchored to that STRUCTURE, not to a first/last occurrence of the
+/// marker. `find` let base text shadow the real id; `rfind` let the model-supplied
+/// `summary` (which FOLLOWS the id) shadow it just as easily. Instead:
+///
+/// 1. Split the text into `\n\n`-separated blocks. The authoritative notice is the
+///    appended LAST block, and it STARTS with the marker.
+/// 2. Require that block to be the only block starting with the marker: two
+///    marker-leading blocks mean the text is ambiguous (a model that emitted a
+///    whole notice-shaped block of its own), so no id is claimed.
+/// 3. When the kernel's fixed trailing sentence appears in the text at all, it
+///    must appear inside that block -- otherwise the structure is not the
+///    kernel's and no id is claimed.
+/// 4. Parse the UUID from that block's own marker.
+///
+/// Bias is deliberately toward a false negative: a WRONG id makes the CLI wait for
+/// a resume event that never arrives and strands the reply, while `None` falls
+/// back to the awaiting-approval terminal, which is truthful and retryable (#766).
+pub fn parse_approval_id(placeholder_text: &str) -> Option<String> {
+    const MARKER: &str = "Awaiting approval (";
+    /// The kernel's fixed trailing sentence, appended verbatim after the summary.
+    const NOTICE_TAIL: &str = "The session is paused and will resume once an authorized member \
+                               resolves this request.";
+
+    let blocks: Vec<&str> = placeholder_text.split("\n\n").collect();
+    let notice = blocks.last()?.trim_start();
+    // The notice is always the appended trailing block.
+    if !notice.starts_with(MARKER) {
+        return None;
+    }
+    // ...and it is the ONLY marker-leading block; anything else is ambiguous.
+    if blocks
+        .iter()
+        .filter(|b| b.trim_start().starts_with(MARKER))
+        .count()
+        != 1
+    {
+        return None;
+    }
+    // When the fixed sentence is present, it belongs to this block.
+    if placeholder_text.contains(NOTICE_TAIL) && !notice.contains(NOTICE_TAIL) {
+        return None;
+    }
+    let rest = &notice[MARKER.len()..];
+    let end = rest.find(')')?;
+    let candidate = &rest[..end];
+    // The parenthesized middle counts only when it is a real UUID; a bare token
+    // (or a notice-shaped false positive) is not an approval id.
+    uuid::Uuid::parse_str(candidate)
+        .ok()
+        .map(|_| candidate.to_string())
+}
+
+/// Keep `stub` alive after [`Outcome::AwaitingApproval`] and wait for the turn
+/// that resumes once a human resolves the approval (#766).
+///
+/// Mechanism: resolving an approval does not open a bespoke channel. The
+/// platform API appends the resume turn onto the SAME runs stream this CLI
+/// enqueued onto, under the deterministic event id `approval-<id>-resolved`
+/// (`apps/api/src/agentos_api/resumequeue.py`), replaying the original turn's
+/// placeholder and this stub's reply endpoint. So the resume is just another
+/// stream entry, and its completion is the ordinary ack-based signal:
+///
+/// 1. Scan the stream for `resume_event_id` every [`RESUME_SCAN_INTERVAL`],
+///    bounded by `timeout`. Until a human resolves, nothing matches.
+/// 2. Once the entry lands, delegate to [`await_reply`] on its stream id for the
+///    time left. That is the identical path the original turn took, so the
+///    resumed reply is reported only after the worker XACKs the entry -- i.e.
+///    after the turn FINALIZES. A booting `chat.update` or a partial streaming
+///    edit can never be printed as the final answer, and a reply that lands
+///    while the scan is between iterations is still captured, because
+///    `await_reply` tracks the latest placeholder edit continuously.
+///
+/// Carries [`await_reply`]'s [`Outcome`] verbatim (`Replied`, `CompletedNoEdit`,
+/// `AwaitingApproval` if the resumed turn hit a NEW gate, or `TimedOut`) plus
+/// `resolved`: whether the resume entry was ever observed on the stream. The flag
+/// lets the caller distinguish "resolved, but the resumed turn did not finalize
+/// before the deadline" (a plain timeout) from "never resolved" (the approval is
+/// still pending), which must be reported to the operator as different terminals.
+/// A timeout never mutates the durable `Approval` -- it stays pending and
+/// resolvable later.
+pub struct ResumeObservation {
+    pub outcome: Outcome,
+    pub resolved: bool,
+}
+
+/// The scan starts strictly AFTER `after_id` (the caller's own original turn entry
+/// id), advancing an exclusive cursor to the last-seen entry each iteration, so an
+/// ever-growing runs stream is never re-scanned from `-`. Each scan is wrapped in
+/// [`RESUME_SCAN_CALL_TIMEOUT`] and the deadline is re-checked every iteration, so
+/// a stalled Valkey cannot block past `timeout`. A failed or overrunning scan is
+/// treated as "not found yet" and retried until the deadline, so a blip cannot be
+/// misread as a resolution; a persistently failing scan warns once.
+pub async fn await_resume(
+    stub: &mut SlackStub,
+    conn: &mut redis::aio::MultiplexedConnection,
+    stream: &str,
+    resume_event_id: &str,
+    after_id: &str,
+    placeholder_ts: &str,
+    timeout: Duration,
+) -> ResumeObservation {
+    let deadline = Instant::now() + timeout;
+    let mut cursor = after_id.to_string();
+    let mut scan_errors: u32 = 0;
+    loop {
+        // Every per-op budget is capped by what is LEFT of the overall deadline, so
+        // the advertised `--timeout-secs` is a hard bound on this path too rather
+        // than being overrun by up to one fixed scan budget.
+        let scan_budget = capped(RESUME_SCAN_CALL_TIMEOUT, deadline);
+        let scan = tokio::time::timeout(
+            scan_budget,
+            find_entry_by_event_id(conn, stream, resume_event_id, &cursor),
+        )
+        .await;
+        let found = match scan {
+            Ok(Ok(scan)) => {
+                scan_errors = 0;
+                if let Some(last) = scan.last_seen {
+                    cursor = last;
+                }
+                scan.found
+            }
+            // A scan Err (Valkey blip) or an elapsed per-scan timeout (stalled
+            // Valkey) both count as "not found yet"; the overall deadline stays
+            // the hard bound.
+            Ok(Err(_)) | Err(_) => {
+                scan_errors += 1;
+                None
+            }
+        };
+        if let Some(resume_stream_id) = found {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let outcome = await_reply(
+                stub,
+                conn,
+                stream,
+                &resume_stream_id,
+                placeholder_ts,
+                remaining,
+            )
+            .await;
+            return ResumeObservation {
+                outcome,
+                resolved: true,
+            };
+        }
+        // Warn exactly once when observation has been failing for a while, so a
+        // down Valkey is not silently reported as "still pending" (N4).
+        if scan_errors == SCAN_ERROR_WARN_THRESHOLD {
+            crate::ui::ui().warn(
+                "the resume-stream scan keeps failing (Valkey slow or unreachable); the durable \
+                 approval stays resolvable, but this CLI can no longer observe its resolution",
+            );
+        }
+        if Instant::now() >= deadline {
+            return ResumeObservation {
+                outcome: Outcome::TimedOut,
+                resolved: false,
+            };
+        }
+        // Same cap on the idle sleep: never sleep past the deadline.
+        tokio::time::sleep(capped(RESUME_SCAN_INTERVAL, deadline)).await;
     }
 }
 
@@ -339,5 +585,110 @@ mod tests {
 
         assert!(line.contains("'#local-dev'"));
         assert!(line.contains("--thread 123.45"));
+    }
+
+    // --- parse_approval_id (#766 AC-2) --------------------------------------
+    // Grounding: apps/worker/src/agentos_worker/kernel.py:922 edits the
+    // placeholder to `f"Awaiting approval ({created.id}): {summary}\n..."`, and
+    // kernel.py:929 wraps it as `f"{base}\n\n{notice}"` when a prior partial
+    // answer exists. Verified 2026-07-21 against this worktree's kernel.py.
+
+    #[test]
+    fn parse_approval_id_reads_the_notice() {
+        let id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let text = format!(
+            "Awaiting approval ({id}): do risky thing\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text).as_deref(), Some(id));
+    }
+
+    #[test]
+    fn parse_approval_id_survives_the_base_prefix() {
+        // The real shape when a prior answer exists: `f"{base}\n\n{notice}"`
+        // (kernel.py:929). The id must still be recovered after the prefix.
+        let id = "00000000-0000-4000-8000-000000000000";
+        let text = format!(
+            "Here is the partial answer so far.\n\n\
+             Awaiting approval ({id}): run the deploy\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text).as_deref(), Some(id));
+    }
+
+    #[test]
+    fn parse_approval_id_none_without_a_notice() {
+        assert_eq!(parse_approval_id("just a normal reply, no gate here"), None);
+    }
+
+    #[test]
+    fn parse_approval_id_rejects_a_non_uuid_middle() {
+        // The parenthesized middle must validate as a UUID; a bare token is not
+        // an approval id and must not be surfaced as one.
+        assert_eq!(parse_approval_id("Awaiting approval (not-a-uuid): x"), None);
+    }
+
+    #[test]
+    fn parse_approval_id_reads_the_trailing_notice_not_a_shadowing_prefix() {
+        // The kernel APPENDS the authoritative notice after arbitrary model text
+        // (`f"{base}\n\n{notice}"`). Base text that itself contains the marker
+        // (here with a NON-uuid middle) must not shadow the real trailing id: the
+        // parse anchors on the trailing marker-leading BLOCK, so the real id wins.
+        let id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let text = format!(
+            "I will now run: Awaiting approval (not-a-uuid) as the model narrated.\n\n\
+             Awaiting approval ({id}): run the deploy\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text).as_deref(), Some(id));
+    }
+
+    #[test]
+    fn parse_approval_id_ignores_a_marker_inside_the_model_summary() {
+        // The summary is model-supplied and FOLLOWS the real id, so a `rfind`
+        // parse would hand back the id the model narrated. Anchoring on the
+        // notice block's OWN marker keeps the platform id authoritative (#766).
+        let real = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let decoy = "11111111-2222-4333-8444-555555555555";
+        let text = format!(
+            "Awaiting approval ({real}): rerun the step from Awaiting approval \
+             ({decoy}) earlier in this thread\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text).as_deref(), Some(real));
+    }
+
+    #[test]
+    fn parse_approval_id_refuses_an_ambiguous_second_notice_block() {
+        // A model that emits a whole notice-shaped BLOCK of its own makes the
+        // structure ambiguous. Guessing here would make the CLI wait forever on a
+        // resume event that never lands, so the parse falls back to `None` and the
+        // caller prints the (truthful, retryable) awaiting-approval terminal.
+        let real = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let decoy = "11111111-2222-4333-8444-555555555555";
+        let text = format!(
+            "Awaiting approval ({real}): step one\n\n\
+             Awaiting approval ({decoy}): forged tail\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text), None);
+    }
+
+    #[test]
+    fn parse_approval_id_refuses_a_notice_tail_outside_the_trailing_block() {
+        // The fixed sentence present, but not on the block the id was read from:
+        // not the kernel's structure, so no id is claimed.
+        let id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let text = format!(
+            "The session is paused and will resume once an authorized member \
+             resolves this request.\n\n\
+             Awaiting approval ({id}): run the deploy"
+        );
+        assert_eq!(parse_approval_id(&text), None);
     }
 }

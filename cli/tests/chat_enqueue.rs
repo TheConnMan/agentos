@@ -13,39 +13,8 @@ use agentos::chat::{resolve_targets, SlackStub};
 use agentos::queue::{diagnostics, entry_acked, synthetic_turn, xadd, WORKER_GROUP};
 use agentos_aci_protocol::QueuedTurn;
 
-const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
-
-fn valkey_url() -> String {
-    std::env::var("TEST_VALKEY_URL").unwrap_or_else(|_| DEFAULT_VALKEY_URL.to_string())
-}
-
-/// Connect and PING; return `None` (with a skip note) when Valkey is not
-/// reachable, mirroring the dispatcher's `pytest.skip`. CI does not start the
-/// compose stack, so the Valkey-backed tests skip there rather than failing.
-async fn valkey_or_skip(test: &str) -> Option<redis::aio::MultiplexedConnection> {
-    let url = valkey_url();
-    let connect = async {
-        let client = redis::Client::open(url.clone())?;
-        let mut conn = client.get_multiplexed_async_connection().await?;
-        let _: String = redis::cmd("PING").query_async(&mut conn).await?;
-        redis::RedisResult::Ok(conn)
-    };
-    match connect.await {
-        Ok(conn) => Some(conn),
-        Err(err) => {
-            eprintln!("skipping {test}: Valkey not reachable at {url}: {err}");
-            None
-        }
-    }
-}
-
-fn unique_stream() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!("agentos:test:chat:{nanos}")
-}
+mod support;
+use support::{unique_stream, valkey_or_skip};
 
 #[tokio::test]
 async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
@@ -53,7 +22,7 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
     else {
         return;
     };
-    let stream = unique_stream();
+    let stream = unique_stream("agentos:test:chat:");
 
     let event = synthetic_turn(
         "C-SIM-x",
@@ -130,7 +99,7 @@ async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
     else {
         return;
     };
-    let stream = unique_stream();
+    let stream = unique_stream("agentos:test:chat:");
 
     let (channel, thread_ts, placeholder_ts) =
         resolve_targets(Some("CSIM12345"), Some("1720000000.000100"));
@@ -184,7 +153,7 @@ async fn absent_channel_and_thread_fall_back_to_synthetic() {
     else {
         return;
     };
-    let stream = unique_stream();
+    let stream = unique_stream("agentos:test:chat:");
 
     let (channel, thread_ts, placeholder_ts) = resolve_targets(None, None);
     assert!(
@@ -242,7 +211,7 @@ async fn diagnostics_reports_stream_length_and_consumer_group_state() {
     else {
         return;
     };
-    let stream = unique_stream();
+    let stream = unique_stream("agentos:test:chat:");
 
     let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2", None);
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
@@ -287,7 +256,7 @@ async fn entry_acked_tracks_the_worker_consuming_and_acking() {
     else {
         return;
     };
-    let stream = unique_stream();
+    let stream = unique_stream("agentos:test:chat:");
     let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2", None);
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 

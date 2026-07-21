@@ -32,7 +32,8 @@ use redis::aio::MultiplexedConnection;
 
 use crate::api::{Agent, ApiClient};
 use crate::chat::{
-    await_reply, continue_hint_line, continue_hint_long_line, resolve_targets, Outcome, SlackStub,
+    await_reply, await_resume, continue_hint_line, continue_hint_long_line, parse_approval_id,
+    resolve_targets, Outcome, SlackStub,
 };
 use crate::evals::{EvalCase, EvalSuite, ExpectedStatus};
 use crate::ops::{plain, require_on_path, run_capture, OpsCommand};
@@ -209,12 +210,35 @@ pub struct MessageOpts {
     pub api_url: Option<String>,
 }
 
-fn persist_and_hint(opts: &MessageOpts, verb: TurnVerb, channel: &str, thread_ts: &str) {
-    let ui = crate::ui::ui();
-    let verb_str = match verb {
-        TurnVerb::Local => "local message",
-        TurnVerb::Cluster => "cluster message",
-    };
+/// The tier string for a [`TurnVerb`], as surfaced in the `--json` `tier` field
+/// and the human resolve hint.
+fn tier_str(verb: TurnVerb) -> &'static str {
+    match verb {
+        TurnVerb::Local => "local",
+        TurnVerb::Cluster => "cluster",
+    }
+}
+
+/// Write `.agentos/last-turn.json` for this turn WITHOUT printing the continue
+/// hint. Called before the (potentially long) approval wait so an interrupted or
+/// closed terminal still leaves a thread `message --continue` can recover (#766);
+/// the terminal paths then call [`persist_and_hint`], which rewrites the identical
+/// context and prints the hint once, at the end.
+fn persist_turn_quietly(opts: &MessageOpts, verb: TurnVerb, channel: &str, thread_ts: &str) {
+    if let Err(err) = save_turn_context(opts, verb, channel, thread_ts) {
+        crate::ui::ui().warn(&format!("could not save turn context: {err}"));
+    }
+}
+
+/// The one place the `TurnContext` is built and written. Idempotent: the same
+/// turn writes the same file, so persisting up front and again at the terminal
+/// records identical state.
+fn save_turn_context(
+    opts: &MessageOpts,
+    verb: TurnVerb,
+    channel: &str,
+    thread_ts: &str,
+) -> Result<()> {
     let ctx = TurnContext::from_turn(
         opts,
         verb,
@@ -224,18 +248,18 @@ fn persist_and_hint(opts: &MessageOpts, verb: TurnVerb, channel: &str, thread_ts
         // resolves to nothing on the next `--continue`.
         env::var("AGENTOS_API_KEY").ok().filter(|v| !v.is_empty()),
     );
+    let cwd = env::current_dir().context("resolving the current working directory")?;
+    save_turn(&cwd, &ctx)
+}
 
-    match env::current_dir().context("resolving the current working directory") {
-        Ok(cwd) => match save_turn(&cwd, &ctx) {
-            Ok(()) => ui.note(&continue_hint_line(verb_str)),
-            Err(err) => {
-                ui.warn(&format!("could not save turn context: {err}"));
-                ui.note(&continue_hint_long_line(verb_str, channel, thread_ts));
-            }
-        },
+fn persist_and_hint(opts: &MessageOpts, verb: TurnVerb, channel: &str, thread_ts: &str) {
+    let ui = crate::ui::ui();
+    let verb_str = format!("{} message", tier_str(verb));
+    match save_turn_context(opts, verb, channel, thread_ts) {
+        Ok(()) => ui.note(&continue_hint_line(&verb_str)),
         Err(err) => {
             ui.warn(&format!("could not save turn context: {err}"));
-            ui.note(&continue_hint_long_line(verb_str, channel, thread_ts));
+            ui.note(&continue_hint_long_line(&verb_str, channel, thread_ts));
         }
     }
 }
@@ -501,15 +525,29 @@ enum MessageOutcomeOutput {
     Replied { thread: String, reply: String },
     /// The worker finished the turn but never edited the placeholder.
     NoEdit { thread: String },
-    /// The turn parked awaiting human approval.
+    /// The turn parked awaiting human approval. `tier`/`agent`/`channel` shape the
+    /// human resolve hint into a copy-paste-runnable `approvals <agent> --resolve
+    /// ... --actor-channel <channel>` command (#766); none of them touch
+    /// `to_json`, which stays byte-identical.
     AwaitingApproval {
         thread: String,
         reply: Option<String>,
+        tier: &'static str,
+        agent: Option<String>,
+        channel: String,
     },
     /// The deadline elapsed with no reply. `diagnostics` carries the stream
     /// diagnostics string on the human path; it stays `None` under `--json`
     /// (which never gathers them), so no extra Valkey read happens there.
-    TimedOut { diagnostics: Option<String> },
+    /// `resume_note` (also human-only) replaces the diagnostics wording for the
+    /// resolved-but-unfinished resume case (#766): the JSON stays the byte-
+    /// identical `message_timeout_json`, but the operator is told the approval
+    /// WAS resolved and the resumed turn simply did not finish in time, rather
+    /// than being shown stream diagnostics for the wrong entry.
+    TimedOut {
+        diagnostics: Option<String>,
+        resume_note: Option<String>,
+    },
 }
 
 impl crate::ui::CliOutput for MessageOutcomeOutput {
@@ -519,7 +557,7 @@ impl crate::ui::CliOutput for MessageOutcomeOutput {
                 message_reply_json(thread, Some(reply))
             }
             MessageOutcomeOutput::NoEdit { thread } => message_reply_json(thread, None),
-            MessageOutcomeOutput::AwaitingApproval { thread, reply } => {
+            MessageOutcomeOutput::AwaitingApproval { thread, reply, .. } => {
                 message_awaiting_approval_json(thread, reply.as_deref())
             }
             MessageOutcomeOutput::TimedOut { .. } => message_timeout_json(),
@@ -535,13 +573,25 @@ impl crate::ui::CliOutput for MessageOutcomeOutput {
             MessageOutcomeOutput::NoEdit { .. } => {
                 ui.warn("the worker finished the turn but never edited the placeholder");
             }
-            MessageOutcomeOutput::AwaitingApproval { .. } => {
-                warn_approval_will_strand(ui);
+            MessageOutcomeOutput::AwaitingApproval {
+                tier,
+                agent,
+                channel,
+                ..
+            } => {
+                note_approval_pending(ui, tier, agent.as_deref(), channel);
             }
-            MessageOutcomeOutput::TimedOut { diagnostics } => {
-                ui.note("stream diagnostics:");
-                if let Some(diag) = diagnostics {
-                    ui.note(diag);
+            MessageOutcomeOutput::TimedOut {
+                diagnostics,
+                resume_note,
+            } => {
+                if let Some(note) = resume_note {
+                    ui.warn(note);
+                } else {
+                    ui.note("stream diagnostics:");
+                    if let Some(diag) = diagnostics {
+                        ui.note(diag);
+                    }
                 }
             }
         }
@@ -702,14 +752,19 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 
     // Channel: explicit --channel, else the sole deployed agent from the compose
     // API (reached directly; routers mount at root, so the base carries no /api).
-    let channel = match opts.channel.as_deref() {
-        Some(channel) => channel.to_string(),
+    // `agent_hint` is the sole agent's NAME when we resolved it (so an approval
+    // resolve hint is copy-paste runnable), and `None` for an explicit --channel
+    // (we don't know which agent it binds) -- then the hint shows an `<AGENT>`
+    // slot (#766).
+    let (channel, agent_hint): (String, Option<String>) = match opts.channel.as_deref() {
+        Some(channel) => (channel.to_string(), None),
         None => {
             let api = ApiClient::new(&api_base, &opts.api_key)?;
             let agents = api.list_agents().await.with_context(|| {
                 format!("listing agents via {api_base} (is `agentos local up` running?)")
             })?;
-            select_channel(&agents, None)?
+            let channel = select_channel(&agents, None)?;
+            (channel, agents.first().map(|a| a.name.clone()))
         }
     };
     ui.note(&format!("routing to channel {channel}"));
@@ -739,6 +794,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 
     let cl = ui.checklist();
     let step = cl.step("waiting for worker reply");
+    let wait_started = Instant::now();
     let outcome = await_reply(
         &mut stub,
         &mut conn,
@@ -769,12 +825,63 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
         }
         Outcome::AwaitingApproval(reply) => {
             step.done("awaiting approval");
-            ui.emit(&MessageOutcomeOutput::AwaitingApproval {
-                thread: thread_ts.clone(),
-                reply,
-            });
-            persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
-            Ok(())
+            // Persist the turn context BEFORE the (possibly full --timeout-secs)
+            // approval wait: if the operator interrupts or the terminal closes
+            // while the approval is pending, `.agentos/last-turn.json` must still
+            // hold the thread for `message --continue` (#766). The terminal paths
+            // re-persist the identical context and print the continue hint once.
+            persist_turn_quietly(&opts, TurnVerb::Local, &channel, &thread_ts);
+            // Keep the stub alive and wait for the resumed reply instead of
+            // exiting and stranding it (#766). The wait rides the Valkey
+            // connection already open for the enqueue, so the only degradation is
+            // a placeholder notice we cannot parse an approval id from -- then
+            // fall back to the terminal.
+            match parse_approval_id(reply.as_deref().unwrap_or_default()) {
+                Some(id) => {
+                    let remaining = Duration::from_secs(opts.timeout_secs)
+                        .saturating_sub(wait_started.elapsed());
+                    match resume_after_approval(
+                        &opts,
+                        TurnVerb::Local,
+                        &mut conn,
+                        &id,
+                        &mut stub,
+                        &stream_id,
+                        &placeholder_ts,
+                        &thread_ts,
+                        &channel,
+                        agent_hint.as_deref(),
+                        reply,
+                        remaining,
+                    )
+                    .await
+                    {
+                        ResumeExit::Done => Ok(()),
+                        // Still parked: the durable approval stays pending and is
+                        // resolvable later, so this is retryable. Local mode holds
+                        // no port-forward children, so exiting here leaks nothing.
+                        ResumeExit::Transient => {
+                            std::process::exit(crate::exit::ExitClass::Transient.code());
+                        }
+                    }
+                }
+                None => {
+                    // No parseable approval id, so we never entered the resume wait.
+                    // The turn is parked exactly like the timeout terminal, so exit
+                    // with the SAME transient (retryable) class rather than 0, so a
+                    // scripted caller sees one deterministic exit for "still parked"
+                    // regardless of whether the id happened to parse (#766, N5).
+                    ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+                        thread: thread_ts.clone(),
+                        reply,
+                        tier: tier_str(TurnVerb::Local),
+                        agent: agent_hint.clone(),
+                        channel: channel.clone(),
+                    });
+                    persist_and_hint(&opts, TurnVerb::Local, &channel, &thread_ts);
+                    std::process::exit(crate::exit::ExitClass::Transient.code());
+                }
+            }
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
@@ -785,7 +892,10 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             } else {
                 Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
             };
-            ui.emit(&MessageOutcomeOutput::TimedOut { diagnostics: diag });
+            ui.emit(&MessageOutcomeOutput::TimedOut {
+                diagnostics: diag,
+                resume_note: None,
+            });
             // A timeout is retryable (the worker may still be working, or a
             // transient stall), so it maps to the transient exit code, not failure.
             std::process::exit(crate::exit::ExitClass::Transient.code());
@@ -793,23 +903,241 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
     }
 }
 
-/// The loud up-front warning a `local`/`cluster message` prints when its turn
-/// parked awaiting approval (#529): the reply stub is this process's throwaway
-/// endpoint, so the resumed reply -- delivered whenever a human approves -- has
-/// nowhere to land once the command exits (#505 dead-letters it rather than
-/// stalling the worker). Names the two ways to actually see a resumed reply.
-fn warn_approval_will_strand(ui: &crate::ui::Ui) {
+/// The one runnable `approvals --resolve` command shape, shared by the pre-wait
+/// hint and the terminal wording so the two cannot drift (#766).
+///
+/// Every flag here is load-bearing against the server:
+/// - `<AGENT>` is a REQUIRED positional on the `approvals` clap surface
+///   (`AgentTarget` flattens a mandatory `agent` arg), so omitting it made the
+///   printed hint fail with `error: the following required arguments were not
+///   provided: <AGENT>`.
+/// - `--as <user>` is required by `--resolve`, and the server blocks
+///   self-approval, so it must not be the turn's author.
+/// - `--actor-channel <channel>` is required by the DEFAULT approver set. With no
+///   `approvers` block on the route binding, the API selects
+///   `SlackChannelMembers(approval.card_channel or approval.reply_channel)`
+///   (`apps/api/src/agentos_api/slack_approvers.py`), whose `contains` admits the
+///   actor only when `actor_channel` equals that channel -- otherwise the resolve
+///   is refused 403 ("resolve this from the approval's channel"). The channel this
+///   turn routed to IS `reply_channel`, so it is the correct value in the common
+///   case; a route binding that placed the card elsewhere carries a different
+///   `card_channel`, which `approvals --list` reports. (Route bindings that
+///   declare `approvers.users`/`approvers.group` ignore the channel entirely, so
+///   passing it is harmless there.)
+fn approval_resolve_command(tier: &str, agent: Option<&str>, channel: &str, id: &str) -> String {
+    let agent = agent.unwrap_or("<AGENT>");
+    format!(
+        "agentos {tier} approvals {agent} --resolve {id} --as <user> --actor-channel '{channel}'"
+    )
+}
+
+/// The awaiting-approval terminal wording a `local`/`cluster message` prints when
+/// it did not keep the reply stub alive to receive the resumed reply -- i.e. the
+/// timeout terminal (the wait elapsed with the approval still pending) or the
+/// graceful-degradation fallback (no parseable approval id).
+///
+/// Every runtime call site is AFTER the wait ended, immediately before this
+/// command exits and drops its reply stub, so the wording says exactly that: the
+/// command is exiting, the durable `Approval` stays resolvable, and the resumed
+/// reply must be read from the agent transcript rather than waited for here.
+/// Promising that a later resolution "prints here" would strand an operator
+/// watching a terminal that is already gone (#766). It never overclaims a
+/// clickable Slack card either.
+fn note_approval_pending(ui: &crate::ui::Ui, tier: &str, agent: Option<&str>, channel: &str) {
+    let command = approval_resolve_command(tier, agent, channel, "<id>");
     ui.warn(
-        "this turn is awaiting human approval and will NOT deliver its reply here: the \
-         approval was persisted with this command's throwaway reply stub as its endpoint, and \
-         that stub dies when the command exits, so the resumed reply strands (it is \
-         dead-lettered, not lost silently).",
+        "this turn is awaiting human approval; it did not finalize, and this command is now \
+         exiting. The durable approval was persisted server-side and stays pending until someone \
+         resolves it.",
     );
-    ui.note(
-        "to demo approvals end to end, drive the turn from a durable reply surface: connect a \
-         real Slack workspace (`agentos local comms --slack` / `agentos cluster comms --slack`) \
-         and mention the agent there, or resolve the approval and read the reply in Slack.",
-    );
+    ui.note(&format!(
+        "resolve it later with `{command}` (the id is listed by `agentos {tier} approvals \
+         <AGENT> --list`, which also reports the approval's channel if its route binds one). \
+         Because this command has exited, the resumed reply does NOT print here -- read it from \
+         the agent transcript. There is no clickable Slack card unless a real workspace is \
+         connected (`agentos {tier} comms --slack`).",
+    ));
+}
+
+/// How a resume wait ended, as far as the CALLER's process lifetime is concerned.
+///
+/// The wait itself always finishes by emitting its terminal output; what the
+/// caller still owes is only the exit. This exists so the transient exit is taken
+/// by the handler that OWNS the `kubectl port-forward` guards rather than inside
+/// this helper: `std::process::exit` does not unwind, so calling it here would
+/// skip the caller's `kill_on_drop` destructors and orphan the port-forward child
+/// to init (#766). The caller drops its guards, then exits.
+enum ResumeExit {
+    /// Fully handled; the caller returns `Ok(())` and its guards drop normally.
+    Done,
+    /// The turn is still parked (the wait elapsed, or the resumed turn hit a NEW
+    /// gate). The durable `Approval` stays pending and resolvable later, so this
+    /// is retryable: the caller drops its port-forward guards and exits with the
+    /// transient class.
+    Transient,
+}
+
+/// Keep the reply stub alive after a turn parked awaiting approval and wait for
+/// the resumed reply (#766, ADR-0063).
+///
+/// Prints a per-id resolve hint and a waiting note, then waits on the runs stream
+/// via [`await_resume`]: when a human resolves the approval, the API appends the
+/// resume turn under the deterministic `approval-<id>-resolved` event id,
+/// replaying this stub's endpoint and the tracked placeholder. Completion is the
+/// worker's XACK of that entry, so the reply is reported only once the resumed
+/// turn FINALIZES -- a booting or partially-streamed edit is never printed as the
+/// answer. The wait is read-only on the approval: it never resolves, rejects, or
+/// deletes the durable record.
+///
+/// If the RESUMED turn itself parks on a NEW approval gate, this LOOPS: it parses
+/// the new approval id, recomputes `approval-<new-id>-resolved`, and keeps waiting
+/// on the fresh resume entry while the caller's overall deadline remains -- so a
+/// nested gate does not re-strand the reply the way exiting on the first gate
+/// would (that was exactly the bug this PR fixes). The loop is bounded by the
+/// deadline and, defensively, by a max iteration count.
+///
+/// Emits the terminal output for every outcome and returns what the caller still
+/// owes ([`ResumeExit`]). Shared by the local and cluster handlers so the two
+/// tiers cannot drift.
+#[allow(clippy::too_many_arguments)] // one cohesive resume-wait call; a struct would not clarify it
+async fn resume_after_approval(
+    opts: &MessageOpts,
+    verb: TurnVerb,
+    conn: &mut MultiplexedConnection,
+    id: &str,
+    stub: &mut SlackStub,
+    // The CLI's OWN original turn entry id: the exclusive lower bound for the
+    // resume scan, so it reads only entries enqueued after our turn (#766, N1).
+    after_id: &str,
+    placeholder_ts: &str,
+    thread_ts: &str,
+    channel: &str,
+    // The runnable resolve-hint agent positional: the sole deployed agent's name,
+    // or `None` (rendered `<AGENT>`) when an explicit `--channel` hid it (#766).
+    agent: Option<&str>,
+    awaiting_reply: Option<String>,
+    remaining: Duration,
+) -> ResumeExit {
+    let ui = crate::ui::ui();
+    let tier = tier_str(verb);
+    let deadline = Instant::now() + remaining;
+    // Defensive cap: the deadline is the real bound, but never spin unbounded on a
+    // pathological gate-per-resume loop.
+    const MAX_NESTED_GATES: usize = 64;
+    let mut current_id = id.to_string();
+    let mut last_reply = awaiting_reply;
+    for _ in 0..MAX_NESTED_GATES {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        ui.note(&format!(
+            "resolve it with: {}",
+            approval_resolve_command(tier, agent, channel, &current_id)
+        ));
+        ui.note(
+            "waiting for the approval to be resolved; the resumed reply lands here if it is \
+             resolved before --timeout-secs elapses...",
+        );
+        // The API's deterministic idempotency key for this approval's resume turn
+        // (`resumequeue.resume_event_id`), which is how we recognize that turn on
+        // the shared runs stream.
+        let resume_event_id = format!("approval-{current_id}-resolved");
+        let observed = await_resume(
+            stub,
+            conn,
+            &opts.stream,
+            &resume_event_id,
+            after_id,
+            placeholder_ts,
+            remaining,
+        )
+        .await;
+        match observed.outcome {
+            Outcome::Replied(reply) => {
+                ui.emit(&MessageOutcomeOutput::Replied {
+                    thread: thread_ts.to_string(),
+                    reply,
+                });
+                persist_and_hint(opts, verb, channel, thread_ts);
+                return ResumeExit::Done;
+            }
+            Outcome::CompletedNoEdit => {
+                ui.emit(&MessageOutcomeOutput::NoEdit {
+                    thread: thread_ts.to_string(),
+                });
+                persist_and_hint(opts, verb, channel, thread_ts);
+                return ResumeExit::Done;
+            }
+            Outcome::AwaitingApproval(new_reply) => {
+                // The RESUMED turn hit a NEW gate of its own. Keep waiting on ITS
+                // resume entry rather than exiting and dropping the stub -- exiting
+                // here would re-create the dead-endpoint bug for the nested gate.
+                match parse_approval_id(new_reply.as_deref().unwrap_or_default()) {
+                    Some(new_id) => {
+                        current_id = new_id;
+                        last_reply = new_reply;
+                        // Loop: wait on the nested approval's resume entry.
+                        continue;
+                    }
+                    None => {
+                        // No parseable id on the nested notice: surface the awaiting
+                        // terminal (durable + resolvable) rather than looping blind.
+                        ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+                            thread: thread_ts.to_string(),
+                            reply: new_reply,
+                            tier,
+                            agent: agent.map(str::to_string),
+                            channel: channel.to_string(),
+                        });
+                        persist_and_hint(opts, verb, channel, thread_ts);
+                        return ResumeExit::Transient;
+                    }
+                }
+            }
+            Outcome::TimedOut if observed.resolved => {
+                // The approval WAS resolved (we saw the resume entry), but the
+                // resumed turn did not finalize before the deadline. That is a
+                // plain timeout, not a still-pending approval: emit the byte-
+                // identical timeout terminal with honest wording (#766, Codex P2).
+                ui.emit(&MessageOutcomeOutput::TimedOut {
+                    diagnostics: None,
+                    resume_note: Some(format!(
+                        "the approval was resolved, but the resumed turn did not finish before \
+                         --timeout-secs ({}s); read the resolved reply from the agent transcript",
+                        opts.timeout_secs
+                    )),
+                });
+                persist_and_hint(opts, verb, channel, thread_ts);
+                return ResumeExit::Transient;
+            }
+            Outcome::TimedOut => {
+                // Never resolved: the durable approval is still pending.
+                ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+                    thread: thread_ts.to_string(),
+                    reply: last_reply,
+                    tier,
+                    agent: agent.map(str::to_string),
+                    channel: channel.to_string(),
+                });
+                // Persist the turn context even on the transient exit so a follow-up
+                // `--continue` still has the thread to resume against.
+                persist_and_hint(opts, verb, channel, thread_ts);
+                return ResumeExit::Transient;
+            }
+        }
+    }
+    // The deadline elapsed at a loop boundary, or the nested-gate cap was hit. The
+    // current approval is still pending and resolvable later.
+    ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+        thread: thread_ts.to_string(),
+        reply: last_reply,
+        tier,
+        agent: agent.map(str::to_string),
+        channel: channel.to_string(),
+    });
+    persist_and_hint(opts, verb, channel, thread_ts);
+    ResumeExit::Transient
 }
 
 /// The shared target noun message handler.
@@ -860,9 +1188,11 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     .await?;
 
     // Channel: explicit --channel, else the sole deployed agent via a short-lived
-    // API port-forward (dropped once the lookup returns).
-    let channel = match opts.channel.as_deref() {
-        Some(channel) => channel.to_string(),
+    // API port-forward (dropped once the lookup returns). `agent_hint` carries the
+    // sole agent's name for a runnable approval-resolve hint, or `None` for an
+    // explicit --channel (rendered as an `<AGENT>` slot) (#766).
+    let (channel, agent_hint): (String, Option<String>) = match opts.channel.as_deref() {
+        Some(channel) => (channel.to_string(), None),
         None => {
             let _api_pf = start_port_forward(
                 &port_forward_command(
@@ -884,7 +1214,8 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
                 .list_agents()
                 .await
                 .context("listing agents through the api port-forward")?;
-            select_channel(&agents, None)?
+            let channel = select_channel(&agents, None)?;
+            (channel, agents.first().map(|a| a.name.clone()))
         }
     };
     ui.note(&format!("routing to channel {channel}"));
@@ -921,6 +1252,7 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
 
     let cl = ui.checklist();
     let step = cl.step("waiting for worker reply");
+    let wait_started = Instant::now();
     let outcome = await_reply(
         &mut stub,
         &mut conn,
@@ -951,12 +1283,68 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
         }
         Outcome::AwaitingApproval(reply) => {
             step.done("awaiting approval");
-            ui.emit(&MessageOutcomeOutput::AwaitingApproval {
-                thread: thread_ts.clone(),
-                reply,
-            });
-            persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
-            Ok(())
+            // Persist the turn context BEFORE the (possibly full --timeout-secs)
+            // approval wait, so an interrupted terminal still leaves a thread
+            // `message --continue` can recover (#766). Terminal paths re-persist
+            // the identical context and print the continue hint once.
+            persist_turn_quietly(&opts, TurnVerb::Cluster, &channel, &thread_ts);
+            // Keep the stub alive and wait for the resumed reply instead of
+            // exiting and stranding it (#766). The wait observes the resume turn
+            // on the runs stream over the Valkey connection already open for the
+            // enqueue, so no API port-forward is needed for it. If we cannot parse
+            // an approval id, fall back to the awaiting-approval terminal rather
+            // than hanging.
+            match parse_approval_id(reply.as_deref().unwrap_or_default()) {
+                Some(id) => {
+                    let remaining = Duration::from_secs(opts.timeout_secs)
+                        .saturating_sub(wait_started.elapsed());
+                    // `_valkey_pf` stays alive across this await, which is what
+                    // keeps `conn` usable for the resume scan.
+                    match resume_after_approval(
+                        &opts,
+                        TurnVerb::Cluster,
+                        &mut conn,
+                        &id,
+                        &mut stub,
+                        &stream_id,
+                        &placeholder_ts,
+                        &thread_ts,
+                        &channel,
+                        agent_hint.as_deref(),
+                        reply,
+                        remaining,
+                    )
+                    .await
+                    {
+                        ResumeExit::Done => Ok(()),
+                        ResumeExit::Transient => {
+                            // Drop the Valkey port-forward FIRST: `process::exit`
+                            // does not unwind, so without this explicit drop its
+                            // `kill_on_drop` guard never fires and the `kubectl
+                            // port-forward` child is orphaned to init (#766).
+                            drop(_valkey_pf);
+                            std::process::exit(crate::exit::ExitClass::Transient.code());
+                        }
+                    }
+                }
+                None => {
+                    // No parseable approval id, so we never entered the resume wait.
+                    // Same parked terminal as the timeout arm, so exit with the SAME
+                    // transient class (not 0) for a deterministic scripted contract
+                    // (#766, N5). Drop the port-forward first so its child is not
+                    // orphaned by the non-unwinding `process::exit`.
+                    ui.emit(&MessageOutcomeOutput::AwaitingApproval {
+                        thread: thread_ts.clone(),
+                        reply,
+                        tier: tier_str(TurnVerb::Cluster),
+                        agent: agent_hint.clone(),
+                        channel: channel.clone(),
+                    });
+                    persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
+                    drop(_valkey_pf);
+                    std::process::exit(crate::exit::ExitClass::Transient.code());
+                }
+            }
         }
         Outcome::TimedOut => {
             step.fail(&format!("timed out after {}s", opts.timeout_secs));
@@ -967,9 +1355,14 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
             } else {
                 Some(diagnostics(&mut conn, &opts.stream, &stream_id).await)
             };
-            ui.emit(&MessageOutcomeOutput::TimedOut { diagnostics: diag });
+            ui.emit(&MessageOutcomeOutput::TimedOut {
+                diagnostics: diag,
+                resume_note: None,
+            });
             // A timeout is retryable (the worker may still be working, or a
             // transient stall), so it maps to the transient exit code, not failure.
+            // Drop the Valkey port-forward FIRST for the same non-unwinding reason.
+            drop(_valkey_pf);
             std::process::exit(crate::exit::ExitClass::Transient.code());
         }
     }
@@ -1862,6 +2255,32 @@ async fn eval_cluster(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The printed resolve hint must be runnable AS PRINTED. Every flag the
+    /// server requires has to be on it: the mandatory `<AGENT>` positional,
+    /// `--as`, and `--actor-channel` -- without the last one the default
+    /// channel-membership approver set
+    /// (`SlackChannelMembers.contains`, apps/api/.../slack_approvers.py) refuses
+    /// the resolve with 403 and the waiting CLI just times out (#766).
+    #[test]
+    fn the_resolve_hint_carries_every_flag_the_server_requires() {
+        let id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let line = approval_resolve_command("local", Some("weather-bot"), "C-SIM-abc", id);
+        assert_eq!(
+            line,
+            format!(
+                "agentos local approvals weather-bot --resolve {id} --as <user> \
+                 --actor-channel 'C-SIM-abc'"
+            )
+        );
+
+        // With no resolved agent name the `<AGENT>` slot keeps the command shape
+        // valid so the operator sees the slot to fill, and the channel still rides.
+        let line = approval_resolve_command("cluster", None, "C-SIM-xyz", id);
+        assert!(line.contains("approvals <AGENT> --resolve"), "{line}");
+        assert!(line.contains("--actor-channel 'C-SIM-xyz'"), "{line}");
+        assert!(line.starts_with("agentos cluster approvals"), "{line}");
+    }
 
     /// The probe is only honest if it filters on the service compose actually
     /// runs the worker as. It previously matched `service=worker`, which exists
