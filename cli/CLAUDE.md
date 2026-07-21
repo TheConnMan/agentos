@@ -174,6 +174,18 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   would parse into the narrow shape untouched and `skill approvals` would
   report gates as armed for a manifest the runner's own `PluginManifest`
   parse rejects outright (closes ADR-0041's formerly-open known limitation).
+- **A `CliOutput::to_json` that hand-projects one of those mirror structs into
+  a `serde_json::json!` literal must be declared in `cli/api-mirrors.json`'s
+  `emits` array** (the `(output, struct)` pair, plus any allowlisted, justified
+  field omissions) -- the second, emit-hop seam #691 named but did not close
+  (the proof case was `VersionsOutput::to_json` dropping `Version.id`,
+  #699). `agentos dev emit-parity` is the check. Narrower than the struct-level
+  gate: it verifies every DECLARED projection stays honest but, unlike that
+  gate's `UndeclaredStruct` check, cannot discover a new projection on its own
+  (see `cli/tests/support/emit_parity.rs`'s module doc for why). A `to_json`
+  that instead delegates wholesale to a `Serialize` value
+  (`serde_json::to_value`) or a shared schema-gated builder needs no `emits`
+  entry -- it cannot drop a field by hand-picking one in the first place.
 
 ## Verify
 
@@ -197,13 +209,30 @@ Cold-start parity ladder (issue #690, `agentos dev e2e-ladder` ->
 `cli/scripts/e2e-ladder.sh`) -- an E2E test, same as the scripted E2E above, not
 the falsifiability gate below it. It chains three rungs: rung 1 delegates to
 `e2e.sh` unchanged; rung 2 drives `local up --minimal` -> `local deploy` ->
-`local message` (reply asserted) -> `local down`; rung 3 drives `cluster
-deploy` -> `cluster message` against a pre-installed release, a real round
-trip with no manual port-forward. `AGENTOS_E2E_TIERS` (default `skill,local`,
-or `all` for `skill,local,cluster`) selects rungs; `AGENTOS_E2E_LIVE` (default
-fake, `1` for live) governs all three rungs -- rung 1 reads the same env var
-directly inside `e2e.sh` rather than being told by the ladder. One-command
-pre-release gate:
+`local message` (reply asserted) -> `local down`, against `compose.dev.yaml`;
+rung 3 drives `cluster deploy` -> `cluster message` against a pre-installed
+release, a real round trip with no manual port-forward. A fourth,
+separately-named `local-release` rung (issue #695) repeats rung 2's exact round
+trip against `compose.release.yaml` instead -- the file
+`compose/generate_release_compose.py` derives from `compose.dev.yaml` and the
+artifact a release binary's `agentos local up` actually runs, one half of the
+`compose.dev.yaml` / generated-release-compose parity seam (AGENTS.md). It
+generates that file fresh each run, preflights that the release-pinned
+`ghcr.io/curie-eng/agentos-api` and `-worker-local` images already exist
+locally (failing with a fix hint otherwise, since the generated file has no
+build directive to fall back on and a release binary has no checkout to build
+one from), then runs the same `local up --minimal -f compose.release.yaml` ->
+`local deploy` -> `local message` (reply asserted) -> `local down -f
+compose.release.yaml` against it. Elsewhere in CI, the `compose` job already
+asserts this generated file parses and renders the right service counts but
+never runs a turn through it -- this rung is the missing half, catching the
+compose-env-wiring bug class (#545) a config-only check cannot.
+`AGENTOS_E2E_TIERS` (default `skill,local`, or `all` for `skill,local,cluster`)
+selects rungs; `local-release` is NOT folded into `all` since it needs those
+extra images built first, so name it explicitly (e.g.
+`skill,local,local-release`). `AGENTOS_E2E_LIVE` (default fake, `1` for live)
+governs every named rung, including rung 1 -- `e2e.sh` reads the same env var
+directly rather than being told by the ladder. One-command pre-release gate:
 ```bash
 AGENTOS_E2E_TIERS=all agentos dev e2e-ladder
 ```

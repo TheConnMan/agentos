@@ -164,6 +164,14 @@ pub struct EvalTriggerResult {
 /// pass-rate and summed cost for a suite run under one model (#255/#526). `model`
 /// is `None` for the matrix's unlabelled column (a run with no resolved model).
 ///
+/// `completed` is a subset of `total`: the graded rows whose turn actually
+/// reached a verdict, as opposed to a graded fail that never completed at all
+/// (a classified failure, the wrong terminal status, or a transport/runner
+/// exception). `total > 0 && completed == 0` is a model that never produced one
+/// completed turn across the whole suite -- distinct from a real 0%, which the
+/// sweep reports and fails on (#622, #526 AC4). `#[serde(default)]` keeps this
+/// tolerant of an API that predates the field.
+///
 /// `plumbing` counts the rows that ran but were never graded (ADR-0055, #612/#606
 /// -- the fake-model tier is plumbing-only): excluded from `passed`/`total` rather
 /// than fabricated into a pass or fail, so a model whose every row is plumbing
@@ -178,6 +186,8 @@ pub struct EvalModelSummary {
     pub total: u64,
     #[serde(default)]
     pub cost_usd: Option<f64>,
+    #[serde(default)]
+    pub completed: u64,
     #[serde(default)]
     pub plumbing: u64,
 }

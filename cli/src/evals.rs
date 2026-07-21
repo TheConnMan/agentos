@@ -213,7 +213,14 @@ pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
 /// case). The one assertion the fake tier makes, and the gate the real path
 /// applies before the grader is ever consulted; a classified-failure or
 /// interrupted turn matches neither expected status, so it never completes.
-fn turn_completed(case: &EvalCase, events: &[OutboundEvent]) -> bool {
+///
+/// `pub` so a `--model` sweep can tally *completion* per case, independent of
+/// `CaseOutcome`: `turn_outcome` collapses "never completed" and "completed but
+/// graded wrong" into the same `Fail`, which is exactly the ambiguity a sweep
+/// row must not have (issue #622, #526 AC4) -- a model that produced zero
+/// completed turns across the whole suite is a categorically different outcome
+/// from one that completed turns and lost on the grader.
+pub fn turn_completed(case: &EvalCase, events: &[OutboundEvent]) -> bool {
     let Some(OutboundEvent::Final { status, .. }) = events.last() else {
         return false;
     };
