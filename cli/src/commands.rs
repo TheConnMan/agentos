@@ -2042,6 +2042,32 @@ async fn boot_eval_runner(
     Ok(url)
 }
 
+/// One model's row in a `--model` sweep report: pass-rate, total, and how many
+/// of its rows were plumbing-only (ran but never graded, ADR-0055, #612/#606).
+/// `plumbing` is always `0` on the in-CLI skill sweep (`eval_sweep` below,
+/// which always boots a real, non-fake runner); it is populated from the
+/// platform eval matrix's `EvalModelSummary.plumbing` on the `local`/`cluster`
+/// `--model` sweep (`message.rs`'s `scoped_rows`), where a fake-model tier row
+/// can legitimately have `total == 0` and `plumbing > 0` (#700).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepRow {
+    pub model: String,
+    pub passed: usize,
+    pub total: usize,
+    pub plumbing: usize,
+}
+
+impl SweepRow {
+    /// A row with zero graded cases and at least one plumbing row is entirely
+    /// a fixture: every case that ran for this model was plumbing, so `passed`
+    /// and `total` carry no real signal at all (not "0% failing", but "never
+    /// graded"). Distinguishing this from a genuine 0/0 (no cases assigned)
+    /// keeps a plumbing-only model from reading as a failing real result.
+    pub fn is_plumbing_only(&self) -> bool {
+        self.total == 0 && self.plumbing > 0
+    }
+}
+
 /// Run the suite once per model in a fresh runner and report pass-rate per model.
 async fn eval_sweep(
     suite: &EvalSuite,
@@ -2063,7 +2089,7 @@ async fn eval_sweep(
         suite.cases.len()
     ));
     let cl = ui.checklist();
-    let mut rows: Vec<(String, usize, usize)> = Vec::with_capacity(models.len());
+    let mut rows: Vec<SweepRow> = Vec::with_capacity(models.len());
     for (i, model) in models.iter().enumerate() {
         let name = format!("agentos-eval-sweep-{i}");
         let port = DEFAULT_PORT + 100 + i as u16;
@@ -2077,7 +2103,8 @@ async fn eval_sweep(
         };
         let client = RunnerClient::new(&url)?;
         // `boot_eval_runner` pins `fake_model: false`, so every sweep runner is a
-        // REAL model whatever the standing dev runner is -- the sweep grades.
+        // REAL model whatever the standing dev runner is -- the sweep grades,
+        // so this in-CLI path never produces a plumbing-only row.
         let run = run_suite_cases(&client, suite, false, |_| {}).await;
         let _ = docker::remove_container(&name).await;
         let results = run?;
@@ -2086,50 +2113,78 @@ async fn eval_sweep(
             .filter(|(_, o, _, _)| *o == CaseOutcome::Pass)
             .count();
         step.done(&format!("{passed}/{}", suite.cases.len()));
-        rows.push((model.clone(), passed, suite.cases.len()));
+        rows.push(SweepRow {
+            model: model.clone(),
+            passed,
+            total: suite.cases.len(),
+            plumbing: 0,
+        });
     }
     report_sweep(&rows)
+}
+
+/// The `--json` sweep payload for one row: pure and independent of `Ui` so it
+/// is unit-testable without a process-level stdout capture. Carries the raw
+/// `plumbing` count (mirroring the API field) plus a `plumbing_only` boolean
+/// derived from `SweepRow::is_plumbing_only` for a scripted consumer to filter
+/// fixture rows out of a real model comparison (#700).
+fn sweep_json_row(row: &SweepRow) -> serde_json::Value {
+    serde_json::json!({
+        "model": row.model,
+        "passed": row.passed,
+        "total": row.total,
+        "pass_rate": if row.total > 0 { row.passed as f64 / row.total as f64 } else { 0.0 },
+        "plumbing": row.plumbing,
+        "plumbing_only": row.is_plumbing_only(),
+    })
+}
+
+/// The human table row for one sweep row: `[model, "passed/total", pass rate,
+/// plumbing count]`. A plumbing-only row (#700) is marked distinctly rather
+/// than blended into the pass-rate list: the model name gets a `(plumbing)`
+/// suffix and the rate column reads `n/a` instead of a misleading `0%`, since
+/// every case for that model was a fixture, never graded, not a real failure.
+fn sweep_table_row(row: &SweepRow) -> Vec<String> {
+    let model = if row.is_plumbing_only() {
+        format!("{} (plumbing)", row.model)
+    } else {
+        row.model.clone()
+    };
+    let rate = if row.is_plumbing_only() {
+        "n/a".to_string()
+    } else if row.total > 0 {
+        format!("{:.0}%", row.passed as f64 / row.total as f64 * 100.0)
+    } else {
+        "0%".to_string()
+    };
+    let plumbing = if row.plumbing > 0 {
+        row.plumbing.to_string()
+    } else {
+        "-".to_string()
+    };
+    vec![
+        model,
+        format!("{}/{}", row.passed, row.total),
+        rate,
+        plumbing,
+    ]
 }
 
 /// Render a model-sweep roll-up: pass-rate per model. Under `--json` the whole
 /// comparison is one payload; otherwise a table. A sweep is a comparison, not a
 /// gate, so it never exits non-zero on a model that scored below 100%.
-pub fn report_sweep(rows: &[(String, usize, usize)]) -> Result<()> {
+pub fn report_sweep(rows: &[SweepRow]) -> Result<()> {
     let ui = crate::ui::ui();
     if ui.json() {
-        let models: Vec<serde_json::Value> = rows
-            .iter()
-            .map(|(model, passed, total)| {
-                serde_json::json!({
-                    "model": model,
-                    "passed": passed,
-                    "total": total,
-                    "pass_rate": if *total > 0 { *passed as f64 / *total as f64 } else { 0.0 },
-                })
-            })
-            .collect();
+        let models: Vec<serde_json::Value> = rows.iter().map(sweep_json_row).collect();
         ui.emit_json(&serde_json::json!({ "sweep": models }));
         return Ok(());
     }
-    let table: Vec<Vec<String>> = rows
-        .iter()
-        .map(|(model, passed, total)| {
-            let rate = if *total > 0 {
-                *passed as f64 / *total as f64 * 100.0
-            } else {
-                0.0
-            };
-            vec![
-                model.clone(),
-                format!("{passed}/{total}"),
-                format!("{rate:.0}%"),
-            ]
-        })
-        .collect();
+    let table: Vec<Vec<String>> = rows.iter().map(sweep_table_row).collect();
     ui.payload_plain(&crate::ui::table(
-        &["model", "passed", "pass rate"],
+        &["model", "passed", "pass rate", "plumbing"],
         &table,
-        &[1, 2],
+        &[1, 2, 3],
     ));
     Ok(())
 }
@@ -4065,9 +4120,9 @@ mod tests {
     use super::{
         absent_container_note, merge_secret_env, parse_manifest_gates, plan_recorded_state,
         plan_recorded_teardown, plan_skill_down, replace_first_line, resolve_cases_path,
-        seed_env_if_missing, select_in_force_deployment, select_passthrough_env,
-        validate_slack_channel, ApprovalGateDecl, DownPlan, EnvSeed, RecordedStatePlan,
-        RecordedTeardown,
+        seed_env_if_missing, select_in_force_deployment, select_passthrough_env, sweep_json_row,
+        sweep_table_row, validate_slack_channel, ApprovalGateDecl, DownPlan, EnvSeed,
+        RecordedStatePlan, RecordedTeardown, SweepRow,
     };
     use serde::Deserialize;
     use std::path::{Path, PathBuf};
@@ -5547,5 +5602,88 @@ mod tests {
             fix.contains("cluster") || fix.contains("local"),
             "fix names a cross-tier alternative: {fix}"
         );
+    }
+
+    // ─── #700: plumbing rows render distinctly from real rows in a sweep ─────
+
+    fn real_row(model: &str, passed: usize, total: usize) -> SweepRow {
+        SweepRow {
+            model: model.to_string(),
+            passed,
+            total,
+            plumbing: 0,
+        }
+    }
+
+    fn plumbing_only_row(model: &str, plumbing: usize) -> SweepRow {
+        SweepRow {
+            model: model.to_string(),
+            passed: 0,
+            total: 0,
+            plumbing,
+        }
+    }
+
+    #[test]
+    fn plumbing_only_row_is_detected_and_a_real_row_is_not() {
+        assert!(plumbing_only_row("fake", 3).is_plumbing_only());
+        assert!(!real_row("opus", 3, 3).is_plumbing_only());
+        // A real row that never ran any case (no cases assigned this model, no
+        // plumbing either) is 0/0 but NOT plumbing-only -- there is nothing to
+        // distinguish it from, so it must not get the plumbing marker.
+        assert!(!real_row("idle", 0, 0).is_plumbing_only());
+    }
+
+    #[test]
+    fn sweep_json_row_carries_the_plumbing_count_and_a_filterable_boolean() {
+        let real = sweep_json_row(&real_row("opus", 2, 3));
+        assert_eq!(real["model"], "opus");
+        assert_eq!(real["passed"], 2);
+        assert_eq!(real["total"], 3);
+        assert_eq!(real["plumbing"], 0);
+        assert_eq!(real["plumbing_only"], false);
+
+        let plumbing = sweep_json_row(&plumbing_only_row("fake", 5));
+        assert_eq!(plumbing["model"], "fake");
+        assert_eq!(plumbing["passed"], 0);
+        assert_eq!(plumbing["total"], 0);
+        assert_eq!(plumbing["plumbing"], 5);
+        assert_eq!(
+            plumbing["plumbing_only"], true,
+            "a scripted consumer filters on this flag to drop fixture rows: {plumbing}"
+        );
+    }
+
+    #[test]
+    fn sweep_table_row_marks_a_plumbing_only_row_distinctly_from_a_real_one() {
+        let real = sweep_table_row(&real_row("opus", 3, 3));
+        assert_eq!(real[0], "opus");
+        assert_eq!(real[1], "3/3");
+        assert_eq!(real[2], "100%");
+        assert_eq!(real[3], "-");
+
+        let plumbing = sweep_table_row(&plumbing_only_row("fake", 4));
+        assert_eq!(
+            plumbing[0], "fake (plumbing)",
+            "the model name must be marked so it cannot be skimmed as a real row"
+        );
+        assert_eq!(plumbing[1], "0/0");
+        assert_eq!(
+            plumbing[2], "n/a",
+            "a plumbing-only row must not read as a real 0% failure"
+        );
+        assert_eq!(plumbing[3], "4");
+    }
+
+    #[test]
+    fn sweep_table_rows_for_a_mixed_sweep_stay_distinguishable_side_by_side() {
+        // A sweep containing both a plumbing row and a real row (#700 AC): the two
+        // must render differently enough that scanning the table cannot mistake
+        // one for the other.
+        let rows = [real_row("opus", 2, 3), plumbing_only_row("fake-model", 3)];
+        let table: Vec<Vec<String>> = rows.iter().map(sweep_table_row).collect();
+        assert_eq!(table[0], vec!["opus", "2/3", "67%", "-"]);
+        assert_eq!(table[1], vec!["fake-model (plumbing)", "0/0", "n/a", "3"]);
+        assert_ne!(table[0][2], table[1][2], "pass-rate columns must differ");
     }
 }
