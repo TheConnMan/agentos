@@ -16,6 +16,16 @@ actor, both still admin-gated and unconfigured. The Decision below (ancestry,
 checks, the environment reference) is unaffected and stands as an
 accident-prevention control.
 
+**Amended by [ADR-0066](0066-a-skip-propagates-through-the-whole-ancestor-graph.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+the Decision's claim that the jobs downstream of `build` are "covered without
+further edits", and the Consequence that a push straight to `main` is
+"unaffected", are both false as built. A skip propagates through the whole
+ancestor graph, so `merge` and the overlay jobs beneath it were skipped on every
+main push and the continuous image tags stopped being published. 0066 guards
+each of those jobs. The gate itself (ancestry, checks, the environment
+reference) is unaffected and stands as decided.
+
 Implements [#628](https://github.com/curie-eng/agentos/issues/628).
 
 ## Context

@@ -42,7 +42,14 @@ and its signature:
 ```bash
 VERSION=vX.Y.Z          # the release you are installing
 REPO=curie-eng/agentos
-ASSET=agentos-x86_64-unknown-linux-gnu   # macOS: agentos-aarch64-apple-darwin
+# Resolve the right asset for this machine. The release ships Linux x86_64 and
+# macOS Apple silicon; anything else builds from source (see cli/).
+ASSET=
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64)                 ASSET=agentos-x86_64-unknown-linux-gnu ;;
+  Darwin/arm64|Darwin/aarch64)  ASSET=agentos-aarch64-apple-darwin ;;
+esac
+: "${ASSET:?no prebuilt binary for this platform; build the CLI from source in cli/}"
 BASE="https://github.com/$REPO/releases/download/$VERSION"
 
 curl -fsSLO "$BASE/$ASSET"
@@ -84,7 +91,7 @@ checks any single asset in one command, no manifest needed. It fails unless the
 asset was built by this repo's release workflow:
 
 ```bash
-gh attestation verify agentos-x86_64-unknown-linux-gnu \
+gh attestation verify "$ASSET" \
   --repo curie-eng/agentos \
   --signer-workflow curie-eng/agentos/.github/workflows/release.yaml \
   --source-ref "refs/tags/$VERSION"
@@ -133,7 +140,7 @@ Scan one with any SPDX-aware tool, for example
 [grype](https://github.com/anchore/grype):
 
 ```bash
-grype sbom:./agentos-x86_64-unknown-linux-gnu.spdx.json
+grype "sbom:./$ASSET.spdx.json"
 ```
 
 ## What happens if an asset is not covered

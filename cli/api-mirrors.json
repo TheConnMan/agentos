@@ -78,6 +78,11 @@
       "omissions": []
     },
     {
+      "struct": "ThreadResetState",
+      "schema": "ThreadResetState",
+      "omissions": []
+    },
+    {
       "struct": "EvalTriggerResult",
       "schema": "EvalTriggerResult",
       "omissions": [

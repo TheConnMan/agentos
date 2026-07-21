@@ -133,6 +133,8 @@ def _sandbox_client(
             # the K8s runner securityContext; overridable via AGENTOS_RUNNER_*.
             hardening=RunnerHardening.from_env(env),
             environ=env,
+            bundle_max_uncompressed_bytes=config.bundle_max_uncompressed_bytes,
+            bundle_max_compression_ratio=config.bundle_max_compression_ratio,
         )
         # Prewarm the runner image once at startup so the first claim window is
         # not gated on a cold pull. Best-effort inside ensure_image.

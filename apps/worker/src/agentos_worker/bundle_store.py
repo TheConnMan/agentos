@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aci_protocol.s3 import build_s3_client
-from plugin_format import bundle_root, safe_extract
+from plugin_format import (
+    DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    bundle_root,
+    safe_extract,
+)
 
 from .config import WorkerConfig
 
@@ -70,16 +75,30 @@ class BundleStore:
         return body
 
 
-def extract_bundle(data: bytes, dest: Path) -> Path:
+def extract_bundle(
+    data: bytes,
+    dest: Path,
+    *,
+    max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+) -> Path:
     """Extract ``data`` into ``dest`` and return the plugin root to mount.
 
     The returned path is ``dest`` when the archive is flat, or its single
     wrapper subdir when the manifest sits one level down -- the same root the
     API validated, so the runner reads the plugin from the expected layout.
     Extraction and unwrap route through ``plugin_format`` (the single audited
-    home for the traversal/symlink/special-file guards); an unsafe or
-    unrecognized archive raises ``plugin_format.UnsupportedArchive``, which the
-    Docker-substrate caller already treats as a fetch failure.
+    home for the traversal/symlink/special-file and size/ratio guards); an
+    unsafe, oversized, or unrecognized archive raises
+    ``plugin_format.UnsupportedArchive``, which the Docker-substrate caller
+    already treats as a fetch failure. The size/ratio caps default to
+    ``plugin_format``'s generous fallbacks; the caller passes the operator-
+    configured ``WorkerConfig`` values instead (ADR-0059 decision 3).
     """
-    safe_extract(data, dest)
+    safe_extract(
+        data,
+        dest,
+        max_uncompressed_bytes=max_uncompressed_bytes,
+        max_compression_ratio=max_compression_ratio,
+    )
     return bundle_root(dest)

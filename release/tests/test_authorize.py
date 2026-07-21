@@ -2,15 +2,17 @@
 
 The gate is the deterministic check behind issue #628: a `v*` tag must not be
 able to start the publish pipeline unless its commit is reachable from
-`origin/main` and that commit's checks are all green. These tests drive both
-functions directly -- `commit_is_on_reviewed_main` against a real, disposable
-git repo (no network needed for ancestry) and `required_checks_passed` against
-constructed check-run lists -- plus `authorize()`, which combines them and is
-what `authorize-release` actually calls.
+`origin/main` and that commit's required checks are all green. These tests
+drive both functions directly -- `commit_is_on_reviewed_main` against a real,
+disposable git repo (no network needed for ancestry) and
+`required_checks_passed`/`missing_required_checks` against constructed
+check-run lists -- plus `authorize()`, which combines them and is what
+`authorize-release` actually calls.
 """
 
 import importlib.util
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -58,6 +60,13 @@ def git_repo(tmp_path) -> Path:
     return repo
 
 
+# A required-name set distinct from the real, larger production
+# REQUIRED_CHECK_NAMES (issue #733). Most tests in this file exercise the
+# *logic* of required-check matching and should not need updating every time
+# a ci.yaml job is renamed or added; the production constant itself gets its
+# own coverage in TestRequiredCheckAllowlist below.
+TEST_REQUIRED_NAMES = frozenset({"CI", "CodeQL"})
+
 CHECK_RUNS_ALL_GREEN = [
     {"name": "CI", "conclusion": "success"},
     {"name": "CodeQL", "conclusion": "neutral"},
@@ -65,7 +74,7 @@ CHECK_RUNS_ALL_GREEN = [
 ]
 CHECK_RUNS_ONE_FAILED = [
     {"name": "CI", "conclusion": "success"},
-    {"name": "Dependency Audit", "conclusion": "failure"},
+    {"name": "CodeQL", "conclusion": "failure"},
 ]
 
 CURRENT_RUN_ID = "29811627398"
@@ -120,22 +129,75 @@ class TestCommitIsOnReviewedMain:
 
 
 class TestRequiredChecksPassed:
-    def test_all_success_or_neutral_or_skipped_passes(self):
-        assert authorize_module.required_checks_passed(CHECK_RUNS_ALL_GREEN)
+    def test_all_required_names_present_and_green_passes(self):
+        assert authorize_module.required_checks_passed(
+            CHECK_RUNS_ALL_GREEN, TEST_REQUIRED_NAMES
+        )
 
-    def test_any_failure_fails(self):
-        assert not authorize_module.required_checks_passed(CHECK_RUNS_ONE_FAILED)
+    def test_a_required_name_that_concluded_failure_fails(self):
+        assert not authorize_module.required_checks_passed(
+            CHECK_RUNS_ONE_FAILED, TEST_REQUIRED_NAMES
+        )
 
     def test_no_check_runs_fails(self):
         # Absence of checks is not evidence they passed.
-        assert not authorize_module.required_checks_passed([])
+        assert not authorize_module.required_checks_passed([], TEST_REQUIRED_NAMES)
+
+    def test_a_missing_required_name_fails_even_if_everything_present_is_green(self):
+        # issue #733's core scenario: a non-empty, fully-passing list that
+        # simply never contains the name that matters.
+        only_unrelated = [{"name": "Secret Scan", "conclusion": "success"}]
+
+        assert not authorize_module.required_checks_passed(
+            only_unrelated, TEST_REQUIRED_NAMES
+        )
+
+    def test_an_unrelated_failing_check_does_not_affect_the_required_set(self):
+        # Only required names are asserted; a failing check outside
+        # `required_names` has no bearing (this is not "everything present
+        # must pass" -- that was the old, weaker behavior issue #733 replaces).
+        runs = [
+            {"name": "CI", "conclusion": "success"},
+            {"name": "CodeQL", "conclusion": "neutral"},
+            {"name": "Some Unrelated Job", "conclusion": "failure"},
+        ]
+
+        assert authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
+
+
+class TestMissingRequiredChecks:
+    def test_empty_check_runs_reports_every_required_name_missing(self):
+        assert (
+            authorize_module.missing_required_checks([], TEST_REQUIRED_NAMES)
+            == TEST_REQUIRED_NAMES
+        )
+
+    def test_all_present_and_green_reports_nothing_missing(self):
+        assert (
+            authorize_module.missing_required_checks(
+                CHECK_RUNS_ALL_GREEN, TEST_REQUIRED_NAMES
+            )
+            == set()
+        )
+
+    def test_a_required_name_present_but_not_concluded_is_reported_missing(self):
+        runs = [
+            {"name": "CI", "conclusion": "success"},
+            {"name": "CodeQL", "conclusion": None},  # still in_progress
+        ]
+
+        assert authorize_module.missing_required_checks(
+            runs, TEST_REQUIRED_NAMES
+        ) == {"CodeQL"}
 
 
 class TestAuthorize:
     def test_reviewed_and_green_commit_is_authorized(self, git_repo):
         sha = run_git(git_repo, "rev-parse", "HEAD")
 
-        authorize_module.authorize(sha, CHECK_RUNS_ALL_GREEN, "main", cwd=git_repo)
+        authorize_module.authorize(
+            sha, CHECK_RUNS_ALL_GREEN, "main", cwd=git_repo, required_names=TEST_REQUIRED_NAMES
+        )
 
     def test_unreviewed_commit_is_refused_even_with_green_checks(self, git_repo):
         run_git(git_repo, "checkout", "-q", "-b", "feature")
@@ -143,16 +205,79 @@ class TestAuthorize:
 
         with pytest.raises(authorize_module.AuthorizationError, match="not reachable"):
             authorize_module.authorize(
-                unmerged, CHECK_RUNS_ALL_GREEN, "main", cwd=git_repo
+                unmerged,
+                CHECK_RUNS_ALL_GREEN,
+                "main",
+                cwd=git_repo,
+                required_names=TEST_REQUIRED_NAMES,
             )
 
-    def test_reviewed_commit_with_failed_checks_is_refused(self, git_repo):
+    def test_reviewed_commit_with_a_failed_required_check_is_refused(self, git_repo):
+        sha = run_git(git_repo, "rev-parse", "HEAD")
+
+        with pytest.raises(authorize_module.AuthorizationError, match="required check-run"):
+            authorize_module.authorize(
+                sha,
+                CHECK_RUNS_ONE_FAILED,
+                "main",
+                cwd=git_repo,
+                required_names=TEST_REQUIRED_NAMES,
+            )
+
+
+class TestRequiredCheckAllowlist:
+    """Issue #733: a non-empty, fully-green check-run list is not enough on
+    its own -- the checks that matter must actually be among them. These use
+    the real production `REQUIRED_CHECK_NAMES` (no override), covering the
+    exact failure scenario from the issue: main's real CI never started for a
+    commit, but one unrelated check-run (e.g. a security scanner) passed on
+    that SHA.
+    """
+
+    UNRELATED_BUT_GREEN = [
+        {"name": "gitleaks (full history)", "conclusion": "success"},
+        {"name": "Analyze (python)", "conclusion": "success"},
+    ]
+
+    def test_unrelated_green_checks_alone_do_not_satisfy_required_checks_passed(self):
+        assert not authorize_module.required_checks_passed(self.UNRELATED_BUT_GREEN)
+
+    def test_missing_required_checks_lists_every_ci_yaml_job(self):
+        missing = authorize_module.missing_required_checks(self.UNRELATED_BUT_GREEN)
+
+        assert missing == authorize_module.REQUIRED_CHECK_NAMES
+
+    def test_authorize_refuses_a_commit_whose_only_checks_are_unrelated_but_green(
+        self, git_repo
+    ):
         sha = run_git(git_repo, "rev-parse", "HEAD")
 
         with pytest.raises(
-            authorize_module.AuthorizationError, match="check-runs"
+            authorize_module.AuthorizationError, match="required check-run"
         ):
-            authorize_module.authorize(sha, CHECK_RUNS_ONE_FAILED, "main", cwd=git_repo)
+            authorize_module.authorize(sha, self.UNRELATED_BUT_GREEN, "main", cwd=git_repo)
+
+    def test_every_required_check_present_and_green_authorizes(self, git_repo):
+        sha = run_git(git_repo, "rev-parse", "HEAD")
+        runs = [
+            {"name": name, "conclusion": "success"}
+            for name in authorize_module.REQUIRED_CHECK_NAMES
+        ]
+
+        authorize_module.authorize(sha, runs, "main", cwd=git_repo)
+
+    def test_a_single_missing_required_check_among_an_otherwise_full_set_is_refused(
+        self, git_repo
+    ):
+        sha = run_git(git_repo, "rev-parse", "HEAD")
+        names = sorted(authorize_module.REQUIRED_CHECK_NAMES)
+        dropped, remaining = names[0], names[1:]
+        runs = [{"name": name, "conclusion": "success"} for name in remaining]
+
+        with pytest.raises(
+            authorize_module.AuthorizationError, match=re.escape(dropped)
+        ):
+            authorize_module.authorize(sha, runs, "main", cwd=git_repo)
 
 
 class TestFetchCheckRuns:
@@ -194,6 +319,102 @@ class TestFetchCheckRuns:
         assert runs == [CHECK_RUNS_ALL_GREEN[0]]
 
 
+class TestFetchCheckRunsPagination:
+    """The check-runs endpoint's default page size is 30, and a real commit
+    on this repo has been measured with several dozen check-runs across its
+    workflows (issue #733) -- comfortably past that default and past what a
+    single `per_page=100` page happened to cover historically. These tests
+    drive `fetch_check_runs`'s own pagination loop (not a stubbed
+    single-response mock) to prove it walks every page, and that a required
+    check which only fails or is only missing on a later page still causes a
+    refusal rather than being silently dropped.
+    """
+
+    @staticmethod
+    def _paged_fake_run(pages: dict, total_count: int):
+        def fake_run(argv, **kwargs):
+            page_arg = next(
+                arg for arg in argv if isinstance(arg, str) and arg.startswith("page=")
+            )
+            page = int(page_arg.split("=", 1)[1])
+            payload = {"total_count": total_count, "check_runs": pages.get(page, [])}
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
+
+        return fake_run
+
+    def test_collects_every_page_in_order(self, monkeypatch):
+        pages = {
+            1: [
+                {"name": "CI", "conclusion": "success"},
+                {"name": "Unrelated", "conclusion": "success"},
+            ],
+            2: [{"name": "CodeQL", "conclusion": "neutral"}],
+        }
+        monkeypatch.setattr(
+            authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=3)
+        )
+
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=2)
+
+        assert [run["name"] for run in runs] == ["CI", "Unrelated", "CodeQL"]
+
+    def test_a_required_check_failing_only_on_a_later_page_still_refuses(self, monkeypatch):
+        pages = {
+            1: [
+                {"name": "CI", "conclusion": "success"},
+                {"name": "Unrelated", "conclusion": "success"},
+            ],
+            2: [{"name": "CodeQL", "conclusion": "failure"}],
+        }
+        monkeypatch.setattr(
+            authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=3)
+        )
+
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=2)
+
+        assert len(runs) == 3
+        assert not authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
+        assert authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES) == {
+            "CodeQL"
+        }
+
+    def test_a_required_check_only_present_on_a_later_page_still_authorizes(
+        self, git_repo, monkeypatch
+    ):
+        sha = run_git(git_repo, "rev-parse", "HEAD")
+        pages = {
+            1: [{"name": "CI", "conclusion": "success"}],
+            2: [{"name": "CodeQL", "conclusion": "success"}],
+        }
+        # Scope the `gh api` stub to the fetch call only -- `authorize()` below
+        # also shells out to real `git merge-base` via the same
+        # `subprocess.run`, which must not be intercepted by this fake.
+        with monkeypatch.context() as page_fetch:
+            page_fetch.setattr(
+                authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=2)
+            )
+            runs = authorize_module.fetch_check_runs(
+                "deadbeef", "curie-eng/agentos", per_page=1
+            )
+
+        authorize_module.authorize(
+            sha, runs, "main", cwd=git_repo, required_names=TEST_REQUIRED_NAMES
+        )
+
+    def test_stops_when_a_page_reports_nothing_even_if_total_count_implied_more(
+        self, monkeypatch
+    ):
+        # A stale/wrong total_count must not spin the loop forever.
+        pages = {1: [{"name": "CI", "conclusion": "success"}], 2: []}
+        monkeypatch.setattr(
+            authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=5)
+        )
+
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=1)
+
+        assert runs == [{"name": "CI", "conclusion": "success"}]
+
+
 class TestExcludeCurrentWorkflowRun:
     """The gate is itself a check-run on the tagged SHA (issue #732, defect 2)."""
 
@@ -232,32 +453,70 @@ class TestAuthorizeExcludesCurrentRun:
         ]
 
         authorize_module.authorize(
-            sha, runs, "main", cwd=git_repo, exclude_run_id=CURRENT_RUN_ID
+            sha,
+            runs,
+            "main",
+            cwd=git_repo,
+            exclude_run_id=CURRENT_RUN_ID,
+            required_names=TEST_REQUIRED_NAMES,
         )
 
-    def test_unrelated_in_progress_check_is_still_refused(self, git_repo):
+    def test_unrelated_check_present_does_not_block_when_required_checks_are_green(
+        self, git_repo
+    ):
+        # New semantics (issue #733): only the required names are asserted --
+        # an unrelated check-run, however incomplete, has no bearing.
         sha = run_git(git_repo, "rev-parse", "HEAD")
         runs = [
             GATE_OWN_IN_PROGRESS,
             check_run("CI", "success", OTHER_RUN_ID, "88573600001"),
+            check_run("CodeQL", "neutral", OTHER_RUN_ID, "88573600002"),
             check_run("Integration Tests", None, OTHER_RUN_ID, "88573600003"),
         ]
 
-        with pytest.raises(authorize_module.AuthorizationError, match="check-runs"):
-            authorize_module.authorize(
-                sha, runs, "main", cwd=git_repo, exclude_run_id=CURRENT_RUN_ID
-            )
+        authorize_module.authorize(
+            sha,
+            runs,
+            "main",
+            cwd=git_repo,
+            exclude_run_id=CURRENT_RUN_ID,
+            required_names=TEST_REQUIRED_NAMES,
+        )
 
-    def test_failed_check_from_another_run_is_still_refused(self, git_repo):
+    def test_required_check_still_in_progress_is_refused(self, git_repo):
         sha = run_git(git_repo, "rev-parse", "HEAD")
         runs = [
             GATE_OWN_IN_PROGRESS,
-            check_run("Dependency Audit", "failure", OTHER_RUN_ID, "88573600004"),
+            check_run("CI", "success", OTHER_RUN_ID, "88573600001"),
+            check_run("CodeQL", None, OTHER_RUN_ID, "88573600002"),
         ]
 
-        with pytest.raises(authorize_module.AuthorizationError, match="check-runs"):
+        with pytest.raises(authorize_module.AuthorizationError, match="required check-run"):
             authorize_module.authorize(
-                sha, runs, "main", cwd=git_repo, exclude_run_id=CURRENT_RUN_ID
+                sha,
+                runs,
+                "main",
+                cwd=git_repo,
+                exclude_run_id=CURRENT_RUN_ID,
+                required_names=TEST_REQUIRED_NAMES,
+            )
+
+    def test_required_check_that_concluded_failure_is_refused(self, git_repo):
+        sha = run_git(git_repo, "rev-parse", "HEAD")
+        runs = [
+            GATE_OWN_IN_PROGRESS,
+            check_run("CI", "success", OTHER_RUN_ID, "88573600001"),
+            check_run("CodeQL", "failure", OTHER_RUN_ID, "88573600004"),
+        ]
+
+        with pytest.raises(authorize_module.AuthorizationError, match="required check-run"):
+            authorize_module.authorize(
+                sha,
+                runs,
+                "main",
+                cwd=git_repo,
+                exclude_run_id=CURRENT_RUN_ID,
+                required_names=TEST_REQUIRED_NAMES,
             )
 
     def test_only_current_run_checks_is_refused(self, git_repo):
@@ -269,20 +528,35 @@ class TestAuthorizeExcludesCurrentRun:
             check_run("authorize-release setup", "success", CURRENT_RUN_ID, "88573652087"),
         ]
 
-        with pytest.raises(authorize_module.AuthorizationError, match="check-runs"):
+        with pytest.raises(authorize_module.AuthorizationError, match="required check-run"):
             authorize_module.authorize(
-                sha, runs, "main", cwd=git_repo, exclude_run_id=CURRENT_RUN_ID
+                sha,
+                runs,
+                "main",
+                cwd=git_repo,
+                exclude_run_id=CURRENT_RUN_ID,
+                required_names=TEST_REQUIRED_NAMES,
             )
 
 
 class TestMain:
     """`main()` must thread `GITHUB_RUN_ID` into `authorize()` as
-    `exclude_run_id` (issue #732, defect 2). Every test above drives
-    `authorize()` or `exclude_current_workflow_run()` directly, so deleting
-    `exclude_run_id=args.run_id` from `main()`'s `authorize(...)` call leaves
-    the whole suite green while restoring the bug: the gate would wait
-    forever on its own in-progress check-run. These tests invoke `main()`
-    itself so that wiring is covered at the layer where it actually lived.
+    `exclude_run_id` (issue #732, defect 2).
+
+    `main()` never passes `required_names` through explicitly, so it always
+    resolves the module-level `REQUIRED_CHECK_NAMES` at call time; these tests
+    monkeypatch that constant to the small `TEST_REQUIRED_NAMES` set so the
+    fixtures stay independent of the production ci.yaml job list.
+
+    Note on the required-check allowlist (issue #733): the gate's own
+    check-run is always named after its job (e.g. `authorize-release`), never
+    after a ci.yaml job, so it can never itself satisfy or block a required
+    name -- unlike the old "every present check-run must pass" rule, an
+    unfiltered self-entry sitting in the list with `conclusion: null` no
+    longer affects the outcome at all. What still matters, and what these
+    tests cover, is that a *wrong* run id can incorrectly filter out a
+    legitimate required check-run (mistaking another run's job for this one),
+    which must still refuse.
 
     `fetch_check_runs` is stubbed so no network call happens; `authorize()`
     runs for real against `git_repo`, so `main()` is run with that repo as
@@ -296,6 +570,10 @@ class TestMain:
         )
 
     @staticmethod
+    def _use_test_required_names(monkeypatch) -> None:
+        monkeypatch.setattr(authorize_module, "REQUIRED_CHECK_NAMES", TEST_REQUIRED_NAMES)
+
+    @staticmethod
     def _runs_with_gate_own_in_progress() -> list[dict]:
         return [
             GATE_OWN_IN_PROGRESS,
@@ -307,6 +585,7 @@ class TestMain:
         self, git_repo, monkeypatch
     ):
         sha = run_git(git_repo, "rev-parse", "HEAD")
+        self._use_test_required_names(monkeypatch)
         self._stub_fetch_check_runs(monkeypatch, self._runs_with_gate_own_in_progress())
         monkeypatch.chdir(git_repo)
         monkeypatch.setenv("GITHUB_RUN_ID", CURRENT_RUN_ID)
@@ -317,8 +596,14 @@ class TestMain:
 
         assert exit_code == 0
 
-    def test_main_refuses_when_github_run_id_is_absent(self, git_repo, monkeypatch):
+    def test_main_still_authorizes_when_github_run_id_is_absent_and_required_checks_are_green(
+        self, git_repo, monkeypatch
+    ):
+        # The gate's own check-run is never itself a required name, so
+        # leaving it unfiltered (no run id to exclude by) has no bearing on
+        # whether the real required checks (CI, CodeQL here) are satisfied.
         sha = run_git(git_repo, "rev-parse", "HEAD")
+        self._use_test_required_names(monkeypatch)
         self._stub_fetch_check_runs(monkeypatch, self._runs_with_gate_own_in_progress())
         monkeypatch.chdir(git_repo)
         monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
@@ -327,12 +612,19 @@ class TestMain:
             [sha, "--repo", "curie-eng/agentos", "--main-ref", "main"]
         )
 
-        assert exit_code == 1
+        assert exit_code == 0
 
     def test_main_refuses_when_github_run_id_is_a_different_run(
         self, git_repo, monkeypatch
     ):
+        # The fixture's real "CI"/"CodeQL" entries are marked as belonging to
+        # OTHER_RUN_ID; passing that value as GITHUB_RUN_ID makes
+        # `exclude_current_workflow_run` mistake them for this run's own and
+        # strip them out, leaving only the gate's unrelated in-progress entry.
+        # A wrong run id over-excluding legitimate required checks must still
+        # refuse, not slip through.
         sha = run_git(git_repo, "rev-parse", "HEAD")
+        self._use_test_required_names(monkeypatch)
         self._stub_fetch_check_runs(monkeypatch, self._runs_with_gate_own_in_progress())
         monkeypatch.chdir(git_repo)
         monkeypatch.setenv("GITHUB_RUN_ID", OTHER_RUN_ID)
@@ -417,6 +709,7 @@ class TestMainLookupFailures:
     ):
         # The unauthorized-tag wording must not appear on the lookup path, or
         # an operator cannot tell the two refusals apart.
+        monkeypatch.setattr(authorize_module, "REQUIRED_CHECK_NAMES", TEST_REQUIRED_NAMES)
         self._stub_fetch_raising(monkeypatch, KeyError("check_runs"))
 
         assert self._run_main(git_repo, monkeypatch) == 1
@@ -430,4 +723,4 @@ class TestMainLookupFailures:
 
         assert "could not retrieve check-runs" in lookup_stderr
         assert "could not retrieve check-runs" not in refusal_stderr
-        assert "does not have a fully successful set of check-runs" in refusal_stderr
+        assert "required check-run" in refusal_stderr
