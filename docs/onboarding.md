@@ -82,7 +82,7 @@ Use this as the verification loop for a code change:
 1. Rebuild what changed. Rebuild the runner image with
    `agentos build` if you touched runner
    code. Run
-   `agentos local deploy --plugin-dir . --slack-channel C-DEMO --api-url http://localhost:28000`
+   `agentos local deploy --plugin-dir . --slack-channel C0123ABCD --api-url http://localhost:28000`
    again to push a changed bundle.
 2. Drive a real turn with `agentos local message "..."`. It walks the full
    queue, worker, sandboxed runner, and reply path, the same path a Slack mention

@@ -187,6 +187,10 @@ channel binding, and troubleshooting) see
 
 ## Quickstart
 
+This is the short version — for immediate testing. For a real model, the
+offline local-model demo, building from source, and the full local/cluster
+runbooks, see the detailed walkthrough in [`QUICKSTART.md`](QUICKSTART.md).
+
 The fastest way in — for operators and coding agents alike — is the prebuilt
 release binary. It needs no Rust toolchain and no repo checkout.
 
@@ -194,206 +198,45 @@ You are about to run a downloaded binary as root, so verify it before you instal
 it. [`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it)
 owns the full flow: resolve the right asset for your platform, verify the signed
 `checksums.txt` with cosign (or `gh attestation`), check the binary against it, and
-install. Then, from anywhere:
+install it. Then, from a bundle directory:
 
 ```bash
-agentos cluster up
-agentos local up
-```
-
-A release binary needs no repo checkout for `agentos cluster up` or `agentos local up`.
-It pulls the pinned chart release asset and the pinned `compose.release.yaml`
-matching the binary version, then caches them under `~/.cache/agentos/`. For
-local development overrides, pass `-f <compose>`, `--chart <path>`, or
-`--image <ref>`.
-
-Contributors can still run from a repo checkout against the dev stack in
-`compose.dev.yaml` (Postgres + Valkey + Langfuse v3 + ClickHouse + MinIO + OTel
-Collector). See [`AGENTS.md`](AGENTS.md) for the ports each service binds and
-the load-bearing gotchas.
-
-```bash
-# 1. Bring up the backing stack. The stack runs on baked defaults; copy
-#    .env.example to the gitignored .env only if you need to override anything.
-cp .env.example .env    # optional
-docker compose --profile full -f compose.dev.yaml up -d
-docker compose -f compose.dev.yaml ps    # wait for all services healthy
-
-# 2. Install the Python workspace (uv workspace: aci-protocol, plugin-format,
-#    apps/api, apps/dispatcher, apps/worker, runner)
-uv sync
-
-# 3. Run the test suite
-uv run pytest -q
-uv run ruff check .
-uv run mypy
-
-# 4. Boot the API server (needs the Postgres schema applied once)
-cd apps/api && uv run alembic upgrade head
-uv run uvicorn agentos_api.main:app --port 8000 &
-cd -
-
-# 5. Boot the UI (fixture mode by default; ?api=1 wires it to the running API)
-cd apps/ui && pnpm install && pnpm dev
-# open http://localhost:5173/?state=1        (fixture demo)
-# open http://localhost:5173/?api=1&state=1  (wired to apps/api on :8000)
-```
-
-**CLI walkthrough** (no Slack, no cluster). With the prebuilt `agentos` on
-your PATH (from the Quickstart above), the binary pulls the pinned runner
-image from GHCR on first run — nothing to build:
-
-```bash
-agentos   # optional full-screen terminal UI for the same workflows
 agentos init my-agent && cd my-agent
 agentos skill up --fake-model    # offline scripted model, no credential
-agentos skill message "hello"
+agentos skill message "hello, are you there?"
 agentos skill down
 ```
 
-`agentos skill eval` runs the bundle's eval cases through the same runner
-(under `--fake-model` it checks plumbing only, not answer quality).
+That is the fastest inner loop: zero Slack, zero platform, zero cluster.
 
-For a real model, drop `--fake-model` and export a credential first (it is
-forwarded into the runner container): one of `CLAUDE_CODE_OAUTH_TOKEN`,
-`ANTHROPIC_API_KEY`, or `AGENTOS_CREDENTIALS`.
-
-```bash
-export CLAUDE_CODE_OAUTH_TOKEN=...
-agentos skill up
-```
-
-From a source checkout instead (contributor path): `cd cli && cargo build
---release`, build the runner image once with `agentos build`, then run
-`./target/release/agentos` in place of `agentos`.
-
-A committed first-party example lives at `examples/weather/`. `cd examples/weather && agentos skill up` runs it from a clean clone. `agentos init` scaffolds a generic starter skill named for your agent (plus a root `AGENTS.md` and an installable `.claude/skills/using-agentos/SKILL.md` harness primer) that you edit to build your own agent; see `examples/weather/` for a runnable example to learn from.
-
-For the "engine as an in-bundle stdio MCP server" shape — a bundle that ships
-its own tools as a stdio subprocess the harness spawns, which a hosted harness
-cannot do — see the template at [`examples/text-stats-engine/`](examples/text-stats-engine/README.md).
-
-For a fully offline round-trip (no credential, scripted replies), add
-`--fake-model` to `agentos skill up` — an explicit test-only mode that never reaches
-the Anthropic API.
-
-**One-command middle mode** (the fastest path — no host-run worker, no cluster):
+**One-command middle mode** — the same bundle through the real product path
+(queue, worker, sandbox), still no host-run worker and no cluster:
 
 ```bash
 agentos local up   # full profile: stores + API + worker + Langfuse + UI
-# or: agentos local up --minimal   # core profile: stores + API + worker only
-agentos local deploy --plugin-dir ./my-agent --slack-channel C-DEMO --api-url http://localhost:28000
+agentos local deploy --plugin-dir . --slack-channel C0123ABCD --api-url http://localhost:28000
 agentos local message "what changed in the last deploy?"
 ```
 
-`local up` runs the worker as the `agentos-worker` compose service (fake model by
-default), so there is nothing to hand-run. For a real model, export a credential
-in your shell and `local up` goes live automatically. The manual runbook
-below is the equivalent with a host-process worker, useful when iterating on the
-worker itself from source. The console UI is served at
-`http://localhost:28080/?api=1` when you use the default `full` profile.
+Watch it land in the console UI at `http://localhost:28080/?api=1`. `local up`
+runs the fake model by default; export `CLAUDE_CODE_OAUTH_TOKEN` or
+`ANTHROPIC_API_KEY` beforehand for a real model. A release binary needs no
+repo checkout for either `local` or `cluster up` — it pulls the pinned chart
+release asset and pinned `compose.release.yaml` matching the binary version,
+caching both under `~/.cache/agentos/`.
 
-**Local-model demo mode** is an opt-in offline path that runs a real local model
-through an Anthropic-compatible endpoint, so the demo answers for real and can
-drive a 1-2 tool-call loop with no Anthropic key. This is a DEMO / dev-loop path,
-NOT the production agent path. The fake model stays the zero-dependency default.
-
-Use one flag on the CLI surface you are running:
-
-```bash
-agentos skill up --local-model
-agentos local up --local-model
-agentos cluster up --local-model
-```
-
-Bare `--local-model` uses `qwen3:4b`. Override it by passing a model name:
-
-```bash
-agentos local up --local-model qwen3-coder:30b
-```
-
-Combine `--minimal` with `--local-model` when you want the core local loop plus
-Ollama, without Langfuse or the UI:
-
-```bash
-agentos local up --minimal --local-model
-```
-
-`skill up` and `local up` run the model in a Docker container and point spawned
-runners at that endpoint. Both the `skill up --local-model` and compose paths
-persist the pulled model in a Docker volume, so a re-up is fast and does not
-re-download the model; the skill-path volume is named `<container>-ollama-data`
-(the compose path uses `ollama_data`) and can be reclaimed with
-`docker volume rm <volume>`. `cluster up` uses the in-chart inference Deployment;
-the chart renders the Ollama Service and Deployment, opens the runner egress
-carve-out automatically, and bakes `ANTHROPIC_BASE_URL` plus the inference model
-into the runner template.
-
-| Model | Loaded (Q4) | Min box | Notes |
-|---|---|---|---|
-| qwen3:4b | ~2.5GB | 8GB | demo default; clears the 1-2 tool-call bar |
-| qwen3-coder:30b | ~17-19GB | 32GB | MoE 30B/3.3B-active; real agentic-coding upgrade |
-| gemma4:e4b | ~5GB | 16GB | "4.5B effective" name understates RAM; needs Ollama >=0.31.x |
-
-Gotchas: Ollama 0.24.0 fails `gemma4` with `unknown model architecture`; qwen3
-works on 0.24.0 and gemma4 needs >=0.31.x. Gemma HF repos are gated and return
-HTTP 400 on `hf.co/google/...`; use a non-gated mirror such as
-`hf.co/unsloth/gemma-4-E4B-it-GGUF:<quant>`. RAM sizing tracks the loaded
-footprint, not the "effective params" marketing number.
-
-`agentos local up` publishes the API on `:28000` (the compose host port); the
-hand-run `uvicorn` in Quickstart step 4 uses `:8000`. Point `deploy --api-url`
-at whichever one you brought up.
-
-**Local runbook** (real deployed pipeline, no Slack, no cluster — the
-backing stack from the Quickstart plus the API on :8000 and the runner image
-built as above):
-
-```bash
-# Deploy a plugin to the API (creates the agent bound to a Slack channel id).
-# This runbook hand-starts uvicorn on :8000 (Quickstart step 4), so pin
-# --api-url to it; local deploy otherwise defaults to the `local up` API on :28000.
-./target/release/agentos local deploy --plugin-dir ./my-agent --slack-channel C-DEMO \
-    --api-url http://localhost:8000 --env dev
-
-# Start a worker that claims runner containers via Docker. REAL MODEL is the
-# default: export your credential first (forwarded into each runner container).
-# AGENTOS_DOCKER_NETWORK joins each runner container to the compose network and
-# OTEL_EXPORTER_OTLP_ENDPOINT is forwarded into it; without BOTH, runs still
-# execute but emit no traces (the runner cannot resolve otel-collector).
-export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=...
-env AGENTOS_SANDBOX_SUBSTRATE=docker \
-    VALKEY_HOST=localhost VALKEY_PORT=26379 VALKEY_PASSWORD=valkeypass \
-    SLACK_API_BASE_URL=http://localhost:8155/api/ SLACK_BOT_TOKEN=xoxb-dev \
-    AGENTOS_DOCKER_NETWORK=agentos_default \
-    OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-    uv run python -m agentos_worker &
-
-# Send a message through the same path a Slack mention takes; the fake-model
-# transcript is the identical command minus the credential, plus AGENTOS_FAKE_MODEL=1.
-./target/release/agentos local message "what changed in the last deploy?" \
-    --channel C-DEMO
-```
-
-For an offline round-trip add `AGENTOS_FAKE_MODEL=1` to the worker env and drop
-the credential. Without either, the worker refuses to start.
-
-Prefer a prebuilt binary for local commands? The
-[GitHub Releases](https://github.com/curie-eng/agentos/releases) page attaches
-`agentos-<target>` binaries on every tag push (`agentos-x86_64-unknown-linux-gnu`
-and `agentos-aarch64-apple-darwin`), so `v0.1.0` onward you can download the CLI
-instead of running `cargo build` above.
-
-Each package documents its own deeper verify commands and gotchas in its own
-README (linked above) and its own scoped `CLAUDE.md` — this quickstart is
-enough to see the pieces move; it is not a substitute for those.
+See [`QUICKSTART.md`](QUICKSTART.md) for: a real model in more depth, the
+offline `--local-model` demo (Ollama, no Anthropic key), running on a
+Kubernetes cluster, the `examples/` bundles, and the contributor path for
+building AgentOS itself from a repo checkout.
 
 ## How do I develop and verify a change?
 
 - **Python packages** are one `uv` workspace (root `pyproject.toml`); ruff,
-  mypy, and pytest run across all members from the repo root (see step 3
-  above). Integration tests hit the real dev stack, never mocks of
-  Postgres/Valkey/Langfuse.
+  mypy, and pytest run across all members from the repo root
+  (`uv sync && uv run pytest -q && uv run ruff check . && uv run mypy`; see
+  [`AGENTS.md`](AGENTS.md) for the full verify command reference). Integration
+  tests hit the real dev stack, never mocks of Postgres/Valkey/Langfuse.
 - **The Rust CLI** and **the UI** are verified independently; see
   `cli/README.md` and `apps/ui/README.md` for their commands.
 - **Work on a feature branch per change**, cut from `main`; never commit to

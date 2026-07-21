@@ -473,7 +473,7 @@ Kubernetes release, so the whole loop is one machine with no cluster:
 
 ```bash
 agentos local up
-agentos local deploy --plugin-dir <dir> --slack-channel C-DEMO --api-url http://localhost:28000
+agentos local deploy --plugin-dir <dir> --slack-channel C0123ABCD --api-url http://localhost:28000
 agentos local message "what changed in the last deploy?"
 ```
 
