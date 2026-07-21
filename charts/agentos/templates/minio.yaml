@@ -34,6 +34,9 @@ spec:
         {{- include "agentos.labels" . | nindent 8 }}
         {{- include "agentos.selectorLabels" (dict "root" . "component" "minio") | nindent 8 }}
     spec:
+      {{- with .Values.priorityClasses.platform.name }}
+      priorityClassName: {{ . }}
+      {{- end }}
       securityContext:
         fsGroup: {{ .Values.minio.podSecurityContext.fsGroup }}
       {{- if not .Values.minio.persistence.enabled }}
