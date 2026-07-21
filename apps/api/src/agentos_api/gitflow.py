@@ -153,7 +153,7 @@ async def process_push(
             data = await run_in_threadpool(
                 clone_and_archive, clone_url, after, settings
             )
-            extension, content_type = deploy.validate_archive(data)
+            extension, content_type = deploy.validate_archive(data, settings)
         except GitFlowError as exc:
             return WebhookResult(
                 status="rejected",
@@ -182,6 +182,21 @@ async def process_push(
     # Either the version pre-existed with a bundle, or the block above created
     # or repaired it; it is non-None from here on.
     assert version is not None
+
+    # A prod promote (bundle_built is False) reuses a bundle that may have been
+    # stored before the current size/ratio caps existed, or under looser ones --
+    # revalidate it here (ADR-0059 decision 3's backward-compat commitment). The
+    # bundle_built branch above already ran these bytes through
+    # `deploy.validate_archive` under the current caps moments ago, so re-fetching
+    # and rechecking the identical bytes here would be redundant.
+    if not bundle_built:
+        try:
+            await deploy.revalidate_stored_bundle(store, version, settings)
+        except deploy.BundleTooLarge as exc:
+            return WebhookResult(
+                status="rejected",
+                errors=[{"code": "bundle.too_large", "message": str(exc)}],
+            )
 
     deployment = await crud.create_deployment_row(
         session,

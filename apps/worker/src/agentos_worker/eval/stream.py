@@ -42,7 +42,11 @@ from aci_protocol import (
     EvalReport,
     parse_eval_job,
 )
-from plugin_format import safe_extract
+from plugin_format import (
+    DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    safe_extract,
+)
 from redis.asyncio import Redis
 
 from ..binding import (
@@ -124,14 +128,28 @@ class EvalReporter:
         return False
 
 
-def load_suite_from_bundle(data: bytes, suite_name: str) -> EvalSuite | None:
+def load_suite_from_bundle(
+    data: bytes,
+    suite_name: str,
+    *,
+    max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+) -> EvalSuite | None:
     """Extract the bundle archive and load its evals/cases.json as an EvalSuite,
     named with ``suite_name`` (the payload's authoritative name / Langfuse tag).
-    Returns None on a corrupt archive or a missing/invalid suite file."""
+    Returns None on a corrupt, unsafe, or oversized archive (ADR-0059
+    decision 3), or a missing/invalid suite file. The size/ratio caps default
+    to ``plugin_format``'s generous fallbacks; ``_load_suite`` passes the
+    operator-configured ``WorkerConfig`` values instead."""
     try:
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp)
-            safe_extract(data, dest)
+            safe_extract(
+                data,
+                dest,
+                max_uncompressed_bytes=max_uncompressed_bytes,
+                max_compression_ratio=max_compression_ratio,
+            )
             cases = next((p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None)
             if cases is None:
                 return None
@@ -424,7 +442,12 @@ class EvalStreamConsumer(StreamConsumer):
         except Exception:
             logger.exception("could not fetch bundle %s", item.bundle_ref)
             return None
-        return load_suite_from_bundle(data, item.suite)
+        return load_suite_from_bundle(
+            data,
+            item.suite,
+            max_uncompressed_bytes=self._config.bundle_max_uncompressed_bytes,
+            max_compression_ratio=self._config.bundle_max_compression_ratio,
+        )
 
     async def _acquire_target(self, item: EvalJob) -> tuple[str | None, str | None, str | None]:
         if item.target_url is not None:

@@ -11,9 +11,15 @@ from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, sta
 
 from .. import bundles, crud, deploy
 from ..auth import require_api_key
+from ..config import get_settings
 from ..deps import SessionDep, StoreDep
 from ..models import AgentVersion
 from ..schemas import BundleOut
+
+# Chunk size for the bounded read below; arbitrary, just small enough that a
+# rejected oversized upload never holds more than one chunk's worth of the
+# file in memory at once.
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 router = APIRouter(
     prefix="/agents/{agent_id}/versions/{version_id}/bundle",
@@ -45,6 +51,46 @@ def _content_type_for(key: str) -> str:
     return "application/octet-stream"
 
 
+async def _read_bounded_upload(file: UploadFile, max_bytes: int) -> bytes:
+    """Read the uploaded file's bytes, rejecting an oversized upload before it
+    is buffered into memory.
+
+    Mirrors ``_read_bounded_body`` (``routers/github.py``): the bound is
+    enforced by rejecting the moment the accumulated size crosses it, rather
+    than via a single ``await file.read()`` that materializes the whole upload
+    into one contiguous bytes object first and only then lets a caller reject
+    it -- exactly the unbounded-memory defect this closes (ADR-0059
+    decision 3). Starlette's multipart parser tracks the exact number of bytes
+    written for this part as ``file.size``, so that is checked first as a fast
+    path with no read at all; the chunked loop below is the enforcement when a
+    parser leaves ``size`` unset, and is itself bounded (never accumulates past
+    ``max_bytes`` before raising). Raises 413 on an oversized upload.
+    """
+
+    if file.size is not None:
+        if file.size > max_bytes:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                "bundle upload exceeds the maximum size",
+            )
+        return await file.read()
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                "bundle upload exceeds the maximum size",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.put("", response_model=BundleOut, status_code=status.HTTP_201_CREATED)
 async def upload_bundle(
     agent_id: uuid.UUID,
@@ -53,6 +99,10 @@ async def upload_bundle(
     store: StoreDep,
     file: UploadFile,
 ) -> BundleOut:
+    # Enforced before touching the DB or anything else: an oversized upload is
+    # rejected on the size gate alone, not after a wasted version lookup.
+    data = await _read_bounded_upload(file, get_settings().bundle_upload_max_bytes)
+
     version = await _load_version(session, agent_id, version_id)
     if version.bundle_ref is not None:
         raise HTTPException(
@@ -60,7 +110,6 @@ async def upload_bundle(
             "bundle already stored for this version (bundles are immutable)",
         )
 
-    data = await file.read()
     try:
         extension, content_type = deploy.validate_archive(data)
     except bundles.UnsupportedArchive as exc:

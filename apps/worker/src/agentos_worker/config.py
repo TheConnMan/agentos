@@ -322,6 +322,20 @@ class WorkerConfig(BaseSettings):
     s3_secret_key: str = "miniosecret"
     s3_region: str = "us-east-1"
     bundle_bucket: str = "agentos-bundles"
+    # Bundle extraction bounds (ADR-0059 decision 3), applied by the Docker
+    # substrate's claim-time bundle-fetch (`sandbox/docker.py`'s
+    # `_prepare_bundle` -> `bundle_store.extract_bundle`) and the eval-stream
+    # suite loader (`eval/stream.py`'s `load_suite_from_bundle`), both of which
+    # route through `plugin_format.safe_extract`. Mirrors the API's `Settings`
+    # field names/defaults (apps/api/src/agentos_api/config.py) -- the same
+    # stored bytes get the same caps regardless of which lane fetches them, so
+    # keep the two in sync (a parity seam per AGENTS.md). The Kubernetes
+    # substrate fetches/extracts via shell init containers, not this Python
+    # path, so this does not reach it; see ADR-0059 decision 3's note that the
+    # API-side bound is substrate-neutral, while extraction itself is not on
+    # every substrate.
+    bundle_max_uncompressed_bytes: int = 1024 * 1024 * 1024  # 1 GiB
+    bundle_max_compression_ratio: float = 100.0
     # Platform API for POST /evals/report. Defaults match the API's dev stack
     # (README serves it on :8000; its shared dev key is agentos-dev-key).
     api_base_url: str = Field(
