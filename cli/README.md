@@ -210,6 +210,7 @@ they error clearly -- a release binary has no dev scripts.
 | `agentos dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
 | `agentos dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI api.rs mirror structs cover their platform API model fields (#691). |
 | `agentos dev emit-parity` | `bash cli/scripts/check-emit-parity.sh` -- assert a `CliOutput::to_json` that hand-projects a mirror struct into a `json!` literal covers that struct's fields, one hop downstream of `field-parity` (#699). |
+| `agentos dev wire-tolerance` | `bash scripts/check-wire-tolerance.sh` -- assert every direct `ClassName.model_validate*(...)` call on an `_AciModel` subclass threads `READER_CONTEXT` or is a declared exception (#625). |
 
 ## `skill` target: runner-only, fully offline
 
@@ -269,7 +270,7 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 | `agentos cluster observability` | Report the release's observability surfaces (AgentOS Console, Langfuse UI, AgentOS API base), using the same NodePort discovery as `cluster status`. Degrades a missing, ClusterIP, or unresolvable surface to a note instead of failing. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. `--dry-run` prints the read-only discovery commands. |
 | `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
 | `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. Auto-discovers the release-generated API key and Valkey password from `<release>-secrets` when `--api-key` / `--valkey-password` (or their env vars) are omitted, so a default strong-secrets install needs no hand-exported credentials (#786). |
-| `agentos cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
+| `agentos cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). Auto-discovers the release-generated API key and Valkey password from `<release>-secrets` when `--api-key` / `--valkey-password` (or their env vars) are omitted, so a default strong-secrets install needs no hand-exported credentials (#790). |
 | `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. When `--api-url` is omitted, self-plumbs a `kubectl port-forward` (loopback tunnel) to the release API service and auto-discovers the release-generated key from `<release>-secrets`, so the strong key never crosses the cleartext UI proxy (ADR-0057). Pass `--api-url` / `AGENTOS_API_URL` to direct-dial a URL instead (no tunnel); an explicit `--api-key` / `AGENTOS_API_KEY` still wins over discovery. |
 | `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
 | `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
@@ -569,14 +570,18 @@ hanging.
 cd cli && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-The scripted E2E (real runner container, fake model, offline):
+The scripted E2E (real runner container, fake model by default, offline):
 
 ```bash
 bash cli/scripts/e2e.sh
 ```
 
 Requires an `agentos-runner` image (`docker build -f runner/Dockerfile -t
-agentos-runner .` from the repo root).
+agentos-runner .` from the repo root) and a cargo toolchain, unless
+`AGENTOS_BIN` points at a prebuilt binary (skips the `cargo build --release`).
+`AGENTOS_E2E_LIVE=1` drops `--fake-model` and runs the skill rung against a
+real model, failing fast if no model credential (`ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`) is present.
 
 The cold-start parity ladder (`agentos dev e2e-ladder`, `cli/scripts/e2e-ladder.sh`)
 runs the same skill-tier script as rung 1, then adds a local rung (`local up
@@ -591,8 +596,8 @@ Two env knobs configure it:
   skipped.
 - `AGENTOS_E2E_LIVE` -- unset or `0` runs the fake model (credential-free, the
   default); `1` runs the live-credential variant for pre-release manual passes
-  and fails fast if no model credential is present. It governs the local and
-  cluster rungs only; the skill rung stays fake.
+  and fails fast if no model credential is present. It governs all three
+  rungs, including the skill rung: `e2e.sh` reads the same env var itself.
 
 The one-command pre-release gate:
 

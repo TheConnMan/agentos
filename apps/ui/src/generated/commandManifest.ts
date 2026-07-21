@@ -2170,12 +2170,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "valkeypass"
-              ],
               "env": "AGENTOS_VALKEY_PASSWORD",
               "global": false,
-              "help": "Valkey password (chart default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "help": "Valkey password. Omit to read the release's own password from its chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
               "id": "valkey_password",
               "long": "valkey-password",
               "positional": false,
@@ -2193,12 +2190,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key for the default-channel lookup",
+              "help": "Platform API key for the default-channel lookup. Omit to read the release's own key from its chart Secret",
               "id": "api_key",
               "long": "api-key",
               "positional": false,
@@ -3275,6 +3269,11 @@ export const commandManifest = {
           "about": "Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml version, and appVersion (`bash scripts/check-version-consistency.sh`)",
           "hidden": false,
           "name": "version-check"
+        },
+        {
+          "about": "Assert every direct `ClassName.model_validate*(...)` call on an `_AciModel` subclass threads `READER_CONTEXT` or is a declared exception in `tools/wire-tolerance-gate/allowlist.json` (#625, following #492's forgotten-context bug, `bash scripts/check-wire-tolerance.sh`). Offline, no credential",
+          "hidden": false,
+          "name": "wire-tolerance"
         },
         {
           "about": "Set the release version across cli/Cargo.toml + Chart.yaml version/appVersion (and refresh the CLI lockfile) so a release cut can't leave the three out of sync. Does not commit or tag",

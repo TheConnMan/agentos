@@ -2,16 +2,16 @@
 # Scripted E2E for the agentos CLI (task I1 done-when).
 #
 # Round-trips a synthetic event through a real local runner container with zero
-# Slack involved: init a bundle, start the runner (fake model, offline), send a
-# message and stream the NDJSON reply, run the eval cases, stop. This is rung 1
-# (skill) of the cold-start parity ladder (issue #690,
-# cli/scripts/e2e-ladder.sh); the ladder's local rung (`local deploy` ->
-# `local message` with a real reply assertion) covers deploying a bundle
-# against a running platform API, so this script no longer does so itself
-# (issue #694).
+# Slack involved: init a bundle, start the runner (fake model, offline by
+# default; live model under AGENTOS_E2E_LIVE=1), send a message and stream the
+# NDJSON reply, run the eval cases, stop. This is rung 1 (skill) of the
+# cold-start parity ladder (issue #690, cli/scripts/e2e-ladder.sh); the
+# ladder's local rung (`local deploy` -> `local message` with a real reply
+# assertion) covers deploying a bundle against a running platform API, so this
+# script no longer does so itself (issue #694).
 #
 # Requirements: docker, an agentos-runner image (build per runner/README.md),
-# and a cargo toolchain. Run from anywhere:
+# and a cargo toolchain (or $AGENTOS_BIN). Run from anywhere:
 #
 #   bash cli/scripts/e2e.sh
 #
@@ -20,17 +20,48 @@
 #   AGENTOS_E2E_PORT      host port (default 7245)
 #   AGENTOS_E2E_NETWORK   docker network to join (e.g. agentos_default)
 #   AGENTOS_E2E_OTEL      OTLP endpoint (e.g. http://otel-collector:4318)
+#   AGENTOS_E2E_LIVE      1 = real model, requiring a credential in the
+#                         environment (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN,
+#                         or AGENTOS_CREDENTIALS); default 0 runs the runner's
+#                         scripted fake model, offline and credential-free. This
+#                         is the SAME env var cli/scripts/e2e-ladder.sh sets for
+#                         its own local and cluster rungs, so a single
+#                         AGENTOS_E2E_LIVE=1 now runs every rung live.
+#   AGENTOS_BIN           path to a prebuilt agentos binary (skip cargo build)
 set -euo pipefail
 
 CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${AGENTOS_E2E_IMAGE:-agentos-runner}"
 PORT="${AGENTOS_E2E_PORT:-7245}"
 CONTAINER="agentos-e2e-runner"
+LIVE="${AGENTOS_E2E_LIVE:-0}"
 
-echo "=== Build the release binary ==="
-(cd "$CLI_DIR" && cargo build --release --quiet)
-BIN="$CLI_DIR/target/release/agentos"
+echo "=== Resolve the agentos binary ==="
+if [[ -n "${AGENTOS_BIN:-}" && -x "${AGENTOS_BIN:-}" ]]; then
+    # Absolutize: this script cd's into a scaffolded bundle directory before
+    # invoking the binary, so a relative $AGENTOS_BIN (as the ladder and CI
+    # pass) must be pinned to an absolute path here or it stops resolving
+    # after the cd.
+    BIN="$(cd "$(dirname "$AGENTOS_BIN")" && pwd)/$(basename "$AGENTOS_BIN")"
+    echo "using prebuilt binary: $BIN"
+else
+    (cd "$CLI_DIR" && cargo build --release --quiet)
+    BIN="$CLI_DIR/target/release/agentos"
+fi
 "$BIN" --version
+
+echo
+echo "=== Resolve model mode ==="
+if [[ "$LIVE" == "1" ]]; then
+    if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${AGENTOS_CREDENTIALS:-}" ]]; then
+        echo "error: AGENTOS_E2E_LIVE=1 needs a model credential in the environment, and none is set." >&2
+        echo "fix: export ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS, or drop AGENTOS_E2E_LIVE to run sealed against the fake model." >&2
+        exit 1
+    fi
+    echo "model mode: LIVE (real model; \`skill up\` forwards the ambient credential)"
+else
+    echo "model mode: FAKE (sealed; --fake-model, offline, no credential)"
+fi
 
 WORKDIR="$(mktemp -d)"
 cleanup() {
@@ -97,8 +128,19 @@ cat > evals/e2e-cases.json <<'EOF'
 EOF
 
 echo
-echo "=== agentos skill up (fake model, offline) ==="
-START_ARGS=(--plugin-dir . --image "$IMAGE" --port "$PORT" --name "$CONTAINER" --fake-model)
+if [[ "$LIVE" == "1" ]]; then
+    echo "=== agentos skill up (live model) ==="
+else
+    echo "=== agentos skill up (fake model, offline) ==="
+fi
+START_ARGS=(--plugin-dir . --image "$IMAGE" --port "$PORT" --name "$CONTAINER")
+if [[ "$LIVE" == "1" ]]; then
+    : # Real credential resolution (AGENTOS_CREDENTIALS, else the ambient SDK
+      # creds) happens inside `skill up` itself once --fake-model is omitted;
+      # see commands::select_passthrough_env.
+else
+    START_ARGS+=(--fake-model)
+fi
 if [[ -n "${AGENTOS_E2E_NETWORK:-}" ]]; then
     START_ARGS+=(--network "$AGENTOS_E2E_NETWORK")
 fi
