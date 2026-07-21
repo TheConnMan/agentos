@@ -158,7 +158,7 @@ jobs:
       # agentSandbox.deploy, and the N=1 self-host control plane stays fully
       # self-declared on cpu/memory (so the new LimitRange defaults never
       # engage for it).
-      - name: helm render assertions (tenant capacity: ResourceQuota + LimitRange)
+      - name: "helm render assertions (tenant capacity: ResourceQuota + LimitRange)"
         run: |
           set -euo pipefail
           bash charts/agentos/ci/tenant-capacity-assertions.sh

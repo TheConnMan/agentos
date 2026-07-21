@@ -461,19 +461,11 @@ jobs:
   # the generator's T1 substitutes for the build directive, both resolved
   # locally so `local up` never attempts a pull against a private GHCR ref.
   #
-  # This job's three builds share the `images` job's gha cache store above:
-  # neither job passes an explicit `scope` to cache-from/cache-to, so both
-  # default to buildkit's own "buildkit" scope, and runner/Dockerfile,
-  # apps/api/Dockerfile, and apps/worker/Dockerfile are the same files the
-  # `images` matrix already built on this commit. There is no `needs` edge
-  # between `images` and `e2e-ladder` (this job only waits on `rust`), so the
-  # cache hit here is NOT guaranteed by job ordering -- it happens in practice
-  # because `images`'s cache-warmed builds are far quicker than `rust`'s full
-  # cargo build/test/release, so `images` has almost always finished writing
-  # its cache well before `rust` unblocks this job. If that assumption ever
-  # flips (a slower images job or a much faster rust job), the first CI run on
-  # a new commit's shas would fall back to a cold build here, same as today,
-  # and only later runs of the same shas would see the hit.
+  # All three image builds here use plain `docker build`, not buildx: two of
+  # the tags are consumed as Dockerfile FROM bases by a compose-triggered build
+  # later in the same job, and a docker-container buildx builder set as the
+  # default (as docker/setup-buildx-action does) breaks that FROM resolution.
+  # See the build steps' own comment for the full history (#697/#791).
   e2e-ladder:
     name: E2E parity ladder (skill + local + local-release, fake model)
     runs-on: ubuntu-latest
@@ -482,8 +474,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Download the agentos binary built by the Rust job
         uses: actions/download-artifact@v7
         with:
@@ -491,8 +481,25 @@ jobs:
           path: cli/target/release
       - name: Make the binary executable
         run: chmod +x cli/target/release/agentos
+      # Plain `docker build`, NOT `docker buildx build`, for all three images
+      # below. Two of them (agentos-worker:ci-local, agentos-api:ci-local) are
+      # consumed as Dockerfile FROM bases by a build that `docker compose`
+      # triggers itself a few steps down (agentos-worker's service build via
+      # compose/worker-local.Dockerfile, inside `agentos local up`). #697 changed
+      # these to `docker buildx build --load` with a docker/setup-buildx-action
+      # step to share the `images` job's GHA layer cache; that made the
+      # setup-buildx-action's docker-container builder the default, and the later
+      # compose-triggered build then inherited it and could no longer resolve the
+      # locally-built `:ci-local` tags as a FROM ("failed to resolve source
+      # metadata ... not found"), reddening this job on every run since #791
+      # merged. Reverting to the pre-#697 plain-`docker build` shape (no buildx,
+      # no setup-buildx-action) is the known-good state: images land in the
+      # daemon store and the compose build, using that same daemon, resolves them.
+      # The GHA-cache speedup from #697 is the right idea but needs a mechanism
+      # that does not repoint the default builder underneath the compose build;
+      # correctness first.
       - name: Build the runner image locally
-        run: docker buildx build --load -t agentos-runner -f runner/Dockerfile --cache-from type=gha --cache-to type=gha .
+        run: docker build -t agentos-runner -f runner/Dockerfile .
       - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
         run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
       # Tagged :ci-local (the worker-local-image job's own convention), not
@@ -502,9 +509,9 @@ jobs:
       # retag its from-source builds over whatever `:latest` meant in the local
       # Docker image store before this job ran.
       - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
-        run: docker buildx build --load -t ghcr.io/curie-eng/agentos-api:ci-local -f apps/api/Dockerfile --cache-from type=gha --cache-to type=gha .
+        run: docker build -t ghcr.io/curie-eng/agentos-api:ci-local -f apps/api/Dockerfile .
       - name: Build the worker base image locally (satisfies the worker-local overlay's FROM, no registry auth)
-        run: docker buildx build --load -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile --cache-from type=gha --cache-to type=gha .
+        run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
       - name: Parity ladder (skill + local rungs, fake model, credential-free)
         env:
           AGENTOS_BIN: cli/target/release/agentos
