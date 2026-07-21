@@ -16,7 +16,10 @@ via three ordered text transforms:
       the otel-collector service from the host bind-mount to that config.
 
   T3  Pin every `ghcr.io/curie-eng/agentos-*:latest` image tag to the release
-      version (this also pins the worker-local image introduced by T1).
+      version (this also pins the worker-local image introduced by T1). Also
+      collapses the `:${AGENTOS_BASE_TAG:-latest}` override form (issue #698)
+      to the same literal pin, since the release asset has no shell to resolve
+      that override in.
 
 Each transform locates its anchor explicitly and raises ValueError if it is
 missing: this runs unattended at publish time, so a silent no-op would ship a
@@ -31,6 +34,15 @@ from pathlib import Path
 WORKER_BUILD_BLOCK = """    build:
       context: compose
       dockerfile: worker-local.Dockerfile
+      # Threads AGENTOS_BASE_TAG through to the overlay's own ARG BASE_TAG
+      # (compose/worker-local.Dockerfile), which pins its `FROM
+      # ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` base. Without this the
+      # arg was never wired, so the Dockerfile silently fell back to its own
+      # `latest` default regardless of what the api/migrate override above was
+      # set to. Same variable, same default, so one override can drive all
+      # three services uniformly.
+      args:
+        BASE_TAG: ${AGENTOS_BASE_TAG:-latest}
 """
 WORKER_IMAGE_LINE = "    image: ghcr.io/curie-eng/agentos-worker-local:latest\n"
 
@@ -44,7 +56,16 @@ OTEL_CONFIGS_REF = """    configs:
         target: /etc/otel/collector-config.yaml
 """
 
-AGENTOS_LATEST_RE = re.compile(r"(ghcr\.io/curie-eng/agentos-[a-z-]+):latest")
+# Matches the plain `:latest` pin AND compose.dev.yaml's
+# `:${AGENTOS_BASE_TAG:-latest}` override form (issue #698: agentos-api and
+# agentos-migrate's `image:` refs carry the override so CI/local runs can
+# repoint them at a locally built tag with no registry auth). The release
+# asset has no shell to resolve that override in, so either form collapses to
+# a plain, literal `:<version>` pin here -- same outcome the dev file's own
+# unset default already produces.
+AGENTOS_LATEST_RE = re.compile(
+    r"(ghcr\.io/curie-eng/agentos-[a-z-]+):(?:latest|\$\{AGENTOS_BASE_TAG:-latest\})"
+)
 
 DEV_COMPOSE = Path("compose.dev.yaml")
 OTEL_CONFIG = Path("otel/collector-config.yaml")
