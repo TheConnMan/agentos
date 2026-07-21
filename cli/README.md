@@ -568,14 +568,18 @@ hanging.
 cd cli && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-The scripted E2E (real runner container, fake model, offline):
+The scripted E2E (real runner container, fake model by default, offline):
 
 ```bash
 bash cli/scripts/e2e.sh
 ```
 
 Requires an `agentos-runner` image (`docker build -f runner/Dockerfile -t
-agentos-runner .` from the repo root).
+agentos-runner .` from the repo root) and a cargo toolchain, unless
+`AGENTOS_BIN` points at a prebuilt binary (skips the `cargo build --release`).
+`AGENTOS_E2E_LIVE=1` drops `--fake-model` and runs the skill rung against a
+real model, failing fast if no model credential (`ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`) is present.
 
 The cold-start parity ladder (`agentos dev e2e-ladder`, `cli/scripts/e2e-ladder.sh`)
 runs the same skill-tier script as rung 1, then adds a local rung (`local up
@@ -590,8 +594,8 @@ Two env knobs configure it:
   skipped.
 - `AGENTOS_E2E_LIVE` -- unset or `0` runs the fake model (credential-free, the
   default); `1` runs the live-credential variant for pre-release manual passes
-  and fails fast if no model credential is present. It governs the local and
-  cluster rungs only; the skill rung stays fake.
+  and fails fast if no model credential is present. It governs all three
+  rungs, including the skill rung: `e2e.sh` reads the same env var itself.
 
 The one-command pre-release gate:
 
