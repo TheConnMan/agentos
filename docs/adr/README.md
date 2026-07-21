@@ -87,4 +87,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0055 | [The fake model is a plumbing fixture, not a subject under test](0055-the-fake-model-is-a-plumbing-fixture.md) | Accepted |
 | 0056 | [An operator opt-in makes a policy gate grantable; a heuristic never does](0056-operator-opt-in-for-policy-gate-grantability.md) | Accepted |
 | 0057 | [`cluster deploy` self-plumbs a port-forward so the generated key stays off the cleartext proxy](0057-cluster-deploy-self-plumbs-port-forward-for-generated-key.md) | Accepted |
+| 0058 | [A pushed tag is not release authority: ancestry, checks, and an approval environment gate publication](0058-tag-push-is-not-release-authority.md) | Accepted |
 <!-- END GENERATED: adr-index -->

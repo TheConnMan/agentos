@@ -28,9 +28,49 @@ permissions:
   packages: write
 
 jobs:
+  # Gates the ENTIRE tag-triggered publish pipeline (issue #628). A `v*` tag push
+  # proves nothing about the tagged commit on its own, so nothing below may run
+  # for one until this job says the commit is reviewed, on main, and green --
+  # see ADR-0058 for the full design and the two admin-only settings (a `v*` tag
+  # protection rule, required reviewers on the `release-publish` environment)
+  # that hardens this further once a maintainer configures them.
+  #
+  # `if:` makes this a no-op (skipped) for ordinary pushes to `main`, so the
+  # continuous sha/latest image builds below are unaffected. `environment:` has
+  # no effect until required reviewers are added to it; the day they are, every
+  # tag push pauses for approval right here, before anything else runs.
+  authorize-release:
+    name: Authorize release publication
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release-publish
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: an ancestor commit deep in main's log must stay
+          # reachable, which a shallow clone would hide.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag's commit must be reviewed, on main, and fully checked
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 release/authorize.py "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+
   build:
     name: Build ${{ matrix.name }} image (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
+    needs: [authorize-release]
+    # `always()` overrides the default needs-propagation (which would skip this
+    # job whenever authorize-release is merely skipped, i.e. on every ordinary
+    # main push): a `skipped` authorize-release means "not a tag push, nothing to
+    # authorize" and this job proceeds; a `failure` result means an unauthorized
+    # tag, and this job -- and everything downstream of it -- does not run.
+    if: |
+      always() &&
+      (needs.authorize-release.result == 'success' || needs.authorize-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -245,7 +285,10 @@ jobs:
 
   cli-binaries:
     name: Build agentos CLI (${{ matrix.target }})
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [authorize-release]
+    # See build's identical condition above: proceed on the tag path only once
+    # authorize-release has actually succeeded (not merely been skipped).
+    if: startsWith(github.ref, 'refs/tags/v') && needs.authorize-release.result == 'success'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -312,7 +355,8 @@ jobs:
 
   chart:
     name: Package chart and release compose
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [authorize-release]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.authorize-release.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
