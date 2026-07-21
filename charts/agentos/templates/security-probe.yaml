@@ -5,7 +5,9 @@ The PT-3 security-boundary probe suite, re-run against the chart's rendered
 defaults as a `helm test`. Five claims:
 
   1. default-deny egress + metadata endpoint blocked, WITH a before/after control
-     that proves the CNI actually enforces (not a silent false-pass).
+     that proves the CNI actually enforces (not a silent false-pass). Claim 1c
+     additionally proves the vendored controller is not shadow-managing its own
+     permissive NetworkPolicy alongside Rail 1's (issue #765).
   2. cross-agent secret isolation via per-agent RBAC scoping.
   3. runner containers are non-root with a read-only rootfs.
   4. gVisor RuntimeClass enforced (reported testable / not-testable honestly;
@@ -226,6 +228,15 @@ spec:
               value: "app.kubernetes.io/name={{ include "agentos.name" . }},app.kubernetes.io/instance={{ .Release.Name }},agentos.io/datatier-probe=allowed"
             - name: DT_DENIED_LABELS
               value: "agentos.io/datatier-probe=denied"
+            # Claim 1c (#765): the controller-managed NetworkPolicy the runner
+            # SandboxTemplate's networkPolicyManagement: Unmanaged is meant to
+            # suppress. Only asserted when THIS release deploys that controller
+            # (agentSandbox.controller.deploy) AND Rail 1 is on -- otherwise there
+            # is nothing #765-shaped to check.
+            - name: SANDBOX_NP_NAME
+              value: {{ include "agentos.fullname" . }}-runner-network-policy
+            - name: CONTROLLER_DEPLOYED
+              value: {{ and .Values.agentSandbox.controller.deploy .Values.security.networkPolicy.enabled | quote }}
           command:
             - /bin/bash
             - -c
@@ -341,6 +352,31 @@ spec:
                 echo "RESULT: FAIL - broad-allow ext=${broad_ext} metadata=${broad_meta}"
                 echo "        (metadata=reachable means a broad allow re-opened IMDS: #70 regression.)"
                 fail=1
+              fi
+
+              # ---- Claim 1c: controller does not shadow-manage a permissive NetworkPolicy (#765) ----
+              # NetworkPolicy allows are additive: a separate, broader policy selecting
+              # the same pods cannot be narrowed by Rail 1 above, only unioned with it.
+              # The runner SandboxTemplate sets networkPolicyManagement: Unmanaged
+              # specifically so the vendored controller never reconciles its own
+              # shared NetworkPolicy for that template. Only meaningful when this
+              # release deploys that controller -- a different/external controller's
+              # behavior toward the field is not this chart's to assert.
+              echo ""
+              echo "== Claim 1c: controller does not shadow-manage a permissive NetworkPolicy (#765) =="
+              if [ "$CONTROLLER_DEPLOYED" != "true" ]; then
+                echo "SKIP: agentSandbox.controller.deploy is false, or Rail 1 (security.networkPolicy.enabled) is off -- not this chart's to assert."
+              else
+                if kubectl get networkpolicy "$SANDBOX_NP_NAME" -n "$NS" >/dev/null 2>&1; then
+                  echo "RESULT: FAIL - controller-managed NetworkPolicy '${SANDBOX_NP_NAME}' exists in ${NS}."
+                  echo "        networkPolicyManagement: Unmanaged should have suppressed it entirely; its"
+                  echo "        presence means the controller is still unioning its own permissive egress"
+                  echo "        rule with Rail 1 above, silently re-opening the allowlist (issue #765)."
+                  kubectl get networkpolicy "$SANDBOX_NP_NAME" -n "$NS" -o yaml 2>/dev/null | sed 's/^/    /'
+                  fail=1
+                else
+                  echo "RESULT: PASS - no controller-managed NetworkPolicy '${SANDBOX_NP_NAME}' exists; Rail 1 is the only policy selecting these pods."
+                fi
               fi
 
               # ================= Claim 2: cross-agent secret isolation ==============
