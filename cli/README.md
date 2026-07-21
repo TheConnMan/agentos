@@ -279,6 +279,27 @@ port-forward the API yourself. They resolve `<agent>` (a name or id) to its API 
 same lookup `deploy` uses. Each takes `--dry-run` (prints the plan, makes no
 request); the destructive `kill`/`delete` also require `--yes`.
 
+### Bundle packing exclusions
+
+`local deploy` and `cluster deploy` never pack `.agentosignore`, `.agentos`,
+`.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `.mypy_cache`, or
+`.pytest_cache`, matched by name at any depth. An optional `.agentosignore`
+at the bundle root adds more patterns, one per line (`#` comments and blank
+lines skipped, surrounding whitespace and a trailing `/` stripped):
+
+```
+# .agentosignore
+scratch
+notebooks/drafts
+```
+
+A bare name matches that entry at any depth; a path containing `/` matches
+only that bundle-root-relative path and its subtree. There is no glob
+support (`*.log` never matches), and a pattern reaching outside the bundle
+(absolute, or containing `.` or `..`) is dropped. Symlinks are still a
+packing error unless excluded, by design: the packer never dereferences a
+link to upload host files from outside the bundle root.
+
 ### Artifact resolution
 
 Release builds resolve default artifacts from the binary version: `agentos local

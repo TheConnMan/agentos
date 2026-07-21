@@ -112,7 +112,12 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   package the bundle as
   tar.gz and push to the platform API (find-or-create agent, create version,
   upload bundle, create deployment) authenticated via
-  `--api-key`/`AGENTOS_API_KEY`. `local message`, `local deploy`,
+  `--api-key`/`AGENTOS_API_KEY`. The packer skips a fixed set of names
+  (`.agentosignore`, `.agentos`, `.git`, `.venv`, `venv`, `node_modules`,
+  `__pycache__`, `.mypy_cache`, `.pytest_cache`) at any depth plus whatever an
+  optional root `.agentosignore` names (name-only, no globs), and still refuses
+  to pack any symlink that survives those exclusions rather than dereference it.
+  `local message`, `local deploy`,
   `cluster message`, `cluster deploy`, and every operator verb
   (`local up`, `local status`, `local down`, `local comms`, `cluster up`, `cluster status`, `cluster down`, `cluster comms`) reach a Valkey, API, or cluster by design.
 - **The operator verbs are a thin wrapper; the chart stays the source of
