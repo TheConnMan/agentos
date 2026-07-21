@@ -89,6 +89,39 @@ async def reset_thread(
     return ThreadResetState(requested=True)
 
 
+@router.get("/threads/{thread_key}/reset", response_model=ThreadResetState)
+async def get_thread_reset_state(
+    agent_id: uuid.UUID,
+    thread_key: str,
+    session: SessionDep,
+    thread_reset_requests: ThreadResetRequestsDep,
+) -> ThreadResetState:
+    """Poll whether a forced reset (the POST above) is still outstanding for
+    this thread (#735). ``requested`` is True from the moment the POST enqueues
+    the request until the worker's next maintenance tick drains it and releases
+    the sandbox, then False.
+
+    Why this exists: the POST returns as soon as the request is *queued*, but the
+    release only happens on the worker's maintenance tick (up to
+    ``reclaim_interval_s`` -- 30s by default -- later). Without a way to observe
+    completion, the natural operator workflow "reset the thread, then send a
+    message to confirm" adopts the still-live pre-reset sandbox and reads a
+    stale answer, indistinguishable from "the reset did not work" (#735). A
+    caller that must not adopt the pre-reset sandbox polls this until it reads
+    False before sending the next message; the CLI ``reset-thread`` verb does
+    exactly that on the operator's behalf. Mirrors ``GET .../kill``.
+
+    Caveat: the worker removes the request from the drain set (atomic ``SPOP``)
+    immediately *before* it runs the release, so this can read False a few
+    milliseconds ahead of ``release_thread`` finishing the teardown. That
+    residual window is milliseconds against the up-to-30s wait this makes
+    observable; shrinking the tick latency itself (a wake nudge, like the kill
+    switch's pub/sub) is a separate follow-up.
+    """
+    await _load_agent(session, agent_id)
+    return ThreadResetState(requested=await thread_reset_requests.is_pending(thread_key))
+
+
 @router.get("/budget", response_model=BudgetConfig)
 async def get_budget(agent_id: uuid.UUID, session: SessionDep) -> BudgetConfig:
     agent = await _load_agent(session, agent_id)

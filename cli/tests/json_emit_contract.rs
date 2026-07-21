@@ -969,9 +969,10 @@ fn reset_thread_output_json_shape_is_pinned() {
             agent: "weather".to_string(),
             thread_key: "t-1".to_string(),
             requested: true,
+            released: true,
         }
         .to_json(),
-        json!({"agent": "weather", "thread_key": "t-1", "requested": true})
+        json!({"agent": "weather", "thread_key": "t-1", "requested": true, "released": true})
     );
 }
 
