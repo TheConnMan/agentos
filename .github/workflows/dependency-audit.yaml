@@ -60,3 +60,26 @@ jobs:
             --format requirements-txt --output-file requirements-audit.txt
       - name: pip-audit
         run: uvx pip-audit --requirement requirements-audit.txt
+
+  js-audit:
+    name: pnpm audit (apps/ui)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: apps/ui
+        run: pnpm install --frozen-lockfile
+      # pnpm audit reads the committed lockfile and exits non-zero on any
+      # advisory, matching cargo-audit/pip-audit's fail-the-job behavior above.
+      - name: pnpm audit
+        working-directory: apps/ui
+        run: pnpm audit
