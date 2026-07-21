@@ -1,0 +1,22 @@
+{
+  "_comment": "Drifted fixture manifest for the plugin_format field-parity gate's rejection tests (issue #701). Paired with drifted-mirrors.rs; the real plugin-format.schema.json is reused unmodified since it is frozen and self-contained. `UndeclaredMirror` is deliberately absent from both lists below.",
+  "mirrors": [
+    {
+      "struct": "MissingFieldGate",
+      "file": "drifted-mirrors.rs",
+      "schema": "ApprovalGate",
+      "omissions": [
+        { "field": "grantableViaPolicy", "why": "fixture only exercises the MissingField case for `route`; grantableViaPolicy is allowlisted here to keep the assertion focused." }
+      ]
+    },
+    {
+      "struct": "PhantomFieldGate",
+      "file": "drifted-mirrors.rs",
+      "schema": "ApprovalGate",
+      "omissions": [
+        { "field": "grantableViaPolicy", "why": "fixture only exercises the UnknownField case for `ghost_field`; grantableViaPolicy is allowlisted here to keep the assertion focused." }
+      ]
+    }
+  ],
+  "non_mirrors": []
+}

@@ -208,7 +208,7 @@ they error clearly -- a release binary has no dev scripts.
 | `agentos dev chart-check` | `bash charts/agentos/ci/render-assertions.sh` -- render-assert the Helm chart. |
 | `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
 | `agentos dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
-| `agentos dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI api.rs mirror structs cover their platform API model fields (#691). |
+| `agentos dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI `api.rs` mirror structs cover their platform API model fields (#691), and CLI `commands.rs`/`spec.rs` mirror structs cover the frozen `packages/plugin-format` schema's fields (#701). |
 | `agentos dev emit-parity` | `bash cli/scripts/check-emit-parity.sh` -- assert a `CliOutput::to_json` that hand-projects a mirror struct into a `json!` literal covers that struct's fields, one hop downstream of `field-parity` (#699). |
 | `agentos dev wire-tolerance` | `bash scripts/check-wire-tolerance.sh` -- assert every direct `ClassName.model_validate*(...)` call on an `_AciModel` subclass threads `READER_CONTEXT` or is a declared exception (#625). |
 

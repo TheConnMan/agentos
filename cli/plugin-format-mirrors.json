@@ -1,0 +1,89 @@
+{
+  "_comment": "Declared hand-mirrors of the frozen packages/plugin-format schema (issue #701, the plugin_format sibling of #691's openapi.json gate; see packages/CLAUDE.md's frozen-contracts rule). Every Deserialize struct in cli/src/commands.rs and cli/src/spec.rs must appear in exactly one of mirrors or non_mirrors for its file. A mirrors entry names the plugin-format.schema.json $defs entry it mirrors and allowlists any field it deliberately does not carry, each with a why. A non_mirrors entry is a Deserialize struct that mirrors something OTHER than a plugin_format shape (a different local contract entirely) or whose field names deliberately diverge from the wire shape (an author-facing spec translated by scaffold.rs, not deserialized off a manifest), so field-by-field comparison does not apply to it. Check with: bash cli/scripts/check-field-parity.sh (rides agentos dev field-parity).",
+  "schema": "packages/plugin-format/schema/plugin-format.schema.json",
+  "mirrors": [
+    {
+      "struct": "ApprovalGateDecl",
+      "file": "cli/src/commands.rs",
+      "schema": "ApprovalGate",
+      "omissions": []
+    },
+    {
+      "struct": "ApprovalPolicyDecl",
+      "file": "cli/src/commands.rs",
+      "schema": "ApprovalPolicy",
+      "omissions": []
+    },
+    {
+      "struct": "ManifestApprovals",
+      "file": "cli/src/commands.rs",
+      "schema": "PluginManifest",
+      "omissions": [
+        { "field": "version", "why": "skill_approvals reports gate/route pairs only; the manifest's own declared version string has no output surface on this verb." },
+        { "field": "description", "why": "no approvals-verb output surfaces the bundle description." },
+        { "field": "author", "why": "no approvals-verb output surfaces manifest authorship." },
+        { "field": "homepage", "why": "no approvals-verb output surfaces a homepage URL." },
+        { "field": "repository", "why": "no approvals-verb output surfaces a source repository link." },
+        { "field": "license", "why": "no approvals-verb output surfaces a license identifier." },
+        { "field": "keywords", "why": "no approvals-verb output surfaces manifest keywords." },
+        { "field": "commands", "why": "no approvals-verb output surfaces the manifest's command list." },
+        { "field": "agents", "why": "no approvals-verb output surfaces the manifest's agent list." },
+        { "field": "hooks", "why": "hook wiring is a runner-boot concern; skill_approvals never reads or reports it." },
+        { "field": "mcpServers", "why": "declared MCP servers are surfaced by other verbs (skill check), not skill approvals." },
+        { "field": "systemPrompt", "why": "no approvals-verb output surfaces the agent's system prompt." },
+        { "field": "starterPrompts", "why": "no approvals-verb output surfaces starter prompts." },
+        { "field": "secrets", "why": "declared secret NAMES are surfaced by other verbs (skill up --secret), not skill approvals." },
+        { "field": "triggers", "why": "no approvals-verb output surfaces the manifest's trigger declarations." }
+      ]
+    },
+    {
+      "struct": "ApprovalGateSpec",
+      "file": "cli/src/spec.rs",
+      "schema": "ApprovalGate",
+      "omissions": []
+    },
+    {
+      "struct": "ApprovalPolicySpec",
+      "file": "cli/src/spec.rs",
+      "schema": "ApprovalPolicy",
+      "omissions": []
+    }
+  ],
+  "non_mirrors": [
+    {
+      "struct": "CheckReport",
+      "file": "cli/src/commands.rs",
+      "reason": "Mirrors the frozen agentos_runner.check report contract (parse_check_report), a different local contract entirely -- unrelated to plugin_format and out of scope for #701."
+    },
+    {
+      "struct": "DeclaredServer",
+      "file": "cli/src/commands.rs",
+      "reason": "A row of CheckReport.declared; same agentos_runner.check contract, not plugin_format."
+    },
+    {
+      "struct": "CheckMatch",
+      "file": "cli/src/commands.rs",
+      "reason": "A row of CheckReport.matches; same agentos_runner.check contract, not plugin_format."
+    },
+    {
+      "struct": "ForwardingVector",
+      "file": "cli/src/commands.rs",
+      "reason": "One row of the credential-forwarding cross-language test vector (#495, cli/tests/data/... fixture), unrelated to plugin_format."
+    },
+    {
+      "struct": "ForwardingVectors",
+      "file": "cli/src/commands.rs",
+      "reason": "The forwarding-vector file wrapper (#495); same unrelated fixture contract as ForwardingVector."
+    },
+    {
+      "struct": "SkillSpec",
+      "file": "cli/src/spec.rs",
+      "reason": "The agent-authoring spec's skill shape (name/description/allowed_tools/instructions). Field names are author-facing and deliberately diverge from SkillFrontmatter's wire shape (allowed_tools vs allowed-tools); scaffold.rs translates it into a SKILL.md frontmatter rather than this struct deserializing one, so it does not wire-mirror SkillFrontmatter."
+    },
+    {
+      "struct": "AgentSpec",
+      "file": "cli/src/spec.rs",
+      "reason": "The whole authored-agent spec shape (name/description/skills/connectors/secrets/approvalPolicy/evals) -- not a 1:1 mirror of any single plugin_format schema entry. Its own shape is held strict independently via #[serde(deny_unknown_fields)]."
+    }
+  ]
+}

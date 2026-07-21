@@ -158,6 +158,22 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   `cli/api-mirrors.json`** (as a `mirrors` entry with its allowlisted field
   omissions, or a `non_mirrors` entry with a one-line reason). `agentos dev
   field-parity` is the check (#691).
+- **A new `Deserialize` struct in `cli/src/commands.rs` or `cli/src/spec.rs`
+  that hand-mirrors the frozen `packages/plugin-format` manifest shape must be
+  declared in `cli/plugin-format-mirrors.json`** the same way (`mirrors` with
+  omissions, or `non_mirrors` with a reason) -- this is a SIBLING gate to the
+  one above, not the same one: the source of truth here is
+  `packages/plugin-format/schema/plugin-format.schema.json`, not
+  `apps/api/openapi.json`, since the two contracts are unrelated. `agentos dev
+  field-parity` (`cli/scripts/check-field-parity.sh`) runs both (#701). Beyond
+  the mechanical field sweep, `commands::parse_manifest_gates` additionally
+  validates a manifest that DECLARES an `approvalPolicy` against the full
+  frozen schema (`commands::validate_against_plugin_format_schema`) before
+  trusting the narrow `ManifestApprovals` read of it -- without that, a
+  manifest invalid in some unrelated modeled field (e.g. `commands: 123`)
+  would parse into the narrow shape untouched and `skill approvals` would
+  report gates as armed for a manifest the runner's own `PluginManifest`
+  parse rejects outright (closes ADR-0041's formerly-open known limitation).
 - **A `CliOutput::to_json` that hand-projects one of those mirror structs into
   a `serde_json::json!` literal must be declared in `cli/api-mirrors.json`'s
   `emits` array** (the `(output, struct)` pair, plus any allowlisted, justified
