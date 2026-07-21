@@ -4,6 +4,18 @@ Date: 2026-07-21
 
 Status: Accepted
 
+**Amended by [ADR-0065](0065-tag-protection-not-the-workflow-gate-binds-a-write-actor.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+the Context sentence below, "The workflow-level gate below is enforceable
+today without that access," is not correct against this ADR's own threat
+model -- the gate and the workflow file that invokes it are both read from the
+tagged commit, so a write actor willing to edit either is not bound by it.
+0065 restates the trust boundary: tag protection on `v*` and required
+reviewers on `release-publish` are the controls that actually bind such an
+actor, both still admin-gated and unconfigured. The Decision below (ancestry,
+checks, the environment reference) is unaffected and stands as an
+accident-prevention control.
+
 **Amended by [ADR-0066](0066-a-skip-propagates-through-the-whole-ancestor-graph.md)**
 (back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
 the Decision's claim that the jobs downstream of `build` are "covered without
