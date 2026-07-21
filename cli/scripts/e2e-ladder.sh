@@ -67,6 +67,16 @@ LOCAL_STACK_OWNED=0
 # matches nothing; the label is the only handle that actually selects them.
 SANDBOX_LABEL="agentos.dev/managed-by=agentos-sandbox-substrate"
 
+# The leftover-runner case (#747) stands in a container of its own. The name is
+# unique to this run and is NEVER agentos-runner-local: that default belongs to
+# whatever real `skill up` a developer has going on this box, and this case
+# removes what it names.
+CONFLICT_NAME="agentos-ladder-747-leftover-$$"
+CONFLICT_CREATED=0
+# The image that case creates its stand-in from. Already a requirement of the
+# ladder (rung 1 boots a real runner), so this adds no new prerequisite.
+RUNNER_IMAGE="agentos-runner"
+
 echo "=== Resolve the agentos binary ==="
 if [[ -n "${AGENTOS_BIN:-}" && -x "${AGENTOS_BIN:-}" ]]; then
     # Absolutize: the ladder invokes the binary from other directories, so a
@@ -110,6 +120,12 @@ cleanup() {
             # shellcheck disable=SC2086
             docker rm -f $orphans >/dev/null 2>&1
         fi
+    fi
+    # Only the container THIS run created, matched by its exact unique name, so
+    # the sweep can never reach a runner belonging to another session. Cleared by
+    # the case itself once `skill down` has removed it.
+    if (( CONFLICT_CREATED )); then
+        docker rm -f "$CONFLICT_NAME" >/dev/null 2>&1
     fi
     rm -rf "$WORKDIR"
     exit "$code"
@@ -233,11 +249,63 @@ assert_stub_port_free() {
     fi
 }
 
-# Rung 1: the existing skill-tier round trip, invoked as is. Never copied.
+# A leftover runner container of the target name must fail `skill up` with the
+# actionable remedies (exit 2), and `skill down --name` must clear it from a
+# directory holding no `.agentos/runner.json` (#747).
+#
+# Live-docker, because the reported defect was a WIRING defect: the planners are
+# unit-tested, but nothing proved `skill up` reaches the preflight or that
+# `skill down` reaches the removal. Nothing is booted -- the stand-in is created,
+# never started, and the preflight matches on `docker ps -a`.
+case_leftover_runner_container() {
+    echo
+    echo "=== case: a leftover runner container is recoverable from the CLI (#747) ==="
+    if ! docker image inspect "$RUNNER_IMAGE" >/dev/null 2>&1; then
+        echo "error: image '$RUNNER_IMAGE' is not present, and the #747 case creates its leftover from it." >&2
+        echo "fix: build it with \`agentos build\`, then re-run." >&2
+        return 1
+    fi
+    # Claim ownership BEFORE creating, so a signal between the two cannot strand
+    # the container: `docker rm -f` on a name that never existed is a no-op.
+    CONFLICT_CREATED=1
+    docker create --name "$CONFLICT_NAME" "$RUNNER_IMAGE" sleep 60 >/dev/null
+
+    local out code
+    out="$("$BIN" skill up --fake-model --plugin-dir "$WORKDIR/bundle" --name "$CONFLICT_NAME" 2>&1)" && code=0 || code=$?
+    printf '%s\n' "$out"
+    if (( code != 2 )); then
+        echo "skill up on a taken container name must exit 2 (usage), got $code." >&2
+        return 1
+    fi
+    # The whole point of #747: the operator's own remedy, not docker's raw
+    # exit-125 "name is already in use by container" text.
+    if [[ "$out" != *"container name conflict"* || "$out" != *"skill down --name $CONFLICT_NAME"* ]]; then
+        echo "skill up did not surface the actionable name-conflict remedies." >&2
+        return 1
+    fi
+    echo "skill up refused the taken name with the actionable remedies"
+
+    # From $WORKDIR, not the bundle: the reported wedge was a directory with no
+    # recorded runner state, which is exactly what `--name` exists to clear.
+    (cd "$WORKDIR" && "$BIN" skill down --name "$CONFLICT_NAME")
+    # Exact-name filter, never a substring: `name=agentos` is host-wide and would
+    # report another session's runner as this case's failure.
+    if [[ -n "$(docker ps -aq --filter "name=^${CONFLICT_NAME}$")" ]]; then
+        echo "skill down --name left '$CONFLICT_NAME' behind." >&2
+        return 1
+    fi
+    CONFLICT_CREATED=0
+    echo "skill down --name cleared the leftover with no recorded state"
+}
+
+# Rung 1: the existing skill-tier round trip, invoked as is. Never copied. The
+# #747 recovery case rides here because it drives skill-tier verbs and shares
+# rung 1's runner-image requirement.
 rung_skill() {
     echo
     echo "########## rung 1/3: skill ##########"
     bash "$REPO_ROOT/cli/scripts/e2e.sh"
+    case_leftover_runner_container
 }
 
 # Rung 2: the compose tier, cold start to teardown.

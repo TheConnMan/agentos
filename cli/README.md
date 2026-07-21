@@ -213,7 +213,7 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 
 | Command | What it does |
 |---|---|
-| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using AgentOS private storage when the env var is not exported. |
+| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using AgentOS private storage when the env var is not exported. A leftover container of the same name fails the boot with the remedies rather than a raw docker conflict; `--replace` removes it and boots fresh. |
 | `agentos skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
 | `agentos skill approvals` | View the bundle's declared `approvalPolicy` gates, read straight from `.claude-plugin/plugin.json` (or `plugin.json`); no docker, no network. `--gate <TOOL>` (repeatable) or `--clear` mutate nothing -- they print the `AGENTOS_APPROVAL_REQUIRED_TOOLS=...` assignment to export, then re-run your original `skill up` invocation with `--secret AGENTOS_APPROVAL_REQUIRED_TOOLS` added, since the runner only resolves that env once at container boot. |
 | `agentos skill versions` | Not available at this tier (exit 4): `skill up` runs the bundle bytes on disk, so no deployed version is assigned. Use `agentos local versions <agent>` or `agentos cluster versions <agent>`. |
@@ -221,7 +221,7 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 | `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
 | `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |
 | `agentos skill status` | Show the local runner's session status. |
-| `agentos skill down` | Stop and remove the local runner container. |
+| `agentos skill down` | Stop and remove the local runner container. With no `.agentos/runner.json` it falls back to container identity, so an orphaned runner is still clearable; `--name <NAME>` targets a container other than `agentos-runner-local`. |
 
 `skill up` records the container in the bundle's `.agentos/runner.json`
 (gitignored by the scaffold); `skill message` / `skill eval` / `skill status` /

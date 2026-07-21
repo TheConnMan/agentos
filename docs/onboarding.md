@@ -85,6 +85,12 @@ Anthropic key, so this proves the loop offline. Drop `--fake-model` and export a
 credential, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or
 `AGENTOS_CREDENTIALS`, for a real model.
 
+If `skill up` reports that the container name is already taken, a previous
+runner is still around: re-run with `--replace` to remove it and boot fresh. To
+clear a leftover runner from a directory that has no recorded state (a bundle
+you never ran `skill up` from, or one whose state file is gone), name it
+directly with `agentos skill down --name <container>`.
+
 The reply streams to `stdout` as `NDJSON`. Abort a live turn with `Ctrl-C`.
 `agentos skill eval` runs the bundle's `evals/cases.json` the same way. <!-- doclint:ignore-line -->
 

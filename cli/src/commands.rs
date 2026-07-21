@@ -78,6 +78,9 @@ pub struct StartOpts {
     /// model credentials (docker reads the value from the caller's env; the
     /// value never appears in argv). From `skill up --secret <NAME>`.
     pub secret: Vec<String>,
+    /// Remove a pre-existing container of the same name before booting, instead
+    /// of failing on the conflict. From `skill up --replace` (#747).
+    pub replace: bool,
 }
 
 /// The versioned report emitted by `agentos_runner.check`.
@@ -871,6 +874,35 @@ fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
     Ok(env)
 }
 
+/// What a recorded runner means for a fresh `skill up` (#747).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordedStatePlan {
+    /// Nothing recorded; boot.
+    Proceed,
+    /// `--replace` names the very container the record describes, so the record
+    /// is about to become stale anyway: clear it and boot.
+    ClearAndProceed,
+    /// A runner is recorded that `--replace` does not cover; refuse, so a second
+    /// bundle's live runner cannot be silently forgotten.
+    Refuse,
+}
+
+/// Resolve the recorded-state gate. Pure so both branches are testable without a
+/// bundle on disk. `--replace` only clears the record when it is replacing that
+/// exact container: a record naming a DIFFERENT runner still blocks, since
+/// removing one container is no reason to forget another.
+pub fn plan_recorded_state(
+    recorded: Option<&str>,
+    target: &str,
+    replace: bool,
+) -> RecordedStatePlan {
+    match recorded {
+        None => RecordedStatePlan::Proceed,
+        Some(container) if replace && container == target => RecordedStatePlan::ClearAndProceed,
+        Some(_) => RecordedStatePlan::Refuse,
+    }
+}
+
 pub async fn start(opts: StartOpts) -> Result<()> {
     let plugin_dir = opts
         .plugin_dir
@@ -891,7 +923,15 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         ));
     }
 
-    if state::load(&plugin_dir)?.is_some() {
+    // Decided here, ACTED ON below: refusing is free, but replacing tears down a
+    // live runner and must not happen until nothing cheap can still abort (#747).
+    let recorded_runner = state::load(&plugin_dir)?;
+    let recorded_plan = plan_recorded_state(
+        recorded_runner.as_ref().map(|s| s.container_name.as_str()),
+        &opts.name,
+        opts.replace,
+    );
+    if recorded_plan == RecordedStatePlan::Refuse {
         return Err(crate::exit::usage(format!(
             "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos skill down' there first",
             plugin_dir.display()
@@ -906,6 +946,30 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         ))
     })?;
 
+    // The replacement itself, once every cheap validation has passed. Tearing
+    // down the record means EVERYTHING it describes -- container, ollama sidecar,
+    // network, then the file -- because clearing the record while its runner is
+    // still live strands exactly the untracked orphan this ticket removes (#747).
+    if let (RecordedStatePlan::ClearAndProceed, Some(saved)) = (recorded_plan, recorded_runner) {
+        crate::ui::ui().note(&format!(
+            "--replace: tearing down the recorded runner '{}' first",
+            saved.container_name
+        ));
+        let live = docker::container_facts(&saved.container_name).await?;
+        stop_recorded(&plugin_dir, crate::ui::ui(), saved, live.as_ref()).await?;
+    }
+
+    // Catch a leftover container of the same name here, before anything is
+    // booted, so the operator gets the remedies instead of docker's raw
+    // exit-125 conflict at the very end of the boot (#747).
+    docker::ensure_container_name_free(
+        &opts.name,
+        Some(opts.port),
+        opts.replace,
+        docker::ConflictContext::SkillUp,
+    )
+    .await?;
+
     let session_id = format!("local-{}", unix_now());
     let mut network = opts.network.clone();
     let mut owned_network: Option<String> = None;
@@ -914,6 +978,18 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     let mut model = opts.model.clone();
 
     if let Some(local_model) = &opts.local_model {
+        // The sidecar is derived from the same --name, so a leftover
+        // `<name>-ollama` is the same wedge one step over (#747). Preflight it
+        // before creating anything, and let --replace cover it too.
+        let ollama = format!("{}-ollama", opts.name);
+        // No host port on the sidecar, so the remedy never offers --port.
+        docker::ensure_container_name_free(
+            &ollama,
+            None,
+            opts.replace,
+            docker::ConflictContext::SkillUp,
+        )
+        .await?;
         let (net, owned) = match &opts.network {
             Some(net) => (net.clone(), false),
             None => (format!("{}-net", opts.name), true),
@@ -926,12 +1002,16 @@ pub async fn start(opts: StartOpts) -> Result<()> {
                 owned_network = Some(net.clone());
             }
         }
-        let ollama = format!("{}-ollama", opts.name);
         if let Err(err) = docker::run_ollama(&ollama, &net, DEFAULT_OLLAMA_IMAGE).await {
             if let Some(net) = &owned_network {
                 let _ = docker::remove_network(net).await;
             }
-            return Err(err.context("starting local model container"));
+            return Err(docker::map_name_conflict(
+                err.context("starting local model container"),
+                &ollama,
+                None,
+                docker::ConflictContext::SkillUp,
+            ));
         }
         if let Err(err) = docker::wait_ollama_ready(&ollama, Duration::from_secs(120)).await {
             let _ = docker::remove_container(&ollama).await;
@@ -1034,7 +1114,15 @@ pub async fn start(opts: StartOpts) -> Result<()> {
             if let Some(net) = &owned_network {
                 let _ = docker::remove_network(net).await;
             }
-            return Err(err.context("starting runner container"));
+            // The preflight above can lose the race to a container created
+            // between the probe and here; map that onto the same actionable
+            // error rather than docker's raw conflict (#747).
+            return Err(docker::map_name_conflict(
+                err.context("starting runner container"),
+                &opts.name,
+                Some(opts.port),
+                docker::ConflictContext::SkillUp,
+            ));
         }
     };
 
@@ -1120,34 +1208,274 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     Ok(())
 }
 
-pub async fn stop() -> Result<()> {
-    let dir = Path::new(".");
-    let ui = crate::ui::ui();
-    let Some(saved) = state::load(dir)? else {
-        bail!("no local runner recorded in .agentos/runner.json; run from the bundle directory");
+/// What `agentos skill down` should tear down, resolved from the recorded state
+/// and an explicit `--name` (#747).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownPlan {
+    /// A runner is recorded and `container` IS it: remove it along with its
+    /// ollama container and network, then clear the state file.
+    Recorded { container: String },
+    /// An explicit `--name` that is not the recorded runner, and that container
+    /// is present: remove only it. The state file and the recorded runner's
+    /// ollama container and network are left alone, since they describe a
+    /// different, still-running runner (#747).
+    Targeted { container: String },
+    /// The same, except the named container is not there. A no-op teardown is
+    /// not an error, but it must not claim a removal that never happened:
+    /// `docker rm -f` exits 0 on a missing name, so absence is established by
+    /// the probe rather than inferred from the removal (#747).
+    TargetedAbsent { container: String },
+    /// No state file, but a container of that name exists: remove it. Nothing to
+    /// clear, so a stray runner is no longer un-stoppable from the CLI.
+    Orphan { container: String },
+    /// Nothing to remove; the message names what was looked for and the remedy.
+    Nothing { message: String },
+}
+
+/// Resolve the teardown target. Pure so the no-state fallback (#747) is testable
+/// without a Docker daemon or a bundle on disk. An explicit `--name` that
+/// disagrees with the recorded runner is a TARGETED removal, never a reason to
+/// clear state that describes a different container.
+/// What the recorded teardown does once the container actually holding the
+/// recorded NAME has been identified (#747).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordedTeardown {
+    /// The container holding the name IS the recorded one: full teardown. The
+    /// verified `id` is what gets removed, never the name: another bundle could
+    /// take the name between this check and the removal, and the whole point of
+    /// the check is that the removal hits the container it approved (#747).
+    Remove { id: String },
+    /// Nothing holds the name any more: clear the record without claiming a
+    /// removal that did not happen.
+    AlreadyGone,
+    /// A DIFFERENT container now holds the recorded name. Removing it would
+    /// destroy someone else's live runner, so it is left alone and the stale
+    /// record is cleared instead.
+    Hijacked { message: String },
+}
+
+/// Resolve the recorded teardown by container IDENTITY rather than by name.
+///
+/// The name alone is not identity: another bundle's `skill up --replace` can
+/// create a new container under the same name, and a later plain `skill down`
+/// here would then destroy that live runner (#747). Pure so both branches are
+/// testable without a Docker daemon.
+pub fn plan_recorded_teardown(
+    recorded_id: &str,
+    container: &str,
+    live_id: Option<&str>,
+) -> RecordedTeardown {
+    let Some(live) = live_id else {
+        return RecordedTeardown::AlreadyGone;
     };
-    match docker::remove_container(&saved.container_name).await {
-        Ok(()) => ui.success(&format!(
-            "stopped and removed container '{}'",
-            saved.container_name
-        )),
-        // The container being gone already is a success for stop: clear the
-        // state instead of wedging start/stop on a stale runner.json.
+    // `docker ps` reports a 12-char short id while `docker run` returns the full
+    // 64-char one, so identity is a prefix match, not equality. A record with no
+    // id at all cannot be compared, so it keeps the old name-based behavior
+    // rather than refusing to tear down.
+    if recorded_id.is_empty() || recorded_id.starts_with(live) || live.starts_with(recorded_id) {
+        return RecordedTeardown::Remove {
+            id: live.to_string(),
+        };
+    }
+    RecordedTeardown::Hijacked {
+        message: format!(
+            "the runner recorded in .agentos/runner.json is gone, and container '{container}' is now a different container ({live}); \
+nothing was removed and the stale record has been cleared. \
+To remove the container currently holding that name, run 'agentos skill down --name {container}'"
+        ),
+    }
+}
+
+pub fn plan_skill_down(recorded: Option<&str>, requested: Option<&str>, exists: bool) -> DownPlan {
+    match (recorded, requested) {
+        (Some(recorded), Some(requested)) if requested != recorded => {
+            let container = requested.to_string();
+            if exists {
+                DownPlan::Targeted { container }
+            } else {
+                DownPlan::TargetedAbsent { container }
+            }
+        }
+        (Some(recorded), _) => DownPlan::Recorded {
+            container: recorded.to_string(),
+        },
+        (None, requested) => {
+            let container = requested.unwrap_or(docker::RUNNER_CONTAINER_LOCAL);
+            if exists {
+                DownPlan::Orphan {
+                    container: container.to_string(),
+                }
+            } else {
+                DownPlan::Nothing {
+                    message: format!(
+                        "no local runner recorded in .agentos/runner.json and no container named '{container}' is running; \
+run 'agentos skill down' from the bundle directory, \
+or name the container with 'agentos skill down --name <container>'"
+                    ),
+                }
+            }
+        }
+    }
+}
+
+/// Warn before removing a container by NAME that is not identifiably ours.
+///
+/// `skill down --name postgres` would otherwise destroy an unrelated container
+/// with no signal at all. A warning, never a refusal: a runner left by a release
+/// that predates the CLI label carries no label and must stay removable, which
+/// is the whole point of #747. The label is read from the same probe that
+/// established the container exists, so a Docker error has already aborted the
+/// teardown before this is reached; here, absent means genuinely unlabeled.
+fn warn_if_not_cli_managed(
+    container: &str,
+    facts: Option<&docker::ContainerFacts>,
+    ui: &crate::ui::Ui,
+) {
+    if docker::is_cli_managed(facts) {
+        return;
+    }
+    ui.warn(&format!(
+        "container '{container}' does not carry the {} label, so it may not be an AgentOS runner; removing it anyway",
+        docker::CLI_MANAGED_LABEL
+    ));
+}
+
+/// Said on every `--name` teardown that deliberately leaves the recorded runner
+/// running, so the two arms cannot drift apart.
+const RECORDED_RUNNER_LEFT_ALONE: &str =
+    "left the recorded runner in .agentos/runner.json alone; run 'agentos skill down' with no --name to stop it";
+
+/// The note for a container that turned out to be gone before it was removed.
+///
+/// `state_cleared` is the recorded path, which ALSO clears
+/// `.agentos/runner.json`; that half of the sentence is the user's only signal
+/// that it did, so it is stated here once rather than left to each caller to
+/// remember (#747). Pure so the wording is testable.
+fn absent_container_note(container: &str, state_cleared: bool) -> String {
+    format!(
+        "container '{container}' was already gone{}",
+        if state_cleared {
+            "; cleared stale state"
+        } else {
+            ""
+        }
+    )
+}
+
+/// Remove a container, reporting success, and treat "already gone" as success
+/// too (the same tolerance the recorded-runner path has always had).
+async fn remove_container_tolerating_absence(
+    target: &str,
+    display: &str,
+    state_cleared: bool,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
+    match docker::remove_container(target).await {
+        Ok(()) => ui.success(&format!("stopped and removed container '{display}'")),
         Err(err) if err.to_string().contains("No such container") => {
-            ui.note(&format!(
-                "container '{}' was already gone; cleared stale state",
-                saved.container_name
-            ));
+            ui.note(&absent_container_note(display, state_cleared));
         }
         Err(err) => return Err(err),
     }
+    Ok(())
+}
+
+pub async fn stop(name: Option<String>) -> Result<()> {
+    let dir = Path::new(".");
+    let ui = crate::ui::ui();
+    let saved = state::load(dir)?;
+    let recorded = saved.as_ref().map(|s| s.container_name.clone());
+    // Ask Docker what actually holds the target name. Every path needs it:
+    // `docker rm -f` exits 0 on a missing name, so only the probe can tell a real
+    // removal from a no-op, and the recorded path compares the live container's
+    // ID against the recorded one before removing anything (#747). Exactly one
+    // branch below runs, so one probe of one name is enough, and taking the id
+    // and the managed-by label from that same probe leaves no window for the two
+    // to disagree.
+    let target = name
+        .as_deref()
+        .or(recorded.as_deref())
+        .unwrap_or(docker::RUNNER_CONTAINER_LOCAL);
+    // Propagated, never swallowed: an unreachable daemon reported as "no such
+    // container" would hand the user a remedy that cannot work and hide the real
+    // fault.
+    let live = docker::container_facts(target)
+        .await
+        .with_context(|| format!("checking whether container '{target}' exists"))?;
+
+    let plan = plan_skill_down(recorded.as_deref(), name.as_deref(), live.is_some());
+    // `Recorded` is returned only when a runner is recorded, so pairing the plan
+    // with the record here is what makes the teardown total.
+    if let (DownPlan::Recorded { .. }, Some(saved)) = (&plan, saved) {
+        return stop_recorded(dir, ui, saved, live.as_ref()).await;
+    }
+    match plan {
+        DownPlan::Targeted { container } => {
+            // A different container than the one on record: remove exactly it and
+            // leave the recorded runner (and its state, ollama, network) intact.
+            warn_if_not_cli_managed(&container, live.as_ref(), ui);
+            remove_container_tolerating_absence(&container, &container, false, ui).await?;
+            ui.note(RECORDED_RUNNER_LEFT_ALONE);
+            Ok(())
+        }
+        DownPlan::TargetedAbsent { container } => {
+            ui.note(&format!(
+                "no container named '{container}' is present; nothing was removed"
+            ));
+            ui.note(RECORDED_RUNNER_LEFT_ALONE);
+            Ok(())
+        }
+        DownPlan::Orphan { container } => {
+            // No state file to clear, so the container IS the identity (#747).
+            warn_if_not_cli_managed(&container, live.as_ref(), ui);
+            remove_container_tolerating_absence(&container, &container, false, ui).await?;
+            ui.note("no .agentos/runner.json was present, so nothing to clear");
+            Ok(())
+        }
+        DownPlan::Nothing { message } => bail!(message),
+        // Unreachable: `plan_skill_down` returns `Recorded` only when a runner
+        // is recorded, and the `if let` above takes that pairing.
+        DownPlan::Recorded { container } => {
+            bail!("internal: a recorded teardown of '{container}' reached the unrecorded path")
+        }
+    }
+}
+
+/// Tear down the runner recorded in `.agentos/runner.json`, plus the ollama
+/// sidecar, network and state file it owns.
+async fn stop_recorded(
+    dir: &Path,
+    ui: &crate::ui::Ui,
+    saved: RunnerState,
+    live: Option<&docker::ContainerFacts>,
+) -> Result<()> {
+    match plan_recorded_teardown(
+        &saved.container_id,
+        &saved.container_name,
+        live.map(|f| f.id.as_str()),
+    ) {
+        // By ID, not by name: the identity check above approved exactly this
+        // container, and a name can change hands before the removal lands.
+        RecordedTeardown::Remove { id } => {
+            remove_container_tolerating_absence(&id, &saved.container_name, true, ui).await?
+        }
+        // Nothing holds the name, so there is no removal to claim; the stale
+        // record still gets cleared below.
+        RecordedTeardown::AlreadyGone => {
+            ui.note(&absent_container_note(&saved.container_name, true))
+        }
+        // Another bundle's runner now holds this name. Removing it would destroy
+        // a live container this bundle never booted.
+        RecordedTeardown::Hijacked { message } => {
+            ui.warn(&message);
+            state::remove(dir)?;
+            return Ok(());
+        }
+    }
     if let Some(ollama) = &saved.ollama_container {
-        match docker::remove_container(ollama).await {
-            Ok(()) => ui.success(&format!("stopped and removed container '{ollama}'")),
-            Err(err) if err.to_string().contains("No such container") => {
-                ui.note(&format!("container '{ollama}' was already gone"));
-            }
-            Err(err) => ui.warn(&format!("could not remove container '{ollama}': {err}")),
+        // A sidecar that will not die is a warning, not a failed teardown.
+        if let Err(err) = remove_container_tolerating_absence(ollama, ollama, false, ui).await {
+            ui.warn(&format!("could not remove container '{ollama}': {err}"));
         }
         // Keep the model-cache volume so the next `skill up` reuses the pulled
         // model instead of re-downloading it (mirrors compose `down` keeping
@@ -1520,6 +1848,11 @@ async fn boot_eval_runner(
     model: &str,
     secrets: &[String],
 ) -> Result<String> {
+    // Same name-conflict preflight as `skill up` (#747), with the remedies the
+    // sweep actually has: never --replace, since a concurrent sweep's container
+    // must not be force-removed out from under it.
+    docker::ensure_container_name_free(name, Some(port), false, docker::ConflictContext::EvalSweep)
+        .await?;
     // Real-model run: forward the model credential (env or vault) and the
     // bundle's --secret connector secrets, mirroring `start`'s resolution.
     let mut docker_env = load_model_credentials_from_secret_store()?;
@@ -1559,7 +1892,12 @@ async fn boot_eval_runner(
     };
     docker::docker_with_env(&spec.run_args(), &spec.docker_env)
         .await
-        .with_context(|| format!("booting eval runner for model {model}"))?;
+        .with_context(|| format!("booting eval runner for model {model}"))
+        // A container created between the preflight and here still loses the
+        // race; report the sweep's remedies, not docker's raw conflict (#747).
+        .map_err(|err| {
+            docker::map_name_conflict(err, name, Some(port), docker::ConflictContext::EvalSweep)
+        })?;
     let url = format!("http://localhost:{port}");
     if let Err(err) = RunnerClient::new(&url)?
         .wait_healthy(Duration::from_secs(60))
@@ -3421,12 +3759,207 @@ pub fn skill_memory_unavailable() -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_secret_env, parse_manifest_gates, replace_first_line, resolve_cases_path,
+        absent_container_note, merge_secret_env, parse_manifest_gates, plan_recorded_state,
+        plan_recorded_teardown, plan_skill_down, replace_first_line, resolve_cases_path,
         seed_env_if_missing, select_in_force_deployment, select_passthrough_env,
-        validate_slack_channel, ApprovalGateDecl, EnvSeed,
+        validate_slack_channel, ApprovalGateDecl, DownPlan, EnvSeed, RecordedStatePlan,
+        RecordedTeardown,
     };
     use serde::Deserialize;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn replace_clears_a_stale_record_for_the_very_container_it_replaces() {
+        // A bundle holding both a stale runner.json and a live container of that
+        // name was unrecoverable with --replace: the record refused the boot
+        // before the preflight could remove anything (#747).
+        assert_eq!(
+            plan_recorded_state(Some("agentos-runner-local"), "agentos-runner-local", true),
+            RecordedStatePlan::ClearAndProceed
+        );
+        assert_eq!(
+            plan_recorded_state(None, "agentos-runner-local", false),
+            RecordedStatePlan::Proceed
+        );
+    }
+
+    #[test]
+    fn replace_does_not_clear_a_record_naming_a_different_runner() {
+        // Removing one container is no reason to forget another: a record for a
+        // different, still-live runner keeps refusing, with or without --replace.
+        assert_eq!(
+            plan_recorded_state(Some("agentos-runner-local"), "agentos-example-42", true),
+            RecordedStatePlan::Refuse
+        );
+        assert_eq!(
+            plan_recorded_state(Some("agentos-runner-local"), "agentos-runner-local", false),
+            RecordedStatePlan::Refuse
+        );
+    }
+
+    #[test]
+    fn an_absent_container_note_says_the_stale_state_was_cleared() {
+        // Only the recorded path clears `.agentos/runner.json`, and this sentence
+        // is the user's only signal that it did, so the two notes are NOT
+        // interchangeable (#747).
+        assert_eq!(
+            absent_container_note("agentos-runner-local", true),
+            "container 'agentos-runner-local' was already gone; cleared stale state"
+        );
+        // The --name paths clear nothing, so they must not claim to.
+        assert_eq!(
+            absent_container_note("agentos-example-42", false),
+            "container 'agentos-example-42' was already gone"
+        );
+    }
+
+    #[test]
+    fn recorded_teardown_removes_the_container_it_actually_recorded() {
+        // `docker ps` reports a short id and `docker run` a full one, so the same
+        // container must still be recognized across that truncation.
+        // And the removal targets the PROBED id, not the recorded one and never
+        // the name: a name can change hands between the check and the removal.
+        assert_eq!(
+            plan_recorded_teardown(
+                "9f2c1d3e4b5a6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f",
+                "agentos-runner-local",
+                Some("9f2c1d3e4b5a")
+            ),
+            RecordedTeardown::Remove {
+                id: "9f2c1d3e4b5a".into()
+            }
+        );
+        // Nothing holds the name: no removal to claim, the record still clears.
+        assert_eq!(
+            plan_recorded_teardown("9f2c1d3e4b5a", "agentos-runner-local", None),
+            RecordedTeardown::AlreadyGone
+        );
+    }
+
+    #[test]
+    fn recorded_teardown_refuses_a_container_that_merely_reuses_the_name() {
+        // Bundle B booted a NEW container under the same name (its own
+        // `skill up --replace`). A plain `skill down` in bundle A must not
+        // destroy it just because the name still matches (#747).
+        let plan = plan_recorded_teardown(
+            "aaaa1111bbbb2222",
+            "agentos-runner-local",
+            Some("cccc3333dddd"),
+        );
+        let RecordedTeardown::Hijacked { message } = plan else {
+            panic!("a different container holding the recorded name must not be removed");
+        };
+        assert!(message.contains("agentos-runner-local"), "{message}");
+        assert!(message.contains("cccc3333dddd"), "{message}");
+        assert!(message.contains("nothing was removed"), "{message}");
+        assert!(
+            message.contains("agentos skill down --name agentos-runner-local"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn skill_down_removes_the_recorded_runner() {
+        assert_eq!(
+            plan_skill_down(Some("agentos-runner-local"), None, false),
+            DownPlan::Recorded {
+                container: "agentos-runner-local".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skill_down_targets_a_name_that_is_not_the_recorded_runner() {
+        // Only `Recorded` clears `.agentos/runner.json`. An explicit --name that
+        // disagrees with the record is a targeted removal, so the still-running
+        // recorded runner keeps its state file, ollama container, and network
+        // instead of being silently orphaned (#747).
+        assert_eq!(
+            plan_skill_down(
+                Some("agentos-runner-local"),
+                Some("agentos-example-42"),
+                true
+            ),
+            DownPlan::Targeted {
+                container: "agentos-example-42".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skill_down_does_not_claim_a_removal_of_an_absent_targeted_container() {
+        // `docker rm -f <missing>` exits 0, so the removal itself cannot tell a
+        // real teardown from a no-op. Absence has to come from the probe, or the
+        // verb reports "stopped and removed" for a container that was never
+        // there (#747). Still not an error -- just not a removal.
+        let plan = plan_skill_down(
+            Some("agentos-runner-local"),
+            Some("agentos-747-absent"),
+            false,
+        );
+        assert_eq!(
+            plan,
+            DownPlan::TargetedAbsent {
+                container: "agentos-747-absent".into()
+            }
+        );
+        // The only variants that report a removal are the ones that do one.
+        assert!(!matches!(
+            plan,
+            DownPlan::Targeted { .. } | DownPlan::Recorded { .. } | DownPlan::Orphan { .. }
+        ));
+    }
+
+    #[test]
+    fn skill_down_with_the_recorded_name_is_the_full_recorded_teardown() {
+        // Naming the recorded container explicitly is the state-clearing
+        // teardown, not a targeted removal that would strand the record.
+        assert_eq!(
+            plan_skill_down(
+                Some("agentos-runner-local"),
+                Some("agentos-runner-local"),
+                false
+            ),
+            DownPlan::Recorded {
+                container: "agentos-runner-local".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skill_down_falls_back_to_container_identity_without_state() {
+        // The reported wedge (#747): an orphaned container and no runner.json.
+        // `skill down` must be able to clear it.
+        assert_eq!(
+            plan_skill_down(None, None, true),
+            DownPlan::Orphan {
+                container: "agentos-runner-local".into()
+            }
+        );
+        assert_eq!(
+            plan_skill_down(None, Some("agentos-example-42"), true),
+            DownPlan::Orphan {
+                container: "agentos-example-42".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skill_down_with_nothing_to_remove_names_the_container_and_the_remedy() {
+        let DownPlan::Nothing { message } = plan_skill_down(None, None, false) else {
+            panic!("no state and no container is nothing to remove");
+        };
+        assert!(message.contains("agentos-runner-local"), "{message}");
+        assert!(message.contains(".agentos/runner.json"), "{message}");
+        assert!(message.contains("--name"), "{message}");
+
+        let DownPlan::Nothing { message } =
+            plan_skill_down(None, Some("agentos-eval-sweep-0"), false)
+        else {
+            panic!("no state and no container is nothing to remove");
+        };
+        assert!(message.contains("agentos-eval-sweep-0"), "{message}");
+    }
 
     #[test]
     fn replace_first_line_rewrites_only_the_first_anchored_line() {

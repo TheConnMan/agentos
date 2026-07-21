@@ -129,6 +129,12 @@ impl StartSpec {
         // Container isolation (#631): read-only rootfs + tmpfs, cap-drop ALL,
         // no-new-privileges. Mirrors the worker Docker substrate + K8s runner.
         args.extend(runner_hardening_args());
+        // Identify CLI-booted runners (#747). Deliberately NOT `SANDBOX_LABEL`:
+        // that one is the worker substrate's, and `local down` reaps by it.
+        args.push("--label".into());
+        args.push(CLI_MANAGED_LABEL.into());
+        args.push("--label".into());
+        args.push(RUNNER_COMPONENT_LABEL.into());
         if self.fake_model {
             args.push("-e".into());
             args.push(format!("{}=1", env_keys::AGENTOS_FAKE_MODEL));
@@ -263,6 +269,13 @@ pub fn ollama_run_args(container: &str, network: &str, image: &str) -> Vec<Strin
         network.to_string(),
         "-v".into(),
         format!("{}:/root/.ollama", ollama_volume(container)),
+        // The sidecar is CLI-booted too, so it carries the same managed-by label
+        // (#747): without it, `skill down --name <bundle>-ollama` would warn that
+        // a container this very code path created may not be ours. No component
+        // label: it is not a runner. Never SANDBOX_LABEL, which would put it in
+        // `local down`'s reap set.
+        "--label".into(),
+        CLI_MANAGED_LABEL.into(),
         image.to_string(),
     ]
 }
@@ -456,6 +469,201 @@ pub const RUNNER_IMAGE: &str = "agentos-runner";
 /// `local` boot it, `skill down` reaps it). One definition (#497).
 pub const RUNNER_CONTAINER_LOCAL: &str = "agentos-runner-local";
 
+/// The label every CLI-booted container carries (#747), so a leftover runner is
+/// identifiable as ours. Distinct from [`SANDBOX_LABEL`] on purpose: that one is
+/// the worker substrate's and drives `local down`'s reap set, which this must
+/// not widen.
+pub const CLI_MANAGED_LABEL: &str = "agentos.dev/managed-by=agentos-cli";
+
+/// The component label on CLI-booted runner containers (#747).
+pub const RUNNER_COMPONENT_LABEL: &str = "agentos.dev/component=runner";
+
+/// The key and value halves of [`CLI_MANAGED_LABEL`]. Split from the one
+/// declaration rather than restated, so the `--format` read below cannot drift
+/// from the `--label` the container is stamped with.
+fn cli_managed_label_parts() -> (&'static str, &'static str) {
+    CLI_MANAGED_LABEL
+        .split_once('=')
+        .expect("CLI_MANAGED_LABEL is a key=value pair")
+}
+
+/// What Docker reports about the container holding a name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerFacts {
+    /// The container id, which is what makes a recorded runner identifiable
+    /// across boots: a name can be reused by an entirely different container
+    /// (#747).
+    pub id: String,
+    /// Whether it carries [`CLI_MANAGED_LABEL`], i.e. the AgentOS CLI booted it.
+    pub cli_managed: bool,
+}
+
+/// Everything one teardown needs to know about the container holding exactly
+/// this name, running or stopped. `None` when the name is free.
+///
+/// Id and label come from ONE `docker ps`, so they cannot disagree because the
+/// container was replaced between two probes.
+pub async fn container_facts(name: &str) -> Result<Option<ContainerFacts>> {
+    let (label_key, label_value) = cli_managed_label_parts();
+    let args: Vec<String> = vec![
+        "ps".into(),
+        "-a".into(),
+        "--filter".into(),
+        format!("name=^{name}$"),
+        "--format".into(),
+        format!("{{{{.Names}}}}\t{{{{.ID}}}}\t{{{{.Label \"{label_key}\"}}}}"),
+    ];
+    let out = docker(&args).await?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            Some((fields.next()?.trim(), fields.next()?.trim(), fields.next()))
+        })
+        .find(|(found, _, _)| *found == name)
+        .map(|(_, id, label)| ContainerFacts {
+            id: id.to_string(),
+            cli_managed: label.map(str::trim) == Some(label_value),
+        }))
+}
+
+/// Whether a container with exactly this name exists, running or stopped.
+pub async fn container_exists(name: &str) -> Result<bool> {
+    Ok(container_facts(name).await?.is_some())
+}
+
+/// Whether these facts describe a container the AgentOS CLI booted. A container
+/// left by a pre-label release reads as false, so this can inform a warning but
+/// must never gate a removal (#747).
+pub fn is_cli_managed(facts: Option<&ContainerFacts>) -> bool {
+    facts.is_some_and(|f| f.cli_managed)
+}
+
+/// What to do about the target container name before booting (#747).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NamePlan {
+    /// The name is free; boot straight away.
+    Proceed,
+    /// The name is taken and `--replace` was passed; remove the leftover first.
+    Replace,
+}
+
+/// Which verb hit the conflict, and therefore which remedies are real.
+///
+/// `skill eval`'s per-model sweep boots its own `agentos-eval-sweep-<i>`
+/// containers and accepts none of `--replace`, `--name` or `--port`, so it must
+/// not be offered them (#747).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictContext {
+    SkillUp,
+    EvalSweep,
+}
+
+/// Resolve the name conflict, or produce the operator-facing error text.
+///
+/// Pure so the remedy wording (#747) is testable without a Docker daemon. The
+/// error must be what the user sees instead of docker's raw exit-125 conflict,
+/// and every remedy it names must exist on the verb that hit the conflict.
+/// `port` is the host port the boot wanted, and `None` for a container that
+/// publishes none (the local-model sidecar): `--port` is not the relevant knob
+/// there, so the clause naming it is dropped rather than misdirecting.
+pub fn plan_container_name(
+    name: &str,
+    port: Option<u16>,
+    exists: bool,
+    replace: bool,
+    context: ConflictContext,
+) -> std::result::Result<NamePlan, String> {
+    match (exists, replace) {
+        (false, _) => Ok(NamePlan::Proceed),
+        (true, true) => Ok(NamePlan::Replace),
+        (true, false) => Err(match context {
+            ConflictContext::SkillUp => format!(
+                "container name conflict: '{name}' already exists, likely a leftover runner from an earlier session; \
+re-run with --replace to remove it and boot fresh, \
+or remove it with 'agentos skill down --name {name}', \
+or boot this bundle beside it with a different --name{}",
+                match port {
+                    Some(port) => format!(" and --port (this run wanted port {port})"),
+                    None => String::new(),
+                }
+            ),
+            // No --replace here on purpose: a concurrent sweep's container must
+            // not be force-removed out from under it.
+            ConflictContext::EvalSweep => format!(
+                "container name conflict: '{name}' already exists, likely a leftover from an interrupted model sweep{}; \
+remove it with 'agentos skill down --name {name}' and re-run the sweep",
+                match port {
+                    Some(port) => format!(" (it was to serve port {port})"),
+                    None => String::new(),
+                }
+            ),
+        }),
+    }
+}
+
+/// Preflight the target container name, removing a leftover when `replace` is
+/// set. Shared by `skill up`, its local-model sidecar and the per-model eval
+/// runners so all three surface the same actionable error rather than docker's
+/// raw conflict (#747). Reports the replacement itself, so no caller has to.
+pub async fn ensure_container_name_free(
+    name: &str,
+    port: Option<u16>,
+    replace: bool,
+    context: ConflictContext,
+) -> Result<()> {
+    let exists = container_exists(name).await?;
+    match plan_container_name(name, port, exists, replace, context).map_err(crate::exit::usage)? {
+        NamePlan::Proceed => Ok(()),
+        NamePlan::Replace => {
+            remove_container(name)
+                .await
+                .with_context(|| format!("removing existing container '{name}' for --replace"))?;
+            crate::ui::ui().note(&format!(
+                "removed pre-existing container '{name}' (--replace)"
+            ));
+            Ok(())
+        }
+    }
+}
+
+/// Whether a docker failure is the name conflict docker reports (its exit 125)
+/// when a container of that name already exists.
+///
+/// Pure so the lost-race mapping (#747) is testable without racing a real
+/// daemon. Matched on docker's stable phrasing: `Conflict. The container name
+/// "/x" is already in use by container "..."`.
+pub fn is_name_conflict_error(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("already in use by container")
+        || (lowered.contains("conflict") && lowered.contains("container name"))
+}
+
+/// Map a `docker run` failure that lost the name-conflict race onto the same
+/// actionable error the preflight produces (#747).
+///
+/// The probe and the run are separate operations, so a container created in
+/// between still yields docker's raw exit-125 text without this. Anything that
+/// is not a name conflict passes through untouched.
+pub fn map_name_conflict(
+    err: anyhow::Error,
+    name: &str,
+    port: Option<u16>,
+    context: ConflictContext,
+) -> anyhow::Error {
+    // The whole chain, not just the outermost context: the docker text is the
+    // root cause under a `starting runner container`-style wrapper.
+    if !is_name_conflict_error(&format!("{err:#}")) {
+        return err;
+    }
+    // An existing container without --replace is unconditionally a conflict, so
+    // there is no plan to fall through to here.
+    crate::exit::usage(
+        plan_container_name(name, port, true, false, context)
+            .expect_err("an existing container without --replace is always a conflict"),
+    )
+}
+
 /// The last log lines of a container, for boot-failure diagnostics.
 pub async fn container_logs(name_or_id: &str, tail: u32) -> String {
     let args: Vec<String> = vec![
@@ -572,6 +780,21 @@ mod tests {
     }
 
     #[test]
+    fn ollama_run_args_label_the_sidecar_as_cli_managed() {
+        // The sidecar is CLI-booted and removable by name, so it must be
+        // identifiable as ours (#747) or `skill down --name <bundle>-ollama`
+        // warns about a container this feature itself created.
+        let joined =
+            ollama_run_args("agentos-ollama", "agentos-net", "ollama/ollama:0.24.0").join(" ");
+        assert!(
+            joined.contains("--label agentos.dev/managed-by=agentos-cli"),
+            "{joined}"
+        );
+        // Still outside the worker substrate's reap set.
+        assert!(!joined.contains(SANDBOX_LABEL), "{joined}");
+    }
+
+    #[test]
     fn run_args_carry_the_aci_boot_env() {
         let args = spec().run_args();
         let joined = args.join(" ");
@@ -607,6 +830,180 @@ mod tests {
         );
         // The default seccomp profile is left active -- never disabled.
         assert!(!joined.contains("seccomp=unconfined"), "{joined}");
+    }
+
+    #[test]
+    fn run_args_label_the_container_as_cli_managed() {
+        // CLI-booted runners are identifiable as ours (#747)...
+        let joined = spec().run_args().join(" ");
+        assert!(
+            joined.contains("--label agentos.dev/managed-by=agentos-cli"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--label agentos.dev/component=runner"),
+            "{joined}"
+        );
+        // ...without joining the worker substrate's reap set, which `local down`
+        // clears by SANDBOX_LABEL.
+        assert!(!joined.contains(SANDBOX_LABEL), "{joined}");
+    }
+
+    #[test]
+    fn plan_container_name_proceeds_when_the_name_is_free() {
+        assert_eq!(
+            plan_container_name(
+                "agentos-runner-local",
+                Some(7245),
+                false,
+                false,
+                ConflictContext::SkillUp
+            ),
+            Ok(NamePlan::Proceed)
+        );
+        assert_eq!(
+            plan_container_name(
+                "agentos-runner-local",
+                Some(7245),
+                false,
+                true,
+                ConflictContext::SkillUp
+            ),
+            Ok(NamePlan::Proceed)
+        );
+    }
+
+    #[test]
+    fn plan_container_name_replaces_only_when_asked() {
+        assert_eq!(
+            plan_container_name(
+                "agentos-runner-local",
+                Some(7245),
+                true,
+                true,
+                ConflictContext::SkillUp
+            ),
+            Ok(NamePlan::Replace)
+        );
+    }
+
+    #[test]
+    fn name_conflict_names_the_container_and_every_remedy() {
+        // The operator must never meet docker's raw exit-125 conflict here
+        // (#747): the error names the container and all three ways out.
+        let err = plan_container_name(
+            "agentos-runner-local",
+            Some(7245),
+            true,
+            false,
+            ConflictContext::SkillUp,
+        )
+        .expect_err("an existing container without --replace must fail");
+        assert!(err.contains("agentos-runner-local"), "{err}");
+        assert!(err.contains("--replace"), "{err}");
+        assert!(
+            err.contains("agentos skill down --name agentos-runner-local"),
+            "{err}"
+        );
+        assert!(err.contains("--name"), "{err}");
+        assert!(err.contains("--port"), "{err}");
+        assert!(err.contains("7245"), "{err}");
+        // Docker's own wording never reaches the user.
+        assert!(!err.contains("125"), "{err}");
+        assert!(!err.contains("already in use"), "{err}");
+    }
+
+    #[test]
+    fn name_conflict_covers_the_eval_sweep_containers_too() {
+        // Sibling-path parity (#747), but only with remedies `skill eval`
+        // actually has: it accepts no --replace, no --name and no --port, so
+        // offering them would send the operator down a dead end.
+        let err = plan_container_name(
+            "agentos-eval-sweep-0",
+            Some(7345),
+            true,
+            false,
+            ConflictContext::EvalSweep,
+        )
+        .expect_err("an existing container without --replace must fail");
+        assert!(err.contains("agentos-eval-sweep-0"), "{err}");
+        assert!(err.contains("7345"), "{err}");
+        assert!(
+            err.contains("agentos skill down --name agentos-eval-sweep-0"),
+            "{err}"
+        );
+        assert!(!err.contains("--replace"), "{err}");
+        assert!(!err.contains("--port"), "{err}");
+        assert!(!err.contains("125"), "{err}");
+    }
+
+    #[test]
+    fn a_container_with_no_host_port_is_not_offered_the_port_knob() {
+        // The local-model sidecar publishes no host port, so `--port` is not the
+        // knob that moves it out of the way; naming it would misdirect (#747).
+        let err = plan_container_name(
+            "agentos-runner-local-ollama",
+            None,
+            true,
+            false,
+            ConflictContext::SkillUp,
+        )
+        .expect_err("an existing container without --replace must fail");
+        assert!(err.contains("agentos-runner-local-ollama"), "{err}");
+        assert!(err.contains("--replace"), "{err}");
+        assert!(
+            err.contains("agentos skill down --name agentos-runner-local-ollama"),
+            "{err}"
+        );
+        // No port clause at all, not just no `--port` flag.
+        assert!(!err.contains("port"), "{err}");
+    }
+
+    #[test]
+    fn a_lost_name_conflict_race_maps_onto_the_same_actionable_error() {
+        // The probe and `docker run` are separate operations, so a container
+        // created in between yields docker's raw exit-125 text. That is the exact
+        // surface this change removes, so the race must land on the same message
+        // (#747).
+        let raw = anyhow::anyhow!(
+            "docker run failed (exit status: 125): docker: Error response from daemon: Conflict. \
+The container name \"/agentos-runner-local\" is already in use by container \"9f2c\"."
+        );
+        assert!(is_name_conflict_error(&raw.to_string()));
+        let mapped = map_name_conflict(
+            raw.context("starting runner container"),
+            "agentos-runner-local",
+            Some(7245),
+            ConflictContext::SkillUp,
+        );
+        let text = format!("{mapped:#}");
+        assert!(text.contains("--replace"), "{text}");
+        assert!(
+            text.contains("agentos skill down --name agentos-runner-local"),
+            "{text}"
+        );
+        assert!(!text.contains("125"), "{text}");
+        assert!(!text.contains("already in use"), "{text}");
+    }
+
+    #[test]
+    fn a_failure_that_is_not_a_name_conflict_passes_through_untouched() {
+        // Only the conflict is rewritten; every other docker failure keeps its
+        // own diagnosis rather than being mislabeled as a leftover container.
+        let raw = anyhow::anyhow!(
+            "docker run failed (exit status: 125): docker: Error response from daemon: \
+driver failed programming external connectivity: port is already allocated."
+        );
+        assert!(!is_name_conflict_error(&raw.to_string()));
+        let mapped = map_name_conflict(
+            raw,
+            "agentos-runner-local",
+            Some(7245),
+            ConflictContext::SkillUp,
+        );
+        let text = format!("{mapped:#}");
+        assert!(text.contains("port is already allocated"), "{text}");
+        assert!(!text.contains("--replace"), "{text}");
     }
 
     #[test]
