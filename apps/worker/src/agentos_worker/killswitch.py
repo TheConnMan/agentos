@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 KILL_CHANNEL = "agentos:kill-events"
 KILL_KEY_PREFIX = "agentos:kill:"
 
+# How long one kill event's dispatch to ``on_kill`` gets before the read loop
+# gives up on it and moves on to the next pubsub message (#742). ``on_kill`` is
+# `Kernel.interrupt_agent`, which already bounds and fans out over the agent's
+# individual threads concurrently, so this is a generous outer backstop, not
+# the primary bound -- it exists so a stuck handler (of any kind, not only a
+# wedged runner) can never stall this read loop and drop every kill event
+# behind it, which is exactly the failure the surrounding try/except was
+# guarding against without actually preventing.
+_ON_KILL_TIMEOUT_S = 15.0
+
 
 def kill_key(agent_id: uuid.UUID) -> str:
     return f"{KILL_KEY_PREFIX}{agent_id}"
@@ -76,11 +86,20 @@ class KillSwitch:
             return
         # A resume needs no worker action: the flag is already cleared by the API,
         # so is_killed lets new runs through. Only a kill interrupts live turns.
-        # Guard on_kill so a failed interrupt of one agent does not tear down the
-        # subscriber and miss every later kill event.
+        # Guard on_kill so a failed OR hanging interrupt of one agent does not
+        # tear down the subscriber or stall this loop and miss every later kill
+        # event (#742): a wedged handler must cost this one dispatch its timeout
+        # budget, never the read loop itself.
         if action == "kill":
             try:
-                await self._on_kill(agent_id)
+                await asyncio.wait_for(self._on_kill(agent_id), _ON_KILL_TIMEOUT_S)
+            except TimeoutError:
+                logger.error(
+                    "kill handler for agent %s did not finish within %ss; abandoning "
+                    "this dispatch and continuing to read further kill events",
+                    agent_id,
+                    _ON_KILL_TIMEOUT_S,
+                )
             except Exception:
                 logger.exception("kill handler failed for agent %s", agent_id)
 

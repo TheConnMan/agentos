@@ -21,6 +21,20 @@ from types import TracebackType
 import aiohttp
 from aci_protocol import Event, Interrupt, OutboundEvent, parse_ndjson_line
 
+# The interrupt RPC is a control-plane POST, not a streaming turn (#742, a
+# follow-up to #739): it exists only to hard-stop the live turn, never to carry
+# a turn's output, so it must not inherit ``connect_timeout_s``/``total_timeout_s``,
+# which are tuned for a long-running streamed turn (default 600s). A wedged
+# runner that accepts the TCP connect and then answers nothing would otherwise
+# hang every interrupt caller for up to that streaming budget. A healthy runner
+# answers an interrupt well under a second. This bound lives here, at the RPC
+# itself, so every caller inherits it for free; each caller then layers its own
+# policy on top (``Kernel.release_thread`` swallows and releases,
+# ``Kernel.interrupt_agent`` and the kill switch surface the failure and keep
+# going) instead of re-deriving the bound -- or a coupling to this client's
+# other timeouts -- at each call site.
+_DEFAULT_INTERRUPT_TIMEOUT_S = 5.0
+
 
 def _auth_headers(token: str | None) -> dict[str, str] | None:
     """Per-call Authorization header for the per-sandbox runner token (issue #63).
@@ -74,6 +88,7 @@ class RunnerClient:
         *,
         connect_timeout_s: float = 10.0,
         total_timeout_s: float = 600.0,
+        interrupt_timeout_s: float = _DEFAULT_INTERRUPT_TIMEOUT_S,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         self._own_session = session is None
@@ -82,6 +97,11 @@ class RunnerClient:
                 total=total_timeout_s, connect=connect_timeout_s, sock_read=total_timeout_s
             )
         )
+        # A per-request override, not folded into the session default above: it
+        # replaces (not merges with) the session timeout for this one call, so
+        # ``/v1/interrupt`` gets its own short control-plane budget regardless of
+        # how the streaming timeouts above are tuned.
+        self._interrupt_timeout = aiohttp.ClientTimeout(total=interrupt_timeout_s)
 
     async def start_turn(
         self, base_url: str, event: Event, token: str | None = None
@@ -109,10 +129,21 @@ class RunnerClient:
             return True
 
     async def interrupt(self, base_url: str, reason: str, token: str | None = None) -> None:
-        """Hard-stop the live turn; its final is reclassified to idle."""
+        """Hard-stop the live turn; its final is reclassified to idle.
+
+        Bounded to ``_DEFAULT_INTERRUPT_TIMEOUT_S`` (or the constructor
+        override), never the streaming ``total_timeout_s``/``sock_read``
+        budget (#742): a wedged runner that accepts the connect and then
+        answers nothing must not cost the caller up to that streaming budget
+        just to find out. Raises ``asyncio.TimeoutError`` on expiry, same as
+        any other failure here -- callers already decide per call site whether
+        to swallow-and-fallback or surface-and-continue."""
         frame = Interrupt(reason=reason)
         async with self._session.post(
-            f"{base_url}/v1/interrupt", json=frame.model_dump(), headers=_auth_headers(token)
+            f"{base_url}/v1/interrupt",
+            json=frame.model_dump(),
+            headers=_auth_headers(token),
+            timeout=self._interrupt_timeout,
         ) as resp:
             if resp.status not in (200, 409):
                 body = await resp.text()

@@ -267,6 +267,54 @@ def test_interrupt_hard_stops_the_live_turn(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_interrupt_agent_signals_other_threads_past_a_wedged_runner(
+    make_harness, monkeypatch
+) -> None:
+    """#742: interrupt_agent fans out over an agent's live threads. A single
+    wedged runner -- one that accepts the interrupt call and then never
+    answers -- must not cost the agent's other threads up to
+    `RunnerClient.interrupt`'s own request budget: the kill switch is "the one
+    control that is supposed to work when things are broken." Each thread's
+    interrupt is individually bounded and the fan-out runs concurrently, so a
+    permanently-wedged thread times out (logged, not raised) while the other
+    threads are still signalled well inside the test's own generous ceiling.
+
+    The wedge is injected at the runner-client seam with an event that is never
+    set, the same deterministic technique #739's release_thread test uses,
+    rather than racing real timing against a live HTTP hang."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            agent_id = uuid.uuid4()
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            threads = ("tKillA", "tKillB", "tKillC")
+            for thread in threads:
+                await h.kernel.process_event(_qevent("hi", thread=thread))
+            h.kernel._active_by_agent[agent_id] = set(threads)
+
+            monkeypatch.setattr(kernel_module, "_KILL_INTERRUPT_TIMEOUT_S", 0.2)
+
+            wedged = asyncio.Event()  # never set: the first thread's runner hangs forever
+            attempted: list[str] = []
+
+            async def maybe_wedge(base_url: str, reason: str, token: str | None = None) -> None:
+                attempted.append(reason)
+                if len(attempted) == 1:
+                    await wedged.wait()
+
+            monkeypatch.setattr(h.kernel._runner, "interrupt", maybe_wedge)
+
+            try:
+                signalled = await asyncio.wait_for(h.kernel.interrupt_agent(agent_id), timeout=2.0)
+            finally:
+                wedged.set()
+
+            assert len(attempted) == 3  # every thread was attempted, none blocked the rest
+            assert signalled == 2  # the wedged thread times out; the other two still land
+
+    asyncio.run(go())
+
+
 def test_duplicate_event_is_idempotent(make_harness) -> None:
     async def go() -> None:
         async with make_harness() as h:
