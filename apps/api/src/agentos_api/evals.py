@@ -48,6 +48,29 @@ def _is_graded(trace: dict[str, Any]) -> bool:
     return _outcome_of(trace) in ("pass", "fail")
 
 
+def _completed(trace: dict[str, Any]) -> bool:
+    """Did this case's turn actually reach a graded verdict?
+
+    A graded ``pass`` is always a completion. A graded ``fail`` is ambiguous on
+    its own: the worker (``EvalCaseResult``) sets ``error`` on a FAIL precisely
+    when the turn never completed -- a classified failure, a terminal status
+    that did not match what the case expected, or a transport/runner exception
+    -- and leaves it unset when the turn completed cleanly and the grader simply
+    said no. Reading ``error`` is what turns "0/5 (0%)" into two distinguishable
+    outcomes: a model that answered wrong five times, and a model that never
+    answered at all (issue #622, #526 AC4). Not called for a non-graded
+    (plumbing/missing) trace, so a pre-#606 trace with no ``error`` key at all
+    (or none written) reads as completed by omission -- there is nothing in a
+    legacy trace to say otherwise.
+    """
+    outcome = _outcome_of(trace)
+    if outcome == "pass":
+        return True
+    if outcome == "fail":
+        return not (trace.get("metadata") or {}).get("error")
+    return False
+
+
 def _version_of(trace: dict[str, Any]) -> str | None:
     metadata = trace.get("metadata") or {}
     version = metadata.get("version")
@@ -192,9 +215,17 @@ def _model_summaries(
     are surfaced rather than dropped. The exclusion is per row, not per model: a
     model with real graded rows keeps its true pass-rate even when a plumbing row
     shares its label.
+
+    ``completed`` is a subset of ``total``: the graded rows whose turn actually
+    reached a verdict rather than tripping the completion gate (see
+    ``_completed``). A model with ``total > 0`` and ``completed == 0`` never
+    produced a single completed turn across the whole suite -- a categorically
+    different outcome from a real 0%, which the CLI reports distinctly and fails
+    on (issue #622).
     """
     passed: dict[str | None, int] = {}
     total: dict[str | None, int] = {}
+    completed: dict[str | None, int] = {}
     plumbing: dict[str | None, int] = {}
     cost: dict[str | None, float | None] = {}
     for (version, _case, model), trace in latest_by_model.items():
@@ -208,6 +239,8 @@ def _model_summaries(
             continue
         total[model] = total.get(model, 0) + 1
         passed[model] = passed.get(model, 0) + (1 if status == "pass" else 0)
+        if _completed(trace):
+            completed[model] = completed.get(model, 0) + 1
         case_cost = _cost_of(trace)
         if case_cost is not None:
             cost[model] = (cost.get(model) or 0.0) + case_cost
@@ -223,6 +256,7 @@ def _model_summaries(
             total=total.get(model, 0),
             cost_usd=cost.get(model),
             plumbing=plumbing.get(model, 0),
+            completed=completed.get(model, 0),
         )
         for model in keys
     ]

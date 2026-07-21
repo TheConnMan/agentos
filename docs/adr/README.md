@@ -96,4 +96,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0064 | [Fail-forward cluster teardown](0064-fail-forward-cluster-teardown.md) | Accepted |
 | 0065 | [Tag protection, not the workflow gate, binds a write actor](0065-tag-protection-not-the-workflow-gate-binds-a-write-actor.md) | Accepted |
 | 0066 | [A skip propagates through the whole ancestor graph, so every publishing job carries its own guard](0066-a-skip-propagates-through-the-whole-ancestor-graph.md) | Accepted |
+| 0067 | [A `--model` sweep row with zero completed turns fails loudly instead of reporting 0%](0067-eval-sweep-fails-loudly-on-zero-completed-turns.md) | Accepted |
 <!-- END GENERATED: adr-index -->

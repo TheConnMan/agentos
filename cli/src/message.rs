@@ -2154,7 +2154,7 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
             let sha_present = matrix.versions.contains(&triggered_sha);
             let rows = scoped_rows(&matrix, &want);
             let ready: std::collections::BTreeSet<&str> =
-                rows.iter().map(|(m, _, _)| m.as_str()).collect();
+                rows.iter().map(|row| row.model.as_str()).collect();
             let missing = want
                 .iter()
                 .filter(|m| !ready.contains(**m))
@@ -2162,11 +2162,25 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
                 .collect::<Vec<_>>()
                 .join(", ");
             if !sha_present || rows.is_empty() {
+                // #622: this used to blame only the worker eval consumer, which
+                // pointed the operator at the wrong subsystem when the real
+                // cause is that a requested model never resolved -- an
+                // unbootable/unregistered id or a missing credential can make
+                // the worker's per-model job fail before it ever produces a
+                // single trace, so NOTHING for that model lands in the matrix
+                // at all (not even a graded "0%" row) and the sweep can only
+                // ever time out here. Name the pending model(s) and give both
+                // plausible causes; the eval consumer is one of two, not the
+                // only one.
                 bail!(
                     "timed out waiting for eval results for this run (sha {}); no requested \
-                     model landed (still pending: {missing}). Check the worker eval consumer \
-                     is running, or raise --timeout-secs.",
-                    &triggered_sha[..triggered_sha.len().min(8)]
+                     model landed within {}s (still pending: {missing}). This means either the \
+                     worker eval consumer is not running, or one or more of {missing} never \
+                     resolved (a typo'd/unregistered model id, or a missing/invalid credential) \
+                     so its job never produced a single trace. Check the eval consumer is \
+                     running, verify {missing}'s id/credential, or raise --timeout-secs.",
+                    &triggered_sha[..triggered_sha.len().min(8)],
+                    opts.timeout_secs,
                 );
             }
             ui.warn(&format!(
@@ -2184,16 +2198,24 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
 fn scoped_rows(
     matrix: &crate::api::EvalMatrix,
     want: &std::collections::BTreeSet<&str>,
-) -> Vec<(String, usize, usize)> {
+) -> Vec<crate::commands::SweepRow> {
     matrix
         .model_summaries
         .iter()
         .filter_map(|s| {
             let m = s.model.as_deref()?;
-            want.contains(m)
-                .then(|| (m.to_string(), s.passed as usize, s.total as usize))
+            want.contains(m).then(|| crate::commands::SweepRow {
+                model: m.to_string(),
+                passed: s.passed as usize,
+                // `completed` is what tells a real 0% apart from a model that
+                // never produced a completed turn (#622, #526 AC4); read
+                // straight off the platform's per-model rollup so local and
+                // cluster share the exact signal skill's in-CLI grading uses.
+                completed: s.completed as usize,
+                total: s.total as usize,
+            })
         })
-        .filter(|(_, _, total)| *total > 0)
+        .filter(|row| row.total > 0)
         .collect()
 }
 
@@ -2221,12 +2243,13 @@ fn sweep_ready_rows(
     matrix: &crate::api::EvalMatrix,
     triggered_sha: &str,
     want: &std::collections::BTreeSet<&str>,
-) -> Option<Vec<(String, usize, usize)>> {
+) -> Option<Vec<crate::commands::SweepRow>> {
     if !matrix.versions.iter().any(|v| v == triggered_sha) {
         return None;
     }
     let rows = scoped_rows(matrix, want);
-    let ready: std::collections::BTreeSet<&str> = rows.iter().map(|(m, _, _)| m.as_str()).collect();
+    let ready: std::collections::BTreeSet<&str> =
+        rows.iter().map(|row| row.model.as_str()).collect();
     want.iter().all(|m| ready.contains(m)).then_some(rows)
 }
 
@@ -3129,11 +3152,26 @@ mod tests {
     }
 
     fn model_summary(model: &str, passed: u64, total: u64) -> crate::api::EvalModelSummary {
+        // `completed` defaults to `total`: every one of these fixture rows models
+        // a normal graded run (every case reached a verdict), so it is not the
+        // #622 "never answered" outcome unless a test opts into that separately
+        // via `model_summary_never_completed`.
         crate::api::EvalModelSummary {
             model: Some(model.to_string()),
             passed,
             total,
             cost_usd: None,
+            completed: total,
+        }
+    }
+
+    fn model_summary_never_completed(model: &str, total: u64) -> crate::api::EvalModelSummary {
+        crate::api::EvalModelSummary {
+            model: Some(model.to_string()),
+            passed: 0,
+            total,
+            cost_usd: None,
+            completed: 0,
         }
     }
 
@@ -3175,8 +3213,8 @@ mod tests {
         );
         let rows = sweep_ready_rows(&m, "new-sha", &want).expect("all models landed for the run");
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|(model, _, _)| model == "opus"));
-        assert!(rows.iter().any(|(model, _, _)| model == "sonnet"));
+        assert!(rows.iter().any(|row| row.model == "opus"));
+        assert!(rows.iter().any(|row| row.model == "sonnet"));
     }
 
     #[test]
@@ -3186,6 +3224,33 @@ mod tests {
         let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
         let m = matrix(&["new-sha"], vec![model_summary("opus", 3, 3)]);
         assert!(sweep_ready_rows(&m, "new-sha", &want).is_none());
+    }
+
+    #[test]
+    fn a_local_cluster_row_for_a_model_that_never_completed_a_turn_is_ready_and_distinct() {
+        // #622 at the local/cluster tier: the platform matrix's `EvalModelSummary`
+        // for a model that never produced a completed turn reports `total > 0,
+        // completed == 0` (every case landed as a graded FAIL with `error` set --
+        // see `apps/api/src/agentos_api/evals.py::_completed`). The row still
+        // counts toward readiness (the sweep DID land, unlike the timeout path
+        // below), but `SweepRow::never_completed` reads it as the distinct
+        // outcome rather than a real 0%.
+        let want: std::collections::BTreeSet<&str> = ["bogus-model-xyz"].into_iter().collect();
+        let m = matrix(
+            &["new-sha"],
+            vec![model_summary_never_completed("bogus-model-xyz", 5)],
+        );
+        let rows = sweep_ready_rows(&m, "new-sha", &want)
+            .expect("a landed-but-all-failed row still satisfies readiness");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].never_completed());
+        assert_eq!(rows[0].passed, 0);
+        assert_eq!(rows[0].total, 5);
+        // Feeding this row straight into the shared reporter fails the sweep
+        // loudly, exactly as the skill-tier row does -- same signal, same gate,
+        // regardless of which tier produced it.
+        let err = crate::commands::report_sweep(&rows).unwrap_err();
+        assert!(err.to_string().contains("bogus-model-xyz"));
     }
 
     #[tokio::test]
