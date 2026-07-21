@@ -278,9 +278,11 @@ fn api_key_on_the_wire(extra_args: &[&str]) -> Option<String> {
 /// `secret_store_env` gated on `var_os(name).is_some()`, which is TRUE for
 /// `NAME=""` -- so an empty export shadowed a real saved key and forwarded the
 /// empty value to the runner. The observable is the note `skill up` prints when
-/// it hydrates a credential from the vault, which it emits BEFORE it ever
-/// contacts Docker; the run failing at the container step afterwards is expected
-/// and irrelevant to the assertion.
+/// it hydrates a credential from the vault. Since #747 the run contacts Docker
+/// BEFORE that point (the container-name preflight shells out to `docker ps`),
+/// so the note is emitted after the preflight and before `docker run`; the run
+/// failing at the container step afterwards is expected and irrelevant to the
+/// assertion.
 #[test]
 fn empty_anthropic_api_key_does_not_suppress_the_vault_fallback() {
     let fixture = vault_with_saved_anthropic_key();
@@ -308,11 +310,32 @@ fn a_non_empty_anthropic_api_key_still_shadows_the_vault() {
          got stderr: {}",
         err_str(&out)
     );
+    // Absence alone is vacuous: since #747 the run contacts Docker before
+    // credential resolution, so a box with no docker (or an unlucky preflight
+    // failure) would satisfy the assertion above without ever resolving a
+    // credential. The image rejection happens AFTER resolution, so seeing it is
+    // the proof this test actually exercised the gate it guards.
+    assert!(
+        err_str(&out).contains(IMAGE_REJECTED_BAIL),
+        "the run must have got past credential resolution to the docker run step; \
+         got stderr: {}",
+        err_str(&out)
+    );
 }
 
 /// The note `skill up` prints when it hydrates a credential from the vault.
 /// Reaching it is the observable proof the env value resolved as "absent".
 const VAULT_HYDRATION_NOTE: &str = "ANTHROPIC_API_KEY: loaded from AgentOS private storage";
+
+/// Docker's own rejection of [`UNRESOLVABLE_IMAGE`], raised locally at the
+/// `docker run` step, which is the first thing after credential resolution.
+const IMAGE_REJECTED_BAIL: &str = "invalid reference format";
+
+/// An image reference docker refuses to parse, so `docker run` fails on the
+/// client with no daemon pull and no registry contact at all. A merely
+/// non-existent TAG would be a valid reference, which sends docker to a registry
+/// and makes these tests depend on the network and on pull rate limits.
+const UNRESOLVABLE_IMAGE: &str = "agentos-runner:747-invalid-reference-format!";
 
 /// A private AgentOS config dir holding a saved `ANTHROPIC_API_KEY`, plus a real
 /// scaffolded bundle for `skill up` to read. Both are built by driving the real
@@ -341,10 +364,22 @@ fn vault_with_saved_anthropic_key() -> tempfile::TempDir {
 /// `skill up` in that fixture's bundle, with a controlled `ANTHROPIC_API_KEY` on
 /// the CHILD process. Each fixture owns its own config dir, so these spawns share
 /// no state and need no [`SPAWN_LOCK`] (they bind no fixed port either).
+///
+/// The name and image are pinned so the run is deterministic on a dirty box.
+/// `--name` is unique per process, because the default `agentos-runner-local` is
+/// often already taken by a real local runner and `skill up`'s name-conflict
+/// preflight (#747) would then fail the run before the vault note is printed;
+/// deriving it from the pid also keeps parallel test runs from colliding.
+/// `--image` names a reference docker rejects outright, so the run still dies at
+/// the docker step, after the credential resolution these tests observe, without
+/// ever booting a container or touching a registry.
 fn skill_up(fixture: &tempfile::TempDir, anthropic_key: Option<&str>) -> Output {
     let mut cmd = Command::new(bin());
     cmd.current_dir(fixture.path().join("bundle"))
         .args(["skill", "up"])
+        .arg("--name")
+        .arg(format!("agentos-747-cred-test-{}", std::process::id()))
+        .args(["--image", UNRESOLVABLE_IMAGE])
         .env("AGENTOS_CONFIG_DIR", fixture.path().join("cfg"));
     match anthropic_key {
         Some(value) => cmd.env("ANTHROPIC_API_KEY", value),

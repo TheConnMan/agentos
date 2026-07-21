@@ -379,6 +379,10 @@ enum SkillAction {
         /// `--secret GITHUB_PERSONAL_ACCESS_TOKEN` with that var exported.
         #[arg(long = "secret", value_name = "NAME")]
         secret: Vec<String>,
+        /// Remove a leftover container of the same name before booting, instead
+        /// of failing on the conflict.
+        #[arg(long)]
+        replace: bool,
     },
     /// Check that the bundle's MCP servers load in an offline runner container.
     Check {
@@ -420,7 +424,13 @@ enum SkillAction {
     ))]
     Memory,
     /// Stop and remove the local runner container.
-    Down,
+    Down {
+        /// Container name to remove. Defaults to the recorded runner, then to
+        /// `agentos-runner-local`. Pass it to clear a leftover container from a
+        /// directory with no `.agentos/runner.json`.
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Show the local runner's session status.
     Status {
         /// Runner base URL (defaults to the started runner, then localhost).
@@ -1373,6 +1383,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 model,
                 local_model,
                 secret,
+                replace,
             } => {
                 let image = artifacts::resolve_image(
                     image.as_deref(),
@@ -1391,6 +1402,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     model,
                     local_model,
                     secret,
+                    replace,
                 })
                 .await
             }
@@ -1415,7 +1427,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             // the verb reports why and exits 4 (issue #459, ADR-0041).
             SkillAction::Versions => Err(commands::skill_versions_unavailable()),
             SkillAction::Memory => Err(commands::skill_memory_unavailable()),
-            SkillAction::Down => commands::stop().await,
+            SkillAction::Down { name } => commands::stop(name).await,
             SkillAction::Status { url } => commands::status(url).await,
             SkillAction::Message {
                 text,

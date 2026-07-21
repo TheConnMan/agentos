@@ -206,6 +206,18 @@ export const commandManifest = {
               "long": "secret",
               "positional": false,
               "required": false
+            },
+            {
+              "global": false,
+              "help": "Remove a leftover container of the same name before booting, instead of failing on the conflict",
+              "id": "replace",
+              "long": "replace",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
             }
           ],
           "hidden": false,
@@ -298,6 +310,16 @@ export const commandManifest = {
         },
         {
           "about": "Stop and remove the local runner container",
+          "args": [
+            {
+              "global": false,
+              "help": "Container name to remove. Defaults to the recorded runner, then to `agentos-runner-local`. Pass it to clear a leftover container from a directory with no `.agentos/runner.json`",
+              "id": "name",
+              "long": "name",
+              "positional": false,
+              "required": false
+            }
+          ],
           "hidden": false,
           "name": "down"
         },
