@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
 from aci_protocol import Event, Final, SessionStatus, TextDelta
 from agentos_worker.runner_client import RunnerClient
 from aiohttp import web
@@ -164,5 +165,54 @@ def test_runner_client_omits_authorization_without_token() -> None:
             finally:
                 await client.close()
                 await server.close()
+
+    asyncio.run(go())
+
+
+# --- The interrupt RPC gets its own bound, separate from the streaming ---------
+# budget (#742, a follow-up to #739 which bounded only one call site above this
+# layer). Against a REAL local server whose /v1/interrupt accepts the
+# connection and then answers nothing -- the wedged-runner shape -- so the
+# assertion is on the actual client behavior, not a mock of it.
+
+
+class _HangingInterruptRunner:
+    """A runner whose ``/v1/interrupt`` accepts the connection and never
+    answers, modelling the wedged runner #742 is about."""
+
+    def __init__(self) -> None:
+        self.app = web.Application()
+        self.app.add_routes([web.post("/v1/interrupt", self._interrupt)])
+        self.hang = asyncio.Event()  # never set by the test: the handler never returns
+
+    async def _interrupt(self, request: web.Request) -> web.Response:
+        await self.hang.wait()
+        return web.json_response({"ok": True})
+
+
+def test_interrupt_is_bounded_by_its_own_timeout_not_the_streaming_budget() -> None:
+    """The interrupt call must time out at RunnerClient's own
+    ``interrupt_timeout_s``, not the session's streaming ``total_timeout_s`` --
+    deliberately configured huge here so the test would hang for a long time
+    (rather than pass by accident) if the interrupt call fell back to
+    inheriting it."""
+
+    async def go() -> None:
+        runner = _HangingInterruptRunner()
+        server = TestServer(runner.app)
+        await server.start_server()
+        base_url = f"http://127.0.0.1:{server.port}"
+        client = RunnerClient(total_timeout_s=30.0, interrupt_timeout_s=0.2)
+        try:
+            loop = asyncio.get_event_loop()
+            started = loop.time()
+            with pytest.raises(TimeoutError):
+                await client.interrupt(base_url, "stop")
+            elapsed = loop.time() - started
+            assert elapsed < 5.0  # nowhere near the 30s streaming budget
+        finally:
+            runner.hang.set()
+            await client.close()
+            await server.close()
 
     asyncio.run(go())

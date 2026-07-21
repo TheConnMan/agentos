@@ -97,6 +97,17 @@ _EXPIRY_RESUME_MARKER = "[approval expired]"
 # silently change which error an operator sees in the log.
 _RESET_INTERRUPT_TIMEOUT_S = 5.0
 
+# How long a single thread's interrupt gets during the kill switch's fan-out
+# over an agent's live threads (#742) before that thread is logged as failed
+# and the fan-out moves on. Unlike `release_thread`, there is no fallback
+# release to run afterward on this path, so a timeout here is surfaced via
+# logging rather than swallowed -- but it must still be a bound, because an
+# unbounded await on one wedged thread would otherwise leave the kill switch,
+# "the one control that is supposed to work when things are broken," unable to
+# signal the agent's other threads for as long as `RunnerClient.interrupt`'s
+# own request budget.
+_KILL_INTERRUPT_TIMEOUT_S = 5.0
+
 # The substrate release itself (#743) runs on `asyncio.to_thread`, which is not
 # cancellable -- a hang in the K8s control plane (as opposed to a wedged
 # runner, already bounded above) would otherwise park the maintenance tick on
@@ -573,12 +584,35 @@ class Kernel:
     async def interrupt_agent(self, agent_id: uuid.UUID) -> int:
         """Interrupt every live turn belonging to an agent (kill switch). Returns
         the number of turns signalled. The kill flag stays set (the API owns it),
-        so new runs are refused by the is_killed check until resume."""
+        so new runs are refused by the is_killed check until resume.
+
+        Threads are signalled concurrently, and each interrupt is individually
+        bounded to `_KILL_INTERRUPT_TIMEOUT_S` (#742): a wedged runner on one
+        thread must not delay -- let alone block -- the interrupt reaching the
+        agent's other live threads. A timed-out or otherwise failed interrupt is
+        logged and does not stop the rest of the fan-out; there is no fallback
+        release to run afterward on this path (unlike `release_thread`), so the
+        failure is surfaced via logging rather than swallowed."""
         threads = list(self._active_by_agent.get(agent_id, set()))
-        signalled = 0
-        for thread in threads:
-            if await self.interrupt_thread(thread, f"agent {agent_id} killed by operator"):
-                signalled += 1
+
+        async def _interrupt_one(thread: str) -> bool:
+            try:
+                return await asyncio.wait_for(
+                    self.interrupt_thread(thread, f"agent {agent_id} killed by operator"),
+                    _KILL_INTERRUPT_TIMEOUT_S,
+                )
+            except Exception:
+                logger.error(
+                    "kill: interrupt did not land for thread %s of agent %s (timed out "
+                    "or errored); continuing to signal its other live threads",
+                    thread,
+                    agent_id,
+                    exc_info=True,
+                )
+                return False
+
+        results = await asyncio.gather(*(_interrupt_one(thread) for thread in threads))
+        signalled = sum(results)
         logger.info("kill: interrupted %d live turn(s) for agent %s", signalled, agent_id)
         return signalled
 

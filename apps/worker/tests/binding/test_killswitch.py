@@ -17,6 +17,7 @@ from collections.abc import Callable
 
 import pytest
 import redis.asyncio as aredis
+from agentos_worker import killswitch as killswitch_module
 from agentos_worker.killswitch import KILL_CHANNEL, KillSwitch, kill_key
 
 _VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
@@ -95,6 +96,66 @@ def test_subscriber_invokes_on_kill_for_a_kill_event() -> None:
             await asyncio.sleep(0.3)
             assert len(killed) == 1
         finally:
+            ks.request_stop()
+            await task
+            await client.aclose()
+            await publisher.aclose()
+
+    asyncio.run(go())
+
+
+def test_wedged_on_kill_does_not_stall_the_pubsub_loop(monkeypatch) -> None:
+    """#742: on_kill (`Kernel.interrupt_agent` in production) is awaited inline
+    in the read loop. If a handler call hangs -- the shape a wedged runner
+    produces one layer down -- the loop must not stall behind it and drop
+    every kill event that arrives afterward, which is exactly the failure the
+    surrounding try/except guards against without actually preventing an
+    unbounded await. Bounding the dispatch is what actually prevents it: the
+    stuck first call times out and a second agent's kill is still dispatched
+    promptly, against the real Valkey pubsub channel (never mocked here)."""
+
+    async def go() -> None:
+        client = _client()
+        publisher = _client()
+        try:
+            await client.ping()
+        except aredis.RedisError as exc:
+            pytest.skip(f"Valkey not reachable: {exc}")
+
+        monkeypatch.setattr(killswitch_module, "_ON_KILL_TIMEOUT_S", 0.2)
+
+        wedged = asyncio.Event()  # never set: the first dispatch hangs forever
+        calls: list[uuid.UUID] = []
+
+        async def on_kill(agent_id: uuid.UUID) -> None:
+            calls.append(agent_id)
+            if len(calls) == 1:
+                await wedged.wait()
+
+        ks = KillSwitch(client, on_kill=on_kill)
+        task = asyncio.create_task(ks.run())
+        try:
+            await asyncio.sleep(0.2)  # let the subscriber finish subscribing
+            agent_a = uuid.uuid4()
+            agent_b = uuid.uuid4()
+
+            await publisher.publish(
+                KILL_CHANNEL,
+                json.dumps({"agent_id": str(agent_a), "action": "kill", "ts": "now"}),
+            )
+            await _wait_until(lambda: len(calls) >= 1)
+
+            # agent_a's dispatch is now stuck. A second kill must still reach
+            # its own handler call well before the wedge is ever released --
+            # proof the read loop kept polling instead of blocking on agent_a.
+            await publisher.publish(
+                KILL_CHANNEL,
+                json.dumps({"agent_id": str(agent_b), "action": "kill", "ts": "now"}),
+            )
+            await _wait_until(lambda: len(calls) >= 2, timeout=2.0)
+            assert calls == [agent_a, agent_b]
+        finally:
+            wedged.set()
             ks.request_stop()
             await task
             await client.aclose()
