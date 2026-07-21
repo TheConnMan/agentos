@@ -2103,6 +2103,49 @@ fn api_key_usage_err(msg: impl Into<String>) -> anyhow::Error {
 /// wins (the caller only reaches here when neither was supplied). The value is
 /// never printed — it flows straight into the `X-API-Key` header.
 pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> {
+    read_release_secret(namespace, release, "apiKey")
+        .await
+        .ok_or_else(|| {
+            api_key_usage_err(format!(
+                "could not read the API key from secret {release}-secrets in namespace {namespace}; \
+                 pass --api-key or set AGENTOS_API_KEY to the release's api.apiKey"
+            ))
+        })
+}
+
+/// A usage error (exit 2) whose fix hint points the operator at
+/// `--valkey-password`, the escape hatch when the release's Valkey password
+/// cannot be read from its Secret.
+fn valkey_password_usage_err(msg: impl Into<String>) -> anyhow::Error {
+    crate::exit::CliError::usage(msg)
+        .with_fix("pass --valkey-password")
+        .into()
+}
+
+/// Discover a Helm release's Valkey password from the same chart Secret
+/// (`<release>-secrets`, data key `valkeyPassword`). `cluster message` enqueues
+/// onto the release's Valkey, whose password `cluster up` randomizes, so without
+/// this the dev sentinel `valkeypass` reaches a strong-secrets install and the
+/// connection fails authentication (#786). An explicit
+/// `--valkey-password`/`AGENTOS_VALKEY_PASSWORD` still wins (the caller only
+/// reaches here when neither was supplied); the value is never printed.
+pub async fn discover_valkey_password(namespace: &str, release: &str) -> Result<String> {
+    read_release_secret(namespace, release, "valkeyPassword")
+        .await
+        .ok_or_else(|| {
+            valkey_password_usage_err(format!(
+                "could not read the Valkey password from secret {release}-secrets in namespace \
+                 {namespace}; pass --valkey-password or set AGENTOS_VALKEY_PASSWORD to the \
+                 release's valkey.password"
+            ))
+        })
+}
+
+/// Read one data key out of a release's chart Secret, decoded server-side by
+/// kubectl's `base64decode` so the plaintext never lands in argv (#524). `None`
+/// when the Secret, the key, or the cluster is unreachable; the caller turns
+/// that into an actionable error naming its own escape-hatch flag.
+async fn read_release_secret(namespace: &str, release: &str, data_key: &str) -> Option<String> {
     let cmd = OpsCommand::new(
         "kubectl",
         vec![
@@ -2112,15 +2155,14 @@ pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> 
             plain("secret"),
             plain(format!("{release}-secrets")),
             plain("-o"),
-            plain("go-template={{ index .data \"apiKey\" | base64decode }}"),
+            plain(format!(
+                "go-template={{{{ index .data \"{data_key}\" | base64decode }}}}"
+            )),
         ],
     );
     match run_capture(&cmd).await {
-        Ok((true, out, _)) if !out.trim().is_empty() => Ok(out.trim().to_string()),
-        _ => Err(api_key_usage_err(format!(
-            "could not read the API key from secret {release}-secrets in namespace {namespace}; \
-             pass --api-key or set AGENTOS_API_KEY to the release's api.apiKey"
-        ))),
+        Ok((true, out, _)) if !out.trim().is_empty() => Some(out.trim().to_string()),
+        _ => None,
     }
 }
 

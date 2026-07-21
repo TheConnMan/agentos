@@ -92,6 +92,67 @@ fn resolve_api_key(raw: &str, env_value: Option<String>) -> String {
         .unwrap_or_else(|| DEFAULT_API_KEY.to_string())
 }
 
+/// clap `value_parser` for the CLUSTER tier's `--api-key` / `--valkey-password`
+/// (issue #786).
+///
+/// The local/compose tier binds the dev constants as clap defaults because that
+/// tier does not generate secrets. The cluster tier must not: `cluster up`
+/// randomizes both credentials per release, so a defaulted dev sentinel reaches
+/// a real install and 401s (API) or fails Valkey auth. These declarations
+/// therefore carry NO `default_value` and land as `Option<String>`; an empty
+/// string means absent, exactly as [`api_key_or_default`] settled for #540, and
+/// the handler reads the real value out of the release's Secret instead.
+pub fn cluster_api_key(raw: &str) -> Result<String, String> {
+    Ok(resolve_supplied_credential(
+        raw,
+        env::var("AGENTOS_API_KEY").ok(),
+    ))
+}
+
+/// Cluster-tier `--valkey-password` parser; see [`cluster_api_key`].
+pub fn cluster_valkey_password(raw: &str) -> Result<String, String> {
+    Ok(resolve_supplied_credential(
+        raw,
+        env::var("AGENTOS_VALKEY_PASSWORD").ok(),
+    ))
+}
+
+/// The pure core of the cluster credential parsers, with the env source passed
+/// in so it is unit-testable without mutating this process's environment. An
+/// explicit non-empty flag wins, then a non-empty env value, and an empty
+/// result means "nothing was supplied" (the caller discovers it instead).
+fn resolve_supplied_credential(raw: &str, env_value: Option<String>) -> String {
+    if !raw.is_empty() {
+        return raw.to_string();
+    }
+    env_value
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+/// Resolve one cluster-tier credential: an explicit flag/env value wins,
+/// otherwise read it from the release (issue #786).
+///
+/// `--dry-run` never contacts the cluster, so it keeps the dev default: the plan
+/// it prints does not carry the credential, and discovering a real secret just
+/// to discard it would break dry-run's offline contract.
+pub async fn resolve_cluster_credential<F, Fut>(
+    supplied: Option<String>,
+    dry_run: bool,
+    dev_default: &str,
+    discover: F,
+) -> Result<String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String>>,
+{
+    match supplied.filter(|value| !value.is_empty()) {
+        Some(value) => Ok(value),
+        None if dry_run => Ok(dev_default.to_string()),
+        None => discover().await,
+    }
+}
+
 /// Local mode (`--local`): the compose Valkey's published host port
 /// (`compose.dev.yaml`), where the CLI enqueues and the compose worker consumes.
 pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 26379;
@@ -2400,6 +2461,97 @@ mod tests {
         assert_eq!(resolve_api_key("sk-real-key-123", None), "sk-real-key-123");
         // Including a key that happens to look like whitespace-padded input.
         assert_eq!(resolve_api_key(" ", real()), " ");
+    }
+
+    /// The cluster tier's parsers carry no dev default, so "nothing supplied"
+    /// must survive as an empty string for the handler to discover instead
+    /// (#786); an explicit flag still beats the env source.
+    #[test]
+    fn cluster_credential_parser_reports_an_unsupplied_credential_as_empty() {
+        let env = || Some("from-env".to_string());
+
+        assert_eq!(resolve_supplied_credential("", None), "");
+        assert_eq!(resolve_supplied_credential("", Some(String::new())), "");
+        assert_eq!(resolve_supplied_credential("", env()), "from-env");
+        assert_eq!(resolve_supplied_credential("explicit", env()), "explicit");
+        assert_eq!(resolve_supplied_credential("explicit", None), "explicit");
+    }
+
+    /// An explicit credential is used as-is and the release is never read.
+    #[tokio::test]
+    async fn cluster_credential_prefers_the_supplied_value_over_discovery() {
+        let mut discovered = false;
+        let resolved = resolve_cluster_credential(
+            Some("supplied-key".to_string()),
+            false,
+            DEFAULT_API_KEY,
+            || {
+                discovered = true;
+                async { Ok("secret-key".to_string()) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "supplied-key");
+        assert!(
+            !discovered,
+            "an explicit credential must not hit the cluster"
+        );
+    }
+
+    /// The #786 defect: with nothing supplied, the cluster tier reads the
+    /// release's generated credential instead of sending the dev sentinel.
+    #[tokio::test]
+    async fn cluster_credential_falls_back_to_release_discovery() {
+        let resolved = resolve_cluster_credential(None, false, DEFAULT_API_KEY, || async {
+            Ok("generated-from-the-release".to_string())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "generated-from-the-release");
+
+        // An empty env value is absent, not "explicitly supplied", so it
+        // discovers too (the #540 rule, held at this seam as well).
+        let resolved = resolve_cluster_credential(
+            Some(String::new()),
+            false,
+            DEFAULT_VALKEY_PASSWORD,
+            || async { Ok("generated-valkey-password".to_string()) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "generated-valkey-password");
+    }
+
+    /// A discovery failure surfaces its actionable error rather than silently
+    /// degrading to the dev default.
+    #[tokio::test]
+    async fn cluster_credential_propagates_a_discovery_failure() {
+        let err = resolve_cluster_credential(None, false, DEFAULT_API_KEY, || async {
+            Err(anyhow::anyhow!(
+                "could not read the API key from secret agentos-secrets in namespace agentos"
+            ))
+        })
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("agentos-secrets"), "{err}");
+    }
+
+    /// `--dry-run` stays offline: no cluster read, and the printed plan carries
+    /// the dev default it always did.
+    #[tokio::test]
+    async fn cluster_credential_stays_offline_under_dry_run() {
+        let resolved = resolve_cluster_credential(None, true, DEFAULT_VALKEY_PASSWORD, || async {
+            panic!("--dry-run must not read the release secret")
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, DEFAULT_VALKEY_PASSWORD);
     }
 
     #[test]

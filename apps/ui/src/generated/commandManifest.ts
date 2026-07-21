@@ -1956,12 +1956,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "valkeypass"
-              ],
               "env": "AGENTOS_VALKEY_PASSWORD",
               "global": false,
-              "help": "Valkey password (chart default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "help": "Valkey password. Omit to read the release's own password from its chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
               "id": "valkey_password",
               "long": "valkey-password",
               "positional": false,
@@ -1979,12 +1976,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "default_values": [
-                "agentos-dev-key"
-              ],
               "env": "AGENTOS_API_KEY",
               "global": false,
-              "help": "Platform API key for the default-channel lookup",
+              "help": "Platform API key for the default-channel lookup. Omit to read the release's own key from its chart Secret",
               "id": "api_key",
               "long": "api-key",
               "positional": false,
