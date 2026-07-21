@@ -138,6 +138,18 @@ class WorkerConfig(BaseSettings):
     model_env_key: str = Field(default="", validation_alias="AGENTOS_MODEL_ENV_KEY")
     model: str = Field(default="", validation_alias="AGENTOS_MODEL")
 
+    # Opt-in false-completion check (#517, #669), operator scope like
+    # model_api_backend/model_env_key: forwarded verbatim into every boot env as
+    # AGENTOS_FALSE_COMPLETION_CHECK, never derived from the agent row. The
+    # runner reads it as a direct env var outside the frozen BootEnv contract
+    # (runner/src/agentos_runner/config.py) since it is authority-free and
+    # observe-only; this field is the missing operator-facing producer that
+    # closes the loop -- without it the runner-side read is unreachable in any
+    # deployed sandbox (#669). Default off preserves current behavior.
+    false_completion_check: Bool = Field(
+        default=False, validation_alias="AGENTOS_FALSE_COMPLETION_CHECK"
+    )
+
     # When true, clear the Slack assistant-thread status (the "shimmer" the
     # dispatcher set) once a turn ends -- editing the placeholder does not
     # auto-clear it. Off by default; pairs with the dispatcher's AGENTOS_SHIMMER.

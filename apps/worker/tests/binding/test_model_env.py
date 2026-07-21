@@ -477,3 +477,84 @@ def test_binding_boot_env_carries_approval_required_tools() -> None:
 
     env = resolver.boot_env(_resolved(), "thread-1")
     assert APPROVAL_REQUIRED_ENV not in env
+
+
+# --- Opt-in false-completion check (#517, #669) --------------------------------
+#
+# The runner (runner/src/agentos_runner/config.py) reads AGENTOS_FALSE_COMPLETION_
+# CHECK directly (never through the frozen BootEnv contract, since the check is
+# observe-only and authority-free). Before #669 nothing set that var in any
+# deployed compose/k8s sandbox, so the #588 check was unreachable outside a
+# hand-run local runner. Mirrors model_api_backend/model_env_key's chain exactly
+# (#514): WorkerConfig field -> boot env, emitted only when truthy, operator scope
+# only (no per-agent override), and both the runs binding and the eval lane must
+# agree.
+FALSE_COMPLETION_CHECK_ENV = "AGENTOS_FALSE_COMPLETION_CHECK"
+
+
+def test_worker_config_reads_false_completion_check_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert WorkerConfig().false_completion_check is False
+    monkeypatch.setenv("AGENTOS_FALSE_COMPLETION_CHECK", "1")
+    assert WorkerConfig().false_completion_check is True
+
+
+def test_apply_model_env_forwards_false_completion_check_when_set() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig(false_completion_check=True))
+    assert env[FALSE_COMPLETION_CHECK_ENV] == "1"
+
+
+def test_apply_model_env_omits_false_completion_check_by_default() -> None:
+    env: dict[str, str] = {}
+    apply_model_env(env, WorkerConfig())
+    assert FALSE_COMPLETION_CHECK_ENV not in env
+
+
+def test_binding_boot_env_carries_false_completion_check() -> None:
+    resolver = BindingResolver.__new__(BindingResolver)
+    resolver._config = WorkerConfig(false_completion_check=True)  # type: ignore[attr-defined]
+
+    env = resolver.boot_env(_resolved(), "thread-1")
+    assert env[FALSE_COMPLETION_CHECK_ENV] == "1"
+
+    # Default off preserves current behavior: unset until explicitly enabled.
+    resolver._config = WorkerConfig()  # type: ignore[attr-defined]
+    env = resolver.boot_env(_resolved(), "thread-1")
+    assert FALSE_COMPLETION_CHECK_ENV not in env
+
+
+def test_eval_boot_env_carries_false_completion_check() -> None:
+    # Both lanes boot the runner through apply_model_env for this knob, so the
+    # eval consumer gets the same observe-only check rather than silently
+    # running with a different boot posture than a bound run.
+    consumer = EvalStreamConsumer(
+        redis=None,  # type: ignore[arg-type]
+        config=WorkerConfig(false_completion_check=True),
+        bundle_store=None,  # type: ignore[arg-type]
+        substrate=None,  # type: ignore[arg-type]
+        reporter=None,  # type: ignore[arg-type]
+        recorder=None,  # type: ignore[arg-type]
+        repo_lookup=None,
+    )
+    item = EvalJob(
+        agent_id=uuid.uuid4(),
+        version_id=uuid.uuid4(),
+        sha="deadbeef",
+        suite="smoke",
+        bundle_ref="bundles/x.zip",
+        requested_at="2026-07-05T00:00:00+00:00",
+    )
+
+    env = consumer._boot_env(item)
+    assert env[FALSE_COMPLETION_CHECK_ENV] == "1"
+
+
+def test_resolved_deployment_carries_no_false_completion_check_field() -> None:
+    # Operator scope is the security property, not a style choice (#514's
+    # precedent): a per-agent row must never be able to enable an observe-only
+    # runner behavior for itself. If this field ever reaches ResolvedDeployment,
+    # boot_env would have a per-agent value to forward.
+    fields = set(ResolvedDeployment.model_fields)
+    assert "false_completion_check" not in fields

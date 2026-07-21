@@ -91,8 +91,12 @@ class RunnerConfig:
 
         boot = BootEnv.from_env(env)
         # A runner-local read, not a BootEnv contract key (#517): the false-
-        # completion check is observe-only and has no worker producer lane, so it
-        # stays a direct env read parsed to an explicit 1/true/yes truthy.
+        # completion check is observe-only, so it stays a direct env read parsed
+        # to an explicit 1/true/yes truthy rather than a declared BootEnv field.
+        # The worker's producer lane (WorkerConfig.false_completion_check ->
+        # apps/worker/src/agentos_worker/binding.py's FALSE_COMPLETION_CHECK_ENV
+        # write, #669) forwards this same literal name, so it is no longer only
+        # reachable on a hand-run local runner.
         false_completion_raw = env.get("AGENTOS_FALSE_COMPLETION_CHECK", "")
         false_completion_check = false_completion_raw.strip().lower() in ("1", "true", "yes")
         return cls(
