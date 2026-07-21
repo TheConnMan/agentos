@@ -2854,6 +2854,88 @@
       ]
     },
     {
+      "about": "List locally-authored agent bundles under `agents/` (source checkout only) -- a personal, gitignored directory (sibling of `examples/`) for in-progress agent projects ready to hand to `deploy-local`. Empty, not an error, when the directory doesn't exist",
+      "hidden": false,
+      "name": "list-agents"
+    },
+    {
+      "about": "Deploy an `agents/<folder>` bundle to the local platform by name -- shorthand for `local deploy --plugin-dir agents/<folder>` (same underlying operation, just resolved by name). Local tier only; use `cluster deploy --plugin-dir agents/<folder>` for the cluster tier. (Bare `deploy` is a retired pre-tier-split verb name -- see `retired.rs` -- so this spells out the tier it targets.)",
+      "args": [
+        {
+          "global": false,
+          "help": "Bundle folder name under `agents/`",
+          "id": "folder",
+          "positional": true,
+          "required": true
+        },
+        {
+          "default_values": [
+            "http://localhost:28000"
+          ],
+          "env": "AGENTOS_API_URL",
+          "global": false,
+          "help": "Platform API base URL",
+          "id": "api_url",
+          "long": "api-url",
+          "positional": false,
+          "required": false
+        },
+        {
+          "default_values": [
+            "agentos-dev-key"
+          ],
+          "env": "AGENTOS_API_KEY",
+          "global": false,
+          "help": "Platform API key",
+          "id": "api_key",
+          "long": "api-key",
+          "positional": false,
+          "required": false
+        },
+        {
+          "global": false,
+          "help": "Slack channel to bind the agent to. On first create it defaults to C0LOCALDEV; on redeploy it is only moved when you pass this flag, so omitting it leaves the deployed agent's channel untouched",
+          "id": "slack_channel",
+          "long": "slack-channel",
+          "positional": false,
+          "required": false
+        },
+        {
+          "default_values": [
+            "dev"
+          ],
+          "global": false,
+          "help": "Target environment",
+          "id": "env",
+          "long": "env",
+          "positional": false,
+          "possible_values": [
+            "dev",
+            "prod"
+          ],
+          "required": false
+        },
+        {
+          "global": false,
+          "help": "Version label; defaults to <manifest version>-<unix time>",
+          "id": "label",
+          "long": "label",
+          "positional": false,
+          "required": false
+        },
+        {
+          "global": false,
+          "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault (`agentos secrets set <NAME>`) and sent to the platform. Repeatable",
+          "id": "secret",
+          "long": "secret",
+          "positional": false,
+          "required": false
+        }
+      ],
+      "hidden": false,
+      "name": "deploy-local"
+    },
+    {
       "about": "Build the runner image locally from `runner/Dockerfile` (source checkout only)",
       "args": [
         {

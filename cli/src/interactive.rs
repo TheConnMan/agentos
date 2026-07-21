@@ -782,6 +782,12 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     ensure_secret_available(terminal, app, "SLACK_BOT_TOKEN")?;
 
     // 3. Channel id + bundle dir, prompted after the operator has completed step 1.
+    //    Resolved before the bundle-dir prompt so a picker over `agents/` bundles
+    //    can be offered instead of a bare text box.
+    let cwd = std::env::current_dir().context("reading current directory")?;
+    let repo_root = find_repo_root(cwd.clone())
+        .context("could not find AgentOS repo root; run this workflow from the source checkout")?;
+
     let Some(channel) = prompt_text(
         terminal,
         app,
@@ -794,17 +800,9 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     else {
         return Ok(());
     };
-    let plugin_dir = prompt_text(
-        terminal,
-        app,
-        "Deploy to Slack",
-        "Agent bundle directory",
-        Some("."),
-        false,
-        true,
-    )?
-    .filter(|dir| !dir.trim().is_empty())
-    .unwrap_or_else(|| ".".to_string());
+    let plugin_dir = prompt_bundle_dir(terminal, app, "Deploy to Slack", &repo_root)?
+        .filter(|dir| !dir.trim().is_empty())
+        .unwrap_or_else(|| ".".to_string());
 
     // Cluster targets a specific Helm release; prompt for its namespace/release
     // so the workflow works for a release not named the default `agentos` (the
@@ -843,10 +841,9 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     //    ones are forwarded here.
     let secret_env = slack_secret_env()?;
 
-    // Run from the repo root (compose files / the chart are repo-relative on a dev
-    // checkout); resolve the bundle dir to an absolute path so `--plugin-dir` finds
-    // it regardless of the run cwd.
-    let cwd = std::env::current_dir().context("reading current directory")?;
+    // Resolve the bundle dir to an absolute path so `--plugin-dir` finds it
+    // regardless of the run cwd (compose files / the chart are repo-relative on
+    // a dev checkout, hence running everything from `repo_root` below).
     let plugin_abs = cwd.join(&plugin_dir);
     if !plugin_abs.join(".claude-plugin/plugin.json").is_file() {
         anyhow::bail!(
@@ -854,8 +851,6 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
             plugin_abs.display()
         );
     }
-    let repo_root = find_repo_root(cwd)
-        .context("could not find AgentOS repo root; run this workflow from the source checkout")?;
 
     let mut view = RunView::new(&format!("Deploy to Slack — channel {channel}"));
     let run_result = (|| -> Result<()> {
@@ -1032,6 +1027,69 @@ fn starter_prompts(example_dir: &Path) -> Result<Vec<String>> {
         .filter(|prompt| !prompt.trim().is_empty())
         .take(10)
         .collect())
+}
+
+/// Prompt for an agent bundle directory: a picker over discovered `agents/`
+/// bundles when any exist (plus a trailing "Custom path..." choice), else the
+/// same free-text prompt as always. `Ok(None)` only when the picker/prompt
+/// itself was cancelled (Esc) -- callers keep their existing
+/// `.filter(...).unwrap_or_else(|| ".".to_string())` fallback for that case,
+/// same as an empty free-text answer.
+fn prompt_bundle_dir(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+    title: &str,
+    repo_root: &Path,
+) -> Result<Option<String>> {
+    let bundles = crate::discover::discover_bundles(&repo_root.join("agents"))?;
+    if bundles.is_empty() {
+        return prompt_text(
+            terminal,
+            app,
+            title,
+            "Agent bundle directory",
+            Some("."),
+            false,
+            true,
+        );
+    }
+
+    #[derive(Clone)]
+    enum BundleChoice {
+        Discovered(PathBuf),
+        Custom,
+    }
+
+    let mut choices: Vec<SelectChoice<BundleChoice>> = bundles
+        .into_iter()
+        .map(|b| SelectChoice {
+            label: b.name,
+            description: b.description,
+            value: BundleChoice::Discovered(b.directory),
+        })
+        .collect();
+    choices.push(SelectChoice {
+        label: "Custom path...".to_string(),
+        description: "Type a bundle directory instead (e.g. \".\" or examples/weather)".to_string(),
+        value: BundleChoice::Custom,
+    });
+
+    let Some(choice) = prompt_select(terminal, app, title, "Choose an agent bundle", choices)?
+    else {
+        return Ok(None);
+    };
+    match choice {
+        BundleChoice::Discovered(dir) => Ok(Some(dir.display().to_string())),
+        BundleChoice::Custom => prompt_text(
+            terminal,
+            app,
+            title,
+            "Agent bundle directory",
+            Some("."),
+            false,
+            true,
+        ),
+    }
 }
 
 fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {

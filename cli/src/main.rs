@@ -196,6 +196,47 @@ enum Command {
         #[command(subcommand)]
         action: ClusterAction,
     },
+    /// List locally-authored agent bundles under `agents/` (source checkout
+    /// only) -- a personal, gitignored directory (sibling of `examples/`) for
+    /// in-progress agent projects ready to hand to `deploy-local`. Empty, not
+    /// an error, when the directory doesn't exist.
+    ListAgents,
+    /// Deploy an `agents/<folder>` bundle to the local platform by name --
+    /// shorthand for `local deploy --plugin-dir agents/<folder>` (same
+    /// underlying operation, just resolved by name). Local tier only; use
+    /// `cluster deploy --plugin-dir agents/<folder>` for the cluster tier.
+    /// (Bare `deploy` is a retired pre-tier-split verb name -- see
+    /// `retired.rs` -- so this spells out the tier it targets.)
+    DeployLocal {
+        /// Bundle folder name under `agents/`.
+        folder: String,
+        /// Platform API base URL.
+        #[arg(
+            long,
+            default_value = message::DEFAULT_LOCAL_API_URL,
+            env = "AGENTOS_API_URL"
+        )]
+        api_url: String,
+        /// Platform API key.
+        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        api_key: String,
+        /// Slack channel to bind the agent to. On first create it defaults to
+        /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
+        /// omitting it leaves the deployed agent's channel untouched.
+        #[arg(long)]
+        slack_channel: Option<String>,
+        /// Target environment.
+        #[arg(long, value_enum, default_value_t = DeployEnv::Dev)]
+        env: DeployEnv,
+        /// Version label; defaults to <manifest version>-<unix time>.
+        #[arg(long)]
+        label: Option<String>,
+        /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
+        /// is resolved from your environment or the host secret vault (`agentos
+        /// secrets set <NAME>`) and sent to the platform. Repeatable.
+        #[arg(long = "secret", value_name = "NAME")]
+        secret: Vec<String>,
+    },
     /// Build the runner image locally from `runner/Dockerfile` (source checkout only).
     ///
     /// Runs `docker build -f runner/Dockerfile -t <tag> .` from the repo root. A
@@ -2276,6 +2317,29 @@ async fn run(command: Option<Command>) -> Result<()> {
                 )
             }
         },
+        Some(Command::ListAgents) => commands::list_agents().await,
+        Some(Command::DeployLocal {
+            folder,
+            api_url,
+            api_key,
+            slack_channel,
+            env,
+            label,
+            secret,
+        }) => emit(
+            commands::deploy_named(
+                &folder,
+                commands::DeployNamedOpts {
+                    api_url,
+                    api_key,
+                    slack_channel,
+                    env,
+                    label,
+                    secret,
+                },
+            )
+            .await?,
+        ),
         Some(Command::Schema) => {
             use clap::CommandFactory;
             print!("{}", agentos::schema::manifest_json(&Cli::command()));
@@ -2307,6 +2371,32 @@ mod tests {
         match cli.command {
             Some(Command::Build { tag }) => assert_eq!(tag, "my-runner:dev"),
             _ => panic!("expected build command"),
+        }
+    }
+
+    #[test]
+    fn list_agents_parses() {
+        let cli =
+            Cli::try_parse_from(["agentos", "list-agents"]).expect("list-agents should parse");
+        assert!(matches!(cli.command, Some(Command::ListAgents)));
+    }
+
+    #[test]
+    fn deploy_local_parses_the_folder_positional_and_defaults() {
+        let cli = Cli::try_parse_from(["agentos", "deploy-local", "revenue-leak"])
+            .expect("deploy-local should parse");
+        match cli.command {
+            Some(Command::DeployLocal {
+                folder,
+                slack_channel,
+                secret,
+                ..
+            }) => {
+                assert_eq!(folder, "revenue-leak");
+                assert_eq!(slack_channel, None);
+                assert!(secret.is_empty());
+            }
+            _ => panic!("expected deploy-local command"),
         }
     }
 
