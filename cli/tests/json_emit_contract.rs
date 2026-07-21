@@ -1057,6 +1057,57 @@ fn cluster_up_down_output_json_shapes_are_pinned() {
     );
 }
 
+// #767 fail-forward teardown error contract. When `cluster down` cannot
+// complete the teardown (e.g. the API server was unreachable so `helm uninstall`
+// failed), it must NOT bail before the sweep and it must NOT report success:
+// it returns a transient error carrying the exact copy-pasteable resume command
+// in `fix`. This test pins that CONTRACT -- exit class 3 (Transient) plus a
+// label-scoped resume command in `{error, fix}` -- which the implementer's error
+// path must produce. The error is constructed exactly as the implementer will:
+// `CliError::transient(msg).with_fix(<resume command>)` wrapped into
+// `anyhow::Error`, then classified via the public `agentos::exit` API. Asserting
+// on `classify`/`error_json` (rather than a real `down()` return, which needs a
+// live unreachable cluster) pins the same user-visible contract without I/O.
+#[test]
+fn cluster_down_failforward_error_is_transient_with_resume_fix() {
+    use agentos::exit::{classify, error_json, CliError, ExitClass};
+
+    // The resume command an incomplete teardown surfaces: only the outstanding
+    // steps, label-scoped per #707 (the ownership-scope invariant).
+    let resume =
+        "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found";
+    let err: anyhow::Error =
+        CliError::transient("cluster teardown could not complete; the API server was unreachable")
+            .with_fix(resume)
+            .into();
+
+    // Retryable signal: exit class 3, so a CI wrapper or agent knows to retry
+    // once connectivity returns.
+    let (class, fix) = classify(&err);
+    assert_eq!(class, ExitClass::Transient);
+    assert_eq!(class.code(), 3);
+
+    // The fix carries the exact resume command, and it stays label-scoped.
+    let fix = fix.expect("a fail-forward teardown error carries a resume command in fix");
+    assert!(
+        fix.contains("agentos.dev/created-by="),
+        "fix must carry the label-scoped resume command: {fix}"
+    );
+
+    // The `--json` error payload exposes it as `{error, fix}` and nothing else.
+    let json = error_json(&err);
+    let obj = json.as_object().expect("error_json is an object");
+    assert_eq!(obj.len(), 2, "exactly error and fix: {obj:?}");
+    assert!(
+        json["fix"]
+            .as_str()
+            .unwrap()
+            .contains("agentos.dev/created-by="),
+        "fix names the label-scoped resume command: {}",
+        json["fix"]
+    );
+}
+
 #[test]
 fn local_operator_output_json_shapes_are_pinned() {
     use agentos::local::{LocalDownOutput, LocalStatusOutput, LocalUpOutput};
