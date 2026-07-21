@@ -664,7 +664,18 @@ class Kernel:
         # bundle + budget; on an adopt the live sandbox is already bound, so the
         # env is ignored. Then try to steer: a live turn takes the follow-up;
         # otherwise (fresh sandbox, or the finish-race 409) we open a new turn.
+        #
+        # Timed separately from the model turn itself (#718): a cold claim (no
+        # warm pool hit, a fresh `docker run`/pod create) and a slow model
+        # response present identically to an end user ("it's just slow"), but
+        # have completely different fixes (a warm pool vs. a faster/cheaper
+        # model). This is the only place that can measure claim latency at
+        # all -- the runner's own per-turn logging starts only once its
+        # process is already up, so it cannot see the wait that got it there.
+        claim_started = time.monotonic()
         handle = await self._claim_or_resume(thread, boot_env)
+        claim_ms = round((time.monotonic() - claim_started) * 1000)
+        logger.info("claim latency for %s: %d ms", thread, claim_ms)
         if await self._runner.steer(handle.base_url, event, token=handle.token or None):
             return _RouteResult(steered=True)
         turn = await self._runner.start_turn(handle.base_url, event, token=handle.token or None)

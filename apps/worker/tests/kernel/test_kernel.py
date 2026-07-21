@@ -7,6 +7,7 @@ scriptable in-process fake runner; only Slack and the model are faked.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -674,5 +675,32 @@ def test_release_thread_with_no_route_is_a_noop(make_harness) -> None:
         async with make_harness() as h:
             released = await h.kernel.release_thread("never-seen-thread")
             assert released is False
+
+    asyncio.run(go())
+
+
+def test_claim_latency_is_logged(make_harness, caplog) -> None:
+    """#718: the claim wait (cold sandbox boot vs. an adopted warm one) is
+    logged separately from the model turn's own duration -- the runner's own
+    per-turn logging starts only once its process is already up, so it has no
+    visibility into how long the worker waited to get it there. Both a fresh
+    claim and a steer onto a live turn go through the same timed call, so both
+    are covered by one assertion on the log line's presence and shape."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            with caplog.at_level(logging.INFO, logger="agentos_worker.kernel"):
+                await h.kernel.process_event(_qevent("hi", thread="tLatency"))
+
+            matches = [
+                r.getMessage()
+                for r in caplog.records
+                if "claim latency for tLatency" in r.getMessage()
+            ]
+            assert matches, caplog.text
+            # "claim latency for tLatency: <N> ms" -- non-negative integer duration.
+            ms = int(matches[0].rsplit(":", 1)[1].strip().split()[0])
+            assert ms >= 0
 
     asyncio.run(go())
