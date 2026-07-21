@@ -40,7 +40,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0008 | [Multi-tenancy: one code path, pooled RLS, hard-siloed compute](0008-multi-tenancy.md) | Accepted |
 | 0009 | [Per-agent secrets and connector credentials](0009-per-agent-connector-auth.md) | Accepted |
 | 0010 | [Approval gates and human-in-the-loop](0010-approval-gates-and-human-in-the-loop.md) | Accepted |
-| 0011 | [OpenCode as the second harness behind the ACI](0011-opencode-second-harness.md) | Accepted (gating steer spike done — ADR-0031, #25/PR #226) |
+| 0011 | [OpenCode as the second harness behind the ACI](0011-opencode-second-harness.md) | Superseded by [ADR-0060](0060-the-harness-is-a-declared-package.md) (the steer spike passed; adoption was withdrawn for other reasons, recorded there) |
 | 0012 | [A substrate-agnostic worker and a channel-agnostic runner (the thin-shim thesis)](0012-substrate-and-channel-agnostic-core.md) | Accepted |
 | 0013 | [Concurrency and delivery: at-least-once streams with an idempotent, side-effect-aware kernel](0013-concurrency-and-delivery-model.md) | Accepted |
 | 0014 | [A git push is the deploy: immutable bundles, promote-not-rebuild, evals as a CI gate](0014-git-push-is-the-deploy.md) | Accepted |
@@ -60,7 +60,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0028 | [The sandbox substrate is a resilience-only fallback, not a product swap axis](0028-substrate-is-resilience-fallback-not-product-swap-axis.md) | Accepted |
 | 0029 | [The conversation-history port and its first loader: transcript replay over the durable state store](0029-conversation-history-port-and-first-loader.md) | Accepted |
 | 0030 | [A proactive within-episode memory agent over the frozen ACI injection seam](0030-proactive-within-episode-memory-agent.md) | Proposed |
-| 0031 | [Harness-neutral runner seams for the second harness](0031-harness-neutral-runner-seams.md) | Proposed |
+| 0031 | [Harness-neutral runner seams for the second harness](0031-harness-neutral-runner-seams.md) | Superseded by [ADR-0060](0060-the-harness-is-a-declared-package.md) and [ADR-0061](0061-out-of-process-harness-boundary.md) (decisions 2/3/5 become manifest fields in 0060; decision 4 carries forward unchanged; decision 1 becomes 0061's recorded fallback) |
 | 0032 | [Explicit named-provider egress, resolved at install](0032-explicit-provider-egress.md) | Accepted |
 | 0033 | [Scoped, least-privilege sandbox state token](0033-scoped-sandbox-state-token.md) | Accepted |
 | 0034 | [Approval authorizers resolve membership in the API](0034-approval-authorizers-resolve-membership-in-the-api.md) | Accepted |
@@ -89,4 +89,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0057 | [`cluster deploy` self-plumbs a port-forward so the generated key stays off the cleartext proxy](0057-cluster-deploy-self-plumbs-port-forward-for-generated-key.md) | Accepted |
 | 0058 | [A pushed tag is not release authority: ancestry, checks, and an approval environment gate publication](0058-tag-push-is-not-release-authority.md) | Accepted |
 | 0059 | [The sandbox is a bounded resource envelope; capacity is a tenant boundary](0059-sandbox-is-a-bounded-resource-envelope.md) | Accepted |
+| 0060 | [The harness is a declared package, not a class](0060-the-harness-is-a-declared-package.md) | Proposed |
+| 0061 | [The harness boundary is an out-of-process adapter, wire-compatible with Omnigent](0061-out-of-process-harness-boundary.md) | Proposed (gated on a spike, see Decision 5) |
+| 0062 | [Harness conformance has teeth](0062-harness-conformance-has-teeth.md) | Proposed |
 <!-- END GENERATED: adr-index -->

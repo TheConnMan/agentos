@@ -1,7 +1,7 @@
 # 31. Harness-neutral runner seams for the second harness
 
 Date: 2026-07-11
-Status: Proposed
+Status: Superseded by [ADR-0060](0060-the-harness-is-a-declared-package.md) and [ADR-0061](0061-out-of-process-harness-boundary.md) (decisions 2/3/5 become manifest fields in 0060; decision 4 carries forward unchanged; decision 1 becomes 0061's recorded fallback)
 
 ## Context
 

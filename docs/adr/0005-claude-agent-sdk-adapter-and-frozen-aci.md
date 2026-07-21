@@ -8,6 +8,15 @@ Status: Accepted
 0036 amends the frozen-ACI posture below with semver, a reader-policy asymmetry,
 and a wire-lock gate. This ADR remains the record of the freeze itself.
 
+**Amended by [ADR-0060](0060-the-harness-is-a-declared-package.md) and
+[ADR-0061](0061-out-of-process-harness-boundary.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+the Consequences below claim the adapter boundary keeps the door open for a
+second adapter "at zero cost". Two attempts disproved that (a synthesis tax plus
+a 517-line installer), and 0060/0061 record the actual cost and what changes to
+reduce it. The freeze itself, and the plugin shape as the distribution wedge,
+stand.
+
 ## Context
 
 Everything inside the runtime boundary is "the harness"; everything outside is "the platform." For the platform to be harness-agnostic (and for the plugin format to be the distribution wedge), the seam between them must be an explicit, versioned contract — the ACI (Agent Container Interface). The MVP harness is Anthropic's claude-agent-sdk, whose streaming-input mode is what makes Claude-Code-style steering possible server-side. The open questions were whether the SDK can be driven as a long-lived server that accepts mid-run input and interrupt, and whether the plugin format loads natively.
