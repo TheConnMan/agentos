@@ -14,6 +14,45 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+/// The compose dev Valkey (host port 26379, password `valkeypass`), used as
+/// the default target for the Valkey-backed integration tests.
+pub const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
+
+pub fn valkey_url() -> String {
+    std::env::var("TEST_VALKEY_URL").unwrap_or_else(|_| DEFAULT_VALKEY_URL.to_string())
+}
+
+/// Connect and PING; return `None` (with a skip note) when Valkey is not
+/// reachable, mirroring the dispatcher's `pytest.skip`. CI does not start the
+/// compose stack, so the Valkey-backed tests skip there rather than failing.
+pub async fn valkey_or_skip(test: &str) -> Option<redis::aio::MultiplexedConnection> {
+    let url = valkey_url();
+    let connect = async {
+        let client = redis::Client::open(url.clone())?;
+        let mut conn = client.get_multiplexed_async_connection().await?;
+        let _: String = redis::cmd("PING").query_async(&mut conn).await?;
+        redis::RedisResult::Ok(conn)
+    };
+    match connect.await {
+        Ok(conn) => Some(conn),
+        Err(err) => {
+            eprintln!("skipping {test}: Valkey not reachable at {url}: {err}");
+            None
+        }
+    }
+}
+
+/// Builds a unique test-scoped stream name under the given prefix (e.g.
+/// `"agentos:test:chat:"`), so concurrent test runs never collide and each
+/// suite keeps its own distinct stream namespace.
+pub fn unique_stream(prefix: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("{prefix}{nanos}")
+}
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub method: String,

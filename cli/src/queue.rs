@@ -122,6 +122,85 @@ pub async fn xadd(
     Ok(stream_id)
 }
 
+/// The Valkey stream id of the first entry whose decoded `QueuedTurn` carries
+/// `event_id`, or `None` when no entry matches. Each element of `entries` is a
+/// `(stream_id, payload_json)` pair as read off the stream's single
+/// [`STREAM_PAYLOAD_FIELD`]. A payload that does not decode as the frozen
+/// `QueuedTurn` is skipped rather than fatal, so one malformed row cannot hide a
+/// later matching entry. Pure, so the match is unit-testable without a Valkey.
+fn entry_stream_id_for_event_id(entries: &[(String, String)], event_id: &str) -> Option<String> {
+    entries.iter().find_map(|(stream_id, payload)| {
+        let turn: QueuedTurn = serde_json::from_str(payload).ok()?;
+        (turn.event_id == event_id).then(|| stream_id.clone())
+    })
+}
+
+/// The result of one incremental [`find_entry_by_event_id`] scan window.
+pub struct StreamScan {
+    /// Stream id of the entry whose decoded `event_id` matched, if present in
+    /// this window.
+    pub found: Option<String>,
+    /// The highest stream id observed in this window, so the caller can advance
+    /// an exclusive cursor and never re-read these rows on the next scan. `None`
+    /// when the window was empty (nothing new since the cursor).
+    pub last_seen: Option<String>,
+}
+
+/// Scan `stream` for the entry carrying `event_id`, reading only entries strictly
+/// AFTER the `after` cursor (an exclusive `(<after>` XRANGE start). Returns the
+/// matching entry's stream id (if present in this window) plus the highest stream
+/// id seen, so the caller can advance the cursor and never re-read these rows.
+///
+/// This is how the CLI observes an approval's resume turn (#766): when a human
+/// resolves a pending approval, the platform API appends a normal `QueuedTurn`
+/// onto this same runs stream under the DETERMINISTIC event id
+/// `approval-<approval_id>-resolved` (`apps/api/src/agentos_api/resumequeue.py`,
+/// `resume_event_id`), replaying the original turn's placeholder and reply
+/// endpoint. The resume entry is ALWAYS appended after the CLI's own original
+/// turn, so seeding `after` with that original entry id and advancing it each
+/// scan bounds every read to entries enqueued since our turn (typically 0-2)
+/// instead of the whole never-trimmed `agentos:runs` history. Finding the entry
+/// gives the caller a stream id it can wait on with the ordinary ack-based
+/// [`entry_acked`] completion signal.
+///
+/// Decoding goes through the generated `agentos_aci_protocol::QueuedTurn` (never
+/// a hand-mirror), so a contract rename cannot silently break the match. The
+/// XRANGE read itself needs a live Valkey; it is exercised by the Valkey-backed
+/// integration test `cli/tests/resume_wait.rs`, the same way [`entry_acked`] is
+/// exercised by `cli/tests/chat_enqueue.rs`. The pure match is
+/// [`entry_stream_id_for_event_id`].
+pub async fn find_entry_by_event_id(
+    conn: &mut MultiplexedConnection,
+    stream: &str,
+    event_id: &str,
+    after: &str,
+) -> Result<StreamScan> {
+    let entries: Vec<(String, Vec<(String, String)>)> = redis::cmd("XRANGE")
+        .arg(stream)
+        // Exclusive start (`(<id>`, Redis/Valkey 6.2+): read only entries newer
+        // than the cursor so a monotonically-growing stream is not re-scanned.
+        .arg(format!("({after}"))
+        .arg("+")
+        .query_async(conn)
+        .await
+        .with_context(|| format!("XRANGE over {stream}"))?;
+    let last_seen = entries.last().map(|(id, _)| id.clone());
+    let decoded: Vec<(String, String)> = entries
+        .into_iter()
+        .filter_map(|(stream_id, fields)| {
+            let payload = fields
+                .into_iter()
+                .find(|(key, _)| key == STREAM_PAYLOAD_FIELD)
+                .map(|(_, value)| value)?;
+            Some((stream_id, payload))
+        })
+        .collect();
+    Ok(StreamScan {
+        found: entry_stream_id_for_event_id(&decoded, event_id),
+        last_seen,
+    })
+}
+
 /// Whether `group` has delivered `entry_id` and no longer holds it pending,
 /// i.e. the worker consumed and acked it. The worker acks only after the turn
 /// finalizes, so this is a real turn-completion signal, not a timing guess.
@@ -362,6 +441,68 @@ mod tests {
             assert_eq!(micros.len(), 6, "micros width: {ts}");
         }
         assert!(synthetic_channel().starts_with("C-SIM-"));
+    }
+
+    /// A stream row: the payload JSON of a `QueuedTurn` with the given event id.
+    fn row(stream_id: &str, event_id: &str) -> (String, String) {
+        let turn = QueuedTurn {
+            event_id: event_id.to_string(),
+            conversation_id: "1720000000.000100".into(),
+            author: "U-agentos-message".into(),
+            text: "hi".into(),
+            reply_handle: ReplyHandle {
+                channel: "C-SIM-x".into(),
+                placeholder: "1720000000.000200".into(),
+                endpoint: None,
+            },
+            received_at: "2026-07-21T00:00:00Z".into(),
+        };
+        (stream_id.to_string(), payload_json(&turn).unwrap())
+    }
+
+    #[test]
+    fn entry_stream_id_matches_the_deterministic_resume_event_id() {
+        // The API appends an approval's resume turn under the deterministic
+        // `approval-<id>-resolved` event id (apps/api/.../resumequeue.py
+        // `resume_event_id`); the CLI finds it by that id to learn which stream
+        // entry to wait on (#766).
+        let resume = "approval-3f2504e0-4f89-41d3-9a0c-0305e82c3301-resolved";
+        let entries = vec![
+            row("1000-0", "EvSIM-original"),
+            row(
+                "1001-0",
+                "approval-00000000-0000-4000-8000-000000000000-resolved",
+            ),
+            row("1002-0", resume),
+        ];
+
+        assert_eq!(
+            entry_stream_id_for_event_id(&entries, resume).as_deref(),
+            Some("1002-0"),
+            "must select the entry whose event_id matches, not merely a resume-shaped one"
+        );
+        // An event id nothing carries yields None (keep waiting), never a guess.
+        assert_eq!(
+            entry_stream_id_for_event_id(&entries, "approval-nope-resolved"),
+            None
+        );
+    }
+
+    #[test]
+    fn entry_stream_id_skips_undecodable_payloads() {
+        // One malformed row must not hide a later matching entry, and must not
+        // panic the scan.
+        let entries = vec![
+            ("1-0".to_string(), "not json at all".to_string()),
+            ("2-0".to_string(), "{\"event_id\":\"partial\"}".to_string()),
+            row("3-0", "approval-abc-resolved"),
+        ];
+
+        assert_eq!(
+            entry_stream_id_for_event_id(&entries, "approval-abc-resolved").as_deref(),
+            Some("3-0")
+        );
+        assert_eq!(entry_stream_id_for_event_id(&entries, "partial"), None);
     }
 
     #[test]
