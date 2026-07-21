@@ -1152,22 +1152,24 @@ enum ClusterAction {
         /// Local port the Valkey port-forward binds.
         #[arg(long, default_value_t = message::DEFAULT_VALKEY_LOCAL_PORT)]
         valkey_local_port: u16,
-        /// Valkey password (chart default `valkeypass`). Prefer the
-        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
-        /// command line, where it leaks via `ps` and shell history.
+        /// Valkey password. Omit to read the release's own password from its
+        /// chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing
+        /// a real secret on the command line, where it leaks via `ps` and shell
+        /// history.
         #[arg(
             long,
             env = "AGENTOS_VALKEY_PASSWORD",
             hide_env_values = true,
-            default_value = message::DEFAULT_VALKEY_PASSWORD
+            value_parser = message::cluster_valkey_password
         )]
-        valkey_password: String,
+        valkey_password: Option<String>,
         /// Local port the API port-forward binds (default-channel lookup).
         #[arg(long, default_value_t = message::DEFAULT_API_LOCAL_PORT)]
         api_local_port: u16,
-        /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
-        api_key: String,
+        /// Platform API key for the default-channel lookup. Omit to read the
+        /// release's own key from its chart Secret.
+        #[arg(long, env = "AGENTOS_API_KEY", value_parser = message::cluster_api_key)]
+        api_key: Option<String>,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
         user: String,
@@ -2137,6 +2139,25 @@ async fn run(command: Option<Command>) -> Result<()> {
                 concurrency,
                 dry_run,
             } => {
+                // `cluster up` randomizes both credentials per release, so an
+                // omitted flag reads the release's own Secret rather than the
+                // dev sentinel that 401s / fails Valkey auth on a real install
+                // (#790, mirroring the #786 fix for `cluster message`). Explicit
+                // flag or env still wins.
+                let api_key = message::resolve_cluster_credential(
+                    api_key,
+                    dry_run,
+                    message::DEFAULT_API_KEY,
+                    || ops::discover_api_key(&namespace, &release),
+                )
+                .await?;
+                let valkey_password = message::resolve_cluster_credential(
+                    valkey_password,
+                    dry_run,
+                    message::DEFAULT_VALKEY_PASSWORD,
+                    || ops::discover_valkey_password(&namespace, &release),
+                )
+                .await?;
                 message::eval(message::EvalOpts {
                     cases,
                     channel,
@@ -2762,6 +2783,115 @@ mod tests {
                 action: LocalAction::Message { api_key, .. },
             }) => assert_eq!(api_key, "K"),
             _ => panic!("expected local message command"),
+        }
+    }
+
+    /// `cluster message` carries no dev-default sentinel for either credential
+    /// (#786): an omitted flag must parse to `None`, not a bound default, so the
+    /// handler discovers the release's own Secret instead.
+    #[test]
+    fn cluster_message_credentials_default_to_discovery() {
+        let cli = Cli::try_parse_from(["agentos", "cluster", "message", "hi"])
+            .expect("cluster message should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Message {
+                        api_key,
+                        valkey_password,
+                        ..
+                    },
+            }) => {
+                assert_eq!(api_key, None, "an omitted --api-key must not default");
+                assert_eq!(
+                    valkey_password, None,
+                    "an omitted --valkey-password must not default"
+                );
+            }
+            _ => panic!("expected cluster message command"),
+        }
+    }
+
+    #[test]
+    fn cluster_message_accepts_explicit_credentials() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "message",
+            "--api-key",
+            "K",
+            "--valkey-password",
+            "P",
+            "hi",
+        ])
+        .expect("cluster message with explicit credentials should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Message {
+                        api_key,
+                        valkey_password,
+                        ..
+                    },
+            }) => {
+                assert_eq!(api_key, Some("K".to_string()));
+                assert_eq!(valkey_password, Some("P".to_string()));
+            }
+            _ => panic!("expected cluster message command"),
+        }
+    }
+
+    /// `cluster eval` had the identical defect (#790): it still bound the
+    /// dev-default sentinel for both credentials after #786 fixed `message`, so
+    /// mirror the same "no default, resolves to None" contract here.
+    #[test]
+    fn cluster_eval_credentials_default_to_discovery() {
+        let cli =
+            Cli::try_parse_from(["agentos", "cluster", "eval"]).expect("cluster eval should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Eval {
+                        api_key,
+                        valkey_password,
+                        ..
+                    },
+            }) => {
+                assert_eq!(api_key, None, "an omitted --api-key must not default");
+                assert_eq!(
+                    valkey_password, None,
+                    "an omitted --valkey-password must not default"
+                );
+            }
+            _ => panic!("expected cluster eval command"),
+        }
+    }
+
+    #[test]
+    fn cluster_eval_accepts_explicit_credentials() {
+        let cli = Cli::try_parse_from([
+            "agentos",
+            "cluster",
+            "eval",
+            "--api-key",
+            "K",
+            "--valkey-password",
+            "P",
+        ])
+        .expect("cluster eval with explicit credentials should parse");
+        match cli.command {
+            Some(Command::Cluster {
+                action:
+                    ClusterAction::Eval {
+                        api_key,
+                        valkey_password,
+                        ..
+                    },
+            }) => {
+                assert_eq!(api_key, Some("K".to_string()));
+                assert_eq!(valkey_password, Some("P".to_string()));
+            }
+            _ => panic!("expected cluster eval command"),
         }
     }
 
