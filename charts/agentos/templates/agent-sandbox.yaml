@@ -15,6 +15,12 @@ the worker claims from, plus (optionally) the vendored upstream controller.
   substrate; envVarsInjectionPolicy Overrides makes that injection win.
 - service: true is what gives every claimed sandbox its routable
   .status.serviceFQDN (PT-1: without it no Service is created at all).
+- networkPolicyManagement: Unmanaged (issue #765, ADR-0067) stops the
+  controller from reconciling its OWN separately-managed NetworkPolicy for
+  this template. NetworkPolicy allows are additive across objects selecting
+  the same pods, so the controller's default "allow public internet"
+  behavior would otherwise silently widen (not be narrowed by) Rail 1's
+  default-deny + allowlist in security-networkpolicy.yaml.
 */}}
 {{- if .Values.agentSandbox.controller.deploy }}
 {{ .Files.Get "files/agent-sandbox/controller.yaml" }}
@@ -117,6 +123,24 @@ metadata:
 spec:
   service: true
   envVarsInjectionPolicy: {{ $runner.envVarsInjectionPolicy }}
+  {{- if .Values.security.networkPolicy.enabled }}
+  # Issue #765: NetworkPolicy is additive across objects that select the same
+  # pods -- there is no way for one policy to narrow what another already
+  # allows. Left at the default "Managed", the vendored agent-sandbox
+  # controller reconciles its OWN shared NetworkPolicy for this SandboxTemplate
+  # (name: {{ include "agentos.fullname" . }}-runner-network-policy) with its
+  # built-in Secure Default egress rule -- public internet minus RFC1918/
+  # link-local -- which UNIONS with (and silently defeats) this chart's own
+  # Rail 1 default-deny + operator allowlist below (security-networkpolicy.yaml)
+  # instead of being narrowed by it. "Unmanaged" tells the controller to skip
+  # creating that policy entirely for this template, so Rail 1 is the only
+  # NetworkPolicy selecting these pods. Gated on security.networkPolicy.enabled
+  # (not narrower) because the union defeats the default-deny baseline itself,
+  # not just a custom allowlist. When the operator has turned Rail 1 off
+  # entirely, leave this field unset (defaults to "Managed") so the
+  # controller's own baseline policy still applies rather than nothing at all.
+  networkPolicyManagement: Unmanaged
+  {{- end }}
   podTemplate:
     metadata:
       labels:
