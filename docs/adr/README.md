@@ -98,4 +98,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0066 | [A skip propagates through the whole ancestor graph, so every publishing job carries its own guard](0066-a-skip-propagates-through-the-whole-ancestor-graph.md) | Accepted |
 | 0067 | [The runner SandboxTemplate sets networkPolicyManagement: Unmanaged so Rail 1 is not additively defeated](0067-controller-networkpolicymanagement-unmanaged-for-rail-1.md) | Accepted |
 | 0068 | [A `--model` sweep row with zero completed turns fails loudly instead of reporting 0%](0068-eval-sweep-fails-loudly-on-zero-completed-turns.md) | Accepted |
+| 0069 | [The policy-gate resume reconciliation stays observe-only](0069-policy-gate-resume-reconciliation-stays-observe-only.md) | Accepted |
 <!-- END GENERATED: adr-index -->
