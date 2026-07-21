@@ -4,9 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from .. import crud
+from .. import crud, deploy
 from ..auth import require_api_key
-from ..deps import SessionDep
+from ..deps import SessionDep, StoreDep
 from ..schemas import DeploymentCreate, DeploymentOut
 
 router = APIRouter(
@@ -18,10 +18,20 @@ router = APIRouter(
 
 @router.post("", response_model=DeploymentOut, status_code=status.HTTP_201_CREATED)
 async def create_deployment(
-    data: DeploymentCreate, session: SessionDep
+    data: DeploymentCreate, session: SessionDep, store: StoreDep
 ) -> DeploymentOut:
     if await crud.get_agent(session, data.agent_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent not found")
+    version = await crud.get_version(session, data.version_id)
+    if version is None or version.agent_id != data.agent_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "version not found")
+    # Revalidate the stored bundle against the CURRENT size/ratio caps before
+    # this version becomes deployable -- catches a bundle stored before these
+    # caps existed, or under looser ones (ADR-0059 decision 3).
+    try:
+        await deploy.revalidate_stored_bundle(store, version)
+    except deploy.BundleTooLarge as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     deployment = await crud.create_deployment(session, data)
     return DeploymentOut.model_validate(deployment)
 

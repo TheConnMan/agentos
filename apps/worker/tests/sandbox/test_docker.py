@@ -405,6 +405,65 @@ def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
         assert (root / ".claude-plugin" / "plugin.json").is_file()
 
 
+def _plugin_tar_gz_with_filler(size: int) -> bytes:
+    """Like ``_plugin_tar_gz`` but with an extra file of ``size`` uncompressed
+    bytes, so the archive's total declared uncompressed size is controllable."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        manifest = b'{"name": "deal-desk", "version": "0.1.0"}'
+        info = tarfile.TarInfo(".claude-plugin/plugin.json")
+        info.size = len(manifest)
+        tf.addfile(info, io.BytesIO(manifest))
+        filler = b"x" * size
+        filler_info = tarfile.TarInfo("big.bin")
+        filler_info.size = len(filler)
+        tf.addfile(filler_info, io.BytesIO(filler))
+    return buf.getvalue()
+
+
+def test_extract_bundle_rejects_a_bundle_over_the_uncompressed_cap() -> None:
+    # ADR-0059 decision 3: the Docker-substrate claim-time extraction is bound
+    # the same as the API upload path, via the same plugin_format helper.
+    import tempfile
+
+    from plugin_format import UnsupportedArchive
+
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            extract_bundle(
+                _plugin_tar_gz_with_filler(5000),
+                Path(tmp),
+                max_uncompressed_bytes=1000,
+            )
+            raise AssertionError("expected UnsupportedArchive")
+        except UnsupportedArchive as exc:
+            assert "1000 byte limit" in str(exc)
+        # Nothing was written: the bound check runs before extraction.
+        assert list(Path(tmp).iterdir()) == []
+
+
+def test_prepare_bundle_rejects_oversized_bundle_and_writes_nothing() -> None:
+    # The operator-configured cap (mirroring WorkerConfig's default) is
+    # threaded from the client constructor through to extract_bundle at
+    # claim time, so an oversized bundle fails the claim instead of silently
+    # staging an unbounded tree for the runner to bind-mount.
+    from plugin_format import UnsupportedArchive
+
+    data = _plugin_tar_gz_with_filler(5000)
+    client = _RecordingDocker(
+        image="agentos-runner",
+        bundle_store=_FakeBundleStore(data),
+        bundle_max_uncompressed_bytes=1000,
+    )
+    try:
+        client._prepare_bundle("t1", "bundles/big.tar.gz")
+        raise AssertionError("expected UnsupportedArchive")
+    except UnsupportedArchive:
+        pass
+    # The claim-scoped bundle dir was never registered (cleaned up on failure).
+    assert client._bundle_dirs == {}
+
+
 # ---------------------------------------------------------------------------
 # Container hardening (#631): every spawned runner is isolated at the container
 # level (read-only rootfs, dropped caps, no privilege escalation, bounded

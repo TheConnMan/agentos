@@ -11,7 +11,14 @@ from .approval_policy import (
     effective_operator_gate,
     grantable_routes,
 )
-from .archive import UnsupportedArchive, bundle_root, safe_extract
+from .archive import (
+    DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    UnsupportedArchive,
+    bundle_root,
+    check_archive_bounds,
+    safe_extract,
+)
 from .manifest import MANIFEST_LOCATIONS, resolve_manifest
 from .models import (
     ApprovalGate,
@@ -53,6 +60,9 @@ __all__ = [
     "ValidationResult",
     "ValidationIssue",
     "safe_extract",
+    "check_archive_bounds",
+    "DEFAULT_MAX_UNCOMPRESSED_BYTES",
+    "DEFAULT_MAX_COMPRESSION_RATIO",
     "bundle_root",
     "UnsupportedArchive",
 ]
