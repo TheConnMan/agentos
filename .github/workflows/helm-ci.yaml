@@ -132,6 +132,16 @@ jobs:
           set -euo pipefail
           bash charts/agentos/ci/sandbox-hardening-assertions.sh
 
+      # Prove every writable emptyDir volume in the sandbox pod (bundles,
+      # mc-config, and one per hardening.writablePaths entry) carries an
+      # explicit sizeLimit (ADR-0059 decision 2, issue #756), and that a
+      # lengthened writablePaths list still gets one on every entry rather
+      # than only the two default paths.
+      - name: helm render assertions (sandbox emptyDir sizeLimit)
+        run: |
+          set -euo pipefail
+          bash charts/agentos/ci/sandbox-emptydir-sizelimit-assertions.sh
+
       # Prove the dispatcher is told where the platform API is and how to
       # authenticate to it (issue #442). Unwired, it falls back to its code
       # default http://localhost:8000 -- itself -- and every Slack Approve click

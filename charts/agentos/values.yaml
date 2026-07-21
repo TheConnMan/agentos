@@ -877,6 +877,20 @@ agentSandbox:
       # Shared bundle volume mount point in the sandbox pod. The plugin dir the
       # worker injects (AGENTOS_PLUGIN_DIR=/bundles/current) is `<mountPath>/current`.
       mountPath: /bundles
+      # ADR-0059 decision 2: ceiling on the shared `bundles` emptyDir (the
+      # fetched archive plus the extracted plugin dir), so an oversized or
+      # zip-bomb-shaped bundle exhausts its own pod's envelope instead of node
+      # disk. Raise per-agent for a legitimately large bundle. NOTE: sizeLimit
+      # is enforced by periodic kubelet measurement, not a write-time cap -- a
+      # fast writer can overshoot it briefly before the pod is evicted. That
+      # makes it a fast, attributable backstop, not an instantaneous quota;
+      # pair it with the `runner.resources` `ephemeral-storage` request/limit
+      # (ADR-0059 decision 1, tracked in #755) for the scheduling-time bound.
+      sizeLimit: 2Gi
+      # Ceiling on the init-only `mc-config` volume, which holds nothing but
+      # the mc credential file written by the bundle-fetch init container.
+      # Small and fixed since nothing else is ever written there.
+      mcConfigSizeLimit: 16Mi
     # ephemeral-storage alongside cpu/memory (ADR-0059 decision 1): this same
     # block is reused for the runner container AND both bundle init containers
     # (bundle-fetch, bundle-extract), matching how cpu/memory already work here.
@@ -913,6 +927,18 @@ agentSandbox:
       # Python both write under HOME/tmp; pointing HOME at a writable emptyDir
       # keeps the root filesystem read-only.
       home: /home/runner
+      # ADR-0059 decision 2: ceiling applied to EVERY writablePaths emptyDir
+      # (one shared default rather than a per-path value, since writablePaths
+      # is a plain path list, not a list of objects -- restructuring it into
+      # {path, sizeLimit} entries just to carry one differing value per path
+      # wasn't worth the schema churn). Sized for CLI/interpreter scratch and
+      # tmp writes, not for durable output (that belongs in the `bundles`
+      # volume or an external store). Raise it for a writablePaths entry a
+      # heavy agent legitimately fills. Same periodic-measurement caveat as
+      # bundleFetch.sizeLimit above: the kubelet samples usage rather than
+      # capping writes inline, so this is a fast, attributable backstop (the
+      # offending pod is evicted, not the node degraded), not a hard quota.
+      writablePathSizeLimit: 512Mi
     # Rail 4 (gVisor kernel isolation) is controlled by security.gvisor.mode
     # below -- the effective pod runtimeClassName is computed from that tri-state,
     # not set here.

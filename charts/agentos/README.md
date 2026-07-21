@@ -315,6 +315,33 @@ Production sizing (raise every `resources` block and persistence size, supply
 real secrets) is covered in **Production sizing** above; PDBs and BYO stores are
 the availability half of the same "not sized for prod out of the box" story.
 
+## Sandbox resource envelope (ADR-0059)
+
+[ADR-0059](../../docs/adr/0059-sandbox-is-a-bounded-resource-envelope.md) treats
+sandbox capacity as a security property, not a performance-tuning afterthought:
+disk is the one resource dimension a sandbox pod could otherwise consume without
+limit. Decision 2 bounds every writable `emptyDir` in the sandbox pod with an
+explicit `sizeLimit`:
+
+| Volume | Values key | Default |
+|---|---|---|
+| `bundles` (fetched archive + extracted plugin dir) | `agentSandbox.runner.bundleFetch.sizeLimit` | `2Gi` |
+| `mc-config` (init-only mc credential dir) | `agentSandbox.runner.bundleFetch.mcConfigSizeLimit` | `16Mi` |
+| One per `agentSandbox.runner.hardening.writablePaths` entry (`/tmp`, `/home/runner` by default) | `agentSandbox.runner.hardening.writablePathSizeLimit` | `512Mi` |
+
+**This is a backstop, not an instantaneous cap.** `sizeLimit` is enforced by
+periodic kubelet measurement of the volume's usage, not a write-time quota, so a
+fast writer can briefly overshoot it before the pod is evicted. That is still a
+meaningful improvement: the offending sandbox is evicted on its own account
+rather than exhausting node disk and pushing the node into `DiskPressure`, which
+degrades every co-scheduled pod including other tenants' sandboxes. Pair it with
+the `ephemeral-storage` request/limit on `agentSandbox.runner.resources` (ADR-0059
+decision 1, tracked in issue #755) for the scheduling-time bound that keeps a node
+from being overcommitted in the first place -- the two are complementary and both
+should be set. Raise any of the values above for a legitimately disk-heavy agent
+(a large repo clone, a big dependency tree, a generated artifact); the defaults
+bound a runaway, not ordinary work.
+
 ## Security rails
 
 The security-boundary rails ship **on by default** (ADR-0006). The runner-surface
