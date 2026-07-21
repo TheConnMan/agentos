@@ -771,6 +771,12 @@ class KillState(BaseModel):
     killed: bool
 
 
+class ThreadResetState(BaseModel):
+    """Whether a thread has a pending forced-sandbox-release request (#713)."""
+
+    requested: bool
+
+
 class CostReport(BaseModel):
     """Daily spend series + total for an agent (L1 Cost view)."""
 

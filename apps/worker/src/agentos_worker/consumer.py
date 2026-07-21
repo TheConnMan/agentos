@@ -63,6 +63,13 @@ _READ_ERROR_BACKOFF_S = 0.5
 # the IDLE filter plus the empty-page early-out make it a single round-trip.
 _CAP_SCAN_PAGE = 1000
 
+# An operator-requested thread reset (#713): the API SADDs a thread_key here
+# (`apps/api/src/agentos_api/threadreset.py`) and the maintenance tick SPOPs
+# it to force-release that thread's sandbox. Not a stream -- a one-shot
+# administrative signal has no ordering/redelivery/dead-letter needs, so a
+# plain Valkey SET is enough.
+THREAD_RESET_SET = "agentos:thread-reset-requests"
+
 
 class Consumer(StreamConsumer):
     """Runs the read loop and the periodic reclaim/reap maintenance loop."""
@@ -76,6 +83,13 @@ class Consumer(StreamConsumer):
         max_concurrency: int = 16,
     ) -> None:
         super().__init__(redis)
+        # The base class narrows self._redis to the StreamBroker port (stream
+        # verbs only, by design -- a second broker implementation need not
+        # support anything else). The thread-reset drain (#713) needs a plain
+        # Valkey SET (SADD/SPOP), which isn't part of that port's contract, so
+        # it gets its own concretely-typed handle onto the same connection
+        # rather than widening StreamBroker for one unrelated feature.
+        self._valkey: Redis = redis
         self._kernel = kernel
         self._config = config
         self._sem = asyncio.Semaphore(max_concurrency)
@@ -271,9 +285,46 @@ class Consumer(StreamConsumer):
             try:
                 await self._reclaim_once()
                 await self._kernel.reap_orphans()
+                await self._drain_thread_reset_requests()
             except Exception:
                 logger.exception("maintenance tick failed")
             await self._sleep_or_stop(self._config.reclaim_interval_s)
+
+    async def _drain_thread_reset_requests(self) -> None:
+        """Force-release any thread whose sandbox an operator requested reset
+        for (#713). ``THREAD_RESET_SET`` mirrors
+        ``apps/api/src/agentos_api/threadreset.py``'s constant verbatim (same
+        cross-service-constant pattern the kill switch already uses, since
+        the API and worker are separate deployables that do not import each
+        other's package).
+
+        ``SPOP`` (not ``SMEMBERS``) so a request is claimed and removed
+        atomically -- a concurrent tick (this worker's own next iteration, or
+        a second replica) can never double-process or leave a member behind
+        on a partial failure. One failed release (a substrate error) is
+        logged and does not block the rest of the batch; the request is
+        already popped, so a release that fails needs a fresh request to
+        retry -- acceptable for a manual operator action, unlike the queue's
+        own bounded-retry delivery guarantee."""
+        while True:
+            raw = await self._valkey.spop(THREAD_RESET_SET)
+            if raw is None:
+                return
+            # SPOP with no count (as called here) always returns a single
+            # bare member, never the set-of-members shape its overload
+            # allows with an explicit count -- narrow away that shape for
+            # the type checker rather than the client's imprecise overload.
+            assert isinstance(raw, (str, bytes)), f"unexpected SPOP shape: {raw!r}"
+            thread_key = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            try:
+                released = await self._kernel.release_thread(thread_key)
+                logger.info(
+                    "thread reset: released sandbox for %s (route existed: %s)",
+                    thread_key,
+                    released,
+                )
+            except Exception:
+                logger.exception("thread reset failed for %s", thread_key)
 
     async def _reclaim_once(self) -> int:
         """Reclaim entries pending too long from any (dead) consumer and retry.

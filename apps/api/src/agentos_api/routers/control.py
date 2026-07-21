@@ -13,9 +13,15 @@ from .. import crud
 from .. import metrics as metrics_service
 from ..auth import require_api_key
 from ..config import get_settings
-from ..deps import KillSwitchDep, LangfuseDep, SessionDep
+from ..deps import KillSwitchDep, LangfuseDep, SessionDep, ThreadResetRequestsDep
 from ..models import Agent
-from ..schemas import BehaviorPacksConfig, BudgetConfig, CostReport, KillState
+from ..schemas import (
+    BehaviorPacksConfig,
+    BudgetConfig,
+    CostReport,
+    KillState,
+    ThreadResetState,
+)
 
 router = APIRouter(
     prefix="/agents/{agent_id}",
@@ -55,6 +61,32 @@ async def get_kill_state(
 ) -> KillState:
     await _load_agent(session, agent_id)
     return KillState(killed=await kill_switch.is_killed(agent_id))
+
+
+@router.post("/threads/{thread_key}/reset", response_model=ThreadResetState)
+async def reset_thread(
+    agent_id: uuid.UUID,
+    thread_key: str,
+    session: SessionDep,
+    thread_reset_requests: ThreadResetRequestsDep,
+) -> ThreadResetState:
+    """Force the thread's sandbox to be released (#713): the worker's next
+    maintenance tick deletes its claim and route, so the NEXT message on this
+    thread cold-creates a fresh sandbox instead of adopting one that may be
+    running stale env (a rotated credential, an unpicked-up redeploy, a wedge
+    from a partial local-stack upgrade). A live turn on the thread, if any, is
+    interrupted first -- see ``Kernel.release_thread``. Does not delete
+    conversation history: a fresh sandbox still rehydrates from the durable
+    transcript on its next claim, same as any other cold-create.
+
+    ``agent_id`` scopes the action to a specific agent's registration (matching
+    every other verb on this router) but is not itself required to resolve the
+    thread -- the release is purely thread-keyed, mirroring
+    ``SandboxSubstrate.release``.
+    """
+    await _load_agent(session, agent_id)
+    await thread_reset_requests.request(thread_key)
+    return ThreadResetState(requested=True)
 
 
 @router.get("/budget", response_model=BudgetConfig)

@@ -13,7 +13,7 @@ from collections.abc import Callable
 import redis.exceptions
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_dispatcher.queue import to_stream_fields
-from agentos_worker.consumer import Consumer
+from agentos_worker.consumer import THREAD_RESET_SET, Consumer
 
 DONE = SessionStatus.DONE
 
@@ -222,5 +222,71 @@ def test_reclaims_and_reprocesses_a_dead_consumers_pending_entry(make_harness) -
             assert h.runner.opened == ["orphan"]
             summary = await h.async_redis.xpending(h.config.stream, h.config.consumer_group)
             assert summary["pending"] == 0  # reclaimed entry acked after reprocessing
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_drains_pending_thread_reset_requests(make_harness) -> None:
+    """#713: an operator-requested thread reset (the API SADDs the thread_key
+    into THREAD_RESET_SET) is picked up and applied by the maintenance tick,
+    releasing that thread's sandbox and popping it off the pending set."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tDrain"))
+            assert h.substrate.lookup("tDrain") is not None
+
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await h.async_redis.sadd(THREAD_RESET_SET, "tDrain")
+
+            await consumer._drain_thread_reset_requests()
+
+            assert h.substrate.lookup("tDrain") is None  # released
+            assert await h.async_redis.scard(THREAD_RESET_SET) == 0  # popped, not left behind
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_thread_reset_is_a_noop_when_nothing_pending(make_harness) -> None:
+    async def go() -> None:
+        async with make_harness() as h:
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await consumer._drain_thread_reset_requests()  # must not raise
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_thread_reset_one_failure_does_not_block_the_rest(
+    make_harness, caplog
+) -> None:
+    """A release failure for one requested thread (e.g. a transient substrate
+    error) is logged and does not prevent the rest of the batch from being
+    drained -- an operator resetting several stuck threads at once should not
+    have one bad apple silently strand the others unprocessed."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="hi", status=DONE)]
+            await h.kernel.process_event(_qevent("hi", thread="tOk"))
+
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await h.async_redis.sadd(THREAD_RESET_SET, "tBoom", "tOk")
+
+            original_release_thread = h.kernel.release_thread
+
+            async def flaky_release_thread(thread_key: str) -> bool:
+                if thread_key == "tBoom":
+                    raise RuntimeError("injected substrate failure")
+                return await original_release_thread(thread_key)
+
+            h.kernel.release_thread = flaky_release_thread  # type: ignore[method-assign]
+
+            with caplog.at_level(logging.ERROR):
+                await consumer._drain_thread_reset_requests()
+
+            assert h.substrate.lookup("tOk") is None  # still processed despite tBoom's failure
+            assert await h.async_redis.scard(THREAD_RESET_SET) == 0  # both popped either way
+            assert any("tBoom" in r.getMessage() for r in caplog.records)
 
     asyncio.run(go())
