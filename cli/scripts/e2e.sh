@@ -3,9 +3,12 @@
 #
 # Round-trips a synthetic event through a real local runner container with zero
 # Slack involved: init a bundle, start the runner (fake model, offline), send a
-# message and stream the NDJSON reply, run the eval cases, stop. Optionally
-# (AGENTOS_E2E_API_URL set) also deploys the bundle to a locally-run platform
-# API.
+# message and stream the NDJSON reply, run the eval cases, stop. This is rung 1
+# (skill) of the cold-start parity ladder (issue #690,
+# cli/scripts/e2e-ladder.sh); the ladder's local rung (`local deploy` ->
+# `local message` with a real reply assertion) covers deploying a bundle
+# against a running platform API, so this script no longer does so itself
+# (issue #694).
 #
 # Requirements: docker, an agentos-runner image (build per runner/README.md),
 # and a cargo toolchain. Run from anywhere:
@@ -17,8 +20,6 @@
 #   AGENTOS_E2E_PORT      host port (default 7245)
 #   AGENTOS_E2E_NETWORK   docker network to join (e.g. agentos_default)
 #   AGENTOS_E2E_OTEL      OTLP endpoint (e.g. http://otel-collector:4318)
-#   AGENTOS_E2E_API_URL   platform API base URL; enables the deploy leg
-#   AGENTOS_E2E_API_KEY   platform API key (default agentos-dev-key)
 set -euo pipefail
 
 CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -123,14 +124,6 @@ echo "=== agentos skill eval (spec-scaffolded evals/cases.json) ==="
 echo
 echo "=== agentos skill eval (explicit cases file) ==="
 "$BIN" skill eval --cases evals/e2e-cases.json
-
-if [[ -n "${AGENTOS_E2E_API_URL:-}" ]]; then
-    echo
-    echo "=== agentos cluster deploy (against the platform API) ==="
-    "$BIN" cluster deploy --plugin-dir . \
-        --api-url "$AGENTOS_E2E_API_URL" \
-        --api-key "${AGENTOS_E2E_API_KEY:-agentos-dev-key}"
-fi
 
 echo
 echo "=== agentos skill down ==="
