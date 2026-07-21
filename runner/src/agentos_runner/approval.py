@@ -56,6 +56,34 @@ from plugin_format import (
 
 logger = logging.getLogger(__name__)
 
+# Best-effort only (#712): NOT authoritative, NOT used for any gating
+# decision -- only to decide whether a bare operator gate name is worth a
+# "did you mean mcp__<server>__<tool>?" warning. The SDK does not export an
+# enumerable built-in tool list, and this set may drift from a future SDK
+# version; a name missing from here is not an error, just an unwarned pass,
+# and a name present here that isn't actually offered in a given session is
+# similarly harmless (it just arms nothing, same as today).
+_KNOWN_BUILTIN_TOOLS = frozenset(
+    {
+        "Task",
+        "Bash",
+        "BashOutput",
+        "KillShell",
+        "Read",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Glob",
+        "Grep",
+        "WebFetch",
+        "WebSearch",
+        "NotebookEdit",
+        "NotebookRead",
+        "TodoWrite",
+        "ExitPlanMode",
+    }
+)
+
 # The server key under ClaudeAgentOptions.mcp_servers; the SDK prefixes tool
 # names as mcp__<server>__<tool>.
 APPROVAL_SERVER_NAME = "agentos"
@@ -651,6 +679,33 @@ def build_approval_gate(
                 " gate that would arm nothing. Namespace it to its live"
                 " mcp__plugin_<bundle>_<server>__<tool> name, or check the bundle"
                 f" declares that server (declared servers: {mcp_servers})"
+            )
+        # A bare (non-mcp__) name is armed VERBATIM as a built-in tool name,
+        # never rewritten or checked (#712): `effective_operator_gate` has no
+        # way to tell a real built-in ("Bash") from an operator's mistaken bare
+        # MCP tool name ("resolve_leak" meant as shorthand for an in-bundle MCP
+        # tool). That second case silently arms a literal the SDK's
+        # `can_use_tool` callback can never match -- a fail-open on a
+        # security-relevant control, with no signal anywhere that the gate is
+        # a no-op. We cannot fail closed here (no authoritative built-in tool
+        # list is importable from this frozen-adjacent path, and a legitimate
+        # built-in gate must keep working), but we can stop it being SILENT:
+        # warn when the name isn't among the well-known Claude Code built-ins,
+        # naming the mcp__<server>__<tool> form the operator likely meant.
+        if (
+            effective == name
+            and not name.startswith("mcp__")
+            and name not in _KNOWN_BUILTIN_TOOLS
+        ):
+            logger.warning(
+                "operator approval gate %r does not match any well-known Claude Code"
+                " built-in tool name. It will be armed VERBATIM and will silently"
+                " gate nothing if it was meant as shorthand for an in-bundle MCP"
+                " tool -- use the mcp__<server>__<tool> form instead (declared"
+                " servers: %s). If %r really is a built-in tool, ignore this warning.",
+                name,
+                mcp_servers,
+                name,
             )
         normalized.append(effective)
 

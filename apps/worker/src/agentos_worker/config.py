@@ -153,8 +153,11 @@ class WorkerConfig(BaseSettings):
 
     # Shown by editing the dispatcher's placeholder to a "booting" state before the
     # sandbox claim, so the cold-boot wait is not silent. Best-effort; overridable.
+    # Kept free of internal implementation vocabulary ("runner", "sandbox") by
+    # default (#717) -- an end user talking to an agent should never see agentos's
+    # own architecture terms in a status line.
     booting_text: str = Field(
-        default="Booting a runner for your request.",
+        default="Working on it...",
         validation_alias="AGENTOS_BOOTING_TEXT",
     )
 
