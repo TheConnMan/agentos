@@ -158,6 +158,18 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   `cli/api-mirrors.json`** (as a `mirrors` entry with its allowlisted field
   omissions, or a `non_mirrors` entry with a one-line reason). `agentos dev
   field-parity` is the check (#691).
+- **A `CliOutput::to_json` that hand-projects one of those mirror structs into
+  a `serde_json::json!` literal must be declared in `cli/api-mirrors.json`'s
+  `emits` array** (the `(output, struct)` pair, plus any allowlisted, justified
+  field omissions) -- the second, emit-hop seam #691 named but did not close
+  (the proof case was `VersionsOutput::to_json` dropping `Version.id`,
+  #699). `agentos dev emit-parity` is the check. Narrower than the struct-level
+  gate: it verifies every DECLARED projection stays honest but, unlike that
+  gate's `UndeclaredStruct` check, cannot discover a new projection on its own
+  (see `cli/tests/support/emit_parity.rs`'s module doc for why). A `to_json`
+  that instead delegates wholesale to a `Serialize` value
+  (`serde_json::to_value`) or a shared schema-gated builder needs no `emits`
+  entry -- it cannot drop a field by hand-picking one in the first place.
 
 ## Verify
 

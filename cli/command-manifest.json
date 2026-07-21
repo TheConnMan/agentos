@@ -3264,6 +3264,11 @@
           "name": "field-parity"
         },
         {
+          "about": "Assert every declared `emits` projection in `cli/api-mirrors.json` -- a `CliOutput::to_json` that hand-projects a mirror struct into a `json!` literal -- covers that struct's fields (#699, one hop downstream of `field-parity`, `bash cli/scripts/check-emit-parity.sh`). Offline, no credential",
+          "hidden": false,
+          "name": "emit-parity"
+        },
+        {
           "about": "Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml version, and appVersion (`bash scripts/check-version-consistency.sh`)",
           "hidden": false,
           "name": "version-check"

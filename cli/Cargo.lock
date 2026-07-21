@@ -38,6 +38,8 @@ dependencies = [
  "indicatif",
  "jsonschema",
  "keyring",
+ "proc-macro2",
+ "quote",
  "ratatui",
  "redis",
  "regex",

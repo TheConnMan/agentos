@@ -209,6 +209,7 @@ they error clearly -- a release binary has no dev scripts.
 | `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
 | `agentos dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
 | `agentos dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI api.rs mirror structs cover their platform API model fields (#691). |
+| `agentos dev emit-parity` | `bash cli/scripts/check-emit-parity.sh` -- assert a `CliOutput::to_json` that hand-projects a mirror struct into a `json!` literal covers that struct's fields, one hop downstream of `field-parity` (#699). |
 
 ## `skill` target: runner-only, fully offline
 

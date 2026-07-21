@@ -338,6 +338,12 @@ enum DevAction {
     /// `cli/api-mirrors.json` and covers its API model's fields (#691,
     /// `bash cli/scripts/check-field-parity.sh`). Offline, no credential.
     FieldParity,
+    /// Assert every declared `emits` projection in `cli/api-mirrors.json` --
+    /// a `CliOutput::to_json` that hand-projects a mirror struct into a
+    /// `json!` literal -- covers that struct's fields (#699, one hop
+    /// downstream of `field-parity`, `bash cli/scripts/check-emit-parity.sh`).
+    /// Offline, no credential.
+    EmitParity,
     /// Assert the release-coupled versions agree: cli/Cargo.toml, Chart.yaml
     /// version, and appVersion (`bash scripts/check-version-consistency.sh`).
     VersionCheck,
@@ -1453,6 +1459,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             DevAction::FieldParity => {
                 commands::dev_script("cli/scripts/check-field-parity.sh").await
             }
+            DevAction::EmitParity => commands::dev_script("cli/scripts/check-emit-parity.sh").await,
             DevAction::VersionCheck => {
                 commands::dev_script("scripts/check-version-consistency.sh").await
             }
