@@ -24,6 +24,16 @@ component and rail detail in `charts/agentos/README.md`.
   empty by default; an unset allowlist must never mean allow-all. If you add
   a new egress destination the runner needs, it goes into this allowlist
   explicitly -- never widen the default-deny baseline itself.
+- **NetworkPolicy allows are additive, never restrictive-intersecting
+  (#765, ADR-0067).** A second NetworkPolicy selecting the same pods can only
+  widen what Rail 1 permits, never narrow it -- there is no such thing as one
+  policy overriding another. This is why the runner SandboxTemplate sets
+  `spec.networkPolicyManagement: Unmanaged` whenever Rail 1 is on: it stops the
+  vendored controller from reconciling its own separately-managed, broader
+  egress policy for the same pods. Do not add any other NetworkPolicy-adjacent
+  mechanism (another controller, an operator, a second chart) that could select
+  `component: runner-sandbox` pods without checking it does not reintroduce
+  this exact union-defeats-default-deny failure mode.
 - **The preflights are mandatory Helm hooks, not advisory scripts.** The
   CPU-AVX/ClickHouse-pin check (`preflights.avxCheck`), the
   NetworkPolicy-enforcement probe (`preflights.networkPolicyProbe`), and the

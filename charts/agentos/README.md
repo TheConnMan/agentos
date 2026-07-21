@@ -365,6 +365,19 @@ default: a fresh install denies all egress except DNS until the operator declare
 where the model API and MCP endpoints live (`{cidr, ports}` entries). An unset
 allowlist never means allow-all.
 
+**The controller does not get a second vote on egress (#765, ADR-0067).**
+NetworkPolicy allows are additive across objects selecting the same pods -- Rail
+1 above cannot narrow a separately-managed, broader policy, only be unioned with
+it. Left to its own default, the vendored agent-sandbox controller reconciles
+its own shared NetworkPolicy per SandboxTemplate with a built-in "allow public
+internet minus RFC1918" rule, which would silently re-open exactly what Rail 1
+was configured to close. Whenever `security.networkPolicy.enabled` is `true`
+(the default), the runner SandboxTemplate sets
+`spec.networkPolicyManagement: Unmanaged`, so the controller never creates that
+policy for this template and Rail 1 is the only NetworkPolicy in effect. With
+`security.networkPolicy.enabled: false` the field is left unset, so the
+controller's own baseline policy still applies rather than nothing.
+
 **Skill/tool web access.** The same allowlist also carries outbound web access a
 skill or tool needs (e.g. a web-search provider). `agentos cluster up --allow-web-egress
 <CIDR>` (repeatable) appends one entry per CIDR on TCP 443, additive to the model

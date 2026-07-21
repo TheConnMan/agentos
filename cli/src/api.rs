@@ -171,6 +171,13 @@ pub struct EvalTriggerResult {
 /// completed turn across the whole suite -- distinct from a real 0%, which the
 /// sweep reports and fails on (#622, #526 AC4). `#[serde(default)]` keeps this
 /// tolerant of an API that predates the field.
+///
+/// `plumbing` counts the rows that ran but were never graded (ADR-0055, #612/#606
+/// -- the fake-model tier is plumbing-only): excluded from `passed`/`total` rather
+/// than fabricated into a pass or fail, so a model whose every row is plumbing
+/// still appears here with `total == 0` instead of vanishing from the rollup. The
+/// `--model` sweep (#700) reads this to tell a plumbing-fixture row from a real
+/// subject-under-test row rather than blending both into one pass-rate list.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvalModelSummary {
     #[serde(default)]
@@ -181,6 +188,8 @@ pub struct EvalModelSummary {
     pub cost_usd: Option<f64>,
     #[serde(default)]
     pub completed: u64,
+    #[serde(default)]
+    pub plumbing: u64,
 }
 
 /// The eval matrix grid (`EvalMatrix` in openapi.json): `GET /evals/matrix`. The

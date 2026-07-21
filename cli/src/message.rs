@@ -2192,9 +2192,15 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     }
 }
 
-/// The wanted models' current rows in the matrix (`model`, `passed`, `total`),
-/// scoped to the sweep's `--model` set and dropping empty (`total == 0`) rows.
-/// The shared filter behind both the readiness check and the timeout partial.
+/// The wanted models' current rows in the matrix, scoped to the sweep's
+/// `--model` set and dropping truly-empty rows: a row with `total == 0` is
+/// kept when `plumbing > 0` (a fake-model/plumbing-only tier row that
+/// genuinely landed, #700, #612/#606) and dropped only when it carries
+/// neither a graded case nor a plumbing one -- i.e. this model has not landed
+/// at all yet. Without the `plumbing > 0` half, a plumbing-only model's row
+/// would vanish from a report entirely instead of being surfaced as such,
+/// exactly the ambiguity #622 and this issue describe. The shared filter
+/// behind both the readiness check and the timeout partial.
 fn scoped_rows(
     matrix: &crate::api::EvalMatrix,
     want: &std::collections::BTreeSet<&str>,
@@ -2213,9 +2219,10 @@ fn scoped_rows(
                 // cluster share the exact signal skill's in-CLI grading uses.
                 completed: s.completed as usize,
                 total: s.total as usize,
+                plumbing: s.plumbing as usize,
             })
         })
-        .filter(|row| row.total > 0)
+        .filter(|row| row.total > 0 || row.plumbing > 0)
         .collect()
 }
 
@@ -3156,12 +3163,22 @@ mod tests {
         // a normal graded run (every case reached a verdict), so it is not the
         // #622 "never answered" outcome unless a test opts into that separately
         // via `model_summary_never_completed`.
+        plumbing_model_summary(model, passed, total, 0)
+    }
+
+    fn plumbing_model_summary(
+        model: &str,
+        passed: u64,
+        total: u64,
+        plumbing: u64,
+    ) -> crate::api::EvalModelSummary {
         crate::api::EvalModelSummary {
             model: Some(model.to_string()),
             passed,
             total,
             cost_usd: None,
             completed: total,
+            plumbing,
         }
     }
 
@@ -3172,6 +3189,7 @@ mod tests {
             total,
             cost_usd: None,
             completed: 0,
+            plumbing: 0,
         }
     }
 
@@ -3251,6 +3269,45 @@ mod tests {
         // regardless of which tier produced it.
         let err = crate::commands::report_sweep(&rows).unwrap_err();
         assert!(err.to_string().contains("bogus-model-xyz"));
+    }
+
+    #[test]
+    fn sweep_ready_when_a_wanted_model_is_plumbing_only() {
+        // #700: a model whose every row is a plumbing fixture (#612/#606, e.g. the
+        // fake-model tier) reports total == 0 forever -- it will never satisfy a
+        // `total > 0` readiness check. Before this fix that model's row (and the
+        // sweep it belongs to) would hang until timeout even though it landed;
+        // `plumbing > 0` alone must be enough to count as landed.
+        let want: std::collections::BTreeSet<&str> = ["opus", "fake"].into_iter().collect();
+        let m = matrix(
+            &["new-sha"],
+            vec![
+                model_summary("opus", 3, 3),
+                plumbing_model_summary("fake", 0, 0, 3),
+            ],
+        );
+        let rows = sweep_ready_rows(&m, "new-sha", &want)
+            .expect("a plumbing-only row must still count as landed");
+        assert_eq!(rows.len(), 2);
+        let fake_row = rows
+            .iter()
+            .find(|row| row.model == "fake")
+            .expect("the plumbing-only model's row must be reported, not dropped");
+        assert_eq!(fake_row.total, 0);
+        assert_eq!(fake_row.plumbing, 3);
+        assert!(fake_row.is_plumbing_only());
+        let opus_row = rows.iter().find(|row| row.model == "opus").unwrap();
+        assert!(!opus_row.is_plumbing_only());
+    }
+
+    #[test]
+    fn scoped_rows_drops_a_model_with_no_graded_and_no_plumbing_rows() {
+        // A model with a summary row but total == 0 and plumbing == 0 has not
+        // landed at all yet (distinct from a genuine plumbing-only row); it must
+        // still be dropped so readiness keeps polling for it.
+        let want: std::collections::BTreeSet<&str> = ["opus"].into_iter().collect();
+        let m = matrix(&["new-sha"], vec![model_summary("opus", 0, 0)]);
+        assert!(scoped_rows(&m, &want).is_empty());
     }
 
     #[tokio::test]

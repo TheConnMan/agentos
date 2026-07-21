@@ -1,0 +1,10 @@
+{
+  "_comment": "Declared exceptions to the _AciModel tolerant-decode gate (issue #625). Every entry names a call site that decodes an _AciModel subclass without syntactically threading READER_CONTEXT, plus why it stays uncorrected here. A new call site should thread context=READER_CONTEXT instead of growing this list; an entry here is a deliberately accepted gap, not a template to copy. Check with: agentos dev wire-tolerance (bash scripts/check-wire-tolerance.sh).",
+  "entries": [
+    {
+      "path": "packages/aci-protocol/src/aci_protocol/session.py",
+      "symbol": "Budget.model_validate_json",
+      "why": "SessionConfig.from_env decodes AGENTOS_BUDGET from the runner's own boot environment, not a queue/NDJSON wire boundary with an existing parse_* helper to route through. It shares the #492 shape (a newer worker's BootEnv could add a Budget field that an older runner's from_env would then reject) and is a real pre-existing gap this gate surfaces rather than hides. Not fixed in this change: packages/aci-protocol is a frozen contract package (packages/CLAUDE.md) and a behavior change there needs its own reviewed issue/PR, not a passenger on the gate that catches it. Follow-up: thread READER_CONTEXT through SessionConfig.from_env's Budget decode in a dedicated change."
+    }
+  ]
+}

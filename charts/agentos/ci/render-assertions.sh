@@ -401,5 +401,73 @@ python3 "$PRIO_CHECK" "$PRIO_OVERRIDE_OUT" "custom-platform-class" "custom-sandb
   || fail "overriding priorityClasses.platform.name/sandbox.name did not propagate to priorityClassName on the rendered pods."
 echo "  ok: overriding priorityClasses.platform.name/sandbox.name propagates to every control-plane pod and the sandbox"
 
+echo "=== Assertion 10: SandboxTemplate opts the controller out of its own permissive NetworkPolicy when Rail 1 is on (#765) ==="
+# NetworkPolicy allows are additive across objects that select the same pods --
+# there is no way for the chart's own restrictive Rail 1 policies to narrow
+# what a separate, broader policy already permits. Left unset, the vendored
+# agent-sandbox controller's default "Managed" behavior reconciles its OWN
+# shared NetworkPolicy per SandboxTemplate with a built-in Secure Default
+# egress rule (public internet minus RFC1918/link-local), which silently
+# re-opens exactly the egress Rail 1's default-deny + allowlist were meant to
+# close (issue #765 packet-level evidence: a non-allowlisted host was
+# reachable from a real sandbox pod). spec.networkPolicyManagement: Unmanaged
+# tells the controller to skip creating that policy for this template
+# entirely, leaving Rail 1 as the only NetworkPolicy selecting these pods.
+NP_CHECK="$TMP/check_network_policy_management.py"
+cat > "$NP_CHECK" <<'PYEOF'
+"""Assert the rendered SandboxTemplate's spec.networkPolicyManagement.
+
+argv: <rendered-dir> <expected-value-or-"absent">
+Exits 0 on pass, 1 naming the mismatch on failure.
+"""
+import pathlib
+import sys
+
+import yaml
+
+rendered, expected = sys.argv[1], sys.argv[2]
+
+found = []
+for path in sorted(pathlib.Path(rendered).rglob("*.yaml")):
+    for doc in yaml.safe_load_all(path.read_text()):
+        if isinstance(doc, dict) and doc.get("kind") == "SandboxTemplate":
+            spec = doc.get("spec", {}) or {}
+            found.append((doc.get("metadata", {}).get("name", ""), spec.get("networkPolicyManagement")))
+
+if not found:
+    sys.stderr.write("found no SandboxTemplate in the render; the assert would pass vacuously\n")
+    sys.exit(1)
+
+for name, got in found:
+    want = None if expected == "absent" else expected
+    if got != want:
+        sys.stderr.write(
+            f"SandboxTemplate '{name}' has spec.networkPolicyManagement={got!r}, expected {want!r}\n")
+        sys.exit(1)
+
+print(f"  ok: {len(found)} SandboxTemplate(s) carry spec.networkPolicyManagement={expected!r}")
+PYEOF
+
+NP_ON_OUT="$(mktemp -d -p "$TMP")"
+helm template "$CHART" --output-dir "$NP_ON_OUT" \
+  --set agentSandbox.runner.image=agentos-runner \
+  --set agentSandbox.runner.tag=latest \
+  --set agentSandbox.runner.imagePullPolicy=Never \
+  > /dev/null
+python3 "$NP_CHECK" "$NP_ON_OUT" "Unmanaged" \
+  || fail "default render (Rail 1 on) did not set spec.networkPolicyManagement: Unmanaged on the runner SandboxTemplate."
+echo "  ok: default render (security.networkPolicy.enabled=true) sets networkPolicyManagement: Unmanaged"
+
+NP_OFF_OUT="$(mktemp -d -p "$TMP")"
+helm template "$CHART" --output-dir "$NP_OFF_OUT" \
+  --set agentSandbox.runner.image=agentos-runner \
+  --set agentSandbox.runner.tag=latest \
+  --set agentSandbox.runner.imagePullPolicy=Never \
+  --set security.networkPolicy.enabled=false \
+  > /dev/null
+python3 "$NP_CHECK" "$NP_OFF_OUT" "absent" \
+  || fail "with security.networkPolicy.enabled=false (Rail 1 off), spec.networkPolicyManagement should be left unset (default Managed) so the controller's own baseline policy still applies, but it was set."
+echo "  ok: with Rail 1 off, networkPolicyManagement is left unset (falls back to the controller's own Managed default rather than nothing)"
+
 echo
-echo "PASS: sealed render generates strong values for all 9 keys (encryptionKey 64-hex); dev overlay keeps published defaults; explicit override wins on the sealed path; every runner boot-env name is a declared contract key (proven by a failing negative control); every control-plane pod and the sandbox render with the expected priorityClassName, including under operator override."
+echo "PASS: sealed render generates strong values for all 9 keys (encryptionKey 64-hex); dev overlay keeps published defaults; explicit override wins on the sealed path; every runner boot-env name is a declared contract key (proven by a failing negative control); every control-plane pod and the sandbox render with the expected priorityClassName, including under operator override; the runner SandboxTemplate opts the controller out of its own permissive NetworkPolicy whenever Rail 1 is on, and leaves it to the controller's default when Rail 1 is off."
