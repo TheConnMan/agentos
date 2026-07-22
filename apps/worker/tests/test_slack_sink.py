@@ -9,6 +9,12 @@ import aiohttp
 import pytest
 from agentos_worker.config import WorkerConfig
 from agentos_worker.slack_sink import AsyncSlackSink
+from channel_protocol import (
+    MESSAGE_VERSION,
+    Action,
+    ConfirmIntent,
+    OutboundMessage,
+)
 from slack_sdk.errors import SlackApiError
 
 
@@ -410,6 +416,132 @@ def test_best_effort_stays_loud_when_default_transport_is_the_dead_target() -> N
                 best_effort_unreachable=True,
             )
         )
+
+
+# --- #454: the approval card renders BELOW the seam (ADR-0020) ----------------
+# The kernel emits a channel-neutral Confirm intent; the Slack adapter's post()
+# renders it into the same Block Kit approval card that used to be built in the
+# kernel. These tests are where the byte-identical card contract lives now (the
+# builders themselves are unit-tested in test_blocks.py).
+
+
+def _approval_message(approval_id: str, summary: str) -> OutboundMessage:
+    return OutboundMessage(
+        version=MESSAGE_VERSION,
+        text=summary,
+        interaction=ConfirmIntent(
+            kind="confirm",
+            id=approval_id,
+            prompt=summary,
+            confirm=Action(label="Approve", value=approval_id),
+            cancel=Action(label="Reject", value=approval_id),
+        ),
+    )
+
+
+def test_post_renders_the_approval_card_from_a_confirm_intent() -> None:
+    # The adapter turns a Confirm intent into the Block Kit approval card: header,
+    # the summary section, a "Requested by" context line, and Approve/Reject
+    # buttons carrying the dispatcher's action ids + the record id as value.
+    from agentos_dispatcher.approval_actions import APPROVE_ACTION_ID, REJECT_ACTION_ID
+
+    sink = AsyncSlackSink("xoxb-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_post(**kwargs: object):
+        captured.update(kwargs)
+        return {"ok": True, "ts": "9.9"}
+
+    sink._client_for(None).chat_postMessage = _fake_post  # type: ignore[method-assign]
+
+    ts = asyncio.run(
+        sink.post(
+            channel="C1",
+            message=_approval_message("appr-1", "Give ACME a 20% discount"),
+            requested_by="U_AE",
+            thread_ts="th-card",
+        )
+    )
+
+    assert ts == "9.9"
+    assert captured["channel"] == "C1"
+    assert captured["thread_ts"] == "th-card"
+    assert "Give ACME a 20% discount" in captured["text"]  # accessibility fallback
+    blocks = captured["blocks"]
+    assert isinstance(blocks, list)
+    assert blocks[0]["type"] == "header"  # type: ignore[index]
+    assert "Give ACME a 20% discount" in blocks[1]["text"]["text"]  # type: ignore[index]
+    assert "<@U_AE>" in blocks[2]["elements"][0]["text"]  # type: ignore[index]
+    actions = blocks[-1]  # type: ignore[index]
+    assert actions["type"] == "actions"
+    approve, reject = actions["elements"]
+    assert approve["action_id"] == APPROVE_ACTION_ID
+    assert approve["value"] == "appr-1"
+    assert approve["style"] == "primary"
+    assert reject["action_id"] == REJECT_ACTION_ID
+    assert reject["value"] == "appr-1"
+    assert reject["style"] == "danger"
+
+
+def test_post_falls_back_to_text_only_when_card_blocks_rejected() -> None:
+    # Mirrors update(): a rejected Block Kit payload retries text-only so the
+    # notice still lands rather than losing the message (the API resolve path
+    # stands regardless).
+    sink = AsyncSlackSink("xoxb-test")
+    calls: list[dict[str, object]] = []
+
+    async def _fake_post(**kwargs: object):
+        calls.append(kwargs)
+        if "blocks" in kwargs:
+            raise SlackApiError("invalid_blocks", {"ok": False, "error": "invalid_blocks"})
+        return {"ok": True, "ts": "9.9"}
+
+    sink._client_for(None).chat_postMessage = _fake_post  # type: ignore[method-assign]
+
+    ts = asyncio.run(
+        sink.post(
+            channel="C1",
+            message=_approval_message("appr-1", "Discount ACME"),
+            requested_by="U1",
+        )
+    )
+
+    assert ts == "9.9"
+    assert len(calls) == 2
+    assert "blocks" not in calls[1]  # the retry is text-only
+    assert "Discount ACME" in calls[1]["text"]
+
+
+def test_update_message_renders_the_expired_card() -> None:
+    # The adapter rebuilds the settled expired card from the channel-neutral
+    # summary: the summary stays, the Approve/Reject actions block is gone, and an
+    # expiry line takes its place so the card can no longer be clicked.
+    sink = AsyncSlackSink("xoxb-test")
+    captured: dict[str, object] = {}
+
+    async def _fake_update(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    sink._client_for(None).chat_update = _fake_update  # type: ignore[method-assign]
+
+    asyncio.run(
+        sink.update_message(
+            channel="C1",
+            ts="9.9",
+            message=OutboundMessage(
+                version=MESSAGE_VERSION, text="Give ACME a 20% discount"
+            ),
+        )
+    )
+
+    assert captured["channel"] == "C1"
+    assert captured["ts"] == "9.9"
+    assert "expired" in str(captured["text"]).lower()
+    blocks = captured["blocks"]
+    assert isinstance(blocks, list)
+    assert "Give ACME a 20% discount" in blocks[1]["text"]["text"]  # type: ignore[index]
+    assert all(b.get("type") != "actions" for b in blocks)  # type: ignore[union-attr]
+    assert any("expired" in str(b).lower() for b in blocks)
 
 
 def test_best_effort_still_falls_back_to_default_when_present() -> None:
