@@ -4,6 +4,15 @@ Date: 2026-07-16
 
 Status: Accepted
 
+**Superseded in part by [ADR-0056](0056-operator-opt-in-for-policy-gate-grantability.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+0056 supersedes the "a policy gate refuses a grant outright" half of Decision C
+below — and only that half — making a policy gate grantable by explicit operator
+opt-in. Every other property this ADR established (durable
+`gate_kind`/`granted_tool` provenance, loud route resolution, observe-only resume
+reconciliation, and the convergence of the two gate paths on one lifecycle) is
+unchanged.
+
 Implements [#544](https://github.com/curie-eng/agentos/issues/544).
 Supersedes the provenance discriminator of
 [ADR-0035](0035-one-shot-post-approval-allowance.md) (the summary-prefix sniff);

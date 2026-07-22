@@ -3,6 +3,14 @@
 Date: 2026-07-13
 Status: Accepted
 
+**Superseded in part by [ADR-0057](0057-cluster-deploy-self-plumbs-port-forward-for-generated-key.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+0057 supersedes the deploy-transport decision below for the auto path (no
+`--api-url`), where `cluster deploy` now self-plumbs its own port-forward so the
+generated key stays off the cleartext proxy. The UI `/api` NodePort proxy survives
+only as the explicit-`--api-url` escape hatch, and the discovery this ADR performs
+for `cluster status` stands.
+
 Supersedes the abandoned self-plumbed port-forward approach for `cluster deploy`
 (#352 / PR #357). Implements [#359](https://github.com/curie-eng/agentos/issues/359).
 
