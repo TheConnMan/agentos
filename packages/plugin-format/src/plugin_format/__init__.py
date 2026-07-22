@@ -13,6 +13,7 @@ from .approval_policy import (
 )
 from .archive import (
     DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_MEMBERS,
     DEFAULT_MAX_UNCOMPRESSED_BYTES,
     UnsupportedArchive,
     bundle_root,
@@ -63,6 +64,7 @@ __all__ = [
     "check_archive_bounds",
     "DEFAULT_MAX_UNCOMPRESSED_BYTES",
     "DEFAULT_MAX_COMPRESSION_RATIO",
+    "DEFAULT_MAX_MEMBERS",
     "bundle_root",
     "UnsupportedArchive",
 ]

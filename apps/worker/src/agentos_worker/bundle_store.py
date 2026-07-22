@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from aci_protocol.s3 import build_s3_client
 from plugin_format import (
     DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_MEMBERS,
     DEFAULT_MAX_UNCOMPRESSED_BYTES,
     bundle_root,
     safe_extract,
@@ -81,6 +82,7 @@ def extract_bundle(
     *,
     max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
     max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+    max_members: int = DEFAULT_MAX_MEMBERS,
 ) -> Path:
     """Extract ``data`` into ``dest`` and return the plugin root to mount.
 
@@ -100,5 +102,6 @@ def extract_bundle(
         dest,
         max_uncompressed_bytes=max_uncompressed_bytes,
         max_compression_ratio=max_compression_ratio,
+        max_members=max_members,
     )
     return bundle_root(dest)

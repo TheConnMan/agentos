@@ -1,5 +1,6 @@
 """Agents and their versions."""
 
+import functools
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import bundles, crud
 from ..auth import require_api_key
+from ..config import get_settings
 from ..deps import SessionDep, StoreDep
 from ..schemas import (
     AgentCreate,
@@ -200,5 +202,12 @@ async def read_version_files(
             status.HTTP_404_NOT_FOUND, "no bundle stored for this version"
         )
     data = await store.get(version.bundle_ref)
-    files = await run_in_threadpool(bundles.read_bundle_text_files, data)
+    settings = get_settings()
+    read = functools.partial(
+        bundles.read_bundle_text_files,
+        max_uncompressed_bytes=settings.bundle_max_uncompressed_bytes,
+        max_compression_ratio=settings.bundle_max_compression_ratio,
+        max_members=settings.bundle_max_members,
+    )
+    files = await run_in_threadpool(read, data)
     return BundleFiles(files=[BundleFile(path=p, content=c) for p, c in files])

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from plugin_format import (
     DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_MEMBERS,
     DEFAULT_MAX_UNCOMPRESSED_BYTES,
     MANIFEST_LOCATIONS,
     UnsupportedArchive,
@@ -66,14 +67,16 @@ def extract_and_validate(
     *,
     max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
     max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+    max_members: int = DEFAULT_MAX_MEMBERS,
 ) -> tuple[str, str, ValidationResult]:
     """Detect, extract, and validate. Returns (extension, content_type, result).
 
-    Extraction (with the traversal/symlink/special-file and size/ratio guards)
-    and the single-wrapper-dir unwrap live in ``plugin_format``; this only adds
-    the storage-key/content-type detection the upload path needs. The size/ratio
-    caps default to ``plugin_format``'s generous fallbacks; ``deploy.py`` passes
-    the operator-configured ``Settings`` values instead.
+    Extraction (with the traversal/symlink/special-file, size/ratio, and
+    member-count guards) and the single-wrapper-dir unwrap live in
+    ``plugin_format``; this only adds the storage-key/content-type detection the
+    upload path needs. The caps default to ``plugin_format``'s generous
+    fallbacks; ``deploy.py`` passes the operator-configured ``Settings`` values
+    instead.
     """
 
     extension, content_type = detect_format(data)
@@ -82,6 +85,7 @@ def extract_and_validate(
         dest,
         max_uncompressed_bytes=max_uncompressed_bytes,
         max_compression_ratio=max_compression_ratio,
+        max_members=max_members,
     )
     result = validate_bundle(bundle_root(dest))
     return extension, content_type, result
@@ -108,15 +112,30 @@ def _collect_text_files(root: Path) -> list[tuple[str, str]]:
     return sorted(files, key=lambda item: item[0])
 
 
-def read_bundle_text_files(data: bytes) -> list[tuple[str, str]]:
+def read_bundle_text_files(
+    data: bytes,
+    *,
+    max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+    max_members: int = DEFAULT_MAX_MEMBERS,
+) -> list[tuple[str, str]]:
     """Extract an archive's bytes and return its known text files.
 
     Mirrors the upload path (detect -> extract into a temp dir, guarding path
     traversal -> unwrap to the bundle root) but reads the text surfaces instead of
     validating. Returns (path, content) pairs; the caller shapes the response.
+    The caps default to ``plugin_format``'s generous fallbacks; the router passes
+    the operator-configured ``Settings`` values so this path honors the same
+    bounds as ingestion (#815) rather than the library defaults.
     """
 
     with tempfile.TemporaryDirectory() as tmp:
         dest = Path(tmp)
-        safe_extract(data, dest)
+        safe_extract(
+            data,
+            dest,
+            max_uncompressed_bytes=max_uncompressed_bytes,
+            max_compression_ratio=max_compression_ratio,
+            max_members=max_members,
+        )
         return _collect_text_files(bundle_root(dest))

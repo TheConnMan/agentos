@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     #   `deploy.revalidate_stored_bundle`'s deploy-time recheck of an
     #   already-stored bundle against the CURRENT caps (the legacy-bundle
     #   backward-compatibility case).
+    # - bundle_max_members caps the NUMBER of archive members, enforced
+    #   INCREMENTALLY during the pre-scan (#815) so a many-member archive (a
+    #   tiny tar.gz of hundreds of thousands of zero-byte members clears both
+    #   size caps yet exhausts memory building one TarInfo per member) is
+    #   refused mid-walk. A real bundle has hundreds to low thousands of files;
+    #   10_000 sits well above that and far below a member-count DoS.
     # Mirrored in the worker's `WorkerConfig` (apps/worker/src/agentos_worker/
     # config.py) under the same names/defaults -- the worker's Docker-substrate
     # bundle-fetch and the eval-stream suite loader apply the same caps to the
@@ -77,6 +83,7 @@ class Settings(BaseSettings):
     bundle_upload_max_bytes: int = 200 * 1024 * 1024  # 200 MiB
     bundle_max_uncompressed_bytes: int = 1024 * 1024 * 1024  # 1 GiB
     bundle_max_compression_ratio: float = 100.0
+    bundle_max_members: int = 10_000
 
     # Git flow (J1). The webhook secret authenticates inbound GitHub events; the
     # two bot identities are the routing targets recorded on each deployment.

@@ -57,6 +57,7 @@ def validate_archive(
             Path(tmp),
             max_uncompressed_bytes=settings.bundle_max_uncompressed_bytes,
             max_compression_ratio=settings.bundle_max_compression_ratio,
+            max_members=settings.bundle_max_members,
         )
     if not result.valid:
         raise BundleInvalid([e.model_dump() for e in result.errors])
@@ -88,6 +89,7 @@ async def revalidate_stored_bundle(
             data,
             max_uncompressed_bytes=settings.bundle_max_uncompressed_bytes,
             max_compression_ratio=settings.bundle_max_compression_ratio,
+            max_members=settings.bundle_max_members,
         )
     except plugin_format.UnsupportedArchive as exc:
         raise BundleTooLarge(

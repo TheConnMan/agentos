@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from plugin_format import (
+    DEFAULT_MAX_MEMBERS,
     UnsupportedArchive,
     bundle_root,
     check_archive_bounds,
@@ -257,3 +258,112 @@ def test_check_archive_bounds_still_rejects_unsafe_entries() -> None:
     # The size/ratio check does not bypass the existing traversal guard.
     with pytest.raises(UnsupportedArchive):
         check_archive_bounds(_zip({"../escape": "pwn"}))
+
+
+# --- #815: member-count cap, enforced incrementally during the pre-scan ------
+
+
+def _many_member_zip(count: int) -> bytes:
+    """A zip of ``count`` zero-byte members -- the many-empty-member shape."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(count):
+            zf.writestr(f"f{i}", b"")
+    return buf.getvalue()
+
+
+def _many_member_tar_gz(count: int) -> bytes:
+    """A tar.gz of ``count`` zero-byte members. gzip compresses the repetitive
+    headers heavily, so this stays tiny on disk while declaring many members --
+    the member-count DoS shape (#815)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for i in range(count):
+            info = tarfile.TarInfo(f"f{i}")
+            info.size = 0
+            tf.addfile(info)
+    return buf.getvalue()
+
+
+def test_zip_member_count_over_cap_rejected(tmp_path: Path) -> None:
+    data = _many_member_zip(50)
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        safe_extract(data, tmp_path, max_members=10)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tar_gz_member_count_over_cap_rejected(tmp_path: Path) -> None:
+    data = _many_member_tar_gz(50)
+    # Sanity: the archive is genuinely small on disk despite its member count,
+    # so only the member-count cap (not the size or ratio cap) can catch it.
+    assert len(data) < 4_000
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        safe_extract(data, tmp_path, max_members=10)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tar_prescan_streams_and_never_calls_getmembers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tar pre-scan must walk the stream one header at a time, never
+    ``getmembers()`` (which materializes every member -- and, for a .tar.gz,
+    decompresses the whole stream -- up front). Poisoning ``getmembers`` proves
+    the incremental walk does not route through it."""
+
+    def _boom(self: tarfile.TarFile) -> list[tarfile.TarInfo]:
+        raise AssertionError("getmembers() materializes the full member list")
+
+    monkeypatch.setattr(tarfile.TarFile, "getmembers", _boom)
+    # A normal small bundle still extracts (streaming iteration, no getmembers).
+    safe_extract(_tar_files(_valid_files()), tmp_path)
+    assert (tmp_path / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_tar_gz_member_cap_fires_before_materializing_all_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A many-member tar.gz is refused at the cap without ever building the
+    full member list: getmembers() is poisoned, so reaching the cap through the
+    streaming walk is the only way this can raise the member-count error."""
+
+    def _boom(self: tarfile.TarFile) -> list[tarfile.TarInfo]:
+        raise AssertionError("getmembers() materializes the full member list")
+
+    monkeypatch.setattr(tarfile.TarFile, "getmembers", _boom)
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        safe_extract(_many_member_tar_gz(50), tmp_path, max_members=10)
+
+
+def test_tar_gz_declared_huge_member_trips_size_cap_mid_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The uncompressed-size cap is enforced incrementally too: a member
+    declaring a huge size trips it during the streaming walk (before the walk
+    advances past the member and decompresses its body), not after a full
+    getmembers() decompress-and-materialize pass."""
+
+    def _boom(self: tarfile.TarFile) -> list[tarfile.TarInfo]:
+        raise AssertionError("getmembers() decompresses the whole stream up front")
+
+    monkeypatch.setattr(tarfile.TarFile, "getmembers", _boom)
+    info, payload = _reg("big.bin", b"\x00" * 5_000)
+    data = _tar([info], {"big.bin": payload})
+    with pytest.raises(UnsupportedArchive, match="byte limit"):
+        safe_extract(data, tmp_path, max_uncompressed_bytes=1_000)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_member_count_within_cap_is_accepted(tmp_path: Path) -> None:
+    # A few hundred legitimate members stay well under the default cap.
+    safe_extract(_many_member_tar_gz(300), tmp_path, max_members=DEFAULT_MAX_MEMBERS)
+    assert len(list(tmp_path.iterdir())) == 300
+
+
+def test_default_member_cap_is_generous_but_bounded() -> None:
+    # Documents the default: hundreds of files pass, hundreds of thousands do not.
+    assert DEFAULT_MAX_MEMBERS == 10_000
+
+
+def test_check_archive_bounds_enforces_member_cap() -> None:
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        check_archive_bounds(_many_member_tar_gz(50), max_members=10)
