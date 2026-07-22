@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "release" / "authorize.py"
@@ -724,3 +725,125 @@ class TestMainLookupFailures:
         assert "could not retrieve check-runs" in lookup_stderr
         assert "could not retrieve check-runs" not in refusal_stderr
         assert "required check-run" in refusal_stderr
+
+
+CI_YAML = REPO_ROOT / ".github" / "workflows" / "ci.yaml"
+
+_MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_]+)\s*\}\}")
+
+
+def ci_job_check_run_names() -> set[str]:
+    """The concrete check-run names ci.yaml's jobs produce (issue #811).
+
+    Parses the real workflow rather than any list derived from
+    `REQUIRED_CHECK_NAMES` -- deriving the expected set from the constant
+    would recreate the very drift-blindness issue #811 is about. Each job's
+    check-run name is its `name:` field; a matrixed job whose name interpolates
+    `${{ matrix.<key> }}` and that declares `strategy.matrix.include` expands
+    to one concrete name per include row, substituting that row's `<key>`
+    value. The substitution is general over the matrix key (regex, not a
+    literal `matrix.name`), so a future job that matrixes on a different key
+    is handled without editing this helper. A job with no `name:` is skipped.
+    """
+    doc = yaml.safe_load(CI_YAML.read_text())
+    names: set[str] = set()
+    for job in doc["jobs"].values():
+        name = job.get("name")
+        if not name:
+            continue
+        ref = _MATRIX_REF.search(name)
+        include = ((job.get("strategy") or {}).get("matrix") or {}).get("include")
+        if ref and include:
+            for entry in include:
+                names.add(_MATRIX_REF.sub(lambda m, entry=entry: str(entry[m.group(1)]), name))
+        else:
+            names.add(name)
+    return names
+
+
+class TestRequiredNamesMatchCiYaml:
+    """`REQUIRED_CHECK_NAMES` must not drift from ci.yaml's job names (#811).
+
+    The gate is fail-closed: a required name that no ci.yaml job produces can
+    never appear among a commit's real check-runs, so it is reported missing on
+    every otherwise-legitimate commit and blocks the release. Conversely a
+    stale name masks the loss of the check it was meant to assert. This pins the
+    constant as a subset of the concrete check-run names the current ci.yaml
+    actually emits, parsed live (never derived from the constant itself).
+
+    Fails today because `REQUIRED_CHECK_NAMES` still carries the pre-rename
+    `"E2E parity ladder (skill + local, fake model)"`, while ci.yaml's
+    `e2e-ladder` job is now named
+    `"E2E parity ladder (skill + local + local-release, fake model)"`.
+    """
+
+    def test_every_required_name_is_a_real_ci_yaml_check_run_name(self):
+        ci_names = ci_job_check_run_names()
+        stale = authorize_module.REQUIRED_CHECK_NAMES - ci_names
+
+        assert authorize_module.REQUIRED_CHECK_NAMES <= ci_names, (
+            "REQUIRED_CHECK_NAMES has drifted from ci.yaml -- these required "
+            f"names match no current job check-run: {sorted(stale)}"
+        )
+
+
+class TestMixedPassFailRequiredCheck:
+    """A required name with any non-passing run is not satisfied (issue #811).
+
+    The set logic only tracks names that have at least one *passing* run, so a
+    required check that ran twice -- once green, once red (a re-run that failed)
+    -- has its name in the passing set and is silently treated as satisfied.
+    For a fail-closed release gate that masks a genuinely failing required
+    check. These use the `required_names` override so they exercise the logic
+    independent of the production constant.
+    """
+
+    MIXED_CI = [
+        {"name": "CI", "conclusion": "success"},
+        {"name": "CI", "conclusion": "failure"},  # a re-run that failed
+        {"name": "CodeQL", "conclusion": "success"},
+    ]
+
+    def test_a_required_name_with_a_failing_run_is_reported_missing(self):
+        assert "CI" in authorize_module.missing_required_checks(
+            self.MIXED_CI, TEST_REQUIRED_NAMES
+        )
+
+    def test_a_required_name_with_a_failing_run_does_not_pass(self):
+        assert not authorize_module.required_checks_passed(
+            self.MIXED_CI, TEST_REQUIRED_NAMES
+        )
+
+    def test_a_single_passing_run_with_no_failing_run_is_satisfied(self):
+        # Positive boundary: the fix must not over-reject a clean pass.
+        runs = [
+            {"name": "CI", "conclusion": "success"},
+            {"name": "CodeQL", "conclusion": "success"},
+        ]
+
+        assert authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES) == set()
+        assert authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
+
+    def test_multiple_all_passing_runs_stay_satisfied(self):
+        # Positive boundary: several entries for a required name, all passing.
+        runs = [
+            {"name": "CI", "conclusion": "success"},
+            {"name": "CI", "conclusion": "neutral"},
+            {"name": "CodeQL", "conclusion": "success"},
+        ]
+
+        assert authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
+
+    def test_authorize_refuses_a_mixed_pass_fail_required_check(self, git_repo):
+        sha = run_git(git_repo, "rev-parse", "HEAD")
+
+        with pytest.raises(
+            authorize_module.AuthorizationError, match="required check-run"
+        ):
+            authorize_module.authorize(
+                sha,
+                self.MIXED_CI,
+                "main",
+                cwd=git_repo,
+                required_names=TEST_REQUIRED_NAMES,
+            )
