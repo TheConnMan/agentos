@@ -17,6 +17,7 @@ the eval matrix records per version.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from enum import StrEnum
 
 from pydantic import (
@@ -30,11 +31,23 @@ from pydantic import (
 
 
 class GraderKind(StrEnum):
-    """How a case's expected value is compared against the agent's output."""
+    """How a case's expected value is compared against the agent's output.
+
+    The three text matchers (``exact``/``contains``/``regex``) grade the turn's
+    final answer TEXT. ``tool_called`` is the ADR-0022 Phase 1 addition: it grades
+    the turn's tool-call TRAJECTORY instead, asserting a named tool was actually
+    invoked during the turn. This closes the "grade the last sentence" gap -- a
+    text grader can confirm a version-shaped string appears in the reply but never
+    that the tool which was supposed to produce it ever ran. Reading the observed
+    trajectory (not the final text) is the whole point: grepping the answer for
+    the tool's name would be the mechanically-easy false green ADR-0022 warns
+    against.
+    """
 
     EXACT = "exact"
     CONTAINS = "contains"
     REGEX = "regex"
+    TOOL_CALLED = "tool_called"
 
 
 class ExpectedStatus(StrEnum):
@@ -52,10 +65,19 @@ class ExpectedStatus(StrEnum):
 
 
 class Grader(BaseModel):
-    """A single deterministic grader. MVP scope: string-shaped checks only.
+    """A single deterministic grader.
 
-    (An LLM-judge grader is a later addition; keeping these deterministic makes
-    eval results reproducible, which is the whole point of eval-as-CI.)
+    For the text matchers (``exact``/``contains``/``regex``) ``expected`` is the
+    string to match against the answer text. For ``tool_called`` ``expected`` is
+    instead the *tool name* that must have been invoked during the turn; the
+    grader then reads the observed tool-call trajectory rather than the answer
+    text. Reusing ``expected`` as the tool name keeps this an additive enum value
+    with no new field -- the smallest possible touch to the frozen eval-case
+    schema (ADR-0022 Phase 1).
+
+    (An LLM-judge grader is a later addition governed by ADR-0042; keeping these
+    deterministic makes eval results reproducible, which is the whole point of
+    eval-as-CI.)
     """
 
     model_config = ConfigDict(frozen=True)
@@ -66,24 +88,42 @@ class Grader(BaseModel):
 
     @field_validator("expected")
     @classmethod
-    def _regex_compiles(cls, value: str, info: ValidationInfo) -> str:
-        """Reject an uncompilable pattern eagerly when the grader is a regex.
+    def _expected_is_well_formed(cls, value: str, info: ValidationInfo) -> str:
+        """Reject an ill-formed ``expected`` eagerly, by grader kind.
 
         ``kind`` is declared before ``expected``, so it is already validated and
-        available in ``info.data`` here. Note that Python ``re`` accepts a wider
-        dialect than the CLI's Rust ``regex`` engine (lookaround, backreferences):
-        a pattern valid here may still be rejected by the local CLI. See
-        docs/adr/0019-freeze-eval-case-format.md.
+        available in ``info.data`` here. A ``regex`` grader must compile (note that
+        Python ``re`` accepts a wider dialect than the CLI's Rust ``regex`` engine
+        -- lookaround, backreferences -- so a pattern valid here may still be
+        rejected by the local CLI; see docs/adr/0019-freeze-eval-case-format.md). A
+        ``tool_called`` grader's ``expected`` is a tool name, which must be
+        non-empty: an empty tool name would match no tool and can never be
+        satisfied, so it is a suite-authoring mistake rather than a valid case.
         """
-        if info.data.get("kind") is GraderKind.REGEX:
+        kind = info.data.get("kind")
+        if kind is GraderKind.REGEX:
             try:
                 re.compile(value)
             except re.error as exc:
                 raise ValueError(f"invalid regex pattern: {exc}") from exc
+        elif kind is GraderKind.TOOL_CALLED and not value.strip():
+            raise ValueError("tool_called grader requires a non-empty tool name in `expected`")
         return value
 
-    def grade(self, output: str) -> bool:
-        """True if ``output`` satisfies this grader."""
+    def grade(self, output: str, trajectory: Sequence[str] = ()) -> bool:
+        """True if the turn satisfies this grader.
+
+        ``output`` is the graded answer text; ``trajectory`` is the ordered tool
+        names the turn invoked (the ``tool`` field of each ``tool_note`` frame, in
+        emission order). The text matchers judge ``output`` and ignore
+        ``trajectory``; ``tool_called`` judges ``trajectory`` and ignores
+        ``output``. Tool names are exact identifiers, so ``tool_called`` compares
+        them exactly and does not fold case (the ``case_sensitive`` flag is a
+        text-matcher concern and does not apply).
+        """
+        if self.kind is GraderKind.TOOL_CALLED:
+            return self.expected in trajectory
+
         if self.kind is GraderKind.REGEX:
             flags = 0 if self.case_sensitive else re.IGNORECASE
             return re.search(self.expected, output, flags) is not None

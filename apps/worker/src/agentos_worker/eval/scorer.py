@@ -63,16 +63,17 @@ class Scorer(Protocol):
 
 
 class GraderScorer:
-    """Default scorer: apply the case's frozen :class:`Grader` to the answer text.
+    """Default scorer: apply the case's frozen :class:`Grader` to the turn.
 
-    Behavior-preserving -- this is exactly the ``case.grader.grade(output)`` the
-    runner used inline, now expressed through the seam so it is one swappable
-    implementation among several.
+    Passes both the answer text and the observed tool-call trajectory to the
+    grader; the grader uses whichever its ``kind`` needs (the text matchers judge
+    the text, ``tool_called`` judges the trajectory). This is the same
+    ``case.grader.grade(...)`` the runner used inline, now expressed through the
+    seam so it is one swappable implementation among several.
     """
 
     def score(self, case: EvalCase, output: str, trajectory: Sequence[str]) -> ScoreResult:
-        del trajectory  # text grader: the tool-call sequence is irrelevant
-        passed = case.grader.grade(output)
+        passed = case.grader.grade(output, trajectory)
         return ScoreResult(passed=passed, detail=None if passed else "grader did not match")
 
 

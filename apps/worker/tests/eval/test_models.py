@@ -36,6 +36,27 @@ def test_regex_grader() -> None:
     assert g.grade("result: 42") is False
 
 
+def test_tool_called_grader_reads_the_trajectory_not_the_text() -> None:
+    # ADR-0022 Phase 1: a tool_called grader asserts a named tool was invoked,
+    # read from the observed trajectory -- NOT grepped from the answer text.
+    g = Grader(kind=GraderKind.TOOL_CALLED, expected="DeterministicEngine")
+    # GREEN: the tool appears in the trajectory.
+    assert g.grade("", ["DeterministicEngine"]) is True
+    assert g.grade("", ["Bash", "DeterministicEngine", "Read"]) is True
+    # RED: the tool was never called, whatever the final text claims.
+    assert g.grade("I ran the DeterministicEngine tool", []) is False
+    assert g.grade("DeterministicEngine", ["Bash", "Read"]) is False
+    # Tool names are exact identifiers; the case_sensitive flag does not fold them.
+    assert Grader(kind=GraderKind.TOOL_CALLED, expected="Bash").grade("", ["bash"]) is False
+
+
+def test_tool_called_grader_rejects_an_empty_tool_name() -> None:
+    # An empty tool name can never be satisfied, so it is a suite-authoring
+    # mistake rejected at construction (deny-by-default).
+    with pytest.raises(ValidationError):
+        Grader(kind=GraderKind.TOOL_CALLED, expected="  ")
+
+
 def test_case_sensitivity_is_honored() -> None:
     insensitive = Grader(kind=GraderKind.CONTAINS, expected="PARIS")
     assert insensitive.grade("paris") is True

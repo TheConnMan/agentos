@@ -2,8 +2,11 @@
 //!
 //! Cases live in `evals/cases.json` (seeded by `agentos init`): a suite OBJECT
 //! `{name, cases: [{id, input, grader}]}`, where each grader is one of
-//! `kind: exact | contains | regex` with an `expected` string and an optional
-//! `case_sensitive` flag. This shape hand-mirrors the frozen canonical eval-case
+//! `kind: exact | contains | regex | tool_called` with an `expected` string and
+//! an optional `case_sensitive` flag. The three text matchers grade the final
+//! answer text; `tool_called` grades the turn's tool-call trajectory, asserting
+//! the tool named in `expected` was actually invoked (ADR-0022 Phase 1). This
+//! shape hand-mirrors the frozen canonical eval-case
 //! format owned by the worker (`apps/worker/schema/eval-cases.schema.json`, the
 //! Pydantic `EvalSuite`); a shape change lands in the same reviewed change as the
 //! Python models. Grading semantics mirror the platform's `Grader.grade`. This is
@@ -27,6 +30,12 @@ pub enum GraderKind {
     Exact,
     Contains,
     Regex,
+    /// Assert a named tool was invoked during the turn (graded against the
+    /// tool-call trajectory, not the answer text). The wire token is snake_case
+    /// `tool_called`, so it is renamed explicitly rather than by the container's
+    /// `lowercase` rule (which would emit `toolcalled`).
+    #[serde(rename = "tool_called")]
+    ToolCalled,
 }
 
 /// The terminal session status an eval case asserts. Mirrors the frozen
@@ -56,7 +65,9 @@ impl ExpectedStatus {
     }
 }
 
-/// A single deterministic grader mirroring the worker's `Grader`.
+/// A single deterministic grader mirroring the worker's `Grader`. For the text
+/// matchers `expected` is the string to match against the answer; for
+/// `tool_called` it is instead the tool NAME that must have been invoked.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Grader {
     pub kind: GraderKind,
@@ -66,11 +77,20 @@ pub struct Grader {
 }
 
 impl Grader {
-    /// True if `output` satisfies this grader. Mirrors the platform's
-    /// `Grader.grade`: exact compares whitespace-trimmed values, contains is a
-    /// substring test, regex is a search; all case-fold both sides unless
-    /// `case_sensitive` (regex uses the engine's case-insensitive flag).
-    pub fn grade(&self, output: &str) -> bool {
+    /// True if the turn satisfies this grader. `output` is the graded answer
+    /// text; `trajectory` is the ordered tool names the turn invoked (each
+    /// `tool_note` frame's `tool`, in emission order). Mirrors the platform's
+    /// `Grader.grade`: the text matchers judge `output` (exact compares
+    /// whitespace-trimmed values, contains is a substring test, regex is a
+    /// search; all case-fold both sides unless `case_sensitive`) and ignore the
+    /// trajectory; `tool_called` judges the trajectory and ignores `output`.
+    /// Tool names are exact identifiers, so `tool_called` compares them exactly
+    /// and does not fold case (the `case_sensitive` flag is a text-matcher
+    /// concern here).
+    pub fn grade(&self, output: &str, trajectory: &[&str]) -> bool {
+        if self.kind == GraderKind::ToolCalled {
+            return trajectory.contains(&self.expected.as_str());
+        }
         if self.kind == GraderKind::Regex {
             return match RegexBuilder::new(&self.expected)
                 .case_insensitive(!self.case_sensitive)
@@ -152,6 +172,15 @@ pub fn validate_suite(name: &str, cases: &[EvalCase]) -> Result<()> {
                     )
                 })?;
         }
+        // A tool_called grader's `expected` is a tool name; an empty one matches
+        // no tool and can never be satisfied, so reject it at load exactly as the
+        // platform's Grader validator does.
+        if case.grader.kind == GraderKind::ToolCalled && case.grader.expected.trim().is_empty() {
+            bail!(
+                "case {:?} has a tool_called grader with an empty tool name in `expected`",
+                case.id
+            );
+        }
     }
     Ok(())
 }
@@ -199,13 +228,32 @@ pub fn graded_answer(events: &[OutboundEvent]) -> String {
     }
 }
 
+/// The ordered tool-call trajectory of a turn: the `tool` field of every
+/// `tool_note` frame, in emission order. This is the observed record a
+/// `tool_called` grader asserts against -- read from the trajectory the runner
+/// emitted, never inferred from the answer text (ADR-0022). Mirrors the platform
+/// runner, which accumulates the same list off the `ToolNote` frames.
+pub fn trajectory(events: &[OutboundEvent]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            OutboundEvent::ToolNote { tool: Some(t), .. } => Some(t.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Full pass condition for a turn: it must end in a `final` whose status equals
 /// the case's `expect_status` (default `done`, or `awaiting-approval` for a
-/// gate-blocked case) AND the grader must match the graded answer. A
-/// classified-failure or interrupted turn still never passes, because those
-/// statuses match neither `done` nor `awaiting-approval`.
+/// gate-blocked case) AND the grader must match the turn. A text grader matches
+/// the graded answer; a `tool_called` grader matches the observed tool-call
+/// trajectory. A classified-failure or interrupted turn still never passes,
+/// because those statuses match neither `done` nor `awaiting-approval`.
 pub fn turn_passes(case: &EvalCase, events: &[OutboundEvent]) -> bool {
-    turn_completed(case, events) && case.grader.grade(&graded_answer(events))
+    turn_completed(case, events)
+        && case
+            .grader
+            .grade(&graded_answer(events), &trajectory(events))
 }
 
 /// True when the turn ended in a `final` frame whose status matches the case's
@@ -267,7 +315,10 @@ pub fn turn_outcome(case: &EvalCase, events: &[OutboundEvent], fake: bool) -> Ca
     if fake {
         return CaseOutcome::PlumbingOk;
     }
-    if case.grader.grade(&graded_answer(events)) {
+    if case
+        .grader
+        .grade(&graded_answer(events), &trajectory(events))
+    {
         CaseOutcome::Pass
     } else {
         CaseOutcome::Fail
@@ -353,6 +404,14 @@ mod tests {
             approval_route: None,
             approval_gate_kind: None,
             approval_granted_tool: None,
+        }
+    }
+
+    fn tool_note(tool: &str) -> OutboundEvent {
+        OutboundEvent::ToolNote {
+            version: PROTOCOL_VERSION.into(),
+            text: format!("calling {tool}"),
+            tool: Some(tool.into()),
         }
     }
 
@@ -450,24 +509,95 @@ mod tests {
 
     #[test]
     fn exact_grader_trims_and_case_folds() {
-        assert!(grader(GraderKind::Exact, "  Done  ", false).grade("done"));
-        assert!(!grader(GraderKind::Exact, "done", true).grade("Done"));
-        assert!(grader(GraderKind::Exact, "done", true).grade("  done  "));
-        assert!(!grader(GraderKind::Exact, "done", false).grade("all done"));
+        assert!(grader(GraderKind::Exact, "  Done  ", false).grade("done", &[]));
+        assert!(!grader(GraderKind::Exact, "done", true).grade("Done", &[]));
+        assert!(grader(GraderKind::Exact, "done", true).grade("  done  ", &[]));
+        assert!(!grader(GraderKind::Exact, "done", false).grade("all done", &[]));
     }
 
     #[test]
     fn contains_grader_case_folds_unless_flagged() {
-        assert!(grader(GraderKind::Contains, "WEATHER", false).grade("the weather today"));
-        assert!(!grader(GraderKind::Contains, "WEATHER", true).grade("the weather today"));
-        assert!(grader(GraderKind::Contains, "weather", true).grade("the weather today"));
+        assert!(grader(GraderKind::Contains, "WEATHER", false).grade("the weather today", &[]));
+        assert!(!grader(GraderKind::Contains, "WEATHER", true).grade("the weather today", &[]));
+        assert!(grader(GraderKind::Contains, "weather", true).grade("the weather today", &[]));
     }
 
     #[test]
     fn regex_grader_searches_with_optional_case_flag() {
-        assert!(grader(GraderKind::Regex, "wea.her", false).grade("The WEATHER"));
-        assert!(!grader(GraderKind::Regex, "WEA.HER", true).grade("the weather"));
-        assert!(grader(GraderKind::Regex, "^done$", false).grade("DONE"));
+        assert!(grader(GraderKind::Regex, "wea.her", false).grade("The WEATHER", &[]));
+        assert!(!grader(GraderKind::Regex, "WEA.HER", true).grade("the weather", &[]));
+        assert!(grader(GraderKind::Regex, "^done$", false).grade("DONE", &[]));
+    }
+
+    #[test]
+    fn tool_called_grader_reads_the_trajectory_not_the_text() {
+        let g = grader(GraderKind::ToolCalled, "DeterministicEngine", false);
+        // GREEN: the tool appears in the observed trajectory.
+        assert!(g.grade("", &["DeterministicEngine"]));
+        assert!(g.grade("", &["Bash", "DeterministicEngine", "Read"]));
+        // RED: the tool was never called, no matter what the answer text says --
+        // grading must read the trajectory, not grep the final text (ADR-0022).
+        assert!(!g.grade("I ran the DeterministicEngine tool", &[]));
+        assert!(!g.grade("DeterministicEngine", &["Bash", "Read"]));
+        // The case_sensitive flag is a text-matcher concern; tool names match
+        // exactly regardless of it.
+        assert!(!grader(GraderKind::ToolCalled, "Bash", false).grade("", &["bash"]));
+    }
+
+    #[test]
+    fn tool_called_case_greens_when_the_tool_note_is_present_and_reds_when_absent() {
+        // The #621 acceptance, at the turn level: a case asserting a tool was
+        // called GREENs when the trajectory carries that tool_note and REDs when
+        // it does not -- and a do-nothing turn that calls no tool fails it, so the
+        // grader is falsifiable.
+        let c = case(grader(GraderKind::ToolCalled, "DeterministicEngine", false));
+        let called = vec![
+            tool_note("DeterministicEngine"),
+            final_event("done", SessionStatus::Done),
+        ];
+        let not_called = vec![
+            tool_note("Bash"),
+            final_event("I used the DeterministicEngine", SessionStatus::Done),
+        ];
+        let did_nothing = vec![final_event("all done", SessionStatus::Done)];
+        assert!(turn_passes(&c, &called));
+        assert!(!turn_passes(&c, &not_called));
+        assert!(!turn_passes(&c, &did_nothing));
+    }
+
+    #[test]
+    fn trajectory_collects_tool_note_names_in_order() {
+        let events = vec![
+            tool_note("Bash"),
+            delta("thinking"),
+            tool_note("Read"),
+            final_event("done", SessionStatus::Done),
+        ];
+        assert_eq!(trajectory(&events), vec!["Bash", "Read"]);
+    }
+
+    #[test]
+    fn loads_a_tool_called_grader_and_rejects_an_empty_tool_name() {
+        let (_dir, path) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"tool_called","expected":"DeterministicEngine"}}]}"#,
+        );
+        let suite = load_suite(&path).unwrap();
+        assert_eq!(suite.cases[0].grader.kind, GraderKind::ToolCalled);
+        assert_eq!(suite.cases[0].grader.expected, "DeterministicEngine");
+        // An empty tool name can never be satisfied, so the loader rejects it.
+        let (_dir2, path2) = write(
+            r#"{"name":"s","cases":[{"id":"a","input":"b","grader":{"kind":"tool_called","expected":"  "}}]}"#,
+        );
+        let err = load_suite(&path2).unwrap_err().to_string();
+        assert!(err.contains("empty tool name"), "{err}");
+    }
+
+    #[test]
+    fn tool_called_round_trips_through_serialize() {
+        // The scaffold/spec re-emit path serializes a Grader; the tool_called kind
+        // must write the snake_case wire token load_suite reads back.
+        let json = serde_json::to_string(&grader(GraderKind::ToolCalled, "Bash", false)).unwrap();
+        assert!(json.contains(r#""kind":"tool_called""#), "got: {json}");
     }
 
     #[test]
@@ -580,14 +710,17 @@ mod tests {
         let body = include_str!("../../examples/weather/evals/cases.json");
         let (_dir, path) = write(body);
         let grader = &load_suite(&path).unwrap().cases[0].grader;
-        assert!(grader.grade("68°"), "glyph form must pass");
-        assert!(grader.grade("68 deg F"), "abbreviated unit must pass");
+        assert!(grader.grade("68°", &[]), "glyph form must pass");
+        assert!(grader.grade("68 deg F", &[]), "abbreviated unit must pass");
         assert!(
-            grader.grade("The high in San Francisco today is 68 degrees Fahrenheit"),
+            grader.grade(
+                "The high in San Francisco today is 68 degrees Fahrenheit",
+                &[]
+            ),
             "spelled-out unit must pass"
         );
         assert!(
-            !grader.grade("I could not confirm a current forecast"),
+            !grader.grade("I could not confirm a current forecast", &[]),
             "a refusal with no temperature figure must still fail"
         );
     }

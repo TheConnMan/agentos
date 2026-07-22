@@ -247,7 +247,7 @@ fn the_scaffold_seeds_a_falsifiable_grader_the_fake_reply_does_not_satisfy() {
     assert_eq!(case.grader.kind, GraderKind::Contains);
     assert_eq!(case.grader.expected, BUNDLE);
     assert!(
-        !case.grader.grade("all done"),
+        !case.grader.grade("all done", &[]),
         "the seed must stay falsifiable: the fake's canned reply must NOT satisfy it, \
          which is precisely why the fake tier cannot be graded"
     );
@@ -289,7 +289,7 @@ fn a_completed_fake_turn_is_plumbing_ok_even_when_the_grader_would_fail_it() {
     let case = case_requiring(BUNDLE);
     let events = vec![final_event("all done", SessionStatus::Done)];
     assert!(
-        !case.grader.grade("all done"),
+        !case.grader.grade("all done", &[]),
         "precondition: this grader fails the fake's canned text"
     );
     assert_eq!(
@@ -307,7 +307,7 @@ fn a_completed_fake_turn_is_plumbing_ok_even_when_the_grader_would_fail_it() {
 fn a_completed_fake_turn_the_grader_would_pass_is_still_plumbing_ok() {
     let case = case_requiring("all done");
     let events = vec![final_event("all done", SessionStatus::Done)];
-    assert!(case.grader.grade("all done"), "precondition");
+    assert!(case.grader.grade("all done", &[]), "precondition");
     assert_eq!(
         turn_outcome(&case, &events, true),
         CaseOutcome::PlumbingOk,

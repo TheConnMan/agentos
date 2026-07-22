@@ -140,23 +140,25 @@ pub fn interview<R: BufRead, W: Write>(
     Ok(EvalSuite { name, cases })
 }
 
-/// Ask for a grader: kind (exact/contains/regex), the expected string, and
-/// case-sensitivity. Re-prompts on an unrecognized kind rather than guessing.
+/// Ask for a grader: kind (exact/contains/regex/tool_called), the expected
+/// string, and case-sensitivity. Re-prompts on an unrecognized kind rather than
+/// guessing.
 fn ask_grader<R: BufRead, W: Write>(r: &mut R, w: &mut W) -> Result<Grader> {
     let kind = loop {
         let raw = ask_default(
             r,
             w,
-            "  Grader kind (exact/contains/regex) [contains]: ",
+            "  Grader kind (exact/contains/regex/tool_called) [contains]: ",
             "contains",
         )?;
         match raw.to_lowercase().as_str() {
             "exact" => break GraderKind::Exact,
             "contains" => break GraderKind::Contains,
             "regex" => break GraderKind::Regex,
+            "tool_called" => break GraderKind::ToolCalled,
             other => writeln!(
                 w,
-                "  '{other}' is not a grader kind; choose exact, contains, or regex."
+                "  '{other}' is not a grader kind; choose exact, contains, regex, or tool_called."
             )?,
         }
     };
@@ -166,6 +168,11 @@ fn ask_grader<R: BufRead, W: Write>(r: &mut R, w: &mut W) -> Result<Grader> {
         GraderKind::Exact => ask_required(r, w, "  Expected (exact answer, trimmed): ")?,
         GraderKind::Contains => {
             ask_required(r, w, "  Expected (substring the answer must contain): ")?
+        }
+        // tool_called grades the tool-call trajectory, so `expected` is the name
+        // of the tool that must have been invoked during the turn.
+        GraderKind::ToolCalled => {
+            ask_required(r, w, "  Expected (name of the tool that must be called): ")?
         }
     };
     let case_sensitive = ask_yes_no(r, w, "  Case-sensitive? [y/N]: ", false)?;
