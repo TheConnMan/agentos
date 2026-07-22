@@ -862,6 +862,16 @@ class StateEntryOut(BaseModel):
     updated_at: datetime
 
 
+class StateNamespaceOut(BaseModel):
+    """One namespace in an agent's durable state store, for the operator's
+    read/inspect surface (#250): the namespace, how many keys it holds, and when
+    it was most recently written."""
+
+    namespace: str
+    key_count: int
+    last_updated: datetime
+
+
 # --- Agent memory (#266 trace-back; #267 inspect/edit/delete) ---------------
 
 

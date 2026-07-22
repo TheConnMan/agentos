@@ -306,3 +306,27 @@ def test_namespace_over_the_per_namespace_cap_is_rejected(
         assert b.status_code == 413, b.text
     finally:
         get_settings.cache_clear()
+
+
+def test_list_namespaces_summarizes_the_store_recent_first(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # The operator read/inspect surface (#250) enumerates an agent's namespaces
+    # with key counts and the last write time, most-recently-written first.
+    aid = _agent(client, auth_headers)
+    assert client.get(f"/agents/{aid}/state", headers=auth_headers).json() == []
+
+    client.put(f"/agents/{aid}/state/alpha/a", json={"value": 1}, headers=auth_headers)
+    client.put(f"/agents/{aid}/state/alpha/b", json={"value": 2}, headers=auth_headers)
+    # beta is written after alpha, so it sorts first (most recent).
+    client.put(f"/agents/{aid}/state/beta/c", json={"value": 3}, headers=auth_headers)
+
+    resp = client.get(f"/agents/{aid}/state", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    namespaces = [row["namespace"] for row in body]
+    assert namespaces == ["beta", "alpha"]
+    by_ns = {row["namespace"]: row for row in body}
+    assert by_ns["alpha"]["key_count"] == 2
+    assert by_ns["beta"]["key_count"] == 1
+    assert by_ns["alpha"]["last_updated"] and by_ns["beta"]["last_updated"]
