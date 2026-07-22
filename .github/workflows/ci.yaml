@@ -688,9 +688,27 @@ jobs:
       - name: Resolve the pod-reachable host for the reply stub
         run: |
           set -euo pipefail
-          gw="$(docker network inspect kind -f '{{ (index .IPAM.Config 0).Gateway }}')"
-          if [[ -z "$gw" ]]; then
-            echo "could not resolve the kind network gateway" >&2
+          # The kind bridge's IPv4 gateway is the host address every node -- and
+          # every pod egressing through its node -- can reach; the stub binds
+          # 0.0.0.0 and answers on it. The `kind` Docker network is frequently
+          # dual-stack, so IPAM.Config carries both an IPv4 and an IPv6 entry in
+          # an unspecified order (and an entry may omit Gateway) -- `index 0` is
+          # not reliably the IPv4 one, which is why it came back empty. Read the
+          # gateway the control-plane node container actually got first, then
+          # fall back to ranging the network's IPAM for a dotted-quad gateway.
+          node="agentos-e2e-control-plane"
+          gw="$(docker inspect "$node" --format '{{ .NetworkSettings.Networks.kind.Gateway }}' 2>/dev/null || true)"
+          if [[ ! "$gw" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+            gw="$(docker network inspect kind \
+                    --format '{{range .IPAM.Config}}{{println .Gateway}}{{end}}' 2>/dev/null \
+                  | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | head -1 || true)"
+          fi
+          if [[ ! "$gw" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+            echo "could not resolve the kind network IPv4 gateway" >&2
+            echo "--- docker network inspect kind ---" >&2
+            docker network inspect kind >&2 || true
+            echo "--- docker inspect $node (.NetworkSettings.Networks) ---" >&2
+            docker inspect "$node" --format '{{json .NetworkSettings.Networks}}' >&2 || true
             exit 1
           fi
           echo "kind network gateway (worker->stub reply host): $gw"
