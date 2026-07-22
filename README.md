@@ -473,6 +473,18 @@ Use `--chart <path>` when developing the chart locally. The short version:
 Full runbook (the credential model, the Slack-connect command, and the
 zero-Slack `message` flow) is in [`docs/operations.md`](docs/operations.md).
 
+## License and trademarks
+
+AgentOS is released under the [Apache License 2.0](LICENSE); see [`NOTICE`](NOTICE)
+for attribution. "AgentOS" is a trademark of Curie Engineering. The code license
+does not grant trademark rights, and [`TRADEMARKS.md`](TRADEMARKS.md) explains
+what use of the name is fine without asking and what needs permission.
+
+If AgentOS is useful to you, especially if you build on it commercially, we'd
+love a link back to [github.com/curie-eng/agentos](https://github.com/curie-eng/agentos).
+It is a friendly request, not a license condition: nothing in the Apache License
+requires it, and you are free to use AgentOS whether or not you do.
+
 ## Where do I go next?
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the component diagram, the
