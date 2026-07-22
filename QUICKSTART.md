@@ -161,7 +161,10 @@ when a credential is present).
 
 For the deeper ticket-verification runbook — rebuilding and redeploying a
 changed bundle, watching worker/runner logs, and driving multi-turn
-conversations — see [`docs/onboarding.md`](docs/onboarding.md).
+conversations — see [`docs/onboarding.md`](docs/onboarding.md). To hand-run the
+worker as a bare host process instead of a compose service (e.g. to attach a
+debugger while iterating on worker source), see
+[`apps/worker/README.md`](apps/worker/README.md#running-the-worker-as-a-bare-process-agentos_workerrun-docker-substrate).
 
 ### On a Kubernetes cluster (Helm)
 
