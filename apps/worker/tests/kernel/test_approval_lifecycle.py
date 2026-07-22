@@ -99,6 +99,51 @@ def test_awaiting_approval_creates_record_and_suspends(make_harness) -> None:
     asyncio.run(go())
 
 
+def test_multiparagraph_summary_yields_a_single_block_parseable_notice(
+    make_harness,
+) -> None:
+    """A model-authored multi-paragraph summary must not break the CLI notice
+    parse (#817).
+
+    The notice is a control string the CLI splits on blank lines, requiring the
+    marker-leading block (cli/src/chat.rs parse_approval_id, the #766
+    keep-alive). A blank line inside the summary would strand the resumed reply
+    (or, on the route-bound path, report the raw notice as a false success). The
+    kernel collapses the interpolated summary to one logical line, so the notice
+    stays a single block whose trailing ``\\n\\n``-split segment starts with the
+    marker -- while the durable record keeps the original summary."""
+
+    async def go() -> None:
+        approvals = RecordingApprovals()
+        async with make_harness(approvals=approvals) as h:
+            summary = "First paragraph of the summary.\n\nSecond paragraph.\nThird line."
+            h.runner.default_script = _awaiting_script(summary)
+            ev = _qevent("please discount", event_id="ev-appr-multi")
+            await h.kernel.process_event(ev)
+
+            # The durable record keeps the original multi-paragraph summary; only
+            # the notice display is collapsed.
+            assert len(approvals.requests) == 1
+            assert approvals.requests[0].summary == summary
+
+            # The placeholder notice is a single logical block: splitting on the
+            # blank-line delimiter, the trailing block is the marker-leading
+            # notice, exactly what the CLI parser anchors on.
+            text = h.sink.last_text
+            assert text is not None
+            blocks = text.split("\n\n")
+            notice = blocks[-1]
+            assert notice.startswith("Awaiting approval (appr-1)")
+            assert "The session is paused" in notice
+            # The summary's own blank line is gone; it reads as one line.
+            summary_line, _, _ = notice.partition("\n")
+            assert "First paragraph of the summary." in summary_line
+            assert "Second paragraph." in summary_line
+            assert "Third line." in summary_line
+
+    asyncio.run(go())
+
+
 def test_pending_state_survives_worker_restart_and_resumes_on_resolve(
     make_harness,
 ) -> None:

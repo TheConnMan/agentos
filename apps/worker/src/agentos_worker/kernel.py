@@ -975,8 +975,16 @@ class Kernel:
             logger.warning("suspend failed for thread %s: %s", thread, exc)
 
         base = outcome.text.strip()
+        # The notice is a control string the CLI parses by splitting on blank
+        # lines and requiring the marker-leading block (cli/src/chat.rs
+        # parse_approval_id, the #766 keep-alive). A model-authored blank line or
+        # newline in ``summary`` would break that delimiter and strand the
+        # resumed reply (#817), so collapse the interpolated summary to one
+        # logical line -- the notice is always a single clean block. The durable
+        # ``Approval`` record and the Block Kit card keep the original summary.
+        notice_summary = " ".join(summary.split())
         notice = (
-            f"Awaiting approval ({created.id}): {summary}\n"
+            f"Awaiting approval ({created.id}): {notice_summary}\n"
             "The session is paused and will resume once an authorized member "
             "resolves this request."
         )

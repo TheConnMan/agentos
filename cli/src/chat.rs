@@ -363,14 +363,22 @@ pub async fn await_reply(
 /// marker. `find` let base text shadow the real id; `rfind` let the model-supplied
 /// `summary` (which FOLLOWS the id) shadow it just as easily. Instead:
 ///
-/// 1. Split the text into `\n\n`-separated blocks. The authoritative notice is the
-///    appended LAST block, and it STARTS with the marker.
+/// 1. Split the text into `\n\n`-separated blocks. The authoritative notice
+///    STARTS with the marker. The kernel appends it as the trailing logical
+///    block, but rather than assuming it is the LAST block, anchor on the last
+///    marker-leading block: a model-authored blank line inside the summary can
+///    split the notice across `\n\n` boundaries, leaving a summary fragment as
+///    the true last block (#817). The kernel now collapses the summary to one
+///    line so this cannot happen in practice, but anchoring on the marker keeps
+///    the parse robust to any future notice shape rather than to a fragile
+///    "last block" assumption about its own control string.
 /// 2. Require that block to be the only block starting with the marker: two
 ///    marker-leading blocks mean the text is ambiguous (a model that emitted a
 ///    whole notice-shaped block of its own), so no id is claimed.
 /// 3. When the kernel's fixed trailing sentence appears in the text at all, it
-///    must appear inside that block -- otherwise the structure is not the
-///    kernel's and no id is claimed.
+///    must appear at or after that block (the sentence FOLLOWS the summary, so a
+///    blank-line summary can push it into a later block) -- a tail that PRECEDES
+///    the marker is not the kernel's structure and no id is claimed.
 /// 4. Parse the UUID from that block's own marker.
 ///
 /// Bias is deliberately toward a false negative: a WRONG id makes the CLI wait for
@@ -383,11 +391,16 @@ pub fn parse_approval_id(placeholder_text: &str) -> Option<String> {
                                resolves this request.";
 
     let blocks: Vec<&str> = placeholder_text.split("\n\n").collect();
-    let notice = blocks.last()?.trim_start();
-    // The notice is always the appended trailing block.
-    if !notice.starts_with(MARKER) {
-        return None;
-    }
+    // The notice STARTS with the marker; anchor on the LAST marker-leading block
+    // rather than the last block overall, so a blank-line summary that split the
+    // notice across `\n\n` boundaries cannot let a trailing summary fragment
+    // shadow it (#817).
+    let (notice_idx, notice) = blocks
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, b)| (i, b.trim_start()))
+        .find(|(_, b)| b.starts_with(MARKER))?;
     // ...and it is the ONLY marker-leading block; anything else is ambiguous.
     if blocks
         .iter()
@@ -397,8 +410,12 @@ pub fn parse_approval_id(placeholder_text: &str) -> Option<String> {
     {
         return None;
     }
-    // When the fixed sentence is present, it belongs to this block.
-    if placeholder_text.contains(NOTICE_TAIL) && !notice.contains(NOTICE_TAIL) {
+    // When the fixed sentence is present, it must appear at or after this block
+    // (it FOLLOWS the summary, so a blank-line summary can push it into a later
+    // block); a tail that precedes the marker is not the kernel's structure.
+    if placeholder_text.contains(NOTICE_TAIL)
+        && !blocks[notice_idx..].iter().any(|b| b.contains(NOTICE_TAIL))
+    {
         return None;
     }
     let rest = &notice[MARKER.len()..];
@@ -698,6 +715,39 @@ mod tests {
              resolves this request."
         );
         assert_eq!(parse_approval_id(&text), None);
+    }
+
+    #[test]
+    fn parse_approval_id_survives_a_blank_line_in_the_summary() {
+        // #817: a model that emits a multi-paragraph approval summary makes the
+        // notice span multiple `\n\n` blocks -- the true LAST block is then a
+        // summary fragment, not the marker-leading notice. Anchoring on the last
+        // marker-leading block (and tolerating the fixed sentence landing in a
+        // later block) recovers the id, so the CLI enters resume instead of
+        // stranding the resumed reply / reporting the notice as a false success.
+        let id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        let text = format!(
+            "Here is the partial answer so far.\n\n\
+             Awaiting approval ({id}): first, I will do step one.\n\n\
+             Then, in a second paragraph, step two.\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text).as_deref(), Some(id));
+    }
+
+    #[test]
+    fn parse_approval_id_survives_a_blank_line_summary_with_no_base_prefix() {
+        // The no-partial-answer shape: the placeholder is the notice alone, but
+        // the summary itself carries a blank line. The id must still parse.
+        let id = "00000000-0000-4000-8000-000000000000";
+        let text = format!(
+            "Awaiting approval ({id}): paragraph one of the summary.\n\n\
+             paragraph two of the summary.\n\
+             The session is paused and will resume once an authorized member \
+             resolves this request."
+        );
+        assert_eq!(parse_approval_id(&text).as_deref(), Some(id));
     }
 
     #[test]

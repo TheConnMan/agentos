@@ -340,3 +340,114 @@ async fn a_notice_without_a_card_parks_the_turn_and_the_keepalive_delivers_the_r
         other => panic!("expected the resumed Replied, got {other:?}"),
     }
 }
+
+/// #817: a model that emits a multi-paragraph approval summary produces a notice
+/// whose blank line splits it across `\n\n` blocks. Before the fix the parse
+/// returned `None`, so `await_reply` fell through to `Outcome::Replied(notice)`
+/// (a FALSE SUCCESS -- the raw notice reported as the final answer, the exact
+/// regression #766 closed) and never entered resume, stranding the resumed
+/// reply. This drives the full path with that notice shape and asserts the turn
+/// parks (never `Replied`), the id parses, and the keep-alive delivers the
+/// resumed reply.
+#[tokio::test]
+async fn a_blank_line_summary_notice_parks_the_turn_and_the_keepalive_delivers_the_resumed_reply() {
+    let Some(mut conn) = valkey_or_skip(
+        "a_blank_line_summary_notice_parks_the_turn_and_the_keepalive_delivers_the_resumed_reply",
+    )
+    .await
+    else {
+        return;
+    };
+    let stream = unique_stream("agentos:test:resume:");
+
+    let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
+    let endpoint = stub.base_api_url().to_string();
+
+    let original = synthetic_turn(
+        "C-SIM-x",
+        "U-agentos-message",
+        "do the risky thing",
+        "1720000000.000100",
+        PLACEHOLDER_TS,
+        Some(endpoint.clone()),
+    );
+    let original_id = xadd(&mut conn, &stream, &original).await.unwrap();
+
+    // The parked notice carries a multi-paragraph summary: the blank line inside
+    // it splits the notice across `\n\n` blocks, so the trailing block is a
+    // summary fragment rather than the marker-leading notice.
+    let approval_id = "3f2504e0-4f89-41d3-9a0c-0305e82c3303";
+    let notice = format!(
+        "a partial answer\n\n\
+         Awaiting approval ({approval_id}): first paragraph of the summary.\n\n\
+         second paragraph of the summary.\n\
+         The session is paused and will resume once an authorized member \
+         resolves this request."
+    );
+    post_placeholder_edit(&endpoint, &notice).await;
+    deliver_and_ack(&mut conn, &stream).await;
+
+    let outcome = await_reply(
+        &mut stub,
+        &mut conn,
+        &stream,
+        &original_id,
+        PLACEHOLDER_TS,
+        Duration::from_secs(3),
+    )
+    .await;
+
+    let parked = match outcome {
+        Outcome::AwaitingApproval(latest) => latest,
+        other => {
+            let _: i64 = redis::cmd("DEL")
+                .arg(&stream)
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+            // A `Replied(notice)` here is the #817 false success being asserted
+            // against: a blank-line summary must never report the notice as done.
+            panic!("a blank-line summary notice must park as AwaitingApproval, got {other:?}");
+        }
+    };
+    assert_eq!(
+        parse_approval_id(parked.as_deref().unwrap_or_default()).as_deref(),
+        Some(approval_id),
+        "the id parses out of a multi-paragraph summary notice"
+    );
+
+    let resume_event_id = format!("approval-{approval_id}-resolved");
+    let resume = resume_turn(&resume_event_id, &endpoint);
+    xadd(&mut conn, &stream, &resume).await.unwrap();
+    deliver_and_ack(&mut conn, &stream).await;
+    post_placeholder_edit(&endpoint, "the resolved answer").await;
+
+    let observed = await_resume(
+        &mut stub,
+        &mut conn,
+        &stream,
+        &resume_event_id,
+        &original_id,
+        PLACEHOLDER_TS,
+        Duration::from_secs(3),
+    )
+    .await;
+
+    let _: i64 = redis::cmd("DEL")
+        .arg(&stream)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+
+    assert!(
+        observed.resolved,
+        "the resume entry was observed (resolved)"
+    );
+    match observed.outcome {
+        Outcome::Replied(reply) => assert_eq!(
+            reply, "the resolved answer",
+            "the resumed reply is delivered, not stranded on the dead stub"
+        ),
+        other => panic!("expected the resumed Replied, got {other:?}"),
+    }
+}
