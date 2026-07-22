@@ -104,6 +104,11 @@ _NON_BOOT_ALLOWLIST: frozenset[str] = frozenset(
         "AGENTOS_EVAL_SUITE",
         "AGENTOS_EVAL_TARGET_URL",
         "AGENTOS_EVAL_VERSION",
+        # Multi-sample / variance-aware grading policy (#332), read by the eval
+        # entrypoint (run.py::_sample_config_from_env), not a sandbox boot key.
+        "AGENTOS_EVAL_SAMPLES",
+        "AGENTOS_EVAL_AGGREGATION",
+        "AGENTOS_EVAL_PASS_AT_K",
         # Substrate wiring: how the worker provisions sandboxes, not what it puts
         # inside one. SubstrateConfig reads these from the worker's env.
         "AGENTOS_CLAIM_TIMEOUT_SECONDS",

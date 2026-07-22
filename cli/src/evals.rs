@@ -404,6 +404,8 @@ mod tests {
             approval_route: None,
             approval_gate_kind: None,
             approval_granted_tool: None,
+            input_tokens: None,
+            output_tokens: None,
         }
     }
 

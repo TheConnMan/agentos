@@ -15,6 +15,7 @@ translation serve both the live HTTP turn and the conformance producer.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from aci_protocol import (
@@ -190,4 +191,36 @@ def _translate_result(
     # so a reasoning model whose result-extraction returned empty (issue #107)
     # still delivers its answer. Provider-agnostic: it only fires when result is
     # empty, so non-reasoning models and the fake-model path are unaffected.
-    return [Final(text=message.result or state.assistant_text, status=SessionStatus.DONE)]
+    #
+    # Stamp the turn's token usage on the successful final (#390) so a consumer
+    # (the eval runner) can attribute a dollar cost to the turn. Only the clean
+    # DONE final carries usage: a classified failure never grades, and the
+    # interrupt/approval overrides in the session reconstruct their own final.
+    input_tokens, output_tokens = _usage_tokens(message.usage)
+    return [
+        Final(
+            text=message.result or state.assistant_text,
+            status=SessionStatus.DONE,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+    ]
+
+
+def _usage_tokens(usage: object) -> tuple[int | None, int | None]:
+    """Read ``input_tokens``/``output_tokens`` off the SDK result's usage block.
+
+    The SDK reports usage as a mapping (the Anthropic wire shape); a missing
+    block or a non-integer value yields ``None`` so the wire never carries a
+    fabricated count. Cache-token fields are deliberately not surfaced here --
+    the eval cost model prices prompt/completion tokens only, and each eval case
+    runs a fresh conversation (little cache benefit to attribute).
+    """
+    if not isinstance(usage, Mapping):
+        return None, None
+
+    def _int(key: str) -> int | None:
+        value = usage.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    return _int("input_tokens"), _int("output_tokens")

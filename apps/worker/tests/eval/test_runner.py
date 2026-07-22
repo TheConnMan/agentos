@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import pytest
 from agentos_worker.eval import (
+    AggregationPolicy,
     EvalCase,
     EvalOutcome,
     EvalRunner,
@@ -14,6 +15,7 @@ from agentos_worker.eval import (
     ExpectedStatus,
     Grader,
     GraderKind,
+    SampleConfig,
     ScoreResult,
 )
 
@@ -450,6 +452,182 @@ def test_a_fake_turn_that_does_not_complete_is_a_failure_not_plumbing_ok(
             assert case.passed is False
             assert case.error is not None  # the breakage reason is recorded
             assert spy.calls == 0  # a broken turn is not graded either
+
+    asyncio.run(go())
+
+
+def test_majority_vote_greens_a_case_that_passes_two_of_three_samples(make_eval_harness) -> None:
+    """#332: with n=3 majority, a case whose runner answers correctly 2 of 3 times
+    is GREEN, and the runner is reset before every sample so the draws are
+    independent (fresh conversation each time)."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            # 2 passing answers, 1 wrong -> 2/3 under majority.
+            fake.output_sequence = {"q": ["the answer is 4", "still 4", "nope"]}
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client, samples=SampleConfig(n=3)).run(
+                suite, base_url=base_url, version="v1"
+            )
+
+            case = result.results[0]
+            assert case.passed is True
+            assert result.summary() == "1/1 passed"
+            # Reset ran before each of the 3 samples (independent fresh draws).
+            assert fake.resets == 3
+
+    asyncio.run(go())
+
+
+def test_flaky_case_that_passes_one_of_three_is_red_with_variance(make_eval_harness) -> None:
+    """A flaky case that passes only 1 of 3 samples is RED under majority and is
+    reported with its variance (the pass count)."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.output_sequence = {"q": ["the answer is 4", "nope", "wrong"]}
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client, samples=SampleConfig(n=3)).run(
+                suite, base_url=base_url, version="v1"
+            )
+
+            case = result.results[0]
+            assert case.passed is False
+            assert case.error is not None and "1/3 samples passed" in case.error
+
+    asyncio.run(go())
+
+
+def test_pass_at_k_greens_a_case_that_passes_once(make_eval_harness) -> None:
+    """Under pass@1 the same 1-of-3 flaky case is GREEN (passed at least once)."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.output_sequence = {"q": ["nope", "the answer is 4", "wrong"]}
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(
+                client, samples=SampleConfig(n=3, policy=AggregationPolicy.PASS_AT_K, k=1)
+            ).run(suite, base_url=base_url, version="v1")
+
+            assert result.results[0].passed is True
+
+    asyncio.run(go())
+
+
+def test_default_single_sample_matches_pre_sampling_behavior(make_eval_harness) -> None:
+    """The default n=1 runs each case exactly once (one reset, one turn) -- the
+    backward-compatible no-op path."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "the answer is 4"}
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+
+            assert result.results[0].passed is True
+            assert fake.resets == 1  # one sample, one reset
+            assert len(fake.seen) == 1  # one turn delivered
+
+    asyncio.run(go())
+
+
+def test_cost_usd_is_priced_from_real_usage_for_a_known_model(make_eval_harness) -> None:
+    """#390: a graded turn with reported usage carries a dollar cost computed from
+    real token usage x the model's price, so the matrix's per-model cost rollup is
+    non-null after a real run. claude-opus-4-8 is $5/1M input, $25/1M output."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "the answer is 4"}
+            fake.usage = {"q": (1_000_000, 200_000)}  # 1M input, 200k output
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client).run(
+                suite, base_url=base_url, version="v1", model="claude-opus-4-8"
+            )
+
+            case = result.results[0]
+            assert case.passed is True
+            # 1M * $5/1M + 200k * $25/1M = 5.0 + 5.0 = 10.0
+            assert case.cost_usd == pytest.approx(10.0)
+
+    asyncio.run(go())
+
+
+def test_cost_usd_is_none_for_an_unpriced_model(make_eval_harness) -> None:
+    """An unknown/unpriced model leaves cost None rather than guessing, so the
+    case drops out of the cost rollup instead of counting as free."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "the answer is 4"}
+            fake.usage = {"q": (1_000_000, 200_000)}
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client).run(
+                suite, base_url=base_url, version="v1", model="some-unpriced-model"
+            )
+
+            assert result.results[0].passed is True
+            assert result.results[0].cost_usd is None
+
+    asyncio.run(go())
+
+
+def test_fake_model_run_leaves_cost_none_even_with_usage(make_eval_harness) -> None:
+    """A fake-tier run is never graded and never priced (#390 AC): even when the
+    fake reports usage, the turn returns PLUMBING_OK before cost is computed, so
+    cost stays None (no pricing)."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "all done"}
+            fake.usage = {"q": (1_000_000, 200_000)}
+            result = await EvalRunner(client).run(
+                _one_case_suite(), base_url=base_url, version="v1",
+                model="claude-opus-4-8", fake=True,
+            )
+
+            case = result.results[0]
+            assert case.outcome is EvalOutcome.PLUMBING_OK
+            assert case.cost_usd is None
+
+    asyncio.run(go())
+
+
+def test_cost_usd_is_none_when_the_runner_reports_no_usage(make_eval_harness) -> None:
+    """A priced model but no reported usage (an older runner, or a provider that
+    reports none) leaves cost None rather than pricing it as zero."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"q": "the answer is 4"}  # no fake.usage entry
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="4"))],
+            )
+            result = await EvalRunner(client).run(
+                suite, base_url=base_url, version="v1", model="claude-opus-4-8"
+            )
+
+            assert result.results[0].passed is True
+            assert result.results[0].cost_usd is None
 
     asyncio.run(go())
 

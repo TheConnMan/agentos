@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.3";
+pub const PROTOCOL_VERSION: &str = "0.2.4";
 
 pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
 
@@ -312,6 +312,10 @@ pub enum OutboundEvent {
         approval_gate_kind: Option<String>,
         #[serde(default)]
         approval_granted_tool: Option<String>,
+        #[serde(default)]
+        input_tokens: Option<i64>,
+        #[serde(default)]
+        output_tokens: Option<i64>,
     },
     #[serde(rename = "error")]
     ErrorEvent {
@@ -346,6 +350,8 @@ mod tests {
             approval_route: None,
             approval_gate_kind: None,
             approval_granted_tool: None,
+            input_tokens: None,
+            output_tokens: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -362,6 +368,8 @@ mod tests {
             approval_route: Some("managers".to_string()),
             approval_gate_kind: Some("policy".to_string()),
             approval_granted_tool: None,
+            input_tokens: None,
+            output_tokens: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
