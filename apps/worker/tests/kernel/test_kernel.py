@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -789,6 +790,69 @@ def test_release_thread_with_no_route_is_a_noop(make_harness) -> None:
         async with make_harness() as h:
             released = await h.kernel.release_thread("never-seen-thread")
             assert released is False
+
+    asyncio.run(go())
+
+
+def test_release_serializes_against_a_concurrent_turn_start(make_harness) -> None:
+    """#734: the release runs under the same per-thread route lock the turn path
+    holds around `_route_and_start`, so a reset and a message arriving for the
+    same thread cannot interleave. Without the lock the message could
+    `claim()`-adopt the sandbox the reset is tearing down and open a turn on it,
+    which the release then yanks mid-run.
+
+    The interleaving is forced deterministically rather than raced: the release
+    is gated open (via a threading.Event, because the substrate release runs on
+    `asyncio.to_thread`) so it sits IN the critical section, holding the route
+    lock, while a new turn for the same thread tries to start. That turn must
+    block on the lock -- proven by its `/v1/event` never firing while the
+    release is parked -- and, once the release drops the route and frees the
+    lock, must cold-create a FRESH sandbox (a new claim) instead of the released
+    one, and complete cleanly rather than failing on a torn-down sandbox."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            h.runner.default_script = [Final(text="ok", status=DONE)]
+
+            # Establish a live route with a concrete, idle sandbox.
+            await h.kernel.process_event(_qevent("first", thread="tRace"))
+            old = h.substrate.lookup("tRace")
+            assert old is not None
+            old_claim = old.claim_name
+
+            # Gate the substrate release so it parks inside the critical section
+            # (route lock held) until the test lets it proceed.
+            real_release = h.substrate.release
+            release_entered = threading.Event()
+            release_gate = threading.Event()
+
+            def gated_release(thread_key: str) -> bool:
+                release_entered.set()
+                release_gate.wait(timeout=5.0)
+                return real_release(thread_key)
+
+            h.substrate.release = gated_release  # type: ignore[method-assign]
+
+            reset = asyncio.create_task(h.kernel.release_thread("tRace"))
+            await _wait_until(release_entered.is_set)  # release now holds the lock
+
+            # A new message for the same thread races the reset. It must block on
+            # the route lock the release holds, not adopt the doomed sandbox.
+            turn = asyncio.create_task(h.kernel.process_event(_qevent("second", thread="tRace")))
+            await asyncio.sleep(0.2)
+            assert h.runner.opened == ["first"], "turn started while the reset held the lock"
+
+            # Let the release finish: it drops the route and frees the lock, so
+            # the waiting turn now cold-creates a fresh sandbox.
+            release_gate.set()
+            assert await reset is True
+            await turn
+
+            assert h.runner.opened == ["first", "second"]  # the turn did run
+            fresh = h.substrate.lookup("tRace")
+            assert fresh is not None
+            assert fresh.claim_name != old_claim  # a fresh sandbox, not the released one
+            assert old_claim not in h.fake_k8s.claims  # the released claim is gone
 
     asyncio.run(go())
 
