@@ -461,3 +461,57 @@ def test_bool_worker_rejects_on_and_falsy_tokens(
 
     assert config.shimmer is False
     assert config.fake_model is False
+
+
+# --- Eval claim-creation concurrency bound (#709) ----------------------------
+#
+# A ceiling on eval SandboxClaims created/bound concurrently, so a single-node
+# cluster is not flooded. Defaults to 1 (sequential-with-backpressure) and reads
+# only its AGENTOS_* alias; kept out of the _WORKER_OVERRIDES parity oracle since
+# it is new, not a port of the old hand-rolled from_env.
+
+
+def test_eval_max_concurrent_claims_defaults_to_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single-node-safe by default: claims are created one at a time."""
+    _clear_all_config_env(monkeypatch)
+
+    config = WorkerConfig()
+
+    assert config.eval_max_concurrent_claims == 1
+
+
+def test_worker_config_reads_eval_max_concurrent_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS", "4")
+
+    config = WorkerConfig()
+
+    assert config.eval_max_concurrent_claims == 4
+
+
+def test_eval_max_concurrent_claims_ignores_bare_field_name_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aliased like every other AGENTOS_* knob: a stray bare-name env var must not
+    leak in."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("EVAL_MAX_CONCURRENT_CLAIMS", "7")
+
+    config = WorkerConfig()
+
+    assert config.eval_max_concurrent_claims == 1
+
+
+def test_eval_max_concurrent_claims_rejects_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Floor of 1: a bound of 0 would create no claims at all (no eval could run)."""
+    _clear_all_config_env(monkeypatch)
+    monkeypatch.setenv("AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS", "0")
+
+    with pytest.raises(ValueError):
+        WorkerConfig()
