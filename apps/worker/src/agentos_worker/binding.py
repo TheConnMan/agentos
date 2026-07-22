@@ -456,17 +456,34 @@ class BindingResolver:
         # ``/<namespace>/<key>`` onto this. Memory and history are two reserved
         # namespaces UNDER it; a bundle skill gets the rest.
         state_url = f"{base}/agents/{resolved.agent_id}/state"
-        # Mint one scoped ``state`` token (ADR-0033, #410) for this agent and use
-        # it for both the memory and history tokens. When no platform key is
-        # configured (fake/local) there is nothing to sign with, so no token is
-        # minted and neither is set -- preserving the pre-#410 no-key path.
+        # Mint scoped tokens (ADR-0033, #410) for this agent. Two scopes, because
+        # the memory/history loaders and the bundle reach DIFFERENT namespaces:
+        #  - the broad ``state`` token backs the memory and history tokens, whose
+        #    loaders MUST read/write the reserved ``memory``/``transcript``
+        #    namespaces to rehydrate the agent across suspend/resume;
+        #  - the narrow ``state.app`` token backs the bundle-facing state token,
+        #    which the API state router refuses on those reserved namespaces
+        #    (#249) -- so a skill cannot corrupt memory/history by composing the
+        #    mounted ``AGENTOS_STATE_URL`` directly with the token it holds.
+        # The scope strings are mirrored in ``apps/api`` ``routers/state.py``
+        # (STATE_SCOPE / STATE_APP_SCOPE). When no platform key is configured
+        # (fake/local) there is nothing to sign with, so neither token is minted
+        # and none is set -- preserving the pre-#410 no-key path.
         state_token: str | None = None
+        app_state_token: str | None = None
         if self._config.api_key:
+            exp = int(time.time()) + SANDBOX_TOKEN_TTL_SECONDS
             state_token = sandbox_token.mint(
                 self._config.api_key,
                 agent=str(resolved.agent_id),
                 scope="state",
-                exp=int(time.time()) + SANDBOX_TOKEN_TTL_SECONDS,
+                exp=exp,
+            )
+            app_state_token = sandbox_token.mint(
+                self._config.api_key,
+                agent=str(resolved.agent_id),
+                scope="state.app",
+                exp=exp,
             )
         env = BootEnv.render_worker(
             plugin_dir=self._config.bundle_plugin_dir,
@@ -497,11 +514,12 @@ class BindingResolver:
             model_env_key=self._config.model_env_key or None,
             history_token=state_token,
             memory_token=state_token,
-            # The general state store exposed to bundle code (#249): the same
-            # per-turn scoped ``state`` token authorizes the URL, so the token is
-            # omitted (and the URL still emitted) on the no-key fake/local path.
+            # The general state store exposed to bundle code (#249): the NARROW
+            # ``state.app`` token authorizes the URL -- refused on the reserved
+            # memory/transcript namespaces server-side -- so the token is omitted
+            # (and the URL still emitted) on the no-key fake/local path.
             state_url=state_url,
-            state_token=state_token,
+            state_token=app_state_token,
         )
         # #517/#669 opt-in false-completion check: NOT a BootEnv.render_worker
         # kwarg (it is deliberately kept out of the frozen ACI contract, see

@@ -90,19 +90,27 @@ def test_plain_bound_run_renders_the_frozen_boot_env() -> None:
 
     assert set(minted) == set(_MINTED)
     assert len(minted["AGENTOS_RUNNER_TOKEN"]) >= 32
-    # One token minted once, used for every state port (ADR-0033, #410, #249).
-    assert (
-        minted["AGENTOS_MEMORY_TOKEN"]
-        == minted["AGENTOS_HISTORY_TOKEN"]
-        == minted["AGENTOS_STATE_TOKEN"]
-    )
-    token = minted["AGENTOS_MEMORY_TOKEN"]
-    assert verify(token, "agentos-dev-key", agent=str(_AGENT), scope="state") is True
-    # Prove binding, not just well-formedness: the token must fail for any
-    # agent or scope other than the one it was minted for.
+    # Two scopes (ADR-0033, #410, #249): the memory/history loaders share the
+    # BROAD ``state`` token (they must reach the reserved namespaces to
+    # rehydrate); the bundle-facing state token is the NARROW ``state.app`` token,
+    # a distinct credential the API refuses on memory/transcript. They must NOT be
+    # the same token, or the bundle would hold the loaders' broad reach.
+    assert minted["AGENTOS_MEMORY_TOKEN"] == minted["AGENTOS_HISTORY_TOKEN"]
+    assert minted["AGENTOS_STATE_TOKEN"] != minted["AGENTOS_MEMORY_TOKEN"]
+
+    broad = minted["AGENTOS_MEMORY_TOKEN"]
+    app = minted["AGENTOS_STATE_TOKEN"]
+    # The loaders' token verifies as broad ``state``; the bundle's as ``state.app``
+    # -- and each fails the OTHER's scope, so the server-side reserved-namespace
+    # guard (which keys off exactly this distinction) cannot be spoofed.
+    assert verify(broad, "agentos-dev-key", agent=str(_AGENT), scope="state") is True
+    assert verify(broad, "agentos-dev-key", agent=str(_AGENT), scope="state.app") is False
+    assert verify(app, "agentos-dev-key", agent=str(_AGENT), scope="state.app") is True
+    assert verify(app, "agentos-dev-key", agent=str(_AGENT), scope="state") is False
+    # Prove binding, not just well-formedness: both fail for any other agent.
     wrong_agent = str(uuid.UUID("33333333-3333-4333-8333-333333333333"))
-    assert verify(token, "agentos-dev-key", agent=wrong_agent, scope="state") is False
-    assert verify(token, "agentos-dev-key", agent=str(_AGENT), scope="memory") is False
+    assert verify(broad, "agentos-dev-key", agent=wrong_agent, scope="state") is False
+    assert verify(app, "agentos-dev-key", agent=wrong_agent, scope="state.app") is False
 
 
 def test_state_refs_are_minted_from_the_runner_facing_base() -> None:

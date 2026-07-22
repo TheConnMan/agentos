@@ -13,6 +13,7 @@ the sandbox authenticates with a scoped ``state`` token (ADR-0033), never the
 platform key.
 """
 
+import enum
 import json
 import uuid
 from typing import Annotated, Any
@@ -28,24 +29,84 @@ from ..deps import SessionDep
 from ..models import WorkflowStateEntry
 from ..schemas import StateAppendIn, StateEntryOut, StateEntryPut, StateNamespaceOut
 
+# Two scoped-token scopes the state router accepts (ADR-0033). The BROAD scope is
+# minted for the runner's own memory/history loaders, which MUST read and write
+# the reserved namespaces to rehydrate the agent across a suspend/resume; it
+# reaches every namespace. The NARROW scope is minted for the bundle-facing
+# ``AGENTOS_STATE_TOKEN`` and is refused on the reserved namespaces by
+# ``forbid_reserved_namespace`` below -- so a skill using the mounted state
+# interface (the ``agentos-state`` MCP tools or a direct ``AGENTOS_STATE_URL``
+# call) cannot reach the memory/history ports even by composing the URL itself.
+# Both strings are mirrored at the worker mint site (``binding.py``); a
+# byte-identical string on both sides is the contract, like ``sandbox_token``.
+STATE_SCOPE = "state"
+STATE_APP_SCOPE = "state.app"
+
+# Namespaces owned by the memory (#264) and history (#20) ports; the narrow
+# app-scoped (bundle) token may not touch them. Literals rather than an import
+# because ``routers.memory`` imports ``_enforce_caps`` from THIS module (a real
+# import cycle otherwise). Mirrors the runner client's ``RESERVED_NAMESPACES``
+# (``runner/src/agentos_runner/state.py``) and ``memory.MEMORY_NAMESPACE`` /
+# the history transcript key -- a bundle wanting durable memory uses the remember
+# tool, not raw state. A future fixed namespace must be added here too.
+RESERVED_NAMESPACES = frozenset({"memory", "transcript"})
+
+
+class StateCaller(enum.Enum):
+    """Which credential authorized a state-router request, and thus how far it
+    reaches. PLATFORM (the shared key) and STATE (the broad scoped token, i.e.
+    the memory/history loaders) are unrestricted; APP (the narrow bundle token)
+    is refused on ``RESERVED_NAMESPACES``."""
+
+    PLATFORM = "platform"
+    STATE = "state"
+    APP = "app"
+
 
 async def require_state_access(
     agent_id: uuid.UUID,
     x_api_key: Annotated[str | None, Header()] = None,
-) -> None:
+) -> StateCaller:
     """State-router auth (ADR-0033): the platform key (trusted callers) OR a
-    scoped ``state`` token bound to this path's ``agent_id`` (the sandbox). Every
-    other router keeps the platform-key-only ``require_api_key``."""
+    scoped token bound to this path's ``agent_id`` (the sandbox). The broad
+    ``state`` scope (the runner's memory/history loaders) reaches every namespace;
+    the narrow app scope (the bundle-facing ``AGENTOS_STATE_TOKEN``) is refused on
+    the reserved namespaces by ``forbid_reserved_namespace``. Every other router
+    keeps the platform-key-only ``require_api_key``. Returns which caller
+    authenticated so the namespace guard can apply the right reach."""
 
     if verify_platform_key(x_api_key):
-        return
-    if x_api_key is not None and sandbox_token.verify(
-        x_api_key, get_settings().api_key, agent=str(agent_id), scope="state"
-    ):
-        return
+        return StateCaller.PLATFORM
+    if x_api_key is not None:
+        api_key = get_settings().api_key
+        agent = str(agent_id)
+        if sandbox_token.verify(x_api_key, api_key, agent=agent, scope=STATE_SCOPE):
+            return StateCaller.STATE
+        if sandbox_token.verify(x_api_key, api_key, agent=agent, scope=STATE_APP_SCOPE):
+            return StateCaller.APP
     raise HTTPException(
         status.HTTP_401_UNAUTHORIZED, detail="missing or invalid credential"
     )
+
+
+async def forbid_reserved_namespace(
+    namespace: str,
+    caller: Annotated[StateCaller, Depends(require_state_access)],
+) -> None:
+    """Server-side backstop for the reserved-namespace rule (#249): a narrow
+    app-scoped (bundle) token may not read or write the memory/transcript
+    namespaces -- those belong to the memory (#264) and history (#20) ports. The
+    platform key and the broad ``state`` token (the loaders) are unrestricted.
+    Without this a skill could bypass the ``agentos-state`` tool's own client-side
+    refusal by composing ``AGENTOS_STATE_URL`` directly with the token it holds;
+    here the token it holds is simply refused."""
+    if caller is StateCaller.APP and namespace in RESERVED_NAMESPACES:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"namespace {namespace!r} is reserved by the platform "
+            f"(reserved: {', '.join(sorted(RESERVED_NAMESPACES))}); "
+            "use the memory or history tools instead",
+        )
 
 
 router = APIRouter(
@@ -108,7 +169,11 @@ async def _get_entry(
     return entry
 
 
-@router.put("/{agent_id}/state/{namespace}/{key}", response_model=StateEntryOut)
+@router.put(
+    "/{agent_id}/state/{namespace}/{key}",
+    response_model=StateEntryOut,
+    dependencies=[Depends(forbid_reserved_namespace)],
+)
 async def put_state(
     agent_id: uuid.UUID,
     namespace: str,
@@ -148,7 +213,9 @@ async def put_state(
 
 
 @router.post(
-    "/{agent_id}/state/{namespace}/{key}/append", response_model=StateEntryOut
+    "/{agent_id}/state/{namespace}/{key}/append",
+    response_model=StateEntryOut,
+    dependencies=[Depends(forbid_reserved_namespace)],
 )
 async def append_state(
     agent_id: uuid.UUID,
@@ -226,7 +293,11 @@ async def list_namespaces(
     ]
 
 
-@router.get("/{agent_id}/state/{namespace}/{key}", response_model=StateEntryOut)
+@router.get(
+    "/{agent_id}/state/{namespace}/{key}",
+    response_model=StateEntryOut,
+    dependencies=[Depends(forbid_reserved_namespace)],
+)
 async def get_state(
     agent_id: uuid.UUID, namespace: str, key: str, session: SessionDep
 ) -> StateEntryOut:
@@ -236,7 +307,11 @@ async def get_state(
     return StateEntryOut.model_validate(entry)
 
 
-@router.get("/{agent_id}/state/{namespace}", response_model=list[StateEntryOut])
+@router.get(
+    "/{agent_id}/state/{namespace}",
+    response_model=list[StateEntryOut],
+    dependencies=[Depends(forbid_reserved_namespace)],
+)
 async def list_state(
     agent_id: uuid.UUID, namespace: str, session: SessionDep
 ) -> list[StateEntryOut]:
@@ -252,7 +327,9 @@ async def list_state(
 
 
 @router.delete(
-    "/{agent_id}/state/{namespace}/{key}", status_code=status.HTTP_204_NO_CONTENT
+    "/{agent_id}/state/{namespace}/{key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(forbid_reserved_namespace)],
 )
 async def delete_state(
     agent_id: uuid.UUID, namespace: str, key: str, session: SessionDep
