@@ -5,7 +5,7 @@ able to start the publish pipeline unless its commit is reachable from
 `origin/main` and that commit's required checks are all green. These tests
 drive both functions directly -- `commit_is_on_reviewed_main` against a real,
 disposable git repo (no network needed for ancestry) and
-`required_checks_passed`/`missing_required_checks` against constructed
+`missing_required_checks` against constructed
 check-run lists -- plus `authorize()`, which combines them and is what
 `authorize-release` actually calls.
 """
@@ -129,28 +129,37 @@ class TestCommitIsOnReviewedMain:
         )
 
 
-class TestRequiredChecksPassed:
+class TestRequiredCheckSatisfaction:
     def test_all_required_names_present_and_green_passes(self):
-        assert authorize_module.required_checks_passed(
-            CHECK_RUNS_ALL_GREEN, TEST_REQUIRED_NAMES
+        assert (
+            authorize_module.missing_required_checks(
+                CHECK_RUNS_ALL_GREEN, TEST_REQUIRED_NAMES
+            )
+            == set()
         )
 
     def test_a_required_name_that_concluded_failure_fails(self):
-        assert not authorize_module.required_checks_passed(
+        assert authorize_module.missing_required_checks(
             CHECK_RUNS_ONE_FAILED, TEST_REQUIRED_NAMES
-        )
+        ) == {"CodeQL"}
 
     def test_no_check_runs_fails(self):
         # Absence of checks is not evidence they passed.
-        assert not authorize_module.required_checks_passed([], TEST_REQUIRED_NAMES)
+        assert (
+            authorize_module.missing_required_checks([], TEST_REQUIRED_NAMES)
+            == TEST_REQUIRED_NAMES
+        )
 
     def test_a_missing_required_name_fails_even_if_everything_present_is_green(self):
         # issue #733's core scenario: a non-empty, fully-passing list that
         # simply never contains the name that matters.
         only_unrelated = [{"name": "Secret Scan", "conclusion": "success"}]
 
-        assert not authorize_module.required_checks_passed(
-            only_unrelated, TEST_REQUIRED_NAMES
+        assert (
+            authorize_module.missing_required_checks(
+                only_unrelated, TEST_REQUIRED_NAMES
+            )
+            == TEST_REQUIRED_NAMES
         )
 
     def test_an_unrelated_failing_check_does_not_affect_the_required_set(self):
@@ -163,7 +172,10 @@ class TestRequiredChecksPassed:
             {"name": "Some Unrelated Job", "conclusion": "failure"},
         ]
 
-        assert authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
+        assert (
+            authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES)
+            == set()
+        )
 
 
 class TestMissingRequiredChecks:
@@ -240,8 +252,8 @@ class TestRequiredCheckAllowlist:
         {"name": "Analyze (python)", "conclusion": "success"},
     ]
 
-    def test_unrelated_green_checks_alone_do_not_satisfy_required_checks_passed(self):
-        assert not authorize_module.required_checks_passed(self.UNRELATED_BUT_GREEN)
+    def test_unrelated_green_checks_alone_leave_required_names_missing(self):
+        assert authorize_module.missing_required_checks(self.UNRELATED_BUT_GREEN)
 
     def test_missing_required_checks_lists_every_ci_yaml_job(self):
         missing = authorize_module.missing_required_checks(self.UNRELATED_BUT_GREEN)
@@ -374,7 +386,6 @@ class TestFetchCheckRunsPagination:
         runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=2)
 
         assert len(runs) == 3
-        assert not authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
         assert authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES) == {
             "CodeQL"
         }
@@ -809,8 +820,8 @@ class TestMixedPassFailRequiredCheck:
             self.MIXED_CI, TEST_REQUIRED_NAMES
         )
 
-    def test_a_required_name_with_a_failing_run_does_not_pass(self):
-        assert not authorize_module.required_checks_passed(
+    def test_a_required_name_with_a_failing_run_is_not_satisfied(self):
+        assert authorize_module.missing_required_checks(
             self.MIXED_CI, TEST_REQUIRED_NAMES
         )
 
@@ -822,7 +833,6 @@ class TestMixedPassFailRequiredCheck:
         ]
 
         assert authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES) == set()
-        assert authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
 
     def test_multiple_all_passing_runs_stay_satisfied(self):
         # Positive boundary: several entries for a required name, all passing.
@@ -832,7 +842,7 @@ class TestMixedPassFailRequiredCheck:
             {"name": "CodeQL", "conclusion": "success"},
         ]
 
-        assert authorize_module.required_checks_passed(runs, TEST_REQUIRED_NAMES)
+        assert authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES) == set()
 
     def test_authorize_refuses_a_mixed_pass_fail_required_check(self, git_repo):
         sha = run_git(git_repo, "rev-parse", "HEAD")
