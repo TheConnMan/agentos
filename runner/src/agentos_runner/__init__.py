@@ -34,7 +34,12 @@ from .otel import RunTracer, build_tracer_provider
 from .plugin import PluginBundleError, load_bundle_system_prompt, load_plugins
 from .server import create_app
 from .session import SessionRunner
-from .side_effects import DEFAULT_IDEMPOTENT_TOOLS, SideEffectClassifier
+from .side_effects import (
+    CLAUDE_READONLY_TOOLS,
+    DEFAULT_IDEMPOTENT_TOOLS,
+    PLATFORM_IDEMPOTENT_TOOLS,
+    SideEffectClassifier,
+)
 
 __version__ = "0.0.0"
 
@@ -57,6 +62,8 @@ __all__ = [
     "SessionRunner",
     "SideEffectClassifier",
     "DEFAULT_IDEMPOTENT_TOOLS",
+    "CLAUDE_READONLY_TOOLS",
+    "PLATFORM_IDEMPOTENT_TOOLS",
     "MemoryStore",
     "MemoryRecord",
     "Provenance",
