@@ -151,11 +151,3 @@ test("kill switch confirms, kills, and resumes", async ({ page }) => {
   await page.getByRole("button", { name: "Resume agent" }).click();
   await expect(page.getByTestId("kill-panel")).toHaveAttribute("data-killed", "false");
 });
-
-test("Cost stays on fixtures without ?api=1", async ({ page }) => {
-  await page.goto("/?state=6");
-  await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
-  await page.getByRole("button", { name: "Cost" }).click();
-  // the fixture Cost view shows the per-agent spend table header
-  await expect(page.getByText("Cost / interaction")).toBeVisible();
-});

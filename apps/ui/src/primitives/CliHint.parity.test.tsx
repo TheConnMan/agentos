@@ -304,7 +304,7 @@ describe("console/CLI parity registry (#280)", () => {
 
 describe("CliHint — noCliEquivalent amber state (#280)", () => {
   function renderHint(el: React.ReactElement) {
-    return render(<StoreProvider level={3}>{el}</StoreProvider>);
+    return render(<StoreProvider>{el}</StoreProvider>);
   }
 
   it("renders the amber glyph and links to the tracking issue instead of copying", () => {

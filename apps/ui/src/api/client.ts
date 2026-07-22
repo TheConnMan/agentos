@@ -545,6 +545,42 @@ export async function deleteMemory(
   throw new ApiError(resp.status, describeError(body) ?? resp.statusText);
 }
 
+// ---- Durable state store: operator read/inspect surface (#250) ----
+
+// One namespace in an agent's durable state store, summarized for the inspector:
+// how many keys it holds and when it was last written.
+export interface StateNamespace {
+  namespace: string;
+  key_count: number;
+  last_updated: string;
+}
+
+// A single durable state entry (a namespace+key holding arbitrary JSON), with the
+// compare-and-set version and the last write time.
+export interface StateEntry {
+  namespace: string;
+  key: string;
+  value: unknown;
+  version: number;
+  updated_at: string;
+}
+
+// List the namespaces an agent has stored, most-recently-written first (empty
+// for an agent that has stored nothing).
+export async function listStateNamespaces(agentId: string): Promise<StateNamespace[]> {
+  const resp = await fetch(url(`/agents/${agentId}/state`), { headers: headers() });
+  return jsonOrThrow<StateNamespace[]>(resp);
+}
+
+// List every key stored under one namespace (get-by-key is not needed for the
+// read surface: the list carries each entry's value, version, and write time).
+export async function listStateEntries(agentId: string, namespace: string): Promise<StateEntry[]> {
+  const resp = await fetch(url(`/agents/${agentId}/state/${encodeURIComponent(namespace)}`), {
+    headers: headers(),
+  });
+  return jsonOrThrow<StateEntry[]>(resp);
+}
+
 export async function killAgent(agentId: string): Promise<KillState> {
   const resp = await fetch(url(`/agents/${agentId}/kill`), { method: "POST", headers: headers() });
   return jsonOrThrow<KillState>(resp);

@@ -40,14 +40,14 @@ function summaryValue(s: MetricsSummary, key: MetricKey): number {
 // and the p50/tool-calls/active-sessions panels (the API is Langfuse aggregates
 // over five metrics), while keeping the card-grid + hero-chart layout.
 export function RealMetrics() {
-  const { state, ghOn } = useStore();
+  const { state } = useStore();
   const [metric, setMetric] = useState<MetricKey>("runs");
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [agentInput, setAgentInput] = useState("");
   const [agent, setAgent] = useState("");
 
   const filter: MetricFilter = {
-    environment: ghOn ? state.env : undefined,
+    environment: state.env,
     agent: agent || undefined,
   };
   const summary = useMetricsSummary(true, filter);
@@ -75,7 +75,7 @@ export function RealMetrics() {
         >
           <span style={{ color: C.brand }}>langfuse</span>
           <span style={{ color: C.text2 }}>
-            {`{ metric="${metric}", env="${ghOn ? state.env : "all"}"${agent ? `, agent~"${agent}"` : ""} }`}
+            {`{ metric="${metric}", env="${state.env}"${agent ? `, agent~"${agent}"` : ""} }`}
           </span>
           <span style={{ marginLeft: "auto", color: C.muted }}>last 7 days</span>
         </div>

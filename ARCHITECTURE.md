@@ -440,19 +440,18 @@ there is no Prometheus and no separate metrics store behind it. It prints URLs a
 opens nothing unless `--open` is passed, and `--json` never opens a browser — the
 agent-facing default is inert output.
 
-## 8. UI: wired vs fixture
+## 8. UI: one wired build
 
-The UI ships one build that runs in two worlds, selected by `?api=1` (query) or
-`VITE_WIRED=1` (build flag) ([`apps/ui/src/api/config.ts`](apps/ui/src/api/config.ts)).
+The UI is always backed by the live API — there is no fixture/demo world and no
+`isWired()` branch. Every view fetches from `apps/api` same-origin under `/api`
+(proxied by Vite; the API key resolves via [`apps/ui/src/api/config.ts`](apps/ui/src/api/config.ts)).
 
-- **Wired (real API):** Agents/Fleet, Runs/Traces, Metrics, Logs, Cost, and create/deploy are backed by `apps/api`. **Versions is wired too** — [`apps/ui/src/views/wired/WiredVersions.tsx`](apps/ui/src/views/wired/WiredVersions.tsx) is a real view with its own rollback test ([`apps/ui/src/views/wired/WiredVersions.rollback.test.tsx`](apps/ui/src/views/wired/WiredVersions.rollback.test.tsx)), and Connections is a real Slack-connect panel ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)).
-- **Fixture (showroom):** an `acme-corp` demo dataset ([`apps/ui/src/fixtures/`](apps/ui/src/fixtures/)) renders a self-contained demo. Exactly **three** wired views render an honest `ComingSoon` placeholder — Evals, Usage, and Settings ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)) — so wired mode never leaks fixture data. The Memory tab is a permanent coming-soon empty-state ([`apps/ui/src/views/obs/MemoryStub.tsx`](apps/ui/src/views/obs/MemoryStub.tsx)) pending v1.1 memory generation.
+- **Backed by the real API:** Agents/Fleet, Runs/Traces, Metrics, Logs, Cost, Versions, and create/deploy are all wired to `apps/api`. [`apps/ui/src/views/wired/WiredVersions.tsx`](apps/ui/src/views/wired/WiredVersions.tsx) is a real view with its own rollback test ([`apps/ui/src/views/wired/WiredVersions.rollback.test.tsx`](apps/ui/src/views/wired/WiredVersions.rollback.test.tsx)), and Connections is a real Slack-connect panel ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)).
+- **Not-yet-wired surfaces are honest stubs, never demo data:** Evals, Usage, and Settings render a `ComingSoon` placeholder ([`apps/ui/src/views/wired/WiredStubs.tsx`](apps/ui/src/views/wired/WiredStubs.tsx)); the Memory tab is a coming-soon empty-state ([`apps/ui/src/views/obs/MemoryStub.tsx`](apps/ui/src/views/obs/MemoryStub.tsx)) pending v1.1 memory generation. These stubs state plainly what is not wired yet rather than showing fictional data.
 
-**Wired-and-live is the intended steady state.** The fixture/showroom surface is a
-demo affordance, not a second supported world: the target is the real API
-everywhere, with no fixture mode and no `isWired()` branch. The fixtures and the
-branch are still in the tree; retiring them is tracked work, and this section
-describes the target rather than treating the dual-world as the design.
+The former `acme-corp` fixture dataset and the `?state=N` / `?api=1` dual-world
+gate have been removed (#542): a single build serves the live product, and views
+degrade honestly (empty lists, zero metrics) when a workspace is fresh.
 
 ## 9. Frozen contracts
 

@@ -1,5 +1,4 @@
 export { Dot } from "./Dot";
-export { StatusDot, healthColor, traceColor, versionColor } from "./StatusDot";
 export { Chip } from "./Chip";
 export { Button, type ButtonVariant } from "./Button";
 export { Card } from "./Card";

@@ -2178,6 +2178,31 @@
         "title": "StateEntryPut",
         "type": "object"
       },
+      "StateNamespaceOut": {
+        "description": "One namespace in an agent's durable state store, for the operator's\nread/inspect surface (#250): the namespace, how many keys it holds, and when\nit was most recently written.",
+        "properties": {
+          "key_count": {
+            "title": "Key Count",
+            "type": "integer"
+          },
+          "last_updated": {
+            "format": "date-time",
+            "title": "Last Updated",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "key_count",
+          "last_updated"
+        ],
+        "title": "StateNamespaceOut",
+        "type": "object"
+      },
       "ThreadResetState": {
         "description": "Whether a thread has a pending forced-sandbox-release request (#713).",
         "properties": {
@@ -3567,6 +3592,70 @@
         "summary": "Resume Agent",
         "tags": [
           "control"
+        ]
+      }
+    },
+    "/agents/{agent_id}/state": {
+      "get": {
+        "description": "List the namespaces an agent has stored, each with its key count and the\nmost recent write time (#250). This is the enumeration the operator's\nread/inspect surface needs on top of get-by-key + list-by-namespace; it stays\nwithin the store's non-goals (no query language, just a grouped summary).\nNamespaces are returned most-recently-written first.",
+        "operationId": "list_namespaces_agents__agent_id__state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StateNamespaceOut"
+                  },
+                  "title": "Response List Namespaces Agents  Agent Id  State Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Namespaces",
+        "tags": [
+          "state"
         ]
       }
     },

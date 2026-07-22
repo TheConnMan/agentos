@@ -197,13 +197,3 @@ test("an agent's View traces opens the Traces list pre-filtered to that agent", 
   await page.getByTestId("trace-filter-clear").click();
   await expect.poll(() => traceUrls.some((u) => u.includes("/langfuse/traces") && !u.includes("agent_id"))).toBe(true);
 });
-
-test("Metrics/Logs stay on fixtures without ?api=1", async ({ page }) => {
-  await page.goto("/?state=4");
-  await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
-  await page.getByRole("button", { name: "Metrics" }).click();
-  // the fixture metrics view shows the Prometheus-style request-rate hero
-  await expect(page.getByText("Request rate")).toBeVisible();
-  await page.getByRole("button", { name: "Logs" }).click();
-  await expect(page.getByText("Live tail")).toBeVisible();
-});

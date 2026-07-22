@@ -3,8 +3,6 @@ import { Dot } from "../primitives";
 import { hoverBg } from "../lib/style";
 import { useStore } from "../state/store";
 import { useWired } from "../state/wired";
-import { isWired } from "../api/config";
-import { agentsForLevel } from "../fixtures";
 import type { Nav } from "../state/types";
 
 const ITEMS: [Nav, string][] = [
@@ -20,15 +18,11 @@ const ITEMS: [Nav, string][] = [
 export function Sidebar() {
   const { state, dispatch } = useStore();
   const wired = useWired();
-  // In wired mode the only real count is the agent list; evals/connections have
-  // no backend count yet, so no fixture badges leak.
-  const badges: Partial<Record<Nav, string | number>> = isWired()
-    ? { agents: wired.agents.length || undefined }
-    : {
-        agents: agentsForLevel(state.level).length || undefined,
-        evals: state.level >= 4 ? (state.extraEval ? "37" : "36") : undefined,
-        connections: state.level >= 4 ? "2" : state.level >= 2 ? "1" : undefined,
-      };
+  // The only real count is the agent list; evals/connections have no backend
+  // count yet, so no fictional badges leak.
+  const badges: Partial<Record<Nav, string | number>> = {
+    agents: wired.agents.length || undefined,
+  };
   return (
     <div
       style={{
@@ -85,7 +79,7 @@ export function Sidebar() {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {isWired() ? wired.orgName : "acme-corp"}
+            {wired.orgName}
           </div>
           <div style={{ fontSize: 11, color: C.muted }}>production</div>
         </div>

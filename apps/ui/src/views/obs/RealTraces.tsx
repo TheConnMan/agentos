@@ -246,7 +246,6 @@ export function RealTraceDetail() {
         <EmptyState
           title="No spans recorded for this run yet"
           sub="This trace exists but has no observations. Spans appear here once the agent finishes a run against it."
-          showDemo={false}
         />
       ) : null}
       {data ? (

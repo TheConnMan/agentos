@@ -2,9 +2,9 @@
 
 The AgentOS console: Vite + React + TypeScript, no meta-framework. Design tokens
 and every view are ported from the design canon (the original design mockup).
-This is the UI shell. It runs entirely on fixture data first, then is wired to
-the real backend; the Metrics/Logs tabs move from fixtures to live
-observability endpoints.
+This is the UI shell, backed by the live API: every view fetches from `apps/api`.
+Surfaces without a backend yet render honest "Coming Soon" stubs rather than
+demo data. There is no fixture/demo mode.
 
 ## Verify
 
@@ -13,50 +13,34 @@ Run from `apps/ui` (dependencies: `pnpm install` once):
 ```bash
 pnpm build          # tsc project build + vite production build
 pnpm lint           # eslint, zero warnings allowed
-pnpm test           # vitest unit tests (reducer, fixtures, component smoke)
+pnpm test           # vitest unit tests (reducer, component smoke)
 pnpm exec playwright test   # E2E, headless; builds + previews automatically
 ```
 
 `pnpm dev` serves the app on http://localhost:5173. `pnpm preview` serves the
 production build on http://localhost:4173 (what Playwright drives).
 
-## Fixture-state mechanism
-
-There is no backend yet, and the design's demo-controls bar is deliberately not
-shipped. Instead the six design states are driven by a URL param:
-
-- `?state=N` (N = 1..6) loads the app at that fixture level on mount. 1 fresh,
-  2 slack-connected, 3 agent-live, 4 agent-ci, 5 plugin, 6 fleet.
-- `?dev=1` additionally shows a small bottom-left state switcher for manual
-  clicking during development. It is hidden without the param, so the product
-  view stays clean. Playwright uses `?state=N` directly.
-
-The whole app is otherwise clickable end to end: starting at `?state=1` a user
-can Connect Slack, create an agent, deploy, and reach the live state organically.
-
 ## Structure
 
 - `src/tokens.ts` — the `C` design-token block, verbatim from the canon.
-- `src/state/` — the app state machine (`store.tsx` reducer + `useStore` hook)
-  and its types. `initialState(level)` seeds a fixture level.
-- `src/fixtures/` — the seeded data model (agents, traces, evals, versions,
-  logs, metrics). Trace spans are typed against the frozen ACI contract
-  (`@aci/aci-protocol`, aliased to `packages/aci-protocol/generated/ts`).
+- `src/state/` — the app UI state machine (`store.tsx` reducer + `useStore` hook,
+  navigation + modal + deploy-feedback state) and its types, plus `wired.tsx`,
+  the real-data layer that fetches `GET /agents` and `GET /config`.
 - `src/primitives/` — hand-rolled design-system primitives (Button, Card, Chip,
-  Dot, StatusDot, Tabs, Modal, Toast, Table, EmptyState, SectionTitle,
-  Sparkline, AreaChart, CopyButton). No component library.
-- `src/components/` — app chrome (Sidebar, Topbar, Confetti, SlackCard, the
-  state switcher) and the modals (`modals/`).
-- `src/views/` — one file per view: Overview (+ fleet + success panel), Agents,
-  AgentDetail (drift), Evals (`evals/Suite`, `evals/Matrix`), Observability
-  (`obs/*`: Traces, Metrics, Logs, MemoryStub, Usage, Cost), Versions,
-  Connections, Settings, Terminal (the CLI REPL).
+  Dot, Tabs, Modal, Toast, Table, EmptyState, SectionTitle, Sparkline,
+  AreaChart, CopyButton). No component library.
+- `src/components/` — app chrome (Sidebar, Topbar, Confetti) and the create-agent
+  modal (`modals/`).
+- `src/views/` — the wired views: `wired/*` (Overview, Agents, AgentDetail,
+  Versions, and the `ComingSoon`/stub views in `WiredStubs.tsx`), `Observability.tsx`
+  and its `obs/*` panels (RealTraces, RealMetrics, RealLogs, RealCost, MemoryStub).
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
 ## Backend wiring
 
-Several paths now run against the real API; everything else stays on fixtures.
+Every view is backed by the live API. Surfaces without a backend yet render an
+honest `ComingSoon` stub (Evals, Usage, Settings) or an empty-state (Memory).
 
 **Wired (real API):**
 - Create agent + Deploy: the create-agent modal POSTs `/agents` and
@@ -93,13 +77,12 @@ descriptor) and shows only the five API-backed metrics. The per-agent filter is 
 trace-name substring server-side, so it is presented as a plain "name contains"
 filter, not exact matching.
 
-**Still fixtures:** fleet, evals, versions, usage, and states 4-6 for the
-non-wired demo. The fixture Metrics/Logs/Cost (the full canon design) still
-render without `?api=1`. Swap the rest by replacing the `src/fixtures` selectors.
+**Not wired yet (honest stubs, no demo data):** Evals, Usage, and Settings
+render a `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`); the Memory
+tab is a coming-soon empty-state (`src/views/obs/MemoryStub.tsx`). These state
+plainly what is not wired yet rather than showing fictional data.
 
-**How wiring is gated.** `src/api/config.ts` resolves the mode at runtime, so a
-single build serves both the fixture demo and the live run:
-- Wired ON when the URL has `?api=1` (or the build set `VITE_WIRED=1`).
+**API access.** `src/api/config.ts` resolves the API key and prefix:
 - The API key is `?api_key=` else `VITE_API_KEY` else the dev default; sent as
   `X-API-Key`.
 - All calls go to the same-origin `/api` prefix. `vite.config.ts` proxies `/api`
@@ -112,11 +95,11 @@ the observability calls `getMetricsSummary`/`getMetricSeries`/`getRunnerLogs`,
 and the cost calls `getCost`/`getBudget`/`putBudget`/`getKillState`/`killAgent`/
 `resumeAgent`/`getAgents`), `bundle.ts` (jszip packaging + the testable
 `bundleFileTree`), `hooks.ts` (`useTraces`/`useTrace`/`useMetricsSummary`/
-`useMetricSeries`/`useAgents`/`useCost`), `config.ts` (the wiring gate). Deploy
+`useMetricSeries`/`useAgents`/`useCost`), `config.ts` (API key + prefix). Deploy
 failures flow through the store reducer actions `deployFailedValidation` /
-`deployFailed`. Wired Observability lives in `src/views/obs/Real*.tsx`
-(`RealTraces`, `RealMetrics`, `RealLogs`, `RealCost`), branched from the fixtures
-in `Observability.tsx` by `isWired()`.
+`deployFailed`. Observability lives in `src/views/obs/Real*.tsx`
+(`RealTraces`, `RealMetrics`, `RealLogs`, `RealCost`), dispatched by tab in
+`Observability.tsx`.
 
 **Integration E2E (needs the live stack).** With the compose dev stack up and
 apps/api on 8000:
@@ -146,11 +129,10 @@ Config reference: `.env.example`.
 
 ## Wiring the rest
 
-- Remaining data entry points are the `*ForLevel` / seeded exports in
-  `src/fixtures` (`agentsForLevel`, `EVAL_CASES`, `VERSION_ROWS`, `logsForLevel`,
-  the metric series). Swap these for API-backed loaders.
-- The ACI contract types are imported for the fixture trace spans; the wired
-  Runs path renders the API's `ObservationNode` tree directly.
+- The remaining `ComingSoon` stubs (Evals, Usage, Settings) each bind to their
+  API endpoint once it exists; until then they must stay honest stubs, never
+  demo data.
+- The Runs path renders the API's `ObservationNode` tree directly.
 
 ## Scope notes
 
@@ -158,5 +140,3 @@ Config reference: `.env.example`.
   editor + Deploy), not the interview wizard (deferred).
 - The Observability Memory tab is a designed coming-soon stub; the full memory
   browser is deferred. The ACI `memory_ref` seam stays in the contract.
-- Metrics and Logs are scaffolded on deterministic fixture data matching the
-  design; the observability endpoints wire them to Langfuse.

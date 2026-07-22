@@ -15,7 +15,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud, sandbox_token
@@ -23,7 +23,7 @@ from ..auth import verify_platform_key
 from ..config import get_settings
 from ..deps import SessionDep
 from ..models import WorkflowStateEntry
-from ..schemas import StateAppendIn, StateEntryOut, StateEntryPut
+from ..schemas import StateAppendIn, StateEntryOut, StateEntryPut, StateNamespaceOut
 
 
 async def require_state_access(
@@ -191,6 +191,36 @@ async def append_state(
     await session.commit()
     await session.refresh(entry)
     return StateEntryOut.model_validate(entry)
+
+
+@router.get("/{agent_id}/state", response_model=list[StateNamespaceOut])
+async def list_namespaces(
+    agent_id: uuid.UUID, session: SessionDep
+) -> list[StateNamespaceOut]:
+    """List the namespaces an agent has stored, each with its key count and the
+    most recent write time (#250). This is the enumeration the operator's
+    read/inspect surface needs on top of get-by-key + list-by-namespace; it stays
+    within the store's non-goals (no query language, just a grouped summary).
+    Namespaces are returned most-recently-written first.
+    """
+    rows = await session.execute(
+        select(
+            WorkflowStateEntry.namespace,
+            func.count().label("key_count"),
+            func.max(WorkflowStateEntry.updated_at).label("last_updated"),
+        )
+        .where(WorkflowStateEntry.agent_id == agent_id)
+        .group_by(WorkflowStateEntry.namespace)
+        .order_by(func.max(WorkflowStateEntry.updated_at).desc())
+    )
+    return [
+        StateNamespaceOut(
+            namespace=row.namespace,
+            key_count=row.key_count,
+            last_updated=row.last_updated,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/{agent_id}/state/{namespace}/{key}", response_model=StateEntryOut)

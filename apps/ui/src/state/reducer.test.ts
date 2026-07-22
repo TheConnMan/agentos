@@ -1,89 +1,73 @@
 import { describe, expect, it } from "vitest";
 import { initialState, reducer } from "./store";
-import type { AppState } from "./types";
+import type { AppState, PromotedEvalCase } from "./types";
 
-const at = (level: 1 | 2 | 3 | 4 | 5 | 6): AppState => initialState(level);
+const fresh = (): AppState => initialState();
 
 describe("reducer state machine", () => {
-  it("setLevel snaps derived flags and resets transient views", () => {
-    let s = at(3);
-    s = reducer(s, { type: "openTrace", id: "tr_8f3k21" });
-    s = reducer(s, { type: "setObsTab", tab: "metrics" });
-    s = reducer(s, { type: "setLevel", level: 6 });
-    expect(s.level).toBe(6);
-    expect(s.agentDeployed).toBe(true);
-    expect(s.pluginInstalled).toBe(true);
+  it("go navigates and clears transient sub-views", () => {
+    let s = reducer(fresh(), { type: "openTrace", id: "tr_8f3k21" });
+    s = reducer(s, { type: "viewTraces", agentId: "agent-1" });
+    s = reducer(s, { type: "go", nav: "agents" });
+    expect(s.nav).toBe("agents");
+    expect(s.agentDetail).toBeNull();
     expect(s.traceOpen).toBeNull();
-    expect(s.obsTab).toBe("traces");
-    expect(s.nav).toBe("overview");
+    expect(s.tracesAgentId).toBeNull();
+    expect(s.logsPod).toBeNull();
   });
 
-  it("deployDone advances to at least level 3, shows success, fires confetti once", () => {
-    let s = at(2);
-    s = reducer(s, { type: "deployStart" });
+  it("confettiFire lands on overview and fires confetti exactly once", () => {
+    let s = reducer(fresh(), { type: "deployStart" });
     expect(s.deploying).toBe(true);
-    s = reducer(s, { type: "deployDone" });
+    s = reducer(s, { type: "confettiFire" });
     expect(s.deploying).toBe(false);
-    expect(s.level).toBe(3);
-    expect(s.agentDeployed).toBe(true);
-    expect(s.showSuccess).toBe(true);
+    expect(s.nav).toBe("overview");
+    expect(s.modal).toBeNull();
     expect(s.confetti).toBe(true);
     expect(s.confettiDone).toBe(true);
 
     // A second deploy does not re-fire confetti.
     s = reducer(s, { type: "confettiDone" });
-    s = reducer(s, { type: "deployDone" });
+    s = reducer(s, { type: "deployStart" });
+    s = reducer(s, { type: "confettiFire" });
     expect(s.confetti).toBe(false);
   });
 
-  it("deployDone never lowers the level", () => {
-    const s = reducer(at(5), { type: "deployDone" });
-    expect(s.level).toBe(5);
+  it("deploy validation failure surfaces issues and stops the spinner", () => {
+    let s = reducer(fresh(), { type: "deployStart" });
+    s = reducer(s, { type: "deployFailedValidation", issues: [{ code: "x", message: "bad", location: "skill.md" }] });
+    expect(s.deploying).toBe(false);
+    expect(s.deployIssues?.length).toBe(1);
+    expect(s.deployError).toBeNull();
+    s = reducer(s, { type: "clearDeployErrors" });
+    expect(s.deployIssues).toBeNull();
   });
 
-  it("allowSlack connects Slack and advances to at least level 2", () => {
-    const s = reducer(at(1), { type: "allowSlack" });
-    expect(s.level).toBe(2);
-    expect(s.modal).toBeNull();
-    expect(s.toast).toBe("Slack connected");
+  it("deploy failure surfaces a message", () => {
+    const s = reducer(reducer(fresh(), { type: "deployStart" }), { type: "deployFailed", message: "boom" });
+    expect(s.deploying).toBe(false);
+    expect(s.deployError).toBe("boom");
+    expect(s.deployIssues).toBeNull();
   });
 
-  it("installPlugin advances to level 5 and lands on agents", () => {
-    const s = reducer(at(4), { type: "installPlugin" });
-    expect(s.level).toBe(5);
-    expect(s.pluginInstalled).toBe(true);
-    expect(s.nav).toBe("agents");
+  it("addPromotedEvalCase prepends newest-first and dedupes by id", () => {
+    const a: PromotedEvalCase = { id: "e1", input: "hi", grader: { kind: "exact", expected: "ok", case_sensitive: false } };
+    const b: PromotedEvalCase = { id: "e2", input: "yo", grader: { kind: "contains", expected: "y", case_sensitive: false } };
+    const a2: PromotedEvalCase = { id: "e1", input: "hi again", grader: { kind: "exact", expected: "ok", case_sensitive: false } };
+    let s = reducer(fresh(), { type: "addPromotedEvalCase", evalCase: a });
+    s = reducer(s, { type: "addPromotedEvalCase", evalCase: b });
+    s = reducer(s, { type: "addPromotedEvalCase", evalCase: a2 });
+    expect(s.promotedEvalCases.map((c) => c.id)).toEqual(["e1", "e2"]);
+    expect(s.promotedEvalCases[0].input).toBe("hi again");
   });
 
-  it("promote flow opens the form then adds the eval case", () => {
-    let s = reducer(at(4), { type: "promoteFormOpen" });
-    expect(s.promoteForm).toBe(true);
-    s = reducer(s, { type: "promoteEval" });
-    expect(s.extraEval).toBe(true);
-    expect(s.promoteForm).toBe(false);
-    expect(s.toast).toContain("37");
-  });
-
-  it("matrix run and reconfigure toggle matrixRun", () => {
-    let s = reducer(at(4), { type: "runMatrix" });
-    expect(s.matrixRun).toBe(true);
-    s = reducer(s, { type: "reconfigureMatrix" });
-    expect(s.matrixRun).toBe(false);
-  });
-
-  it("connectGitHub reaches level 4 for CI", () => {
-    const s = reducer(at(3), { type: "connectGitHub" });
-    expect(s.level).toBe(4);
-    expect(s.toast).toContain("GitHub connected");
-  });
-
-  it("env stays prod below level 4 even if set to dev", () => {
-    const s = reducer(at(3), { type: "setLevel", level: 3 });
-    expect(s.env).toBe("prod");
+  it("setEnv toggles the environment", () => {
+    const s = reducer(fresh(), { type: "setEnv", env: "dev" });
+    expect(s.env).toBe("dev");
   });
 
   it("viewTraces jumps to the traces tab filtered to an agent", () => {
-    const s = reducer(at(3), { type: "viewTraces", agentId: "agent-123" });
+    const s = reducer(fresh(), { type: "viewTraces", agentId: "agent-123" });
     expect(s.nav).toBe("observability");
     expect(s.obsTab).toBe("traces");
     expect(s.tracesAgentId).toBe("agent-123");
@@ -91,7 +75,7 @@ describe("reducer state machine", () => {
   });
 
   it("openLogs jumps to the logs tab preselected to the serving sandbox", () => {
-    const s = reducer(at(3), { type: "openLogs", sandboxId: "sbx-42" });
+    const s = reducer(fresh(), { type: "openLogs", sandboxId: "sbx-42" });
     expect(s.nav).toBe("observability");
     expect(s.obsTab).toBe("logs");
     expect(s.logsPod).toBe("sbx-42");
@@ -99,18 +83,18 @@ describe("reducer state machine", () => {
   });
 
   it("a manual tab switch or nav clears the sandbox-logs prefill", () => {
-    let s = reducer(at(3), { type: "openLogs", sandboxId: "sbx-42" });
+    let s = reducer(fresh(), { type: "openLogs", sandboxId: "sbx-42" });
     s = reducer(s, { type: "setObsTab", tab: "traces" });
     expect(s.logsPod).toBeNull();
-    s = reducer(reducer(at(3), { type: "openLogs", sandboxId: "sbx-9" }), { type: "go", nav: "agents" });
+    s = reducer(reducer(fresh(), { type: "openLogs", sandboxId: "sbx-9" }), { type: "go", nav: "agents" });
     expect(s.logsPod).toBeNull();
   });
 
   it("changing tab or nav clears the agent trace filter", () => {
-    let s = reducer(at(3), { type: "viewTraces", agentId: "agent-123" });
+    let s = reducer(fresh(), { type: "viewTraces", agentId: "agent-123" });
     s = reducer(s, { type: "setObsTab", tab: "metrics" });
     expect(s.tracesAgentId).toBeNull();
-    s = reducer(reducer(at(3), { type: "viewTraces", agentId: "agent-9" }), { type: "go", nav: "agents" });
+    s = reducer(reducer(fresh(), { type: "viewTraces", agentId: "agent-9" }), { type: "go", nav: "agents" });
     expect(s.tracesAgentId).toBeNull();
   });
 });
