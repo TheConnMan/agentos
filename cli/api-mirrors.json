@@ -92,17 +92,18 @@
       ]
     },
     {
-      "struct": "EvalModelSummary",
-      "schema": "EvalModelSummary",
+      "struct": "EvalModelVersionSummary",
+      "schema": "EvalModelVersionSummary",
       "omissions": []
     },
     {
       "struct": "EvalMatrix",
       "schema": "EvalMatrix",
       "omissions": [
-        { "field": "cases", "why": "The sweep reads the per-model rollup (model_summaries) and the version columns (versions); the per-case identifiers (cases) that label the grid are not read by the CLI." },
+        { "field": "cases", "why": "The sweep reads the per-(version, model) rollup (model_version_summaries) and the version columns (versions); the per-case identifiers (cases) that label the grid are not read by the CLI." },
         { "field": "rows", "why": "The per-case pass/fail grid (rows) is carried by the endpoint but unused by the sweep, which needs only the per-model rollup; the existing doc comment on EvalMatrix already states this." },
-        { "field": "models", "why": "The model dimension the CLI acts on is model_summaries[].model; the separate models label list is not read." }
+        { "field": "models", "why": "The model dimension the CLI acts on is model_version_summaries[].model; the separate models label list is not read." },
+        { "field": "model_summaries", "why": "The window-blended per-model rollup sums completed across every in-window sha, which masks a triggered sha's zero-completed outcome (#814); the sweep reads the per-(version, model) model_version_summaries scoped to the triggered sha instead, so the blended rollup is not consumed by the CLI." }
       ]
     }
   ],

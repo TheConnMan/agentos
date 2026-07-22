@@ -11,7 +11,13 @@ pivot is unit-testable off canned data.
 
 from typing import Any, Literal
 
-from .schemas import EvalCell, EvalMatrix, EvalMatrixRow, EvalModelSummary
+from .schemas import (
+    EvalCell,
+    EvalMatrix,
+    EvalMatrixRow,
+    EvalModelSummary,
+    EvalModelVersionSummary,
+)
 
 Status = Literal["pass", "fail", "plumbing_ok", "missing"]
 
@@ -195,6 +201,9 @@ def build_matrix(
         rows=rows,
         models=[s.model for s in summaries],
         model_summaries=summaries,
+        model_version_summaries=_model_version_summaries(
+            latest_by_model, version_set
+        ),
     )
 
 
@@ -259,4 +268,61 @@ def _model_summaries(
             completed=completed.get(model, 0),
         )
         for model in keys
+    ]
+
+
+def _model_version_summaries(
+    latest_by_model: dict[tuple[str, str, str | None], dict[str, Any]],
+    version_set: set[str],
+) -> list[EvalModelVersionSummary]:
+    """The per-``(version, model)`` slice of the same rollup ``_model_summaries``
+    blends across the window.
+
+    ``_model_summaries`` accumulates ``completed`` over every ``(version, case,
+    model)`` in ``version_set`` for a model, so a model that completed on an
+    older in-window sha carries ``completed > 0`` even when its turns never
+    complete on the triggered sha -- masking the "never completed" outcome the
+    sweep must fail on (ADR-0068, #814). Keying the accumulation by
+    ``(version, model)`` instead keeps each sha's counts separate, so the CLI can
+    read the triggered sha's row alone. The per-row inclusion rules are identical
+    to ``_model_summaries`` (plumbing counted separately, missing skipped, graded
+    rows into ``total``/``passed`` with the completion gate feeding ``completed``);
+    only the aggregation key differs.
+    """
+    passed: dict[tuple[str, str | None], int] = {}
+    total: dict[tuple[str, str | None], int] = {}
+    completed: dict[tuple[str, str | None], int] = {}
+    plumbing: dict[tuple[str, str | None], int] = {}
+    for (version, _case, model), trace in latest_by_model.items():
+        if version not in version_set:
+            continue
+        key = (version, model)
+        status = _outcome_of(trace)
+        if status == "plumbing_ok":
+            plumbing[key] = plumbing.get(key, 0) + 1
+            continue
+        if status == "missing":
+            continue
+        total[key] = total.get(key, 0) + 1
+        passed[key] = passed.get(key, 0) + (1 if status == "pass" else 0)
+        if _completed(trace):
+            completed[key] = completed.get(key, 0) + 1
+
+    # Deterministic order: by version, then named models sorted, unlabelled last.
+    # The key union mirrors `_model_summaries`: a (version, model) whose every row
+    # was plumbing has no `total` entry but must still surface.
+    keys = sorted(
+        set(total) | set(plumbing),
+        key=lambda k: (k[0], k[1] is None, k[1] or ""),
+    )
+    return [
+        EvalModelVersionSummary(
+            version=version,
+            model=model,
+            passed=passed.get((version, model), 0),
+            total=total.get((version, model), 0),
+            completed=completed.get((version, model), 0),
+            plumbing=plumbing.get((version, model), 0),
+        )
+        for (version, model) in keys
     ]

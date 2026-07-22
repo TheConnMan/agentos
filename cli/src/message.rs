@@ -2152,7 +2152,7 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
             // otherwise nothing for this sweep exists yet and reporting a prior
             // run's rows would be the very lie the scoping guards against (#608).
             let sha_present = matrix.versions.contains(&triggered_sha);
-            let rows = scoped_rows(&matrix, &want);
+            let rows = scoped_rows(&matrix, &want, &triggered_sha);
             let ready: std::collections::BTreeSet<&str> =
                 rows.iter().map(|row| row.model.as_str()).collect();
             let missing = want
@@ -2192,31 +2192,41 @@ async fn eval_sweep(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
     }
 }
 
-/// The wanted models' current rows in the matrix, scoped to the sweep's
-/// `--model` set and dropping truly-empty rows: a row with `total == 0` is
-/// kept when `plumbing > 0` (a fake-model/plumbing-only tier row that
+/// The wanted models' rows in the matrix for the TRIGGERED sha, scoped to the
+/// sweep's `--model` set and dropping truly-empty rows: a row with `total == 0`
+/// is kept when `plumbing > 0` (a fake-model/plumbing-only tier row that
 /// genuinely landed, #700, #612/#606) and dropped only when it carries
 /// neither a graded case nor a plumbing one -- i.e. this model has not landed
-/// at all yet. Without the `plumbing > 0` half, a plumbing-only model's row
-/// would vanish from a report entirely instead of being surfaced as such,
-/// exactly the ambiguity #622 and this issue describe. The shared filter
-/// behind both the readiness check and the timeout partial.
+/// at all yet on the triggered sha. Without the `plumbing > 0` half, a
+/// plumbing-only model's row would vanish from a report entirely instead of
+/// being surfaced as such, exactly the ambiguity #622 and #814 describe.
+///
+/// Reads `model_version_summaries` filtered to `triggered_sha`, NOT the
+/// window-blended `model_summaries`: the blended `completed` sums across every
+/// in-window sha, so a model that completed on a prior in-window sha would keep
+/// `completed > 0` and hide the triggered sha's zero-completed outcome (#814).
+/// Scoping to the triggered sha's own row is what makes `never_completed`
+/// honest. The shared filter behind both the readiness check and the timeout
+/// partial.
 fn scoped_rows(
     matrix: &crate::api::EvalMatrix,
     want: &std::collections::BTreeSet<&str>,
+    triggered_sha: &str,
 ) -> Vec<crate::commands::SweepRow> {
     matrix
-        .model_summaries
+        .model_version_summaries
         .iter()
+        .filter(|s| s.version == triggered_sha)
         .filter_map(|s| {
             let m = s.model.as_deref()?;
             want.contains(m).then(|| crate::commands::SweepRow {
                 model: m.to_string(),
                 passed: s.passed as usize,
                 // `completed` is what tells a real 0% apart from a model that
-                // never produced a completed turn (#622, #526 AC4); read
-                // straight off the platform's per-model rollup so local and
-                // cluster share the exact signal skill's in-CLI grading uses.
+                // never produced a completed turn (#622, #526 AC4); read from
+                // the triggered sha's own per-version row so a prior sha's
+                // completions cannot mask this run's zero-completed outcome
+                // (#814).
                 completed: s.completed as usize,
                 total: s.total as usize,
                 plumbing: s.plumbing as usize,
@@ -2227,25 +2237,23 @@ fn scoped_rows(
 }
 
 /// The rows to report once the triggered sweep has landed, scoped to the run just
-/// triggered (issue #608). Returns `Some(rows)` only when BOTH hold, else `None`
-/// ("keep polling"):
+/// triggered (issues #608, #814). Returns `Some(rows)` only when BOTH hold, else
+/// `None` ("keep polling"):
 ///   1. `triggered_sha` appears in the matrix's shown version columns -- i.e. at
 ///      least one trace for THIS run has landed. A change produces a new commit
 ///      sha, so a prior run's rows carry a different sha; on the first poll,
 ///      before the new traces exist, the triggered sha is absent and the prior
 ///      run cannot satisfy the exit condition (the pre-#608 gate exited here); and
-///   2. every wanted model has a summary row with `total > 0`.
+///   2. every wanted model has a row for `triggered_sha` with `total > 0` (or a
+///      plumbing-only row, #700).
 ///
-/// Residual (documented): `model_summaries` rolls the last N version columns
-/// together and does not expose the per-`(version, model)` dimension, so when a
-/// prior run for the SAME models is still in the window, the moment this run's
-/// first model lands (satisfying 1) the still-present prior rows satisfy 2 for the
-/// other models. The reported numbers are then the latest per
-/// `(version, case, model)` -- correct once every model has landed, at worst a few
-/// seconds early during the sequential per-model landing, and strictly tighter
-/// than the pre-#608 gate that exited before any trace for the run existed.
-/// Precise per-model scoping needs a matrix that keys summaries by
-/// `(version, model)`; that is a matrix API change, out of scope here.
+/// Because `scoped_rows` reads the per-`(version, model)` `model_version_summaries`
+/// filtered to `triggered_sha`, a prior in-window run for the SAME models can no
+/// longer satisfy condition 2 for a model whose triggered-sha row has not landed:
+/// each model's counts (pass-rate AND completion) are the triggered sha's own, not
+/// the blended window. This closes the residual the pre-#814 gate conceded, where
+/// a still-present prior row could stand in for a not-yet-landed model and, worse,
+/// a prior sha's completions could mask the triggered sha's zero-completed outcome.
 fn sweep_ready_rows(
     matrix: &crate::api::EvalMatrix,
     triggered_sha: &str,
@@ -2254,7 +2262,7 @@ fn sweep_ready_rows(
     if !matrix.versions.iter().any(|v| v == triggered_sha) {
         return None;
     }
-    let rows = scoped_rows(matrix, want);
+    let rows = scoped_rows(matrix, want, triggered_sha);
     let ready: std::collections::BTreeSet<&str> =
         rows.iter().map(|row| row.model.as_str()).collect();
     want.iter().all(|m| ready.contains(m)).then_some(rows)
@@ -3158,36 +3166,46 @@ mod tests {
         assert_eq!(select_agent_id(&agents[..1], None).unwrap(), "a1");
     }
 
-    fn model_summary(model: &str, passed: u64, total: u64) -> crate::api::EvalModelSummary {
+    fn model_summary(
+        version: &str,
+        model: &str,
+        passed: u64,
+        total: u64,
+    ) -> crate::api::EvalModelVersionSummary {
         // `completed` defaults to `total`: every one of these fixture rows models
         // a normal graded run (every case reached a verdict), so it is not the
         // #622 "never answered" outcome unless a test opts into that separately
         // via `model_summary_never_completed`.
-        plumbing_model_summary(model, passed, total, 0)
+        plumbing_model_summary(version, model, passed, total, 0)
     }
 
     fn plumbing_model_summary(
+        version: &str,
         model: &str,
         passed: u64,
         total: u64,
         plumbing: u64,
-    ) -> crate::api::EvalModelSummary {
-        crate::api::EvalModelSummary {
+    ) -> crate::api::EvalModelVersionSummary {
+        crate::api::EvalModelVersionSummary {
+            version: version.to_string(),
             model: Some(model.to_string()),
             passed,
             total,
-            cost_usd: None,
             completed: total,
             plumbing,
         }
     }
 
-    fn model_summary_never_completed(model: &str, total: u64) -> crate::api::EvalModelSummary {
-        crate::api::EvalModelSummary {
+    fn model_summary_never_completed(
+        version: &str,
+        model: &str,
+        total: u64,
+    ) -> crate::api::EvalModelVersionSummary {
+        crate::api::EvalModelVersionSummary {
+            version: version.to_string(),
             model: Some(model.to_string()),
             passed: 0,
             total,
-            cost_usd: None,
             completed: 0,
             plumbing: 0,
         }
@@ -3195,12 +3213,12 @@ mod tests {
 
     fn matrix(
         versions: &[&str],
-        summaries: Vec<crate::api::EvalModelSummary>,
+        summaries: Vec<crate::api::EvalModelVersionSummary>,
     ) -> crate::api::EvalMatrix {
         crate::api::EvalMatrix {
             suite: "smoke".into(),
             versions: versions.iter().map(|v| v.to_string()).collect(),
-            model_summaries: summaries,
+            model_version_summaries: summaries,
         }
     }
 
@@ -3214,7 +3232,10 @@ mod tests {
         let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
         let m = matrix(
             &["old-sha"],
-            vec![model_summary("opus", 3, 3), model_summary("sonnet", 2, 3)],
+            vec![
+                model_summary("old-sha", "opus", 3, 3),
+                model_summary("old-sha", "sonnet", 2, 3),
+            ],
         );
         assert!(
             sweep_ready_rows(&m, "new-sha", &want).is_none(),
@@ -3227,7 +3248,10 @@ mod tests {
         let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
         let m = matrix(
             &["new-sha", "old-sha"],
-            vec![model_summary("opus", 3, 3), model_summary("sonnet", 3, 3)],
+            vec![
+                model_summary("new-sha", "opus", 3, 3),
+                model_summary("new-sha", "sonnet", 3, 3),
+            ],
         );
         let rows = sweep_ready_rows(&m, "new-sha", &want).expect("all models landed for the run");
         assert_eq!(rows.len(), 2);
@@ -3240,7 +3264,7 @@ mod tests {
         // The triggered sha has landed, but only one of the two swept models has a
         // row yet -- keep polling rather than report a half-finished sweep.
         let want: std::collections::BTreeSet<&str> = ["opus", "sonnet"].into_iter().collect();
-        let m = matrix(&["new-sha"], vec![model_summary("opus", 3, 3)]);
+        let m = matrix(&["new-sha"], vec![model_summary("new-sha", "opus", 3, 3)]);
         assert!(sweep_ready_rows(&m, "new-sha", &want).is_none());
     }
 
@@ -3256,7 +3280,11 @@ mod tests {
         let want: std::collections::BTreeSet<&str> = ["bogus-model-xyz"].into_iter().collect();
         let m = matrix(
             &["new-sha"],
-            vec![model_summary_never_completed("bogus-model-xyz", 5)],
+            vec![model_summary_never_completed(
+                "new-sha",
+                "bogus-model-xyz",
+                5,
+            )],
         );
         let rows = sweep_ready_rows(&m, "new-sha", &want)
             .expect("a landed-but-all-failed row still satisfies readiness");
@@ -3282,8 +3310,8 @@ mod tests {
         let m = matrix(
             &["new-sha"],
             vec![
-                model_summary("opus", 3, 3),
-                plumbing_model_summary("fake", 0, 0, 3),
+                model_summary("new-sha", "opus", 3, 3),
+                plumbing_model_summary("new-sha", "fake", 0, 0, 3),
             ],
         );
         let rows = sweep_ready_rows(&m, "new-sha", &want)
@@ -3306,8 +3334,48 @@ mod tests {
         // landed at all yet (distinct from a genuine plumbing-only row); it must
         // still be dropped so readiness keeps polling for it.
         let want: std::collections::BTreeSet<&str> = ["opus"].into_iter().collect();
-        let m = matrix(&["new-sha"], vec![model_summary("opus", 0, 0)]);
-        assert!(scoped_rows(&m, &want).is_empty());
+        let m = matrix(&["new-sha"], vec![model_summary("new-sha", "opus", 0, 0)]);
+        assert!(scoped_rows(&m, &want, "new-sha").is_empty());
+    }
+
+    #[test]
+    fn never_completed_is_scoped_to_the_triggered_sha_not_the_window() {
+        // #814: a model that COMPLETED cases on an older in-window sha but never
+        // completes a turn on the TRIGGERED sha must be reported never_completed
+        // and fail the sweep. The platform matrix now exposes the per-(version,
+        // model) dimension (model_version_summaries), so `scoped_rows` reads the
+        // triggered sha's own row rather than the window-blended `completed`. With
+        // the old blended count, opus's completions on `old-sha` (completed == 5)
+        // would keep `completed > 0`, masking the zero-completed run on `new-sha`
+        // and reporting a fabricated blended pass-rate.
+        let want: std::collections::BTreeSet<&str> = ["opus"].into_iter().collect();
+        let m = matrix(
+            &["new-sha", "old-sha"],
+            vec![
+                // The triggered sha: every case landed as a graded FAIL whose turn
+                // never completed (error set) -- completed == 0.
+                model_summary_never_completed("new-sha", "opus", 5),
+                // A prior in-window sha: opus completed and passed every case.
+                model_summary("old-sha", "opus", 5, 5),
+            ],
+        );
+        let rows = sweep_ready_rows(&m, "new-sha", &want)
+            .expect("the triggered sha's row has landed for the wanted model");
+        assert_eq!(rows.len(), 1);
+        let opus = &rows[0];
+        assert_eq!(opus.model, "opus");
+        assert_eq!(opus.total, 5);
+        assert_eq!(
+            opus.completed, 0,
+            "completed must be scoped to the triggered sha (new-sha), not blended with old-sha"
+        );
+        assert!(
+            opus.never_completed(),
+            "scoped to new-sha opus never completed a turn, so the sweep must fail loudly"
+        );
+        // The shared reporter fails the sweep and names the offending model.
+        let err = crate::commands::report_sweep(&rows).unwrap_err();
+        assert!(err.to_string().contains("opus"));
     }
 
     #[tokio::test]
