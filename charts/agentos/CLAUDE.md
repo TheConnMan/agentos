@@ -82,7 +82,7 @@ helm template charts/agentos -f charts/agentos/values-dev.yaml   # chart-authori
 Runtime check (the cheap default for a chart/sandbox/bundle change): installs a
 trimmed slice, runs the bundle-fetch init pair, and exec-asserts on the runner:
 ```bash
-bash scripts/chart-runtime-e2e.sh                                # from repo root
+agentos dev chart-runtime-e2e            # implemented by scripts/chart-runtime-e2e.sh
 ```
 A ticket whose AC is a runtime check (like #56, the bundle-fetch credential
 isolation) is only satisfied by running this and pasting its output -- lint /

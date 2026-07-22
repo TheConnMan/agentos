@@ -334,6 +334,12 @@ enum DevAction {
     /// Run the cold-start parity ladder across the skill, local, and cluster
     /// tiers, fake model by default (#690, `bash cli/scripts/e2e-ladder.sh`).
     E2eLadder,
+    /// Runtime E2E the Helm chart on a local cluster: install a trimmed slice,
+    /// seed a bundle into MinIO, run the sandbox bundle-fetch init pair, and
+    /// exec-assert the runner's view -- the one-command way to satisfy a
+    /// chart/sandbox runtime acceptance criterion static checks cannot (#199,
+    /// `bash scripts/chart-runtime-e2e.sh`).
+    ChartRuntimeE2e,
     /// Lint the interface catalog docs (`bash scripts/check-docs.sh`).
     DocsLint,
     /// Validate every `examples/` bundle against Claude Code (`bash scripts/check-plugin-compat.sh`).
@@ -1476,6 +1482,9 @@ async fn run(command: Option<Command>) -> Result<()> {
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
             DevAction::E2eLadder => commands::dev_script("cli/scripts/e2e-ladder.sh").await,
+            DevAction::ChartRuntimeE2e => {
+                commands::dev_script("scripts/chart-runtime-e2e.sh").await
+            }
             DevAction::DocsLint => commands::dev_script("scripts/check-docs.sh").await,
             DevAction::PluginCompat => commands::dev_script("scripts/check-plugin-compat.sh").await,
             DevAction::EvalFalsifiability => {
@@ -2795,6 +2804,14 @@ mod tests {
             cli.command,
             Some(Command::Dev {
                 action: DevAction::E2eLadder
+            })
+        ));
+        let cli = Cli::try_parse_from(["agentos", "dev", "chart-runtime-e2e"])
+            .expect("dev chart-runtime-e2e should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Dev {
+                action: DevAction::ChartRuntimeE2e
             })
         ));
     }
