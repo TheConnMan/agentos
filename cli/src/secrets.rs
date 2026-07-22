@@ -71,9 +71,11 @@ pub fn list() -> Result<()> {
 }
 
 /// Output of `secrets list` (#474): the saved secret NAMEs. Routes through the
-/// one `Ui::emit` point rather than an inline `if json()` branch.
-struct SecretsListOutput {
-    names: Vec<String>,
+/// one `Ui::emit` point rather than an inline `if json()` branch. Public so the
+/// schema contract test (#634) can build one and validate `to_json` against
+/// `cli/schema/secrets.schema.json`.
+pub struct SecretsListOutput {
+    pub names: Vec<String>,
 }
 
 impl crate::ui::CliOutput for SecretsListOutput {

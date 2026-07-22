@@ -3339,6 +3339,21 @@ export const commandManifest = {
       "name": "schema"
     },
     {
+      "about": "Print the committed, versioned JSON Schemas for the `--json` result outputs",
+      "args": [
+        {
+          "global": false,
+          "help": "The schema to print (short name like `kill`, or `kill.schema.json`). Omit to print the inventory index of all result schemas",
+          "id": "name",
+          "positional": true,
+          "required": false
+        }
+      ],
+      "hidden": false,
+      "long_about": "Print the committed, versioned JSON Schemas for the `--json` result outputs.\n\nWith no NAME, emits the schema inventory index (`cli/schema/index.json`): every agent-facing result family, the schema file it maps to, and its version. With a NAME (e.g. `kill`, or `kill.schema.json`), emits that schema. The schemas are embedded in the binary, so this works from a released `agentos` with no source checkout (issue #634).",
+      "name": "schema-index"
+    },
+    {
       "about": "Print a self-contained primer for a coding agent driving the harness (ADR-0021)",
       "hidden": false,
       "long_about": "Print a self-contained primer for a coding agent driving the harness (ADR-0021).\n\nOrdered by what the agent needs first (roughly 100 lines), carrying only non-discoverable knowledge: the parity ladder, when/which decision logic, the landmines, and verify-first. Human-readable Markdown by default; The global `--json` emits a structured variant (data on stdout, human text on stderr).",

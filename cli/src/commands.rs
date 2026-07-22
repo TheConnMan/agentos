@@ -634,17 +634,18 @@ pub async fn list_agents() -> Result<()> {
     Ok(())
 }
 
-struct LocalAgentSummary {
-    name: String,
-    description: String,
-    directory: String,
+pub struct LocalAgentSummary {
+    pub name: String,
+    pub description: String,
+    pub directory: String,
 }
 
 /// Output of `list-agents`. Routes through the one `Ui::emit` point rather
 /// than an inline `if json()` branch (mirrors `secrets list`'s
-/// `SecretsListOutput`).
-struct ListAgentsOutput {
-    agents: Vec<LocalAgentSummary>,
+/// `SecretsListOutput`). Public so the schema contract test (#634) can build one
+/// and validate `to_json` against `cli/schema/list-agents.schema.json`.
+pub struct ListAgentsOutput {
+    pub agents: Vec<LocalAgentSummary>,
 }
 
 impl crate::ui::CliOutput for ListAgentsOutput {
@@ -2340,6 +2341,15 @@ fn sweep_json_row(row: &SweepRow) -> serde_json::Value {
     })
 }
 
+/// The whole `--json` sweep payload: `{"sweep": [<row>, ...]}`. Pure and
+/// independent of `Ui` so the schema contract test (#634) can validate it
+/// against `cli/schema/sweep.schema.json` without a process-level stdout
+/// capture. `report_sweep` emits exactly this via `Ui::emit_json`, so the two
+/// never drift.
+pub fn sweep_json(rows: &[SweepRow]) -> serde_json::Value {
+    serde_json::json!({ "sweep": rows.iter().map(sweep_json_row).collect::<Vec<_>>() })
+}
+
 /// The human table row for one sweep row: `[model, "passed/total", pass rate,
 /// plumbing count]`. A plumbing-only row (#700) is marked distinctly rather
 /// than blended into the pass-rate list: the model name gets a `(plumbing)`
@@ -2392,8 +2402,7 @@ fn sweep_table_row(row: &SweepRow) -> Vec<String> {
 pub fn report_sweep(rows: &[SweepRow]) -> Result<()> {
     let ui = crate::ui::ui();
     if ui.json() {
-        let models: Vec<serde_json::Value> = rows.iter().map(sweep_json_row).collect();
-        ui.emit_json(&serde_json::json!({ "sweep": models }));
+        ui.emit_json(&sweep_json(rows));
     } else {
         let table: Vec<Vec<String>> = rows.iter().map(sweep_table_row).collect();
         ui.payload_plain(&crate::ui::table(

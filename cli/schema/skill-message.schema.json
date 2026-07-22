@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentos.dev/cli/skill-message/v1.json",
+  "title": "agentos skill message --json",
+  "description": "The agent-facing payload of `agentos skill message` under `--json`: the full buffered model reply and the final ACI session status (the human path streams tokens live and never builds this).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reply": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "finalized": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "reply",
+    "status",
+    "finalized"
+  ]
+}

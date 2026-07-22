@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentos.dev/cli/approvals/v1.json",
+  "title": "agentos <tier> approvals --json",
+  "description": "The agent-facing payload of `agentos <tier> approvals <agent>`: the dry-run plan; the gate list (`manifest_unreadable` non-null when the deployed manifest could not be read); the pending approval records (`truncated` true when the server page cap was hit); or a single resolved record.",
+  "$defs": {
+    "dryRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dry_run": {
+          "const": true
+        },
+        "plan": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "dry_run",
+        "plan"
+      ]
+    },
+    "approvalRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gate_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "granted_tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolved_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "route",
+        "gate_kind",
+        "granted_tool",
+        "status",
+        "conversation_id",
+        "summary",
+        "expires_at",
+        "resolved_by"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/dryRun"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "gated_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "manifest_unreadable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent",
+        "gated_tools",
+        "manifest_unreadable"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/approvalRecord"
+          }
+        },
+        "count": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agent",
+        "pending",
+        "count",
+        "truncated"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resolved": {
+          "$ref": "#/$defs/approvalRecord"
+        }
+      },
+      "required": [
+        "resolved"
+      ]
+    }
+  ]
+}

@@ -313,6 +313,18 @@ enum Command {
     /// `dump-commands`.
     #[command(hide = true, alias = "dump-commands")]
     Schema,
+    /// Print the committed, versioned JSON Schemas for the `--json` result outputs.
+    ///
+    /// With no NAME, emits the schema inventory index (`cli/schema/index.json`):
+    /// every agent-facing result family, the schema file it maps to, and its
+    /// version. With a NAME (e.g. `kill`, or `kill.schema.json`), emits that
+    /// schema. The schemas are embedded in the binary, so this works from a
+    /// released `agentos` with no source checkout (issue #634).
+    SchemaIndex {
+        /// The schema to print (short name like `kill`, or `kill.schema.json`).
+        /// Omit to print the inventory index of all result schemas.
+        name: Option<String>,
+    },
     /// Print a self-contained primer for a coding agent driving the harness (ADR-0021).
     ///
     /// Ordered by what the agent needs first (roughly 100 lines), carrying only
@@ -2556,6 +2568,21 @@ async fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Schema) => {
             use clap::CommandFactory;
             print!("{}", agentos::schema::manifest_json(&Cli::command()));
+            Ok(())
+        }
+        Some(Command::SchemaIndex { name }) => {
+            match name {
+                None => print!("{}", agentos::schemas::index()),
+                Some(name) => {
+                    let body = agentos::schemas::schema(&name).ok_or_else(|| {
+                        agentos::exit::CliError::usage(format!(
+                            "no result schema named {name:?}; run `agentos schema-index` for the inventory of {} schemas",
+                            agentos::schemas::names().len()
+                        ))
+                    })?;
+                    print!("{body}");
+                }
+            }
             Ok(())
         }
         Some(Command::Guide) => agentos::guide::run(),

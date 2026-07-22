@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentos.dev/cli/guide/v1.json",
+  "title": "agentos guide --json",
+  "description": "The agent-facing payload of `agentos guide`: the self-describing harness primer as structured data (the same content the default Markdown render is built from).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "harness": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "verify_first": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "why": {
+          "type": "string"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "why",
+        "commands"
+      ]
+    },
+    "parity_ladder": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tier": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "command",
+          "purpose"
+        ]
+      }
+    },
+    "decision_logic": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ]
+      }
+    },
+    "landmines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "detail"
+        ]
+      }
+    },
+    "recovery": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symptom": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symptom",
+          "fix"
+        ]
+      }
+    }
+  },
+  "required": [
+    "harness",
+    "summary",
+    "verify_first",
+    "parity_ladder",
+    "decision_logic",
+    "landmines",
+    "recovery"
+  ]
+}

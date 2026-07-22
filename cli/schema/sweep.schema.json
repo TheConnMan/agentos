@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentos.dev/cli/sweep/v1.json",
+  "title": "agentos <tier> eval --sweep --json",
+  "description": "The agent-facing payload of an `agentos <tier> eval --sweep` run: one row per model. `pass_rate` is null (not a fabricated 0.0) on a never-completed row; `plumbing_only` flags a fixture-only row whose `passed`/`total` carry no graded signal.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sweep": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "integer"
+          },
+          "completed": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "pass_rate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "plumbing": {
+            "type": "integer"
+          },
+          "plumbing_only": {
+            "type": "boolean"
+          },
+          "never_completed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model",
+          "passed",
+          "completed",
+          "total",
+          "pass_rate",
+          "plumbing",
+          "plumbing_only",
+          "never_completed"
+        ]
+      }
+    }
+  },
+  "required": [
+    "sweep"
+  ]
+}
