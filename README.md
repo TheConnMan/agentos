@@ -188,61 +188,18 @@ channel binding, and troubleshooting) see
 ## Quickstart
 
 The fastest way in — for operators and coding agents alike — is the prebuilt
-release binary. It needs no Rust toolchain and no repo checkout:
+release binary. It needs no Rust toolchain and no repo checkout.
 
-You are about to run a downloaded binary as root, so verify it first. Every
-release ships a `checksums.txt` signed by the release workflow; check the
-signature, then check the binary against it, then install. Set `VERSION` to the
-release you are installing, from the
-[Releases page](https://github.com/curie-eng/agentos/releases):
+You are about to run a downloaded binary as root, so verify it before you install
+it. [`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it)
+owns the full flow: resolve the right asset for your platform, verify the signed
+`checksums.txt` with cosign (or `gh attestation`), check the binary against it, and
+install. Then, from anywhere:
 
 ```bash
-VERSION=vX.Y.Z                            # the release you are installing
-# Resolve the right asset for this machine. The release ships Linux x86_64 and
-# macOS Apple silicon; anything else builds from source (see cli/).
-ASSET=
-case "$(uname -s)/$(uname -m)" in
-  Linux/x86_64)                 ASSET=agentos-x86_64-unknown-linux-gnu ;;
-  Darwin/arm64|Darwin/aarch64)  ASSET=agentos-aarch64-apple-darwin ;;
-esac
-: "${ASSET:?no prebuilt binary for this platform; build the CLI from source in cli/}"
-BASE="https://github.com/curie-eng/agentos/releases/download/$VERSION"
-curl -fsSLO "$BASE/$ASSET" -O "$BASE/checksums.txt" -O "$BASE/checksums.txt.sigstore.json"
-
-# 1. checksums.txt really came from this repo's release workflow, at this tag
-cosign verify-blob --bundle checksums.txt.sigstore.json \
-  --certificate-identity "https://github.com/curie-eng/agentos/.github/workflows/release.yaml@refs/tags/$VERSION" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  checksums.txt
-# 2. the binary is the one it names (macOS: shasum -a 256 --check --ignore-missing)
-sha256sum --check --ignore-missing checksums.txt
-# 3. both OK? install it
-chmod +x "$ASSET" && sudo mv "$ASSET" /usr/local/bin/agentos
-
 agentos cluster up
 agentos local up
 ```
-
-> **Which releases can be verified?** Every release published *after* v0.4.0.
-> `checksums.txt`, the signature, the provenance, and the SBOMs are produced by
-> the release workflow, so v0.4.0 and earlier shipped bare binaries and the two
-> integrity URLs above 404 against them. Install a newer release.
-
-No cosign? `gh attestation verify $ASSET --repo curie-eng/agentos --signer-workflow
-curie-eng/agentos/.github/workflows/release.yaml --source-ref "refs/tags/$VERSION"`
-does both checks in one command. Keep `--source-ref`: without it the check passes
-for any artifact this workflow ever built, including one from a different tag.
-Either way, see [`docs/release-verification.md`](docs/release-verification.md) for
-the full story: what each asset carries, how to verify the chart and compose file,
-and the per-asset SBOMs.
-
-> **macOS: "unidentified developer"?** The release binaries are not yet
-> notarized by Apple, so a copy downloaded through a browser is quarantined and
-> Gatekeeper blocks it on first launch. The `curl` command above avoids this
-> entirely (curl does not set the quarantine flag). If you already downloaded it
-> in a browser, clear the flag once with
-> `xattr -d com.apple.quarantine ./agentos-aarch64-apple-darwin`, or right-click
-> the binary in Finder and choose Open to approve it a single time.
 
 A release binary needs no repo checkout for `agentos cluster up` or `agentos local up`.
 It pulls the pinned chart release asset and the pinned `compose.release.yaml`

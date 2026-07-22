@@ -4,8 +4,9 @@ Every GitHub release publishes the `agentos` CLI binaries, the Helm chart, and
 `compose.release.yaml`. Installing the CLI means running a downloaded binary as
 root and pointing it at a cluster, so verify what you received before you run it.
 
-This page is the reference. The [README quickstart](../README.md#quickstart) has
-the short copy-paste version for the default install path.
+This page is the reference and owns the download-verify-install flow. The
+[README quickstart](../README.md#quickstart), [`QUICKSTART.md`](../QUICKSTART.md),
+and the [local dev onboarding](onboarding.md) point here for it.
 
 These artifacts are produced by the release workflow, so they exist on every
 release published *after* v0.4.0. Nothing below works against v0.4.0 or earlier,
@@ -172,7 +173,10 @@ which is a reviewed edit rather than a side effect.
 
 - **Apple notarization.** The macOS binary is unsigned and un-notarized, pending
   an Apple developer account decision. Gatekeeper quarantines a browser-downloaded
-  copy; see the [README note](../README.md#quickstart). Verify it with cosign or
+  copy; the `curl` download above avoids this (curl does not set the quarantine
+  flag), or clear it once with
+  `xattr -d com.apple.quarantine ./agentos-aarch64-apple-darwin` (or right-click
+  the binary in Finder and choose Open). Verify it with cosign or
   `gh attestation verify` as above -- that is the real check regardless.
 - **Container images.** GHCR image signing, provenance, and SBOMs are issue #62.
 - **The SBOM generator's own supply chain.** `anchore/sbom-action` is pinned to a

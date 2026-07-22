@@ -109,18 +109,9 @@ which is what §3b describes.
 
 ### Directory ownership and language
 
-| Path | Language | Role |
-|---|---|---|
-| [`packages/aci-protocol`](packages/aci-protocol) | Python (Pydantic + codegen) | Frozen ACI session protocol + NDJSON events |
-| [`packages/plugin-format`](packages/plugin-format) | Python (Pydantic + codegen) | Frozen Claude Code plugin bundle shape |
-| [`apps/api`](apps/api) | Python (FastAPI) | Agents/versions/deployments, git-flow, evals, Langfuse proxy |
-| [`apps/dispatcher`](apps/dispatcher) | Python (Slack Bolt) | Socket Mode ingress, dedupe, placeholder, enqueue |
-| [`apps/worker`](apps/worker) | Python (redis-py) | Concurrency kernel, substrate, eval consumer |
-| [`runner`](runner) | Python (claude-agent-sdk) | ACI session server inside the sandbox |
-| [`apps/ui`](apps/ui) | React (Vite + TS) | Console: create/deploy, Runs, Metrics, Logs, Cost |
-| [`cli`](cli) | Rust (clap + tokio) | `agentos` binary: 12 top-level commands ([`cli/src/main.rs`](cli/src/main.rs)) — `init`, `skill`, `local`, `cluster`, `build`, `install`, `update`, `secrets`, `dev`, `schema`, `guide`, plus the bare-invocation `interactive` TUI |
-| [`charts/agentos`](charts/agentos) | Helm | Umbrella chart + security rails |
-| [`tests/soak`](tests/soak) | Python | Soak/chaos harness: 762 lines of Python (`wc -l tests/soak/*.py`), env-gated on `AGENTOS_SOAK=1` ([`tests/soak/conftest.py`](tests/soak/conftest.py)) — the code exists; what is outstanding is a run at N1 scale |
+The per-package directory listing — path, language, and what each package owns —
+lives in the [README Component map](README.md#component-map). It is not duplicated
+here so the two cannot drift apart.
 
 The Python packages are one **uv workspace** (root
 [`pyproject.toml`](pyproject.toml)); ruff, mypy, and pytest run across all
@@ -517,11 +508,12 @@ integration test and UI E2E runs against it.
 compose stack, runs real Alembic migrations on a virgin Postgres
 (`version_table_schema=agentos`, [`apps/api/alembic/env.py::do_run_migrations`](apps/api/alembic/env.py)),
 then the whole workspace pytest suite against the live services. It defines
-**eight** jobs: `python`, `rust`, `contracts-ts`, `ui` (lint + vitest + build +
-headless Playwright), `compose`, `images`, `worker-local-image`, and
-`dispatcher-image-smoke`. The last three are the image build gates — an operator
-reading this list to know what protects a release needs them named, since a green
-`python` says nothing about whether the images build.
+**ten** jobs: `python`, `rust`, `contracts-ts`, `ui` (lint + vitest + build +
+headless Playwright), `compose`, `images`, `worker-local-image`,
+`dispatcher-image-smoke`, `eval-falsifiability`, and `e2e-ladder`. Three of them
+(`images`, `worker-local-image`, `dispatcher-image-smoke`) are the image build
+gates — an operator reading this list to know what protects a release needs them
+named, since a green `python` says nothing about whether the images build.
 
 **Release** ([`.github/workflows/release.yaml`](.github/workflows/release.yaml))
 publishes `ghcr.io/curie-eng/agentos-{runner,api,dispatcher,worker,ui}` as

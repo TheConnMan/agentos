@@ -7,22 +7,9 @@ the runner container on your host Docker daemon, talking straight to the agent.
 ## Before you start
 
 - **Docker** running locally.
-- The **`agentos`** binary on your PATH. Download the prebuilt binary for
-  your platform from the latest release (no Rust toolchain required):
-
-  ```bash
-  # Resolve the right asset for this machine. The release ships Linux x86_64 and
-  # macOS Apple silicon; anything else builds from source (see cli/).
-  ASSET=
-  case "$(uname -s)/$(uname -m)" in
-    Linux/x86_64)                 ASSET=agentos-x86_64-unknown-linux-gnu ;;
-    Darwin/arm64|Darwin/aarch64)  ASSET=agentos-aarch64-apple-darwin ;;
-  esac
-  : "${ASSET:?no prebuilt binary for this platform; build the CLI from source in cli/}"
-  curl -fsSL -o agentos \
-    "https://github.com/curie-eng/agentos/releases/latest/download/$ASSET"
-  chmod +x agentos && sudo mv agentos /usr/local/bin/
-  ```
+- The **`agentos`** binary on your PATH. Download, verify, and install the
+  prebuilt binary for your platform by following
+  [`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it).
 
   Building the CLI from source (`cargo build --release` in `cli/`) is the
   contributor path — see [`docs/onboarding.md`](docs/onboarding.md).

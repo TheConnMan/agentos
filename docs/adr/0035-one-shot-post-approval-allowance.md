@@ -4,6 +4,12 @@ Date: 2026-07-15
 
 Status: Accepted
 
+**Superseded in part by [ADR-0046](0046-converged-approval-gates-and-durable-provenance.md)**
+(back-link added under [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)):
+0046 supersedes the provenance discriminator this ADR used (the summary-prefix
+sniff), replacing it with durable runner-authored provenance. The one-shot grant
+lifecycle established below is otherwise unchanged.
+
 Implements [#430](https://github.com/curie-eng/agentos/issues/430).
 
 ## Context
