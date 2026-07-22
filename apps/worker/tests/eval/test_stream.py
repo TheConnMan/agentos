@@ -16,7 +16,6 @@ import asyncio
 import io
 import json
 import logging
-import os
 import tarfile
 import time
 import uuid
@@ -29,6 +28,15 @@ import httpx
 import pytest
 import redis
 from aci_protocol import STREAM_PAYLOAD_FIELD
+from agentos_test_support.valkey import (
+    VALKEY_HOST as _VH,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PORT as _VP,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PW as _VPW,
+)
 from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV, MODEL_ENV
 from agentos_worker.bundle_store import BundleStore
 from agentos_worker.config import WorkerConfig
@@ -48,9 +56,6 @@ from agentos_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateCon
 from agentos_worker.sandbox.types import ClaimView, SandboxView
 from redis.asyncio import Redis as AsyncRedis
 
-_VH = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VP = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VPW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 CONTAINS = GraderKind.CONTAINS
 
 

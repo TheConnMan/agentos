@@ -21,6 +21,7 @@ members = [
     "packages/aci-protocol",
     "packages/channel-protocol",
     "packages/plugin-format",
+    "packages/test-support",
     "apps/api",
     "apps/dispatcher",
     "apps/worker",
@@ -33,6 +34,7 @@ members = [
 aci-protocol = { workspace = true }
 agentos-channel-protocol = { workspace = true }
 plugin-format = { workspace = true }
+agentos-test-support = { workspace = true }
 agentos-api = { workspace = true }
 agentos-dispatcher = { workspace = true }
 agentos-worker = { workspace = true }
@@ -44,6 +46,7 @@ agentos-wire-tolerance-gate = { workspace = true }
 dev = [
     "agentos-doclint",
     "agentos-wire-tolerance-gate",
+    "agentos-test-support",
     "pytest>=8.3",
     "ruff>=0.15.22",
     "mypy>=2.3.0",
@@ -97,6 +100,7 @@ mypy_path = [
     "packages/aci-protocol/src",
     "packages/channel-protocol/src",
     "packages/plugin-format/src",
+    "packages/test-support/src",
     "apps/api/src",
     "apps/dispatcher/src",
     "apps/worker/src",
@@ -108,6 +112,7 @@ files = [
     "packages/aci-protocol/src",
     "packages/channel-protocol/src",
     "packages/plugin-format/src",
+    "packages/test-support/src",
     "apps/api/src",
     "apps/dispatcher/src",
     "apps/worker/src",

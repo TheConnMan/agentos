@@ -38,6 +38,9 @@ from agentos_api.sandbox_token import mint
 from agentos_api.slack_approvers import SlackApproverSetSelector
 from agentos_api.slack_usergroups import SlackUserGroupClient
 from agentos_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
+from agentos_test_support.valkey import (
+    connect_or_skip,
+)
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -48,10 +51,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 # The migration test (18) drives alembic directly against the disposable DB the
 # conftest provisions, so it needs the same script location conftest uses.
 ALEMBIC_DIR = Path(__file__).resolve().parents[1] / "alembic"
-
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 
 
 @pytest.fixture
@@ -78,16 +77,7 @@ def approvals_client(_disposable_db: Any, runs_stream: str) -> Iterator[TestClie
 
 @pytest.fixture
 def valkey(runs_stream: str) -> Iterator[redis.Redis]:
-    client = redis.Redis(
-        host=_VALKEY_HOST,
-        port=_VALKEY_PORT,
-        password=_VALKEY_PW or None,
-        decode_responses=True,
-    )
-    try:
-        client.ping()
-    except redis.exceptions.RedisError as exc:
-        pytest.skip(f"Valkey not reachable: {exc}")
+    client = connect_or_skip(decode_responses=True)
     yield client
     client.delete(runs_stream)
     client.close()

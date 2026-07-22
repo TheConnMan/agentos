@@ -9,13 +9,15 @@ client is exercised by the env-gated k8scratch e2e in ``test_e2e_k8scratch.py``.
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import pytest
 import redis
+from agentos_test_support.valkey import (
+    connect_or_skip,
+)
 from agentos_worker.sandbox import (
     AffinityStore,
     ClaimView,
@@ -51,23 +53,10 @@ class _RecordingDocker(DockerSandboxClient):
 def _flag_values(argv: list[str], flag: str) -> list[str]:
     return [argv[i + 1] for i, a in enumerate(argv) if a == flag and i + 1 < len(argv)]
 
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
-
 
 @pytest.fixture
 def redis_client() -> Iterator[redis.Redis]:
-    client = redis.Redis(
-        host=_VALKEY_HOST,
-        port=_VALKEY_PORT,
-        password=_VALKEY_PW or None,
-        decode_responses=False,
-    )
-    try:
-        client.ping()
-    except redis.exceptions.RedisError as exc:
-        pytest.skip(f"Valkey not reachable at {_VALKEY_HOST}:{_VALKEY_PORT}: {exc}")
+    client = connect_or_skip(decode_responses=False)
     yield client
     client.close()
 
