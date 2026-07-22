@@ -391,3 +391,33 @@ def test_a_fake_turn_that_does_not_complete_is_a_failure_not_plumbing_ok(
             assert spy.calls == 0  # a broken turn is not graded either
 
     asyncio.run(go())
+
+
+def test_a_bare_timeout_error_records_a_nonempty_error(make_eval_harness) -> None:
+    """Issue #813: aiohttp raises a bare ``asyncio.TimeoutError`` on total/sock_read
+    expiry, and ``str(asyncio.TimeoutError())`` is empty. If ``_run_case`` recorded
+    that empty string as the error, the API's completion check (ADR-0068) would
+    read a timed-out turn as "completed" instead of the loud failure it must be.
+    The case must still FAIL, and its error must be non-empty."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            async def _timeout(*args, **kwargs):
+                # aiohttp raises a bare asyncio.TimeoutError (== builtin TimeoutError
+                # since 3.11) on timeout; its str() is empty, which is the whole bug.
+                raise TimeoutError
+
+            client.start_turn = _timeout  # type: ignore[method-assign]
+            suite = EvalSuite(
+                name="s",
+                cases=[EvalCase(id="c", input="q", grader=Grader(kind=CONTAINS, expected="x"))],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+
+            case = result.results[0]
+            assert case.passed is False
+            assert case.error  # must be non-empty, not just non-None
+            assert case.error == "TimeoutError"
+            assert result.summary() == "0/1 passed"
+
+    asyncio.run(go())

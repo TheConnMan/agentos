@@ -141,7 +141,9 @@ class EvalRunner:
                 outcome=EvalOutcome.FAIL,
                 output="",
                 latency_ms=_elapsed_ms(start),
-                error=str(exc),
+                # A bare asyncio.TimeoutError stringifies to "", which would
+                # otherwise read downstream as a completed turn; keep it non-empty.
+                error=str(exc) or type(exc).__name__,
             )
 
         output = final_text if final_text is not None else "".join(parts)
