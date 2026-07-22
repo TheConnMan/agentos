@@ -1146,7 +1146,7 @@
         "type": "object"
       },
       "EvalMatrix": {
-        "description": "The eval matrix grid: rows = cases, columns = versions (most recent first).\n\n``models`` and ``model_summaries`` add the model dimension: the distinct\nmodels observed across the fetched traces, and a pass-rate + cost rollup per\nmodel for BYO-model comparison. They are additive; the version grid is\nunchanged.",
+        "description": "The eval matrix grid: rows = cases, columns = versions (most recent first).\n\n``models`` and ``model_summaries`` add the model dimension: the distinct\nmodels observed across the fetched traces, and a pass-rate + cost rollup per\nmodel for BYO-model comparison. ``model_version_summaries`` slices that same\nrollup per ``(version, model)`` so a caller can scope completion to a single\ntriggered sha rather than the blended window (#814). They are additive; the\nversion grid is unchanged.",
         "properties": {
           "cases": {
             "items": {
@@ -1161,6 +1161,14 @@
               "$ref": "#/components/schemas/EvalModelSummary"
             },
             "title": "Model Summaries",
+            "type": "array"
+          },
+          "model_version_summaries": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvalModelVersionSummary"
+            },
+            "title": "Model Version Summaries",
             "type": "array"
           },
           "models": {
@@ -1277,6 +1285,51 @@
           "total"
         ],
         "title": "EvalModelSummary",
+        "type": "object"
+      },
+      "EvalModelVersionSummary": {
+        "description": "A per-(version, model) rollup: the graded aggregates scoped to a single\nversion column, not rolled across the whole shown window.\n\n``EvalModelSummary`` sums ``completed`` over EVERY in-window version for a\nmodel. That blend can mask a triggered sha that lands all-incomplete (the\nmodel boots but never completes a turn on the new code) when a prior in-window\nsha completed cases for that same model: the blended ``completed`` stays ``> 0``\nfrom the old sha, so the \"never completed\" outcome the sweep must fail on\n(ADR-0068, #622) is hidden and a blended pass-rate is reported as a real\ncomparison (issue #814). This per-version breakdown exposes the\n``(version, model)`` dimension so a caller -- the CLI ``--model`` sweep, which\nknows the sha it just triggered -- can scope ``completed``/never-completed to\nthat one sha instead of the window.\n\nFields mirror the graded subset of ``EvalModelSummary`` (``cost_usd`` is not\nsliced per version, since the sweep does not compare cost per sha). It is\nadditive and defaulted the way ``completed``/``plumbing`` already are: a caller\nthat predates the field reads an empty list and degrades to the blended\nreading rather than misreporting.",
+        "properties": {
+          "completed": {
+            "default": 0,
+            "title": "Completed",
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "plumbing": {
+            "default": 0,
+            "title": "Plumbing",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "passed",
+          "total"
+        ],
+        "title": "EvalModelVersionSummary",
         "type": "object"
       },
       "EvalReport": {

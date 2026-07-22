@@ -704,13 +704,49 @@ class EvalModelSummary(BaseModel):
         return self.passed / self.total if self.total else 0.0
 
 
+class EvalModelVersionSummary(BaseModel):
+    """A per-(version, model) rollup: the graded aggregates scoped to a single
+    version column, not rolled across the whole shown window.
+
+    ``EvalModelSummary`` sums ``completed`` over EVERY in-window version for a
+    model. That blend can mask a triggered sha that lands all-incomplete (the
+    model boots but never completes a turn on the new code) when a prior in-window
+    sha completed cases for that same model: the blended ``completed`` stays ``> 0``
+    from the old sha, so the "never completed" outcome the sweep must fail on
+    (ADR-0068, #622) is hidden and a blended pass-rate is reported as a real
+    comparison (issue #814). This per-version breakdown exposes the
+    ``(version, model)`` dimension so a caller -- the CLI ``--model`` sweep, which
+    knows the sha it just triggered -- can scope ``completed``/never-completed to
+    that one sha instead of the window.
+
+    Fields mirror the graded subset of ``EvalModelSummary`` (``cost_usd`` is not
+    sliced per version, since the sweep does not compare cost per sha). It is
+    additive and defaulted the way ``completed``/``plumbing`` already are: a caller
+    that predates the field reads an empty list and degrades to the blended
+    reading rather than misreporting.
+    """
+
+    version: str
+    model: str | None = None
+    passed: int
+    total: int
+    completed: int = 0
+    plumbing: int = 0
+
+    @property
+    def pass_rate(self) -> float:
+        return self.passed / self.total if self.total else 0.0
+
+
 class EvalMatrix(BaseModel):
     """The eval matrix grid: rows = cases, columns = versions (most recent first).
 
     ``models`` and ``model_summaries`` add the model dimension: the distinct
     models observed across the fetched traces, and a pass-rate + cost rollup per
-    model for BYO-model comparison. They are additive; the version grid is
-    unchanged.
+    model for BYO-model comparison. ``model_version_summaries`` slices that same
+    rollup per ``(version, model)`` so a caller can scope completion to a single
+    triggered sha rather than the blended window (#814). They are additive; the
+    version grid is unchanged.
     """
 
     suite: str
@@ -719,6 +755,7 @@ class EvalMatrix(BaseModel):
     rows: list[EvalMatrixRow]
     models: list[str | None] = []
     model_summaries: list[EvalModelSummary] = []
+    model_version_summaries: list[EvalModelVersionSummary] = []
 
 
 class EvalTriggerRequest(BaseModel):

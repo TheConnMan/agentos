@@ -370,3 +370,80 @@ def test_legacy_traces_with_no_error_key_read_as_completed() -> None:
     unlabelled = next(m for m in matrix.model_summaries if m.model is None)
     assert unlabelled.total == 1
     assert unlabelled.completed == 1
+
+
+def test_per_version_summaries_scope_completed_to_each_sha() -> None:
+    """#814: the blended `model_summaries` sums `completed` across every in-window
+    sha, so a model that completed on an OLDER in-window sha but never completes on
+    the TRIGGERED sha reads `completed > 0` in the blend -- masking the "never
+    completed" outcome the sweep must fail on. `model_version_summaries` slices the
+    same rollup per (version, model) so a caller can scope completion to one sha.
+
+    Here opus completed and passed both cases on the older `shaOld`, but on the
+    triggered `shaNew` every case landed as a graded FAIL whose turn never
+    completed (error set). The blend hides it; the per-version rows must not.
+    """
+    traces = [
+        # Older in-window sha: opus completed and passed both cases.
+        _otrace("o1", "shaOld", "c1", "2026-07-01T00:00:00Z", "pass", "opus"),
+        _otrace("o2", "shaOld", "c2", "2026-07-01T00:00:01Z", "pass", "opus"),
+        # Triggered sha: every case is a graded FAIL that never completed.
+        _otrace(
+            "n1",
+            "shaNew",
+            "c1",
+            "2026-07-02T00:00:00Z",
+            "fail",
+            "opus",
+            error="runner reported a classified failure",
+        ),
+        _otrace(
+            "n2",
+            "shaNew",
+            "c2",
+            "2026-07-02T00:00:01Z",
+            "fail",
+            "opus",
+            error="runner reported a classified failure",
+        ),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    # The blended rollup masks the outcome (completed picked up the old sha).
+    blended = next(m for m in matrix.model_summaries if m.model == "opus")
+    assert blended.total == 4
+    assert blended.completed == 2  # the two old-sha completions -- the mask
+
+    per_version = {
+        (s.version, s.model): s for s in matrix.model_version_summaries
+    }
+    # The triggered sha's own row: never completed (total > 0, completed == 0).
+    new = per_version[("shaNew", "opus")]
+    assert new.total == 2
+    assert new.completed == 0
+    assert new.passed == 0
+    # The older sha's row is unaffected: it did complete both cases.
+    old = per_version[("shaOld", "opus")]
+    assert old.total == 2
+    assert old.completed == 2
+    assert old.passed == 2
+
+
+def test_per_version_summaries_surface_a_plumbing_only_row() -> None:
+    """A (version, model) whose every row is plumbing has no graded total but must
+    still surface with `total == 0, plumbing > 0`, mirroring `_model_summaries`
+    (#700) -- the sweep reads this to tell a landed plumbing fixture apart from a
+    model that has not landed at all."""
+    traces = [
+        _otrace("f1", "shaA", "c1", "2026-07-01T00:00:00Z", "plumbing_ok", "fake"),
+        _otrace("f2", "shaA", "c2", "2026-07-01T00:00:01Z", "plumbing_ok", "fake"),
+    ]
+    matrix = build_matrix(traces, "s", 5)
+
+    per_version = {
+        (s.version, s.model): s for s in matrix.model_version_summaries
+    }
+    fake = per_version[("shaA", "fake")]
+    assert fake.total == 0
+    assert fake.plumbing == 2
+    assert fake.completed == 0

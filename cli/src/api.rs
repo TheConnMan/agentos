@@ -160,32 +160,36 @@ pub struct EvalTriggerResult {
     pub model: Option<String>,
 }
 
-/// One per-model rollup of the eval matrix (`EvalModelSummary` in openapi.json):
-/// pass-rate and summed cost for a suite run under one model (#255/#526). `model`
-/// is `None` for the matrix's unlabelled column (a run with no resolved model).
+/// One per-`(version, model)` slice of the eval matrix rollup
+/// (`EvalModelVersionSummary` in openapi.json): the graded aggregates scoped to a
+/// single version column rather than blended across the shown window. `model` is
+/// `None` for the matrix's unlabelled column (a run with no resolved model).
+///
+/// The sweep reads this rather than the window-blended `model_summaries` because
+/// `completed` there sums over EVERY in-window sha for a model, so a model that
+/// completed on an older in-window sha keeps `completed > 0` even when its turns
+/// never complete on the triggered sha -- masking the "never completed" outcome
+/// the sweep must fail on (issue #814). Scoping the row to the triggered sha (the
+/// one the sweep just enqueued) is what makes `never_completed` honest.
 ///
 /// `completed` is a subset of `total`: the graded rows whose turn actually
 /// reached a verdict, as opposed to a graded fail that never completed at all
 /// (a classified failure, the wrong terminal status, or a transport/runner
-/// exception). `total > 0 && completed == 0` is a model that never produced one
-/// completed turn across the whole suite -- distinct from a real 0%, which the
-/// sweep reports and fails on (#622, #526 AC4). `#[serde(default)]` keeps this
-/// tolerant of an API that predates the field.
-///
-/// `plumbing` counts the rows that ran but were never graded (ADR-0055, #612/#606
-/// -- the fake-model tier is plumbing-only): excluded from `passed`/`total` rather
-/// than fabricated into a pass or fail, so a model whose every row is plumbing
-/// still appears here with `total == 0` instead of vanishing from the rollup. The
-/// `--model` sweep (#700) reads this to tell a plumbing-fixture row from a real
-/// subject-under-test row rather than blending both into one pass-rate list.
+/// exception). `total > 0 && completed == 0` on the triggered sha is a model that
+/// never produced one completed turn for this run -- distinct from a real 0%,
+/// which the sweep reports and fails on (#622, #526 AC4, ADR-0068). `plumbing`
+/// counts the rows that ran but were never graded (ADR-0055, #612/#606 -- the
+/// fake-model tier is plumbing-only): excluded from `passed`/`total` rather than
+/// fabricated into a pass or fail, so a plumbing-only model's row still lands with
+/// `total == 0` (#700). `#[serde(default)]` keeps the counts tolerant of an API
+/// that predates them.
 #[derive(Debug, Clone, Deserialize)]
-pub struct EvalModelSummary {
+pub struct EvalModelVersionSummary {
+    pub version: String,
     #[serde(default)]
     pub model: Option<String>,
     pub passed: u64,
     pub total: u64,
-    #[serde(default)]
-    pub cost_usd: Option<f64>,
     #[serde(default)]
     pub completed: u64,
     #[serde(default)]
@@ -193,11 +197,14 @@ pub struct EvalModelSummary {
 }
 
 /// The eval matrix grid (`EvalMatrix` in openapi.json): `GET /evals/matrix`. The
-/// sweep reads `model_summaries` (the model dimension) plus `versions` (the shown
-/// version columns, newest first): a `--model` sweep uses `versions` to scope
-/// readiness to the run it just triggered, so a prior run's rows cannot satisfy
-/// the exit condition on the first poll (issue #608). The per-case `rows` grid is
-/// carried by the endpoint but unused here.
+/// sweep reads `model_version_summaries` (the per-`(version, model)` dimension)
+/// plus `versions` (the shown version columns, newest first): a `--model` sweep
+/// uses `versions` to scope readiness to the run it just triggered, so a prior
+/// run's rows cannot satisfy the exit condition on the first poll (issue #608),
+/// and reads the per-version rollup scoped to the triggered sha so a prior sha's
+/// completions cannot mask the triggered sha's zero-completed outcome (#814). The
+/// window-blended `model_summaries` and the per-case `rows`/`cases`/`models` grid
+/// are carried by the endpoint but unused here.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvalMatrix {
     pub suite: String,
@@ -206,7 +213,7 @@ pub struct EvalMatrix {
     #[serde(default)]
     pub versions: Vec<String>,
     #[serde(default)]
-    pub model_summaries: Vec<EvalModelSummary>,
+    pub model_version_summaries: Vec<EvalModelVersionSummary>,
 }
 
 /// The per-agent budget (`BudgetConfig` in openapi.json): the request and
