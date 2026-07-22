@@ -576,8 +576,29 @@ print("yes" if isinstance(d, dict) and d.get("release_found") is True else "no")
     # No --thread: an existing thread keeps the sandbox and bundle it first
     # booted with, so reusing one could silently test a stale bundle. cluster
     # message manages its own port-forwards and reply stub; never forward by hand.
+    #
+    # AGENTOS_E2E_LISTEN_HOST (optional): the host the in-cluster worker uses to
+    # reach this run's reply stub, forwarded verbatim as `cluster message
+    # --listen-host`. Leave it UNSET for a cluster whose kubeconfig points at a
+    # routable API server (k8scratch, a real cloud cluster): `cluster message`
+    # then auto-detects the local IP the kernel would use to reach that API and
+    # advertises it, and the worker posts its reply there. SET it only where that
+    # auto-detection cannot produce a pod-reachable host -- most importantly a
+    # kind/minikube cluster, whose API server is bound on loopback
+    # (127.0.0.1:<port>), so the auto-detected host is 127.0.0.1, which an
+    # in-cluster pod cannot route to. CI's kind job sets it to the kind Docker
+    # network gateway (the host's address on that bridge, which every node
+    # container can reach), so the pod->host reply leg -- the one reachability
+    # surface this rung exists to gate -- resolves. It is the documented
+    # `--listen-host` operator escape hatch, not a test-only shortcut: the exact
+    # value any loopback-API-server cluster needs.
+    local msg_args=(--json cluster message "$PROMPT")
+    if [[ -n "${AGENTOS_E2E_LISTEN_HOST:-}" ]]; then
+        echo "using --listen-host ${AGENTOS_E2E_LISTEN_HOST} (worker->stub reply host)"
+        msg_args+=(--listen-host "$AGENTOS_E2E_LISTEN_HOST")
+    fi
     local out
-    out="$("$BIN" --json cluster message "$PROMPT" || true)"
+    out="$("$BIN" "${msg_args[@]}" || true)"
     printf '%s\n' "$out"
     assert_finalized_reply "cluster" "$out"
 }

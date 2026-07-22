@@ -52,10 +52,14 @@ spec:
       containers:
         - name: prewarm
           image: {{ include "agentos.image" (dict "repository" $runner.image "tag" $runner.tag "digest" $runner.digest "defaultTag" $.Chart.AppVersion) | quote }}
-          # Always so the roll above re-pulls the pinned ref (and picks up a
-          # moved tag on the rare cluster that still overrides tag back to a
-          # mutable one); on an immutable digest/version pin it is a no-op.
-          imagePullPolicy: Always
+          # Always (the default) so the roll above re-pulls the pinned ref (and
+          # picks up a moved tag on the rare cluster that still overrides tag back
+          # to a mutable one); on an immutable digest/version pin it is a no-op.
+          # Overridable via agentSandbox.runner.prewarm.imagePullPolicy for an
+          # offline cluster whose runner image was imported into the node store
+          # (kind/k3s) rather than published, where `Always` would ErrImagePull a
+          # registry-less ref that is already present locally.
+          imagePullPolicy: {{ $runner.prewarm.imagePullPolicy }}
           command: ["sleep", "infinity"]
           resources:
             {{- toYaml $runner.prewarm.resources | nindent 12 }}

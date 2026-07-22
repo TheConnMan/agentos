@@ -780,6 +780,16 @@ agentSandbox:
     # the point is the pinned image, not the process.
     prewarm:
       enabled: true
+      # Pull policy for the prewarm DaemonSet container. `Always` (the default)
+      # is what refreshes a churned `latest` on every `helm upgrade` roll -- the
+      # whole point of the DaemonSet (see runner-prewarm.yaml). Override to
+      # `Never`/`IfNotPresent` on a cluster whose runner image was imported into
+      # the node store rather than published to a registry (offline dev / kind /
+      # k3s with `kind load` or `ctr images import`): there `Always` would try a
+      # registry pull of a ref that only exists locally and ErrImagePull-loop the
+      # prewarm pods, even though the image is already present. Mirrors the
+      # imagePullPolicy override the per-thread sandbox already exposes above.
+      imagePullPolicy: Always
       resources:
         requests: { cpu: 10m, memory: 16Mi }
         limits: { cpu: 50m, memory: 32Mi }
