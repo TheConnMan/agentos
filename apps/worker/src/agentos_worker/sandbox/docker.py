@@ -51,7 +51,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aci_protocol import BootEnv
-from plugin_format import DEFAULT_MAX_COMPRESSION_RATIO, DEFAULT_MAX_UNCOMPRESSED_BYTES
+from plugin_format import (
+    DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_MEMBERS,
+    DEFAULT_MAX_UNCOMPRESSED_BYTES,
+)
 
 from ..binding import (
     BASE_URL_ENV,
@@ -231,6 +235,7 @@ class DockerSandboxClient:
         environ: Mapping[str, str] | None = None,
         bundle_max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
         bundle_max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+        bundle_max_members: int = DEFAULT_MAX_MEMBERS,
     ) -> None:
         self._image = image
         self._bundles = bundle_store
@@ -245,6 +250,7 @@ class DockerSandboxClient:
         # ``WorkerConfig`` values instead.
         self._bundle_max_uncompressed_bytes = bundle_max_uncompressed_bytes
         self._bundle_max_compression_ratio = bundle_max_compression_ratio
+        self._bundle_max_members = bundle_max_members
         # Container isolation (read-only rootfs, dropped caps, no-new-privileges,
         # bounded resources). Defaults to the K8s-mirroring RunnerHardening; a
         # None means "use the on-by-default set", never "no hardening".
@@ -444,6 +450,7 @@ class DockerSandboxClient:
                 Path(tmp),
                 max_uncompressed_bytes=self._bundle_max_uncompressed_bytes,
                 max_compression_ratio=self._bundle_max_compression_ratio,
+                max_members=self._bundle_max_members,
             )
             # The mount is read-only and the runner is non-root (uid 1000), so the
             # staged bundle must be group/other readable+traversable; mkdtemp

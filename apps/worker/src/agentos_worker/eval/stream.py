@@ -44,6 +44,7 @@ from aci_protocol import (
 )
 from plugin_format import (
     DEFAULT_MAX_COMPRESSION_RATIO,
+    DEFAULT_MAX_MEMBERS,
     DEFAULT_MAX_UNCOMPRESSED_BYTES,
     safe_extract,
 )
@@ -134,6 +135,7 @@ def load_suite_from_bundle(
     *,
     max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
     max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+    max_members: int = DEFAULT_MAX_MEMBERS,
 ) -> EvalSuite | None:
     """Extract the bundle archive and load its evals/cases.json as an EvalSuite,
     named with ``suite_name`` (the payload's authoritative name / Langfuse tag).
@@ -149,6 +151,7 @@ def load_suite_from_bundle(
                 dest,
                 max_uncompressed_bytes=max_uncompressed_bytes,
                 max_compression_ratio=max_compression_ratio,
+                max_members=max_members,
             )
             cases = next((p for p in dest.rglob("cases.json") if p.parent.name == "evals"), None)
             if cases is None:
@@ -329,6 +332,7 @@ class EvalStreamConsumer(StreamConsumer):
             item.suite,
             max_uncompressed_bytes=self._config.bundle_max_uncompressed_bytes,
             max_compression_ratio=self._config.bundle_max_compression_ratio,
+            max_members=self._config.bundle_max_members,
         )
 
     async def _acquire_target(self, item: EvalJob) -> tuple[str | None, str | None, str | None]:

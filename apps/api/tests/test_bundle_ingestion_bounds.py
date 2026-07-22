@@ -167,6 +167,52 @@ def test_zip_bomb_upload_is_refused_with_nothing_written(
     assert version["bundle_ref"] is None
 
 
+def _many_member_tar_gz(count: int, top: str = "demo-plugin") -> bytes:
+    """A tar.gz of ``count`` zero-byte members plus a manifest. gzip shrinks the
+    repetitive headers so the wire size stays tiny (clearing the upload gate),
+    while the declared member count is what the member-count cap must catch."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        manifest = MANIFEST.encode()
+        info = tarfile.TarInfo(f"{top}/.claude-plugin/plugin.json")
+        info.size = len(manifest)
+        tf.addfile(info, io.BytesIO(manifest))
+        for i in range(count):
+            member = tarfile.TarInfo(f"{top}/f{i}")
+            member.size = 0
+            tf.addfile(member)
+    return buf.getvalue()
+
+
+def test_many_member_upload_is_refused_by_member_count_cap(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        deploy_module,
+        "get_settings",
+        lambda: Settings(bundle_max_members=10),
+    )
+    agent_id, version_id = _create_version(client, auth_headers)
+    archive = _many_member_tar_gz(200)
+    assert len(archive) < 4_000  # tiny on the wire; clears the upload size gate
+
+    resp = client.put(
+        f"/agents/{agent_id}/versions/{version_id}/bundle",
+        files={"file": ("many.tar.gz", archive)},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "member-count" in resp.json()["detail"]
+
+    version = client.get(
+        f"/agents/{agent_id}/versions", headers=auth_headers
+    ).json()[0]
+    assert version["bundle_ref"] is None
+
+
 # --- legacy bundle revalidated against the CURRENT caps at deploy time ---
 
 

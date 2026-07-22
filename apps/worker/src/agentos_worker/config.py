@@ -336,6 +336,9 @@ class WorkerConfig(BaseSettings):
     # every substrate.
     bundle_max_uncompressed_bytes: int = 1024 * 1024 * 1024  # 1 GiB
     bundle_max_compression_ratio: float = 100.0
+    # Member-count cap, enforced incrementally during the pre-scan (#815) so a
+    # many-member archive is refused mid-walk. Mirrors the API's Settings field.
+    bundle_max_members: int = 10_000
     # Platform API for POST /evals/report. Defaults match the API's dev stack
     # (README serves it on :8000; its shared dev key is agentos-dev-key).
     api_base_url: str = Field(

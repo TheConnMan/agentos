@@ -24,6 +24,15 @@ the whole archive's byte length rather than a per-entry compressed size because
 tar(.gz) compresses the whole stream, not per-member, so per-member compressed
 sizes do not exist there; using the same denominator for zip keeps one uniform
 rule across both formats.
+
+#815 adds a third bound -- a cap on the **number of members** -- and, crucially,
+enforces both it and the uncompressed-size cap INCREMENTALLY during the pre-scan
+rather than after the full member list is materialized. The tar pre-scan walks
+the stream one header at a time (``for m in tf``) instead of ``getmembers()``,
+which for a ``.tar.gz`` would decompress the entire stream up front; so a small
+archive with a huge member count, or one declaring a single huge member (a
+decompression bomb), is refused mid-walk before hundreds of MiB of TarInfo
+objects are built or the bomb's body is decompressed.
 """
 
 import io
@@ -43,6 +52,36 @@ DEFAULT_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024  # 1 GiB
 # bomb (e.g. a large run of a single repeated byte) routinely clears 1000x.
 # 100x sits well above real bundles and well below a bomb's typical ratio.
 DEFAULT_MAX_COMPRESSION_RATIO = 100.0
+# A cap on the NUMBER of archive members, enforced INCREMENTALLY during the
+# pre-scan so a many-member archive (e.g. a ~5 MiB tar.gz of hundreds of
+# thousands of zero-byte members: total uncompressed 0, so it clears both the
+# size and ratio caps, yet materializing one TarInfo per member costs hundreds
+# of MiB of RSS) is refused mid-walk rather than after the whole member list is
+# built (#815). A real plugin bundle (source, skill docs, small fixtures) has
+# hundreds to low thousands of files; 10_000 sits well above that and far below
+# the hundreds-of-thousands a member-count DoS needs.
+DEFAULT_MAX_MEMBERS = 10_000
+
+# A zip is the one format whose member cap CANNOT be enforced by the in-loop
+# pre-scan alone: `zipfile.ZipFile()` parses the entire central directory and
+# builds one ZipInfo per entry at CONSTRUCTION, before `_prescan_zip` runs, so
+# a many-member zip is fully materialized (hundreds of MiB of RSS for a small
+# on-disk archive) before the loop's cap can fire (#815). The cap must be read
+# from the end-of-central-directory (EOCD) record and enforced BEFORE the
+# ZipFile is opened. These are the fixed-layout constants of that record.
+_ZIP_EOCD_SIGNATURE = b"\x50\x4b\x05\x06"  # "PK\x05\x06"
+_ZIP_EOCD_MIN_SIZE = 22  # fixed part, before any archive comment
+_ZIP_MAX_COMMENT = 0xFFFF  # the comment length field is 16 bits
+# A per-member byte budget for the central directory, used to bound the member
+# count from the EOCD's declared central-directory SIZE. zipfile parses the
+# central directory until it has consumed `size_cd` bytes (it does NOT trust
+# the declared entry count to bound that loop), so an attacker cannot evade the
+# cap by under-declaring the count -- the SIZE is what bounds zipfile's work.
+# A central-directory header is 46 fixed bytes + the file name; 512 leaves
+# generous room for long paths (a legitimate <=10k-file bundle stays well under
+# max_members*512, while a 100k+ zero-byte-member DoS blows past it), so this
+# rejects the DoS without false-rejecting a real bundle near the count cap.
+_ZIP_CENTRAL_DIR_BYTES_PER_MEMBER = 512
 
 
 class UnsupportedArchive(Exception):
@@ -55,6 +94,80 @@ def _reject_unsafe_path(name: str) -> None:
         raise UnsupportedArchive(f"unsafe path in archive: {name}")
 
 
+def _reject_over_size(total_uncompressed: int, max_uncompressed_bytes: int) -> None:
+    """Reject once the running (or final) uncompressed total crosses the cap.
+
+    Shared by the incremental pre-scan check and ``_check_bounds`` so both
+    raise with the identical message: ``total_uncompressed`` is the sum seen so
+    far, which is a lower bound on the full extracted footprint, so tripping it
+    mid-walk is sound (the real total can only be larger)."""
+    if total_uncompressed > max_uncompressed_bytes:
+        raise UnsupportedArchive(
+            f"archive would extract to {total_uncompressed} bytes, over the "
+            f"{max_uncompressed_bytes} byte limit"
+        )
+
+
+def _reject_over_member_count(count: int, max_members: int) -> None:
+    """Reject once the running member count crosses the cap. Called per member
+    during the pre-scan, before the next member is materialized, so a
+    many-member archive is refused mid-walk (#815)."""
+    if count > max_members:
+        raise UnsupportedArchive(
+            f"archive has more than {max_members} members, over the member-count "
+            f"limit"
+        )
+
+
+def _reject_zip_over_member_count(data: bytes, max_members: int) -> None:
+    """Reject a zip whose central directory holds more than ``max_members``
+    entries, read from the EOCD record BEFORE ``zipfile.ZipFile`` parses and
+    materializes the whole central directory (#815).
+
+    Two signals from the EOCD, both bounded reads of the archive's tail:
+
+    - the declared entry count (precise for an honest archive), and
+    - the central-directory byte SIZE, which caps how many entries
+      ``zipfile`` will parse regardless of the (attacker-controllable, possibly
+      under-declared) count -- ``zipfile`` loops until it has consumed that many
+      bytes, so this is the signal that actually bounds its work.
+
+    A ZIP64 sentinel in either field means the true value overflows the
+    16/32-bit field, i.e. is far past any sane cap, so it is rejected. If no
+    consistent EOCD can be located the archive is left for ``zipfile`` to
+    reject with its own ``BadZipFile`` (the in-loop cap remains a backstop).
+    """
+    tail_len = _ZIP_EOCD_MIN_SIZE + _ZIP_MAX_COMMENT
+    tail = data[-tail_len:] if len(data) > tail_len else data
+    # The EOCD is the last record, followed only by its own comment; scan back
+    # for the last signature whose declared comment length lands exactly at
+    # end-of-tail, so a signature that coincidentally appears inside file data
+    # or the comment does not fool the check.
+    start = tail.rfind(_ZIP_EOCD_SIGNATURE)
+    while start != -1:
+        eocd = tail[start:]
+        if len(eocd) >= _ZIP_EOCD_MIN_SIZE:
+            comment_len = int.from_bytes(eocd[20:22], "little")
+            if start + _ZIP_EOCD_MIN_SIZE + comment_len == len(tail):
+                total_entries = int.from_bytes(eocd[10:12], "little")
+                size_cd = int.from_bytes(eocd[12:16], "little")
+                if total_entries == 0xFFFF or size_cd == 0xFFFFFFFF:
+                    raise UnsupportedArchive(
+                        f"archive declares a ZIP64 central directory, over the "
+                        f"{max_members} member-count limit"
+                    )
+                if (
+                    total_entries > max_members
+                    or size_cd > max_members * _ZIP_CENTRAL_DIR_BYTES_PER_MEMBER
+                ):
+                    raise UnsupportedArchive(
+                        f"archive has more than {max_members} members, over the "
+                        f"member-count limit"
+                    )
+                return
+        start = tail.rfind(_ZIP_EOCD_SIGNATURE, 0, start)
+
+
 def _check_bounds(
     total_uncompressed: int,
     archive_bytes: int,
@@ -63,12 +176,10 @@ def _check_bounds(
 ) -> None:
     """Reject an archive whose declared extracted footprint or compression
     ratio exceeds the caps. Called from the pre-scan, before any entry is
-    written, so a violation writes nothing to ``dest``."""
-    if total_uncompressed > max_uncompressed_bytes:
-        raise UnsupportedArchive(
-            f"archive would extract to {total_uncompressed} bytes, over the "
-            f"{max_uncompressed_bytes} byte limit"
-        )
+    written, so a violation writes nothing to ``dest``. The size cap is also
+    enforced incrementally during the pre-scan (see ``_prescan_*``); this
+    re-checks it and adds the ratio check, which needs the final total."""
+    _reject_over_size(total_uncompressed, max_uncompressed_bytes)
     ratio = total_uncompressed / max(archive_bytes, 1)
     if ratio > max_compression_ratio:
         raise UnsupportedArchive(
@@ -78,37 +189,75 @@ def _check_bounds(
         )
 
 
-def _prescan_zip(zf: zipfile.ZipFile) -> int:
-    """Reject unsafe entries; return the total declared uncompressed size."""
+def _prescan_zip(
+    zf: zipfile.ZipFile,
+    *,
+    max_uncompressed_bytes: int,
+    max_members: int,
+) -> int:
+    """Reject unsafe entries; return the total declared uncompressed size.
+
+    The member-count and running-uncompressed-size caps are enforced INSIDE the
+    loop (before the next entry is touched), so a many-member or declared-huge
+    archive is refused mid-walk rather than after the whole list is walked."""
     total = 0
+    count = 0
     for info in zf.infolist():
+        count += 1
+        _reject_over_member_count(count, max_members)
         _reject_unsafe_path(info.filename)
         # A unix symlink is encoded in the high 16 bits of external_attr;
         # non-unix zips leave those bits 0, so this is a no-op for them.
         if stat.S_ISLNK(info.external_attr >> 16):
             raise UnsupportedArchive(f"link entry not allowed in archive: {info.filename}")
         total += info.file_size
+        _reject_over_size(total, max_uncompressed_bytes)
     return total
 
 
-def _prescan_tar(tf: tarfile.TarFile) -> int:
-    """Reject unsafe entries; return the total declared uncompressed size."""
+def _prescan_tar(
+    tf: tarfile.TarFile,
+    *,
+    max_uncompressed_bytes: int,
+    max_members: int,
+) -> int:
+    """Reject unsafe entries; return the total declared uncompressed size.
+
+    Iterates the tar as a STREAM (``for m in tf``, one member header at a time)
+    rather than ``getmembers()``, which for a ``.tar.gz`` would decompress the
+    whole stream to walk every header up front. Combined with the incremental
+    member-count and size caps, a many-member archive stops at the cap and a
+    declared-huge member (a gzip decompression bomb) trips the size cap BEFORE
+    the pre-scan advances past its header and decompresses its body (#815)."""
     total = 0
-    for m in tf.getmembers():
+    count = 0
+    for m in tf:
+        count += 1
+        _reject_over_member_count(count, max_members)
         _reject_unsafe_path(m.name)
         if m.issym() or m.islnk():
             raise UnsupportedArchive(f"link entry not allowed in archive: {m.name}")
         if not (m.isreg() or m.isdir()):
             raise UnsupportedArchive(f"special entry not allowed in archive: {m.name}")
         total += m.size
+        _reject_over_size(total, max_uncompressed_bytes)
     return total
 
 
 def _extract_zip(
-    data: bytes, dest: Path, max_uncompressed_bytes: int, max_compression_ratio: float
+    data: bytes,
+    dest: Path,
+    max_uncompressed_bytes: int,
+    max_compression_ratio: float,
+    max_members: int,
 ) -> None:
+    # Enforce the member cap from the EOCD BEFORE opening the ZipFile, which
+    # would otherwise materialize the entire central directory up front (#815).
+    _reject_zip_over_member_count(data, max_members)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        total = _prescan_zip(zf)
+        total = _prescan_zip(
+            zf, max_uncompressed_bytes=max_uncompressed_bytes, max_members=max_members
+        )
         _check_bounds(total, len(data), max_uncompressed_bytes, max_compression_ratio)
         zf.extractall(dest)
 
@@ -119,8 +268,11 @@ def _extract_tar(
     archive_bytes: int,
     max_uncompressed_bytes: int,
     max_compression_ratio: float,
+    max_members: int,
 ) -> None:
-    total = _prescan_tar(tf)
+    total = _prescan_tar(
+        tf, max_uncompressed_bytes=max_uncompressed_bytes, max_members=max_members
+    )
     _check_bounds(total, archive_bytes, max_uncompressed_bytes, max_compression_ratio)
     # filter="data" (py3.12+) is the traversal/special-file backstop; the
     # pre-scan above is the primary gate and makes "no links at all" explicit.
@@ -133,24 +285,35 @@ def safe_extract(
     *,
     max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
     max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+    max_members: int = DEFAULT_MAX_MEMBERS,
 ) -> None:
     """Extract ``data`` (zip or tar(.gz)) into ``dest``, refusing unsafe entries.
 
     Raises ``UnsupportedArchive`` on an unrecognized archive, any absolute,
-    traversing, link, or special-file entry, or an archive whose total
-    uncompressed size or compression ratio exceeds the given caps -- nothing is
-    written in that case beyond what a rejected member's predecessors may have
-    already unpacked (in practice nothing, since the whole pre-scan, including
-    the bound check, runs before extraction starts).
+    traversing, link, or special-file entry, or an archive whose member count,
+    total uncompressed size, or compression ratio exceeds the given caps --
+    nothing is written in that case beyond what a rejected member's predecessors
+    may have already unpacked (in practice nothing, since the whole pre-scan,
+    including the bound checks, runs before extraction starts). The member-count
+    and uncompressed-size caps are enforced incrementally during the pre-scan,
+    so a many-member or decompression-bomb archive is refused mid-walk rather
+    than after the full member list is materialized.
     """
     if zipfile.is_zipfile(io.BytesIO(data)):
-        _extract_zip(data, dest, max_uncompressed_bytes, max_compression_ratio)
+        _extract_zip(
+            data, dest, max_uncompressed_bytes, max_compression_ratio, max_members
+        )
         return
     for mode in ("r:gz", "r:"):
         try:
             with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
                 _extract_tar(
-                    tf, dest, len(data), max_uncompressed_bytes, max_compression_ratio
+                    tf,
+                    dest,
+                    len(data),
+                    max_uncompressed_bytes,
+                    max_compression_ratio,
+                    max_members,
                 )
             return
         except tarfile.TarError:
@@ -163,6 +326,7 @@ def check_archive_bounds(
     *,
     max_uncompressed_bytes: int = DEFAULT_MAX_UNCOMPRESSED_BYTES,
     max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
+    max_members: int = DEFAULT_MAX_MEMBERS,
 ) -> None:
     """Validate an archive's size/ratio bounds without extracting anything.
 
@@ -180,14 +344,25 @@ def check_archive_bounds(
     the node.
     """
     if zipfile.is_zipfile(io.BytesIO(data)):
+        # Same EOCD pre-check as the extract path: bound the member count before
+        # ZipFile materializes the central directory (#815).
+        _reject_zip_over_member_count(data, max_members)
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            total = _prescan_zip(zf)
+            total = _prescan_zip(
+                zf,
+                max_uncompressed_bytes=max_uncompressed_bytes,
+                max_members=max_members,
+            )
         _check_bounds(total, len(data), max_uncompressed_bytes, max_compression_ratio)
         return
     for mode in ("r:gz", "r:"):
         try:
             with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tf:
-                total = _prescan_tar(tf)
+                total = _prescan_tar(
+                    tf,
+                    max_uncompressed_bytes=max_uncompressed_bytes,
+                    max_members=max_members,
+                )
             _check_bounds(total, len(data), max_uncompressed_bytes, max_compression_ratio)
             return
         except tarfile.TarError:
