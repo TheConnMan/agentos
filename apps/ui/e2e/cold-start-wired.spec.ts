@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 // The cold-start loop (H2 backend-driven shell), stackless via route stubs:
 // empty DB -> onboarding -> create an agent -> it appears in the real Agents
 // list -> honest post-deploy copy -> no fixture agent (deal-desk) anywhere in
-// wired mode. The ?state fixture showroom is asserted still intact separately.
+// wired mode (#542 removed the fixture/demo world entirely).
 
 function json(status: number, body: unknown) {
   return { status, contentType: "application/json", body: JSON.stringify(body) };
@@ -125,12 +125,4 @@ test("no fixture agent (deal-desk) leaks anywhere in wired mode", async ({ page 
     await page.getByRole("navigation").getByText(nav, { exact: true }).click();
     await expect(page.getByText("deal-desk")).toHaveCount(0);
   }
-});
-
-test("the ?state fixture showroom still works unwired", async ({ page }) => {
-  await page.goto("/?state=6");
-  await page.getByRole("navigation").getByText("Overview", { exact: true }).click();
-  // fixture fleet renders with its demo agents
-  await expect(page.getByText("acme-corp fleet · 5 agents")).toBeVisible();
-  await expect(page.getByText("deal-desk").first()).toBeVisible();
 });
