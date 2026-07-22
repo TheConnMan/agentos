@@ -98,8 +98,8 @@ async def get_thread_reset_state(
 ) -> ThreadResetState:
     """Poll whether a forced reset (the POST above) is still outstanding for
     this thread (#735). ``requested`` is True from the moment the POST enqueues
-    the request until the worker's next maintenance tick drains it and releases
-    the sandbox, then False.
+    the request until the worker's maintenance tick drains it AND
+    ``release_thread`` actually completes, then False.
 
     Why this exists: the POST returns as soon as the request is *queued*, but the
     release only happens on the worker's maintenance tick (up to
@@ -111,12 +111,14 @@ async def get_thread_reset_state(
     False before sending the next message; the CLI ``reset-thread`` verb does
     exactly that on the operator's behalf. Mirrors ``GET .../kill``.
 
-    Caveat: the worker removes the request from the drain set (atomic ``SPOP``)
-    immediately *before* it runs the release, so this can read False a few
-    milliseconds ahead of ``release_thread`` finishing the teardown. That
-    residual window is milliseconds against the up-to-30s wait this makes
-    observable; shrinking the tick latency itself (a wake nudge, like the kill
-    switch's pub/sub) is a separate follow-up.
+    The signal flips only after the release LANDS, not at claim time (#812, was
+    #806 incomplete). The worker SPOPs the request to claim it, then moves it
+    into an in-progress set that ``is_pending`` also reads, clearing it only once
+    ``release_thread`` succeeds. So this stays True across the whole release, and
+    a release that raises or times out leaves it True -- the CLI reports the
+    reset as unconfirmed rather than a false "released". Reading only the request
+    set would flip to done the instant the request was SPOPped, before -- and
+    independent of whether -- the sandbox was actually released.
     """
     await _load_agent(session, agent_id)
     return ThreadResetState(requested=await thread_reset_requests.is_pending(thread_key))

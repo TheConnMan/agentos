@@ -69,6 +69,18 @@ _CAP_SCAN_PAGE = 1000
 # plain Valkey SET is enough.
 THREAD_RESET_SET = "agentos:thread-reset-requests"
 
+# Claimed-but-not-yet-released thread-reset requests (#812). The drain SPOPs a
+# request off THREAD_RESET_SET (the atomic claim, so no second replica/tick
+# double-releases it) and immediately SADDs it here; it is SREMoved only after
+# `release_thread` actually completes. The API's `is_pending` reads the UNION of
+# both sets, so the observable "reset still outstanding" signal the CLI polls on
+# flips to done only when the sandbox is truly released -- not at claim time, and
+# NOT at all if the release raises or times out (the key is left here, so the CLI
+# reports the reset as unconfirmed rather than a false success). Mirrored verbatim
+# in `apps/api/src/agentos_api/threadreset.py`, the same cross-service-constant
+# pattern as THREAD_RESET_SET itself.
+THREAD_RESET_INFLIGHT_SET = "agentos:thread-reset-inflight"
+
 # Per-tick time budget for draining THREAD_RESET_SET (#743, follow-up to
 # #739). #739 bounded the courtesy interrupt to 5s per *request*, but the
 # drain itself is a serial `while True` over the whole set, inline in
@@ -247,14 +259,28 @@ class Consumer(StreamConsumer):
         the API and worker are separate deployables that do not import each
         other's package).
 
-        ``SPOP`` (not ``SMEMBERS``) so a request is claimed and removed
-        atomically -- a concurrent tick (this worker's own next iteration, or
-        a second replica) can never double-process or leave a member behind
-        on a partial failure. One failed release (a substrate error) is
-        logged and does not block the rest of the batch; the request is
-        already popped, so a release that fails needs a fresh request to
-        retry -- acceptable for a manual operator action, unlike the queue's
-        own bounded-retry delivery guarantee.
+        ``SPOP`` (not ``SMEMBERS``) so a request is CLAIMED and removed from
+        the request set atomically -- a concurrent tick (this worker's own next
+        iteration, or a second replica) can never double-process it or run
+        ``release_thread`` for the same key twice.
+
+        But the claim must not itself be the "reset done" signal (#812, was #806
+        incomplete): the API's ``is_pending`` -- which the CLI's ``reset-thread``
+        poll gates its "sandbox released" report on -- must stay True until the
+        release ACTUALLY lands, not flip the instant the request is SPOPped
+        (before, and independent of whether, ``release_thread`` succeeds; #777
+        widened that release to several seconds). So a claimed request is moved
+        into ``THREAD_RESET_INFLIGHT_SET`` (which ``is_pending`` also reads) for
+        the duration of the release, and cleared from it only on SUCCESS.
+
+        A release that raises or times out is logged and LEFT in the in-progress
+        set: ``is_pending`` therefore stays True and the CLI reports the reset as
+        unconfirmed rather than a false success (scenario B). It is deliberately
+        NOT re-added to the request set -- re-claiming a permanently-failing
+        release every tick would hot-loop the drain -- so, as before, a release
+        that fails needs a fresh operator request to retry (acceptable for a
+        manual action, unlike the queue's bounded-retry delivery guarantee). One
+        failed release does not block the rest of the batch.
 
         The loop is also bounded by ``_THREAD_RESET_DRAIN_BUDGET_S`` (#743): a
         large operator-populated batch of wedged resets stops draining once
@@ -274,15 +300,27 @@ class Consumer(StreamConsumer):
             # the type checker rather than the client's imprecise overload.
             assert isinstance(raw, (str, bytes)), f"unexpected SPOP shape: {raw!r}"
             thread_key = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            # Mark the claim in-progress BEFORE releasing, so `is_pending` (the
+            # union of the request and in-progress sets) stays True for the whole
+            # release rather than flipping at claim time (#812).
+            await self._valkey.sadd(THREAD_RESET_INFLIGHT_SET, thread_key)
             try:
                 released = await self._kernel.release_thread(thread_key)
+            except Exception:
+                # Release failed/timed out: leave the key in the in-progress set
+                # so `is_pending` stays True and the CLI does not report a false
+                # "released" (#812). Not re-queued -- a fresh request re-drives it.
+                logger.exception("thread reset failed for %s", thread_key)
+            else:
+                # Release landed: clear the in-progress marker so `is_pending`
+                # flips to done -- only now, after the teardown actually
+                # completed.
+                await self._valkey.srem(THREAD_RESET_INFLIGHT_SET, thread_key)
                 logger.info(
                     "thread reset: released sandbox for %s (route existed: %s)",
                     thread_key,
                     released,
                 )
-            except Exception:
-                logger.exception("thread reset failed for %s", thread_key)
             if time.monotonic() - start >= _THREAD_RESET_DRAIN_BUDGET_S:
                 logger.warning(
                     "thread reset drain: per-tick budget (%.0fs) spent; "

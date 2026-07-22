@@ -152,6 +152,48 @@ def test_thread_reset_state_is_pollable_until_the_worker_drains(
         valkey.srem(THREAD_RESET_SET, thread)
 
 
+def test_thread_reset_state_stays_pending_while_release_is_in_progress_or_failed(
+    client: Any,
+    auth_headers: dict[str, str],
+    clean_db: None,
+    valkey: redis.Redis,
+) -> None:
+    """#812 (was #806 incomplete): the worker claims a reset off THREAD_RESET_SET
+    (atomic SPOP) and moves it into THREAD_RESET_INFLIGHT_SET for the duration of
+    ``release_thread``, clearing it only on success. While the request sits in the
+    in-progress set -- the release still running, OR failed/timed out -- GET
+    .../reset must still report ``requested: True`` (``is_pending`` reads the union
+    of both sets), so the CLI does not report a false ``released: true`` before or
+    independent of the actual release. Real Valkey, real SADD/SREM, no mocking."""
+    from agentos_api.threadreset import THREAD_RESET_INFLIGHT_SET, THREAD_RESET_SET
+
+    agent_id = _make_agent(client, auth_headers)
+    thread = "t-reset-inflight-1"
+    url = f"/agents/{agent_id}/threads/{thread}/reset"
+    valkey.srem(THREAD_RESET_SET, thread)
+    valkey.srem(THREAD_RESET_INFLIGHT_SET, thread)
+    try:
+        # Simulate the worker having SPOPped the request (so it is gone from the
+        # request set) and moved it into the in-progress set: the release is
+        # underway, or it raised/timed out and was left here.
+        valkey.sadd(THREAD_RESET_INFLIGHT_SET, thread)
+        assert not valkey.sismember(THREAD_RESET_SET, thread)
+
+        inflight = client.get(url, headers=auth_headers)
+        assert inflight.status_code == 200
+        assert inflight.json() == {"requested": True}  # not a false "released"
+
+        # Only once the worker confirms the release (SREM from the in-progress
+        # set) does the poll read False -- the signal the CLI reports success on.
+        valkey.srem(THREAD_RESET_INFLIGHT_SET, thread)
+        done = client.get(url, headers=auth_headers)
+        assert done.status_code == 200
+        assert done.json() == {"requested": False}
+    finally:
+        valkey.srem(THREAD_RESET_SET, thread)
+        valkey.srem(THREAD_RESET_INFLIGHT_SET, thread)
+
+
 def test_reset_thread_requires_a_real_agent(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
