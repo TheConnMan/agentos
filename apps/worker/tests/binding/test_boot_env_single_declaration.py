@@ -97,6 +97,7 @@ _NON_BOOT_ALLOWLIST: frozenset[str] = frozenset(
         "AGENTOS_MAX_DELIVERY",
         "AGENTOS_SLACK_NO_EDIT_STREAMING",
         "AGENTOS_EVAL_CONSUMER_GROUP",
+        "AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS",
         "AGENTOS_EVAL_STREAM",
         "AGENTOS_EVAL_STREAM_MAX_AGE_HOURS",
         # The eval harness's own knobs, read by the eval entrypoint, not injected.

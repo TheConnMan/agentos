@@ -949,6 +949,89 @@ def test_eval_fake_model_install_refuses_to_label_a_model_never_called(
     assert consumer._eval_model(remote) == "claude-y"
 
 
+class _ConcurrencyProbeSubstrate:
+    """A substrate whose ``claim`` records how many claims are in flight at once.
+
+    ``claim`` is the sync substrate call the eval consumer runs via
+    ``asyncio.to_thread`` (real OS threads), so the probe uses a threading lock to
+    track the live count and the peak the semaphore ever allowed. Each claim holds
+    for a beat so overlapping callers actually contend for the slot -- without the
+    hold the calls could serialize by luck and hide an unbounded fan-out.
+    """
+
+    def __init__(self, hold_s: float = 0.05) -> None:
+        import threading
+
+        self._hold_s = hold_s
+        self._lock = threading.Lock()
+        self._live = 0
+        self.peak = 0
+        self.claims = 0
+
+    def claim(self, _key: str, *, env: dict[str, str] | None = None) -> _FakeHandle:
+        with self._lock:
+            self._live += 1
+            self.claims += 1
+            self.peak = max(self.peak, self._live)
+        time.sleep(self._hold_s)
+        with self._lock:
+            self._live -= 1
+        return _FakeHandle(base_url="http://sandbox.local:8080", token="t")
+
+    def release(self, _key: str) -> None:  # pragma: no cover - unused here
+        pass
+
+
+def test_eval_claim_creation_is_bounded_to_one_by_default() -> None:
+    """#709: the eval consumer creates SandboxClaims one at a time by default, so a
+    single-node cluster is not flooded with concurrent binds (the 504/never-bind
+    storm). Firing several provisioning calls at once must never overlap more than
+    the configured bound -- here the default of 1 -- inside ``_acquire_target``."""
+    substrate = _ConcurrencyProbeSubstrate()
+    consumer = _consumer(_cfg("s", "g"), substrate=substrate, repo_lookup=_StubRepo())
+    items = [
+        _item(suite="s", sha=f"sha{i}", bundle_ref="bundles/x.zip", target_url=None)
+        for i in range(5)
+    ]
+
+    async def go() -> None:
+        await asyncio.gather(*(consumer._acquire_target(item) for item in items))
+
+    asyncio.run(go())
+
+    assert substrate.claims == len(items)  # every job did provision
+    assert substrate.peak == 1, (
+        f"claim creation must be sequential at the default bound; saw {substrate.peak} at once"
+    )
+
+
+def test_eval_claim_creation_bound_admits_configured_parallelism() -> None:
+    """The bound is a ceiling, not a hard-coded 1: raising
+    ``eval_max_concurrent_claims`` admits that many concurrent binds (a multi-node
+    cluster opts into real parallelism) while still capping the fan-out below the
+    number of jobs in flight."""
+    substrate = _ConcurrencyProbeSubstrate()
+    consumer = _consumer(
+        _cfg("s", "g", eval_max_concurrent_claims=3),
+        substrate=substrate,
+        repo_lookup=_StubRepo(),
+    )
+    items = [
+        _item(suite="s", sha=f"sha{i}", bundle_ref="bundles/x.zip", target_url=None)
+        for i in range(8)
+    ]
+
+    async def go() -> None:
+        await asyncio.gather(*(consumer._acquire_target(item) for item in items))
+
+    asyncio.run(go())
+
+    assert substrate.claims == len(items)
+    assert 1 < substrate.peak <= 3, (
+        f"bound of 3 must admit up to 3 concurrent binds and no more; saw {substrate.peak}"
+    )
+
+
 def _consumer(cfg: WorkerConfig, **wiring: Any) -> EvalStreamConsumer:
     deps: dict[str, Any] = {
         "redis": None,

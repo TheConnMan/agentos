@@ -308,6 +308,21 @@ class WorkerConfig(BaseSettings):
         validation_alias="AGENTOS_EVAL_CONSUMER_GROUP",
     )
     eval_consumer_name: str = Field(default_factory=_default_consumer_name)
+    # Upper bound on eval SandboxClaims being created/bound CONCURRENTLY in this
+    # worker (#709). Eval jobs are handled by two coroutines racing under one
+    # gather -- the blocking read loop and the crash-recovery reclaim loop -- and
+    # each provisions its own sandbox, so without a bound they can create claims
+    # faster than a small cluster binds them. On a single-node k3s cluster that
+    # storm is the observed failure: claims never bind within claim_timeout and
+    # claim reads return 504. The default of 1 is single-node-safe (a second claim
+    # is not created until the first has bound), giving sequential-with-backpressure
+    # claim creation; a multi-node cluster raises this to admit real parallelism.
+    # The bound covers only the create/bind phase (the flood source), not the whole
+    # suite run: once a claim binds the slot frees so the next claim can begin while
+    # the bound sandbox runs its cases. Floor 1 -- 0 would create no claims at all.
+    eval_max_concurrent_claims: int = Field(
+        default=1, ge=1, validation_alias="AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS"
+    )
     # On first creation the eval group starts at (now - this window) rather than
     # the stream head, so a backlog of ancient entries is not replayed en masse
     # on boot. Recent entries (younger than the window) are still delivered, so a

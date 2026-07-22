@@ -184,6 +184,15 @@ class EvalStreamConsumer(StreamConsumer):
         self._reporter = reporter
         self._recorder = recorder
         self._repo_lookup = repo_lookup
+        # Bound concurrent in-flight SandboxClaim creation (#709). The read loop
+        # and the reclaim loop both drive _handle -> _acquire_target under one
+        # gather, so two claims can be created at once even though each loop is
+        # itself sequential; unbounded that races a small cluster's binder and
+        # produces the single-node 504/never-bind storm. This semaphore caps how
+        # many claims are being created/bound at the same time (default 1: the
+        # next claim waits until the current one binds -- sequential-with-
+        # backpressure), so a suite completes on one node instead of flooding it.
+        self._claim_slots = asyncio.Semaphore(config.eval_max_concurrent_claims)
         # The reclaim/dead-letter knobs the shared base machinery reads; handler
         # is the bound self._handle. The eval-specific dead_letter_log/logger stay
         # eval-specific (logger agentos_worker.eval.stream) so eval dead-letters
@@ -344,7 +353,15 @@ class EvalStreamConsumer(StreamConsumer):
         try:
             connector_secrets = await self._repo_lookup.secrets_for(item.agent_id)
             env = self._boot_env(item, connector_secrets)
-            handle = await asyncio.to_thread(self._substrate.claim, release_key, env=env)
+            # Hold a claim slot only across creation/binding (the flood source),
+            # not the whole suite run: the semaphore is released the moment the
+            # claim binds, so the bound sandbox runs its cases while the next
+            # claim may begin. The secrets/env prep above is cheap and does not
+            # touch the cluster, so it stays outside the slot.
+            async with self._claim_slots:
+                handle = await asyncio.to_thread(
+                    self._substrate.claim, release_key, env=env
+                )
         except SandboxError:
             logger.exception("could not provision a runner for eval %s", item.sha)
             return None, None, None
