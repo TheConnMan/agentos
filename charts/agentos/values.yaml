@@ -1109,9 +1109,11 @@ security:
 # capacity another tenant's sandboxes depend on. See
 # docs/adr/0059-sandbox-is-a-bounded-resource-envelope.md.
 # ---------------------------------------------------------------------------
-# ResourceQuota: an aggregate cpu/memory/ephemeral-storage + sandbox pod-count
-# ceiling for the tenant namespace, so a tenant cannot exceed its allocation
-# regardless of how many sandboxes it claims.
+# ResourceQuota: an aggregate cpu/memory + sandbox pod-count ceiling for the
+# tenant namespace, so a tenant cannot exceed its allocation regardless of how
+# many sandboxes it claims. (No ephemeral-storage line: a PriorityClass-scoped
+# quota may not constrain it -- see tenant-resourcequota.yaml; the per-pod
+# ephemeral limit x this pod-count cap is the effective disk ceiling.)
 resourceQuota:
   enabled: true
   # The PriorityClass name this quota's scopeSelector keys on, so the quota
@@ -1129,10 +1131,8 @@ resourceQuota:
   hard:
     requestsCpu: "4"
     requestsMemory: 8Gi
-    requestsEphemeralStorage: 20Gi
     limitsCpu: "8"
     limitsMemory: 16Gi
-    limitsEphemeralStorage: 40Gi
     # Aggregate sandbox pod count, scoped by the same scopeSelector -- closes
     # the "claim more, smaller sandboxes" route around the limits above.
     sandboxPodCount: "50"

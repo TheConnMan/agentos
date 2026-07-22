@@ -190,9 +190,21 @@ default_quota="$(render_file default tenant-resourcequota.yaml)"
 check quota-scope "$default_quota" agentos-sandbox
 echo "  ok: scopeSelector keys on PriorityClass=agentos-sandbox"
 check quota-hard "$default_quota" \
-  requests.cpu=4 requests.memory=8Gi requests.ephemeral-storage=20Gi \
-  limits.cpu=8 limits.memory=16Gi limits.ephemeral-storage=40Gi pods=50
+  requests.cpu=4 requests.memory=8Gi \
+  limits.cpu=8 limits.memory=16Gi pods=50
 echo "  ok: published hard ceiling values render as documented"
+
+# Regression guard (the kind cluster rung, #692, is the only place a real apply
+# runs; this catches the class cheaply at render time): a PriorityClass-scoped
+# ResourceQuota may ONLY constrain cpu/memory/pods. Listing ephemeral-storage
+# (or any other resource) makes the API server reject the object at admission
+# with "unsupported scope applied to resource" -- invisible to `helm template`.
+# Ignore comment lines (the template explains the omission in a `#` comment that
+# renders into the output); flag only a real resource KEY.
+if grep -vE '^[[:space:]]*#' "$default_quota" | grep -q 'ephemeral-storage'; then
+  fail "scoped ResourceQuota lists ephemeral-storage -- a PriorityClass scope forbids it; the API server will reject the install. Constrain per-pod disk via the LimitRange/pod limits instead."
+fi
+echo "  ok: scoped quota constrains only cpu/memory/pods (no admission-invalid resource)"
 
 echo "=== Assertion 2: default install's LimitRange carries the published defaults, no min/max ==="
 # Reuses assertion 1's "default" render (--output-dir renders every template in
