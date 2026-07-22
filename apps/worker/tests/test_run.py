@@ -183,7 +183,7 @@ def test_main_installs_dead_letter_alerting(
                 "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
                 "1730000000000-0",
                 2,
-                "max delivery exceeded",
+                "max-delivery-exceeded",
                 "agentos:runs:dead",
             )
 

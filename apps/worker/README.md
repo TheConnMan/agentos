@@ -244,7 +244,7 @@ why:
 |---|---|
 | `dl_original_id` | the entry's id on the source stream |
 | `dl_delivery_count` | deliveries made before it was given up on |
-| `dl_reason` | `max delivery exceeded`, or `unparseable` |
+| `dl_reason` | `max-delivery-exceeded`, or `unparseable` |
 | `dl_dead_lettered_at` | UTC ISO-8601 timestamp |
 
 The `dl_` prefix keeps the metadata namespaced, but the unparseable path stores

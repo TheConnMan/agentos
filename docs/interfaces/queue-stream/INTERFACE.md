@@ -51,18 +51,18 @@ A second broker must honor the stream key, the payload encoding, and the Stream 
 - **Consumer verbs** — the worker reads with `xreadgroup` over a consumer group
   (`apps/worker/src/agentos_worker/consumer.py::Consumer._read_loop`), rebuilds the model at
   `apps/worker/src/agentos_worker/consumer.py::Consumer._handle`, and acknowledges with `xack`
-  (`apps/worker/src/agentos_worker/consumer.py::Consumer._ack`). The group is
+  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._ack`). The group is
   `"agentos-workers"` (`WorkerConfig.consumer_group`, `apps/worker/src/agentos_worker/config.py::WorkerConfig`).
 - **Delivery cap and dead-letter graveyard** (#505, ADR-0039) — an entry already
   delivered `WorkerConfig.max_delivery` times (default 5, floor 2) is dead-lettered
-  instead of reclaimed again. `Consumer._dead_letter_over_cap`
-  (`apps/worker/src/agentos_worker/consumer.py::Consumer._dead_letter_over_cap`) reads
+  instead of reclaimed again. `StreamConsumer._dead_letter_over_cap`
+  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._dead_letter_over_cap`) reads
   the pending list's delivery counts with `xpending_range` before the reclaim's
   `xautoclaim` bumps them; an over-cap entry's original fields are fetched with
-  `xrange` in `Consumer._dead_letter_over_cap_entry`
-  (`apps/worker/src/agentos_worker/consumer.py::Consumer._dead_letter_over_cap_entry`)
-  and moved with `xadd` in `Consumer._dead_letter`
-  (`apps/worker/src/agentos_worker/consumer.py::Consumer._dead_letter`), then acked off
+  `xrange` in `StreamConsumer._entry_fields`
+  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._entry_fields`)
+  and moved with `xadd` in `StreamConsumer._dead_letter`
+  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._dead_letter`), then acked off
   the group. The target stream is `WorkerConfig.dead_letter_stream`
   (`apps/worker/src/agentos_worker/config.py::WorkerConfig`), defaulting to
   `"<stream>:dead"`.

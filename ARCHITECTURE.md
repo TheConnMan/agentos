@@ -278,7 +278,7 @@ Each has an integration test under `apps/worker/tests/`:
 1. **One live session per thread.** A Valkey thread lock (`SET NX PX`) is the routing CAS ([`apps/worker/src/agentos_worker/threadlock.py::ThreadLock`](apps/worker/src/agentos_worker/threadlock.py)).
 2. **The finish race.** A follow-up during a live turn is a steer; if the turn finished first, the runner returns 409 and the kernel opens a fresh turn on the same idle sandbox ([`apps/worker/src/agentos_worker/kernel.py::Kernel._route_and_start`](apps/worker/src/agentos_worker/kernel.py)).
 3. **No auto-retry after a side-effectful failure.** If a prior attempt flagged a side effect, the kernel escalates to a human instead of retrying ([`apps/worker/src/agentos_worker/kernel.py::Kernel.process_event`](apps/worker/src/agentos_worker/kernel.py)).
-4. **Crash recovery.** Pending stream entries are reclaimed with `XAUTOCLAIM` ([`apps/worker/src/agentos_worker/consumer.py::Consumer._reclaim_once`](apps/worker/src/agentos_worker/consumer.py)); the runs consumer group is created at `$` so a cold worker never replays ancient backlog ([`apps/worker/src/agentos_worker/consumer.py::Consumer.ensure_group`](apps/worker/src/agentos_worker/consumer.py)).
+4. **Crash recovery.** Pending stream entries are reclaimed with `XAUTOCLAIM` ([`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._reclaim_once`](apps/worker/src/agentos_worker/stream_consumer.py)); the runs consumer group is created at `$` so a cold worker never replays ancient backlog ([`apps/worker/src/agentos_worker/consumer.py::Consumer.ensure_group`](apps/worker/src/agentos_worker/consumer.py)).
 
 **Kill switch.** A Valkey pub/sub channel `agentos:kill-events` plus per-agent
 kill keys gate and interrupt live runs for a killed agent
