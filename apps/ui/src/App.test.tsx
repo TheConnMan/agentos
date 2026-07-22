@@ -1,60 +1,78 @@
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { StoreProvider } from "./state/store";
 import { WiredProvider } from "./state/wired";
-import type { FixtureLevel } from "./state/types";
+import { getAgents, getConfig, listDeployments, type AgentOut } from "./api/client";
 
-// These tests exercise the fixture shell (no ?api=1), so WiredProvider is inert
-// here — it just satisfies the useWired() contract the shared chrome now uses.
-function renderAt(level: FixtureLevel) {
+// The console is always backed by the live API, so App renders the wired shell.
+// We mock the data layer so the tree resolves deterministically without a backend.
+vi.mock("./api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api/client")>();
+  return {
+    ...actual,
+    getAgents: vi.fn(),
+    getConfig: vi.fn(),
+    listDeployments: vi.fn(),
+  };
+});
+
+const AGENT: AgentOut = {
+  id: "a1",
+  name: "deal-desk",
+  slack_channel: "C0123ABCD",
+  model: null,
+  created_at: "2026-07-01T00:00:00Z",
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getConfig).mockResolvedValue({ org_name: "Globex Corporation" });
+  vi.mocked(listDeployments).mockResolvedValue([]);
+});
+
+function renderApp() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <StoreProvider level={level}>
-      <WiredProvider>
-        <App />
-      </WiredProvider>
-    </StoreProvider>,
+    <QueryClientProvider client={client}>
+      <StoreProvider>
+        <WiredProvider>
+          <App />
+        </WiredProvider>
+      </StoreProvider>
+    </QueryClientProvider>,
   );
 }
 
-describe("App shell", () => {
+describe("App shell (wired)", () => {
   it("renders the seven nav items", () => {
-    renderAt(6);
+    vi.mocked(getAgents).mockResolvedValue([]);
+    renderApp();
     const nav = screen.getByRole("navigation");
     for (const label of ["Overview", "Agents", "Evals", "Observability", "Versions", "Connections", "Settings"]) {
       expect(within(nav).getByText(label)).toBeInTheDocument();
     }
   });
 
-  it("shows the setup checklist for a fresh account", () => {
-    renderAt(1);
-    expect(screen.getByText("Welcome to AgentOS")).toBeInTheDocument();
-    expect(screen.getByText("Connect Slack")).toBeInTheDocument();
+  it("shows onboarding for a fresh workspace with no agents", async () => {
+    vi.mocked(getAgents).mockResolvedValue([]);
+    renderApp();
+    expect(await screen.findByText("Welcome to AgentOS")).toBeInTheDocument();
   });
 
-  it("renders the fleet dashboard at level 6", () => {
-    renderAt(6);
-    expect(screen.getByText("acme-corp fleet · 5 agents")).toBeInTheDocument();
-    expect(screen.getByText("rev-analytics")).toBeInTheDocument();
+  it("shows the configured workspace name from the live config", async () => {
+    vi.mocked(getAgents).mockResolvedValue([AGENT]);
+    renderApp();
+    await waitFor(() => expect(screen.getAllByText("Globex Corporation").length).toBeGreaterThanOrEqual(1));
   });
 
-  it("navigates to Evals and shows the matrix regression story", async () => {
+  it("navigates to Agents and prompts to create the first agent", async () => {
+    vi.mocked(getAgents).mockResolvedValue([]);
     const user = userEvent.setup();
-    renderAt(4);
-    await user.click(within(screen.getByRole("navigation")).getByText("Evals"));
-    await user.click(screen.getByText("Matrix"));
-    await user.click(screen.getByRole("button", { name: "Run matrix" }));
-    expect(screen.getByText(/2 regressions introduced after 4f2c91a/)).toBeInTheDocument();
-  });
-
-  it("completes the create-agent deploy flow into the success panel", async () => {
-    const user = userEvent.setup();
-    renderAt(2);
+    renderApp();
     await user.click(within(screen.getByRole("navigation")).getByText("Agents"));
-    await user.click(screen.getByRole("button", { name: /New agent/ }));
-    await user.click(screen.getByRole("button", { name: "Deploy" }));
-    // deploy resolves after 700ms; assert the success banner appears
-    expect(await screen.findByText(/is live in #revenue-ops/, undefined, { timeout: 2000 })).toBeInTheDocument();
+    expect(await screen.findByText("Create your first agent")).toBeInTheDocument();
   });
 });

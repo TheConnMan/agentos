@@ -7,80 +7,36 @@ import {
   type Dispatch,
   type ReactNode,
 } from "react";
-import type { Action, AppState, FixtureLevel } from "./types";
-import { isWired } from "../api/config";
+import type { Action, AppState } from "./types";
 
-const max = (a: FixtureLevel, b: FixtureLevel): FixtureLevel =>
-  (a > b ? a : b) as FixtureLevel;
-
-export function initialState(level: FixtureLevel): AppState {
+export function initialState(): AppState {
   return {
-    level,
     nav: "overview",
     env: "prod",
     obsTab: "traces",
-    evalTab: "suite",
-    metricRange: "6h",
     modal: null,
     toast: null,
-    tokenRevealed: false,
-    provReveal: null,
     confetti: false,
-    confettiDone: level >= 3,
+    confettiDone: false,
     deploying: false,
-    agentDeployed: level >= 3,
-    pluginInstalled: level >= 5,
-    pluginUploaded: false,
-    matrixRun: false,
-    extraEval: false,
     agentDetail: null,
     traceOpen: null,
     tracesAgentId: null,
     logsPod: null,
-    promoteForm: false,
-    defaultModel: "claude-sonnet-5",
-    driftHover: null,
-    slackTyping: false,
-    showSuccess: false,
     deployIssues: null,
     deployError: null,
     promotedEvalCases: [],
   };
 }
 
-// Reset shared to setLevel: mirrors the canon's setLevel() which snaps every
-// transient sub-view back to its default when the fixture level changes.
-function levelReset(s: AppState, level: FixtureLevel): AppState {
-  return {
-    ...s,
-    level,
-    nav: "overview",
-    modal: null,
-    agentDetail: null,
-    matrixRun: false,
-    traceOpen: null,
-    tracesAgentId: null,
-    logsPod: null,
-    obsTab: "traces",
-    promoteForm: false,
-    agentDeployed: level >= 3,
-    pluginInstalled: level >= 5,
-    extraEval: false,
-    showSuccess: false,
-    env: level < 4 ? "prod" : s.env,
-  };
-}
-
 export function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
-    case "setLevel":
-      return levelReset(s, a.level);
     case "go":
       return { ...s, nav: a.nav, agentDetail: null, traceOpen: null, tracesAgentId: null, logsPod: null };
     case "openModal":
       return { ...s, modal: a.modal };
     case "closeModal":
-      return { ...s, modal: null, pluginUploaded: false, deployIssues: null, deployError: null };
+      return { ...s, modal: null, deployIssues: null, deployError: null };
     case "toast":
       return { ...s, toast: a.message };
     case "addPromotedEvalCase":
@@ -99,8 +55,7 @@ export function reducer(s: AppState, a: Action): AppState {
       // tab directly, so its prefill survives; a subsequent user click drops it).
       return { ...s, obsTab: a.tab, traceOpen: null, tracesAgentId: null, logsPod: null };
     case "viewTraces":
-      // Jump to the Traces tab pre-filtered to one agent (wired mode). The
-      // fixture Traces list ignores the filter; the wired list applies it.
+      // Jump to the Traces tab pre-filtered to one agent.
       return {
         ...s,
         nav: "observability",
@@ -109,14 +64,10 @@ export function reducer(s: AppState, a: Action): AppState {
         traceOpen: null,
         tracesAgentId: a.agentId,
       };
-    case "setEvalTab":
-      return { ...s, evalTab: a.tab };
-    case "setMetricRange":
-      return { ...s, metricRange: a.range };
     case "openTrace":
       return { ...s, traceOpen: a.id };
     case "closeTrace":
-      return { ...s, traceOpen: null, promoteForm: false };
+      return { ...s, traceOpen: null };
     case "openLogs":
       // Jump from a trace's detail into the Logs tab preselected to the serving
       // sandbox. The sandbox id doubles as the pod-name prefill (RealLogs notes
@@ -136,27 +87,10 @@ export function reducer(s: AppState, a: Action): AppState {
       return { ...s, agentDetail: null, nav: "overview" };
     case "deployStart":
       return { ...s, deploying: true, deployIssues: null, deployError: null };
-    case "deployDone": {
-      const fire = !s.confettiDone;
-      return {
-        ...s,
-        deploying: false,
-        modal: null,
-        pluginUploaded: false,
-        nav: "overview",
-        level: max(s.level, 3),
-        agentDeployed: true,
-        showSuccess: true,
-        confetti: fire,
-        confettiDone: true,
-        deployIssues: null,
-        deployError: null,
-      };
-    }
     case "confettiFire":
       // Backend-driven deploy success: close the modal, land on Overview, and
-      // fire confetti once, WITHOUT the fixture level/showSuccess machinery (the
-      // wired shell renders its own honest post-deploy panel from real state).
+      // fire confetti once. The wired shell renders its own honest post-deploy
+      // panel from real state.
       return {
         ...s,
         modal: null,
@@ -174,54 +108,8 @@ export function reducer(s: AppState, a: Action): AppState {
       return { ...s, deploying: false, deployError: a.message, deployIssues: null };
     case "clearDeployErrors":
       return s.deployIssues || s.deployError ? { ...s, deployIssues: null, deployError: null } : s;
-    case "allowSlack":
-      return {
-        ...s,
-        modal: null,
-        level: max(s.level, 2),
-        toast: "Slack connected",
-      };
-    case "pluginUpload":
-      return { ...s, pluginUploaded: true };
-    case "installPlugin":
-      return {
-        ...s,
-        modal: null,
-        level: max(s.level, 5),
-        pluginInstalled: true,
-        pluginUploaded: false,
-        nav: "agents",
-        toast: "Plugin installed · sre-triage",
-      };
-    case "promoteFormOpen":
-      return { ...s, promoteForm: true };
-    case "promoteEval":
-      return { ...s, extraEval: true, promoteForm: false, toast: "Eval suite: 36 → 37 cases" };
-    case "runMatrix":
-      return { ...s, matrixRun: true };
-    case "reconfigureMatrix":
-      return { ...s, matrixRun: false };
-    case "revealToken":
-      return { ...s, tokenRevealed: a.value };
-    case "revealProvider":
-      return { ...s, provReveal: a.id };
-    case "setDefaultModel":
-      return { ...s, defaultModel: a.model };
-    case "setDriftHover":
-      return { ...s, driftHover: a.label };
-    case "slackTyping":
-      return { ...s, slackTyping: a.on };
     case "confettiDone":
       return { ...s, confetti: false };
-    case "connectGitHub":
-      return {
-        ...s,
-        level: max(s.level, 4),
-        agentDeployed: true,
-        toast: "GitHub connected · CI evals enabled",
-      };
-    case "enterAgentOS":
-      return { ...s, level: max(s.level, 3), agentDeployed: true, nav: "overview", showSuccess: true };
     default:
       return s;
   }
@@ -230,31 +118,13 @@ export function reducer(s: AppState, a: Action): AppState {
 interface Store {
   state: AppState;
   dispatch: Dispatch<Action>;
-  slackOn: boolean;
-  ghOn: boolean;
   envDev: boolean;
 }
 
 const StoreContext = createContext<Store | null>(null);
 
-export function readLevelFromUrl(search: string): FixtureLevel {
-  const p = new URLSearchParams(search);
-  const raw = Number(p.get("state"));
-  if (raw >= 1 && raw <= 6) return raw as FixtureLevel;
-  return 1;
-}
-
-export function StoreProvider({
-  children,
-  level,
-}: {
-  children: ReactNode;
-  level?: FixtureLevel;
-}) {
-  const start =
-    level ??
-    (typeof window !== "undefined" ? readLevelFromUrl(window.location.search) : 1);
-  const [state, dispatch] = useReducer(reducer, start, initialState);
+export function StoreProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(reducer, undefined, initialState);
 
   // Auto-clear toasts after 2.5s, matching the canon's toast lifetime.
   useEffect(() => {
@@ -263,19 +133,14 @@ export function StoreProvider({
     return () => clearTimeout(id);
   }, [state.toast]);
 
-  const value = useMemo<Store>(() => {
-    // Environments are real in wired mode; in the fixture demo they unlock at
-    // level 4 (GitHub connected). Keep the reducer's env clamp untouched — this
-    // is only the derived enablement the chrome reads.
-    const envAvailable = isWired() || state.level >= 4;
-    return {
+  const value = useMemo<Store>(
+    () => ({
       state,
       dispatch,
-      slackOn: state.level >= 2,
-      ghOn: envAvailable,
-      envDev: envAvailable && state.env === "dev",
-    };
-  }, [state]);
+      envDev: state.env === "dev",
+    }),
+    [state],
+  );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

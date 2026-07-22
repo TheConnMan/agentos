@@ -4,7 +4,6 @@ import { Button, CliHint, cliCommand } from "../../primitives";
 import { SkillEditor } from "../SkillEditor";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
-import { isWired } from "../../api/config";
 import { createAgent, createVersion, uploadBundle, BundleValidationError } from "../../api/client";
 import { buildBundleZip } from "../../api/bundle";
 
@@ -56,19 +55,13 @@ export function NewAgentModal() {
   const modelValue = model.trim();
   const channelValue = channel.trim();
   const channelLooksOff = channelValue !== "" && !CHANNEL_ID_RE.test(channelValue);
-  // A blank channel can never match a Slack mention, so wired deploy requires one.
+  // A blank channel can never match a Slack mention, so deploy requires one.
   // This is distinct from the format warning above, which never blocks: arbitrary
   // non-ID strings (the CLI's synthetic channels) still deploy — empty does not.
-  const channelBlank = isWired() && channelValue === "";
+  const channelBlank = channelValue === "";
 
   const deploy = async () => {
     if (state.deploying) return;
-    if (!isWired()) {
-      // Fixture path: staged skeleton then success, no backend.
-      dispatch({ type: "deployStart" });
-      setTimeout(() => dispatch({ type: "deployDone" }), 700);
-      return;
-    }
     if (channelValue === "") return;
     dispatch({ type: "deployStart" });
     try {

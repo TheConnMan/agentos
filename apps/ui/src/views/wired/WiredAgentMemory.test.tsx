@@ -42,7 +42,7 @@ const ENTRIES: MemoryEntry[] = [
 
 function renderPanel() {
   return render(
-    <StoreProvider level={3}>
+    <StoreProvider>
       <WiredAgentMemory agentId="a1" />
     </StoreProvider>,
   );

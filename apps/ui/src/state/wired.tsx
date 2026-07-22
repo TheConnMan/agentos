@@ -1,14 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getAgents, getConfig, type AgentOut } from "../api/client";
-import { isWired } from "../api/config";
 
-// Fallback workspace name shown while config is loading or when unwired.
+// Fallback workspace name shown while config is loading.
 const DEFAULT_ORG_NAME = "AgentOS";
 
-// The real-data layer for wired mode. It fetches GET /agents and derives whether
-// the account is fresh (onboarding) or has agents (live shell). The fixture demo
-// (?state=N) never touches this: when not wired, the provider is inert and the
-// app renders fixtures exactly as before. wired=real, unwired=fixtures, no mixing.
+// The real-data layer for the console. It fetches GET /agents and derives whether
+// the account is fresh (onboarding) or has agents (live shell), plus the
+// workspace name from GET /config.
 
 export interface JustDeployed {
   name: string;
@@ -16,6 +14,8 @@ export interface JustDeployed {
 }
 
 export interface WiredData {
+  /** Always true now that the console is backed by the live API; retained as the
+   * enabled flag threaded into the react-query hooks. */
   wired: boolean;
   agents: AgentOut[];
   /** Configurable org/workspace name from GET /config; falls back to a default. */
@@ -32,10 +32,9 @@ export interface WiredData {
 const Ctx = createContext<WiredData | null>(null);
 
 export function WiredProvider({ children }: { children: ReactNode }) {
-  const wired = isWired();
   const [agents, setAgents] = useState<AgentOut[]>([]);
   const [orgName, setOrgName] = useState(DEFAULT_ORG_NAME);
-  const [loading, setLoading] = useState(wired);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [justDeployed, setJustDeployed] = useState<JustDeployed | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -43,7 +42,6 @@ export function WiredProvider({ children }: { children: ReactNode }) {
   const refetch = useCallback(() => setReloadKey((n) => n + 1), []);
 
   useEffect(() => {
-    if (!wired) return;
     let live = true;
     setLoading(true);
     setError(null);
@@ -68,11 +66,11 @@ export function WiredProvider({ children }: { children: ReactNode }) {
     return () => {
       live = false;
     };
-  }, [wired, reloadKey]);
+  }, [reloadKey]);
 
   const value = useMemo<WiredData>(
     () => ({
-      wired,
+      wired: true,
       agents,
       orgName,
       loading,
@@ -82,7 +80,7 @@ export function WiredProvider({ children }: { children: ReactNode }) {
       markDeployed: (d) => setJustDeployed(d),
       clearDeployed: () => setJustDeployed(null),
     }),
-    [wired, agents, orgName, loading, error, refetch, justDeployed],
+    [agents, orgName, loading, error, refetch, justDeployed],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

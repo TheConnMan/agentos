@@ -33,7 +33,7 @@ function renderWired(ui: React.ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <StoreProvider level={3}>{ui}</StoreProvider>
+      <StoreProvider>{ui}</StoreProvider>
     </QueryClientProvider>,
   );
 }

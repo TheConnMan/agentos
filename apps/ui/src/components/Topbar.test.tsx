@@ -1,46 +1,36 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Topbar } from "./Topbar";
 import { StoreProvider, useStore } from "../state/store";
 import { WiredProvider } from "../state/wired";
-import { isWired } from "../api/config";
-import type { FixtureLevel } from "../state/types";
+import { getAgents, getConfig } from "../api/client";
 
-// The env switcher's enablement is derived in the store. After the fix it is
-// driven by isWired() OR a level>=4 fixture, so we mock the wiring flag and
-// assert the pill behaviour through the store.
-vi.mock("../api/config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api/config")>();
-  return { ...actual, isWired: vi.fn(() => false) };
+// The console is always backed by the live API, so the env switcher is always
+// enabled. We mock the data layer so WiredProvider resolves without a fetch.
+vi.mock("../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/client")>();
+  return { ...actual, getAgents: vi.fn(), getConfig: vi.fn() };
 });
 
-afterEach(() => {
-  vi.mocked(isWired).mockReset();
-  vi.mocked(isWired).mockReturnValue(false);
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getAgents).mockResolvedValue([]);
+  vi.mocked(getConfig).mockResolvedValue({ org_name: "AgentOS" });
 });
 
-// Surfaces the store's derived env-switch state so the assertions do not depend
-// on pill styling internals.
+// Surfaces the store's env state so assertions do not depend on pill styling.
 function Probe() {
-  const { state, ghOn } = useStore();
-  return (
-    <>
-      <span data-testid="env">{state.env}</span>
-      <span data-testid="ghon">{String(ghOn)}</span>
-    </>
-  );
+  const { state } = useStore();
+  return <span data-testid="env">{state.env}</span>;
 }
 
-function renderTopbar(level: FixtureLevel) {
-  // Topbar now reads useWired() (org name) and the tree mounts react-query
-  // hooks, so wrap in the same provider stack main.tsx uses. retry off keeps
-  // any incidental query deterministic.
+function renderTopbar() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <StoreProvider level={level}>
+      <StoreProvider>
         <WiredProvider>
           <Topbar />
           <Probe />
@@ -50,32 +40,17 @@ function renderTopbar(level: FixtureLevel) {
   );
 }
 
-describe("Topbar env switcher enablement", () => {
-  it("is enabled in wired mode even at a low fixture level, and DEV dispatches setEnv('dev')", async () => {
-    vi.mocked(isWired).mockReturnValue(true);
+describe("Topbar env switcher", () => {
+  it("starts on prod and toggles between DEV and PROD", async () => {
     const user = userEvent.setup();
-    renderTopbar(1);
+    renderTopbar();
 
-    // Enabled: the store reports environments are available.
-    expect(screen.getByTestId("ghon")).toHaveTextContent("true");
     expect(screen.getByTestId("env")).toHaveTextContent("prod");
 
     await user.click(screen.getByRole("button", { name: "DEV" }));
     expect(screen.getByTestId("env")).toHaveTextContent("dev");
 
     await user.click(screen.getByRole("button", { name: "PROD" }));
-    expect(screen.getByTestId("env")).toHaveTextContent("prod");
-  });
-
-  it("stays disabled in fixture mode below level 4 — clicking DEV is a no-op", async () => {
-    vi.mocked(isWired).mockReturnValue(false);
-    const user = userEvent.setup();
-    renderTopbar(1);
-
-    expect(screen.getByTestId("ghon")).toHaveTextContent("false");
-
-    await user.click(screen.getByRole("button", { name: "DEV" }));
-    // Disabled pill: env is unchanged.
     expect(screen.getByTestId("env")).toHaveTextContent("prod");
   });
 });

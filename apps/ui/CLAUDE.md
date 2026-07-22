@@ -10,15 +10,16 @@ structure and wiring detail in `apps/ui/README.md`.
   screenshots live in `apps/ui/design-review/` (`*-canon.png` vs `*-impl.png`);
   check those before improvising a new pattern -- do not invent new visual
   language.
-- **The fixture-vs-wired gate is a runtime URL param, not a build flag.**
-  `?state=N` (1-6) seeds a fixture level; `?api=1` (or `VITE_WIRED=1` at
-  build time) flips wired paths on. A single build serves both the fixture
-  demo and the live app -- do not fork the build per mode.
-- **Not everything is wired yet.** Create-agent + Deploy, the Runs tab, and
-  Metrics/Logs call the real API. Fleet, Evals, Versions, Usage, and
-  Cost are still fixtures. Before wiring a new view, check
-  `apps/ui/README.md`'s "Wired / Still fixtures" split so you don't assume
-  a backend endpoint exists that hasn't been built yet.
+- **The console is always backed by the live API -- there is no fixture/demo
+  mode and no `isWired()` branch** (#542). Every view fetches from `apps/api`;
+  a fresh workspace degrades honestly (empty lists, zero metrics).
+- **Not everything is wired yet, but unwired surfaces are honest stubs, never
+  demo data.** Create-agent + Deploy, Agents/Fleet, Runs/Traces, Metrics, Logs,
+  Cost, and Versions call the real API. Evals, Usage, and Settings render a
+  `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`) and Memory is a
+  coming-soon empty-state (`src/views/obs/MemoryStub.tsx`). Before wiring one of
+  these, check `apps/ui/README.md`'s "Not wired yet" list; when the endpoint
+  does not exist yet, keep the honest stub rather than inventing data.
 - **All API calls are same-origin `/api`, proxied by Vite.** `apps/api` has
   no CORS middleware on purpose -- the browser must reach it same-origin.
   `vite.config.ts` proxies `/api` to `AGENTOS_API_TARGET` and strips the
@@ -31,9 +32,9 @@ structure and wiring detail in `apps/ui/README.md`.
   swaps the PromQL bar for an honest `langfuse {...}` descriptor. This is a
   deliberate, documented divergence (see `apps/ui/README.md`) -- do not "fix"
   it back toward the canon without checking why it diverged.
-- **The demo-controls bar from the design is deliberately not shipped.**
-  `?dev=1` gives an equivalent state switcher for development; keep it
-  hidden without that param so the product view stays clean.
+- **The demo-controls bar from the design is deliberately not shipped**, and the
+  `?state=N` / `?dev=1` fixture-state switcher was removed with the fixtures
+  (#542). Do not reintroduce a demo/state-seeding surface.
 - **Console/CLI parity: hints resolve from the manifest, never hardcoded**
   (epic #145). CLI hints on wired surfaces call `cliCommand()` directly
   (`src/primitives/cliCommand.ts`), which is typed against the committed

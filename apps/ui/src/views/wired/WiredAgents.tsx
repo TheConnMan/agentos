@@ -48,7 +48,6 @@ export function WiredAgents() {
           sub="Write a skill.md in the browser, pick a channel, and deploy it to Slack in seconds."
           ctaLabel="New agent"
           onCta={() => dispatch({ type: "openModal", modal: "new-agent" })}
-          showDemo={false}
         />
       </div>
     );

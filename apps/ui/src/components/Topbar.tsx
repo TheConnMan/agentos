@@ -1,7 +1,6 @@
 import { C } from "../tokens";
 import { useStore } from "../state/store";
 import { useWired } from "../state/wired";
-import { isWired } from "../api/config";
 import type { Nav } from "../state/types";
 
 const CRUMB: Record<Nav, string> = {
@@ -15,10 +14,9 @@ const CRUMB: Record<Nav, string> = {
 };
 
 export function Topbar() {
-  const { state, dispatch, ghOn, envDev } = useStore();
+  const { state, dispatch, envDev } = useStore();
   const wired = useWired();
-  const orgName = isWired() ? wired.orgName : "acme-corp";
-  const envDisabled = !ghOn;
+  const orgName = wired.orgName;
   const isProd = state.env === "prod" && !envDev;
 
   const pill = (label: string, active: boolean, activeBg: string, activeColor: string, onClick: () => void) => (
@@ -30,7 +28,7 @@ export function Topbar() {
         fontFamily: C.mono,
         padding: "4px 12px",
         borderRadius: 20,
-        cursor: envDisabled ? "not-allowed" : "pointer",
+        cursor: "pointer",
         border: "none",
         background: active ? activeBg : "transparent",
         color: active ? activeColor : C.muted,
@@ -62,18 +60,16 @@ export function Topbar() {
       </div>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
         <div
-          title={envDisabled ? "Connect GitHub to get environments" : ""}
           style={{
             display: "flex",
             background: C.card,
             border: "1px solid " + C.border,
             borderRadius: 20,
             padding: 2,
-            opacity: envDisabled ? 0.5 : 1,
           }}
         >
-          {pill("PROD", isProd, "rgba(62,207,142,.15)", C.brand, () => !envDisabled && dispatch({ type: "setEnv", env: "prod" }))}
-          {pill("DEV", envDev, "rgba(191,135,0,.18)", C.warn, () => ghOn && dispatch({ type: "setEnv", env: "dev" }))}
+          {pill("PROD", isProd, "rgba(62,207,142,.15)", C.brand, () => dispatch({ type: "setEnv", env: "prod" }))}
+          {pill("DEV", envDev, "rgba(191,135,0,.18)", C.warn, () => dispatch({ type: "setEnv", env: "dev" }))}
         </div>
       </div>
     </div>

@@ -19,13 +19,6 @@ import {
   type BundleFiles,
 } from "../../api/client";
 
-// Force wired mode so <WiredProvider> fetches getAgents and App/Main would route
-// to <WiredAgentDetail>. isWired() otherwise reads window.location (empty in jsdom).
-vi.mock("../../api/config", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api/config")>()),
-  isWired: () => true,
-}));
-
 // Mock only the data-layer calls; preserve the real ApiError/BundleValidationError
 // classes (the hooks branch on `instanceof ApiError`) and the untouched helpers.
 // `updateAgent` is mocked for the channel-edit tests; `createDeployment` for the
@@ -123,7 +116,7 @@ function renderDetail() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <StoreProvider level={3}>
+      <StoreProvider>
         <WiredProvider>
           <Harness />
         </WiredProvider>
