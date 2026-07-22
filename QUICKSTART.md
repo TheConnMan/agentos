@@ -52,10 +52,11 @@ tools as a stdio subprocess the harness spawns — see the template at
 
 The fake model returns scripted replies. For a genuine answer, drop
 `--fake-model` and export a credential first (`agentos` forwards it into the
-runner container), then re-run `skill up`:
+runner container), then re-run `skill up`. Any one of `CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY`, or `AGENTOS_CREDENTIALS` works for the Anthropic default:
 
 ```bash
-export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=...
+export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=... / AGENTOS_CREDENTIALS=...
 agentos skill up
 agentos skill message "What's the weather in Paris? Answer in one short sentence."
 agentos skill down
@@ -64,7 +65,8 @@ agentos skill down
 To use a different provider or model instead of the Anthropic default, bring
 your own model through OpenRouter on the same `skill` path. Set
 `AGENTOS_CREDENTIALS` to your OpenRouter key (it must arrive on that variable,
-not `ANTHROPIC_API_KEY`) and name a model slug:
+not `ANTHROPIC_API_KEY`, and here it selects OpenRouter specifically because
+it's paired with `--image`/`--model`) and name a model slug:
 
 ```bash
 AGENTOS_CREDENTIALS="$OPENROUTER_TOKEN" agentos skill up \
@@ -157,9 +159,9 @@ when a credential is present).
 
 > The stack comes up clean; the UI answers on `:28080`.
 
-For the deeper ticket-verification runbook — a hand-started worker, watching
-logs, and driving multi-turn conversations — see
-[`docs/onboarding.md`](docs/onboarding.md).
+For the deeper ticket-verification runbook — rebuilding and redeploying a
+changed bundle, watching worker/runner logs, and driving multi-turn
+conversations — see [`docs/onboarding.md`](docs/onboarding.md).
 
 ### On a Kubernetes cluster (Helm)
 
