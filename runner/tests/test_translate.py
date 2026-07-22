@@ -59,6 +59,44 @@ def test_result_success_is_final_done() -> None:
     assert events[0].text == "answer"
 
 
+def test_success_final_carries_token_usage() -> None:
+    # #390: usage from the SDK result rides the successful final so a consumer
+    # can attribute a dollar cost to the turn.
+    msg = ResultMessage(
+        subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+        num_turns=1, session_id="s", result="answer",
+        usage={"input_tokens": 1200, "output_tokens": 88},
+    )
+    events = _translate(msg)
+    assert events[0].input_tokens == 1200
+    assert events[0].output_tokens == 88
+
+
+def test_success_final_has_no_usage_when_result_reports_none() -> None:
+    # A result with no usage block leaves the wire counts None (never a
+    # fabricated zero), so a consumer reads "cost unknown".
+    msg = ResultMessage(
+        subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+        num_turns=1, session_id="s", result="answer", usage=None,
+    )
+    events = _translate(msg)
+    assert events[0].input_tokens is None
+    assert events[0].output_tokens is None
+
+
+def test_failure_final_carries_no_usage() -> None:
+    # A classified-failure final is never graded, so it carries no cost signal.
+    msg = ResultMessage(
+        subtype="error", duration_ms=1, duration_api_ms=1, is_error=True,
+        num_turns=1, session_id="s", result="boom",
+        usage={"input_tokens": 10, "output_tokens": 2},
+    )
+    events = _translate(msg)
+    final = next(e for e in events if e.type == "final")
+    assert final.input_tokens is None
+    assert final.output_tokens is None
+
+
 def test_reasoning_model_empty_result_falls_back_to_assistant_text() -> None:
     # A reasoning model routed through OpenRouter (e.g. z-ai/glm-5.2) streams the
     # answer as a TextBlock but the terminal ResultMessage reports success with an

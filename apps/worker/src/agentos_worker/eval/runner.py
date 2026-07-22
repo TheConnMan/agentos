@@ -29,6 +29,8 @@ from aci_protocol import ErrorEvent, Event, Final, SessionStatus, TextDelta, Too
 
 from ..runner_client import RunnerClient, RunnerError
 from .models import EvalCase, EvalCaseResult, EvalOutcome, EvalRunResult, EvalSuite
+from .pricing import cost_usd
+from .sampling import SampleConfig, aggregate
 from .scorer import GraderScorer, Scorer
 
 
@@ -45,9 +47,21 @@ class EvalRunner:
     skips the scorer entirely (see :meth:`run`).
     """
 
-    def __init__(self, runner: RunnerClient, *, scorer: Scorer | None = None) -> None:
+    def __init__(
+        self,
+        runner: RunnerClient,
+        *,
+        scorer: Scorer | None = None,
+        samples: SampleConfig | None = None,
+    ) -> None:
         self._runner = runner
         self._scorer: Scorer = scorer if scorer is not None else GraderScorer()
+        # Multi-sample policy (#332). Default n=1 is a no-op: each case runs once
+        # and its single result is returned unchanged, so existing suites behave
+        # exactly as before. n>1 runs the case n times and reduces the verdicts by
+        # the configured policy (majority / pass@k) -- variance-aware grading
+        # around the frozen case + scorer.
+        self._samples: SampleConfig = samples if samples is not None else SampleConfig()
 
     async def run(
         self,
@@ -64,33 +78,54 @@ class EvalRunner:
         ``fake`` says the runner behind ``base_url`` is the fake model, whose
         canned replies no grader can meaningfully judge (ADR-0055). It is not a
         scoring mode: the scorer is not consulted at all on a completed fake turn.
+
+        Each case is run :attr:`SampleConfig.n` times and the per-sample verdicts
+        are reduced to one by the configured aggregation policy (#332). With the
+        default ``n=1`` the case runs once and its result is returned unchanged.
         """
         results: list[EvalCaseResult] = []
         for case in suite.cases:
-            # Fresh conversation by default (#550): reset the runner before a case
-            # so it cannot inherit an earlier case's history. A shared_history
-            # case skips the reset and deliberately chains onto what preceded it.
-            if not case.shared_history:
-                isolation_error = await self._isolate(base_url, token)
-                if isolation_error is not None:
-                    # Could not establish isolation: fail the case rather than run
-                    # it against a possibly-leaked conversation (a false green is
-                    # exactly what #550 removes). One bad reset never aborts the
-                    # suite, matching the per-case error handling in _run_case.
-                    results.append(
-                        EvalCaseResult(
-                            case_id=case.id,
-                            outcome=EvalOutcome.FAIL,
-                            output="",
-                            latency_ms=0.0,
-                            error=isolation_error,
-                        )
-                    )
-                    continue
-            results.append(await self._run_case(case, base_url, token, fake=fake))
+            samples = [
+                await self._sample_case(case, base_url, token, model=model, fake=fake)
+                for _ in range(self._samples.n)
+            ]
+            results.append(aggregate(case.id, samples, self._samples))
         return EvalRunResult(
             version=version, suite=suite.name, results=results, model=model
         )
+
+    async def _sample_case(
+        self,
+        case: EvalCase,
+        base_url: str,
+        token: str | None,
+        *,
+        model: str | None,
+        fake: bool,
+    ) -> EvalCaseResult:
+        """Run one sample of a case: establish isolation, then run and score it.
+
+        Isolation is re-established before *every* sample (not once per case): two
+        samples of the same fresh-conversation case must each start clean, or the
+        second would inherit the first's turn and the samples would not be
+        independent draws. A ``shared_history`` case still skips the reset and
+        chains, matching its per-case semantics.
+        """
+        if not case.shared_history:
+            isolation_error = await self._isolate(base_url, token)
+            if isolation_error is not None:
+                # Could not establish isolation: fail the sample rather than run
+                # it against a possibly-leaked conversation (a false green is
+                # exactly what #550 removes). One bad reset never aborts the
+                # suite, matching the per-case error handling in _run_case.
+                return EvalCaseResult(
+                    case_id=case.id,
+                    outcome=EvalOutcome.FAIL,
+                    output="",
+                    latency_ms=0.0,
+                    error=isolation_error,
+                )
+        return await self._run_case(case, base_url, token, model=model, fake=fake)
 
     async def _isolate(self, base_url: str, token: str | None) -> str | None:
         """Reset the runner's conversation; return an error string on failure.
@@ -111,6 +146,7 @@ class EvalRunner:
         base_url: str,
         token: str | None = None,
         *,
+        model: str | None = None,
         fake: bool = False,
     ) -> EvalCaseResult:
         start = time.monotonic()
@@ -119,6 +155,8 @@ class EvalRunner:
         trajectory: list[str] = []
         final_text: str | None = None
         final_status: SessionStatus | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
         error_detail: str | None = None
         try:
             turn = await self._runner.start_turn(base_url, event, token=token)
@@ -133,6 +171,10 @@ class EvalRunner:
                     elif isinstance(frame, Final):
                         final_text = frame.text
                         final_status = frame.status
+                        # Token usage the runner stamped on the successful final
+                        # (#390); priced into cost_usd below for a graded turn.
+                        input_tokens = frame.input_tokens
+                        output_tokens = frame.output_tokens
                     elif isinstance(frame, ErrorEvent):
                         error_detail = frame.classification or frame.message
         except (RunnerError, aiohttp.ClientError, TimeoutError) as exc:
@@ -197,6 +239,10 @@ class EvalRunner:
             outcome=EvalOutcome.PASS if verdict.passed else EvalOutcome.FAIL,
             output=output,
             latency_ms=_elapsed_ms(start),
+            # Real token usage x model pricing (#390). None when the model is
+            # unpriced or the runner reported no usage, so the matrix omits this
+            # case from the model's cost rollup rather than counting it as free.
+            cost_usd=cost_usd(model, input_tokens, output_tokens),
         )
 
 

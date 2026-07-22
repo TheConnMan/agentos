@@ -84,6 +84,15 @@ class FakeEvalRunner:
         # tool_note frames before the final, so scorer-seam tests can drive the
         # tool-call sequence a turn produced.
         self.tool_calls: dict[str, list[str]] = {}
+        # Per-input token usage stamped on the final ((input_tokens, output_tokens)),
+        # so cost-attribution tests (#390) can drive a turn's usage. Absent inputs
+        # emit a final with no usage, modelling a provider that reported none.
+        self.usage: dict[str, tuple[int, int]] = {}
+        # Per-input output sequence consumed one entry per delivery (clamped to the
+        # last), so multi-sample tests (#332) can drive a flaky case that answers
+        # differently across samples. Takes precedence over ``responses``.
+        self.output_sequence: dict[str, list[str]] = {}
+        self._sequence_calls: dict[str, int] = {}
         self.default_output = ""
         self.seen: list[dict[str, str]] = []
         # The accumulated conversation: every delivered input, cleared by reset.
@@ -114,9 +123,15 @@ class FakeEvalRunner:
         if text in self.fail_inputs:
             return web.json_response({"error": "boom"}, status=500)
         # A recall input answers from the conversation so far (the history that a
-        # reset would have cleared); otherwise fall back to the canned response.
+        # reset would have cleared); otherwise a per-sample output sequence (#332),
+        # else the canned response.
         if text in self.recall_inputs:
             output = " | ".join(self.history)
+        elif text in self.output_sequence:
+            seq = self.output_sequence[text]
+            idx = min(self._sequence_calls.get(text, 0), len(seq) - 1)
+            self._sequence_calls[text] = idx + 1
+            output = seq[idx]
         else:
             output = self.responses.get(text, self.default_output)
         self.history.append(text)
@@ -133,7 +148,13 @@ class FakeEvalRunner:
         for tool in self.tool_calls.get(text, []):
             note = ToolNote(text=f"calling {tool}", tool=tool)
             await resp.write((note.model_dump_json() + "\n").encode("utf-8"))
-        frame = Final(text=output, status=status)
+        usage = self.usage.get(text)
+        frame = Final(
+            text=output,
+            status=status,
+            input_tokens=usage[0] if usage else None,
+            output_tokens=usage[1] if usage else None,
+        )
         await resp.write((frame.model_dump_json() + "\n").encode("utf-8"))
         await resp.write_eof()
         return resp

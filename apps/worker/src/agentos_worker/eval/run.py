@@ -28,6 +28,7 @@ from ..runner_client import RunnerClient
 from .models import EvalRunResult, EvalSuite
 from .recorder import LangfuseEvalRecorder
 from .runner import EvalRunner
+from .sampling import AggregationPolicy, SampleConfig
 
 
 def load_suite(path: str | Path) -> EvalSuite:
@@ -43,16 +44,19 @@ async def run_eval_suite(
     token: str | None = None,
     model: str | None = None,
     fake: bool = False,
+    samples: SampleConfig | None = None,
 ) -> EvalRunResult:
     """Run a suite against a runner endpoint and, if configured, record it.
 
     ``model`` is the model id the suite is being run under; it is threaded onto
     the ``EvalRunResult`` so the recorder can tag the model dimension and the
     eval matrix can slice pass-rate/cost by model. ``fake`` says that runner is
-    the fake model, whose turns are never graded (ADR-0055).
+    the fake model, whose turns are never graded (ADR-0055). ``samples`` is the
+    multi-sample / variance-aware-grading policy (#332); the default (``None`` ->
+    ``n=1``) runs each case once, unchanged.
     """
     async with RunnerClient() as runner:
-        result = await EvalRunner(runner).run(
+        result = await EvalRunner(runner, samples=samples).run(
             suite,
             base_url=base_url,
             version=version,
@@ -65,6 +69,20 @@ async def run_eval_suite(
     return result
 
 
+def _sample_config_from_env(env: Mapping[str, str]) -> SampleConfig:
+    """Build the multi-sample policy from the eval Job's env (#332).
+
+    ``AGENTOS_EVAL_SAMPLES`` (default 1) sets N; ``AGENTOS_EVAL_AGGREGATION``
+    (``majority`` | ``pass_at_k``, default ``majority``) the policy; and
+    ``AGENTOS_EVAL_PASS_AT_K`` (default 1) the pass@k threshold. Absent/unset
+    keys yield the backward-compatible ``n=1`` default.
+    """
+    n = int(env.get("AGENTOS_EVAL_SAMPLES", "1"))
+    policy = AggregationPolicy(env.get("AGENTOS_EVAL_AGGREGATION", AggregationPolicy.MAJORITY))
+    k = int(env.get("AGENTOS_EVAL_PASS_AT_K", "1"))
+    return SampleConfig(n=n, policy=policy, k=k)
+
+
 async def _main_async(env: Mapping[str, str]) -> int:
     suite = load_suite(env["AGENTOS_EVAL_SUITE"])
     base_url = env["AGENTOS_EVAL_TARGET_URL"]
@@ -73,6 +91,7 @@ async def _main_async(env: Mapping[str, str]) -> int:
     # (the same AGENTOS_MODEL the runner authenticates from). Empty/unset means
     # "model unknown", recorded as no model tag.
     model = env.get("AGENTOS_MODEL") or None
+    samples = _sample_config_from_env(env)
 
     lf_keys = ("LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
     if all(k in env for k in lf_keys):
@@ -84,11 +103,12 @@ async def _main_async(env: Mapping[str, str]) -> int:
                 client=client,
             )
             result = await run_eval_suite(
-                suite, base_url=base_url, version=version, recorder=recorder, model=model
+                suite, base_url=base_url, version=version, recorder=recorder,
+                model=model, samples=samples,
             )
     else:
         result = await run_eval_suite(
-            suite, base_url=base_url, version=version, model=model
+            suite, base_url=base_url, version=version, model=model, samples=samples
         )
 
     print(result.model_dump_json())

@@ -19,6 +19,7 @@ from .models import (
 from .recorder import SCORE_NAME, IngestionError, LangfuseEvalRecorder
 from .run import load_suite, run_eval_suite
 from .runner import EvalRunner
+from .sampling import AggregationPolicy, SampleConfig, aggregate
 from .scorer import (
     GraderScorer,
     Scorer,
@@ -38,6 +39,7 @@ from .stream import (
 
 __all__ = [
     "SCORE_NAME",
+    "AggregationPolicy",
     "EvalCase",
     "EvalCaseResult",
     "EvalJob",
@@ -54,11 +56,13 @@ __all__ = [
     "GraderScorer",
     "IngestionError",
     "LangfuseEvalRecorder",
+    "SampleConfig",
     "Scorer",
     "ScoreResult",
     "TrajectoryMode",
     "TrajectoryScorer",
     "TrajectorySpec",
+    "aggregate",
     "load_suite",
     "load_suite_from_bundle",
     "match_trajectory",

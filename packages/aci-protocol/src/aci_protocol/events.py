@@ -156,6 +156,16 @@ class Final(_OutboundBase):
     'permission'``; a policy gate never authorizes a tool, so it stays ``None``.
     Both ``None`` on every other status, and ``None`` from an older runner that
     predates these fields (the worker falls back to the prefix parse then).
+
+    ``input_tokens``/``output_tokens`` carry the turn's model token usage when
+    the harness reported it (#390): the runner stamps them from the SDK result's
+    ``usage`` so a consumer can attribute a dollar cost to the turn (model
+    pricing lives with the consumer, not on the wire). Both ``None`` when usage
+    was unavailable -- the fake-model path, a provider that reports no usage, or
+    an older runner that predates these fields -- so a consumer computing cost
+    leaves it unknown rather than counting the turn as free. Additive optional
+    scalars: a tolerant consumer decoding an older producer's ``final`` simply
+    sees them absent.
     """
 
     type: Literal["final"] = "final"
@@ -165,6 +175,8 @@ class Final(_OutboundBase):
     approval_route: str | None = None
     approval_gate_kind: str | None = None
     approval_granted_tool: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class ErrorEvent(_OutboundBase):

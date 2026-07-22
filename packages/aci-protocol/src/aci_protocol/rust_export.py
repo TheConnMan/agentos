@@ -287,6 +287,8 @@ mod tests {
             approval_route: None,
             approval_gate_kind: None,
             approval_granted_tool: None,
+            input_tokens: None,
+            output_tokens: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
@@ -303,6 +305,8 @@ mod tests {
             approval_route: Some("managers".to_string()),
             approval_gate_kind: Some("policy".to_string()),
             approval_granted_tool: None,
+            input_tokens: None,
+            output_tokens: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: OutboundEvent = serde_json::from_str(&encoded).unwrap();
