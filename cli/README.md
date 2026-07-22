@@ -551,6 +551,19 @@ data. On failure under `--json`, the error is emitted to stdout as
 an agent can recover without parsing prose. `NO_COLOR`, `CLICOLOR`, and
 `--color=never` are honored on every command.
 
+**Versioned result schemas.** Every agent-facing `--json` result maps to a
+committed JSON Schema under `cli/schema/` with an explicit version identity (the
+`vN` segment of its `$id`); `cli/schema/index.json` is the inventory of every
+result family, the schema it maps to, and its version. The schemas are embedded
+in the released binary, so the discovery path works with no source checkout:
+`agentos schema-index` prints the inventory index, and `agentos schema-index
+<name>` (e.g. `agentos schema-index kill`) prints one schema. A contract test
+(`cli/tests/schema_inventory.rs`) fails CI if a new result family lands without a
+schema, and `cli/tests/json_contract.rs` validates every result's real output
+against its schema. The compatibility policy — additive changes stay at the same
+version, breaking changes ship a new version — is
+[ADR-0074](../docs/adr/0074-versioned-json-schemas-for-cli-results.md).
+
 **Semantic exit codes** let an agent branch on *why* a command failed without
 parsing output:
 

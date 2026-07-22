@@ -1,0 +1,246 @@
+{
+  "$comment": "Inventory index of every agent-facing `agentos --json` result family and the committed, versioned JSON Schema each maps to (issue #634). This file is the single source of truth the anti-drift contract test `cli/tests/schema_inventory.rs` enforces: it walks `cli/src` for every `impl CliOutput` and cross-checks it against the `results` entries here, so a new result family that lands without a schema fails CI. Each `kind` is either `CliOutput` (auto-discovered from the source) or `builder`/`raw` (a hand-declared free-function or direct-`emit_json` result, the tractable-half scope note mirrored from cli/tests/support/emit_parity.rs). The `version` MUST equal the `/vN` segment of the schema's `$id`.",
+  "compatibility_policy": "docs/adr/0074-versioned-json-schemas-for-cli-results.md",
+  "discovery": "These schema files are bundled into released `agentos` CLI binaries and printed on demand: `agentos schema-index` emits this index, `agentos schema-index <name>` emits a named schema. In a source checkout they live at cli/schema/.",
+  "results": [
+    {
+      "result": "CheckOutput",
+      "kind": "CliOutput",
+      "schema": "check.schema.json",
+      "version": 1
+    },
+    {
+      "result": "InitOutput",
+      "kind": "CliOutput",
+      "schema": "init.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ListAgentsOutput",
+      "kind": "CliOutput",
+      "schema": "list-agents.schema.json",
+      "version": 1
+    },
+    {
+      "result": "BumpVersionOutput",
+      "kind": "CliOutput",
+      "schema": "bump-version.schema.json",
+      "version": 1
+    },
+    {
+      "result": "StatusOutput",
+      "kind": "CliOutput",
+      "schema": "status.schema.json",
+      "version": 1
+    },
+    {
+      "result": "SkillMessageOutput",
+      "kind": "CliOutput",
+      "schema": "skill-message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "EvalOutput",
+      "kind": "CliOutput",
+      "schema": "eval.schema.json",
+      "version": 1
+    },
+    {
+      "result": "DeployOutput",
+      "kind": "CliOutput",
+      "schema": "deploy.schema.json",
+      "version": 1
+    },
+    {
+      "result": "KillOutput",
+      "kind": "CliOutput",
+      "schema": "kill.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ResumeOutput",
+      "kind": "CliOutput",
+      "schema": "resume.schema.json",
+      "version": 1
+    },
+    {
+      "result": "BudgetOutput",
+      "kind": "CliOutput",
+      "schema": "budget.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ResetThreadOutput",
+      "kind": "CliOutput",
+      "schema": "reset-thread.schema.json",
+      "version": 1
+    },
+    {
+      "result": "DeleteOutput",
+      "kind": "CliOutput",
+      "schema": "delete.schema.json",
+      "version": 1
+    },
+    {
+      "result": "VersionsOutput",
+      "kind": "CliOutput",
+      "schema": "versions.schema.json",
+      "version": 1
+    },
+    {
+      "result": "MemoryOutput",
+      "kind": "CliOutput",
+      "schema": "memory.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ApprovalsOutput",
+      "kind": "CliOutput",
+      "schema": "approvals.schema.json",
+      "version": 1
+    },
+    {
+      "result": "SkillApprovalsOutput",
+      "kind": "CliOutput",
+      "schema": "skill-approvals.schema.json",
+      "version": 1
+    },
+    {
+      "result": "SecretsListOutput",
+      "kind": "CliOutput",
+      "schema": "secrets.schema.json",
+      "version": 1
+    },
+    {
+      "result": "CommsOutput",
+      "kind": "CliOutput",
+      "schema": "comms.schema.json",
+      "version": 1
+    },
+    {
+      "result": "GuideOutput",
+      "kind": "CliOutput",
+      "schema": "guide.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ObservabilityOutput",
+      "kind": "CliOutput",
+      "schema": "observability.schema.json",
+      "version": 1
+    },
+    {
+      "result": "MessageDryRunOutput",
+      "kind": "CliOutput",
+      "schema": "message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "MessageOutcomeOutput",
+      "kind": "CliOutput",
+      "schema": "message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "LocalUpOutput",
+      "kind": "CliOutput",
+      "schema": "local-up.schema.json",
+      "version": 1
+    },
+    {
+      "result": "LocalRebuildOutput",
+      "kind": "CliOutput",
+      "schema": "local-rebuild.schema.json",
+      "version": 1
+    },
+    {
+      "result": "LocalStatusOutput",
+      "kind": "CliOutput",
+      "schema": "local-status.schema.json",
+      "version": 1
+    },
+    {
+      "result": "LocalDownOutput",
+      "kind": "CliOutput",
+      "schema": "local-down.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ClusterUpOutput",
+      "kind": "CliOutput",
+      "schema": "cluster-up.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ClusterStatusOutput",
+      "kind": "CliOutput",
+      "schema": "cluster-status.schema.json",
+      "version": 1
+    },
+    {
+      "result": "ClusterDownOutput",
+      "kind": "CliOutput",
+      "schema": "cluster-down.schema.json",
+      "version": 1
+    },
+    {
+      "result": "DryRunPlan",
+      "kind": "CliOutput",
+      "schema": "dry-run.schema.json",
+      "version": 1
+    },
+    {
+      "result": "status_json",
+      "kind": "builder",
+      "schema": "status.schema.json",
+      "version": 1
+    },
+    {
+      "result": "eval_json",
+      "kind": "builder",
+      "schema": "eval.schema.json",
+      "version": 1
+    },
+    {
+      "result": "message_reply_json",
+      "kind": "builder",
+      "schema": "message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "message_timeout_json",
+      "kind": "builder",
+      "schema": "message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "message_awaiting_approval_json",
+      "kind": "builder",
+      "schema": "message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "message_dry_run_json",
+      "kind": "builder",
+      "schema": "message.schema.json",
+      "version": 1
+    },
+    {
+      "result": "error_json",
+      "kind": "builder",
+      "schema": "error.schema.json",
+      "version": 1
+    },
+    {
+      "result": "sweep_json",
+      "kind": "builder",
+      "schema": "sweep.schema.json",
+      "version": 1
+    }
+  ],
+  "raw_emit_sites": {
+    "cli/src/ui.rs": 1,
+    "cli/src/main.rs": 1,
+    "cli/src/commands.rs": 1
+  }
+}

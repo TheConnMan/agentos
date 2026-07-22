@@ -1,0 +1,13 @@
+{
+  "$comment": "Drifted inventory fixture for cli/tests/schema_inventory.rs rejection cases (#634). Every entry is deliberately broken to trigger one Violation variant.",
+  "results": [
+    { "result": "DeclaredGood", "kind": "CliOutput", "schema": "good.schema.json", "version": 1 },
+    { "result": "GhostImpl", "kind": "CliOutput", "schema": "good.schema.json", "version": 1 },
+    { "result": "MissingFileOne", "kind": "builder", "schema": "absent.schema.json", "version": 1 },
+    { "result": "InvalidOne", "kind": "builder", "schema": "invalid.schema.json", "version": 1 },
+    { "result": "NoVersionOne", "kind": "builder", "schema": "good.schema.json" },
+    { "result": "MismatchOne", "kind": "builder", "schema": "v2.schema.json", "version": 1 },
+    { "kind": "builder", "schema": "good.schema.json", "version": 1 }
+  ],
+  "raw_emit_sites": {}
+}
