@@ -297,6 +297,67 @@ def test_all_passed_suite(make_eval_harness) -> None:
     asyncio.run(go())
 
 
+def test_tool_called_grader_greens_on_the_tool_note_and_reds_without_it(
+    make_eval_harness,
+) -> None:
+    """The #621 acceptance, end to end through the real stream path: a case
+    asserting a tool was called GREENs when the runner emits that tool_note and
+    REDs when it does not -- and a turn that calls no tool at all fails it, so
+    the grader is falsifiable (a do-nothing agent cannot pass)."""
+
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            # Same input for all three cases; the fake emits a per-input tool_note
+            # trajectory, so the grader is judged on what the turn actually did.
+            fake.responses = {
+                "run it": "I used the DeterministicEngine",
+                "narrate": "I used the DeterministicEngine tool, promise",
+                "idle": "nothing happened",
+            }
+            fake.tool_calls = {
+                "run it": ["Bash", "DeterministicEngine"],  # tool really called
+                "narrate": ["Bash"],  # only claims it in text
+                # "idle" emits no tool_note at all
+            }
+            suite = EvalSuite(
+                name="tool-calls",
+                cases=[
+                    EvalCase(
+                        id="called",
+                        input="run it",
+                        grader=Grader(
+                            kind=GraderKind.TOOL_CALLED, expected="DeterministicEngine"
+                        ),
+                    ),
+                    EvalCase(
+                        id="only-narrated",
+                        input="narrate",
+                        grader=Grader(
+                            kind=GraderKind.TOOL_CALLED, expected="DeterministicEngine"
+                        ),
+                    ),
+                    EvalCase(
+                        id="did-nothing",
+                        input="idle",
+                        grader=Grader(
+                            kind=GraderKind.TOOL_CALLED, expected="DeterministicEngine"
+                        ),
+                    ),
+                ],
+            )
+            result = await EvalRunner(client).run(suite, base_url=base_url, version="v1")
+            by_id = {r.case_id: r for r in result.results}
+            # GREEN only when the tool_note is on the wire.
+            assert by_id["called"].passed is True
+            # RED when the agent merely claims it in text (grader reads trajectory).
+            assert by_id["only-narrated"].passed is False
+            # RED when no tool ran at all -- the falsifiability floor.
+            assert by_id["did-nothing"].passed is False
+            assert result.summary() == "1/3 passed"
+
+    asyncio.run(go())
+
+
 class _SpyScorer:
     """A scorer that would pass ANYTHING, and counts the times it was consulted.
 

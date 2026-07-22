@@ -42,7 +42,7 @@ def _validator_for(def_name: str) -> Draft202012Validator:
     return Draft202012Validator({"$ref": f"#/$defs/{def_name}", "$defs": schema["$defs"]})
 
 
-@pytest.mark.parametrize("kind", ["exact", "contains", "regex"])
+@pytest.mark.parametrize("kind", ["exact", "contains", "regex", "tool_called"])
 def test_emitted_eval_case_validates_against_the_frozen_schema(kind: str) -> None:
     case = EvalCaseOut(
         id="c1",

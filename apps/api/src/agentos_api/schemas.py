@@ -405,7 +405,7 @@ class GraderOut(BaseModel):
     (`apps/worker/schema/eval-cases.schema.json`). Do not let this drift from the
     worker's `Grader` model."""
 
-    kind: Literal["exact", "contains", "regex"]
+    kind: Literal["exact", "contains", "regex", "tool_called"]
     expected: str
     case_sensitive: bool = False
 

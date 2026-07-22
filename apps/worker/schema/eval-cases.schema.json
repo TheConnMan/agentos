@@ -65,7 +65,7 @@
       "type": "string"
     },
     "Grader": {
-      "description": "A single deterministic grader. MVP scope: string-shaped checks only.\n\n(An LLM-judge grader is a later addition; keeping these deterministic makes\neval results reproducible, which is the whole point of eval-as-CI.)",
+      "description": "A single deterministic grader.\n\nFor the text matchers (``exact``/``contains``/``regex``) ``expected`` is the\nstring to match against the answer text. For ``tool_called`` ``expected`` is\ninstead the *tool name* that must have been invoked during the turn; the\ngrader then reads the observed tool-call trajectory rather than the answer\ntext. Reusing ``expected`` as the tool name keeps this an additive enum value\nwith no new field -- the smallest possible touch to the frozen eval-case\nschema (ADR-0022 Phase 1).\n\n(An LLM-judge grader is a later addition governed by ADR-0042; keeping these\ndeterministic makes eval results reproducible, which is the whole point of\neval-as-CI.)",
       "properties": {
         "case_sensitive": {
           "default": false,
@@ -88,11 +88,12 @@
       "type": "object"
     },
     "GraderKind": {
-      "description": "How a case's expected value is compared against the agent's output.",
+      "description": "How a case's expected value is compared against the agent's output.\n\nThe three text matchers (``exact``/``contains``/``regex``) grade the turn's\nfinal answer TEXT. ``tool_called`` is the ADR-0022 Phase 1 addition: it grades\nthe turn's tool-call TRAJECTORY instead, asserting a named tool was actually\ninvoked during the turn. This closes the \"grade the last sentence\" gap -- a\ntext grader can confirm a version-shaped string appears in the reply but never\nthat the tool which was supposed to produce it ever ran. Reading the observed\ntrajectory (not the final text) is the whole point: grepping the answer for\nthe tool's name would be the mechanically-easy false green ADR-0022 warns\nagainst.",
       "enum": [
         "exact",
         "contains",
-        "regex"
+        "regex",
+        "tool_called"
       ],
       "title": "GraderKind",
       "type": "string"

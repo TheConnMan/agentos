@@ -50,7 +50,8 @@ and PR check read.
 EvalSuite (cases: input + grader)
    -> EvalRunner: deliver each case as an ACI `eval_case` event over the runner's
       HTTP channel (the kernel's RunnerClient), take the `final` text as the answer
-   -> Grader: exact | contains | regex -> pass/fail (deny-by-default; a case must
+   -> Grader: exact | contains | regex (on the answer text) | tool_called (on the
+      turn's tool-call trajectory) -> pass/fail (deny-by-default; a case must
       name a grader)
    -> EvalRunResult: per-case rows + the "N/M passed" summary
    -> LangfuseEvalRecorder: a trace + `eval_pass` score per case, tagged

@@ -66,7 +66,7 @@ export type RawTrace = Record<string, unknown>;
 // An eval case in the frozen eval-case format (#8/#259): an input prompt plus a
 // deterministic grader. Returned by promoteTraceToEvalCase.
 export interface GraderOut {
-  kind: "exact" | "contains" | "regex";
+  kind: "exact" | "contains" | "regex" | "tool_called";
   expected: string;
   case_sensitive: boolean;
 }

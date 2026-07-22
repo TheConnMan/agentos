@@ -97,6 +97,20 @@ def test_grader_scorer_matches_the_frozen_grader() -> None:
     assert scorer.score(case, "The capital is Berlin.", []).passed is False
 
 
+def test_grader_scorer_threads_the_trajectory_to_a_tool_called_grader() -> None:
+    # The default scorer now passes the observed trajectory to the grader, so a
+    # frozen tool_called grader is judged on what the turn did, not its text.
+    scorer = GraderScorer()
+    case = EvalCase(
+        id="c",
+        input="q",
+        grader=Grader(kind=GraderKind.TOOL_CALLED, expected="DeterministicEngine"),
+    )
+    # Text is unrelated; only the trajectory decides.
+    assert scorer.score(case, "unrelated text", ["Bash", "DeterministicEngine"]).passed is True
+    assert scorer.score(case, "I used the DeterministicEngine", []).passed is False
+
+
 def test_scorers_satisfy_the_protocol() -> None:
     # runtime_checkable Protocol: both shipped scorers are structural Scorers.
     assert isinstance(GraderScorer(), Scorer)

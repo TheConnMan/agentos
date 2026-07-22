@@ -70,7 +70,11 @@ export interface AppState {
 export interface PromotedEvalCase {
   id: string;
   input: string;
-  grader: { kind: "exact" | "contains" | "regex"; expected: string; case_sensitive: boolean };
+  grader: {
+    kind: "exact" | "contains" | "regex" | "tool_called";
+    expected: string;
+    case_sensitive: boolean;
+  };
 }
 
 export type Action =

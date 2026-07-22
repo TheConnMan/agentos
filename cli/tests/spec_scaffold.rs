@@ -435,15 +435,15 @@ fn a_spec_scaffolded_grader_is_not_satisfied_by_the_fake_models_canned_reply() {
     let grader = &suite.cases[0].grader;
     // "all done" is `fake.py::default_turn()`'s final text, whatever the input.
     assert!(
-        !grader.grade("all done"),
+        !grader.grade("all done", &[]),
         "a spec-scaffolded grader must judge the real work, not the fake's canned text"
     );
     assert!(
-        !grader.grade(""),
+        !grader.grade("", &[]),
         "an empty turn must never satisfy a scaffolded grader"
     );
     assert!(
-        grader.grade("The deal-desk agent quotes 20% off for Acme."),
+        grader.grade("The deal-desk agent quotes 20% off for Acme.", &[]),
         "an on-topic answer must still pass"
     );
 }

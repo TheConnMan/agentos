@@ -1612,7 +1612,11 @@ pub fn reply_passes(case: &EvalCase, outcome: &Outcome) -> bool {
     match case.expect_status {
         // Default: the turn must have finalized WITH reply text and satisfy the grader.
         ExpectedStatus::Done => match outcome {
-            Outcome::Replied(reply) => case.grader.grade(reply),
+            // The message-relay path observes only the reply text, not the turn's
+            // tool-call trajectory, so a tool_called grader has nothing to read
+            // here and fails closed. The trajectory-aware grade lives on the
+            // `skill eval` path (`turn_passes`) and the server-side eval matrix.
+            Outcome::Replied(reply) => case.grader.grade(reply, &[]),
             Outcome::CompletedNoEdit | Outcome::AwaitingApproval(_) | Outcome::TimedOut => false,
         },
         // Gate-blocked assertion: the turn must have parked awaiting approval, and
@@ -1621,7 +1625,7 @@ pub fn reply_passes(case: &EvalCase, outcome: &Outcome) -> bool {
         // asserts purely on the gate holding.
         ExpectedStatus::AwaitingApproval => match outcome {
             Outcome::AwaitingApproval(reply) => {
-                case.grader.grade(reply.as_deref().unwrap_or_default())
+                case.grader.grade(reply.as_deref().unwrap_or_default(), &[])
             }
             Outcome::Replied(_) | Outcome::CompletedNoEdit | Outcome::TimedOut => false,
         },
