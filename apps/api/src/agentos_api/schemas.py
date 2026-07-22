@@ -461,13 +461,6 @@ class BundleOut(BaseModel):
     size_bytes: int
 
 
-class BundleValidationError(BaseModel):
-    """Returned (HTTP 422) when a bundle fails plugin-format validation."""
-
-    detail: str = "bundle failed validation"
-    errors: list[dict[str, str]]
-
-
 class BundleFile(BaseModel):
     """One text file inside a stored bundle (path relative to the bundle root)."""
 

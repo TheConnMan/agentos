@@ -5,8 +5,6 @@ Alembic migration creates that schema. The engine and sessionmaker are built
 lazily from Settings so tests can point them at the compose Postgres.
 """
 
-from collections.abc import AsyncIterator
-
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -31,10 +29,3 @@ def create_engine() -> AsyncEngine:
 
 def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
-
-
-async def session_dependency(
-    sessionmaker: async_sessionmaker[AsyncSession],
-) -> AsyncIterator[AsyncSession]:
-    async with sessionmaker() as session:
-        yield session

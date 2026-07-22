@@ -137,22 +137,6 @@ def missing_required_checks(
     return (set(required_names) - passed_names) | non_passing_required
 
 
-def required_checks_passed(
-    check_runs: list[dict[str, object]],
-    required_names: frozenset[str] | None = None,
-) -> bool:
-    """Did every one of `required_names` conclude successfully for this commit?
-
-    An empty check-run list fails trivially: none of the required names can be
-    satisfied by nothing, so absence of checks is not evidence they passed. A
-    non-empty list where some unrelated check-run passed but a required one
-    never ran is the exact case issue #733 closes -- it also fails here.
-    """
-    if not check_runs:
-        return False
-    return not missing_required_checks(check_runs, required_names)
-
-
 def exclude_current_workflow_run(
     check_runs: list[dict[str, object]], run_id: str | None
 ) -> list[dict[str, object]]:
