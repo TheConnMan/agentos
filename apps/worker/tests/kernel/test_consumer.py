@@ -15,7 +15,11 @@ from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelt
 from agentos_dispatcher.queue import to_stream_fields
 from agentos_worker import consumer as consumer_module
 from agentos_worker import kernel as kernel_module
-from agentos_worker.consumer import THREAD_RESET_SET, Consumer
+from agentos_worker.consumer import (
+    THREAD_RESET_INFLIGHT_SET,
+    THREAD_RESET_SET,
+    Consumer,
+)
 
 DONE = SessionStatus.DONE
 
@@ -246,6 +250,44 @@ def test_maintenance_tick_drains_pending_thread_reset_requests(make_harness) -> 
 
             assert h.substrate.lookup("tDrain") is None  # released
             assert await h.async_redis.scard(THREAD_RESET_SET) == 0  # popped, not left behind
+            # #812: the in-progress marker is cleared only after the release
+            # actually lands, so a successful drain leaves nothing pending.
+            assert not await h.async_redis.sismember(THREAD_RESET_INFLIGHT_SET, "tDrain")
+
+    asyncio.run(go())
+
+
+def test_maintenance_tick_thread_reset_failed_release_keeps_the_signal_pending(
+    make_harness, caplog
+) -> None:
+    """#812 (was #806 incomplete): the observable "reset outstanding" signal --
+    membership of THREAD_RESET_SET UNION THREAD_RESET_INFLIGHT_SET, which the
+    API's ``is_pending`` and therefore the CLI's ``reset-thread`` poll read --
+    must NOT flip to done when ``release_thread`` raises or times out. The drain
+    SPOPs the request (the atomic claim) and moves it into the in-progress set,
+    clearing it only on SUCCESS; a failed release leaves the key in the
+    in-progress set, so the signal stays pending and the CLI reports the reset as
+    unconfirmed rather than a false ``released: true`` (scenario B)."""
+
+    async def go() -> None:
+        async with make_harness() as h:
+            consumer = Consumer(redis=h.async_redis, kernel=h.kernel, config=h.config)
+            await h.async_redis.sadd(THREAD_RESET_SET, "tFailRelease")
+
+            async def boom_release(thread_key: str) -> bool:
+                raise RuntimeError("injected release failure")
+
+            h.kernel.release_thread = boom_release  # type: ignore[method-assign]
+
+            with caplog.at_level(logging.ERROR):
+                await consumer._drain_thread_reset_requests()
+
+            # Claimed off the request set (atomic SPOP: no second replica double-releases)...
+            assert await h.async_redis.scard(THREAD_RESET_SET) == 0
+            # ...but the in-progress marker is STILL set: the pending signal the
+            # CLI gates on stays True, so it never reports a false success.
+            assert await h.async_redis.sismember(THREAD_RESET_INFLIGHT_SET, "tFailRelease")
+            assert any("tFailRelease" in r.getMessage() for r in caplog.records)
 
     asyncio.run(go())
 
