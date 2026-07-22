@@ -86,6 +86,14 @@ export const commandManifest = {
           "long": "from-spec",
           "positional": false,
           "required": false
+        },
+        {
+          "global": false,
+          "help": "Adopt an existing non-plugin directory: scaffold the plugin skeleton INTO it (alongside your code, never overwriting existing files), deriving the name from the directory unless a NAME is given. The on-ramp for a pre-plugin (agent-ss-template) bundle; port the logic by hand afterward (docs/adopting-a-bundle.md, #745)",
+          "id": "adopt",
+          "long": "adopt",
+          "positional": false,
+          "required": false
         }
       ],
       "hidden": false,

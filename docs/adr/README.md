@@ -100,4 +100,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0068 | [A `--model` sweep row with zero completed turns fails loudly instead of reporting 0%](0068-eval-sweep-fails-loudly-on-zero-completed-turns.md) | Accepted |
 | 0069 | [The policy-gate resume reconciliation stays observe-only](0069-policy-gate-resume-reconciliation-stays-observe-only.md) | Accepted |
 | 0070 | [A bundle-local `.env` is an opt-in, lowest-priority credential source](0070-bundle-local-dotenv-is-an-opt-in-lowest-priority-credential-source.md) | Accepted |
+| 0071 | [Adopting a pre-plugin bundle scaffolds the skeleton, not the logic](0071-adopting-a-pre-plugin-bundle-scaffolds-the-skeleton-not-the-logic.md) | Accepted |
 <!-- END GENERATED: adr-index -->

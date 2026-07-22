@@ -21,7 +21,9 @@ use crate::evals::{
 };
 use crate::render::{boxed_summary, status_str, TurnPart, TurnPrinter};
 use crate::runner::RunnerClient;
-use crate::scaffold::{read_declared_secrets, read_manifest, scaffold, scaffold_from_spec};
+use crate::scaffold::{
+    derive_plugin_name, read_declared_secrets, read_manifest, scaffold, scaffold_from_spec,
+};
 use crate::state::{self, RunnerState};
 
 pub const DEFAULT_PORT: u16 = 7245; // the design canon's local bot port
@@ -250,7 +252,12 @@ impl crate::ui::CliOutput for CheckOutput<'_> {
     }
 }
 
-pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBuf>) -> Result<()> {
+pub fn init(
+    name: Option<String>,
+    dir: Option<PathBuf>,
+    from_spec: Option<PathBuf>,
+    adopt: Option<PathBuf>,
+) -> Result<()> {
     let ui = crate::ui::ui();
 
     // Spec-file path (ADR-0021 decision 5): fully non-interactive. The bundle
@@ -289,9 +296,48 @@ pub fn init(name: Option<String>, dir: Option<PathBuf>, from_spec: Option<PathBu
         return Ok(());
     }
 
+    // Adopt an existing directory (#745, ADR-0071): scaffold the plugin skeleton
+    // INTO <dir> alongside whatever is already there, deriving the name from the
+    // directory unless an explicit NAME overrides it. The logic port is the
+    // operator's (docs/adopting-a-bundle.md); this only lays the skeleton.
+    if let Some(adopt_dir) = adopt {
+        if !adopt_dir.is_dir() {
+            bail!(
+                "--adopt {}: not a directory. Point it at the existing bundle to adopt.",
+                adopt_dir.display()
+            );
+        }
+        let name = match name {
+            Some(name) => name,
+            None => derive_plugin_name(&adopt_dir).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not derive a kebab-case plugin name from {}; pass one explicitly: \
+                     agentos init <name> --adopt {}",
+                    adopt_dir.display(),
+                    adopt_dir.display()
+                )
+            })?,
+        };
+        let created = scaffold(&adopt_dir, &name)?;
+        report_scaffold(
+            ui,
+            name.clone(),
+            None,
+            format!(
+                "adopted {} as plugin bundle '{name}' -- scaffolded the skeleton alongside \
+                 your existing files. Port your agent's logic into skills/{name}/SKILL.md and \
+                 .mcp.json (see docs/adopting-a-bundle.md), then run `agentos skill up`.",
+                adopt_dir.display()
+            ),
+            created,
+            &adopt_dir,
+        );
+        return Ok(());
+    }
+
     let name = match name {
         Some(name) => name,
-        None => bail!("provide a plugin NAME or --from-spec <path>"),
+        None => bail!("provide a plugin NAME, --from-spec <path>, or --adopt <dir>"),
     };
     let dir = dir.unwrap_or_else(|| PathBuf::from(&name));
     let created = scaffold(&dir, &name)?;
@@ -4025,12 +4071,7 @@ fn read_bundle_gates(plugin_dir: &Path) -> Result<Vec<(String, String)>> {
         .iter()
         .map(|loc| plugin_dir.join(loc))
         .find(|path| path.is_file())
-        .ok_or_else(|| {
-            crate::exit::usage(format!(
-                "no plugin manifest under {}: expected .claude-plugin/plugin.json or plugin.json",
-                plugin_dir.display()
-            ))
-        })?;
+        .ok_or_else(|| crate::exit::usage(crate::scaffold::no_manifest_message(plugin_dir)))?;
     let body = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
     parse_manifest_gates(&body, &manifest_path.display().to_string())
