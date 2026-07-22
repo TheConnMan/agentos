@@ -767,7 +767,7 @@ def test_dead_letter_is_logged_loudly_with_the_operational_facts(
                 assert any(
                     entry_id in m
                     and "2" in m
-                    and "max delivery exceeded" in m
+                    and "max-delivery-exceeded" in m
                     and dead in m
                     for m in messages
                 ), (
@@ -822,7 +822,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                 assert len(alerts) == 1, f"expected one dead letter alert, got {alerts}"
                 assert alerts[0].getMessage() == (
                     f"event=agentos.dead_letter entry_id={entry_id} delivery_count=2 "
-                    f"reason=max delivery exceeded dead_stream={dead}"
+                    f"reason=max-delivery-exceeded dead_stream={dead}"
                 )
 
                 caplog.clear()
@@ -831,14 +831,14 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                     "dead-lettered entry %s after %d deliveries reason=%s -> %s",
                     entry_id,
                     2,
-                    "max delivery exceeded",
+                    "max-delivery-exceeded",
                     dead,
                 )
                 source_logger.error(
                     "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
                     entry_id,
                     2,
-                    "max delivery exceeded",
+                    "max-delivery-exceeded",
                 )
                 assert not [
                     record
@@ -853,7 +853,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                     "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
                     entry_id,
                     2,
-                    "max delivery exceeded",
+                    "max-delivery-exceeded",
                     dead,
                 )
                 assert not [
@@ -868,7 +868,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                     "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
                     entry_id,
                     2,
-                    "max delivery exceeded",
+                    "max-delivery-exceeded",
                     dead,
                 )
                 assert not [
@@ -883,7 +883,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                     "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
                     entry_id,
                     "two",
-                    "max delivery exceeded",
+                    "max-delivery-exceeded",
                     dead,
                 )
                 assert not [
