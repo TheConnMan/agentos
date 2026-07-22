@@ -79,6 +79,11 @@ pub struct StartOpts {
     /// model credentials (docker reads the value from the caller's env; the
     /// value never appears in argv). From `skill up --secret <NAME>`.
     pub secret: Vec<String>,
+    /// Opt-in path to a bundle-local `.env` read as the LOWEST-priority model-
+    /// credential source (#749, ADR-0070): shell env > vault > this file. Only
+    /// the recognized credential names are read; every other key is ignored.
+    /// From `skill up --env-file <PATH>`.
+    pub env_file: Option<PathBuf>,
     /// Remove a pre-existing container of the same name before booting, instead
     /// of failing on the conflict. From `skill up --replace` (#747).
     pub replace: bool,
@@ -1007,6 +1012,91 @@ fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
     Ok(env)
 }
 
+/// The model-credential names, in the precedence order the vault loader uses
+/// (`AGENTOS_CREDENTIALS` dominates the SDK pair). These are the ONLY keys read
+/// from an opt-in `--env-file` (#749, ADR-0070); every other key in the dotfile
+/// is ignored, never absorbed into any process env.
+const MODEL_CREDENTIAL_ENV_NAMES: [&str; 3] = [
+    "AGENTOS_CREDENTIALS",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+];
+
+/// Parse just the recognized model-credential names out of a dotenv file,
+/// dropping every other key. An empty value is absent, not supplied (issue
+/// #540), so it is dropped too. A missing/unreadable file is a hard error --
+/// `--env-file` is an explicit opt-in, so pointing it at nothing is a mistake.
+fn parse_credential_env_file(path: &Path) -> Result<Vec<(String, String)>> {
+    let mut found = Vec::new();
+    for item in dotenvy::from_path_iter(path)
+        .with_context(|| format!("reading --env-file {}", path.display()))?
+    {
+        let (key, value) =
+            item.with_context(|| format!("parsing --env-file {}", path.display()))?;
+        if MODEL_CREDENTIAL_ENV_NAMES.contains(&key.as_str()) && !value.is_empty() {
+            found.push((key, value));
+        }
+    }
+    Ok(found)
+}
+
+/// Which parsed `.env` credentials to add, given what a higher-priority source
+/// already supplied (`is_present`: shell env OR vault). Pure, so the precedence
+/// (#749: shell env > vault > file) is unit-testable without touching the
+/// process env. Mirrors `load_model_credentials_from_secret_store`'s shape:
+/// `AGENTOS_CREDENTIALS` dominates and suppresses the SDK pair, matching
+/// `select_passthrough_env`'s byo branch.
+fn resolve_env_file_credentials(
+    parsed: &[(String, String)],
+    is_present: &dyn Fn(&str) -> bool,
+) -> Vec<(String, String)> {
+    let take = |name: &str| -> Option<(String, String)> {
+        if is_present(name) {
+            return None;
+        }
+        parsed
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(key, value)| (key.clone(), value.clone()))
+    };
+    if let Some(pair) = take("AGENTOS_CREDENTIALS") {
+        return vec![pair];
+    }
+    // A BYO credential from a higher source dominates: the SDK pair is never
+    // forwarded alongside it, so do not pull it from the file either.
+    if is_present("AGENTOS_CREDENTIALS") {
+        return Vec::new();
+    }
+    ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        .into_iter()
+        .filter_map(take)
+        .collect()
+}
+
+/// Load model credentials from an opt-in bundle `.env` as the LOWEST-priority
+/// source (#749, ADR-0070). `already` is the vault-hydrated `docker_env`, so a
+/// name supplied by the shell env or the vault always wins; only a name missing
+/// from both is taken from the file.
+fn load_model_credentials_from_env_file(
+    env_file: Option<&Path>,
+    already: &[(String, String)],
+) -> Result<Vec<(String, String)>> {
+    let Some(path) = env_file else {
+        return Ok(Vec::new());
+    };
+    let parsed = parse_credential_env_file(path)?;
+    let is_present =
+        |name: &str| env_credential_present(name) || stored_env_contains(already, name);
+    let resolved = resolve_env_file_credentials(&parsed, &is_present);
+    for (name, _) in &resolved {
+        crate::ui::ui().note(&format!(
+            "{name}: loaded from --env-file {} for this run",
+            path.display()
+        ));
+    }
+    Ok(resolved)
+}
+
 /// What a recorded runner means for a fresh `skill up` (#747).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordedStatePlan {
@@ -1179,6 +1269,13 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     let mut docker_env = Vec::new();
     if !fake_model {
         docker_env.extend(load_model_credentials_from_secret_store()?);
+        // #749/ADR-0070: an opt-in bundle `.env` is the lowest-priority source
+        // -- appended after the vault, filling only names the shell env and the
+        // vault did not (shell env > vault > file). `select_passthrough_env`
+        // below stays the frozen authority on what is actually forwarded.
+        let from_env_file =
+            load_model_credentials_from_env_file(opts.env_file.as_deref(), &docker_env)?;
+        docker_env.extend(from_env_file);
     }
     let byo_credential = std::env::var("AGENTOS_CREDENTIALS")
         .ok()
@@ -4259,14 +4356,97 @@ pub fn skill_memory_unavailable() -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        absent_container_note, merge_secret_env, parse_manifest_gates, plan_recorded_state,
-        plan_recorded_teardown, plan_skill_down, replace_first_line, report_sweep,
-        resolve_cases_path, seed_env_if_missing, select_in_force_deployment,
-        select_passthrough_env, sweep_json_row, sweep_table_row, validate_slack_channel,
-        ApprovalGateDecl, DownPlan, EnvSeed, RecordedStatePlan, RecordedTeardown, SweepRow,
+        absent_container_note, merge_secret_env, parse_credential_env_file, parse_manifest_gates,
+        plan_recorded_state, plan_recorded_teardown, plan_skill_down, replace_first_line,
+        report_sweep, resolve_cases_path, resolve_env_file_credentials, seed_env_if_missing,
+        select_in_force_deployment, select_passthrough_env, sweep_json_row, sweep_table_row,
+        validate_slack_channel, ApprovalGateDecl, DownPlan, EnvSeed, RecordedStatePlan,
+        RecordedTeardown, SweepRow,
     };
     use serde::Deserialize;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn env_file_resolver_respects_shell_and_vault_precedence() {
+        let parsed = vec![
+            (
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "oat-file".to_string(),
+            ),
+            ("ANTHROPIC_API_KEY".to_string(), "sk-file".to_string()),
+        ];
+        // Nothing higher present -> the file fills both SDK names.
+        let none_present = |_: &str| false;
+        assert_eq!(
+            resolve_env_file_credentials(&parsed, &none_present),
+            vec![
+                (
+                    "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                    "oat-file".to_string()
+                ),
+                ("ANTHROPIC_API_KEY".to_string(), "sk-file".to_string()),
+            ]
+        );
+        // A higher source (shell env or vault) already has the OAuth token, so
+        // the file fills only the still-missing API key: shell > vault > file.
+        let oauth_present = |name: &str| name == "CLAUDE_CODE_OAUTH_TOKEN";
+        assert_eq!(
+            resolve_env_file_credentials(&parsed, &oauth_present),
+            vec![("ANTHROPIC_API_KEY".to_string(), "sk-file".to_string())]
+        );
+    }
+
+    #[test]
+    fn env_file_agentos_credential_dominates_the_sdk_pair() {
+        let parsed = vec![
+            ("AGENTOS_CREDENTIALS".to_string(), "byo-file".to_string()),
+            ("ANTHROPIC_API_KEY".to_string(), "sk-file".to_string()),
+        ];
+        // The file's AGENTOS_CREDENTIALS wins and is returned alone.
+        let none = |_: &str| false;
+        assert_eq!(
+            resolve_env_file_credentials(&parsed, &none),
+            vec![("AGENTOS_CREDENTIALS".to_string(), "byo-file".to_string())]
+        );
+        // A BYO credential from a higher source dominates -> nothing from the
+        // file (the SDK pair never rides alongside AGENTOS_CREDENTIALS).
+        let byo_present = |name: &str| name == "AGENTOS_CREDENTIALS";
+        assert!(resolve_env_file_credentials(&parsed, &byo_present).is_empty());
+    }
+
+    #[test]
+    fn parse_credential_env_file_reads_only_recognized_nonempty_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        std::fs::write(
+            &path,
+            "ANTHROPIC_API_KEY=sk-real\n\
+             AGENTOS_CREDENTIALS=\n\
+             UNRELATED=leaked\n\
+             CLAUDE_CODE_OAUTH_TOKEN=oat-real\n",
+        )
+        .unwrap();
+        let parsed = parse_credential_env_file(&path).unwrap();
+        // Recognized + non-empty only: the empty AGENTOS_CREDENTIALS and the
+        // UNRELATED key are dropped, never absorbed (#749/#540).
+        assert_eq!(
+            parsed,
+            vec![
+                ("ANTHROPIC_API_KEY".to_string(), "sk-real".to_string()),
+                (
+                    "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                    "oat-real".to_string()
+                ),
+            ]
+        );
+        assert!(!parsed.iter().any(|(key, _)| key == "UNRELATED"));
+    }
+
+    #[test]
+    fn parse_credential_env_file_errors_on_a_missing_file() {
+        let err = parse_credential_env_file(Path::new("/no/such/agentos/env/file")).unwrap_err();
+        assert!(err.to_string().contains("--env-file"), "{err}");
+    }
 
     fn row(model: &str, passed: usize, completed: usize, total: usize) -> SweepRow {
         SweepRow {

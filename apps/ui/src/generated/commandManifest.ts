@@ -209,6 +209,14 @@ export const commandManifest = {
             },
             {
               "global": false,
+              "help": "Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST- priority model-credential source, so the bundle boots live with no `set -a; source .env` step. Precedence: shell env > stored secret (`agentos secrets set`) > this file. Only AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other key in the file is ignored (#749)",
+              "id": "env_file",
+              "long": "env-file",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
               "help": "Remove a leftover container of the same name before booting, instead of failing on the conflict",
               "id": "replace",
               "long": "replace",
