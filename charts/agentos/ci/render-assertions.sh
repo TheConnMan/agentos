@@ -290,13 +290,23 @@ if check_runner_env "$MUTANT" "mutant (AGENTOS_SANDBOX_ID -> AGENTOS_SANBOX_ID)"
 fi
 echo "  ok: misspelled runner env name is rejected (the assert can fail)"
 
-echo "=== Assertion 8: priorityClassName on every control-plane pod + the sandbox (ADR-0059 decision 5, #759) ==="
+echo "=== Assertion 8: priorityClassName on every control-plane pod + the sandbox controller + the sandbox (ADR-0059 decision 5, #759, #816) ==="
 # The control plane (worker, api, dispatcher, data tier: postgres, valkey,
 # clickhouse, minio) must outrank sandbox pods for node-pressure eviction, so
 # the components that supervise, drain, and reclaim a sandbox are never
 # themselves preferred for eviction over the sandboxes they manage. Render with
 # the dispatcher enabled (it needs both Slack tokens to render at all) so every
 # control-plane pod is present in one pass.
+#
+# The vendored agent-sandbox controller (#816) is control plane too: it
+# reconciles sandbox claims/releases, so it must also outrank the sandbox pods
+# it manages for node-pressure eviction. It is a static Deployment named
+# exactly `agent-sandbox-controller`, not prefixed by the chart fullname, so it
+# cannot be matched by the suffix table below and needs its own exact-name
+# lookup. This is also the tripwire for the template-layer string-injection
+# anchor silently drifting on a future upstream controller bump: if the anchor
+# stops matching, the field silently stops being set, and only an assert that
+# actually reads the rendered priorityClassName back out would catch it.
 PRIO_OUT="$(mktemp -d -p "$TMP")"
 helm template "$CHART" --output-dir "$PRIO_OUT" \
   --set dispatcher.slack.appToken=xapp-render-assert \
@@ -305,8 +315,8 @@ helm template "$CHART" --output-dir "$PRIO_OUT" \
 
 PRIO_CHECK="$TMP/check_priority_class.py"
 cat > "$PRIO_CHECK" <<'PYEOF'
-"""Assert priorityClassName on every control-plane pod template and the
-sandbox pod template.
+"""Assert priorityClassName on every control-plane pod template, the vendored
+agent-sandbox controller Deployment, and the sandbox pod template.
 
 argv: <rendered-dir> <expected-platform-name> <expected-sandbox-name>
 Exits 0 on pass, 1 naming the offending workload on failure.
@@ -333,7 +343,13 @@ EXPECTED = {
     "-minio": platform_name,
 }
 
+# Exact name, not a suffix match: `agent-sandbox-controller-extensions` and
+# `release-name-agentos-preflight-controller` also exist in the render, and a
+# loose `-controller` suffix would silently match the wrong object.
+CONTROLLER_NAME = "agent-sandbox-controller"
+
 found = {}
+controller_found = None
 sandbox_found = []
 for path in sorted(pathlib.Path(rendered).rglob("*.yaml")):
     for doc in yaml.safe_load_all(path.read_text()):
@@ -350,6 +366,8 @@ for path in sorted(pathlib.Path(rendered).rglob("*.yaml")):
             for suffix in EXPECTED:
                 if name.endswith(suffix):
                     found[suffix] = (name, spec.get("priorityClassName"))
+            if kind == "Deployment" and name == CONTROLLER_NAME:
+                controller_found = (name, spec.get("priorityClassName"))
         elif kind == "SandboxTemplate":
             spec = doc.get("spec", {}).get("podTemplate", {}).get("spec", {})
             sandbox_found.append((doc.get("metadata", {}).get("name", ""), spec.get("priorityClassName")))
@@ -371,6 +389,19 @@ if mismatched:
             f"priorityClassName={got!r}, expected {want!r}\n")
     sys.exit(1)
 
+if controller_found is None:
+    sys.stderr.write(
+        f"found no Deployment named exactly {CONTROLLER_NAME!r} in the render; "
+        "the agent-sandbox controller priorityClassName assert would pass vacuously\n")
+    sys.exit(1)
+
+controller_name, controller_got = controller_found
+if controller_got != platform_name:
+    sys.stderr.write(
+        f"controller Deployment '{controller_name}' has "
+        f"priorityClassName={controller_got!r}, expected {platform_name!r}\n")
+    sys.exit(1)
+
 if not sandbox_found:
     sys.stderr.write("found no SandboxTemplate in the render; the sandbox assert would pass vacuously\n")
     sys.exit(1)
@@ -382,12 +413,12 @@ if sandbox_mismatched:
             f"SandboxTemplate '{name}' has priorityClassName={got!r}, expected {sandbox_name!r}\n")
     sys.exit(1)
 
-print(f"  ok: {len(found)} control-plane workloads carry priorityClassName={platform_name!r}; "
-      f"SandboxTemplate carries priorityClassName={sandbox_name!r}")
+print(f"  ok: {len(found)} control-plane workloads and the agent-sandbox controller carry "
+      f"priorityClassName={platform_name!r}; SandboxTemplate carries priorityClassName={sandbox_name!r}")
 PYEOF
 
 python3 "$PRIO_CHECK" "$PRIO_OUT" "agentos-platform" "agentos-sandbox" \
-  || fail "default render did not set the expected priorityClassName on every control-plane pod and the sandbox."
+  || fail "default render did not set the expected priorityClassName on every control-plane pod, the agent-sandbox controller, and the sandbox."
 
 echo "=== Assertion 9: priorityClassName names are operator-overridable (additive values, #759) ==="
 PRIO_OVERRIDE_OUT="$(mktemp -d -p "$TMP")"
@@ -399,7 +430,7 @@ helm template "$CHART" --output-dir "$PRIO_OVERRIDE_OUT" \
   > /dev/null
 python3 "$PRIO_CHECK" "$PRIO_OVERRIDE_OUT" "custom-platform-class" "custom-sandbox-class" \
   || fail "overriding priorityClasses.platform.name/sandbox.name did not propagate to priorityClassName on the rendered pods."
-echo "  ok: overriding priorityClasses.platform.name/sandbox.name propagates to every control-plane pod and the sandbox"
+echo "  ok: overriding priorityClasses.platform.name/sandbox.name propagates to every control-plane pod, the agent-sandbox controller, and the sandbox"
 
 echo "=== Assertion 10: SandboxTemplate opts the controller out of its own permissive NetworkPolicy when Rail 1 is on (#765) ==="
 # NetworkPolicy allows are additive across objects that select the same pods --
@@ -470,4 +501,4 @@ python3 "$NP_CHECK" "$NP_OFF_OUT" "absent" \
 echo "  ok: with Rail 1 off, networkPolicyManagement is left unset (falls back to the controller's own Managed default rather than nothing)"
 
 echo
-echo "PASS: sealed render generates strong values for all 9 keys (encryptionKey 64-hex); dev overlay keeps published defaults; explicit override wins on the sealed path; every runner boot-env name is a declared contract key (proven by a failing negative control); every control-plane pod and the sandbox render with the expected priorityClassName, including under operator override; the runner SandboxTemplate opts the controller out of its own permissive NetworkPolicy whenever Rail 1 is on, and leaves it to the controller's default when Rail 1 is off."
+echo "PASS: sealed render generates strong values for all 9 keys (encryptionKey 64-hex); dev overlay keeps published defaults; explicit override wins on the sealed path; every runner boot-env name is a declared contract key (proven by a failing negative control); every control-plane pod, the agent-sandbox controller, and the sandbox render with the expected priorityClassName, including under operator override; the runner SandboxTemplate opts the controller out of its own permissive NetworkPolicy whenever Rail 1 is on, and leaves it to the controller's default when Rail 1 is off."

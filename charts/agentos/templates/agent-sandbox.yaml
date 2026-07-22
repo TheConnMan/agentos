@@ -9,7 +9,11 @@ the worker claims from, plus (optionally) the vendored upstream controller.
   vendored under files/agent-sandbox/ with two AgentOS security patches (#66:
   the networkpolicies RBAC is de-scoped from cluster-wide to the release
   namespace via the Role/RoleBinding below, and the Deployment carries a
-  hardened securityContext). Cluster-scoped, one per cluster.
+  hardened securityContext). Cluster-scoped, one per cluster. A third,
+  template-layer patch injects the platform priorityClassName into the
+  controller Deployment below (issue #816, ADR-0059 decision 5) rather than
+  baking it into the vendored file, so it tracks the operator-set class name;
+  the vendored file itself still carries only the #66 securityContext patch.
 - The SandboxTemplate bakes the generic warm-pod env. Per-session env
   (AGENTOS_HISTORY_REF, AGENTOS_SESSION_ID) is injected per-claim by the
   substrate; envVarsInjectionPolicy Overrides makes that injection win.
@@ -23,7 +27,22 @@ the worker claims from, plus (optionally) the vendored upstream controller.
   default-deny + allowlist in security-networkpolicy.yaml.
 */}}
 {{- if .Values.agentSandbox.controller.deploy }}
-{{ .Files.Get "files/agent-sandbox/controller.yaml" }}
+{{/*
+ADR-0059 decision 5 / issue #816: the vendored controller carries no
+priorityClassName (priority 0), so under node Disk/Memory pressure the
+kubelet would evict it BEFORE the sandbox pods (agentos-sandbox, value
+100000) it reconciles, halting claim/release servicing exactly when the node
+is under pressure. Injecting the platform PriorityClass keeps the controller
+ranked above the sandboxes it manages. The name tracks
+.Values.priorityClasses.platform.name so an operator rename propagates; the
+vendored file stays a static .Files.Get (not tpl-ed) and this value-dependent
+patch lives in the template layer alongside the #66 RBAC patch below.
+*/}}
+{{- $controllerManifest := .Files.Get "files/agent-sandbox/controller.yaml" }}
+{{- with .Values.priorityClasses.platform.name }}
+{{- $controllerManifest = $controllerManifest | replace "      serviceAccountName: agent-sandbox-controller" (printf "      serviceAccountName: agent-sandbox-controller\n      priorityClassName: %s" .) }}
+{{- end }}
+{{ $controllerManifest }}
 ---
 {{/*
 NetworkPolicy RBAC for the vendored controller, split by verb along the
