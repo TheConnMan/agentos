@@ -120,6 +120,17 @@ _KILL_INTERRUPT_TIMEOUT_S = 5.0
 # fresh reset request is needed to retry.
 _RESET_RELEASE_TIMEOUT_S = 5.0
 
+# The release runs under the same per-thread route lock the turn path holds
+# around `_route_and_start` (#734), so a reset and a turn-start on the same
+# thread cannot interleave. Acquiring that lock is bounded like the interrupt
+# and the release above, and for the same reason: a wedged or slow-cold-claiming
+# turn can hold the route lock for up to the substrate's claim timeout, and a
+# reset must not park the maintenance tick waiting on it. A lock that cannot be
+# taken in time raises, which the drain loop treats as a failed release (left in
+# the in-progress set, reported unconfirmed, retried by a fresh operator
+# request) rather than falling back to the old, unsafe lock-free release.
+_RESET_LOCK_ACQUIRE_TIMEOUT_S = 5.0
+
 
 @dataclass
 class TurnOutcome:
@@ -420,17 +431,13 @@ class Kernel:
             attempt = 0
             while True:
                 attempt += 1
-                outcome = await self._attempt(
-                    qevent, release_order, boot_env, agent_id, nav, packs
-                )
+                outcome = await self._attempt(qevent, release_order, boot_env, agent_id, nav, packs)
 
                 if outcome.status is SessionStatus.AWAITING_APPROVAL:
                     # A gate fired (ADR-0010): persist the durable record, then
                     # suspend the session until a human resolves it. The event
                     # is done -- the resolution arrives as its own queued turn.
-                    await self._pause_for_approval(
-                        qevent, outcome, agent_id, approval_routes
-                    )
+                    await self._pause_for_approval(qevent, outcome, agent_id, approval_routes)
                     await self._markers.mark_done(event_id)
                     return
 
@@ -530,6 +537,28 @@ class Kernel:
         like any other release failure, which the drain loop's per-request
         handler already logs and isolates from the rest of the batch.
 
+        The release runs under the SAME per-thread route lock the turn path
+        holds around `_route_and_start` (#734). Without it the release is
+        lock-free while a concurrent turn for this thread holds only that lock,
+        so a message arriving in the window between the interrupt above and the
+        release below can `claim()`-adopt the very sandbox this is tearing down
+        and open a turn on it -- which the release then yanks mid-run. The
+        interrupt cannot cover that turn: it fired before the turn existed, so
+        it no-oped. Taking the lock makes the two mutually exclusive. A reset
+        that wins the lock drops the route while holding it, so a turn waiting
+        to route then cold-creates a fresh sandbox (exactly the reset's intent)
+        instead of adopting the doomed one. A turn that wins the lock opens
+        first and the reset serializes behind its `_route_and_start`, then tears
+        it down as an ordinary live-thread reset (the turn replays on a fresh
+        sandbox via the `runner-error` retry path described below). Either way
+        no turn is ever left streaming on a sandbox this released out from under
+        it without the reset first having serialized against its start.
+
+        The lock hold spans only the release (interrupt-then-lock, not the
+        reverse), so the bounded-but-possibly-slow courtesy interrupt does not
+        extend the window turn-starts for this thread are blocked; the hold is
+        the release bound (a few seconds), well under the lock's TTL.
+
         The failure log is an ERROR, not a warning: it is the only record that a
         sandbox was pulled out from under a turn that may still be running, and
         there is no retry that would produce a second, louder signal. The two
@@ -569,13 +598,22 @@ class Kernel:
                     thread_key,
                 )
             else:
-                logger.info(
-                    "reset: no live runner to interrupt on thread %s", thread_key
-                )
-        return await asyncio.wait_for(
-            asyncio.to_thread(self._substrate.release, thread_key),
-            _RESET_RELEASE_TIMEOUT_S,
-        )
+                logger.info("reset: no live runner to interrupt on thread %s", thread_key)
+        # Serialize the teardown against `_route_and_start` for this thread by
+        # holding the same route lock the turn path holds (#734). Both the lock
+        # acquisition and the release run on their own bounds, so a wedged turn
+        # or control plane cannot park the maintenance tick here; a lock that
+        # cannot be taken in time propagates as a release failure, same as a
+        # timed-out release.
+        lock_key = self._config.lock_key(thread_key)
+        token = await asyncio.wait_for(self._lock.acquire(lock_key), _RESET_LOCK_ACQUIRE_TIMEOUT_S)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._substrate.release, thread_key),
+                _RESET_RELEASE_TIMEOUT_S,
+            )
+        finally:
+            await self._lock.release(lock_key, token)
 
     def attach_killswitch(self, killswitch: KillSwitch) -> None:
         """Wire the kill switch after construction (it needs interrupt_agent)."""
@@ -689,9 +727,7 @@ class Kernel:
                     endpoint=qevent.reply_handle.endpoint,
                 )
             except Exception:
-                logger.warning(
-                    "booting-state update failed for %s", qevent.event_id
-                )
+                logger.warning("booting-state update failed for %s", qevent.event_id)
 
         event = self._to_event(qevent)
 
@@ -806,9 +842,7 @@ class Kernel:
         turn = await self._runner.start_turn(handle.base_url, event, token=handle.token or None)
         return _RouteResult(steered=False, handle=handle, turn=turn)
 
-    async def _claim_or_resume(
-        self, thread: str, boot_env: dict[str, str] | None
-    ) -> SandboxHandle:
+    async def _claim_or_resume(self, thread: str, boot_env: dict[str, str] | None) -> SandboxHandle:
         try:
             return await asyncio.to_thread(self._substrate.claim, thread, env=boot_env)
         except SuspendedThreadError:
@@ -859,9 +893,7 @@ class Kernel:
                 blocks=blocks,
                 endpoint=ref.endpoint,
             )
-            logger.info(
-                "disabled expired approval card for thread %s", qevent.conversation_id
-            )
+            logger.info("disabled expired approval card for thread %s", qevent.conversation_id)
         except Exception as exc:  # noqa: BLE001 - card teardown is best-effort
             logger.warning(
                 "expired approval card teardown failed for thread %s: %s",
@@ -1033,12 +1065,8 @@ class Kernel:
                         endpoint=card_endpoint,
                     )
                 except Exception as exc:  # noqa: BLE001 - best-effort memory
-                    logger.warning(
-                        "remembering approval card for %s failed: %s", created.id, exc
-                    )
-        logger.info(
-            "thread %s suspended awaiting approval %s", thread, created.id
-        )
+                    logger.warning("remembering approval card for %s failed: %s", created.id, exc)
+        logger.info("thread %s suspended awaiting approval %s", thread, created.id)
 
     async def _consume(
         self, qevent: QueuedTurn, turn: TurnStream, nav: NavPack | None = None
