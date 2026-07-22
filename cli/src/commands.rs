@@ -1010,7 +1010,7 @@ fn merge_secret_env(mut passthrough: Vec<String>, secrets: &[String]) -> Vec<Str
 /// alone reports `NAME=""` as present, which would suppress the vault fallback
 /// and forward nothing usable. Mirrors `ops.rs::resolve_up_credentials` and
 /// `interactive.rs::env_credential_present`.
-fn env_credential_present(name: &str) -> bool {
+pub(crate) fn env_credential_present(name: &str) -> bool {
     std::env::var(name).is_ok_and(|value| !value.is_empty())
 }
 
@@ -1072,7 +1072,7 @@ const MODEL_CREDENTIAL_ENV_NAMES: [&str; 3] = [
 /// dropping every other key. An empty value is absent, not supplied (issue
 /// #540), so it is dropped too. A missing/unreadable file is a hard error --
 /// `--env-file` is an explicit opt-in, so pointing it at nothing is a mistake.
-fn parse_credential_env_file(path: &Path) -> Result<Vec<(String, String)>> {
+pub(crate) fn parse_credential_env_file(path: &Path) -> Result<Vec<(String, String)>> {
     let mut found = Vec::new();
     for item in dotenvy::from_path_iter(path)
         .with_context(|| format!("reading --env-file {}", path.display()))?
@@ -1092,7 +1092,7 @@ fn parse_credential_env_file(path: &Path) -> Result<Vec<(String, String)>> {
 /// process env. Mirrors `load_model_credentials_from_secret_store`'s shape:
 /// `AGENTOS_CREDENTIALS` dominates and suppresses the SDK pair, matching
 /// `select_passthrough_env`'s byo branch.
-fn resolve_env_file_credentials(
+pub(crate) fn resolve_env_file_credentials(
     parsed: &[(String, String)],
     is_present: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, String)> {

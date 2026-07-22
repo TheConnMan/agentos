@@ -543,6 +543,14 @@
                 "false"
               ],
               "required": false
+            },
+            {
+              "global": false,
+              "help": "Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST- priority model-credential source, so the compose stack boots live with no `set -a; source .env` step. Precedence: shell env > this file. Only AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other key in the file is ignored, and the value never reaches argv or logs (#749)",
+              "id": "env_file",
+              "long": "env-file",
+              "positional": false,
+              "required": false
             }
           ],
           "hidden": false,

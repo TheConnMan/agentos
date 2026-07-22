@@ -6,6 +6,8 @@
 //! (or the `--dry-run` printer) consumes it, so argv construction stays
 //! unit-testable with no Docker daemon.
 
+use std::path::Path;
+
 use anyhow::{bail, Result};
 
 use crate::commands::OLLAMA_PORT;
@@ -134,13 +136,76 @@ pub fn otel_endpoint_env_override(minimal: bool) -> Option<(String, String)> {
 /// empty-string-is-not-a-credential rule); a credential is any non-empty
 /// CREDENTIAL_ENV_VARS value.
 pub fn model_mode_from_env() -> ModelMode {
+    model_mode_from_env_with_file_credential(false)
+}
+
+/// The shell parity decision, folding in whether an opt-in `.env` supplied a
+/// model credential the shell did not (#749). `file_has_credential` makes the
+/// stack go live exactly like a shell credential would, unless the shell pins
+/// `AGENTOS_FAKE_MODEL` truthy -- in which case the pin still wins
+/// (`FakePinnedDespiteCredential`). Reads the shell for the pin and for its own
+/// credentials; a `.env`-only credential is the sole extra input.
+pub fn model_mode_from_env_with_file_credential(file_has_credential: bool) -> ModelMode {
     let explicit = std::env::var("AGENTOS_FAKE_MODEL")
         .ok()
         .filter(|s| !s.is_empty());
-    let has_credential = CREDENTIAL_ENV_VARS
-        .iter()
-        .any(|v| std::env::var(v).map(|s| !s.is_empty()).unwrap_or(false));
+    let has_credential = file_has_credential
+        || CREDENTIAL_ENV_VARS
+            .iter()
+            .any(|v| std::env::var(v).map(|s| !s.is_empty()).unwrap_or(false));
     resolve_model_mode(explicit.as_deref(), has_credential)
+}
+
+/// Resolve the opt-in bundle `.env` plan for `local up` (#749, ADR-0070): the
+/// model credentials to inject into the compose child, plus the effective model
+/// mode. Pure -- the shell-presence predicate and the explicit `AGENTOS_FAKE_MODEL`
+/// pin are injected -- so both the precedence (shell env wins over `.env`) and
+/// the "a `.env`-only credential still boots live" rule are unit-testable without
+/// touching the process environment.
+///
+/// `parsed` is the recognized model-credential names read from the file;
+/// `shell_present(name)` is whether the shell already exports it non-empty (a
+/// shell value always wins, so a present name is never taken from the file);
+/// `explicit_fake_model` / `shell_has_credential` are the shell inputs to the
+/// parity decision. The returned credentials are only those absent from the
+/// shell, ready to be attached as masked `secret_env` (never argv).
+pub fn resolve_env_file_up_plan(
+    parsed: &[(String, String)],
+    shell_present: &dyn Fn(&str) -> bool,
+    explicit_fake_model: Option<&str>,
+    shell_has_credential: bool,
+) -> (Vec<(String, String)>, ModelMode) {
+    let creds = crate::commands::resolve_env_file_credentials(parsed, shell_present);
+    let has_credential = shell_has_credential || !creds.is_empty();
+    let mode = resolve_model_mode(explicit_fake_model, has_credential);
+    (creds, mode)
+}
+
+/// Read the opt-in bundle `.env` and resolve the credentials `local up` should
+/// inject plus the effective model mode, from the live process environment. A
+/// `None` path means no file is read (returns no credentials and the shell-only
+/// mode). Thin IO wrapper over the pure [`resolve_env_file_up_plan`]; the file
+/// is parsed for the recognized model-credential names only, every other key
+/// ignored.
+pub fn load_env_file_up_plan(
+    env_file: Option<&Path>,
+) -> Result<(Vec<(String, String)>, ModelMode)> {
+    let Some(path) = env_file else {
+        return Ok((Vec::new(), model_mode_from_env()));
+    };
+    let parsed = crate::commands::parse_credential_env_file(path)?;
+    let explicit = std::env::var("AGENTOS_FAKE_MODEL")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let shell_has_credential = CREDENTIAL_ENV_VARS
+        .iter()
+        .any(|v| crate::commands::env_credential_present(v));
+    Ok(resolve_env_file_up_plan(
+        &parsed,
+        &|name| crate::commands::env_credential_present(name),
+        explicit.as_deref(),
+        shell_has_credential,
+    ))
 }
 
 /// Flags shared by every `local` verb.
@@ -153,6 +218,11 @@ pub struct LocalOpts {
     /// Model mode resolved from the shell (skill-tier parity). Only `up`
     /// consumes it; `down`/`status` set `DefaultFake`.
     pub model_mode: ModelMode,
+    /// Opt-in bundle-local `.env` path (#749, ADR-0070): the LOWEST-priority
+    /// model-credential source for the compose stack, so a bundle boots live
+    /// with no `set -a; source .env` step. `None` means no file is read. Only
+    /// `up` consumes it; the other verbs set `None`.
+    pub env_file: Option<std::path::PathBuf>,
 }
 
 pub struct LocalDownOpts {
@@ -388,9 +458,31 @@ impl crate::ui::CliOutput for LocalUpOutput {
     }
 }
 
-pub async fn up(o: LocalOpts) -> Result<LocalUpOutput> {
+pub async fn up(mut o: LocalOpts) -> Result<LocalUpOutput> {
     let ui = crate::ui::ui();
-    let cmd = up_command(&o);
+    // #749/ADR-0070: an opt-in bundle `.env` is the LOWEST-priority model
+    // credential source. A name exported in the shell always wins; only a name
+    // absent from the shell is taken from the file. The value is injected into
+    // the compose child as masked `secret_env` (never argv/logs), and a
+    // `.env`-only credential still flips the stack live -- so the model mode is
+    // recomputed with the file credential folded in.
+    let (env_creds, env_file_mode) = load_env_file_up_plan(o.env_file.as_deref())?;
+    if o.env_file.is_some() {
+        o.model_mode = env_file_mode;
+        for (name, _) in &env_creds {
+            ui.note(&format!(
+                "{name}: loaded from --env-file {} for this run",
+                o.env_file
+                    .as_deref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            ));
+        }
+    }
+    let mut cmd = up_command(&o);
+    if !env_creds.is_empty() {
+        cmd = cmd.with_secret_env(env_creds);
+    }
     if o.dry_run {
         return Ok(LocalUpOutput::DryRun(crate::ui::DryRunPlan {
             lines: vec![cmd.display()],
@@ -678,6 +770,7 @@ mod tests {
             local_model: None,
             slack: false,
             model_mode: ModelMode::DefaultFake,
+            env_file: None,
         }
     }
 
@@ -689,6 +782,7 @@ mod tests {
             local_model: Some(model.into()),
             slack: false,
             model_mode: ModelMode::DefaultFake,
+            env_file: None,
         }
     }
 
@@ -877,6 +971,99 @@ mod tests {
         o.slack = true;
         let display = rebuild_command(&o, "agentos-dispatcher").display();
         assert!(display.contains("--profile slack"));
+    }
+
+    /// #749/ADR-0070 precedence: a credential exported in the SHELL always wins
+    /// over the same name in the opt-in `.env`, so a shell-present name is never
+    /// taken from the file. Here the shell already has `ANTHROPIC_API_KEY`, so the
+    /// file copy is dropped; nothing is injected and the mode stays whatever the
+    /// shell dictated (live, since the shell has the credential).
+    #[test]
+    fn env_file_up_plan_shell_env_wins_over_dotenv() {
+        let parsed = vec![("ANTHROPIC_API_KEY".to_string(), "from-file".to_string())];
+        let (creds, mode) = resolve_env_file_up_plan(
+            &parsed,
+            &|name| name == "ANTHROPIC_API_KEY", // shell already exports it
+            None,
+            true, // shell has the credential
+        );
+        assert!(
+            creds.is_empty(),
+            "a shell-present credential must not be taken from the file; got {creds:?}"
+        );
+        assert_eq!(mode, ModelMode::LiveFromCredential);
+    }
+
+    /// A credential present ONLY in the `.env` (absent from the shell) is
+    /// injected and still flips the stack live, so a bundle boots on the real
+    /// model with no `source` step.
+    #[test]
+    fn env_file_up_plan_dotenv_only_credential_boots_live() {
+        let parsed = vec![("ANTHROPIC_API_KEY".to_string(), "sk-from-file".to_string())];
+        let (creds, mode) = resolve_env_file_up_plan(
+            &parsed,
+            &|_| false, // shell exports nothing
+            None,
+            false,
+        );
+        assert_eq!(
+            creds,
+            vec![("ANTHROPIC_API_KEY".to_string(), "sk-from-file".to_string())]
+        );
+        assert_eq!(mode, ModelMode::LiveFromCredential);
+    }
+
+    /// The shell's `AGENTOS_FAKE_MODEL` pin still wins over a `.env` credential:
+    /// the operator explicitly asked for the fake model, so a file credential
+    /// does not silently override it (parity with a shell credential).
+    #[test]
+    fn env_file_up_plan_shell_fake_pin_beats_dotenv_credential() {
+        let parsed = vec![("ANTHROPIC_API_KEY".to_string(), "sk-from-file".to_string())];
+        let (creds, mode) = resolve_env_file_up_plan(&parsed, &|_| false, Some("1"), false);
+        // The credential is still injected (present for the runner), but the mode
+        // honors the pin.
+        assert_eq!(creds.len(), 1);
+        assert_eq!(mode, ModelMode::FakePinnedDespiteCredential);
+    }
+
+    /// The injected `.env` credential travels as masked `secret_env`: its raw
+    /// value never appears in the argv or the printed command line, only a masked
+    /// prefix. This is the leak-prevention property (cli/CLAUDE.md: credentials
+    /// masked, never printed).
+    #[test]
+    fn env_file_credential_is_masked_never_printed() {
+        let secret = "sk-ant-supersecretvalue";
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.model_mode = ModelMode::LiveFromCredential;
+        let cmd = up_command(&o)
+            .with_secret_env(vec![("ANTHROPIC_API_KEY".to_string(), secret.to_string())]);
+        let display = cmd.display();
+        assert!(
+            display.contains("ANTHROPIC_API_KEY=sk-ant-s***"),
+            "the token must be masked in the printed command line; got {display}"
+        );
+        assert!(
+            !display.contains(secret),
+            "the raw token leaked into the printed command line: {display}"
+        );
+        assert!(
+            !cmd.argv().iter().any(|a| a.contains(secret)),
+            "the raw token leaked into argv: {:?}",
+            cmd.argv()
+        );
+        // The credential rides secret_env, not the plain env vec.
+        assert!(cmd.env.iter().all(|(k, _)| k != "ANTHROPIC_API_KEY"));
+        assert!(cmd
+            .secret_env
+            .contains(&("ANTHROPIC_API_KEY".to_string(), secret.to_string())));
+    }
+
+    /// No `--env-file` means no file read and no injected credentials -- the
+    /// mode is the shell-only decision.
+    #[test]
+    fn load_env_file_up_plan_none_reads_nothing() {
+        let (creds, _mode) = load_env_file_up_plan(None).unwrap();
+        assert!(creds.is_empty());
     }
 
     #[test]
