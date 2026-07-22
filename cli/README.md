@@ -38,6 +38,7 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 |---|---|
 | `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-agentos/SKILL.md` harness primer. |
 | `agentos init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
+| `agentos init --adopt <dir>` | Adopt an existing non-plugin directory: scaffold the same plugin skeleton **into** it, alongside your code and never overwriting an existing file, with the bundle name derived from the directory unless a `<name>` is given. The on-ramp for a pre-plugin (`agent-ss-template`) bundle; the logic port is manual afterward -- see `docs/adopting-a-bundle.md`. |
 | `agentos` | Open the keyboard-driven terminal interface. Explicit forms: `agentos interactive`, `agentos ui`, `agentos tui`. |
 | `agentos secrets set <NAME>` | Save a local secret in AgentOS's mode-0600 credential file with hidden input. `--from-env <VAR>` reads from an existing environment variable for non-interactive use without putting the value in argv. |
 | `agentos secrets list` | List saved AgentOS secret names. Values are never printed. |

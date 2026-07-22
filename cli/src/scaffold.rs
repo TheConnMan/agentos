@@ -34,6 +34,31 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Derive a kebab-case plugin name from a directory's own name, for `init
+/// --adopt` (#745). Lowercases, turns each run of non-alphanumerics into a
+/// single hyphen, and trims leading/trailing hyphens, so the result satisfies
+/// `valid_name`. Returns None when nothing usable remains (the caller then asks
+/// for an explicit NAME).
+pub(crate) fn derive_plugin_name(dir: &Path) -> Option<String> {
+    let base = dir
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))?;
+    let mut out = String::new();
+    let mut prev_hyphen = true; // start true to suppress any leading hyphen
+    for ch in base.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            prev_hyphen = false;
+        } else if !prev_hyphen {
+            out.push('-');
+            prev_hyphen = true;
+        }
+    }
+    let name = out.trim_end_matches('-').to_string();
+    (!name.is_empty() && valid_name(&name)).then_some(name)
+}
+
 fn manifest(name: &str) -> String {
     serde_json::to_string_pretty(&serde_json::json!({
         "name": name,
@@ -289,12 +314,44 @@ pub(crate) fn load_manifest_json(dir: &Path) -> Result<(std::path::PathBuf, serd
         .iter()
         .map(|rel| dir.join(rel))
         .find(|p| p.is_file())
-        .with_context(|| format!("no plugin manifest under {}", dir.display()))?;
+        .ok_or_else(|| anyhow::anyhow!("{}", no_manifest_message(dir)))?;
     let body =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&body)
         .with_context(|| format!("{} is not valid JSON", path.display()))?;
     Ok((path, value))
+}
+
+/// A directory that looks like a pre-plugin `agent-ss-template` bundle: a
+/// Python-package agent (`src/` plus a build/run file) rather than a plugin
+/// (#745). Used only to make the "no plugin manifest" error point somewhere.
+fn looks_like_pre_plugin_bundle(dir: &Path) -> bool {
+    dir.join("src").is_dir()
+        && ["Makefile", "Dockerfile", "compose.yaml", "server.py"]
+            .iter()
+            .any(|f| dir.join(f).exists())
+}
+
+/// The "no plugin manifest" error, shape-aware (#745): a pre-plugin bundle is
+/// pointed at `init --adopt` and the porting guide; anything else gets the
+/// generic scaffold hint. Shared by every manifest-read call site so the dead
+/// end always names the path forward.
+pub(crate) fn no_manifest_message(dir: &Path) -> String {
+    let d = dir.display();
+    if looks_like_pre_plugin_bundle(dir) {
+        format!(
+            "no plugin manifest under {d} -- this looks like a pre-plugin \
+             (agent-ss-template) bundle. Run `agentos init --adopt {d}` to scaffold \
+             the plugin skeleton alongside your code, then port its logic into \
+             skills/ and .mcp.json (see docs/adopting-a-bundle.md)."
+        )
+    } else {
+        format!(
+            "no plugin manifest under {d}: expected .claude-plugin/plugin.json or \
+             plugin.json. Run `agentos init <name>` to scaffold a new bundle, or \
+             `agentos init --adopt {d}` to adopt an existing directory."
+        )
+    }
 }
 
 /// Read the plugin name and version from a bundle's manifest.
@@ -336,6 +393,47 @@ pub fn read_declared_secrets(dir: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derive_plugin_name_kebabizes_a_directory_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("Revenue_Leak Agent!");
+        std::fs::create_dir(&sub).unwrap();
+        assert_eq!(
+            derive_plugin_name(&sub).as_deref(),
+            Some("revenue-leak-agent")
+        );
+    }
+
+    #[test]
+    fn derive_plugin_name_is_none_when_nothing_usable_remains() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("!!!");
+        std::fs::create_dir(&sub).unwrap();
+        assert_eq!(derive_plugin_name(&sub), None);
+    }
+
+    #[test]
+    fn no_manifest_message_points_a_pre_plugin_bundle_at_adopt() {
+        // src/ + a build/run file => looks like an agent-ss-template bundle.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("server.py"), "# flask\n").unwrap();
+        let msg = no_manifest_message(dir.path());
+        assert!(msg.contains("agent-ss-template"), "{msg}");
+        assert!(msg.contains("init --adopt"), "{msg}");
+        assert!(msg.contains("docs/adopting-a-bundle.md"), "{msg}");
+    }
+
+    #[test]
+    fn no_manifest_message_is_generic_for_a_plain_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let msg = no_manifest_message(dir.path());
+        assert!(msg.contains(".claude-plugin/plugin.json"), "{msg}");
+        assert!(!msg.contains("agent-ss-template"), "{msg}");
+        // still offers adopt as an option, just not as the lead.
+        assert!(msg.contains("init --adopt"), "{msg}");
+    }
 
     #[test]
     fn accepts_kebab_case_and_rejects_everything_else() {

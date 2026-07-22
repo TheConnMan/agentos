@@ -178,6 +178,14 @@ enum Command {
         /// Scaffold non-interactively from an agent-authored spec file (JSON). The bundle name comes from the spec.
         #[arg(long, value_name = "PATH")]
         from_spec: Option<PathBuf>,
+        /// Adopt an existing non-plugin directory: scaffold the plugin skeleton INTO it (alongside your code, never overwriting existing files), deriving the name from the directory unless a NAME is given. The on-ramp for a pre-plugin (agent-ss-template) bundle; port the logic by hand afterward (docs/adopting-a-bundle.md, #745).
+        #[arg(
+            long,
+            value_name = "DIR",
+            conflicts_with = "from_spec",
+            conflicts_with = "dir"
+        )]
+        adopt: Option<PathBuf>,
     },
     /// Work with a local runner session for a plugin bundle:
     /// `skill <up|down|status|message|eval|approvals>`. `versions` and `memory`
@@ -1448,7 +1456,8 @@ async fn run(command: Option<Command>) -> Result<()> {
             name,
             dir,
             from_spec,
-        }) => commands::init(name, dir, from_spec),
+            adopt,
+        }) => commands::init(name, dir, from_spec, adopt),
         Some(Command::Build { tag }) => commands::build(&tag).await,
         Some(Command::Install { update }) => commands::install(update).await,
         Some(Command::Update { image }) => commands::update(image).await,
