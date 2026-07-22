@@ -45,6 +45,7 @@ from agentos_worker.slack_sink import SlackSink
 from agentos_worker.threadlock import ThreadLock
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from channel_protocol import OutboundMessage
 from redis.asyncio import Redis as AsyncRedis
 
 
@@ -110,17 +111,22 @@ class FakeSink(SlackSink):
         self.update_endpoints: list[str | None] = []
         self.status_sets: list[tuple[str, str, str]] = []
         self.status_clears: list[tuple[str, str]] = []
-        # New messages posted by the kernel (the approval card, #246):
-        # (channel, text, blocks, thread_ts, endpoint) per post. The endpoint is
-        # the transport the post is delivered through (#451): None means the
-        # worker's default Slack transport.
+        # New messages posted by the kernel (the approval card, #246): the
+        # channel-neutral OutboundMessage the kernel emits (ADR-0020) plus its
+        # framing -- (channel, message, requested_by, thread_ts, endpoint) per
+        # post. Block Kit rendering is the adapter's job (see test_slack_sink.py),
+        # so this double records the intent, not blocks. The endpoint is the
+        # transport the post is delivered through (#451): None means the worker's
+        # default Slack transport.
         self.posts: list[
-            tuple[str, str, list[dict[str, object]] | None, str | None, str | None]
+            tuple[str, OutboundMessage, str, str | None, str | None]
         ] = []
-        # In-place block edits of an already-posted message (the expired approval
-        # card, #419): (channel, ts, text, blocks, endpoint) per update_message.
+        # In-place edits of an already-posted message (the expired approval card,
+        # #419): (channel, ts, message, endpoint) per update_message. Like posts,
+        # the recorded value is the channel-neutral message; the adapter renders
+        # the buttonless expired card below the seam.
         self.card_updates: list[
-            tuple[str, str, str, list[dict[str, object]], str | None]
+            tuple[str, str, OutboundMessage, str | None]
         ] = []
         # #708 test infra: endpoints whose HOST is dead (a CLI stub that exited).
         # A reply-delivery ``update`` to one models the pure-offline local loop --
@@ -166,12 +172,12 @@ class FakeSink(SlackSink):
         self,
         *,
         channel: str,
-        text: str,
-        blocks: list[dict[str, object]] | None = None,
+        message: OutboundMessage,
+        requested_by: str,
         thread_ts: str | None = None,
         endpoint: str | None = None,
     ) -> str | None:
-        self.posts.append((channel, text, blocks, thread_ts, endpoint))
+        self.posts.append((channel, message, requested_by, thread_ts, endpoint))
         return f"posted-{len(self.posts)}"
 
     async def update_message(
@@ -179,11 +185,10 @@ class FakeSink(SlackSink):
         *,
         channel: str,
         ts: str,
-        text: str,
-        blocks: list[dict[str, object]],
+        message: OutboundMessage,
         endpoint: str | None = None,
     ) -> None:
-        self.card_updates.append((channel, ts, text, blocks, endpoint))
+        self.card_updates.append((channel, ts, message, endpoint))
 
     @property
     def last_text(self) -> str | None:

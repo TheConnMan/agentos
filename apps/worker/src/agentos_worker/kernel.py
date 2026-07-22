@@ -44,6 +44,12 @@ from aci_protocol import (
     TextDelta,
     ToolNote,
 )
+from channel_protocol import (
+    MESSAGE_VERSION,
+    Action,
+    ConfirmIntent,
+    OutboundMessage,
+)
 from pydantic import ValidationError
 
 from .approval_cards import ApprovalCardStore
@@ -57,7 +63,6 @@ from .behaviorpacks import (
     sample_tip,
 )
 from .binding import GRANT_TOOL_ENV, RESUMED_KIND_ENV, BindingResolver
-from .blocks import approval_card, expired_approval_card
 from .config import WorkerConfig
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -885,12 +890,12 @@ class Kernel:
             ref = await self._card_store.pop(qevent.conversation_id)
             if ref is None or not qevent.text.startswith(_EXPIRY_RESUME_MARKER):
                 return
-            fallback, blocks = expired_approval_card(summary=ref.summary)
+            # Emit the channel-neutral summary (ADR-0020); the adapter renders the
+            # settled, buttonless expired card below the seam.
             await self._sink.update_message(
                 channel=ref.channel,
                 ts=ref.ts,
-                text=fallback,
-                blocks=blocks,
+                message=OutboundMessage(version=MESSAGE_VERSION, text=ref.summary),
                 endpoint=ref.endpoint,
             )
             logger.info("disabled expired approval card for thread %s", qevent.conversation_id)
@@ -1027,24 +1032,37 @@ class Kernel:
             endpoint=qevent.reply_handle.endpoint,
         )
 
-        # The Block Kit approval card (#246): Approve/Reject buttons routed to
-        # the approval's channel, in this thread; the dispatcher resolves a
-        # click through the API's server-side authorizer. Best-effort -- the
-        # record and the API resolve path stand with or without the card.
-        fallback, card_blocks = approval_card(
-            approval_id=created.id, summary=summary, requested_by=qevent.author
-        )
         # In the requesting channel the card joins the thread and rides the
         # trigger's transport; a route-bound channel has no such thread and is
         # policy, not a per-turn reply, so it posts top-level over the worker's
         # default Slack transport.
         in_requesting_channel = card_channel == qevent.reply_handle.channel
         card_endpoint = qevent.reply_handle.endpoint if in_requesting_channel else None
+        # The approval interaction (#246, ADR-0010/0020): a channel-neutral
+        # Confirm intent (Approve/Reject) emitted WITHOUT any Block Kit -- the
+        # Slack adapter renders it into the approval card's buttons below the
+        # seam. The confirm/cancel actions carry the durable record id so a click
+        # resolves exactly this approval through the API's server-side authorizer.
+        # Building the message is inside the best-effort try (the channel-neutral
+        # models validate on construction, unlike the old blocks builder) so the
+        # pause -- the durable record and the resume path -- stands with or without
+        # the card, exactly as before.
         try:
+            card_message = OutboundMessage(
+                version=MESSAGE_VERSION,
+                text=summary,
+                interaction=ConfirmIntent(
+                    kind="confirm",
+                    id=created.id,
+                    prompt=summary,
+                    confirm=Action(label="Approve", value=created.id),
+                    cancel=Action(label="Reject", value=created.id),
+                ),
+            )
             card_ts = await self._sink.post(
                 channel=card_channel,
-                text=fallback,
-                blocks=card_blocks,
+                message=card_message,
+                requested_by=qevent.author,
                 thread_ts=thread if in_requesting_channel else None,
                 endpoint=card_endpoint,
             )

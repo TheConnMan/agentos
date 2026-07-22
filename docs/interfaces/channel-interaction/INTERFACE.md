@@ -108,6 +108,13 @@ back into the contract:
    degrades to plain text, so a half-streamed block never shows raw JSON. Slack's
    3000-char section cap is absorbed here by
    `apps/worker/src/agentos_worker/blocks.py::chunk`, not pushed onto the agent.
+   The approval card (ADR-0010) travels the same seam: the kernel emits a
+   `confirm` intent and the adapter renders it below the line via
+   `apps/worker/src/agentos_worker/blocks.py::approval_card` inside
+   `apps/worker/src/agentos_worker/slack_sink.py::AsyncSlackSink.post` (its
+   settled/expired form via
+   `apps/worker/src/agentos_worker/blocks.py::expired_approval_card`), so no Block
+   Kit is built above the seam.
 2. **Terminal (TUI selector)** — `cli/src/channel.rs`. It parses the same fence
    (`REPLY_FENCE`) into a `TerminalMessage` of plain lines plus actions, which the
    TUI renders as a numbered selector per the TUI behavior above.

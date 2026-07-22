@@ -17,6 +17,7 @@ import pytest
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
 from agentos_worker.approvals import ApprovalBackendError, ApprovalRequest, CreatedApproval
 from agentos_worker.sandbox.types import RouteState
+from channel_protocol import ConfirmIntent
 
 DONE = SessionStatus.DONE
 AWAITING = SessionStatus.AWAITING_APPROVAL
@@ -379,9 +380,11 @@ def test_unknown_gate_kind_escalates_instead_of_stranding_the_turn(make_harness)
     asyncio.run(go())
 
 
-def test_pause_posts_the_approval_card(make_harness) -> None:
-    """#246: pausing posts a Block Kit card into the approval's thread whose
-    buttons carry the record id, alongside the placeholder notice."""
+def test_pause_emits_a_confirm_intent_for_the_approval_card(make_harness) -> None:
+    """#246, ADR-0020: pausing emits a channel-neutral Confirm intent into the
+    approval's thread whose confirm/cancel actions carry the record id (the Slack
+    adapter renders it into Block Kit buttons -- see test_slack_sink.py), alongside
+    the placeholder notice. The kernel never builds Block Kit itself."""
 
     async def go() -> None:
         approvals = RecordingApprovals()
@@ -391,14 +394,21 @@ def test_pause_posts_the_approval_card(make_harness) -> None:
             await h.kernel.process_event(ev)
 
             assert len(h.sink.posts) == 1
-            channel, fallback, blocks, thread_ts, _endpoint = h.sink.posts[0]
+            channel, message, requested_by, thread_ts, _endpoint = h.sink.posts[0]
             assert channel == "C1"
             assert thread_ts == "th-card"
-            assert "Give ACME a 20% discount" in fallback
-            assert blocks is not None
-            actions = blocks[-1]
-            assert actions["type"] == "actions"
-            assert [e["value"] for e in actions["elements"]] == ["appr-1", "appr-1"]
+            assert requested_by == "U1"
+            # The mandatory text fallback carries the summary; the adapter derives
+            # the "Approval required: ..." card fallback from it below the seam.
+            assert message.text == "Give ACME a 20% discount"
+            # A Confirm intent, not buttons: the record id rides both actions so a
+            # click resolves exactly this approval.
+            intent = message.interaction
+            assert isinstance(intent, ConfirmIntent)
+            assert intent.id == "appr-1"
+            assert intent.confirm.value == "appr-1"
+            assert intent.cancel.value == "appr-1"
+            assert (intent.confirm.label, intent.cancel.label) == ("Approve", "Reject")
 
     asyncio.run(go())
 
@@ -479,10 +489,10 @@ def test_routed_approval_cards_go_to_the_bound_channel(make_harness) -> None:
             assert req.route == "managers"
             assert req.card_channel == "C_MGRS"
             # Card posted to the bound channel, top-level (no thread there).
-            channel, _fallback, blocks, thread_ts, endpoint = h.sink.posts[0]
+            channel, message, _requested_by, thread_ts, endpoint = h.sink.posts[0]
             assert channel == "C_MGRS"
             assert thread_ts is None
-            assert blocks is not None
+            assert isinstance(message.interaction, ConfirmIntent)
             assert endpoint is None
 
     asyncio.run(go())
@@ -556,7 +566,7 @@ def test_routed_card_ignores_the_triggering_turns_endpoint(make_harness) -> None
                 _qevent("discount?", thread="th-cli-routed", endpoint=_CLI_STUB)
             )
 
-            channel, _f, _b, thread_ts, endpoint = h.sink.posts[0]
+            channel, _message, _requested_by, thread_ts, endpoint = h.sink.posts[0]
             assert channel == "C_MGRS"
             assert thread_ts is None
             assert endpoint is None
@@ -581,7 +591,7 @@ def test_card_routed_to_requesting_channel_keeps_the_trigger_endpoint(
                 _qevent("ship?", thread="th-self-routed", endpoint=_CLI_STUB)
             )
 
-            channel, _f, _b, thread_ts, endpoint = h.sink.posts[0]
+            channel, _message, _requested_by, thread_ts, endpoint = h.sink.posts[0]
             assert channel == "C1"
             assert thread_ts == "th-self-routed"
             assert endpoint == _CLI_STUB
@@ -640,15 +650,15 @@ def test_expiry_resume_disables_the_approval_card(make_harness) -> None:
                 )
             )
 
-            # The card was edited in place: same ts, no actions block, an expiry
-            # line where the Approve/Reject buttons were.
+            # The card was edited in place: same ts, and a channel-neutral message
+            # carrying the remembered summary. The buttonless expired-card render
+            # (no actions block, an expiry line) is the adapter's job below the
+            # seam -- asserted in test_slack_sink.py.
             assert len(h.sink.card_updates) == 1
-            channel, ts, text, blocks, endpoint = h.sink.card_updates[0]
+            channel, ts, message, endpoint = h.sink.card_updates[0]
             assert (channel, ts) == ("C1", card_ts)
             assert endpoint is None
-            assert all(b.get("type") != "actions" for b in blocks)
-            assert "expired" in text.lower()
-            assert any("expired" in str(b).lower() for b in blocks)
+            assert message.text == "Give ACME a 20% discount"
 
             # The memory was consumed (GETDEL), so a redelivery no-ops.
             assert not await h.async_redis.exists(h.config.approval_card_key(thread))

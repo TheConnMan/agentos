@@ -14,12 +14,13 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, cast
 
 import aiohttp
+from channel_protocol import ConfirmIntent, OutboundMessage
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.web.async_slack_response import AsyncSlackResponse
 
 from .behaviorpacks import NavPack
-from .blocks import render
+from .blocks import approval_card, expired_approval_card, render
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +75,22 @@ class SlackSink(Protocol):
         self,
         *,
         channel: str,
-        text: str,
-        blocks: list[dict[str, object]] | None = None,
+        message: OutboundMessage,
+        requested_by: str,
         thread_ts: str | None = None,
         endpoint: str | None = None,
     ) -> str | None:
         """Post a NEW message (the approval card, #246), returning its ts.
 
-        Distinct from ``update``: the placeholder-edit reply model stays the
-        norm; posting is reserved for platform-owned messages like the
-        approval card. Raises on failure so the caller decides best-effort."""
+        The kernel hands a channel-neutral ``OutboundMessage`` carrying a
+        ``Confirm`` intent (ADR-0020); the adapter renders it into whatever
+        widget the channel supports (Slack: the Block Kit approval card with
+        Approve/Reject buttons). No channel-native markup crosses this seam.
+        ``requested_by`` is the semantic actor id the adapter renders (Slack: a
+        ``<@id>`` mention). Distinct from ``update``: the placeholder-edit reply
+        model stays the norm; posting is reserved for platform-owned messages
+        like the approval card. Raises on failure so the caller decides
+        best-effort."""
         ...
 
     async def update_message(
@@ -91,16 +98,17 @@ class SlackSink(Protocol):
         *,
         channel: str,
         ts: str,
-        text: str,
-        blocks: list[dict[str, object]],
+        message: OutboundMessage,
         endpoint: str | None = None,
     ) -> None:
-        """Edit an already-posted platform message's blocks in place (disabling
-        the expired approval card, #419).
+        """Edit an already-posted platform message in place (disabling the
+        expired approval card, #419).
 
-        Distinct from ``update`` (which renders reply Markdown through
-        ``render``) and ``post`` (a brand-new message): this replaces a known
-        message's blocks verbatim. Best-effort at the call site."""
+        Like ``post``, the kernel hands a channel-neutral ``OutboundMessage``
+        (ADR-0020) and the adapter renders the settled form (Slack: the expired
+        approval card, its buttons gone). Distinct from ``update`` (which renders
+        streamed reply Markdown): this replaces a known platform message.
+        Best-effort at the call site."""
         ...
 
 
@@ -271,11 +279,23 @@ class AsyncSlackSink:
         self,
         *,
         channel: str,
-        text: str,
-        blocks: list[dict[str, object]] | None = None,
+        message: OutboundMessage,
+        requested_by: str,
         thread_ts: str | None = None,
         endpoint: str | None = None,
     ) -> str | None:
+        # Render the channel-neutral message into Block Kit HERE, below the seam
+        # (ADR-0020): the kernel emits a Confirm intent, the Slack adapter turns it
+        # into the approval card's Approve/Reject buttons. A message with no
+        # interaction degrades to a plain text post (the mandatory text fallback).
+        intent = message.interaction
+        if isinstance(intent, ConfirmIntent):
+            text, blocks = approval_card(
+                approval_id=intent.id, summary=message.text, requested_by=requested_by
+            )
+        else:
+            text, blocks = message.text, None
+
         # A rejected Block Kit payload falls back to text-only, mirroring
         # ``update``: the card is the resolve UI, but a plain-text notice still
         # beats losing the message (the API resolve path works regardless).
@@ -309,10 +329,14 @@ class AsyncSlackSink:
         *,
         channel: str,
         ts: str,
-        text: str,
-        blocks: list[dict[str, object]],
+        message: OutboundMessage,
         endpoint: str | None = None,
     ) -> None:
+        # Render the settled (expired) approval card HERE, below the seam
+        # (ADR-0020): the kernel hands the channel-neutral summary, the adapter
+        # rebuilds the buttonless expired form.
+        text, blocks = expired_approval_card(summary=message.text)
+
         # A rejected Block Kit payload falls back to text-only, mirroring
         # ``post``/``update``: disabling the card is best-effort, but a plain-text
         # expiry notice still beats leaving live-looking buttons.
