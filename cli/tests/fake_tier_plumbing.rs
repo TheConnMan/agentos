@@ -278,6 +278,8 @@ fn final_event(text: &str, status: SessionStatus) -> OutboundEvent {
         approval_route: None,
         approval_gate_kind: None,
         approval_granted_tool: None,
+        input_tokens: None,
+        output_tokens: None,
     }
 }
 
