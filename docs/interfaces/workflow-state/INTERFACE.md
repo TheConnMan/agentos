@@ -44,6 +44,15 @@ The state API is the store today. The five verbs live in
 Memory and Conversation history are the CLEAN loaders already built over this store
 (`StateApiMemoryStore`, `StateApiTranscriptStore`).
 
+Bundle code reaches the store two ways (#249), without shipping its own server. The
+platform mounts an in-process `agentos-state` MCP server into every sandbox
+(`runner/src/agentos_runner/state.py::build_state_server`), carrying get / set /
+list / delete / append tools over the five router verbs; `memory` and `transcript`
+are reserved so a skill cannot corrupt the memory or history namespaces. A bundle
+script that talks to the store directly reads the same URL and scoped token from
+`AGENTOS_STATE_URL` / `AGENTOS_STATE_TOKEN`. Both authenticate with the per-turn
+scoped `state` token (ADR-0033), never the platform key.
+
 The worker-side route store is separate. `AffinityStore` at
 `apps/worker/src/agentos_worker/sandbox/affinity.py::AffinityStore` records the
 `thread_key -> sandbox route` binding, and its methods are the closest thing to a

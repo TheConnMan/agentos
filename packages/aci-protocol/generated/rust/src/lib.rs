@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.4";
+pub const PROTOCOL_VERSION: &str = "0.2.5";
 
 pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
 
@@ -142,6 +142,10 @@ pub struct BootEnv {
     #[serde(default)]
     pub memory_token: Option<String>,
     #[serde(default)]
+    pub state_url: Option<String>,
+    #[serde(default)]
+    pub state_token: Option<String>,
+    #[serde(default)]
     pub approval_required_tools: Option<Vec<String>>,
     #[serde(default)]
     pub approval_grant_tool: Option<String>,
@@ -192,6 +196,8 @@ pub mod env_keys {
     pub const AGENTOS_RUNNER_TOKEN: &str = "AGENTOS_RUNNER_TOKEN";
     pub const AGENTOS_SANDBOX_ID: &str = "AGENTOS_SANDBOX_ID";
     pub const AGENTOS_SESSION_ID: &str = "AGENTOS_SESSION_ID";
+    pub const AGENTOS_STATE_TOKEN: &str = "AGENTOS_STATE_TOKEN";
+    pub const AGENTOS_STATE_URL: &str = "AGENTOS_STATE_URL";
     pub const ANTHROPIC_BASE_URL: &str = "ANTHROPIC_BASE_URL";
     pub const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
     pub const OTEL_EXPORTER_OTLP_HEADERS: &str = "OTEL_EXPORTER_OTLP_HEADERS";

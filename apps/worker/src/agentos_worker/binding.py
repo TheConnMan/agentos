@@ -450,6 +450,12 @@ class BindingResolver:
         # characters cannot break the key path.
         thread_segment = quote(thread_key, safe="")
         history_ref = f"{base}/agents/{resolved.agent_id}/state/transcript/{thread_segment}"
+        # The general state namespace base (#249): the agent's whole state
+        # subtree on the same store. The auto-mounted ``agentos-state`` MCP server
+        # and any bundle script talking to the store directly compose
+        # ``/<namespace>/<key>`` onto this. Memory and history are two reserved
+        # namespaces UNDER it; a bundle skill gets the rest.
+        state_url = f"{base}/agents/{resolved.agent_id}/state"
         # Mint one scoped ``state`` token (ADR-0033, #410) for this agent and use
         # it for both the memory and history tokens. When no platform key is
         # configured (fake/local) there is nothing to sign with, so no token is
@@ -491,6 +497,11 @@ class BindingResolver:
             model_env_key=self._config.model_env_key or None,
             history_token=state_token,
             memory_token=state_token,
+            # The general state store exposed to bundle code (#249): the same
+            # per-turn scoped ``state`` token authorizes the URL, so the token is
+            # omitted (and the URL still emitted) on the no-key fake/local path.
+            state_url=state_url,
+            state_token=state_token,
         )
         # #517/#669 opt-in false-completion check: NOT a BootEnv.render_worker
         # kwarg (it is deliberately kept out of the frozen ACI contract, see

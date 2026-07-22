@@ -6,8 +6,11 @@ list / delete / append. Two hard non-goals keep this from becoming a database
 product: there is no query language (get-by-key + list-by-namespace only), and
 both a single value and a whole namespace are size-capped (#248). This is the
 API surface the approvals epic (#22) and other cross-turn workflow state
-consume; exposing it to bundle code via an auto-mounted MCP server is a later
-slice.
+consume. It is also exposed to bundle code (#249) via the auto-mounted
+``agentos-state`` MCP server and the ``AGENTOS_STATE_URL`` / ``AGENTOS_STATE_TOKEN``
+boot-env pair, so a skill reads and writes state without shipping its own server;
+the sandbox authenticates with a scoped ``state`` token (ADR-0033), never the
+platform key.
 """
 
 import json

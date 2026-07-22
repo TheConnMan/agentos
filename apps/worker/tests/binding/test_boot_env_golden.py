@@ -37,10 +37,16 @@ _THREAD = "thread-1"
 
 # The state token's exp is a wall-clock stamp, so the token bytes are pinned by
 # verify() rather than frozen. The runner token is minted fresh per claim.
-_MINTED = ("AGENTOS_RUNNER_TOKEN", "AGENTOS_MEMORY_TOKEN", "AGENTOS_HISTORY_TOKEN")
+_MINTED = (
+    "AGENTOS_RUNNER_TOKEN",
+    "AGENTOS_MEMORY_TOKEN",
+    "AGENTOS_HISTORY_TOKEN",
+    "AGENTOS_STATE_TOKEN",
+)
 
 _MEMORY_REF = f"http://localhost:8000/agents/{_AGENT}/state/memory"
 _HISTORY_REF = f"http://localhost:8000/agents/{_AGENT}/state/transcript/{_THREAD}"
+_STATE_URL = f"http://localhost:8000/agents/{_AGENT}/state"
 
 
 def _resolved(**kwargs: object) -> ResolvedDeployment:
@@ -79,12 +85,17 @@ def test_plain_bound_run_renders_the_frozen_boot_env() -> None:
         "AGENTOS_BUNDLE_REF": "bundles/x.zip",
         "AGENTOS_MEMORY_REF": _MEMORY_REF,
         "AGENTOS_HISTORY_REF": _HISTORY_REF,
+        "AGENTOS_STATE_URL": _STATE_URL,
     }
 
     assert set(minted) == set(_MINTED)
     assert len(minted["AGENTOS_RUNNER_TOKEN"]) >= 32
-    # One token minted once, used for both ports (ADR-0033, #410).
-    assert minted["AGENTOS_MEMORY_TOKEN"] == minted["AGENTOS_HISTORY_TOKEN"]
+    # One token minted once, used for every state port (ADR-0033, #410, #249).
+    assert (
+        minted["AGENTOS_MEMORY_TOKEN"]
+        == minted["AGENTOS_HISTORY_TOKEN"]
+        == minted["AGENTOS_STATE_TOKEN"]
+    )
     token = minted["AGENTOS_MEMORY_TOKEN"]
     assert verify(token, "agentos-dev-key", agent=str(_AGENT), scope="state") is True
     # Prove binding, not just well-formedness: the token must fail for any
@@ -160,6 +171,7 @@ def test_fully_loaded_run_renders_the_frozen_boot_env() -> None:
         "AGENTOS_APPROVAL_REQUIRED_TOOLS": "Bash,Write",
         "AGENTOS_MEMORY_REF": _MEMORY_REF,
         "AGENTOS_HISTORY_REF": _HISTORY_REF,
+        "AGENTOS_STATE_URL": _STATE_URL,
         # Connector secret values ride the merged dict by value, and the marker
         # names exactly the keys injected (#429).
         "GITHUB_TOKEN": "ghp-1",
@@ -175,8 +187,9 @@ def test_fully_loaded_run_renders_the_frozen_boot_env() -> None:
 
 
 def test_no_api_key_path_mints_no_state_token() -> None:
-    # fake/local: nothing to sign with, so neither token is set and the pre-#410
-    # no-key path is preserved.
+    # fake/local: nothing to sign with, so no state token is set and the pre-#410
+    # no-key path is preserved. The state URL is not a credential, so it is still
+    # emitted (the store is simply unauthenticated on this path).
     stable, minted = _split_minted(_boot_env(WorkerConfig(api_key=""), _resolved()))
 
     assert stable == {
@@ -188,6 +201,7 @@ def test_no_api_key_path_mints_no_state_token() -> None:
         "AGENTOS_BUNDLE_REF": "bundles/x.zip",
         "AGENTOS_MEMORY_REF": _MEMORY_REF,
         "AGENTOS_HISTORY_REF": _HISTORY_REF,
+        "AGENTOS_STATE_URL": _STATE_URL,
     }
     assert set(minted) == {"AGENTOS_RUNNER_TOKEN"}
 
