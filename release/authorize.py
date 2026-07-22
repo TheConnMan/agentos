@@ -72,7 +72,7 @@ REQUIRED_CHECK_NAMES = frozenset(
         "Build worker-local overlay image (no push)",
         "Dispatcher image imports resolve",
         "Eval falsifiability gate (fake model, offline)",
-        "E2E parity ladder (skill + local, fake model)",
+        "E2E parity ladder (skill + local + local-release, fake model)",
     }
 )
 
@@ -105,12 +105,16 @@ def missing_required_checks(
     """Which `required_names` have no passing check-run for this commit?
 
     A name only counts as satisfied if some check-run with that exact `name`
-    concluded `success`/`neutral`/`skipped`; a same-named entry that is still
-    running, failed, or never ran at all leaves its name in the returned set.
-    Names outside `required_names` are ignored entirely -- an unrelated
-    check-run, passing or not, has no bearing on this gate (issue #733): the
-    point is asserting the checks that matter actually ran and passed, not
-    that everything present happened to be green.
+    concluded `success`/`neutral`/`skipped` AND no check-run with that name is
+    still running, failed, or otherwise non-passing. A required name with two
+    check-runs -- one success and one failure (a re-run with mixed states) --
+    is left in the returned set: for a fail-closed release gate any non-passing
+    run of a required name masks nothing and blocks the tag. A same-named entry
+    that is still running, failed, or never ran at all thus leaves its name in
+    the returned set. Names outside `required_names` are ignored entirely -- an
+    unrelated check-run, passing or not, has no bearing on this gate (issue
+    #733): the point is asserting the checks that matter actually ran and
+    passed, not that everything present happened to be green.
 
     `required_names` defaults to the module-level `REQUIRED_CHECK_NAMES`,
     looked up here rather than bound as the parameter's default value so that
@@ -122,7 +126,15 @@ def missing_required_checks(
     passed_names = {
         run.get("name") for run in check_runs if run.get("conclusion") in PASSING_CONCLUSIONS
     }
-    return set(required_names) - passed_names
+    non_passing_required = {
+        name
+        for name in required_names
+        if any(
+            run.get("name") == name and run.get("conclusion") not in PASSING_CONCLUSIONS
+            for run in check_runs
+        )
+    }
+    return (set(required_names) - passed_names) | non_passing_required
 
 
 def required_checks_passed(
