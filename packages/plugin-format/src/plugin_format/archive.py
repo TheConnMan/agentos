@@ -62,6 +62,27 @@ DEFAULT_MAX_COMPRESSION_RATIO = 100.0
 # the hundreds-of-thousands a member-count DoS needs.
 DEFAULT_MAX_MEMBERS = 10_000
 
+# A zip is the one format whose member cap CANNOT be enforced by the in-loop
+# pre-scan alone: `zipfile.ZipFile()` parses the entire central directory and
+# builds one ZipInfo per entry at CONSTRUCTION, before `_prescan_zip` runs, so
+# a many-member zip is fully materialized (hundreds of MiB of RSS for a small
+# on-disk archive) before the loop's cap can fire (#815). The cap must be read
+# from the end-of-central-directory (EOCD) record and enforced BEFORE the
+# ZipFile is opened. These are the fixed-layout constants of that record.
+_ZIP_EOCD_SIGNATURE = b"\x50\x4b\x05\x06"  # "PK\x05\x06"
+_ZIP_EOCD_MIN_SIZE = 22  # fixed part, before any archive comment
+_ZIP_MAX_COMMENT = 0xFFFF  # the comment length field is 16 bits
+# A per-member byte budget for the central directory, used to bound the member
+# count from the EOCD's declared central-directory SIZE. zipfile parses the
+# central directory until it has consumed `size_cd` bytes (it does NOT trust
+# the declared entry count to bound that loop), so an attacker cannot evade the
+# cap by under-declaring the count -- the SIZE is what bounds zipfile's work.
+# A central-directory header is 46 fixed bytes + the file name; 512 leaves
+# generous room for long paths (a legitimate <=10k-file bundle stays well under
+# max_members*512, while a 100k+ zero-byte-member DoS blows past it), so this
+# rejects the DoS without false-rejecting a real bundle near the count cap.
+_ZIP_CENTRAL_DIR_BYTES_PER_MEMBER = 512
+
 
 class UnsupportedArchive(Exception):
     """The bytes are not a recognized zip/tar(.gz), or carry an unsafe entry."""
@@ -96,6 +117,55 @@ def _reject_over_member_count(count: int, max_members: int) -> None:
             f"archive has more than {max_members} members, over the member-count "
             f"limit"
         )
+
+
+def _reject_zip_over_member_count(data: bytes, max_members: int) -> None:
+    """Reject a zip whose central directory holds more than ``max_members``
+    entries, read from the EOCD record BEFORE ``zipfile.ZipFile`` parses and
+    materializes the whole central directory (#815).
+
+    Two signals from the EOCD, both bounded reads of the archive's tail:
+
+    - the declared entry count (precise for an honest archive), and
+    - the central-directory byte SIZE, which caps how many entries
+      ``zipfile`` will parse regardless of the (attacker-controllable, possibly
+      under-declared) count -- ``zipfile`` loops until it has consumed that many
+      bytes, so this is the signal that actually bounds its work.
+
+    A ZIP64 sentinel in either field means the true value overflows the
+    16/32-bit field, i.e. is far past any sane cap, so it is rejected. If no
+    consistent EOCD can be located the archive is left for ``zipfile`` to
+    reject with its own ``BadZipFile`` (the in-loop cap remains a backstop).
+    """
+    tail_len = _ZIP_EOCD_MIN_SIZE + _ZIP_MAX_COMMENT
+    tail = data[-tail_len:] if len(data) > tail_len else data
+    # The EOCD is the last record, followed only by its own comment; scan back
+    # for the last signature whose declared comment length lands exactly at
+    # end-of-tail, so a signature that coincidentally appears inside file data
+    # or the comment does not fool the check.
+    start = tail.rfind(_ZIP_EOCD_SIGNATURE)
+    while start != -1:
+        eocd = tail[start:]
+        if len(eocd) >= _ZIP_EOCD_MIN_SIZE:
+            comment_len = int.from_bytes(eocd[20:22], "little")
+            if start + _ZIP_EOCD_MIN_SIZE + comment_len == len(tail):
+                total_entries = int.from_bytes(eocd[10:12], "little")
+                size_cd = int.from_bytes(eocd[12:16], "little")
+                if total_entries == 0xFFFF or size_cd == 0xFFFFFFFF:
+                    raise UnsupportedArchive(
+                        f"archive declares a ZIP64 central directory, over the "
+                        f"{max_members} member-count limit"
+                    )
+                if (
+                    total_entries > max_members
+                    or size_cd > max_members * _ZIP_CENTRAL_DIR_BYTES_PER_MEMBER
+                ):
+                    raise UnsupportedArchive(
+                        f"archive has more than {max_members} members, over the "
+                        f"member-count limit"
+                    )
+                return
+        start = tail.rfind(_ZIP_EOCD_SIGNATURE, 0, start)
 
 
 def _check_bounds(
@@ -181,6 +251,9 @@ def _extract_zip(
     max_compression_ratio: float,
     max_members: int,
 ) -> None:
+    # Enforce the member cap from the EOCD BEFORE opening the ZipFile, which
+    # would otherwise materialize the entire central directory up front (#815).
+    _reject_zip_over_member_count(data, max_members)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         total = _prescan_zip(
             zf, max_uncompressed_bytes=max_uncompressed_bytes, max_members=max_members
@@ -271,6 +344,9 @@ def check_archive_bounds(
     the node.
     """
     if zipfile.is_zipfile(io.BytesIO(data)):
+        # Same EOCD pre-check as the extract path: bound the member count before
+        # ZipFile materializes the central directory (#815).
+        _reject_zip_over_member_count(data, max_members)
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             total = _prescan_zip(
                 zf,
