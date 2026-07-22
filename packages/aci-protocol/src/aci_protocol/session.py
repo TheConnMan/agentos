@@ -314,6 +314,19 @@ class BootEnv(_AciModel):
     memory_token: str | None = Field(
         default=None, json_schema_extra=_env("AGENTOS_MEMORY_TOKEN", "worker")
     )
+    # The durable state store exposed to bundle code (#249, epic #23). state_url
+    # is the agent's state namespace base on the API state router
+    # (``.../agents/<id>/state``); the auto-mounted ``agentos-state`` MCP server
+    # and any bundle script that talks to the store directly compose
+    # ``/<namespace>/<key>`` onto it. state_token is the scoped ``state`` token
+    # (ADR-0033) the caller presents as X-API-Key -- the same per-turn scoped
+    # derivative used for memory/history, never the raw platform key.
+    state_url: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_STATE_URL", "worker")
+    )
+    state_token: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_STATE_TOKEN", "worker")
+    )
     # Per-agent permission gates (#245, ADR-0010).
     approval_required_tools: list[str] | None = Field(
         default=None, json_schema_extra=_env("AGENTOS_APPROVAL_REQUIRED_TOOLS", "worker")
@@ -466,6 +479,8 @@ class BootEnv(_AciModel):
         model_env_key: str | None = None,
         history_token: str | None = None,
         memory_token: str | None = None,
+        state_url: str | None = None,
+        state_token: str | None = None,
         approval_required_tools: Sequence[str] | None = None,
     ) -> dict[str, str]:
         """Render the worker binding's boot-env subset.
@@ -519,6 +534,10 @@ class BootEnv(_AciModel):
             env[cls.env_key("history_token")] = history_token
         if memory_token:
             env[cls.env_key("memory_token")] = memory_token
+        if state_url:
+            env[cls.env_key("state_url")] = state_url
+        if state_token:
+            env[cls.env_key("state_token")] = state_token
         return env
 
     def to_env(self) -> dict[str, str]:
@@ -548,6 +567,10 @@ class BootEnv(_AciModel):
             env[self.env_key("history_token")] = self.history_token
         if self.memory_token is not None:
             env[self.env_key("memory_token")] = self.memory_token
+        if self.state_url is not None:
+            env[self.env_key("state_url")] = self.state_url
+        if self.state_token is not None:
+            env[self.env_key("state_token")] = self.state_token
         if self.approval_required_tools:
             env[self.env_key("approval_required_tools")] = ",".join(self.approval_required_tools)
         if self.approval_grant_tool is not None:
@@ -596,6 +619,8 @@ class BootEnv(_AciModel):
             history_ref=_str_or_none(env.get("AGENTOS_HISTORY_REF")),
             history_token=_str_or_none(env.get("AGENTOS_HISTORY_TOKEN")),
             memory_token=_str_or_none(env.get("AGENTOS_MEMORY_TOKEN")),
+            state_url=_str_or_none(env.get("AGENTOS_STATE_URL")),
+            state_token=_str_or_none(env.get("AGENTOS_STATE_TOKEN")),
             approval_required_tools=_list_or_none(env.get("AGENTOS_APPROVAL_REQUIRED_TOOLS")),
             approval_grant_tool=_stripped_or_none(env.get("AGENTOS_APPROVAL_GRANT_TOOL")),
             approval_resumed_kind=_stripped_or_none(env.get("AGENTOS_APPROVAL_RESUMED_KIND")),

@@ -43,6 +43,7 @@ from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
+from .state import STATE_SERVER_NAME, build_state_server, resolve_state_client
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,13 @@ def build_runner(
         logger.error("approval policy unusable error_class=%s: %s", type(exc).__name__, exc)
         raise
 
+    # The durable state store exposed to bundle code (#249): when the worker
+    # forwarded AGENTOS_STATE_URL, mount the platform ``agentos-state`` MCP
+    # server so a skill can read/write suspend/resume-surviving state without the
+    # bundle shipping its own server. Absent (fake/local, or an older worker), no
+    # state server is mounted and the agent simply sees no state tools.
+    state_client = resolve_state_client(os.environ)
+
     def factory() -> ModelSession:
         if fake_model:
             # The offline fake honors the same permission gate (#245) the real
@@ -160,8 +168,17 @@ def build_runner(
             hooks=bundle_hooks,
             # Every session carries the in-process approval-request tool, so a
             # skill can raise a policy gate (ADR-0010) without the bundle
-            # shipping its own MCP server for it.
-            mcp_servers={"agentos": build_approval_server(approval_gate)},
+            # shipping its own MCP server for it. The ``agentos-state`` server
+            # (#249) joins it whenever a state store is configured, so a skill
+            # reads/writes durable state the same way -- no bundle-shipped server.
+            mcp_servers={
+                "agentos": build_approval_server(approval_gate),
+                **(
+                    {STATE_SERVER_NAME: build_state_server(state_client)}
+                    if state_client is not None
+                    else {}
+                ),
+            },
             can_use_tool=(
                 build_can_use_tool(approval_gate) if approval_gate is not None else None
             ),

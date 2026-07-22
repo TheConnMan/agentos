@@ -128,6 +128,68 @@ def test_state_router_rejects_missing_api_key_header(
     assert r.status_code == 401, r.text
 
 
+def test_app_scoped_token_is_refused_on_reserved_namespaces(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # #249 security backstop: the bundle-facing state token is the NARROW
+    # ``state.app`` scope, and the server refuses it on the memory/transcript
+    # namespaces owned by the memory (#264) and history (#20) ports -- so a skill
+    # cannot corrupt them by composing AGENTOS_STATE_URL directly, bypassing the
+    # runner tool's own client-side refusal.
+    aid = _agent(client, auth_headers)
+    app = mint(get_settings().api_key, agent=aid, scope="state.app", exp=_FAR_FUTURE)
+    headers = {"X-API-Key": app}
+
+    for ns in ("memory", "transcript"):
+        put = client.put(
+            f"/agents/{aid}/state/{ns}/k", json={"value": {"n": 1}}, headers=headers
+        )
+        assert put.status_code == 403, f"{ns}: {put.text}"
+        assert "reserved" in put.text
+        # Every verb over a reserved namespace is refused, not just writes.
+        assert client.get(f"/agents/{aid}/state/{ns}/k", headers=headers).status_code == 403
+        assert client.get(f"/agents/{aid}/state/{ns}", headers=headers).status_code == 403
+        assert (
+            client.post(
+                f"/agents/{aid}/state/{ns}/log/append", json={"item": 1}, headers=headers
+            ).status_code
+            == 403
+        )
+        assert client.delete(f"/agents/{aid}/state/{ns}/k", headers=headers).status_code == 403
+
+
+def test_app_scoped_token_works_on_a_non_reserved_namespace(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # The narrow token is refused ONLY on the reserved set; everywhere else it is
+    # a first-class credential -- the bundle "gets the rest".
+    aid = _agent(client, auth_headers)
+    app = mint(get_settings().api_key, agent=aid, scope="state.app", exp=_FAR_FUTURE)
+    headers = {"X-API-Key": app}
+    url = f"/agents/{aid}/state/workflow/step"
+
+    assert client.put(url, json={"value": {"n": 1}}, headers=headers).status_code == 200
+    assert client.get(url, headers=headers).json()["value"] == {"n": 1}
+
+
+def test_broad_state_token_and_platform_key_reach_reserved_namespaces(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # The loaders MUST reach memory/transcript to rehydrate: the broad ``state``
+    # token (their credential) and the platform key are both unrestricted. If this
+    # regressed, memory/history rehydration would break -- the reason the fix
+    # gates on scope, not on the namespace alone.
+    aid = _agent(client, auth_headers)
+    broad = mint(get_settings().api_key, agent=aid, scope="state", exp=_FAR_FUTURE)
+
+    for headers in ({"X-API-Key": broad}, auth_headers):
+        for ns in ("memory", "transcript"):
+            r = client.put(
+                f"/agents/{aid}/state/{ns}/k", json={"value": {"n": 1}}, headers=headers
+            )
+            assert r.status_code == 200, f"{ns}: {r.text}"
+
+
 def test_put_get_list_delete_round_trip(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:

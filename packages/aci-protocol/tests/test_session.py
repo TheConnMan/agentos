@@ -170,6 +170,8 @@ def _full_boot_env() -> BootEnv:
         history_ref=_HISTORY_REF,
         history_token="st-scoped-token",
         memory_token="st-scoped-token",
+        state_url="http://api:8000/agents/agent-abc/state",
+        state_token="st-scoped-token",
         approval_required_tools=["Bash", "mcp__github__create_pr"],
         approval_grant_tool="Bash",
         approval_resumed_kind="policy",
@@ -459,6 +461,8 @@ def test_render_worker_emits_exactly_the_worker_owned_key_subset() -> None:
         credentials_ref="k8s://secret/demo",
         api_backend="messages",
         model_env_key="MY_PROVIDER_KEY",
+        state_url="http://api:8000/agents/agent-abc/state",
+        state_token="st-scoped-token",
     )
     worker_owned = set(BootEnv.env_keys(producer="worker"))
     assert set(maximal) <= worker_owned
@@ -681,6 +685,8 @@ def test_env_keys_declares_the_whole_flattened_boot_surface() -> None:
         "AGENTOS_HISTORY_REF",
         "AGENTOS_HISTORY_TOKEN",
         "AGENTOS_MEMORY_TOKEN",
+        "AGENTOS_STATE_URL",
+        "AGENTOS_STATE_TOKEN",
         "AGENTOS_APPROVAL_REQUIRED_TOOLS",
         "AGENTOS_APPROVAL_GRANT_TOOL",
         "AGENTOS_APPROVAL_RESUMED_KIND",

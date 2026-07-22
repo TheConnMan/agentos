@@ -432,6 +432,38 @@
         },
         "session": {
           "$ref": "#/$defs/SessionConfig"
+        },
+        "state_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "env": "AGENTOS_STATE_TOKEN",
+          "producer": [
+            "worker"
+          ],
+          "title": "State Token"
+        },
+        "state_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "env": "AGENTOS_STATE_URL",
+          "producer": [
+            "worker"
+          ],
+          "title": "State Url"
         }
       },
       "required": [
@@ -1131,6 +1163,6 @@
   },
   "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.2.4",
-  "title": "ACI Protocol v0.2.4"
+  "protocolVersion": "0.2.5",
+  "title": "ACI Protocol v0.2.5"
 }
