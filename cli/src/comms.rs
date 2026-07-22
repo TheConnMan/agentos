@@ -222,6 +222,49 @@ pub fn require_connect_tokens(disconnect: bool, app_token: &str, bot_token: &str
     Ok(())
 }
 
+/// Decide a Slack token from the two candidate sources, highest wins: the
+/// clap-merged `--flag`/env value, then a value persisted via `agentos secrets
+/// set` (#749). `cli_value` is empty when neither the flag nor the env var was
+/// supplied; `saved` is `None` when the vault has no entry. Returns the empty
+/// string when nothing is available, which `require_connect_tokens` then rejects
+/// on connect. Pure so the precedence (flag/env > saved vault) is unit-testable
+/// without touching the vault or the process env.
+pub fn resolve_slack_token(cli_value: &str, saved: Option<String>) -> String {
+    if !cli_value.is_empty() {
+        return cli_value.to_string();
+    }
+    saved.unwrap_or_default()
+}
+
+/// Resolve a `local comms` Slack token from the live vault, so a token persisted
+/// once with `agentos secrets set SLACK_APP_TOKEN`/`SLACK_BOT_TOKEN` survives
+/// across sessions and `--slack` needs no per-session re-export (#749).
+/// Precedence: the clap-merged `--flag`/env `cli_value` wins; only when it is
+/// empty is the vault consulted. The vault is never read on `--disconnect`
+/// (which needs no tokens) or when a value was already supplied, so an unrelated
+/// run never opens the credential store. Emits a masked "loaded from storage"
+/// note, never the value; the resolved token still travels only through the
+/// masked `secret_env` channel downstream.
+pub fn resolve_local_slack_token(name: &str, cli_value: &str, disconnect: bool) -> Result<String> {
+    if !cli_value.is_empty() || disconnect {
+        return Ok(cli_value.to_string());
+    }
+    let saved = if crate::secrets::is_saved(name)? {
+        match crate::secrets::get_value(name)? {
+            Some(value) => {
+                crate::ui::ui().note(&format!(
+                    "{name}: loaded from AgentOS private storage for this run"
+                ));
+                Some(value)
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    Ok(resolve_slack_token(cli_value, saved))
+}
+
 /// Output of `<tier> comms`: the dry-run plan, or the resulting Slack wiring
 /// state. `--json` emits a JSON object; the real path formerly emitted only
 /// stderr notes, so `comms --json` on success exited 0 with empty stdout (#485).
@@ -368,6 +411,26 @@ mod tests {
         assert!(require_provider(true).is_ok());
         let err = require_provider(false).unwrap_err().to_string();
         assert!(err.contains("specify a chat surface"), "{err}");
+    }
+
+    /// #749 token resolution precedence: the clap-merged `--flag`/env value wins;
+    /// only when it is empty does the saved vault value apply; empty + no saved
+    /// value yields the empty string (which `require_connect_tokens` rejects on
+    /// connect).
+    #[test]
+    fn resolve_slack_token_prefers_flag_env_then_saved_vault() {
+        // Flag/env supplied: wins even when a vault value also exists.
+        assert_eq!(
+            resolve_slack_token("xapp-flag", Some("xapp-saved".to_string())),
+            "xapp-flag"
+        );
+        // Flag/env empty: fall back to the saved vault value.
+        assert_eq!(
+            resolve_slack_token("", Some("xapp-saved".to_string())),
+            "xapp-saved"
+        );
+        // Nothing anywhere: empty (rejected downstream on connect).
+        assert_eq!(resolve_slack_token("", None), "");
     }
 
     #[test]
@@ -680,6 +743,7 @@ mod tests {
                 local_model: None,
                 slack: false,
                 model_mode: mode,
+                env_file: None,
             })
             .env;
             let connect_env = local_connect_commands(&local_comms_opts(false, mode))[0]
@@ -714,6 +778,7 @@ mod tests {
                 local_model: None,
                 slack: false,
                 model_mode: mode,
+                env_file: None,
             })
             .env;
             let disconnect_env = local_disconnect_commands(&local_comms_opts(true, mode))[1]
@@ -747,6 +812,7 @@ mod tests {
                 local_model: None,
                 slack: false,
                 model_mode: ModelMode::DefaultFake,
+                env_file: None,
             })
             .env;
             let connect_env = local_connect_commands(&local_comms_opts_with(
@@ -783,6 +849,7 @@ mod tests {
                 local_model: None,
                 slack: false,
                 model_mode: ModelMode::DefaultFake,
+                env_file: None,
             })
             .env;
             let disconnect_env = local_disconnect_commands(&local_comms_opts_with(

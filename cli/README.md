@@ -247,11 +247,11 @@ the optional Slack dispatcher.
 
 | Command | What it does |
 |---|---|
-| `agentos local up` | Bring the compose stack up (`docker compose --profile full up -d --wait` by default, `docker compose --profile core up -d --wait` with `--minimal`) and print URLs. Add `--slack` to append `--profile slack`. |
+| `agentos local up` | Bring the compose stack up (`docker compose --profile full up -d --wait` by default, `docker compose --profile core up -d --wait` with `--minimal`) and print URLs. Add `--slack` to append `--profile slack`. `--env-file <PATH>` reads the model credential from a bundle `.env` as a last-resort fallback (precedence: shell env > file; only `AGENTOS_CREDENTIALS`/`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` are read, and the value never reaches argv or logs), so the stack boots live with no `set -a; source .env` step (#749). |
 | `agentos local down` | Stop the compose stack (`docker compose down`), keeping volumes. |
 | `agentos local status` | Show the compose stack's service status (`docker compose ps`). |
 | `agentos local observability` | Print the local platform's observability surfaces: AgentOS Console, Langfuse UI (traces / cost / evals), and the AgentOS API base. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. |
-| `agentos local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
+| `agentos local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Resolves `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` with precedence `--app-token`/`--bot-token` flag > env var > a value persisted with `agentos secrets set` (so tokens saved once need no per-session re-export, #749), masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
 | `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
 | `agentos local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
 | `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
@@ -491,17 +491,25 @@ suffix). `local message` composes with `--channel`, `--thread`, and
 `--release`, `--force-wire`, ...)
 with a clear error. The compose worker runs the fake model by default (a canned
 reply, no credentials); export a credential in your shell and `local up` or
-`local comms` goes live automatically for a real model. Set
-`AGENTOS_FAKE_MODEL=1` to force the fake model regardless of a credential
-being present.
+`local comms` goes live automatically for a real model. Instead of exporting it
+every session, point `agentos local up --env-file .env` at the bundle's own
+dotfile: the model credential is read from it as a last-resort fallback
+(precedence: shell env > file), so the stack boots live with no
+`set -a; source .env` step. Only `AGENTOS_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`,
+and `ANTHROPIC_API_KEY` are read; every other key in the file is ignored, and the
+value never reaches argv or logs. Set `AGENTOS_FAKE_MODEL=1` to force the fake
+model regardless of a credential being present.
 
 Use `agentos local comms --slack` when you want the same compose stack to talk
-to a real Slack workspace. Connect reads `SLACK_APP_TOKEN` and
-`SLACK_BOT_TOKEN`, masks them in printed commands, starts the dispatcher, and
-points the worker at real Slack, resolving the model the same way as `local up`
-(live when a credential is present, fake otherwise). `--disconnect` stops the
-dispatcher and restores the local stub. `--dry-run` prints the compose command
-only.
+to a real Slack workspace. Connect resolves `SLACK_APP_TOKEN` and
+`SLACK_BOT_TOKEN` with precedence `--app-token`/`--bot-token` flag > env var > a
+value persisted with `agentos secrets set SLACK_APP_TOKEN` /
+`agentos secrets set SLACK_BOT_TOKEN` -- so tokens saved once in AgentOS private
+storage need no per-session re-export -- masks them in printed commands, starts
+the dispatcher, and points the worker at real Slack, resolving the model the same
+way as `local up` (live when a credential is present, fake otherwise).
+`--disconnect` stops the dispatcher and restores the local stub. `--dry-run`
+prints the compose command only.
 
 Use `--continue` to reuse the last successful `local message` context from
 `.agentos/last-turn.json` in the current working directory, so only the new text

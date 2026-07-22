@@ -587,6 +587,14 @@ enum LocalAction {
         /// Also start the optional Slack dispatcher (adds --profile slack).
         #[arg(long)]
         slack: bool,
+        /// Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST-
+        /// priority model-credential source, so the compose stack boots live
+        /// with no `set -a; source .env` step. Precedence: shell env > this
+        /// file. Only AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and
+        /// ANTHROPIC_API_KEY are read; every other key in the file is ignored,
+        /// and the value never reaches argv or logs (#749).
+        #[arg(long = "env-file", value_name = "PATH")]
+        env_file: Option<PathBuf>,
     },
     /// Rebuild + recreate ONE compose service (e.g. after a code change) without
     /// losing the stack's already-resolved credential/model-mode wiring.
@@ -1587,6 +1595,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 minimal,
                 local_model,
                 slack,
+                env_file,
             } => {
                 let file = resolve_compose_file(file, dry_run).await?;
                 emit(
@@ -1597,6 +1606,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                         local_model,
                         slack,
                         model_mode: local::model_mode_from_env(),
+                        env_file,
                     })
                     .await?,
                 )
@@ -1619,6 +1629,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                             local_model,
                             slack,
                             model_mode: local::model_mode_from_env(),
+                            env_file: None,
                         },
                         service,
                     })
@@ -1641,6 +1652,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                             local_model: None,
                             slack: false,
                             model_mode: local::ModelMode::DefaultFake,
+                            env_file: None,
                         },
                         wipe,
                         yes,
@@ -1658,6 +1670,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                         local_model: None,
                         slack: false,
                         model_mode: local::ModelMode::DefaultFake,
+                        env_file: None,
                     })
                     .await?,
                 )
@@ -1673,6 +1686,14 @@ async fn run(command: Option<Command>) -> Result<()> {
             } => {
                 comms::require_provider(slack)?;
                 let resolved_file = resolve_compose_file(file, dry_run).await?;
+                // #749: fall back to Slack tokens persisted via `agentos secrets
+                // set` when neither a flag nor an env var supplied one, so
+                // `--slack` needs no per-session re-export. Precedence: flag/env
+                // > saved vault.
+                let app_token =
+                    comms::resolve_local_slack_token("SLACK_APP_TOKEN", &app_token, disconnect)?;
+                let bot_token =
+                    comms::resolve_local_slack_token("SLACK_BOT_TOKEN", &bot_token, disconnect)?;
                 emit(
                     comms::local_comms(LocalCommsOpts {
                         file: resolved_file,
