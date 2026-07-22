@@ -13,7 +13,6 @@ sync fixtures.
 from __future__ import annotations
 
 import contextlib
-import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
@@ -22,6 +21,18 @@ import aiohttp
 import pytest
 import redis
 from aci_protocol import Final, OutboundEvent, SessionStatus
+from agentos_test_support.valkey import (
+    VALKEY_HOST as _VALKEY_HOST,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PORT as _VALKEY_PORT,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PW as _VALKEY_PW,
+)
+from agentos_test_support.valkey import (
+    connect_or_skip,
+)
 from agentos_worker.approval_cards import ApprovalCardStore
 from agentos_worker.behaviorpacks import NavPack
 from agentos_worker.config import WorkerConfig
@@ -36,20 +47,10 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from redis.asyncio import Redis as AsyncRedis
 
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
-
 
 @pytest.fixture
 def sync_redis() -> Iterator[redis.Redis]:
-    client = redis.Redis(
-        host=_VALKEY_HOST, port=_VALKEY_PORT, password=_VALKEY_PW or None, decode_responses=True
-    )
-    try:
-        client.ping()
-    except redis.exceptions.RedisError as exc:
-        pytest.skip(f"Valkey not reachable: {exc}")
+    client = connect_or_skip(decode_responses=True)
     yield client
     client.close()
 

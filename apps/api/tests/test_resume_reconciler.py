@@ -33,16 +33,24 @@ from agentos_api.config import get_settings
 from agentos_api.models import Approval, ApprovalStatus
 from agentos_api.resumequeue import ResumeQueue
 from agentos_api.resumereconciler import ResumeReconciler
+from agentos_test_support.valkey import (
+    VALKEY_HOST as _VALKEY_HOST,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PORT as _VALKEY_PORT,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PW as _VALKEY_PW,
+)
+from agentos_test_support.valkey import (
+    connect_or_skip,
+)
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 
 
 @pytest.fixture
@@ -60,16 +68,7 @@ def runs_stream() -> Iterator[str]:
 
 @pytest.fixture
 def valkey(runs_stream: str) -> Iterator[redis.Redis]:
-    client = redis.Redis(
-        host=_VALKEY_HOST,
-        port=_VALKEY_PORT,
-        password=_VALKEY_PW or None,
-        decode_responses=True,
-    )
-    try:
-        client.ping()
-    except redis.exceptions.RedisError as exc:
-        pytest.skip(f"Valkey not reachable: {exc}")
+    client = connect_or_skip(decode_responses=True)
     yield client
     client.delete(runs_stream)
     # #532's graveyard-scan tests write to the dead-letter stream too; clean it

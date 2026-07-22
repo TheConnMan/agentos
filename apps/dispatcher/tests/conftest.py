@@ -3,7 +3,6 @@ compose stack (per repo test discipline: never mock Valkey). Only the Slack Web
 API and socket transport are faked."""
 
 import logging
-import os
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -11,6 +10,18 @@ from typing import Any
 import pytest
 import redis
 from agentos_dispatcher.config import DispatcherConfig
+from agentos_test_support.valkey import (
+    VALKEY_HOST as _VALKEY_HOST,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PORT as _VALKEY_PORT,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PW as _VALKEY_PW,
+)
+from agentos_test_support.valkey import (
+    connect_or_skip,
+)
 from slack_bolt.authorization import AuthorizeResult
 
 
@@ -36,25 +47,12 @@ class FakeSocketClient:
     def send_socket_mode_response(self, response: Any) -> None:
         self.acked_envelope_ids.append(response.envelope_id)
 
-# Compose defaults (compose.dev.yaml maps Valkey to host port 26379, password
-# valkeypass). Overridable for CI via TEST_VALKEY_* env vars.
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
+# Compose defaults and connection params come from the shared agentos_test_support.valkey helper.
 
 
 @pytest.fixture
 def redis_client() -> Iterator[redis.Redis]:
-    client = redis.Redis(
-        host=_VALKEY_HOST,
-        port=_VALKEY_PORT,
-        password=_VALKEY_PW or None,
-        decode_responses=True,
-    )
-    try:
-        client.ping()
-    except redis.exceptions.RedisError as exc:
-        pytest.skip(f"Valkey not reachable at {_VALKEY_HOST}:{_VALKEY_PORT}: {exc}")
+    client = connect_or_skip(decode_responses=True)
     yield client
     client.close()
 

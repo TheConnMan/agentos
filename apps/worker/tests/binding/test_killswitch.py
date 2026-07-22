@@ -10,19 +10,23 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 import uuid
 from collections.abc import Callable
 
 import pytest
 import redis.asyncio as aredis
+from agentos_test_support.valkey import (
+    VALKEY_HOST as _VALKEY_HOST,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PORT as _VALKEY_PORT,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PW as _VALKEY_PW,
+)
 from agentos_worker import killswitch as killswitch_module
 from agentos_worker.killswitch import KILL_CHANNEL, KillSwitch, kill_key
-
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 
 
 def _client() -> aredis.Redis:

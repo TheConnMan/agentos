@@ -40,9 +40,6 @@ def eval_cases_example_path() -> Path:
     return EVAL_CASES_EXAMPLE_PATH
 
 
-_VH = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VP = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VPW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
 _MINIO: dict[str, object] = {
     "s3_endpoint_url": os.environ.get("TEST_S3_ENDPOINT_URL", "http://localhost:29000"),
     "s3_access_key": os.environ.get("TEST_S3_ACCESS_KEY", "minio"),

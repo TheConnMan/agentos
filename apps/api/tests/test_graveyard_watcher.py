@@ -9,16 +9,20 @@ history, and does not double-alert or suppress across an approximate-MAXLEN trim
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import pytest
 import redis.asyncio as aioredis
 from agentos_api.graveyardwatcher import GraveyardWatcher
-
-_VALKEY_HOST = os.environ.get("TEST_VALKEY_HOST", "localhost")
-_VALKEY_PORT = int(os.environ.get("TEST_VALKEY_PORT", "26379"))
-_VALKEY_PW = os.environ.get("TEST_VALKEY_PW", "valkeypass")
+from agentos_test_support.valkey import (
+    VALKEY_HOST as _VALKEY_HOST,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PORT as _VALKEY_PORT,
+)
+from agentos_test_support.valkey import (
+    VALKEY_PW as _VALKEY_PW,
+)
 
 
 def _client() -> aioredis.Redis:
