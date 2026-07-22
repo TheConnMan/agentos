@@ -101,4 +101,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0069 | [The policy-gate resume reconciliation stays observe-only](0069-policy-gate-resume-reconciliation-stays-observe-only.md) | Accepted |
 | 0070 | [A bundle-local `.env` is an opt-in, lowest-priority credential source](0070-bundle-local-dotenv-is-an-opt-in-lowest-priority-credential-source.md) | Accepted |
 | 0071 | [Adopting a pre-plugin bundle scaffolds the skeleton, not the logic](0071-adopting-a-pre-plugin-bundle-scaffolds-the-skeleton-not-the-logic.md) | Accepted |
+| 0072 | [Keep the hand-rolled Rust ACI emitter; typify cannot express the wire contract's runtime semantics](0072-keep-the-hand-rolled-rust-aci-emitter-over-typify.md) | Accepted |
 <!-- END GENERATED: adr-index -->
