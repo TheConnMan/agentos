@@ -197,3 +197,57 @@ test("an agent's View traces opens the Traces list pre-filtered to that agent", 
   await page.getByTestId("trace-filter-clear").click();
   await expect.poll(() => traceUrls.some((u) => u.includes("/langfuse/traces") && !u.includes("agent_id"))).toBe(true);
 });
+
+// Wired Memory tab (#869): the GET/PUT/DELETE /agents/{id}/memory endpoint is
+// live and already consumed on the agent detail page; the tab reuses that panel
+// behind an agent selector. Stub the agents list + the per-agent memory log.
+test("Memory tab lists an agent's learned memory with provenance and supports delete", async ({ page }) => {
+  const agent = { id: "ag-mem", name: "deal-desk", slack_channel: "#revenue-ops", created_at: "2026-07-05T00:00:00Z" };
+  await page.route(/\/api\/agents(\?.*)?$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([agent]) }),
+  );
+
+  // Mutable memory log so the DELETE transition is reflected on the reload.
+  let entries = [
+    {
+      index: 0,
+      version: 3,
+      content: "deploy is a git push",
+      provenance: { learned_from_session_id: "sess-1", source_trace_ids: ["trace-a"], recorded_at: "2026-07-13T00:00:00+00:00" },
+    },
+    {
+      index: 1,
+      version: 3,
+      content: "prod reuses the dev bundle",
+      provenance: { learned_from_session_id: null, source_trace_ids: [], recorded_at: "" },
+    },
+  ];
+  await page.route(
+    (url) => /\/api\/agents\/[^/]+\/memory/.test(url.pathname),
+    (route) => {
+    const req = route.request();
+    if (req.method() === "DELETE") {
+      entries = entries.filter((e) => e.index !== 0).map((e, i) => ({ ...e, index: i, version: 4 }));
+      return route.fulfill({ status: 204, contentType: "application/json", body: "" });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(entries) });
+    },
+  );
+
+  await page.goto("/?api=1");
+  await page.getByRole("navigation").getByText("Observability", { exact: true }).click();
+  await page.getByRole("button", { name: "Memory" }).click();
+
+  // The agent selector is present and the learned memory panel rendered.
+  await expect(page.getByTestId("memory-agent-select")).toBeVisible();
+  await expect(page.getByTestId("agent-memory")).toBeVisible();
+  await expect(page.getByText("deploy is a git push")).toBeVisible();
+  // Provenance is surfaced — the differentiator (how the lesson was learned).
+  await expect(page.getByText(/session sess-1/)).toBeVisible();
+  await expect(page.getByText(/traces: trace-a/)).toBeVisible();
+
+  // Deleting the first entry removes it and reloads to the shorter log.
+  await page.getByRole("button", { name: "Delete" }).first().click();
+  await expect(page.getByText("deploy is a git push")).toHaveCount(0);
+  await expect(page.getByText("prod reuses the dev bundle")).toBeVisible();
+});
