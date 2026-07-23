@@ -56,7 +56,7 @@ That guarantee is what the harness supplies.
 
 ## What makes it AgentOS
 
-Five commitments that should hold across every feature we build:
+Six commitments that should hold across every feature we build:
 
 - **The local loop is the production loop.** What a developer tests locally is
   what runs in prod, down to the sandbox and the harness. Local-first is a

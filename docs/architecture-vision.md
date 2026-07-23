@@ -49,7 +49,14 @@ all compile against the generated artifacts; none of them import the SDK.
 claude-agent-sdk-coupled: `runner/src/agentos_runner/adapter.py` defines a
 `ModelSession` protocol and implements it with `ClaudeSDKClient` in
 streaming-input mode (native steer and interrupt), and `translate.py` maps SDK
-messages to ACI events.
+messages to ACI events. Above the session sits the declared-package layer from
+ADR-0060: a `HarnessContribution` manifest (name, image, install, auth,
+read-only tool set, spawn env) registered through the `agentos.harness`
+entry-point group (`runner/src/agentos_runner/harness/`), selected at boot via
+`AGENTOS_HARNESS` and defaulting to the built-in Claude contribution. Exactly
+one contribution exists today, so the registry is a guarded indirection around
+the same adapter; conformance checks for third-party contributions are pending
+(ADR-0062).
 
 **Swap (candidates: ADK, Codex, Strands, other Claude Agent SDK variants):**
 implement a new ACI server (an HTTP process that accepts `/v1/event`,
