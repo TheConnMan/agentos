@@ -165,3 +165,13 @@ def test_resource_omits_sandbox_id_when_absent_or_empty() -> None:
         assert provider is not None
         assert "agentos.sandbox_id" not in provider.resource.attributes
         provider.shutdown()
+
+
+def test_resource_stamps_schema_version() -> None:
+    # ADR-0076: every exported trace carries the closed schema's version so a
+    # consumer can tell which attribute-key set it was produced under.
+    otel = OtelConfig(endpoint="http://localhost:24318")
+    provider = build_tracer_provider(otel, "s1")
+    assert provider is not None
+    assert provider.resource.attributes["schema.version"] == "v1"
+    provider.shutdown()

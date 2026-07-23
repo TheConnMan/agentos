@@ -31,7 +31,7 @@ from .memory import (
     merge_provenance,
     resolve_memory,
 )
-from .otel import RunTracer, build_tracer_provider
+from .otel import SCHEMA_VERSION, RunTracer, SpanAttributeKey, build_tracer_provider
 from .plugin import PluginBundleError, load_bundle_system_prompt, load_plugins
 from .server import create_app
 from .session import SessionRunner
@@ -55,6 +55,8 @@ __all__ = [
     "FakeModelSession",
     "RunTracer",
     "build_tracer_provider",
+    "SpanAttributeKey",
+    "SCHEMA_VERSION",
     "PluginBundleError",
     "load_plugins",
     "load_bundle_system_prompt",
