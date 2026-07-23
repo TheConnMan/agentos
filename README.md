@@ -192,13 +192,19 @@ offline local-model demo, building from source, and the full local/cluster
 runbooks, see the detailed walkthrough in [`QUICKSTART.md`](QUICKSTART.md).
 
 The fastest way in — for operators and coding agents alike — is the prebuilt
-release binary. It needs no Rust toolchain and no repo checkout.
+release binary. It needs no Rust toolchain and no repo checkout. One command
+resolves the latest release, downloads the binary for your platform, verifies
+its signed checksum, and installs it to your PATH:
 
-You are about to run a downloaded binary as root, so verify it before you install
-it. [`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it)
-owns the full flow: resolve the right asset for your platform, verify the signed
-`checksums.txt` with cosign (or `gh attestation`), check the binary against it, and
-install it. Then, from a bundle directory:
+```bash
+curl -fsSL https://raw.githubusercontent.com/curie-eng/agentos/main/get-agentos.sh | bash
+```
+
+The installer always verifies the sha256 and runs `cosign verify-blob` when
+cosign is on PATH (set `AGENTOS_REQUIRE_COSIGN=1` to require it). To run every
+download-verify-install step by hand instead, or to verify with `gh attestation`,
+[`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it)
+owns the fully manual flow. Then, from a bundle directory:
 
 ```bash
 agentos init my-agent && cd my-agent

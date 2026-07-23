@@ -11,8 +11,16 @@ repo-checkout path. For the 30-second version, see the
 ## Before you start
 
 - **Docker** running locally.
-- The **`agentos`** binary on your PATH. Download, verify, and install the
-  prebuilt binary for your platform by following
+- The **`agentos`** binary on your PATH. One command downloads the prebuilt
+  binary for your platform, verifies its signed checksum, and installs it:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/curie-eng/agentos/main/get-agentos.sh | bash
+  ```
+
+  It always verifies the sha256 and runs `cosign verify-blob` when cosign is on
+  PATH (`AGENTOS_REQUIRE_COSIGN=1` requires it). To run the download-verify-install
+  steps by hand instead, see
   [`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it).
 
   Building the CLI from source (`cargo build --release` in `cli/`) is the
