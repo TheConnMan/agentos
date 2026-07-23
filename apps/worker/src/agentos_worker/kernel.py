@@ -62,7 +62,7 @@ from .behaviorpacks import (
     sample_load,
     sample_tip,
 )
-from .binding import GRANT_TOOL_ENV, RESUMED_KIND_ENV, BindingResolver
+from .binding import DECISION_ENV, GRANT_TOOL_ENV, RESUMED_KIND_ENV, BindingResolver
 from .config import WorkerConfig
 from .killswitch import KillSwitch
 from .markers import Markers
@@ -419,6 +419,21 @@ class Kernel:
                 )
                 if resumed_kind:
                     boot_env[RESUMED_KIND_ENV] = resumed_kind
+                # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal
+                # decision (approved/rejected/expired), authority-free like the
+                # marker above, so the runner can stamp it on the turn's OTel
+                # span. Reports all three terminal statuses, not just approved
+                # (contrast resumed_kind), closing the "did an approval get
+                # requested" gap ADR-0038 named open. getattr-tolerant of
+                # binding doubles that do not carry the method, like the two above.
+                decision_fn = getattr(self._binding, "approval_decision", None)
+                decision = (
+                    await decision_fn(qevent.event_id, resolved.agent_id)
+                    if decision_fn is not None
+                    else None
+                )
+                if decision:
+                    boot_env[DECISION_ENV] = decision
                 # Resolve the agent's packs once here (a pure parse, no I/O) and
                 # reuse: the nav pack is threaded to the final render, the same
                 # packs feed the shimmer below.

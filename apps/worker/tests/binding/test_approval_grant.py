@@ -606,6 +606,108 @@ def test_resumed_kind_only_for_approved_approvals() -> None:
     asyncio.run(go())
 
 
+def test_approval_decision_reports_all_three_terminal_statuses() -> None:
+    # ADR-0076 Stone 3 (#889): unlike approval_resumed_kind (approved-only),
+    # approval_decision reports every terminal status so a rejected or expired
+    # gate is observable from the trace too. pending is not terminal and never
+    # yields a decision.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            await _skip_if_unreachable(engine)
+            agent_id = uuid.uuid4()
+            await _seed_agent(engine, agent_id)
+            try:
+                resolver = _resolver(engine)
+                for status in ("approved", "rejected", "expired"):
+                    approval_id = uuid.uuid4()
+                    await _seed_approval(
+                        engine,
+                        approval_id=approval_id,
+                        status=status,
+                        summary="Give ACME a 20% discount",
+                        agent_id=agent_id,
+                        gate_kind="policy",
+                    )
+                    assert (
+                        await resolver.approval_decision(
+                            resume_event_id(approval_id), agent_id
+                        )
+                        == status
+                    )
+
+                pending_id = uuid.uuid4()
+                await _seed_approval(
+                    engine,
+                    approval_id=pending_id,
+                    status="pending",
+                    summary="Give ACME a 20% discount",
+                    agent_id=agent_id,
+                    gate_kind="policy",
+                )
+                assert (
+                    await resolver.approval_decision(resume_event_id(pending_id), agent_id)
+                    is None
+                )
+            finally:
+                await _cleanup_agents(engine, [agent_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_approval_decision_is_agent_bound() -> None:
+    # Same cross-agent guard as the grant and the resumed-kind marker: a
+    # decision resolves only for the agent the approval belongs to.
+    async def go() -> None:
+        engine = create_async_engine(_DB_URL)
+        try:
+            await _skip_if_unreachable(engine)
+            owner_id = uuid.uuid4()
+            other_id = uuid.uuid4()
+            approval_id = uuid.uuid4()
+            await _seed_agent(engine, owner_id)
+            await _seed_approval(
+                engine,
+                approval_id=approval_id,
+                status="approved",
+                summary="Give ACME a 20% discount",
+                agent_id=owner_id,
+                gate_kind="policy",
+            )
+            try:
+                resolver = _resolver(engine)
+                event = resume_event_id(approval_id)
+                assert await resolver.approval_decision(event, other_id) is None
+                assert await resolver.approval_decision(event, owner_id) == "approved"
+            finally:
+                await _cleanup_agents(engine, [owner_id])
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+def test_approval_decision_returns_none_without_db_hit_for_non_approval_event_id() -> None:
+    # Same fast-return guarantee as approval_grant_tool: a non-approval event id
+    # must not touch the DB at all.
+    async def go() -> None:
+        bad_engine = create_async_engine(
+            "postgresql+asyncpg://invalid:invalid@127.0.0.1:1/none"
+        )
+        try:
+            resolver = BindingResolver(bad_engine, WorkerConfig(db_schema=_SCHEMA))
+            decision = await resolver.approval_decision(
+                "ev-slack-1699999999.123456", uuid.uuid4()
+            )
+            assert decision is None
+        finally:
+            await bad_engine.dispose()
+
+    asyncio.run(go())
+
+
 def test_pins_summarize_tool_call_format() -> None:
     # Pinning: the worker summary-parser recovers exactly the tool name that
     # summarize_tool_call (the runner producer) writes into the summary. Guards
