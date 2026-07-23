@@ -14,6 +14,7 @@ from .budget import BUDGET_CLASSIFICATION, BudgetTracker
 from .config import RunnerConfig
 from .conformance import conformance_producer
 from .fake import FakeModelSession
+from .harness import HarnessContribution, discover_contributions, resolve_harness
 from .hooks import load_bundle_hooks
 from .memory import (
     ConsolidationResult,
@@ -77,4 +78,7 @@ __all__ = [
     "consolidate_memory",
     "consolidate_records",
     "merge_provenance",
+    "HarnessContribution",
+    "discover_contributions",
+    "resolve_harness",
 ]
