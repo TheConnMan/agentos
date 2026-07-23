@@ -33,7 +33,8 @@ production build on http://localhost:4173 (what Playwright drives).
   modal (`modals/`).
 - `src/views/` — the wired views: `wired/*` (Overview, Agents, AgentDetail,
   Versions, Evals, and the `ComingSoon`/stub views in `WiredStubs.tsx`), `Observability.tsx`
-  and its `obs/*` panels (RealTraces, RealMetrics, RealLogs, RealCost, RealMemory).
+  and its `obs/*` panels (RealTraces, RealMetrics, RealLogs, RealCost,
+  RealApprovals, RealMemory).
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
@@ -74,6 +75,15 @@ honest `ComingSoon` stub (Usage, Settings).
   one with `DELETE /agents/{id}/memory/{index}`; edits/deletes take effect at the
   agent's next session boot. Reuses the same `WiredAgentMemory` panel the agent
   detail page consumes (the endpoint was already live and consumed there).
+- Approvals tab (Observability > Approvals): the operator visibility + resolve
+  surface for durable approvals (#867). Lists approvals (pending by default,
+  with a status filter) from `GET /approvals`; a row opens a detail with the
+  audit trail (`GET /approvals/{id}/audit`) and, for a pending record, drives
+  the resolve-once route (`POST /approvals/{id}/resolve`) with Approve/Reject,
+  a required resolver identity, and optional actor-channel/note. The resolve
+  route's designed failure statuses are surfaced distinctly (403 not
+  authorized/self-approval, 409 already resolved, 410 expired). Read + resolve
+  only -- it never creates approvals (that is the worker's job).
 
 **Metrics divergence (deliberate).** The design canon's Metrics tab is a
 Prometheus/PromQL surface (a `rate(...)` query bar, a request-rate hero, and
@@ -104,8 +114,8 @@ and the cost calls `getCost`/`getBudget`/`putBudget`/`getKillState`/`killAgent`/
 `useMetricSeries`/`useAgents`/`useCost`), `config.ts` (API key + prefix). Deploy
 failures flow through the store reducer actions `deployFailedValidation` /
 `deployFailed`. Observability lives in `src/views/obs/Real*.tsx`
-(`RealTraces`, `RealMetrics`, `RealLogs`, `RealCost`), dispatched by tab in
-`Observability.tsx`.
+(`RealTraces`, `RealMetrics`, `RealLogs`, `RealCost`, `RealApprovals`),
+dispatched by tab in `Observability.tsx`.
 
 **Integration E2E (needs the live stack).** With the compose dev stack up and
 apps/api on 8000:
@@ -127,7 +137,9 @@ The wired Metrics/Logs are covered in the **stackless** suite
 (`e2e/observability-wired.spec.ts`) by running the app in `?api=1` mode and
 stubbing the observability endpoints with real-shaped responses via Playwright
 route interception (200 metrics, 503 no-cluster logs, 200 logs) — no backend
-needed. Against a real API on the dev box, runner-logs returns 502 rather than
+needed. Approvals are covered the same way (`e2e/approvals-wired.spec.ts`):
+stubbed `GET /approvals`/`/audit` and a `POST /resolve` interceptor asserting
+the list, detail, resolve payload, and the 409 conflict state. Against a real API on the dev box, runner-logs returns 502 rather than
 503 because a kubeconfig is present (the 401-rejecting cluster), which the UI
 renders as the "Cluster error" state.
 
