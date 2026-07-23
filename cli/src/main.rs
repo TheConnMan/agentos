@@ -496,6 +496,25 @@ enum SkillAction {
         /// Print the assignment that clears the env override.
         #[arg(long)]
         clear: bool,
+        /// List pending approval RECORDS (not gate config). Accepted so it can be
+        /// DECLINED with a reason at this tier rather than error like a typo: the
+        /// skill tier's local runner keeps no durable approval store (ADR-0063,
+        /// ADR-0077). Use `agentos local/cluster approvals --list`.
+        #[arg(long)]
+        list: bool,
+        /// Resolve the approval with this id. Not available at the skill tier for
+        /// the same reason as --list; declined with that reason.
+        #[arg(long, value_name = "APPROVAL_ID")]
+        resolve: Option<String>,
+        /// The actor resolving the approval (paired with --resolve on
+        /// local/cluster). Accepted here only so a local/cluster-style resolve
+        /// invocation is declined cleanly, not rejected as an unknown flag.
+        #[arg(long = "as", value_name = "USER")]
+        as_actor: Option<String>,
+        /// Reject instead of approve (paired with --resolve). Accepted only to be
+        /// declined cleanly at this tier.
+        #[arg(long)]
+        reject: bool,
     },
     // The about text is composed from the same consts the runtime `{error, fix}`
     // payload uses, so the discovery surface cannot drift from the answer
@@ -1578,7 +1597,20 @@ async fn run(command: Option<Command>) -> Result<()> {
                 plugin_dir,
                 gate,
                 clear,
-            } => emit(commands::skill_approvals(plugin_dir, gate, clear).await?),
+                list,
+                resolve,
+                ..
+            } => {
+                // Answered, not absent (ADR-0041, ADR-0077): the durable
+                // list/resolve the local+cluster tiers have does not exist here,
+                // so the verb reports why and exits 4 rather than erroring like a
+                // typo. Gate config (view/set/clear) is unchanged.
+                if list || resolve.is_some() {
+                    Err(commands::skill_approvals_list_unavailable())
+                } else {
+                    emit(commands::skill_approvals(plugin_dir, gate, clear).await?)
+                }
+            }
             // Answered, not absent: the concept does not exist at this tier, so
             // the verb reports why and exits 4 (issue #459, ADR-0041).
             SkillAction::Versions => Err(commands::skill_versions_unavailable()),
@@ -2597,6 +2629,24 @@ mod tests {
     #[test]
     fn clap_surface_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn skill_approvals_accepts_list_and_resolve_to_decline_them() {
+        // The flags exist so the skill tier DECLINES them with a reason
+        // (ADR-0077), not clap-erroring like an unknown-flag typo.
+        Cli::try_parse_from(["agentos", "skill", "approvals", "--list"])
+            .expect("skill approvals --list should parse");
+        Cli::try_parse_from([
+            "agentos",
+            "skill",
+            "approvals",
+            "--resolve",
+            "abc",
+            "--as",
+            "u",
+        ])
+        .expect("skill approvals --resolve --as should parse");
     }
 
     #[test]
