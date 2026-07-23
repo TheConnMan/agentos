@@ -32,8 +32,19 @@ end
 """
 
 
-class LockAcquireTimeout(Exception):
-    """The per-thread lock was not acquired within the configured timeout."""
+class LockAcquireTimeout(TimeoutError):
+    """The per-thread lock was not acquired within the configured timeout.
+
+    A ``TimeoutError`` subclass on purpose (#849): it genuinely is a timeout, and
+    the kernel's turn path treats a failed turn start as a retryable outcome by
+    catching ``TimeoutError`` among the transient errors. As a plain
+    ``Exception`` this escaped that catch, so a contended lock left the stream
+    entry pending for the whole reclaim window instead of retrying in process.
+    Subclassing also makes the turn path uniform with the reset path, where the
+    outer ``asyncio.wait_for`` bound already raises ``TimeoutError``. Note that
+    since builtin ``TimeoutError`` subclasses ``OSError``, this exception is now
+    also an ``OSError``.
+    """
 
 
 class ThreadLock:

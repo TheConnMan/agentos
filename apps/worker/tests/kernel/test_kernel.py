@@ -882,3 +882,70 @@ def test_claim_latency_is_logged(make_harness, caplog) -> None:
             assert ms >= 0
 
     asyncio.run(go())
+
+
+def test_lock_acquire_timeout_is_a_retryable_turn_start_failure(make_harness) -> None:
+    """#849, the sibling of the runner-500 turn-start failure above: the turn
+    never starts because the per-thread route lock cannot be taken in time.
+
+    The contention is real -- another holder squats the exact Valkey lock key,
+    so `acquire` polls to its deadline -- and the failure must come back as the
+    same retryable outcome the other transient turn-start failures do, not
+    escape `_attempt` to the consumer. The order lock must be released too, or
+    the next same-thread event would never route."""
+
+    async def go() -> None:
+        async with make_harness(lock_acquire_timeout_s=0.2) as h:
+            thread = "tLockTimeout"
+            # A foreign holder of the route lock, outliving the acquire deadline.
+            await h.async_redis.set(h.config.lock_key(thread), "another-worker", nx=True, px=60000)
+
+            released: list[bool] = []
+
+            def release_order() -> None:
+                released.append(True)
+
+            outcome = await h.kernel._attempt(_qevent("go", thread=thread), release_order)
+
+            assert outcome.terminal_ok is False
+            assert outcome.classification == "runner-error"  # retryable
+            assert h.runner.opened == []  # the turn was never started
+            assert released, "the order lock was not released on the failed start"
+
+    asyncio.run(go())
+
+
+def test_lock_acquire_timeout_retries_in_process(make_harness) -> None:
+    """#849: a route-lock acquire timeout is retried inside `process_event`,
+    within `max_attempts`, instead of escaping to the consumer and leaving the
+    stream entry pending for the whole reclaim window.
+
+    Attempt 1 finds the lock squatted by a foreign holder and times out without
+    ever reaching the runner; the squatter goes away once attempt 2 has begun,
+    so attempt 2 opens the turn and completes. `opened == ["go"]` is what
+    separates this from the runner-500 shape: the retry was caused by the lock,
+    not by a failed turn start at the runner."""
+
+    async def go() -> None:
+        async with make_harness(lock_acquire_timeout_s=0.2, max_attempts=3) as h:
+            thread = "tLockRetry"
+            lock_key = h.config.lock_key(thread)
+            await h.async_redis.set(lock_key, "another-worker", nx=True, px=60000)
+            h.runner.default_script = [Final(text="recovered", status=DONE)]
+
+            async def unsquat() -> None:
+                # Each attempt opens with a "booting" edit before it touches the
+                # lock, so a second one means attempt 1 already gave up.
+                await _wait_until(lambda: len(h.sink.updates) >= 2)
+                await h.async_redis.delete(lock_key)
+
+            freeing = asyncio.create_task(unsquat())
+            ev = _qevent("go", thread=thread)
+            await h.kernel.process_event(ev)
+            await freeing
+
+            assert h.runner.opened == ["go"]  # attempt 1 never reached the runner
+            assert h.sink.last_text == "recovered"
+            assert await h.async_redis.exists(h.config.done_key(ev.event_id))
+
+    asyncio.run(go())

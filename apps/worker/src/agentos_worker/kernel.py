@@ -611,6 +611,11 @@ class Kernel:
         # cannot be taken in time propagates as a release failure, same as a
         # timed-out release.
         lock_key = self._config.lock_key(thread_key)
+        # This outer bound shadows `acquire`'s own configured
+        # `lock_acquire_timeout_s` (45s by default): whichever fires first wins,
+        # and `_RESET_LOCK_ACQUIRE_TIMEOUT_S` is the shorter one, so it is the
+        # effective bound on the reset path. Both raise `TimeoutError` (the
+        # inner one as `LockAcquireTimeout`), so the caller sees one shape.
         token = await asyncio.wait_for(self._lock.acquire(lock_key), _RESET_LOCK_ACQUIRE_TIMEOUT_S)
         try:
             return await asyncio.wait_for(
@@ -746,11 +751,12 @@ class Kernel:
                 route = await self._route_and_start(thread, event, boot_env, packs)
         except (RunnerError, aiohttp.ClientError, TimeoutError, SandboxError) as exc:
             # The turn was never accepted (transient runner 5xx, runner not ready,
-            # claim timeout). Convert to a retryable outcome so process_event backs
-            # off and retries within max_attempts, instead of letting the entry
-            # escape to the consumer and sit pending for the whole reclaim window.
+            # claim timeout, route-lock acquire timeout). Convert to a retryable
+            # outcome so process_event backs off and retries within max_attempts,
+            # instead of letting the entry escape to the consumer and sit pending
+            # for the whole reclaim window.
             release_order()
-            logger.warning("turn start failed for %s: %s", qevent.event_id, exc)
+            logger.warning("turn start failed for %s: %r", qevent.event_id, exc)
             return TurnOutcome(terminal_ok=False, classification="runner-error")
         release_order()
 
