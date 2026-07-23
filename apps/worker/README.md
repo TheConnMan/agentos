@@ -296,6 +296,56 @@ from `compose.dev.yaml`, the real sandbox substrate with a fake Kubernetes clien
 sandboxes resolve to a local in-process fake runner, and a recording Slack sink.
 Only Slack and the model behind the runner are faked.
 
+### Running the worker as a bare process (`agentos_worker.run`, Docker substrate)
+
+`agentos_worker.run` is the `python -m agentos_worker` entrypoint: it reads
+`WorkerConfig`, builds the Valkey clients, the sandbox substrate, the
+`RunnerClient`, and the Slack sink, then drives the consumer until a signal
+stops it. `_sandbox_client` picks the substrate via `AGENTOS_SANDBOX_SUBSTRATE`
+(`kubernetes`, the default, claims agent-sandbox CRs; `docker` boots runner
+containers on the host Docker daemon instead -- what `agentos local up` sets
+when it runs the worker as a compose service).
+
+To hand-run the worker as a bare host process against an already-running
+`compose.dev.yaml` stack instead of letting `agentos local up` manage it as a
+compose service -- useful for attaching a debugger or iterating on worker
+source without a container rebuild -- point it at the stack's exposed ports:
+
+```bash
+export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=... / AGENTOS_CREDENTIALS=...
+env AGENTOS_SANDBOX_SUBSTRATE=docker \
+    VALKEY_HOST=localhost VALKEY_PORT=26379 VALKEY_PASSWORD=valkeypass \
+    SLACK_API_BASE_URL=http://localhost:8155/api/ SLACK_BOT_TOKEN=xoxb-dev \
+    AGENTOS_DOCKER_NETWORK=agentos_default \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
+    uv run python -m agentos_worker &
+```
+
+- With the Docker substrate, `_sandbox_client` requires a model credential
+  (`AGENTOS_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY`),
+  `AGENTOS_MODEL_BASE_URL` (local-model mode), or `AGENTOS_FAKE_MODEL=1`
+  (explicit offline opt-in) -- absent all three it raises `SystemExit` at
+  startup rather than booting a runner that fails cryptically.
+- `AGENTOS_DOCKER_NETWORK` joins each spawned runner container to the compose
+  network (`docker.py`'s `--network`); without it a runner is on the default
+  bridge network and can't reach the stack's other services (including the
+  OTel collector) by hostname.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` is forwarded into each spawned runner; unset,
+  runners still boot but just don't export traces (a warning, not a startup
+  failure).
+- `AGENTOS_RUNNER_IMAGE` overrides the runner image tag (default
+  `agentos-runner`).
+- `VALKEY_HOST`/`VALKEY_PORT`/`VALKEY_PASSWORD` and `SLACK_BOT_TOKEN` point at
+  the compose stack's exposed ports and dev bot token (see `compose.dev.yaml`);
+  `SLACK_API_BASE_URL` points at the stack's Slack stub instead of real
+  slack.com.
+
+Drive a turn the normal way once it's up (`agentos local deploy` / `agentos
+local message`, pinned at whichever API port you brought up) -- the hand-run
+worker claims runner containers on the same Docker daemon exactly as the
+compose-managed one would. For an offline round-trip, add `AGENTOS_FAKE_MODEL=1`
+to the env above and drop the credential.
+
 ## The sandbox substrate (`agentos_worker.sandbox`)
 
 The lifecycle seam between the worker kernel and kubernetes-sigs/agent-sandbox
