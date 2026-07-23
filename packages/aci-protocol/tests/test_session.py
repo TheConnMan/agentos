@@ -472,16 +472,18 @@ def test_render_worker_emits_exactly_the_worker_owned_key_subset() -> None:
 # --- Golden 3: the kernel resume overlay. ------------------------------------
 
 
-def test_the_kernel_owns_exactly_the_two_approval_resume_keys() -> None:
-    """kernel.py:317,334 layer these onto binding.boot_env's dict after the fact.
+def test_the_kernel_owns_exactly_the_three_approval_resume_keys() -> None:
+    """kernel.py layers these onto binding.boot_env's dict after the fact.
 
     They are a distinct producer: same process, different code path, rendered
     independently. The kernel sets them via the exported constants, so the
-    producer map is what pins the overlay's exact extent.
+    producer map is what pins the overlay's exact extent. ADR-0076/#889 added
+    ``AGENTOS_APPROVAL_DECISION`` alongside the original two.
     """
     assert set(BootEnv.env_keys(producer="kernel")) == {
         "AGENTOS_APPROVAL_GRANT_TOOL",
         "AGENTOS_APPROVAL_RESUMED_KIND",
+        "AGENTOS_APPROVAL_DECISION",
     }
 
 
@@ -490,6 +492,7 @@ def test_the_kernel_overlay_keys_are_not_worker_rendered() -> None:
     env = _worker_env(approval_required_tools=["Bash"])
     assert "AGENTOS_APPROVAL_GRANT_TOOL" not in env
     assert "AGENTOS_APPROVAL_RESUMED_KIND" not in env
+    assert "AGENTOS_APPROVAL_DECISION" not in env
 
 
 # --- Golden 4: the consumer parse. -------------------------------------------
@@ -690,6 +693,7 @@ def test_env_keys_declares_the_whole_flattened_boot_surface() -> None:
         "AGENTOS_APPROVAL_REQUIRED_TOOLS",
         "AGENTOS_APPROVAL_GRANT_TOOL",
         "AGENTOS_APPROVAL_RESUMED_KIND",
+        "AGENTOS_APPROVAL_DECISION",
         "AGENTOS_CONNECTOR_SECRET_KEYS",
         "AGENTOS_RUNNER_PORT",
         "ANTHROPIC_BASE_URL",

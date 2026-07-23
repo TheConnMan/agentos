@@ -27,17 +27,18 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from aci_protocol import OtelConfig
 from opentelemetry import trace
+from opentelemetry.attributes import BoundedAttributes
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind, Tracer
 
-from .redact import redact_span_attribute
+from .redact import redact_span_attribute, redact_text
 
 _SERVICE_NAME = "agentos-runner"
 
@@ -58,6 +59,12 @@ class SpanAttributeKey(StrEnum):
     TRACE_NAME = "langfuse.trace.name"
     SESSION_ID = "langfuse.session.id"
     USER_ID = "langfuse.user.id"
+    # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
+    # (approved/rejected/expired) of the approval a resume turn is resuming
+    # from, threaded in from the worker's authority-free AGENTOS_APPROVAL_DECISION
+    # boot-env fact. Closes the "did an approval get requested" gap ADR-0038
+    # named open, on the existing span stream.
+    APPROVAL_DECISION = "gen_ai.approval.decision"
     REQUEST_MODEL = "gen_ai.request.model"
     MODEL = "model"
     USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
@@ -94,6 +101,50 @@ def _set(span: Any, key: SpanAttributeKey, value: object) -> None:
     span.set_attribute(key.value, redact_span_attribute(value))
 
 
+class _SchemaValidatingSpanProcessor(SpanProcessor):
+    """Fail-closed export-time backstop (ADR-0076 decision 3).
+
+    ``_set()`` already gates every attribute this module attaches through the
+    closed ``SpanAttributeKey`` enum and the ``redact.py`` scrub; this processor
+    exists for the call site that bypasses both by calling ``span.set_attribute``
+    directly. On each span ending, it strips (does not replace) any attribute
+    whose key is outside the closed schema, or whose string value still matches
+    an unscrubbed-secret pattern after the existing redaction pass — dropping the
+    offending attribute rather than the whole span, so one bad key costs a single
+    field of trace data rather than the whole record.
+
+    Must be registered on the provider ahead of the exporting processor
+    (``TracerProvider.add_span_processor`` invokes processors in registration
+    order); it mutates the span's attributes in place so the exporter that runs
+    after it sees the cleaned set.
+    """
+
+    _ALLOWED_KEYS = frozenset(member.value for member in SpanAttributeKey)
+
+    def on_end(self, span: ReadableSpan) -> None:
+        # ReadableSpan.attributes is a read-only MappingProxyType view; the
+        # underlying BoundedAttributes (span._attributes) is the same object the
+        # concrete Span held, flagged immutable at Span.end() (see the SDK's own
+        # `self._attributes._immutable = True` in Span.end()). Toggling that
+        # private flag to mutate here mirrors the SDK's own pattern. Always a
+        # BoundedAttributes at runtime (Span.__init__ constructs it directly);
+        # the cast narrows past the Mapping-typed private attribute.
+        raw = span._attributes  # noqa: SLF001
+        if raw is None:
+            return
+        attributes = cast(BoundedAttributes, raw)
+        was_immutable = attributes._immutable  # noqa: SLF001
+        attributes._immutable = False  # noqa: SLF001
+        try:
+            for key in list(attributes.keys()):
+                value = attributes[key]
+                still_leaks = isinstance(value, str) and redact_text(value) != value
+                if key not in self._ALLOWED_KEYS or still_leaks:
+                    del attributes[key]
+        finally:
+            attributes._immutable = was_immutable  # noqa: SLF001
+
+
 def build_tracer_provider(
     otel: OtelConfig, session_id: str, sandbox_id: str | None = None
 ) -> TracerProvider | None:
@@ -118,6 +169,9 @@ def build_tracer_provider(
         attributes[SpanAttributeKey.AGENTOS_SANDBOX_ID.value] = sandbox_id
     resource = Resource.create(attributes)
     provider = TracerProvider(resource=resource)
+    # The validator must run before the exporting processor (registration order)
+    # so the exporter only ever sees attributes the closed schema allows.
+    provider.add_span_processor(_SchemaValidatingSpanProcessor())
     # The exporter reads OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _PROTOCOL from
     # the environment itself; SessionConfig.otel is the typed view of the same
     # vars, so an argument-free exporter and the config agree by construction.
@@ -146,6 +200,7 @@ class RunTracer:
         model: str | None,
         session_id: str | None = None,
         user_id: str | None = None,
+        approval_decision: str | None = None,
     ) -> Iterator[_GenerationSpan]:
         """Open the root ``agent.run`` span and its child ``llm.generation`` span.
 
@@ -155,6 +210,11 @@ class RunTracer:
         Langfuse reads these from the trace-root span, exactly as it does
         ``langfuse.trace.name``; an empty or absent value is omitted rather than
         stamped, so a turn with no event user (eval runs etc.) carries no user id.
+
+        ``approval_decision`` (ADR-0076 Stone 3, #889) is the authority-free
+        AGENTOS_APPROVAL_DECISION fact -- present only when this turn is
+        resuming a resolved approval -- stamped unconditionally when given so
+        an operator can see the outcome from the trace.
         """
 
         with self._tracer.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
@@ -163,6 +223,8 @@ class RunTracer:
                 _set(root, SpanAttributeKey.SESSION_ID, session_id)
             if user_id:
                 _set(root, SpanAttributeKey.USER_ID, user_id)
+            if approval_decision:
+                _set(root, SpanAttributeKey.APPROVAL_DECISION, approval_decision)
             with self._tracer.start_as_current_span("llm.generation") as gen:
                 span = _GenerationSpan(self._tracer, gen)
                 # Stamp the configured model at span open when AGENTOS_MODEL is

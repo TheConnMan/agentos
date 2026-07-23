@@ -590,6 +590,10 @@ class TraceTree(BaseModel):
     # The runner's sandbox id (agentos.sandbox_id), hoisted out of the trace/
     # observation resource attributes; None when the trace predates the attr.
     sandbox_id: str | None = None
+    # The resolved approval-gate decision (approved/rejected/expired) this turn
+    # resumed from (ADR-0076 Stone 3, #889), hoisted out of the trace/
+    # observation attributes; None for a turn that resumed no approval.
+    approval_decision: str | None = None
 
 
 class MetricsSummary(BaseModel):

@@ -46,14 +46,20 @@ def matching_traces(
 # attributable to the concrete sandbox that served it.
 _SANDBOX_ATTR = "agentos.sandbox_id"
 
+# The OTel span attribute the runner stamps on the root agent.run span (ADR-0076
+# Stone 3, #889) when a turn resumes a resolved approval.
+_APPROVAL_DECISION_ATTR = "gen_ai.approval.decision"
 
-def _probe_sandbox_attr(bag: Any) -> str | None:
-    """Return a non-empty `agentos.sandbox_id` from one attribute bag, or None.
+
+def _probe_attr(bag: Any, key: str, *, bare_key: str | None = None) -> str | None:
+    """Return a non-empty string attribute from one attribute bag, or None.
 
     Checks the bag itself plus the common keys Langfuse uses to carry OTel
-    resource/metadata attributes (``metadata`` / ``resourceAttributes`` /
-    ``resource``, each optionally wrapping an ``attributes`` sub-dict). The bare
-    ``sandbox_id`` key is accepted too. Non-string / empty values are ignored.
+    span/resource attributes (``metadata`` / ``resourceAttributes`` /
+    ``resource``, each optionally wrapping an ``attributes`` sub-dict).
+    ``bare_key``, when given, is accepted as a shorter alias (e.g. the bare
+    ``sandbox_id`` for ``agentos.sandbox_id``). Non-string / empty values are
+    ignored.
     """
 
     if not isinstance(bag, dict):
@@ -67,7 +73,7 @@ def _probe_sandbox_attr(bag: Any) -> str | None:
             if isinstance(inner, dict):
                 candidates.append(inner)
     for cand in candidates:
-        hit = cand.get(_SANDBOX_ATTR) or cand.get("sandbox_id")
+        hit = cand.get(key) or (cand.get(bare_key) if bare_key else None)
         if isinstance(hit, str) and hit.strip():
             return hit
     return None
@@ -85,11 +91,33 @@ def hoist_sandbox_id(
     invented.
     """
 
-    hit = _probe_sandbox_attr(trace)
+    hit = _probe_attr(trace, _SANDBOX_ATTR, bare_key="sandbox_id")
     if hit:
         return hit
     if observations:
-        return _probe_sandbox_attr(observations[0])
+        return _probe_attr(observations[0], _SANDBOX_ATTR, bare_key="sandbox_id")
+    return None
+
+
+def hoist_approval_decision(
+    trace: dict[str, Any], observations: list[dict[str, Any]]
+) -> str | None:
+    """Lift the runner's approval-gate decision out of a trace, or None.
+
+    Mirrors ``hoist_sandbox_id``'s trace-then-first-observation probe. The
+    attribute is stamped on the root ``agent.run`` span rather than as a
+    provider-wide resource attribute (ADR-0076 Stone 3, #889), so it is
+    ordinarily trace-level; the observation fallback stays for the same
+    reason ``hoist_sandbox_id`` keeps it -- Langfuse's OTLP ingestion doesn't
+    guarantee which level surfaces a given span attribute. Absent for the
+    ordinary case (no approval gate was resumed this turn); no value invented.
+    """
+
+    hit = _probe_attr(trace, _APPROVAL_DECISION_ATTR)
+    if hit:
+        return hit
+    if observations:
+        return _probe_attr(observations[0], _APPROVAL_DECISION_ATTR)
     return None
 
 
