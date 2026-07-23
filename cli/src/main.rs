@@ -663,6 +663,14 @@ enum LocalAction {
         /// Match how `local up` brought the stack up (--slack, if used).
         #[arg(long)]
         slack: bool,
+        /// Match how `local up` brought the stack up (--env-file, if used):
+        /// read a bundle-local `.env` as the LOWEST-priority model-credential
+        /// source so the rebuilt service comes back on the SAME model as the
+        /// rest of the stack, instead of reverting to compose's fake default
+        /// (#853). Precedence (shell env > this file), the recognized keys, and
+        /// the never-in-argv/logs masking are identical to `local up --env-file`.
+        #[arg(long = "env-file", value_name = "PATH")]
+        env_file: Option<PathBuf>,
     },
     /// Stop the dev stack (docker compose down), keeping volumes.
     Down {
@@ -1671,6 +1679,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 minimal,
                 local_model,
                 slack,
+                env_file,
             } => {
                 let file = resolve_compose_file(file, dry_run).await?;
                 emit(
@@ -1682,7 +1691,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                             local_model,
                             slack,
                             model_mode: local::model_mode_from_env(),
-                            env_file: None,
+                            env_file,
                         },
                         service,
                     })

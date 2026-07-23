@@ -458,14 +458,21 @@ impl crate::ui::CliOutput for LocalUpOutput {
     }
 }
 
-pub async fn up(mut o: LocalOpts) -> Result<LocalUpOutput> {
-    let ui = crate::ui::ui();
-    // #749/ADR-0070: an opt-in bundle `.env` is the LOWEST-priority model
-    // credential source. A name exported in the shell always wins; only a name
-    // absent from the shell is taken from the file. The value is injected into
-    // the compose child as masked `secret_env` (never argv/logs), and a
-    // `.env`-only credential still flips the stack live -- so the model mode is
-    // recomputed with the file credential folded in.
+/// Apply the opt-in bundle `.env` plan (#749, ADR-0070) to a worker-starting
+/// verb's options, in place: fold a file-only model credential into the model
+/// mode so the stack boots live exactly as a shell credential would, emit a
+/// per-credential "loaded from --env-file" note, and return the credentials to
+/// attach as masked `secret_env` (never argv/logs). Shared by `local up` and
+/// `local rebuild` so a targeted rebuild comes back with the SAME
+/// credential/model-mode wiring the original `up` resolved from identical
+/// inputs (shell env + the same `--env-file`), rather than the fake-model revert
+/// #853 describes. A `None` env_file leaves the shell-resolved mode untouched
+/// and returns no credentials.
+fn apply_env_file_plan(o: &mut LocalOpts, ui: &crate::ui::Ui) -> Result<Vec<(String, String)>> {
+    // A name exported in the shell always wins; only a name absent from the
+    // shell is taken from the file. A `.env`-only credential still flips the
+    // stack live, so the model mode is recomputed with the file credential
+    // folded in.
     let (env_creds, env_file_mode) = load_env_file_up_plan(o.env_file.as_deref())?;
     if o.env_file.is_some() {
         o.model_mode = env_file_mode;
@@ -479,6 +486,14 @@ pub async fn up(mut o: LocalOpts) -> Result<LocalUpOutput> {
             ));
         }
     }
+    Ok(env_creds)
+}
+
+pub async fn up(mut o: LocalOpts) -> Result<LocalUpOutput> {
+    let ui = crate::ui::ui();
+    // #749/ADR-0070: an opt-in bundle `.env` is the LOWEST-priority model
+    // credential source, injected into the compose child as masked `secret_env`.
+    let env_creds = apply_env_file_plan(&mut o, ui)?;
     let mut cmd = up_command(&o);
     if !env_creds.is_empty() {
         cmd = cmd.with_secret_env(env_creds);
@@ -573,20 +588,30 @@ impl crate::ui::CliOutput for LocalRebuildOutput {
 /// (e.g. after a code change) without losing the stack's already-resolved
 /// credential/model-mode wiring (#714) -- see `rebuild_command`'s doc comment
 /// for the footgun this exists to close. Re-resolves `ModelMode` from THIS
-/// invocation's shell exactly as `local up` does, rather than trying to read
-/// back whatever the rest of the stack is currently running with (not
-/// generally recoverable from outside the containers) -- so the credential
-/// this rebuild applies is whatever is exported in the shell running the
-/// command, same as any other worker-restarting verb.
-pub async fn rebuild(o: LocalRebuildOpts) -> Result<LocalRebuildOutput> {
-    let cmd = rebuild_command(&o.common, &o.service);
+/// invocation's inputs exactly as `local up` does -- the shell AND the same
+/// opt-in `--env-file` (#853) -- rather than trying to read back whatever the
+/// rest of the stack is currently running with (not generally recoverable from
+/// outside the containers). So given the same shell and the same `--env-file`
+/// the original `up` used, the rebuilt service comes back on the identical
+/// model/credential wiring; drop `--env-file` on a stack that was brought up
+/// with one and the rebuilt service silently reverts to compose's fake default,
+/// which is exactly the regression #853 reports.
+pub async fn rebuild(mut o: LocalRebuildOpts) -> Result<LocalRebuildOutput> {
+    let ui = crate::ui::ui();
+    // The same opt-in bundle `.env` plan `local up` applies: fold a file-only
+    // credential into the model mode and inject it as masked `secret_env`, so
+    // the resolved plan matches `up`'s for identical inputs (#853).
+    let env_creds = apply_env_file_plan(&mut o.common, ui)?;
+    let mut cmd = rebuild_command(&o.common, &o.service);
+    if !env_creds.is_empty() {
+        cmd = cmd.with_secret_env(env_creds);
+    }
     if o.common.dry_run {
         return Ok(LocalRebuildOutput::DryRun(crate::ui::DryRunPlan {
             lines: vec![cmd.display()],
         }));
     }
     require_on_path("docker")?;
-    let ui = crate::ui::ui();
     let cl = ui.checklist();
     run_step(&cl, &format!("rebuilding {}", o.service), "rebuild", &cmd).await?;
     Ok(LocalRebuildOutput::Rebuilt {
@@ -1052,6 +1077,72 @@ mod tests {
             cmd.argv()
         );
         // The credential rides secret_env, not the plain env vec.
+        assert!(cmd.env.iter().all(|(k, _)| k != "ANTHROPIC_API_KEY"));
+        assert!(cmd
+            .secret_env
+            .contains(&("ANTHROPIC_API_KEY".to_string(), secret.to_string())));
+    }
+
+    /// #853: given the SAME inputs a `local up --env-file` resolved -- a
+    /// file-only credential folded into `LiveFromCredential`, plus that
+    /// credential to inject as masked `secret_env` -- `local rebuild` builds the
+    /// identical model/credential wiring, so the rebuilt service comes back LIVE
+    /// rather than reverting to compose's fake default. Asserted on the resolved
+    /// plan (the env and secret_env of the built command), not on flag presence.
+    /// Both verbs share `apply_env_file_plan`, so identical inputs cannot diverge.
+    #[test]
+    fn rebuild_matches_up_env_file_wiring() {
+        let secret = "sk-ant-fromfile";
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        // The mode a `.env`-only credential resolves to (see
+        // env_file_up_plan_dotenv_only_credential_boots_live).
+        o.model_mode = ModelMode::LiveFromCredential;
+        let creds = vec![("ANTHROPIC_API_KEY".to_string(), secret.to_string())];
+
+        let up = up_command(&o).with_secret_env(creds.clone());
+        let rebuilt = rebuild_command(&o, "agentos-worker").with_secret_env(creds.clone());
+
+        // The live-model flip is present on both, and the plain env + masked
+        // credential wiring match exactly across the two verbs.
+        assert!(up
+            .env
+            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+        assert_eq!(up.env, rebuilt.env, "rebuild env drifted from up env");
+        assert_eq!(
+            up.secret_env, rebuilt.secret_env,
+            "rebuild secret_env drifted from up secret_env"
+        );
+        assert!(rebuilt
+            .secret_env
+            .contains(&("ANTHROPIC_API_KEY".to_string(), secret.to_string())));
+    }
+
+    /// #853: the `--env-file` credential a rebuild injects is masked in the
+    /// printed command line and never lands in argv -- the same leak-prevention
+    /// property `env_file_credential_is_masked_never_printed` proves for `up`
+    /// must hold on the rebuild path too (cli/CLAUDE.md: credentials masked,
+    /// never printed).
+    #[test]
+    fn rebuild_env_file_credential_is_masked_never_printed() {
+        let secret = "sk-ant-supersecretvalue";
+        let mut o = opts(DEFAULT_COMPOSE_FILE);
+        o.model_mode = ModelMode::LiveFromCredential;
+        let cmd = rebuild_command(&o, "agentos-worker")
+            .with_secret_env(vec![("ANTHROPIC_API_KEY".to_string(), secret.to_string())]);
+        let display = cmd.display();
+        assert!(
+            display.contains("ANTHROPIC_API_KEY=sk-ant-s***"),
+            "the token must be masked in the printed command line; got {display}"
+        );
+        assert!(
+            !display.contains(secret),
+            "the raw token leaked into the printed command line: {display}"
+        );
+        assert!(
+            !cmd.argv().iter().any(|a| a.contains(secret)),
+            "the raw token leaked into argv: {:?}",
+            cmd.argv()
+        );
         assert!(cmd.env.iter().all(|(k, _)| k != "ANTHROPIC_API_KEY"));
         assert!(cmd
             .secret_env
