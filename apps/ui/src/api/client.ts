@@ -347,6 +347,14 @@ export interface KillState {
   killed: boolean;
 }
 
+// The forced-thread-reset state (#737/#735). `requested` is true from the moment
+// the POST enqueues a reset until the worker's maintenance tick has actually
+// released the thread's sandbox, then false. Operators poll it to know the
+// release landed (mirrors the CLI reset-thread verb's wait loop).
+export interface ThreadResetState {
+  requested: boolean;
+}
+
 export async function getAgents(): Promise<AgentOut[]> {
   const resp = await fetch(url("/agents"), { headers: headers() });
   return jsonOrThrow<AgentOut[]>(resp);
@@ -589,4 +597,33 @@ export async function killAgent(agentId: string): Promise<KillState> {
 export async function resumeAgent(agentId: string): Promise<KillState> {
   const resp = await fetch(url(`/agents/${agentId}/resume`), { method: "POST", headers: headers() });
   return jsonOrThrow<KillState>(resp);
+}
+
+// Force a thread's sandbox to be released (#737): the worker's next maintenance
+// tick deletes the thread's claim/route, so the next message cold-creates a
+// fresh sandbox. Interrupts a live turn on the thread; does not delete
+// conversation history. `agent_id` scopes the action; the release is
+// thread-keyed. The POST only *queues* the release — poll getThreadResetState to
+// confirm it landed. The thread key is arbitrary (e.g. a Slack thread ts), so it
+// is URL-encoded into the path.
+export async function resetThread(agentId: string, threadKey: string): Promise<ThreadResetState> {
+  const resp = await fetch(
+    url(`/agents/${agentId}/threads/${encodeURIComponent(threadKey)}/reset`),
+    { method: "POST", headers: headers() },
+  );
+  return jsonOrThrow<ThreadResetState>(resp);
+}
+
+// Poll whether a forced reset (the POST above) is still outstanding for this
+// thread (#735). Stays true across the whole release and flips to false only
+// once the sandbox has actually been released.
+export async function getThreadResetState(
+  agentId: string,
+  threadKey: string,
+): Promise<ThreadResetState> {
+  const resp = await fetch(
+    url(`/agents/${agentId}/threads/${encodeURIComponent(threadKey)}/reset`),
+    { headers: headers() },
+  );
+  return jsonOrThrow<ThreadResetState>(resp);
 }

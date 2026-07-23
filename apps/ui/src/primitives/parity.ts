@@ -53,6 +53,12 @@ export const WIRED_ACTIONS = [
   { id: "budget", label: "Set budget", mapping: { command: "cluster.budget" } },
   { id: "delete", label: "Delete an agent", mapping: { command: "cluster.delete" } },
 
+  // WiredThreadReset (#871) — force a thread's sandbox to be released. Env-scoped
+  // in the UI (prod -> cluster, dev -> local), mirroring deploy; both tiers are
+  // listed so the parity gate covers each concrete command the surface emits.
+  { id: "reset-thread-cluster", label: "Reset a thread (prod)", mapping: { command: "cluster.reset-thread" } },
+  { id: "reset-thread-local", label: "Reset a thread (dev)", mapping: { command: "local.reset-thread" } },
+
   // Genuinely-unmapped actions: no dedicated CLI verb exists yet. These render
   // the honest amber glyph linking to the parity epic instead of a command.
   { id: "rollback", label: "Roll back to an earlier version", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
