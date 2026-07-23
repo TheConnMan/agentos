@@ -27,21 +27,32 @@ AgentOS itself — see [Where to go next](#where-to-go-next).
 
 ## Your first agent reply
 
-```bash
-# 1. Scaffold a bundle. This creates a starter skill named for your agent, plus
-#    an AGENTS.md and a using-agentos harness-primer skill, that you edit next.
-agentos init my-agent
-cd my-agent
+1. **Scaffold a bundle.** This creates a starter skill named for your agent,
+   plus an `AGENTS.md` and a `using-agentos` harness-primer skill, that you edit
+   next.
 
-# 2. Boot the runner with the built-in fake model (offline, instant, no key).
-agentos skill up --fake-model
+   ```bash
+   agentos init my-agent
+   cd my-agent
+   ```
 
-# 3. Ask it something and watch the reply stream back.
-agentos skill message "hello, are you there?"
+2. **Boot the runner** with the built-in fake model — offline, instant, no key.
 
-# 4. Done. Tear the runner down.
-agentos skill down
-```
+   ```bash
+   agentos skill up --fake-model
+   ```
+
+3. **Ask it something** and watch the reply stream back.
+
+   ```bash
+   agentos skill message "hello, are you there?"
+   ```
+
+4. **Done.** Tear the runner down.
+
+   ```bash
+   agentos skill down
+   ```
 
 That is the full loop. `agentos skill up` starts the runner container,
 `agentos skill message` sends a synthetic event and streams the reply, and
@@ -62,11 +73,14 @@ runner container), then re-run `skill up`. Any one of `CLAUDE_CODE_OAUTH_TOKEN`,
 `ANTHROPIC_API_KEY`, or `AGENTOS_CREDENTIALS` works for the Anthropic default:
 
 ```bash
-export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=... / AGENTOS_CREDENTIALS=...
+export CLAUDE_CODE_OAUTH_TOKEN=...
 agentos skill up
 agentos skill message "What's the weather in Paris? Answer in one short sentence."
 agentos skill down
 ```
+
+(`ANTHROPIC_API_KEY` or `AGENTOS_CREDENTIALS` work in place of
+`CLAUDE_CODE_OAUTH_TOKEN`, as noted above.)
 
 To use a different provider or model instead of the Anthropic default, bring
 your own model through OpenRouter on the same `skill` path. Set
