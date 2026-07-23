@@ -72,7 +72,8 @@ REQUIRED_CHECK_NAMES = frozenset(
         "Build worker-local overlay image (no push)",
         "Dispatcher image imports resolve",
         "Eval falsifiability gate (fake model, offline)",
-        "E2E parity ladder (skill + local + local-release, fake model)",
+        "E2E parity ladder (skill + local, fake model)",
+        "E2E parity ladder (local-release, fake model)",
     }
 )
 

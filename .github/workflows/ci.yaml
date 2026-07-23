@@ -496,15 +496,21 @@ jobs:
   # the generator's T1 substitutes for the build directive, both resolved
   # locally so `local up` never attempts a pull against a private GHCR ref.
   #
-  # All three image builds here use plain `docker build`, not buildx: two of
-  # the tags are consumed as Dockerfile FROM bases by a compose-triggered build
-  # later in the same job, and a docker-container buildx builder set as the
-  # default (as docker/setup-buildx-action does) breaks that FROM resolution.
-  # See the build steps' own comment for the full history (#697/#791).
+  # The three image builds here are GHA-layer-cached via a buildx builder that
+  # is created but NOT made the default (`setup-buildx-action` with
+  # `use: false`): two of the tags are consumed as Dockerfile FROM bases by a
+  # compose-triggered build later in the same job, which must stay on a plain
+  # `docker` builder to resolve them. See the build steps' own comment for the
+  # full history and why `use: false` is the fix (#697/#791/#803).
   e2e-ladder:
-    name: E2E parity ladder (skill + local + local-release, fake model)
+    name: E2E parity ladder (skill + local, fake model)
     runs-on: ubuntu-latest
-    needs: rust-build
+    needs: [rust-build, changes]
+    # Skip on PRs that can't affect what the ladder tests (docs, UI-only, gtools,
+    # non-ladder CI). Not a required check, so skipping never blocks a merge; it
+    # just stops paying the ~2min image-build + rung cost when nothing it
+    # exercises changed. Always runs on push to main (the changes job forces it).
+    if: needs.changes.outputs.ladder == 'true'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -516,25 +522,46 @@ jobs:
           path: cli/target/release
       - name: Make the binary executable
         run: chmod +x cli/target/release/agentos
-      # Plain `docker build`, NOT `docker buildx build`, for all three images
-      # below. Two of them (agentos-worker:ci-local, agentos-api:ci-local) are
-      # consumed as Dockerfile FROM bases by a build that `docker compose`
-      # triggers itself a few steps down (agentos-worker's service build via
-      # compose/worker-local.Dockerfile, inside `agentos local up`). #697 changed
-      # these to `docker buildx build --load` with a docker/setup-buildx-action
-      # step to share the `images` job's GHA layer cache; that made the
-      # setup-buildx-action's docker-container builder the default, and the later
-      # compose-triggered build then inherited it and could no longer resolve the
-      # locally-built `:ci-local` tags as a FROM ("failed to resolve source
-      # metadata ... not found"), reddening this job on every run since #791
-      # merged. Reverting to the pre-#697 plain-`docker build` shape (no buildx,
-      # no setup-buildx-action) is the known-good state: images land in the
-      # daemon store and the compose build, using that same daemon, resolves them.
-      # The GHA-cache speedup from #697 is the right idea but needs a mechanism
-      # that does not repoint the default builder underneath the compose build;
-      # correctness first.
-      - name: Build the runner image locally
-        run: docker build -t agentos-runner -f runner/Dockerfile .
+      # The three from-scratch image builds below are GHA-layer-cached WITHOUT
+      # repointing the default buildx builder -- the exact mechanism the pre-#803
+      # revert note asked for. Two of these tags (agentos-worker:ci-local,
+      # agentos-api:ci-local) are consumed as Dockerfile FROM bases by a build
+      # that `docker compose` triggers itself a few steps down (the worker-local
+      # overlay via compose/worker-local.Dockerfile, inside `agentos local up`),
+      # so that compose build MUST run on a plain `docker` builder that can see
+      # the locally-built `:ci-local` tags in the daemon store.
+      #
+      # History: #697 first added the GHA cache here with a bare
+      # docker/setup-buildx-action step; its default `use: true` made the
+      # docker-container builder the *current* builder, the compose-triggered
+      # build inherited it, and it could no longer resolve the `:ci-local` tags
+      # as a FROM ("failed to resolve source metadata ... not found"), reddening
+      # every run (#791/#803). The fix is the one line #697 lacked: `use: false`
+      # creates the container builder for the cache export but leaves the plain
+      # `docker` builder current, so the compose FROM still resolves. Each build
+      # below runs on the named builder explicitly (`builder:` input) with
+      # `load: true` to export the result into that same daemon store -- so both
+      # this job's steps and the compose FROM find the tags. Same pinned actions
+      # and gha cache as the `images` job above, which proves the token wiring.
+      # Validated locally (kind box): named builder never becomes default, the
+      # `FROM :ci-local` resolves, and a cache-warm runner build restores 9
+      # layers from cache alone (58s -> 15s) after wiping the builder.
+      - name: Set up a cache-only buildx builder (named, NOT the default -- preserves compose FROM, #803)
+        id: laddercache
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          use: false
+      - name: Build the runner image locally (gha layer cache)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: runner/Dockerfile
+          builder: ${{ steps.laddercache.outputs.name }}
+          tags: agentos-runner
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-runner
+          cache-to: type=gha,mode=max,scope=ladder-runner
       - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
         run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
       # Tagged :ci-local (the worker-local-image job's own convention), not
@@ -544,14 +571,102 @@ jobs:
       # retag its from-source builds over whatever `:latest` meant in the local
       # Docker image store before this job ran.
       - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
-        run: docker build -t ghcr.io/curie-eng/agentos-api:ci-local -f apps/api/Dockerfile .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          builder: ${{ steps.laddercache.outputs.name }}
+          tags: ghcr.io/curie-eng/agentos-api:ci-local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-api
+          cache-to: type=gha,mode=max,scope=ladder-api
       - name: Build the worker base image locally (satisfies the worker-local overlay's FROM, no registry auth)
-        run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          builder: ${{ steps.laddercache.outputs.name }}
+          tags: ghcr.io/curie-eng/agentos-worker:ci-local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-worker
+          cache-to: type=gha,mode=max,scope=ladder-worker
       - name: Parity ladder (skill + local rungs, fake model, credential-free)
         env:
           AGENTOS_BIN: cli/target/release/agentos
           AGENTOS_BASE_TAG: ci-local
         run: bash cli/scripts/e2e-ladder.sh
+
+  # LOCAL-RELEASE RUNG -- split into its own job (issue #695 follow-up) so it
+  # runs in PARALLEL with the skill+local rung above instead of appended after
+  # it, taking the release round trip off the ladder's critical path
+  # (~30-50s wall-clock). A fresh runner shares no Docker daemon with e2e-ladder
+  # so it must rebuild the images; the shared GHA layer cache defuses that --
+  # these builds hit the same ladder-{runner,api,worker} scopes e2e-ladder
+  # populates, so on a warm cache they cost the --load export, not a full
+  # rebuild. Same use:false / build-push-action mechanism and the same path
+  # gate as e2e-ladder, so the two skip together on irrelevant PRs.
+  e2e-ladder-release:
+    name: E2E parity ladder (local-release, fake model)
+    runs-on: ubuntu-latest
+    needs: [rust-build, changes]
+    if: needs.changes.outputs.ladder == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download the agentos binary built by the Rust job
+        uses: actions/download-artifact@v7
+        with:
+          name: agentos-x86_64-linux-${{ github.sha }}
+          path: cli/target/release
+      - name: Make the binary executable
+        run: chmod +x cli/target/release/agentos
+      # Cache-only named builder (use: false) so the worker-local overlay's
+      # `FROM :ci-local` (a plain `docker build` below) still resolves on the
+      # default builder -- the same #803-safe mechanism the e2e-ladder job
+      # documents in full.
+      - name: Set up a cache-only buildx builder (named, NOT the default -- #803)
+        id: releasecache
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          use: false
+      - name: Build the runner image locally (gha layer cache)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: runner/Dockerfile
+          builder: ${{ steps.releasecache.outputs.name }}
+          tags: agentos-runner
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-runner
+          cache-to: type=gha,mode=max,scope=ladder-runner
+      - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
+        run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
+      - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          builder: ${{ steps.releasecache.outputs.name }}
+          tags: ghcr.io/curie-eng/agentos-api:ci-local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-api
+          cache-to: type=gha,mode=max,scope=ladder-api
+      - name: Build the worker base image locally (satisfies the worker-local overlay's FROM, no registry auth)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          builder: ${{ steps.releasecache.outputs.name }}
+          tags: ghcr.io/curie-eng/agentos-worker:ci-local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-worker
+          cache-to: type=gha,mode=max,scope=ladder-worker
       - name: Tag the api image for the generated release compose (ghcr.io/curie-eng/agentos-api:latest, no registry auth)
         run: docker tag ghcr.io/curie-eng/agentos-api:ci-local ghcr.io/curie-eng/agentos-api:latest
       - name: Build the worker-local overlay for the generated release compose (ghcr.io/curie-eng/agentos-worker-local:latest, no registry auth)
@@ -610,39 +725,20 @@ jobs:
   # treat the kind/reachability path as unverified rather than assuming the
   # theory above is right. Kept a SEPARATE job from `e2e-ladder` on purpose: the
   # skill/local signal must never be reddened by a kind or Helm flake.
-  # Gate the expensive kind rung so it runs ONLY when a change could affect the
-  # cluster deploy-then-message path (charts / cli / app+runner images / any
-  # frozen contract package / this workflow), and always on push to main. An
-  # unrelated PR (docs, etc.) skips it entirely -- no red check, no kind-cluster
-  # minutes. Pure git-diff, no third-party action.
-  #
-  # The filter matches ALL of `packages/`, not an enumerated subset (#859). The
-  # cluster deploy exercises every workspace contract package the deployed
-  # components import -- `aci-protocol` + `plugin-format` (api, runner) and
-  # additionally `channel-protocol` (worker) -- so an earlier filter that named
-  # only `packages/aci-protocol/` silently skipped this rung on a
-  # `plugin-format` or `channel-protocol` change that could break cluster deploy
-  # at bundle-unpack or reply-render time (e.g. #828's archive caps touched only
-  # `packages/plugin-format/`). Matching `packages/` wholesale makes that class
-  # of drift STRUCTURALLY impossible -- there is no enumeration to fall out of
-  # sync with what the cluster path imports -- at the cost of occasionally
-  # running the rung on a `packages/test-support/`-only PR, a rare and cheap
-  # over-trigger that is the right trade for a parity gate (over-run, never
-  # under-run).
-  #
-  # DECISION (#859): this rung stays ADVISORY, not a required check. The branch
-  # ruleset requires only Compose/Contracts/Python/Rust/UI, so a red here can
-  # never block a merge -- deliberately, because a kind/Helm flake must not gate
-  # merges (the skill/local signal carries that weight; this is a post-merge gate
-  # on main plus an opt-in PR signal). Promoting it to required is a
-  # branch-protection ruleset change (repo admin), not a workflow edit, and is
-  # intentionally NOT taken here; revisit once the kind rung has a proven-stable
-  # track record on main. Do not read a green tick here as a merge gate.
+  # Gate the expensive e2e parity ladder rungs so they run ONLY when a change
+  # could affect the build/deploy/message path any rung exercises (charts / cli /
+  # app+runner images / the ACI wire / this workflow), and always on push to
+  # main. An unrelated PR (docs, UI-only, gtools, etc.) skips every ladder rung
+  # entirely -- the ladder's image builds + rungs are ~2min it need not pay when
+  # nothing it tests changed. Pure git-diff, no third-party action. (No ladder
+  # rung is a required check anyway -- the ruleset requires only
+  # Compose/Contracts/Python/Rust/UI -- so this only trims wasted runs, never
+  # blocks a merge.)
   changes:
-    name: Detect cluster-relevant changes
+    name: Detect ladder-relevant changes
     runs-on: ubuntu-latest
     outputs:
-      cluster: ${{ steps.filter.outputs.cluster }}
+      ladder: ${{ steps.filter.outputs.ladder }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -652,23 +748,23 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "cluster=true" >> "$GITHUB_OUTPUT"   # post-merge gate on main
+            echo "ladder=true" >> "$GITHUB_OUTPUT"   # post-merge gate on main
             exit 0
           fi
           base="${{ github.base_ref }}"
           git fetch --quiet origin "$base"
           if git diff --name-only "origin/$base...HEAD" \
               | grep -qE '^(charts/|cli/|apps/|runner/|packages/|\.github/workflows/ci\.yaml)'; then
-            echo "cluster=true" >> "$GITHUB_OUTPUT"
+            echo "ladder=true" >> "$GITHUB_OUTPUT"
           else
-            echo "cluster=false" >> "$GITHUB_OUTPUT"
+            echo "ladder=false" >> "$GITHUB_OUTPUT"
           fi
 
   e2e-ladder-cluster:
     name: E2E parity ladder (cluster rung on kind, fake model)
     runs-on: ubuntu-latest
     needs: [rust-build, changes]
-    if: needs.changes.outputs.cluster == 'true'
+    if: needs.changes.outputs.ladder == 'true'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -684,18 +780,60 @@ jobs:
         uses: azure/setup-helm@v5
         with:
           version: v3.16.4
-      # Plain `docker build` (not buildx) for the same reason the `e2e-ladder`
-      # job documents: keep the images in the local daemon store so `kind load`
-      # picks them up with no registry round trip. Only the four images the
+      # GHA-layer-cached builds via a named buildx builder that is NOT made the
+      # default (`use: false`), same mechanism the `e2e-ladder` job documents.
+      # `load: true` exports each image into the local daemon store so `kind
+      # load` picks it up with no registry round trip. Only the four images the
       # cluster round trip actually needs; the dispatcher is not deployed.
+      - name: Set up a cache-only buildx builder (named, NOT the default)
+        id: clustercache
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          use: false
       - name: Build the api image locally
-        run: docker build -t agentos-api:local -f apps/api/Dockerfile .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          builder: ${{ steps.clustercache.outputs.name }}
+          tags: agentos-api:local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-api
+          cache-to: type=gha,mode=max,scope=ladder-api
       - name: Build the worker image locally
-        run: docker build -t agentos-worker:local -f apps/worker/Dockerfile .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          builder: ${{ steps.clustercache.outputs.name }}
+          tags: agentos-worker:local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-worker
+          cache-to: type=gha,mode=max,scope=ladder-worker
       - name: Build the ui image locally
-        run: docker build -t agentos-ui:local -f apps/ui/Dockerfile .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/ui/Dockerfile
+          builder: ${{ steps.clustercache.outputs.name }}
+          tags: agentos-ui:local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-ui
+          cache-to: type=gha,mode=max,scope=ladder-ui
       - name: Build the runner image locally
-        run: docker build -t agentos-runner:latest -f runner/Dockerfile .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: runner/Dockerfile
+          builder: ${{ steps.clustercache.outputs.name }}
+          tags: agentos-runner:latest
+          push: false
+          load: true
+          cache-from: type=gha,scope=ladder-runner
+          cache-to: type=gha,mode=max,scope=ladder-runner
       # kind config: map the UI NodePort (chart default 30080) to the host so
       # `cluster deploy`'s UI `/api` NodePort discovery -- which resolves the
       # loopback kubeconfig host (127.0.0.1) -- reaches the in-cluster API.
