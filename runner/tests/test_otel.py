@@ -4,6 +4,7 @@ import anyio
 from aci_protocol import Event, OtelConfig
 from agentos_runner import RunTracer, SideEffectClassifier, build_tracer_provider
 from agentos_runner.fake import FakeModelSession
+from agentos_runner.otel import _SchemaValidatingSpanProcessor
 from agentos_runner.session import SessionRunner
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -175,3 +176,51 @@ def test_resource_stamps_schema_version() -> None:
     assert provider is not None
     assert provider.resource.attributes["schema.version"] == "v1"
     provider.shutdown()
+
+
+def _validated_exporter() -> tuple[TracerProvider, InMemorySpanExporter]:
+    # The validator only strips attributes on export; wire it ahead of an
+    # in-memory exporter so tests can assert on what actually got through.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(_SchemaValidatingSpanProcessor())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider, exporter
+
+
+def test_validator_strips_attribute_key_outside_the_closed_schema() -> None:
+    # A call site bypassing _set() (e.g. a future span.set_attribute call) must
+    # not reach the exporter with an unlisted key (ADR-0076 decision 3).
+    provider, exporter = _validated_exporter()
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("agent.run") as span:
+        span.set_attribute("langfuse.trace.name", "ok")
+        span.set_attribute("some.unlisted.key", "should not survive export")
+
+    (finished,) = exporter.get_finished_spans()
+    assert finished.attributes["langfuse.trace.name"] == "ok"
+    assert "some.unlisted.key" not in finished.attributes
+
+
+def test_validator_strips_value_still_matching_an_unscrubbed_secret() -> None:
+    # A value that reaches set_attribute without going through redact_span_attribute
+    # (bypassing _set()) is caught at export time even though its key is allowed.
+    provider, exporter = _validated_exporter()
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("agent.run") as span:
+        span.set_attribute("langfuse.trace.name", "sk-abcdefghijklmnopqrstuvwx")
+
+    (finished,) = exporter.get_finished_spans()
+    assert "langfuse.trace.name" not in finished.attributes
+
+
+def test_validator_leaves_clean_allowed_attributes_untouched() -> None:
+    provider, exporter = _validated_exporter()
+    tracer = provider.get_tracer("test")
+    with tracer.start_as_current_span("agent.run") as span:
+        span.set_attribute("langfuse.trace.name", "agentos-run:test")
+        span.set_attribute("gen_ai.usage.input_tokens", 12)
+
+    (finished,) = exporter.get_finished_spans()
+    assert finished.attributes["langfuse.trace.name"] == "agentos-run:test"
+    assert finished.attributes["gen_ai.usage.input_tokens"] == 12
