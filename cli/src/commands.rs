@@ -4403,6 +4403,28 @@ pub fn skill_memory_unavailable() -> anyhow::Error {
     crate::exit::unsupported("memory", MEMORY_REASON, MEMORY_ALT)
 }
 
+/// Why `skill approvals --list`/`--resolve` cannot be answered at this tier.
+pub const APPROVALS_LIST_REASON: &str =
+    "`skill message` talks straight to the local runner, bypassing the worker, Valkey, and the durable-Approval + resume machinery (ADR-0063), so the skill tier keeps no durable approval record to list or resolve";
+/// Where to list/resolve durable approvals instead.
+pub const APPROVALS_LIST_ALT: &str =
+    "use `agentos local approvals <agent> --list`/`--resolve` or `agentos cluster approvals <agent> --list`/`--resolve` for a deployed agent, or resolve the gate within the same `skill message` session";
+
+/// `skill approvals --list`/`--resolve`: answered, but unavailable at this tier
+/// by construction (ADR-0077). The bundle's gate config (view/set/clear) still
+/// works; only the durable pending-record list/resolve the local+cluster tiers
+/// gained (#506/#736) has no meaning where there is no durable Approval store or
+/// resume path (#766). The flags are accepted so this reports WHY (exit 4) rather
+/// than erroring like an unknown-flag typo, matching `cluster deploy --secret`'s
+/// decline-with-reason (issue #771, ADR-0041, ADR-0077).
+pub fn skill_approvals_list_unavailable() -> anyhow::Error {
+    crate::exit::unsupported(
+        "approvals --list/--resolve",
+        APPROVALS_LIST_REASON,
+        APPROVALS_LIST_ALT,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -5500,6 +5522,24 @@ mod tests {
                 Vec::new()
             );
         }
+    }
+
+    #[test]
+    fn skill_approvals_list_resolve_reported_unavailable_not_absent() {
+        // ADR-0077 / ADR-0041: --list/--resolve are answered-as-unavailable at
+        // the skill tier (exit 4, carrying a cross-tier fix), with the reason and
+        // the local/cluster alternative -- not silently broken.
+        let err = super::skill_approvals_list_unavailable();
+        let (class, fix) = crate::exit::classify(&err);
+        assert_eq!(class, crate::exit::ExitClass::Unsupported);
+        assert!(
+            fix.expect("an unsupported error carries the cross-tier fix")
+                .contains("approvals"),
+            "the fix must point at the local/cluster alternative"
+        );
+        let shown = format!("{err:#}");
+        assert!(shown.contains("durable approval record"), "reason: {shown}");
+        assert!(shown.contains("cluster approvals"), "alternative: {shown}");
     }
 
     #[test]

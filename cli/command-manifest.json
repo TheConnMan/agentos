@@ -306,6 +306,46 @@
                 "false"
               ],
               "required": false
+            },
+            {
+              "global": false,
+              "help": "List pending approval RECORDS (not gate config). Accepted so it can be DECLINED with a reason at this tier rather than error like a typo: the skill tier's local runner keeps no durable approval store (ADR-0063, ADR-0077). Use `agentos local/cluster approvals --list`",
+              "id": "list",
+              "long": "list",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Resolve the approval with this id. Not available at the skill tier for the same reason as --list; declined with that reason",
+              "id": "resolve",
+              "long": "resolve",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "The actor resolving the approval (paired with --resolve on local/cluster). Accepted here only so a local/cluster-style resolve invocation is declined cleanly, not rejected as an unknown flag",
+              "id": "as_actor",
+              "long": "as",
+              "positional": false,
+              "required": false
+            },
+            {
+              "global": false,
+              "help": "Reject instead of approve (paired with --resolve). Accepted only to be declined cleanly at this tier",
+              "id": "reject",
+              "long": "reject",
+              "positional": false,
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false
             }
           ],
           "hidden": false,
