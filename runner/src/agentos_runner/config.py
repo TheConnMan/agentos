@@ -19,11 +19,19 @@ from dataclasses import dataclass
 
 from aci_protocol import BootEnv, SessionConfig
 
+from .harness.registry import DEFAULT_HARNESS
+
 
 @dataclass(frozen=True)
 class RunnerConfig:
     session: SessionConfig
     model: str | None
+    # The harness whose contribution manifest drives this runner (ADR-0060,
+    # #844): read from the runner-local AGENTOS_HARNESS knob (default the
+    # built-in Claude), NOT a BootEnv contract key -- the same runner-local read
+    # pattern as false_completion_check below. ``__main__`` resolves this name
+    # through the harness registry; an unregistered selection fails the boot.
+    harness: str
     max_turns: int
     history_ref: str | None
     # Tool names whose calls require human approval (#245, ADR-0010). The
@@ -99,9 +107,13 @@ class RunnerConfig:
         # reachable on a hand-run local runner.
         false_completion_raw = env.get("AGENTOS_FALSE_COMPLETION_CHECK", "")
         false_completion_check = false_completion_raw.strip().lower() in ("1", "true", "yes")
+        # Runner-local harness selection (ADR-0060, #844), not a BootEnv key:
+        # empty/unset selects the built-in Claude harness.
+        harness = env.get("AGENTOS_HARNESS", "").strip() or DEFAULT_HARNESS
         return cls(
             session=boot.session,
             model=boot.model,
+            harness=harness,
             max_turns=boot.max_turns if boot.max_turns is not None else 20,
             history_ref=boot.history_ref,
             approval_required_tools=boot.approval_required_tools,

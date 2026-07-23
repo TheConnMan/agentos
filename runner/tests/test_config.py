@@ -19,6 +19,22 @@ def test_parses_budget_and_defaults() -> None:
     assert config.history_ref is None
 
 
+def test_harness_defaults_to_claude_when_unset() -> None:
+    # AGENTOS_HARNESS is a runner-local knob; unset selects the built-in Claude.
+    assert RunnerConfig.from_env(dict(_BASE)).harness == "claude"
+
+
+def test_harness_selection_is_read_from_env() -> None:
+    env = dict(_BASE, AGENTOS_HARNESS="claude-code")
+    assert RunnerConfig.from_env(env).harness == "claude-code"
+
+
+def test_harness_selection_is_stripped_and_empty_falls_back() -> None:
+    assert RunnerConfig.from_env(dict(_BASE, AGENTOS_HARNESS="  opencode ")).harness == "opencode"
+    # A whitespace-only (or empty) value is not a selection -- fall back to the default.
+    assert RunnerConfig.from_env(dict(_BASE, AGENTOS_HARNESS="   ")).harness == "claude"
+
+
 def test_history_ref_is_not_derived_from_memory_ref() -> None:
     # A memory ref is an externalized-memory pointer, not an SDK resume id, so it
     # must not become the rehydrate ref.
