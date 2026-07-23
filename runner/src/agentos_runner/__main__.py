@@ -26,6 +26,8 @@ from .approval import (
 )
 from .config import RunnerConfig
 from .fake import FakeModelSession
+from .harness.contribution import HarnessContribution
+from .harness.registry import UnknownHarnessError, resolve_harness
 from .history import (
     DEFAULT_PREAMBLE_MAX_BYTES,
     DEFAULT_PREAMBLE_MAX_TURNS,
@@ -37,15 +39,36 @@ from .history import (
 from .hooks import load_bundle_hooks
 from .memory import MemoryRecord, MemoryStore, format_memory_preamble, resolve_memory
 from .otel import RunTracer, build_tracer_provider
-from .plugin import load_bundle_system_prompt, load_plugins
 from .redact import install_stdout_redaction
-from .sdk_auth import UnsupportedCredentialError, resolve_sdk_env
+from .sdk_auth import UnsupportedCredentialError
 from .server import create_app
 from .session import SessionRunner
 from .side_effects import SideEffectClassifier
 from .state import STATE_SERVER_NAME, build_state_server, resolve_state_client
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_HARNESS = "claude"
+
+
+def _resolve_harness(name: str = DEFAULT_HARNESS) -> HarnessContribution:
+    """Resolve the active harness's contribution manifest (ADR-0060).
+
+    The built-in Claude harness must always be available, so if entry-point
+    metadata is somehow absent in this environment this falls back to its direct
+    import -- the critical boot path never depends on packaging metadata for the
+    built-in. A non-built-in name that isn't registered still raises, so an
+    operator who selects a harness that isn't installed fails loud, not silent.
+    """
+
+    try:
+        return resolve_harness(name)
+    except UnknownHarnessError:
+        if name == DEFAULT_HARNESS:
+            from .harness.claude import get_contribution
+
+            return get_contribution()
+        raise
 
 
 def _compose_system_prompt(
@@ -74,21 +97,32 @@ def build_runner(
     memory_preamble: str | None = None,
     history_store: TranscriptStore | None = None,
     conversation_preamble: str | None = None,
+    harness: HarnessContribution | None = None,
 ) -> SessionRunner:
-    """Wire a SessionRunner backed by a real claude-agent-sdk session.
+    """Wire a SessionRunner backed by the active harness's model session.
 
     ``fake_model`` (env ``AGENTOS_FAKE_MODEL``) swaps in the scripted fake session
     so the image can round-trip a synthetic event with no model credential or
     network -- used for the container smoke and any offline exercise of the wiring
     (OTel export included). It never reaches the Anthropic API.
+
+    ``harness`` is the resolved contribution manifest (ADR-0060) whose fields
+    drive the read-only tool set and bundle compile; it defaults to the built-in
+    Claude harness so existing callers are unaffected.
     """
 
-    # The effective system prompt is the ``systemPrompt`` shipped in the bundle
-    # manifest, versioned with the agent (epic #30). It is the declared surface
-    # and always wins: an env override let an operator silently replace the
-    # prompt the bundle ships, so the bundle said one thing and the sandbox ran
-    # another (#488).
-    system_prompt = load_bundle_system_prompt(config.session.plugin_dir)
+    # Resolve the active harness's contribution (ADR-0060): its manifest is the
+    # single source for the read-only tool classification and how a bundle
+    # compiles into session inputs, replacing the direct module imports these
+    # used to be. Defaults to the built-in Claude harness.
+    harness = harness or _resolve_harness()
+    # The bundle compiles once into this harness's native inputs (compile_bundle):
+    # the ``systemPrompt`` shipped in the manifest (versioned with the agent, epic
+    # #30) is the declared surface and always wins -- an env override let an
+    # operator silently replace the prompt the bundle ships (#488) -- and the
+    # bundle's plugins feed the session factory below.
+    compiled = harness.compile_bundle(config.session.plugin_dir)
+    system_prompt = compiled.system_prompt
     # Prior memory (#264) and this thread's recovered conversation (#20), both
     # loaded from outside the sandbox, lead the system prompt so the model sees
     # learned lessons and the prior exchange as durable context.
@@ -151,7 +185,7 @@ def build_runner(
                 # route through the real decision table on the offline tier (#561).
                 approval_gate=approval_gate,
             )
-        plugins = load_plugins(config.session.plugin_dir)
+        plugins = compiled.plugins
         options = build_options(
             plugins=plugins,
             model=config.model,
@@ -194,7 +228,7 @@ def build_runner(
         session_factory=factory,
         ceiling=config.ceiling,
         tracer=RunTracer(provider),
-        classifier=SideEffectClassifier(),
+        classifier=SideEffectClassifier(readonly_tools=harness.readonly_tools),
         trace_name=f"agentos-run:{config.session.session_id}",
         session_id=config.session.session_id,
         model=config.model,
@@ -296,14 +330,20 @@ def main() -> None:
         "yes",
     )
     logger.info("runner starting fake_model=%s", fake_model)
-    # A real session authenticates from the SDK's own credential env; map the
-    # forwarded ACI AGENTOS_CREDENTIALS reference onto it (a no-op for a fake
-    # run, which needs no credential). Raises on an unsupported credential so the
-    # process fails visibly before the port is up rather than after a real call.
+    # The active harness (ADR-0060). Its manifest supplies the per-spawn env
+    # builder used just below and is threaded into build_runner so the read-only
+    # tool set and bundle compile come from the same declaration. Defaults to the
+    # built-in Claude harness (declarative harness selection is a later step).
+    harness = _resolve_harness()
+    # A real session authenticates from the SDK's own credential env; the
+    # harness's per-spawn env builder maps the forwarded ACI AGENTOS_CREDENTIALS
+    # reference onto it (a no-op for a fake run, which needs no credential).
+    # Raises on an unsupported credential so the process fails visibly before the
+    # port is up rather than after a real call.
     override = None
     if not fake_model:
         try:
-            override = resolve_sdk_env(os.environ)
+            override = harness.build_spawn_env(os.environ)
         except UnsupportedCredentialError as exc:
             logger.error("credential resolution failed: %s", exc)
             raise
@@ -324,6 +364,7 @@ def main() -> None:
         memory_preamble=memory_preamble,
         history_store=history_store,
         conversation_preamble=conversation_preamble,
+        harness=harness,
     )
     app = create_app(runner, token=config.runner_token)
 
