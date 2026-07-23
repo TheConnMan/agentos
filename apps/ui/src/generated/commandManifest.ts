@@ -666,6 +666,14 @@ export const commandManifest = {
                 "false"
               ],
               "required": false
+            },
+            {
+              "global": false,
+              "help": "Match how `local up` brought the stack up (--env-file, if used): read a bundle-local `.env` as the LOWEST-priority model-credential source so the rebuilt service comes back on the SAME model as the rest of the stack, instead of reverting to compose's fake default (#853). Precedence (shell env > this file), the recognized keys, and the never-in-argv/logs masking are identical to `local up --env-file`",
+              "id": "env_file",
+              "long": "env-file",
+              "positional": false,
+              "required": false
             }
           ],
           "hidden": false,
