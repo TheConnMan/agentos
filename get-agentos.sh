@@ -1,18 +1,96 @@
 #!/usr/bin/env bash
-# One-command verified installer for the released agentos CLI.
+# One-command installer for agentos. Two modes, auto-detected:
 #
-#   curl -fsSL https://raw.githubusercontent.com/curie-eng/agentos/main/get-agentos.sh | bash
+#   * From a source checkout (this script sits at the repo root next to
+#     cli/Cargo.toml):
+#         ./get-agentos.sh
+#     builds the CLI from source (cargo install --path cli) and hands off to
+#     `agentos install` for the rest (uv sync, pnpm install, runner image).
+#     This is the contributor bootstrap: it solves the chicken-and-egg where
+#     the CLI cannot install itself before it is built. On an existing install
+#     it reuses heavyweight artifacts (`agentos install --update`) but always
+#     rebuilds and reinstalls the CLI from this checkout.
 #
-# This automates the flow in docs/release-verification.md without weakening it:
-# it resolves the latest release (or AGENTOS_VERSION=vX.Y.Z), downloads the
-# right asset for this platform plus checksums.txt and its sigstore bundle,
-# ALWAYS verifies the sha256, runs `cosign verify-blob` with the pinned
-# certificate identity when cosign is on PATH (set AGENTOS_REQUIRE_COSIGN=1 to
-# make its absence a hard failure), and installs the binary to a PATH location.
-# It never calls sudo; run it under sudo yourself if you want a root-owned dir.
+#   * Anywhere else, including piped straight from the web:
+#         curl -fsSL https://raw.githubusercontent.com/curie-eng/agentos/main/get-agentos.sh | bash
+#     downloads the latest released binary for this platform (or
+#     AGENTOS_VERSION=vX.Y.Z), ALWAYS verifies the sha256, runs
+#     `cosign verify-blob` with the pinned certificate identity when cosign is
+#     on PATH (set AGENTOS_REQUIRE_COSIGN=1 to make its absence a hard failure),
+#     and installs the binary to a PATH location. No checkout, no toolchain. It
+#     never calls sudo; run it under sudo yourself for a root-owned dir. This
+#     automates docs/release-verification.md without weakening it.
+#
+# The mode is auto-detected (a real script file next to cli/Cargo.toml => source,
+# otherwise download). Force it with AGENTOS_INSTALL_MODE=source|download.
 set -euo pipefail
 
 REPO=curie-eng/agentos
+
+# --- mode detection -------------------------------------------------------
+# A source checkout is one where this script is a real file on disk sitting at
+# the repo root next to cli/Cargo.toml. When piped via `curl | bash` there is
+# no file on disk (BASH_SOURCE is unset or not a path), so we fall through to
+# the download path.
+SELF_DIR=
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+MODE="${AGENTOS_INSTALL_MODE:-}"
+if [ -z "$MODE" ]; then
+  if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/cli/Cargo.toml" ]; then
+    MODE=source
+  else
+    MODE=download
+  fi
+fi
+
+# ==========================================================================
+# SOURCE MODE -- build the CLI from this checkout, then hand off to `agentos
+# install` for deps + runner image.
+# ==========================================================================
+if [ "$MODE" = source ]; then
+  if [ -z "$SELF_DIR" ] || [ ! -f "$SELF_DIR/cli/Cargo.toml" ]; then
+    echo "error: source install mode needs a source checkout -- this script must be a" >&2
+    echo "file sitting next to cli/Cargo.toml. To install the released binary instead," >&2
+    echo "run in download mode (unset AGENTOS_INSTALL_MODE, or pipe this from the web)." >&2
+    exit 1
+  fi
+  cd "$SELF_DIR"
+
+  # Invoke the freshly installed binary by its absolute path so this works even
+  # when ~/.cargo/bin is not yet on PATH in the current shell (a new clone on a
+  # machine whose shell rc has not been re-sourced).
+  CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+  AGENTOS_BIN="$CARGO_BIN/agentos"
+
+  # Always (re)build and install the CLI from this checkout. A file-mtime
+  # heuristic cannot tell whether the checked-out source matches the installed
+  # binary -- a `git checkout`/branch switch changes content without reliably
+  # bumping mtimes, so a stale binary (missing commands that exist in the
+  # source) would silently survive. cargo's own caching keeps this to a few
+  # seconds when nothing changed; --force just re-links and copies the binary.
+  UPDATE_ARGS=()
+  [[ -x "$AGENTOS_BIN" ]] && UPDATE_ARGS=(--update)
+  echo "==> cargo install --path cli --force (build agentos and install it to ~/.cargo/bin)"
+  cargo install --path cli --force
+
+  echo "==> agentos install ${UPDATE_ARGS[*]} (deps + runner image as needed)"
+  "$AGENTOS_BIN" install "${UPDATE_ARGS[@]}"
+
+  echo
+  echo "Done. If 'agentos' is not found in this shell, add ~/.cargo/bin to PATH"
+  echo "(rustup writes ~/.cargo/env for this) and open a new shell."
+  echo
+  echo "For future changes you don't need this script -- run 'agentos update' to"
+  echo "rebuild and reinstall the CLI on PATH ('agentos update --image' also rebuilds"
+  echo "the runner image)."
+  exit 0
+fi
+
+# ==========================================================================
+# DOWNLOAD MODE -- fetch, verify, and install the released binary.
+# ==========================================================================
 
 # Resolve the asset for this machine. The release ships exactly two binaries --
 # Linux x86_64 and macOS Apple silicon -- so this case statement is the whole
@@ -26,7 +104,8 @@ esac
 if [ -z "$ASSET" ]; then
   echo "error: no prebuilt agentos binary for $(uname -s)/$(uname -m)." >&2
   echo "Supported: Linux x86_64 and macOS Apple silicon (Darwin arm64)." >&2
-  echo "On anything else, build the CLI from source (see cli/ and docs/release-verification.md)." >&2
+  echo "On anything else, build the CLI from source: clone the repo and run" >&2
+  echo "./get-agentos.sh from the checkout (see cli/ and docs/release-verification.md)." >&2
   exit 1
 fi
 
