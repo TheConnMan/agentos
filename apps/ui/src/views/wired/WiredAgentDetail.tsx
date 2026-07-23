@@ -4,6 +4,7 @@ import { Button, Card, Chip, CliHint, Dot, Notice, cliCommand } from "../../prim
 import { SkillEditor } from "../../components/SkillEditor";
 import { WiredAgentMemory } from "./WiredAgentMemory";
 import { WiredAgentState } from "./WiredAgentState";
+import { WiredThreadReset } from "./WiredThreadReset";
 import { useStore } from "../../state/store";
 import { useWired } from "../../state/wired";
 import { useAgentVersions, useVersionFiles } from "../../api/hooks";
@@ -536,6 +537,12 @@ export function WiredAgentDetail() {
       {agentId ? (
         <div style={{ marginTop: 16 }}>
           <WiredAgentState agentId={agentId} />
+        </div>
+      ) : null}
+
+      {agentId ? (
+        <div style={{ marginTop: 16 }}>
+          <WiredThreadReset agentId={agentId} agentName={agent.name} />
         </div>
       ) : null}
     </div>
