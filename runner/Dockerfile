@@ -52,10 +52,10 @@ RUN python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir ./packages/aci-protocol ./packages/plugin-format \
     && /app/.venv/bin/pip install --no-cache-dir --no-deps ./runner \
     && /app/.venv/bin/pip install --no-cache-dir \
-        "claude-agent-sdk==0.2.110" \
+        "claude-agent-sdk==0.2.115" \
         "aiohttp==3.14.1" \
-        "opentelemetry-sdk==1.43.0" \
-        "opentelemetry-exporter-otlp-proto-http==1.43.0" \
+        "opentelemetry-sdk==1.44.0" \
+        "opentelemetry-exporter-otlp-proto-http==1.44.0" \
         "anyio==4.14.1"
 
 # Run as a non-root user. The claude-agent-sdk spawns
