@@ -133,6 +133,62 @@ def test_run_omits_langfuse_user_id_when_event_user_empty() -> None:
     assert root.attributes["langfuse.session.id"] == "agent-abc-thread-123"
 
 
+def test_run_stamps_approval_decision_when_resuming_a_resolved_approval() -> None:
+    # ADR-0076 Stone 3 (#889): the authority-free AGENTOS_APPROVAL_DECISION fact
+    # threaded from the worker lands on the root span, so an operator can see
+    # the outcome of an approval gate from the trace.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    runner = SessionRunner(
+        session_factory=FakeModelSession,
+        ceiling=0,
+        tracer=RunTracer(provider),
+        classifier=SideEffectClassifier(),
+        trace_name="agentos-run:test",
+        model="fake-model",
+        approval_decision="rejected",
+    )
+
+    async def go() -> None:
+        await runner.start()
+        async for _ in runner.run_turn(Event(type="message", text="go", user="U", ts="1")):
+            pass
+
+    anyio.run(go)
+
+    root = {s.name: s for s in exporter.get_finished_spans()}["agent.run"]
+    assert root.attributes["gen_ai.approval.decision"] == "rejected"
+
+
+def test_run_omits_approval_decision_on_an_ordinary_turn() -> None:
+    # No approval was resumed, so the attribute is absent rather than stamped
+    # empty or None -- the ordinary-turn default posture.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    runner = SessionRunner(
+        session_factory=FakeModelSession,
+        ceiling=0,
+        tracer=RunTracer(provider),
+        classifier=SideEffectClassifier(),
+        trace_name="agentos-run:test",
+        model="fake-model",
+    )
+
+    async def go() -> None:
+        await runner.start()
+        async for _ in runner.run_turn(Event(type="message", text="go", user="U", ts="1")):
+            pass
+
+    anyio.run(go)
+
+    root = {s.name: s for s in exporter.get_finished_spans()}["agent.run"]
+    assert "gen_ai.approval.decision" not in root.attributes
+
+
 def test_tracer_provider_none_without_endpoint() -> None:
     otel = OtelConfig()
     assert build_tracer_provider(otel, "s1") is None

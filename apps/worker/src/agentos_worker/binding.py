@@ -104,6 +104,12 @@ GRANT_TOOL_ENV = BootEnv.env_key("approval_grant_tool")
 # confers nothing -- the runner reads it only to decide whether to emit an
 # observe-only warning when the approved business action never ran.
 RESUMED_KIND_ENV = BootEnv.env_key("approval_resumed_kind")
+# ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
+# ('approved'/'rejected'/'expired') of the approval this resume boot is
+# resuming from, so the runner can stamp it on the turn's OTel span and close
+# the "did an approval get requested" gap ADR-0038 named open. Also an
+# authority-free FACT, like RESUMED_KIND_ENV -- confers nothing.
+DECISION_ENV = BootEnv.env_key("approval_decision")
 # #517/#669 opt-in false-completion check: a runner-local, authority-free,
 # observe-only knob, NOT a declared BootEnv field (unlike the keys above, which
 # all go through BootEnv.env_key). runner/src/agentos_runner/config.py reads
@@ -380,6 +386,45 @@ class BindingResolver:
             return None
         kind: str | None = row["gate_kind"]
         return kind or None
+
+    async def approval_decision(self, event_id: str, agent_id: uuid.UUID) -> str | None:
+        """The resolved terminal decision of the approval a resume turn is
+        resuming from (ADR-0076 Stone 3, #889), or None.
+
+        An authority-free FACT for the runner's OTel span, exactly like
+        ``approval_resumed_kind`` -- it confers nothing, it only reports an
+        outcome the worker already resolved. Unlike ``approval_resumed_kind``
+        (approved-only, since only an approved resume owes a business action)
+        this reports all three terminal statuses -- ``approved``, ``rejected``,
+        and ``expired`` -- so a rejected or expired gate is observable from the
+        trace too, closing the "did an approval get requested" gap ADR-0038
+        named open. ``pending`` is not terminal and is never returned.
+
+        Agent-bound identically to the grant and the resumed-kind marker, so it
+        never leaks across a channel rebind. A non-approval event id, an
+        unknown or other-agent approval, or a still-pending approval all
+        return None.
+        """
+        approval_id = _parse_resume_event_id(event_id)
+        if approval_id is None:
+            return None
+        sql = text(
+            f"SELECT status, agent_id FROM {self._config.db_schema}.approvals WHERE id = :id"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": approval_id})
+            row = result.mappings().first()
+        if row is None:
+            return None
+        row_agent_id = row["agent_id"]
+        if row_agent_id is None or row_agent_id != agent_id:
+            return None
+        # Literal status compare: the worker must not import the API's
+        # ApprovalStatus.
+        status: str = row["status"]
+        if status not in ("approved", "rejected", "expired"):
+            return None
+        return status
 
     async def secrets_for(self, agent_id: uuid.UUID) -> dict[str, str] | None:
         """The agent's connector secrets (#429), for lanes that boot by agent_id

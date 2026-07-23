@@ -149,6 +149,22 @@
           ],
           "title": "Api Backend"
         },
+        "approval_decision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "env": "AGENTOS_APPROVAL_DECISION",
+          "producer": [
+            "kernel"
+          ],
+          "title": "Approval Decision"
+        },
         "approval_grant_tool": {
           "anyOf": [
             {
@@ -1163,6 +1179,6 @@
   },
   "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.2.5",
-  "title": "ACI Protocol v0.2.5"
+  "protocolVersion": "0.2.6",
+  "title": "ACI Protocol v0.2.6"
 }
