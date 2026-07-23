@@ -678,3 +678,108 @@ export async function getThreadResetState(
   );
   return jsonOrThrow<ThreadResetState>(resp);
 }
+
+// ---- Durable approvals: operator visibility + resolve-once (#867, ADR-0010) ----
+
+// A durable approval record (mirrors ApprovalOut). The worker creates one when a
+// run pauses on a permission/policy gate and suspends the session; an operator
+// resolves it here or from the Slack card. `status` is one of
+// pending/approved/rejected/expired.
+export interface ApprovalOut {
+  id: string;
+  agent_id: string | null;
+  conversation_id: string;
+  author: string;
+  summary: string;
+  reply_channel: string;
+  reply_placeholder: string;
+  reply_endpoint: string | null;
+  dedupe_key: string;
+  route: string | null;
+  card_channel: string | null;
+  // Gate provenance (#544): which gate fired, and the tool a grant is bound to.
+  gate_kind: string | null;
+  granted_tool: string | null;
+  status: string;
+  expires_at: string | null;
+  resolved_by: string | null;
+  resolution_note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+// One audit-trail entry for an approval (mirrors ApprovalAuditOut, #247): each
+// resolution attempt with the authorizer snapshot that counted or refused it.
+export interface ApprovalAudit {
+  id: string;
+  approval_id: string;
+  action: string;
+  actor: string;
+  actor_channel: string | null;
+  decision: string;
+  authorizer: string;
+  authorized: boolean;
+  reason: string | null;
+  evidence: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ApprovalListQuery {
+  // Passed as the `status_filter` query param; omit for all statuses.
+  status?: string;
+  agentId?: string;
+  conversationId?: string;
+  limit?: number;
+}
+
+// List approvals, newest first (server clamps limit to 1..200). Without a status
+// filter, every status is returned; the operator surface defaults to pending.
+export async function listApprovals(opts: ApprovalListQuery = {}): Promise<ApprovalOut[]> {
+  const resp = await fetch(
+    url(
+      `/approvals${query({
+        status_filter: opts.status,
+        agent_id: opts.agentId,
+        conversation_id: opts.conversationId,
+        limit: opts.limit,
+      })}`,
+    ),
+    { headers: headers() },
+  );
+  return jsonOrThrow<ApprovalOut[]>(resp);
+}
+
+export async function getApproval(approvalId: string): Promise<ApprovalOut> {
+  const resp = await fetch(url(`/approvals/${encodeURIComponent(approvalId)}`), { headers: headers() });
+  return jsonOrThrow<ApprovalOut>(resp);
+}
+
+// The approval's audit trail, oldest first (empty until the first resolution
+// attempt). A 404 (approval gone) surfaces via the thrown ApiError.
+export async function getApprovalAudit(approvalId: string): Promise<ApprovalAudit[]> {
+  const resp = await fetch(url(`/approvals/${encodeURIComponent(approvalId)}/audit`), { headers: headers() });
+  return jsonOrThrow<ApprovalAudit[]>(resp);
+}
+
+export interface ApprovalResolveInput {
+  decision: "approved" | "rejected";
+  // Who is resolving (server requires non-empty); the authorizer blocks
+  // self-approval against the record's author.
+  resolved_by: string;
+  note?: string;
+  // The channel the resolution is asserted from; an API-key operator asserts it
+  // explicitly so the channel-membership authorizer can count them.
+  actor_channel?: string;
+}
+
+// Resolve an approval (resolve-once compare-and-set). The server-side authorizer
+// runs first; distinct failure statuses carried on the thrown ApiError: 403
+// (not authorized / self-approval), 409 (already resolved), 410 (expired).
+export async function resolveApproval(approvalId: string, input: ApprovalResolveInput): Promise<ApprovalOut> {
+  const resp = await fetch(url(`/approvals/${encodeURIComponent(approvalId)}/resolve`), {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  return jsonOrThrow<ApprovalOut>(resp);
+}

@@ -9,7 +9,7 @@ export type Nav =
 
 export type Env = "prod" | "dev";
 
-export type ObsTab = "traces" | "metrics" | "logs" | "memory" | "usage" | "cost";
+export type ObsTab = "traces" | "metrics" | "logs" | "memory" | "usage" | "cost" | "approvals";
 export type ModalKind = "new-agent";
 
 // A plugin-format validator issue, surfaced inline when a wired deploy is

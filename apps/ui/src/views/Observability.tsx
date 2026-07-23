@@ -6,12 +6,14 @@ import { RealMetrics } from "./obs/RealMetrics";
 import { RealLogs } from "./obs/RealLogs";
 import { RealCost } from "./obs/RealCost";
 import { RealMemory } from "./obs/RealMemory";
+import { RealApprovals } from "./obs/RealApprovals";
 import { WiredUsage } from "./wired/WiredStubs";
 
 const TABS: [ObsTab, string][] = [
   ["traces", "Traces"],
   ["metrics", "Metrics"],
   ["logs", "Logs"],
+  ["approvals", "Approvals"],
   ["memory", "Memory"],
   ["usage", "Usage"],
   ["cost", "Cost"],
@@ -40,6 +42,9 @@ export function Observability() {
       break;
     case "cost":
       content = <RealCost />;
+      break;
+    case "approvals":
+      content = <RealApprovals />;
       break;
   }
 
