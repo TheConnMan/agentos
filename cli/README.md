@@ -173,8 +173,8 @@ live `skill up` runs.
 ## `agentos install`
 
 Contributor bootstrap/update for a source checkout: install dependencies and
-build, but **start nothing**. Run it after cloning; rerun `./install.sh` later to
-refresh an existing checkout without reinstalling already-present artifacts.
+build, but **start nothing**. Run it after cloning; rerun `./get-agentos.sh` later
+to refresh an existing checkout without reinstalling already-present artifacts.
 Then `agentos local up` brings the stack up. From the repo root (found by
 walking up to `runner/Dockerfile`) it runs, in order and each idempotent,
 streaming output:
@@ -185,11 +185,14 @@ streaming output:
 4. `cargo build` in `cli` (needs `cargo`).
 5. Build the runner image via `agentos build` (needs `docker`).
 
-`agentos install --update` is the rerun path used by `./install.sh` when an
-installed CLI already exists. It still refreshes dependencies and local builds,
-but skips rebuilding the `agentos-runner` image if that image is already present.
-`./install.sh` also skips the initial `cargo install --path cli --force` when the
-installed `agentos` binary is newer than the CLI sources.
+`agentos install --update` is the rerun path used by `./get-agentos.sh` (in its
+source-checkout mode) when an installed CLI already exists. It still refreshes
+dependencies and local builds, but skips rebuilding the `agentos-runner` image
+if that image is already present. `./get-agentos.sh` always rebuilds and
+reinstalls the CLI itself (`cargo install --path cli --force`) rather than
+guessing from file mtimes -- a branch switch changes the sources without
+reliably bumping mtimes, so a stale binary could otherwise survive; cargo's own
+caching keeps this to a few seconds when nothing changed.
 
 Each required tool is checked first; a missing one prints a pointer (e.g. `uv is
 not installed - https://docs.astral.sh/uv/`) and stops. Run outside a source
