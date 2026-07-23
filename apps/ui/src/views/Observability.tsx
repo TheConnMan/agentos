@@ -5,7 +5,7 @@ import { RealTracesList, RealTraceDetail } from "./obs/RealTraces";
 import { RealMetrics } from "./obs/RealMetrics";
 import { RealLogs } from "./obs/RealLogs";
 import { RealCost } from "./obs/RealCost";
-import { MemoryStub } from "./obs/MemoryStub";
+import { RealMemory } from "./obs/RealMemory";
 import { WiredUsage } from "./wired/WiredStubs";
 
 const TABS: [ObsTab, string][] = [
@@ -33,7 +33,7 @@ export function Observability() {
       content = <RealLogs />;
       break;
     case "memory":
-      content = <MemoryStub />;
+      content = <RealMemory />;
       break;
     case "usage":
       content = <WiredUsage />;

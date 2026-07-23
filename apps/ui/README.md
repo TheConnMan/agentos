@@ -33,14 +33,14 @@ production build on http://localhost:4173 (what Playwright drives).
   modal (`modals/`).
 - `src/views/` — the wired views: `wired/*` (Overview, Agents, AgentDetail,
   Versions, and the `ComingSoon`/stub views in `WiredStubs.tsx`), `Observability.tsx`
-  and its `obs/*` panels (RealTraces, RealMetrics, RealLogs, RealCost, MemoryStub).
+  and its `obs/*` panels (RealTraces, RealMetrics, RealLogs, RealCost, RealMemory).
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
 
 ## Backend wiring
 
 Every view is backed by the live API. Surfaces without a backend yet render an
-honest `ComingSoon` stub (Evals, Usage, Settings) or an empty-state (Memory).
+honest `ComingSoon` stub (Evals, Usage, Settings).
 
 **Wired (real API):**
 - Create agent + Deploy: the create-agent modal POSTs `/agents` and
@@ -67,6 +67,13 @@ honest `ComingSoon` stub (Evals, Usage, Settings) or an empty-state (Memory).
   an emergency stop with confirm-before-kill and an unmistakable red killed-state
   banner. The wired Cost view is per-agent panels rather than the fixture fleet
   table (the API is per agent).
+- Memory tab (Observability > Memory): agent-scoped (an agent selector, since
+  the memory endpoint is per agent). Lists an agent's learned memory with its
+  provenance (session + source traces) from `GET /agents/{id}/memory`, and lets
+  an operator correct an entry against `PUT /agents/{id}/memory/{index}` or remove
+  one with `DELETE /agents/{id}/memory/{index}`; edits/deletes take effect at the
+  agent's next session boot. Reuses the same `WiredAgentMemory` panel the agent
+  detail page consumes (the endpoint was already live and consumed there).
 
 **Metrics divergence (deliberate).** The design canon's Metrics tab is a
 Prometheus/PromQL surface (a `rate(...)` query bar, a request-rate hero, and
@@ -78,8 +85,7 @@ trace-name substring server-side, so it is presented as a plain "name contains"
 filter, not exact matching.
 
 **Not wired yet (honest stubs, no demo data):** Evals, Usage, and Settings
-render a `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`); the Memory
-tab is a coming-soon empty-state (`src/views/obs/MemoryStub.tsx`). These state
+render a `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`). These state
 plainly what is not wired yet rather than showing fictional data.
 
 **API access.** `src/api/config.ts` resolves the API key and prefix:
@@ -138,5 +144,6 @@ Config reference: `.env.example`.
 
 - Onboarding uses the classic create-agent modal (template picker + skill.md
   editor + Deploy), not the interview wizard (deferred).
-- The Observability Memory tab is a designed coming-soon stub; the full memory
-  browser is deferred. The ACI `memory_ref` seam stays in the contract.
+- The Observability Memory tab is wired to `GET/PUT/DELETE /agents/{id}/memory`
+  (#869), reusing the `WiredAgentMemory` panel from the agent detail page behind
+  an agent selector. The ACI `memory_ref` seam stays in the contract.
