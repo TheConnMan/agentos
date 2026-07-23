@@ -6,6 +6,7 @@ import {
   getMetricSeries,
   getAgents,
   getCost,
+  getEvalMatrix,
   listVersions,
   listDeployments,
   listAllDeployments,
@@ -20,6 +21,7 @@ import {
   type MetricFilter,
   type AgentOut,
   type CostReport,
+  type EvalMatrix,
   type VersionOut,
   type DeploymentOut,
   type BundleFile,
@@ -106,6 +108,18 @@ export function useAllDeployments(enabled: boolean): Async<DeploymentOut[]> {
     queryFn: () => listAllDeployments(),
   });
   return asyncFrom(enabled, query);
+}
+
+// Fetch the eval matrix for a suite (K1). Keyed on suite + version count so a
+// suite change refetches; gated on a non-empty suite (the endpoint requires it).
+export function useEvalMatrix(suite: string, versions = 5): Async<EvalMatrix> {
+  const gate = suite.trim().length > 0;
+  const query = useQuery({
+    queryKey: ["evalMatrix", suite, versions],
+    enabled: gate,
+    queryFn: () => getEvalMatrix(suite, versions),
+  });
+  return asyncFrom(gate, query);
 }
 
 // Fetch the per-agent cost report (total + daily points).

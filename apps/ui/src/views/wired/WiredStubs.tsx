@@ -43,18 +43,6 @@ export function ComingSoon({ title, body }: { title: string; body: string }) {
   );
 }
 
-export function WiredEvals() {
-  return (
-    <div>
-      <SectionTitle title="Evals" sub="Fixed test cases run against a version + model, on every PR." />
-      <ComingSoon
-        title="No eval runs yet"
-        body="Eval suites and the version matrix light up here once the eval runner is connected. Nothing to show for a fresh workspace."
-      />
-    </div>
-  );
-}
-
 export function WiredUsage() {
   return (
     <ComingSoon

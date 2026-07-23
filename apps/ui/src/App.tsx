@@ -11,7 +11,8 @@ import { Observability } from "./views/Observability";
 import { WiredOverview } from "./views/wired/WiredOverview";
 import { WiredAgents } from "./views/wired/WiredAgents";
 import { WiredAgentDetail } from "./views/wired/WiredAgentDetail";
-import { WiredEvals, WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
+import { WiredConnections, WiredSettings } from "./views/wired/WiredStubs";
+import { WiredEvals } from "./views/wired/WiredEvals";
 import { WiredVersions } from "./views/wired/WiredVersions";
 
 // The console is always backed by the live API. Each nav renders its

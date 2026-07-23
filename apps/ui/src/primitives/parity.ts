@@ -68,6 +68,11 @@ export const WIRED_ACTIONS = [
   // CLI verb exists yet, so both render the honest amber gap glyph.
   { id: "memory-edit", label: "Edit a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
   { id: "memory-delete", label: "Delete a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
+
+  // WiredEvals (#868) — the eval matrix is read from GET /evals/matrix. There is
+  // no top-level `agentos` verb that just reads the matrix (the CLI polls it
+  // internally during a model sweep), so the view renders the honest amber gap.
+  { id: "eval-matrix", label: "View the eval matrix", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
 ] as const satisfies readonly WiredAction[];
 
 export type WiredActionId = (typeof WIRED_ACTIONS)[number]["id"];

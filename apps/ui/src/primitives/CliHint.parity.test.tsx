@@ -20,6 +20,7 @@ const EXPECTED_COMMAND_IDS = [
   "local.status",
 ] as const;
 const EXPECTED_NO_CLI_ACTION_IDS = [
+  "eval-matrix",
   "memory-delete",
   "memory-edit",
 ] as const satisfies readonly WiredActionId[];

@@ -32,7 +32,7 @@ production build on http://localhost:4173 (what Playwright drives).
 - `src/components/` — app chrome (Sidebar, Topbar, Confetti) and the create-agent
   modal (`modals/`).
 - `src/views/` — the wired views: `wired/*` (Overview, Agents, AgentDetail,
-  Versions, and the `ComingSoon`/stub views in `WiredStubs.tsx`), `Observability.tsx`
+  Versions, Evals, and the `ComingSoon`/stub views in `WiredStubs.tsx`), `Observability.tsx`
   and its `obs/*` panels (RealTraces, RealMetrics, RealLogs, RealCost, RealMemory).
 - `e2e/` — Playwright specs. `design-review/` — committed side-by-side fidelity
   screenshots (impl vs the design canon).
@@ -40,7 +40,7 @@ production build on http://localhost:4173 (what Playwright drives).
 ## Backend wiring
 
 Every view is backed by the live API. Surfaces without a backend yet render an
-honest `ComingSoon` stub (Evals, Usage, Settings).
+honest `ComingSoon` stub (Usage, Settings).
 
 **Wired (real API):**
 - Create agent + Deploy: the create-agent modal POSTs `/agents` and
@@ -84,7 +84,7 @@ descriptor) and shows only the five API-backed metrics. The per-agent filter is 
 trace-name substring server-side, so it is presented as a plain "name contains"
 filter, not exact matching.
 
-**Not wired yet (honest stubs, no demo data):** Evals, Usage, and Settings
+**Not wired yet (honest stubs, no demo data):** Usage and Settings
 render a `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`). These state
 plainly what is not wired yet rather than showing fictional data.
 
@@ -135,7 +135,7 @@ Config reference: `.env.example`.
 
 ## Wiring the rest
 
-- The remaining `ComingSoon` stubs (Evals, Usage, Settings) each bind to their
+- The remaining `ComingSoon` stubs (Usage, Settings) each bind to their
   API endpoint once it exists; until then they must stay honest stubs, never
   demo data.
 - The Runs path renders the API's `ObservationNode` tree directly.

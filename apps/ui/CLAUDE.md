@@ -15,10 +15,12 @@ structure and wiring detail in `apps/ui/README.md`.
   a fresh workspace degrades honestly (empty lists, zero metrics).
 - **Not everything is wired yet, but unwired surfaces are honest stubs, never
   demo data.** Create-agent + Deploy, Agents/Fleet, Runs/Traces, Metrics, Logs,
-  Cost, Memory, and Versions call the real API. Evals, Usage, and Settings render
-  a `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`). Before wiring one
-  of these, check `apps/ui/README.md`'s "Not wired yet" list; when the endpoint
-  does not exist yet, keep the honest stub rather than inventing data.
+  Cost, Memory, Versions, and Evals call the real API (Evals reads
+  `GET /evals/matrix` in `src/views/wired/WiredEvals.tsx`). Usage and Settings
+  render a `ComingSoon` placeholder (`src/views/wired/WiredStubs.tsx`). Before
+  wiring one of these, check `apps/ui/README.md`'s "Not wired yet" list; when
+  the endpoint does not exist yet, keep the honest stub rather than inventing
+  data.
 - **All API calls are same-origin `/api`, proxied by Vite.** `apps/api` has
   no CORS middleware on purpose -- the browser must reach it same-origin.
   `vite.config.ts` proxies `/api` to `AGENTOS_API_TARGET` and strips the
