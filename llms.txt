@@ -35,4 +35,5 @@ The point of the three targets (`skill` in-process, `local` via docker compose, 
 - [SECURITY.md](SECURITY.md): the security posture and reporting process.
 - [docs/behavior-packs.md](docs/behavior-packs.md): reusable behavior packs for bundles.
 - [docs/onboarding.md](docs/onboarding.md): the end-to-end onboarding walkthrough.
+- [docs/local-model.md](docs/local-model.md): the offline `--local-model` demo (Ollama in a container), model sizing, and gotchas.
 - [docs/slack-local-runbook.md](docs/slack-local-runbook.md): exercising real Slack routing against the local compose stack.
