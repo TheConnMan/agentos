@@ -97,6 +97,43 @@ def test_classified_failure_final_fails_even_if_text_matches(make_eval_harness) 
     asyncio.run(go())
 
 
+def test_cost_is_attributed_on_failing_real_model_turns(make_eval_harness) -> None:
+    # #854: a real-model turn that ends in a classified failure -- or the wrong
+    # terminal status -- still burned tokens on its Final, and those failing runs
+    # are often the most expensive. Their cost must be attributed, not dropped as
+    # unknown. A fake run stays None: it has no real spend to price.
+    async def go() -> None:
+        async with make_eval_harness() as (base_url, fake, client):
+            fake.responses = {"boom": "burned then failed", "wrong": "answered early"}
+            fake.usage = {"boom": (1_000_000, 0), "wrong": (1_000_000, 0)}  # 1M input tokens
+            fake.classified_failure_inputs = {"boom"}  # -> classified-failure return
+            fake.awaiting_approval_inputs = {"wrong"}  # ends != the default expected 'done'
+            suite = EvalSuite(
+                name="cost",
+                cases=[
+                    EvalCase(id="cf", input="boom", grader=Grader(kind=CONTAINS, expected="")),
+                    EvalCase(id="ws", input="wrong", grader=Grader(kind=CONTAINS, expected="")),
+                ],
+            )
+
+            real = await EvalRunner(client).run(
+                suite, base_url=base_url, version="v1", model="claude-sonnet-5"
+            )
+            by_id = {r.case_id: r for r in real.results}
+            # Both failed; both burned 1M input tokens @ $3/Mtok (claude-sonnet-5) = $3.00.
+            assert by_id["cf"].outcome is EvalOutcome.FAIL
+            assert by_id["cf"].cost_usd == pytest.approx(3.0)
+            assert by_id["ws"].cost_usd == pytest.approx(3.0)
+
+            # The identical failing turns on the fake tier attribute no cost.
+            faked = await EvalRunner(client).run(
+                suite, base_url=base_url, version="v1", model="claude-sonnet-5", fake=True
+            )
+            assert {r.cost_usd for r in faked.results} == {None}
+
+    asyncio.run(go())
+
+
 def test_idle_awaiting_input_final_fails_even_if_text_matches(make_eval_harness) -> None:
     async def go() -> None:
         async with make_eval_harness() as (base_url, fake, client):

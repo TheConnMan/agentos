@@ -186,6 +186,9 @@ class EvalRunner:
                 # A bare asyncio.TimeoutError stringifies to "", which would
                 # otherwise read downstream as a completed turn; keep it non-empty.
                 error=str(exc) or type(exc).__name__,
+                # Attribute whatever usage the turn stamped before it failed
+                # (#854); None on a fake run or when no Final was seen.
+                cost_usd=None if fake else cost_usd(model, input_tokens, output_tokens),
             )
 
         output = final_text if final_text is not None else "".join(parts)
@@ -199,6 +202,9 @@ class EvalRunner:
                 output=output,
                 latency_ms=_elapsed_ms(start),
                 error=error_detail or "runner reported a classified failure",
+                # A classified-failure turn (budget/model error) can burn heavy
+                # input tokens before it fails -- attribute that cost (#854).
+                cost_usd=None if fake else cost_usd(model, input_tokens, output_tokens),
             )
         # Gate on the case's expected terminal status. A case asserts its terminal
         # status (default ``done``, or ``awaiting-approval`` for a gate-blocked
@@ -215,6 +221,9 @@ class EvalRunner:
                 output=output,
                 latency_ms=_elapsed_ms(start),
                 error=f"turn ended {final_status}, expected status {expected.value!r}",
+                # A wrong-terminal-status turn still ran the model and stamped
+                # usage on its Final -- attribute that cost too (#854).
+                cost_usd=None if fake else cost_usd(model, input_tokens, output_tokens),
             )
         # The turn completed, which on the fake tier is the whole assertion: the
         # fake answers from a canned script, so grading its text measures the
@@ -229,6 +238,8 @@ class EvalRunner:
                 outcome=EvalOutcome.PLUMBING_OK,
                 output=output,
                 latency_ms=_elapsed_ms(start),
+                # No cost_usd on purpose: the fake tier has no real spend, so
+                # pricing it would fabricate a cost (#854).
             )
         # The turn completed cleanly, so a negative verdict is the scorer saying
         # "no", not a runner/turn error -- keep `error` reserved for the latter
