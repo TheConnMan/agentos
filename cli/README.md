@@ -629,6 +629,14 @@ otherwise). Two env knobs configure it:
   default); `1` runs the live-credential variant for pre-release manual passes
   and fails fast if no model credential is present. It governs every named
   rung, including the skill rung: `e2e.sh` reads the same env var itself.
+- `AGENTOS_E2E_LISTEN_HOST` -- cluster rung only. Forwarded verbatim to `cluster
+  message --listen-host` (the host the in-cluster worker posts its reply back
+  to). Leave it unset for a cluster whose kubeconfig points at a routable API
+  server: `cluster message` then auto-detects the local IP the kernel would use
+  to reach it. Set it only where auto-detection cannot yield a pod-reachable
+  host -- notably a kind/minikube cluster whose API server binds loopback, where
+  the auto-detected `127.0.0.1` is unreachable from a pod. CI's kind cluster job
+  sets it to the kind Docker network gateway.
 
 The one-command pre-release gate:
 

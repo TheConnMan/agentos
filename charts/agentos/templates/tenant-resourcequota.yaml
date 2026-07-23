@@ -10,13 +10,27 @@ actually bounds aggregate consumption inside it.
 
 Self-host wrinkle (ADR-0059 decision 4, and decision 5's PriorityClass): in the
 N=1 topology this release's sandboxes share the release namespace with the
-platform pods (api, worker, dispatcher, and the data tier), none of which
-declare `ephemeral-storage` today. A plain namespace-wide ResourceQuota
-would therefore bind the control plane and data tier too -- exactly what
-`resourceQuota.enabled` must NOT do. `scopeSelector` on the `PriorityClass`
-scope restricts every `hard` line in this object (including the pod count) to
-pods carrying that priority class, so only sandbox pods are counted and the
-control plane renders unconstrained by this quota.
+platform pods (api, worker, dispatcher, and the data tier). A plain
+namespace-wide ResourceQuota would therefore bind the control plane and data
+tier too -- exactly what `resourceQuota.enabled` must NOT do. `scopeSelector`
+on the `PriorityClass` scope restricts every `hard` line in this object
+(including the pod count) to pods carrying that priority class, so only sandbox
+pods are counted and the control plane renders unconstrained by this quota.
+
+Why no `ephemeral-storage` here (and why render tests could not catch its
+absence being required): a ResourceQuota scoped by `PriorityClass` (like the
+other pod scopes) may only constrain the compute + pod-count resources
+Kubernetes allows for a pod scope -- `requests/limits.cpu`, `requests/limits.memory`,
+and `pods`. `ephemeral-storage` is NOT in that set, so an API server REJECTS a
+scoped quota that lists it ("unsupported scope applied to resource") at admission
+-- a failure `helm template` and render-assertions never see, only a real apply
+(the kind cluster rung, #692). The per-sandbox disk ceiling therefore lives on
+the pod, not here: every sandbox container carries an `ephemeral-storage`
+request+limit (ADR-0059 decision 1, plus the LimitRange default), and the
+aggregate ceiling is that per-pod limit times the `pods` cap below. An UNSCOPED
+ephemeral-storage quota is not an alternative -- it would force every control-plane
+pod (which declares none) to be rejected, reintroducing the exact blast radius
+the scopeSelector exists to avoid.
 
 That priority class is the one decision 5 / issue #759 defines for sandbox
 pods. This template does not depend on #759's chart objects or values existing
@@ -47,15 +61,16 @@ spec:
         scopeName: PriorityClass
         values:
           - {{ $rq.sandboxPriorityClassName | quote }}
+  # Only cpu/memory/pods: a PriorityClass-scoped quota cannot list
+  # ephemeral-storage (see the header). Per-pod ephemeral limits x the pods cap
+  # give the aggregate disk ceiling instead.
   hard:
     requests.cpu: {{ $rq.hard.requestsCpu | quote }}
     requests.memory: {{ $rq.hard.requestsMemory | quote }}
-    requests.ephemeral-storage: {{ $rq.hard.requestsEphemeralStorage | quote }}
     limits.cpu: {{ $rq.hard.limitsCpu | quote }}
     limits.memory: {{ $rq.hard.limitsMemory | quote }}
-    limits.ephemeral-storage: {{ $rq.hard.limitsEphemeralStorage | quote }}
     # Scoped by the same scopeSelector, so this bounds sandbox pod COUNT, not
     # every pod in the namespace -- a tenant cannot route around the
-    # cpu/memory/disk ceiling above by simply claiming more, smaller sandboxes.
+    # cpu/memory ceiling above by simply claiming more, smaller sandboxes.
     pods: {{ $rq.hard.sandboxPodCount | quote }}
 {{- end }}
