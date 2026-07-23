@@ -34,6 +34,7 @@ import json
 import logging
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from aci_protocol import BootEnv
@@ -104,10 +105,16 @@ class StateApiClient:
         self._token = token
 
     def _key_url(self, namespace: str, key: str) -> str:
-        return f"{self._base}/{namespace}/{key}"
+        # Percent-encode both path segments (#851). An unescaped '#' or '?' in a
+        # key (or, since #840, an arbitrary namespace) is URL syntax to
+        # aiohttp/yarl -- the fragment/query -- which silently truncates the path
+        # so two distinct keys ("config" and "config#draft") collide on one slot
+        # with no error. `safe=""` also encodes '/' so a key never spills into an
+        # extra path segment. Mirrors binding.py's own `quote(..., safe="")`.
+        return f"{self._base}/{quote(namespace, safe='')}/{quote(key, safe='')}"
 
     def _namespace_url(self, namespace: str) -> str:
-        return f"{self._base}/{namespace}"
+        return f"{self._base}/{quote(namespace, safe='')}"
 
     def _headers(self, *, json_body: bool = False) -> dict[str, str]:
         headers: dict[str, str] = {}

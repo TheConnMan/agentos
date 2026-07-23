@@ -142,6 +142,40 @@ def test_set_then_get_round_trip() -> None:
     anyio.run(go)
 
 
+def test_keys_with_url_special_chars_do_not_collide() -> None:
+    # #851: '#'/'?'/space in a key are URL syntax to aiohttp -- without escaping,
+    # "config#draft" truncates to "config" and the two silently share one slot.
+    # Faithful round trip: aiohttp's real client URL handling + a router that
+    # decodes path params exactly as the FastAPI state route does.
+    app, store = _fake_state_app()
+
+    async def go() -> None:
+        async with TestServer(app) as server:
+            client = StateApiClient(_base(server), token="k")
+            specials = ["config#draft", "report?v=2", "with space"]
+            for key in specials:
+                await client.set("prefs", key, {"k": key}, expected_version=None)
+            # A distinct plain key must NOT read back a special-char key's value.
+            await client.set("prefs", "config", {"k": "plain"}, expected_version=None)
+            assert (await client.get("prefs", "config#draft"))["value"] == {"k": "config#draft"}
+            assert (await client.get("prefs", "config"))["value"] == {"k": "plain"}
+            # Every key landed in its own row, none clobbered.
+            for key in [*specials, "config"]:
+                assert ("prefs", key) in store
+
+    anyio.run(go)
+
+
+def test_key_url_percent_encodes_both_segments() -> None:
+    # Unit guard (#851): special chars become %-escapes (incl. '/'), and two keys
+    # that would have collided now compose distinct URLs.
+    client = StateApiClient("http://api/agents/A/state", token=None)
+    url = client._key_url("ns#x", "config#draft")
+    assert url == "http://api/agents/A/state/ns%23x/config%23draft"
+    assert "%2F" in client._key_url("ns", "a/b")
+    assert client._key_url("ns", "config#draft") != client._key_url("ns", "config")
+
+
 def test_get_missing_key_is_none() -> None:
     app, _ = _fake_state_app()
 
