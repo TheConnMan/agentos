@@ -138,8 +138,31 @@ jobs:
       - name: Generated ACI protocol crate compiles
         working-directory: packages/aci-protocol/generated/rust
         run: cargo test --locked
-      # Continuously prove the release build (the artifact a cold user downloads)
-      # and publish it as a sha-addressable workflow artifact every run.
+
+  # The release binary the e2e ladder + falsifiability gate consume, split out of
+  # the quality job above so those downstream jobs start as soon as the binary
+  # COMPILES -- in parallel with fmt/clippy/test rather than after them (they no
+  # longer gate the ladder; a real test/clippy failure still blocks the merge via
+  # the required "Rust (fmt + clippy + test)" check). The release-build compile
+  # check now lives here; if it should stay merge-blocking, add this job ("Build
+  # the agentos release binary") to the branch ruleset's required checks (today
+  # the required set is Compose/Contracts/Python/Rust/UI). Cached independently.
+  rust-build:
+    name: Build the agentos release binary
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustc --version
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
       - name: Release build
         run: cargo build --release --locked
       - name: Upload agentos binary
@@ -357,7 +380,7 @@ jobs:
   eval-falsifiability:
     name: Eval falsifiability gate (fake model, offline)
     runs-on: ubuntu-latest
-    needs: rust
+    needs: rust-build
     steps:
       - uses: actions/checkout@v7
         with:
@@ -472,7 +495,7 @@ jobs:
   e2e-ladder:
     name: E2E parity ladder (skill + local + local-release, fake model)
     runs-on: ubuntu-latest
-    needs: rust
+    needs: rust-build
     steps:
       - uses: actions/checkout@v7
         with:
@@ -614,7 +637,7 @@ jobs:
   e2e-ladder-cluster:
     name: E2E parity ladder (cluster rung on kind, fake model)
     runs-on: ubuntu-latest
-    needs: [rust, changes]
+    needs: [rust-build, changes]
     if: needs.changes.outputs.cluster == 'true'
     steps:
       - uses: actions/checkout@v7
