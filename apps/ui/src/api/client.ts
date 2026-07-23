@@ -783,3 +783,91 @@ export async function resolveApproval(approvalId: string, input: ApprovalResolve
   });
   return jsonOrThrow<ApprovalOut>(resp);
 }
+
+// ---- Behavior packs: per-agent opt-in deterministic behaviors (#870) ----
+//
+// Shapes mirror apps/api schemas.BehaviorPacksConfig verbatim. The packs ride on
+// the agent's stored config (like BudgetConfig mirrors the ACI Budget), so the
+// shape is duplicated here rather than shared. A NULL agent row reads back as the
+// all-off default; the API always returns the fully-defaulted object.
+
+export interface LoadPack {
+  enabled: boolean;
+  // Rotating "working…" load lines shown while the agent is thinking.
+  lines: string[];
+}
+
+export interface TipsPack {
+  enabled: boolean;
+  // Rotating capability tips (what the agent CAN do, vs. what it is doing now).
+  tips: string[];
+}
+
+export interface GreetingPack {
+  enabled: boolean;
+  // Trigger phrases that short-circuit to the deterministic reply below.
+  phrases: string[];
+  reply: string;
+}
+
+export interface HelpPack {
+  enabled: boolean;
+  // Trigger phrases (e.g. "what can you do") that short-circuit to the reply.
+  phrases: string[];
+  reply: string;
+}
+
+// One declared user-editable runtime knob. The settings pack is schema-only today
+// (the override store + per-user edit UI are a deferred runtime), so the console
+// surfaces the declared knobs read-only and round-trips them unchanged.
+export interface SettingConfig {
+  key: string;
+  label: string;
+  kind: string;
+  default: string;
+  help: string;
+  choices: string[];
+  applies_live: boolean;
+}
+
+export interface SettingsPack {
+  enabled: boolean;
+  settings: SettingConfig[];
+}
+
+export interface NavPack {
+  enabled: boolean;
+  // The no-dead-ends hub button label + command for this agent.
+  hub_label: string;
+  hub_command: string;
+}
+
+export interface BehaviorPacksConfig {
+  load: LoadPack;
+  tips: TipsPack;
+  greeting: GreetingPack;
+  help: HelpPack;
+  settings: SettingsPack;
+  nav: NavPack;
+}
+
+export async function getBehaviorPacks(agentId: string): Promise<BehaviorPacksConfig> {
+  const resp = await fetch(url(`/agents/${agentId}/behavior-packs`), { headers: headers() });
+  return jsonOrThrow<BehaviorPacksConfig>(resp);
+}
+
+// PUT the full behavior-packs config (the API validates + persists the whole
+// object; there is no partial patch). A validation failure 422s server-side and
+// the ApiError message carries the field-level reason for inline display. The
+// change is read by the worker at the agent's next bind, not mid-turn.
+export async function putBehaviorPacks(
+  agentId: string,
+  config: BehaviorPacksConfig,
+): Promise<BehaviorPacksConfig> {
+  const resp = await fetch(url(`/agents/${agentId}/behavior-packs`), {
+    method: "PUT",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(config),
+  });
+  return jsonOrThrow<BehaviorPacksConfig>(resp);
+}

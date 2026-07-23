@@ -73,6 +73,11 @@ export const WIRED_ACTIONS = [
   // no top-level `agentos` verb that just reads the matrix (the CLI polls it
   // internally during a model sweep), so the view renders the honest amber gap.
   { id: "eval-matrix", label: "View the eval matrix", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
+
+  // WiredAgentBehaviorPacks (#870) — view/edit the agent's opt-in behavior packs.
+  // No CLI path reads or writes behavior_packs (see cli/api-mirrors.json), so the
+  // save action renders the honest amber gap glyph linking to the parity epic.
+  { id: "behavior-packs-edit", label: "Edit an agent's behavior packs", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
 ] as const satisfies readonly WiredAction[];
 
 export type WiredActionId = (typeof WIRED_ACTIONS)[number]["id"];

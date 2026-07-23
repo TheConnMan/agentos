@@ -48,6 +48,13 @@ honest `ComingSoon` stub (Usage, Settings).
   `/agents/{id}/versions`, packages the editor's skill.md into a plugin bundle
   client-side (jszip), and PUTs it to `/agents/{id}/versions/{vid}/bundle`. The
   bundle validator's 422 `errors[]` render inline under the editor.
+- Agent detail > Behavior packs: a settings-style panel over
+  `GET/PUT /agents/{id}/behavior-packs` (#870). Toggles each opt-in pack (load
+  lines, tips, greeting/help short-circuits, the nav hub button) and edits its
+  content, then PUTs the full config (the API takes the whole object, no partial
+  patch). The declarative settings pack is schema-only today, so its declared
+  knobs are shown read-only and round-tripped unchanged. Edits apply at the
+  agent's next bind, not mid-turn.
 - Runs tab (Observability > Traces): reads `GET /langfuse/traces` and
   `/langfuse/traces/{id}` through the proxy and renders the real span tree.
 - Metrics tab (Observability > Metrics): summary stat cards from
@@ -109,7 +116,8 @@ plainly what is not wired yet rather than showing fictional data.
 **Client layer.** `src/api/`: `client.ts` (typed calls + `BundleValidationError`,
 the observability calls `getMetricsSummary`/`getMetricSeries`/`getRunnerLogs`,
 and the cost calls `getCost`/`getBudget`/`putBudget`/`getKillState`/`killAgent`/
-`resumeAgent`/`getAgents`), `bundle.ts` (jszip packaging + the testable
+`resumeAgent`/`getAgents`, and the behavior-packs calls
+`getBehaviorPacks`/`putBehaviorPacks`), `bundle.ts` (jszip packaging + the testable
 `bundleFileTree`), `hooks.ts` (`useTraces`/`useTrace`/`useMetricsSummary`/
 `useMetricSeries`/`useAgents`/`useCost`), `config.ts` (API key + prefix). Deploy
 failures flow through the store reducer actions `deployFailedValidation` /
