@@ -72,6 +72,16 @@ DEFAULT_MAX_MEMBERS = 10_000
 _ZIP_EOCD_SIGNATURE = b"\x50\x4b\x05\x06"  # "PK\x05\x06"
 _ZIP_EOCD_MIN_SIZE = 22  # fixed part, before any archive comment
 _ZIP_MAX_COMMENT = 0xFFFF  # the comment length field is 16 bits
+# The ZIP64 end-of-central-directory LOCATOR, which `zipfile._EndRecData64`
+# looks for exactly `sizeEndCentDir64Locator` (20) bytes before the located
+# 32-bit EOCD, UNCONDITIONALLY (not gated on the 0xFFFF/0xFFFFFFFF sentinel). If
+# present, zipfile reads the 64-bit count/size from the ZIP64 record and
+# OVERRIDES the 32-bit fields, so an attacker can patch the auto-emitted 32-bit
+# sentinel back to small values while leaving the locator intact and still have
+# zipfile materialize the whole central directory (values verified against
+# `zipfile.stringEndArchive64Locator` / `zipfile.sizeEndCentDir64Locator`).
+_ZIP64_EOCD_LOCATOR_SIGNATURE = b"\x50\x4b\x06\x07"  # "PK\x06\x07"
+_ZIP64_EOCD_LOCATOR_SIZE = 20
 # A per-member byte budget for the central directory, used to bound the member
 # count from the EOCD's declared central-directory SIZE. zipfile parses the
 # central directory until it has consumed `size_cd` bytes (it does NOT trust
@@ -114,8 +124,7 @@ def _reject_over_member_count(count: int, max_members: int) -> None:
     many-member archive is refused mid-walk (#815)."""
     if count > max_members:
         raise UnsupportedArchive(
-            f"archive has more than {max_members} members, over the member-count "
-            f"limit"
+            f"archive has more than {max_members} members, over the member-count limit"
         )
 
 
@@ -132,40 +141,87 @@ def _reject_zip_over_member_count(data: bytes, max_members: int) -> None:
       under-declared) count -- ``zipfile`` loops until it has consumed that many
       bytes, so this is the signal that actually bounds its work.
 
-    A ZIP64 sentinel in either field means the true value overflows the
-    16/32-bit field, i.e. is far past any sane cap, so it is rejected. If no
-    consistent EOCD can be located the archive is left for ``zipfile`` to
-    reject with its own ``BadZipFile`` (the in-loop cap remains a backstop).
+    A ZIP64 record makes the true value overflow the 16/32-bit fields, so it is
+    rejected two ways: a 32-bit sentinel (0xFFFF/0xFFFFFFFF) in either field,
+    AND -- because ``zipfile`` calls ``_EndRecData64`` UNCONDITIONALLY, not
+    gated on that sentinel -- a ZIP64 EOCD locator sitting 20 bytes before the
+    located 32-bit EOCD, whose presence lets ``zipfile`` read the real 64-bit
+    count and override the 32-bit fields even when an attacker has patched the
+    sentinel back down to small values. If no usable EOCD can be located the
+    archive is refused outright (#848): the guard must bound the record
+    ``zipfile`` will actually act on, so anything we cannot read is a refusal,
+    never a silent pass-through to ``ZipFile``.
+
+    The record is located exactly the way ``zipfile._EndRecData`` locates it. It
+    first tries the FAST PATH: if the trailing 22 bytes start with the signature
+    and end b"\x00\x00" (declared comment length zero), that record is used
+    directly and no search happens, even when the signature bytes recur later
+    inside the record's own fields. Only if the fast path does not apply does
+    CPython search for the LAST signature in the tail window, unpacked where it
+    sits, with the declared comment length ignored (it uses it only to slice the
+    comment and accepts a short slice silently). A plain ``rfind`` alone diverts
+    to an in-field occurrence the fast path would have skipped and false-rejects;
+    any locator stricter than CPython's is a bypass by construction: an archive
+    whose declared comment does not land at end-of-file still opens, so requiring
+    that made one appended byte enough to skip the cap (#848 reopened #815).
     """
-    tail_len = _ZIP_EOCD_MIN_SIZE + _ZIP_MAX_COMMENT
+    # A superset of every supported CPython's EOCD search window: equal to
+    # 3.12/3.13's (22 + 0x10000) and one byte wider than 3.14's (22 + 0xFFFF),
+    # so it is never narrower than the bytes any of them scans. A signature only
+    # WE can see is harmless: CPython would find none there and raise
+    # BadZipFile, so a superset can only fail closed, never accept what CPython
+    # rejects.
+    tail_len = _ZIP_EOCD_MIN_SIZE + _ZIP_MAX_COMMENT + 1
     tail = data[-tail_len:] if len(data) > tail_len else data
-    # The EOCD is the last record, followed only by its own comment; scan back
-    # for the last signature whose declared comment length lands exactly at
-    # end-of-tail, so a signature that coincidentally appears inside file data
-    # or the comment does not fool the check.
-    start = tail.rfind(_ZIP_EOCD_SIGNATURE)
-    while start != -1:
-        eocd = tail[start:]
-        if len(eocd) >= _ZIP_EOCD_MIN_SIZE:
-            comment_len = int.from_bytes(eocd[20:22], "little")
-            if start + _ZIP_EOCD_MIN_SIZE + comment_len == len(tail):
-                total_entries = int.from_bytes(eocd[10:12], "little")
-                size_cd = int.from_bytes(eocd[12:16], "little")
-                if total_entries == 0xFFFF or size_cd == 0xFFFFFFFF:
-                    raise UnsupportedArchive(
-                        f"archive declares a ZIP64 central directory, over the "
-                        f"{max_members} member-count limit"
-                    )
-                if (
-                    total_entries > max_members
-                    or size_cd > max_members * _ZIP_CENTRAL_DIR_BYTES_PER_MEMBER
-                ):
-                    raise UnsupportedArchive(
-                        f"archive has more than {max_members} members, over the "
-                        f"member-count limit"
-                    )
-                return
-        start = tail.rfind(_ZIP_EOCD_SIGNATURE, 0, start)
+    if (
+        len(tail) >= _ZIP_EOCD_MIN_SIZE
+        and tail[-_ZIP_EOCD_MIN_SIZE:][:4] == _ZIP_EOCD_SIGNATURE
+        and tail[-2:] == b"\x00\x00"
+    ):
+        # CPython's fast path: a comment-less trailing record is taken as-is,
+        # so the signature recurring inside its own fields never diverts the
+        # locator the way a plain rfind would.
+        start = len(tail) - _ZIP_EOCD_MIN_SIZE
+    else:
+        start = tail.rfind(_ZIP_EOCD_SIGNATURE)
+        if start == -1 or len(tail) - start < _ZIP_EOCD_MIN_SIZE:
+            # No signature, or a truncated record: CPython returns None for
+            # both, which becomes BadZipFile, so refusing here cannot
+            # false-reject an archive zipfile would have opened.
+            raise UnsupportedArchive("archive has no readable end-of-central-directory record")
+    # A ZIP64 EOCD locator 20 bytes before the record makes zipfile read the
+    # real 64-bit count and override the 32-bit fields, so refuse before trusting
+    # them -- the 32-bit values are not authoritative once a ZIP64 record is
+    # present (an attacker patches the sentinel back down but leaves this intact).
+    # Index the locator from its ABSOLUTE position in `data`, mirroring CPython's
+    # `_EndRecData64` absolute seek, NOT tail-relative. Tail-relative was a
+    # bypass: when the archive is larger than the tail window and rfind lands the
+    # EOCD within the window's first 20 bytes (trailing junk or a max-length
+    # comment), `start < 20` skipped the check, yet CPython's absolute seek still
+    # read the locator and materialized every member (#848 reopened). For a
+    # non-truncated tail (len(tail) == len(data)) abs_eocd == start, so this is
+    # identical to the old slice; `abs_eocd < 20` maps to `_EndRecData64`'s
+    # `offset < 0` early return (no room for a locator, safe to skip).
+    abs_eocd = len(data) - len(tail) + start
+    if (
+        abs_eocd >= _ZIP64_EOCD_LOCATOR_SIZE
+        and data[abs_eocd - _ZIP64_EOCD_LOCATOR_SIZE : abs_eocd - _ZIP64_EOCD_LOCATOR_SIZE + 4]
+        == _ZIP64_EOCD_LOCATOR_SIGNATURE
+    ):
+        raise UnsupportedArchive(
+            f"archive declares a ZIP64 central directory, over the {max_members} member-count limit"
+        )
+    eocd = tail[start : start + _ZIP_EOCD_MIN_SIZE]
+    total_entries = int.from_bytes(eocd[10:12], "little")
+    size_cd = int.from_bytes(eocd[12:16], "little")
+    if total_entries == 0xFFFF or size_cd == 0xFFFFFFFF:
+        raise UnsupportedArchive(
+            f"archive declares a ZIP64 central directory, over the {max_members} member-count limit"
+        )
+    if total_entries > max_members or size_cd > max_members * _ZIP_CENTRAL_DIR_BYTES_PER_MEMBER:
+        raise UnsupportedArchive(
+            f"archive has more than {max_members} members, over the member-count limit"
+        )
 
 
 def _check_bounds(
@@ -270,9 +326,7 @@ def _extract_tar(
     max_compression_ratio: float,
     max_members: int,
 ) -> None:
-    total = _prescan_tar(
-        tf, max_uncompressed_bytes=max_uncompressed_bytes, max_members=max_members
-    )
+    total = _prescan_tar(tf, max_uncompressed_bytes=max_uncompressed_bytes, max_members=max_members)
     _check_bounds(total, archive_bytes, max_uncompressed_bytes, max_compression_ratio)
     # filter="data" (py3.12+) is the traversal/special-file backstop; the
     # pre-scan above is the primary gate and makes "no links at all" explicit.
@@ -300,9 +354,7 @@ def safe_extract(
     than after the full member list is materialized.
     """
     if zipfile.is_zipfile(io.BytesIO(data)):
-        _extract_zip(
-            data, dest, max_uncompressed_bytes, max_compression_ratio, max_members
-        )
+        _extract_zip(data, dest, max_uncompressed_bytes, max_compression_ratio, max_members)
         return
     for mode in ("r:gz", "r:"):
         try:

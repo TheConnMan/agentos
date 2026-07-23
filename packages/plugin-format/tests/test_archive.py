@@ -10,6 +10,7 @@ import io
 import stat
 import tarfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -469,14 +470,328 @@ def test_zip_eocd_precheck_allows_within_cap() -> None:
 
 
 def test_zip_eocd_precheck_ignores_a_spurious_trailing_signature() -> None:
-    """A comment that itself contains the EOCD signature bytes must not be
-    mistaken for the record: the scan requires the declared comment length to
-    land exactly at end-of-data, so the real (earlier) EOCD is the one read."""
+    """A later byte run that itself starts with the EOCD signature is the record
+    ``rfind`` now locates (matching CPython, which rfinds the LAST signature in
+    the tail window). Here that embedded run is a full 22-byte pseudo-record
+    whose entry-count bytes are 0, so reading it keeps the archive under the cap
+    and the guard does NOT raise."""
     from plugin_format.archive import _reject_zip_over_member_count
 
-    # Real EOCD declares 42 entries and a comment that embeds a fake signature.
-    fake = b"\x50\x4b\x05\x06" + b"\x00" * 18  # looks like an EOCD, but mid-comment
+    # A 22-byte run starting with the signature, appended as the "comment": rfind
+    # lands on it and it is unpacked in place as the record (entry count 0).
+    fake = b"\x50\x4b\x05\x06" + b"\x00" * 18  # a full 22-byte pseudo-record
     data = _synthetic_eocd(total_entries=42, size_cd=5_000, comment=fake)
-    # The real record (42 entries, within cap) is found, so this does NOT raise;
-    # the embedded fake (whose comment-length invariant fails) is skipped.
+    # The later fake (0 entries, within cap) is the record rfind locates, so this
+    # does NOT raise.
     _reject_zip_over_member_count(data, max_members=10_000)
+
+
+# --- #848: the EOCD locator must be as lenient as CPython's `_EndRecData`.
+# The guard required the declared comment to land exactly at end-of-tail, a
+# rule CPython does not have: `_EndRecData` rfinds the signature, unpacks the
+# 22-byte record there, and uses the declared comment size only to SLICE the
+# comment (`comment = data[start+sizeEndCentDir:start+sizeEndCentDir+commentSize]`
+# in Lib/zipfile/__init__.py), accepting a short slice silently. So one
+# appended byte, or an over-declared comment_len, made the guard return without
+# raising while `zipfile.ZipFile` still opened the archive and materialized the
+# whole central directory -- the #815 DoS, reopened. ---
+
+
+def _append_junk_byte(data: bytes) -> bytes:
+    """One trailing byte after the EOCD: the record no longer ends at EOF."""
+    return data + b"\x00"
+
+
+def _over_declare_comment_len(data: bytes) -> bytes:
+    """Claim a 5-byte archive comment that is not there. A zip written without
+    a comment ends with the EOCD's own 2-byte comment_len field, so the final
+    two bytes are the field to patch."""
+    assert data[-2:] == b"\x00\x00"
+    return data[:-2] + (5).to_bytes(2, "little")
+
+
+EOCD_MUTATIONS = [
+    pytest.param(_append_junk_byte, id="appended-junk-byte"),
+    pytest.param(_over_declare_comment_len, id="over-declared-comment-len"),
+]
+
+
+@pytest.mark.parametrize("mutate", EOCD_MUTATIONS)
+def test_eocd_mutated_zip_is_still_opened_by_zipfile(mutate: Callable[[bytes], bytes]) -> None:
+    """The premise of the bypass, asserted by execution rather than assumed:
+    CPython still opens these archives and still sees every member, so the
+    guard must fire for them. If CPython ever tightens, this fails loudly and
+    tells the reader the threat model changed."""
+    data = mutate(_many_member_zip(50))
+    assert zipfile.is_zipfile(io.BytesIO(data))
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert len(zf.infolist()) == 50
+
+
+@pytest.mark.parametrize("mutate", EOCD_MUTATIONS)
+def test_safe_extract_rejects_eocd_mutated_over_cap_zip(
+    mutate: Callable[[bytes], bytes], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real over-cap zip, mutated after the fact, is still refused from the
+    EOCD BEFORE ``zipfile.ZipFile`` is constructed. ``ZipFile`` is poisoned
+    because the post-construction in-loop cap raises the identical message, so
+    without the poison this would pass on the bypassed path (#815's property is
+    pre-open refusal, not merely some error)."""
+    data = mutate(_many_member_zip(50))  # build BEFORE poisoning ZipFile
+    monkeypatch.setattr(zipfile, "ZipFile", _boom_zipfile)
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        safe_extract(data, tmp_path, max_members=10)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("mutate", EOCD_MUTATIONS)
+def test_check_archive_bounds_rejects_eocd_mutated_over_cap_zip(
+    mutate: Callable[[bytes], bytes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deploy-time revalidation entry point reaches the same guard, so the
+    mutated archive must be refused there too, also before construction."""
+    data = mutate(_many_member_zip(50))  # build BEFORE poisoning ZipFile
+    monkeypatch.setattr(zipfile, "ZipFile", _boom_zipfile)
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        check_archive_bounds(data, max_members=10)
+
+
+def _sentinel_entry_counts(data: bytes) -> bytes:
+    """Patch a real comment-less zip's EOCD entry-count fields (bytes 8:10 and
+    10:12 of the record) to the 16-bit ZIP64 sentinel."""
+    start = len(data) - 22
+    assert data[start : start + 4] == b"\x50\x4b\x05\x06"
+    return data[: start + 8] + b"\xff\xff\xff\xff" + data[start + 12 :]
+
+
+def test_safe_extract_rejects_zip64_sentinel_with_appended_junk_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The appended byte bypassed the ZIP64 sentinel branch as well. The
+    archive still opens under CPython with every member present, so the
+    sentinel refusal must survive the mutation and must still precede
+    construction."""
+    data = _append_junk_byte(_sentinel_entry_counts(_many_member_zip(50)))
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert len(zf.infolist()) == 50
+    monkeypatch.setattr(zipfile, "ZipFile", _boom_zipfile)
+    with pytest.raises(UnsupportedArchive, match="ZIP64|member-count"):
+        safe_extract(data, tmp_path, max_members=10)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_honest_commented_zip_within_cap_still_extracts(tmp_path: Path) -> None:
+    """Negative control: a legitimate under-cap zip carrying a real, correctly
+    declared archive comment extracts with its contents intact."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.comment = b"built by a real packer"
+        zf.writestr("src/app.py", "print('hello')")
+        zf.writestr("README.md", "docs")
+    safe_extract(buf.getvalue(), tmp_path, max_members=10)
+    assert (tmp_path / "src" / "app.py").read_text() == "print('hello')"
+    assert (tmp_path / "README.md").read_text() == "docs"
+
+
+# --- #848 (round 2): two review findings against the plain-rfind locator. ---
+#
+# Finding 1 (code-reviewer MAJOR): CPython's `_EndRecData` has a FAST PATH
+# before its rfind search. It reads the last 22 bytes and, if they start with
+# `PK\x05\x06` and end with b"\x00\x00" (comment length zero), unpacks them in
+# place and never searches -- even when the signature bytes recur later inside
+# the record's own fields (Lib/zipfile/__init__.py; verified on CPython 3.14.3
+# via `inspect.getsource(zipfile._EndRecData)`). The guard's plain
+# `tail.rfind(signature)` instead diverts to that in-field occurrence, leaves
+# <22 bytes after it, and wrongly reports "no readable end-of-central-directory
+# record" for an archive CPython opens fine.
+#
+# Finding 2 (security HIGH): `_EndRecData` then calls `_EndRecData64`
+# UNCONDITIONALLY (not gated on the 0xFFFF/0xFFFFFFFF sentinel). `_EndRecData64`
+# looks exactly 20 bytes before the located 32-bit EOCD for a ZIP64 EOCD locator
+# signature `PK\x06\x07` (`zipfile.stringEndArchive64Locator`,
+# `zipfile.sizeEndCentDir64Locator == 20`); if present it reads the 64-bit count
+# from the ZIP64 EOCD record and OVERRIDES the 32-bit fields (verified via
+# `inspect.getsource(zipfile._EndRecData64)`). So an attacker who patches the
+# 32-bit EOCD counts below the sentinel while leaving the ZIP64 locator intact
+# bypasses a guard that only inspects the 32-bit sentinel -- CPython still reads
+# the real (huge) count and materializes every member.
+
+
+def _fast_path_eocd_with_signature_in_offset_field(total_entries: int) -> bytes:
+    """A comment-less 32-bit EOCD (trailing 22 bytes: signature + fields +
+    comment_len 0, so they end b"\x00\x00") whose offset-of-central-directory
+    field (record bytes 16:20) itself holds the EOCD signature bytes.
+
+    A plain rfind of the signature lands on that in-field occurrence, not the
+    real trailing record. CPython does NOT: its `_EndRecData` fast path reads
+    the last 22 bytes directly when they start with `PK\x05\x06` and end
+    b"\x00\x00", so the recurring bytes inside the record never divert it.
+
+    A direct byte construction is the correct tool here (not the `zipfile`
+    module): the assertion is about the guard's LOCATOR against a hostile-but-
+    CPython-valid tail, and CPython's fast-path behavior is cited from its
+    source above rather than re-derived from a written archive.
+    """
+    import struct
+
+    offset_cd = int.from_bytes(b"\x50\x4b\x05\x06", "little")
+    record = struct.pack(
+        "<4sHHHHIIH",
+        b"\x50\x4b\x05\x06",  # EOCD signature
+        0,  # disk number
+        0,  # disk with central directory
+        total_entries,  # entries on this disk
+        total_entries,  # total entries
+        46,  # central directory size (non-sentinel)
+        offset_cd,  # offset field (bytes 16:20) == the signature bytes
+        0,  # comment length 0 -> record ends b"\x00\x00" (fast path applies)
+    )
+    assert record[16:20] == b"\x50\x4b\x05\x06"  # signature recurs in-field
+    assert record[-2:] == b"\x00\x00"  # comment-less: CPython fast path applies
+    # A little filler before the record so the true record is the trailing 22.
+    return b"\x00\x00\x00\x00" + record
+
+
+def test_eocd_locator_uses_cpython_fast_path_when_signature_recurs_in_fields() -> None:
+    """Finding 1: the guard must locate the record the way CPython's fast path
+    does. This trailing 22-byte EOCD declares 3 entries (under the cap), but its
+    offset field replays the signature, so a plain rfind diverts to the in-field
+    hit, leaves <22 bytes, and falsely reports no EOCD. The guard must read the
+    true trailing record and NOT raise."""
+    from plugin_format.archive import _reject_zip_over_member_count
+
+    data = _fast_path_eocd_with_signature_in_offset_field(total_entries=3)
+    # Premise, by execution: CPython locates the real EOCD via its fast path.
+    assert zipfile.is_zipfile(io.BytesIO(data))
+    _reject_zip_over_member_count(data, max_members=10)  # must not raise
+
+
+def test_eocd_fast_path_record_over_cap_is_still_rejected() -> None:
+    """Companion to the above: the fast-path record's real counts still gate.
+    The same trailing-22 EOCD declaring 50 entries against a cap of 10 must be
+    rejected for member count -- proof the guard reads the true record's fields,
+    not merely that it stopped raising the no-EOCD error."""
+    from plugin_format.archive import _reject_zip_over_member_count
+
+    data = _fast_path_eocd_with_signature_in_offset_field(total_entries=50)
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        _reject_zip_over_member_count(data, max_members=10)
+
+
+# 65536 members: one past ZIP_FILECOUNT_LIMIT (0xFFFF), the minimum count that
+# makes CPython emit a ZIP64 EOCD record + locator and set the 32-bit EOCD
+# entry-count fields to the 0xFFFF sentinel. Kept at the minimum to stay fast
+# (builds and opens in well under a second on CPython 3.14.3).
+_ZIP64_FORCING_MEMBER_COUNT = 65536
+
+
+def _zip64_override_patched_under_cap(data: bytes) -> bytes:
+    """Patch a real ZIP64 zip's trailing 32-bit EOCD total_entries (record bytes
+    10:12) and size_cd (bytes 12:16) down to small NON-sentinel values (1 and
+    46), leaving the `PK\x06\x06` ZIP64 EOCD record and the `PK\x06\x07` locator
+    intact. A guard that only inspects the 32-bit sentinel now sees a tiny
+    archive; CPython reads the real count from the ZIP64 record and still
+    materializes every member."""
+    start = len(data) - 22  # comment-less: the 32-bit EOCD is the trailing 22
+    assert data[start : start + 4] == b"\x50\x4b\x05\x06"
+    patched = bytearray(data)
+    patched[start + 10 : start + 12] = (1).to_bytes(2, "little")  # total_entries
+    patched[start + 12 : start + 16] = (46).to_bytes(4, "little")  # size_cd
+    return bytes(patched)
+
+
+def test_eocd_zip64_locator_override_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 2: an attacker patches the 32-bit EOCD counts below the sentinel
+    while leaving the ZIP64 locator intact. CPython's `_EndRecData64` (called
+    unconditionally, 20 bytes before the 32-bit EOCD) reads the real huge count
+    from the ZIP64 record and materializes every member, so the guard must
+    reject on the ZIP64 structure rather than trust the patched 32-bit fields.
+
+    ``ZipFile`` is poisoned (as in the #815 tests) so the refusal must come from
+    the PRE-open EOCD guard: the property is pre-open refusal, not merely some
+    error. Without the poison the post-open in-loop cap in ``_prescan_zip`` would
+    raise the identical message AFTER CPython materialized all 65536 members --
+    exactly the DoS the guard exists to prevent."""
+    raw = _many_member_zip(_ZIP64_FORCING_MEMBER_COUNT)
+    data = _zip64_override_patched_under_cap(raw)  # build BEFORE poisoning ZipFile
+    start = len(data) - 22
+    # Premise, by execution: CPython opens it and sees ALL members, and the
+    # `PK\x06\x07` locator sits exactly 20 bytes before the 32-bit EOCD (the
+    # offset `_EndRecData64` reads, sizeEndCentDir64Locator == 20).
+    assert zipfile.is_zipfile(io.BytesIO(data))
+    assert data[start - 20 : start - 16] == b"\x50\x4b\x06\x07"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert len(zf.infolist()) == _ZIP64_FORCING_MEMBER_COUNT
+    monkeypatch.setattr(zipfile, "ZipFile", _boom_zipfile)
+    with pytest.raises(UnsupportedArchive, match="ZIP64|member-count"):
+        safe_extract(data, tmp_path, max_members=10)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_check_archive_bounds_rejects_zip64_locator_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deploy-time revalidation path reaches the same pre-open guard, so the
+    patched ZIP64 archive must be refused there too, also before construction."""
+    data = _zip64_override_patched_under_cap(
+        _many_member_zip(_ZIP64_FORCING_MEMBER_COUNT)
+    )  # build BEFORE poisoning ZipFile
+    monkeypatch.setattr(zipfile, "ZipFile", _boom_zipfile)
+    with pytest.raises(UnsupportedArchive, match="ZIP64|member-count"):
+        check_archive_bounds(data, max_members=10)
+
+
+# The #848 appended-junk vector applied to the ZIP64 branch. The prior ZIP64
+# tests place the `PK\x06\x07` locator 20 bytes before a trailing 32-bit EOCD
+# that sits at end-of-file, so it lands well inside the guard's tail window and
+# `start >= 20` holds. But the guard slices the locator TAIL-relative
+# (`tail[start-20:...]`) and gates the ZIP64 check on `start >= 20`. Appending
+# junk AFTER the 32-bit EOCD (the same lever #815/#848 used to slide the record)
+# pushes the located EOCD toward the FRONT of the ~65558-byte tail window: with
+# ~65520 trailing bytes the EOCD lands at tail offset ~16, so `start < 20`, the
+# locator (now at tail offset ~-4, before the slice) is never inspected, and the
+# guard trusts the attacker-patched 32-bit fields and stays silent. CPython
+# reads the locator via an ABSOLUTE seek 20 bytes before the located EOCD, so it
+# still overrides with the real 64-bit count and materializes all 65536 members.
+_ZIP64_LOCATOR_BEYOND_WINDOW_JUNK = 65520
+
+
+def _zip64_override_patched_under_cap_beyond_window(data: bytes) -> bytes:
+    """Patch the 32-bit EOCD counts down (as above) then append junk AFTER the
+    EOCD so the real record slides into the first ~20 bytes of the guard's tail
+    window while CPython's rfind still lands it. The `PK\x06\x07` locator is left
+    intact 20 bytes before the (now non-trailing) 32-bit EOCD."""
+    return _zip64_override_patched_under_cap(data) + b"\x00" * _ZIP64_LOCATOR_BEYOND_WINDOW_JUNK
+
+
+def test_eocd_zip64_locator_override_beyond_tail_window_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ZIP64 locator override still bypasses the guard when trailing junk
+    pushes the located 32-bit EOCD into the first 20 bytes of the tail window:
+    the guard's `start >= 20` gate then skips the locator check entirely, yet
+    CPython (absolute seek) reads the 64-bit count and opens every member.
+
+    ``ZipFile`` is poisoned (as in the sibling ZIP64 tests) so the refusal must
+    come from the PRE-open EOCD guard, not the post-open in-loop cap that would
+    fire only AFTER CPython materialized all 65536 members -- the DoS itself."""
+    data = _zip64_override_patched_under_cap_beyond_window(
+        _many_member_zip(_ZIP64_FORCING_MEMBER_COUNT)
+    )  # build BEFORE poisoning ZipFile
+    start = len(data) - 22 - _ZIP64_LOCATOR_BEYOND_WINDOW_JUNK
+    # Premise, by execution: CPython opens it and sees ALL members, and the
+    # `PK\x06\x07` locator is still present 20 bytes before the real 32-bit EOCD.
+    assert zipfile.is_zipfile(io.BytesIO(data))
+    assert data[start - 20 : start - 16] == b"\x50\x4b\x06\x07"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert len(zf.infolist()) == _ZIP64_FORCING_MEMBER_COUNT
+    monkeypatch.setattr(zipfile, "ZipFile", _boom_zipfile)
+    with pytest.raises(UnsupportedArchive, match="ZIP64|member-count"):
+        safe_extract(data, tmp_path, max_members=10)
+    assert list(tmp_path.iterdir()) == []
+    # Same bytes, same pre-open guard: the deploy-time revalidation path must
+    # refuse before it constructs the (still poisoned) ZipFile.
+    with pytest.raises(UnsupportedArchive, match="ZIP64|member-count"):
+        check_archive_bounds(data, max_members=10)
