@@ -119,6 +119,15 @@ jobs:
           persist-credentials: false
       - name: Toolchain
         run: rustup component add rustfmt clippy
+      # Cache the cargo registry + build artifacts keyed on the lockfiles + rustc
+      # so a run recompiles only what changed, not the whole dependency tree from
+      # scratch (the dominant cost of this job).
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            cli
+            packages/aci-protocol/generated/rust
       # The release-coupled versions (cli/Cargo.toml, Chart.yaml version +
       # appVersion) must agree on every PR, so a bump that forgets one field
       # fails here rather than shipping a chart that pulls the wrong image (#489).
