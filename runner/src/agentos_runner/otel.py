@@ -14,12 +14,19 @@ vars via ``SessionConfig.otel``; the exporter is constructed argument-free so th
 opentelemetry SDK's own env parsing applies (it appends ``/v1/traces`` to a base
 ``OTEL_EXPORTER_OTLP_ENDPOINT``). When no endpoint is configured the tracer is a
 no-op, so unit tests and offline runs neither export nor fail.
+
+Per ADR-0076, every attribute this module attaches comes from the closed
+``SpanAttributeKey`` enum below rather than a bare string, so a future call site
+with an unlisted key is a construction-time error, not a silent addition to the
+wire shape. ``SCHEMA_VERSION`` is bumped only when a key is removed, renamed, or
+changes value type; a new optional key is additive and does not bump it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from enum import StrEnum
 from typing import Any
 
 from aci_protocol import OtelConfig
@@ -34,15 +41,57 @@ from .redact import redact_span_attribute
 
 _SERVICE_NAME = "agentos-runner"
 
+# ADR-0076 decision 2: additive (a new optional key) does not bump this; removing,
+# renaming, or retyping an existing key does.
+SCHEMA_VERSION = "v1"
 
-def _set(span: Any, key: str, value: object) -> None:
+
+class SpanAttributeKey(StrEnum):
+    """The closed set of keys the runner may attach to a span or resource.
+
+    ADR-0076 decision 1. Str-mixin so a member is usable anywhere a plain
+    attribute-value string is expected (e.g. dict keys, f-strings), but every
+    ``set_attribute``/``Resource.create`` call site should pass a member here
+    rather than a literal, so an unlisted key is a construction-time error.
+    """
+
+    TRACE_NAME = "langfuse.trace.name"
+    SESSION_ID = "langfuse.session.id"
+    USER_ID = "langfuse.user.id"
+    REQUEST_MODEL = "gen_ai.request.model"
+    MODEL = "model"
+    USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
+    USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    USAGE_CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read_input_tokens"
+    USAGE_CACHE_CREATION_INPUT_TOKENS = "gen_ai.usage.cache_creation_input_tokens"
+    TOOL_NAME = "gen_ai.tool.name"
+    OPERATION_NAME = "gen_ai.operation.name"
+    SERVICE_NAME = "service.name"
+    AGENTOS_SESSION_ID = "agentos.session_id"
+    AGENTOS_SANDBOX_ID = "agentos.sandbox_id"
+    SCHEMA_VERSION_KEY = "schema.version"
+
+
+# The ``usage`` mapping's own field names (SDK wire shape) to the span attribute
+# they stamp, so ``record_usage`` can iterate without a per-field literal.
+_USAGE_ATTRIBUTE_KEYS: Mapping[str, SpanAttributeKey] = {
+    "input_tokens": SpanAttributeKey.USAGE_INPUT_TOKENS,
+    "output_tokens": SpanAttributeKey.USAGE_OUTPUT_TOKENS,
+    "cache_read_input_tokens": SpanAttributeKey.USAGE_CACHE_READ_INPUT_TOKENS,
+    "cache_creation_input_tokens": SpanAttributeKey.USAGE_CACHE_CREATION_INPUT_TOKENS,
+}
+
+
+def _set(span: Any, key: SpanAttributeKey, value: object) -> None:
     """Set a span attribute through the redaction pass.
 
     Every ``set_attribute`` in this module goes through here so a future attribute
-    cannot bypass the scrub by being written directly (see ``redact.py``).
+    cannot bypass the scrub by being written directly (see ``redact.py``), and
+    ``key`` is a closed ``SpanAttributeKey`` member so an unlisted key cannot be
+    attached by construction (ADR-0076).
     """
 
-    span.set_attribute(key, redact_span_attribute(value))
+    span.set_attribute(key.value, redact_span_attribute(value))
 
 
 def build_tracer_provider(
@@ -61,11 +110,12 @@ def build_tracer_provider(
         return None
 
     attributes: dict[str, str] = {
-        "service.name": _SERVICE_NAME,
-        "agentos.session_id": session_id,
+        SpanAttributeKey.SERVICE_NAME.value: _SERVICE_NAME,
+        SpanAttributeKey.AGENTOS_SESSION_ID.value: session_id,
+        SpanAttributeKey.SCHEMA_VERSION_KEY.value: SCHEMA_VERSION,
     }
     if sandbox_id:
-        attributes["agentos.sandbox_id"] = sandbox_id
+        attributes[SpanAttributeKey.AGENTOS_SANDBOX_ID.value] = sandbox_id
     resource = Resource.create(attributes)
     provider = TracerProvider(resource=resource)
     # The exporter reads OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _PROTOCOL from
@@ -108,11 +158,11 @@ class RunTracer:
         """
 
         with self._tracer.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
-            _set(root, "langfuse.trace.name", trace_name)
+            _set(root, SpanAttributeKey.TRACE_NAME, trace_name)
             if session_id:
-                _set(root, "langfuse.session.id", session_id)
+                _set(root, SpanAttributeKey.SESSION_ID, session_id)
             if user_id:
-                _set(root, "langfuse.user.id", user_id)
+                _set(root, SpanAttributeKey.USER_ID, user_id)
             with self._tracer.start_as_current_span("llm.generation") as gen:
                 span = _GenerationSpan(self._tracer, gen)
                 # Stamp the configured model at span open when AGENTOS_MODEL is
@@ -150,8 +200,8 @@ class _GenerationSpan:
 
         if self._model_recorded or not model:
             return
-        _set(self._span, "gen_ai.request.model", model)
-        _set(self._span, "model", model)
+        _set(self._span, SpanAttributeKey.REQUEST_MODEL, model)
+        _set(self._span, SpanAttributeKey.MODEL, model)
         self._model_recorded = True
 
     def record_usage(self, usage: Mapping[str, Any] | None) -> None:
@@ -168,19 +218,14 @@ class _GenerationSpan:
 
         if not usage:
             return
-        for key in (
-            "input_tokens",
-            "output_tokens",
-            "cache_read_input_tokens",
-            "cache_creation_input_tokens",
-        ):
-            value = usage.get(key)
+        for usage_field, attribute_key in _USAGE_ATTRIBUTE_KEYS.items():
+            value = usage.get(usage_field)
             if isinstance(value, int):
-                _set(self._span, f"gen_ai.usage.{key}", value)
+                _set(self._span, attribute_key, value)
 
     def tool_span(self, tool_name: str) -> None:
         """Emit a short ``execute_tool`` child span for one tool call."""
 
         with self._tracer.start_as_current_span("execute_tool") as tool:
-            _set(tool, "gen_ai.tool.name", tool_name)
-            _set(tool, "gen_ai.operation.name", "execute_tool")
+            _set(tool, SpanAttributeKey.TOOL_NAME, tool_name)
+            _set(tool, SpanAttributeKey.OPERATION_NAME, "execute_tool")
