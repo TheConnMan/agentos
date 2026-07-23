@@ -59,6 +59,12 @@ class SpanAttributeKey(StrEnum):
     TRACE_NAME = "langfuse.trace.name"
     SESSION_ID = "langfuse.session.id"
     USER_ID = "langfuse.user.id"
+    # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
+    # (approved/rejected/expired) of the approval a resume turn is resuming
+    # from, threaded in from the worker's authority-free AGENTOS_APPROVAL_DECISION
+    # boot-env fact. Closes the "did an approval get requested" gap ADR-0038
+    # named open, on the existing span stream.
+    APPROVAL_DECISION = "gen_ai.approval.decision"
     REQUEST_MODEL = "gen_ai.request.model"
     MODEL = "model"
     USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
@@ -194,6 +200,7 @@ class RunTracer:
         model: str | None,
         session_id: str | None = None,
         user_id: str | None = None,
+        approval_decision: str | None = None,
     ) -> Iterator[_GenerationSpan]:
         """Open the root ``agent.run`` span and its child ``llm.generation`` span.
 
@@ -203,6 +210,11 @@ class RunTracer:
         Langfuse reads these from the trace-root span, exactly as it does
         ``langfuse.trace.name``; an empty or absent value is omitted rather than
         stamped, so a turn with no event user (eval runs etc.) carries no user id.
+
+        ``approval_decision`` (ADR-0076 Stone 3, #889) is the authority-free
+        AGENTOS_APPROVAL_DECISION fact -- present only when this turn is
+        resuming a resolved approval -- stamped unconditionally when given so
+        an operator can see the outcome from the trace.
         """
 
         with self._tracer.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
@@ -211,6 +223,8 @@ class RunTracer:
                 _set(root, SpanAttributeKey.SESSION_ID, session_id)
             if user_id:
                 _set(root, SpanAttributeKey.USER_ID, user_id)
+            if approval_decision:
+                _set(root, SpanAttributeKey.APPROVAL_DECISION, approval_decision)
             with self._tracer.start_as_current_span("llm.generation") as gen:
                 span = _GenerationSpan(self._tracer, gen)
                 # Stamp the configured model at span open when AGENTOS_MODEL is

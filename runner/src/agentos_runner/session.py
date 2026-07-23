@@ -135,6 +135,7 @@ class SessionRunner:
         history_store: TranscriptStore | None = None,
         approval_gate: ApprovalGate | None = None,
         approval_resumed_kind: str | None = None,
+        approval_decision: str | None = None,
         false_completion_check: bool = False,
     ) -> None:
         self._factory = session_factory
@@ -161,6 +162,11 @@ class SessionRunner:
         # this boot is resuming from a policy-gate approval. It confers no
         # capability -- it only arms the observe-only turn-end reconciliation.
         self._approval_resumed_kind = approval_resumed_kind
+        # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
+        # (approved/rejected/expired) of the approval this resume boot is
+        # resuming from, stamped onto the turn's OTel span. Authority-free,
+        # like approval_resumed_kind -- it confers no capability.
+        self._approval_decision = approval_decision
         # Opt-in, observe-only false-completion check (#517): warn when a turn
         # ends DONE with a substantive answer but zero tool calls. Off by default.
         self._false_completion_check = false_completion_check
@@ -381,7 +387,11 @@ class SessionRunner:
             tracker = BudgetTracker(ceiling=self._ceiling)
 
             with self._tracer.run_span(
-                self._trace_name, self._model, self._session_id, event.user
+                self._trace_name,
+                self._model,
+                self._session_id,
+                event.user,
+                approval_decision=self._approval_decision,
             ) as gen:
                 try:
                     async for line in self._drive_turn(event, state, tracker, gen):

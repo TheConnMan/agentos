@@ -54,6 +54,13 @@ class RunnerConfig:
     # the past, used only to emit an observe-only warning when a resumed policy
     # turn takes no action. It must never influence can_use_tool.
     approval_resumed_kind: str | None
+    # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
+    # (approved/rejected/expired) of the approval this resume boot is resuming
+    # from. Authority-free like approval_resumed_kind -- it confers nothing,
+    # it is stamped onto the turn's OTel span so an operator can see whether
+    # (and how) an approval gate was resolved from the trace, closing the
+    # "did an approval get requested" gap ADR-0038 named open.
+    approval_decision: str | None
     # Opt-in false-completion check (#517), authority-free and observe-only. When
     # AGENTOS_FALSE_COMPLETION_CHECK is truthy, a turn that ends DONE with a
     # substantive answer but ZERO tool calls emits a non-terminal warning frame.
@@ -119,6 +126,7 @@ class RunnerConfig:
             approval_required_tools=boot.approval_required_tools,
             approval_grant_tool=boot.approval_grant_tool,
             approval_resumed_kind=boot.approval_resumed_kind,
+            approval_decision=boot.approval_decision,
             false_completion_check=false_completion_check,
             port=boot.port if boot.port is not None else 8080,
             runner_token=boot.runner_token,
