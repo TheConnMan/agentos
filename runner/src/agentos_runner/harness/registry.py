@@ -69,6 +69,11 @@ BUILTIN_HARNESS_CANONICAL_PATHS: dict[str, str] = {
     "claude-code": _CLAUDE_CANONICAL_PATH,
 }
 
+# The harness selected when none is named (``AGENTOS_HARNESS`` unset): the
+# built-in Claude harness. Single source shared by the runner config and the
+# boot path so the default name is declared exactly once.
+DEFAULT_HARNESS = "claude"
+
 
 class FlatHarnessPackageError(RuntimeError):
     """Raised when a harness entry point registers a flat (unpackaged) module path."""

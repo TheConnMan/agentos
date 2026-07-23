@@ -149,6 +149,10 @@ _NON_BOOT_ALLOWLIST: frozenset[str] = frozenset(
         # runner-local false-completion knob; read by the runner from its own env,
         # not a boot contract key.
         "AGENTOS_FALSE_COMPLETION_CHECK",
+        # runner-local harness selection (ADR-0060, #844); read by the runner from
+        # its own env to pick the active harness, unset selects the built-in
+        # Claude. Not a boot contract key.
+        "AGENTOS_HARNESS",
     }
 )
 

@@ -93,6 +93,24 @@ def test_resolve_harness_default_alias_and_unknown() -> None:
         _resolve_harness("no-such-harness")
 
 
+def test_config_selected_unregistered_harness_fails_loud() -> None:
+    # End to end: a config-selected harness that isn't registered raises through
+    # the same _resolve_harness(config.harness) call main() makes -- no silent
+    # fallback for a non-built-in name, so a misconfigured harness fails visibly.
+    cfg = RunnerConfig.from_env(
+        {
+            "AGENTOS_PLUGIN_DIR": "/b",
+            "AGENTOS_SESSION_ID": "s",
+            "AGENTOS_SANDBOX_ID": "b",
+            "AGENTOS_BUDGET": _BUDGET,
+            "AGENTOS_HARNESS": "no-such-harness",
+        }
+    )
+    assert cfg.harness == "no-such-harness"
+    with pytest.raises(UnknownHarnessError):
+        _resolve_harness(cfg.harness)
+
+
 def test_resolve_harness_falls_back_to_builtin_when_registry_misses(monkeypatch) -> None:
     # If entry-point discovery somehow cannot surface the built-in, the default
     # falls back to its direct import so the boot path never loses Claude. A

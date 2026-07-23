@@ -27,7 +27,7 @@ from .approval import (
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .harness.contribution import HarnessContribution
-from .harness.registry import UnknownHarnessError, resolve_harness
+from .harness.registry import DEFAULT_HARNESS, UnknownHarnessError, resolve_harness
 from .history import (
     DEFAULT_PREAMBLE_MAX_BYTES,
     DEFAULT_PREAMBLE_MAX_TURNS,
@@ -47,8 +47,6 @@ from .side_effects import SideEffectClassifier
 from .state import STATE_SERVER_NAME, build_state_server, resolve_state_client
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_HARNESS = "claude"
 
 
 def _resolve_harness(name: str = DEFAULT_HARNESS) -> HarnessContribution:
@@ -330,11 +328,20 @@ def main() -> None:
         "yes",
     )
     logger.info("runner starting fake_model=%s", fake_model)
-    # The active harness (ADR-0060). Its manifest supplies the per-spawn env
-    # builder used just below and is threaded into build_runner so the read-only
-    # tool set and bundle compile come from the same declaration. Defaults to the
-    # built-in Claude harness (declarative harness selection is a later step).
-    harness = _resolve_harness()
+    config = RunnerConfig.from_env(os.environ)
+    logger.info(
+        "runner configured session=%s model=%s port=%d harness=%s",
+        config.session.session_id,
+        config.model,
+        config.port,
+        config.harness,
+    )
+    # The active harness (ADR-0060), SELECTED by config (AGENTOS_HARNESS, default
+    # the built-in Claude). Its manifest supplies the per-spawn env builder used
+    # just below and is threaded into build_runner so the read-only tool set and
+    # bundle compile come from the same declaration. An unregistered selection
+    # raises here, so a misconfigured harness fails visibly before the port is up.
+    harness = _resolve_harness(config.harness)
     # A real session authenticates from the SDK's own credential env; the
     # harness's per-spawn env builder maps the forwarded ACI AGENTOS_CREDENTIALS
     # reference onto it (a no-op for a fake run, which needs no credential).
@@ -347,13 +354,6 @@ def main() -> None:
         except UnsupportedCredentialError as exc:
             logger.error("credential resolution failed: %s", exc)
             raise
-    config = RunnerConfig.from_env(os.environ)
-    logger.info(
-        "runner configured session=%s model=%s port=%d",
-        config.session.session_id,
-        config.model,
-        config.port,
-    )
     memory_store, memory_preamble = _load_memory(config)
     history_store, conversation_preamble = _load_history(config)
     runner = build_runner(
