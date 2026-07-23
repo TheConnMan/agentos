@@ -2240,6 +2240,17 @@
       "TraceTree": {
         "description": "A trace plus its reconstructed observation tree.",
         "properties": {
+          "approval_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Decision"
+          },
           "sandbox_id": {
             "anyOf": [
               {

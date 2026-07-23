@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ..auth import require_api_key
 from ..deps import LangfuseDep
 from ..evalcase import trace_to_eval_case
-from ..langfuse import build_tree, hoist_sandbox_id
+from ..langfuse import build_tree, hoist_approval_decision, hoist_sandbox_id
 from ..metrics import agent_trace_filter
 from ..schemas import EvalCaseOut, TraceTree
 
@@ -49,6 +49,7 @@ async def get_trace(trace_id: str, lf: LangfuseDep) -> TraceTree:
         trace=trace,
         tree=build_tree(observations),
         sandbox_id=hoist_sandbox_id(trace, observations),
+        approval_decision=hoist_approval_decision(trace, observations),
     )
 
 

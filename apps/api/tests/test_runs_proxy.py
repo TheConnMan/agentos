@@ -88,6 +88,36 @@ def test_get_trace_sandbox_id_null_when_absent(
     assert resp.json()["sandbox_id"] is None
 
 
+def test_get_trace_surfaces_approval_decision_from_observation(
+    auth_headers: dict[str, str],
+) -> None:
+    # Same hoist shape as sandbox_id, for the ADR-0076 Stone 3 (#889) attribute.
+    observations = [
+        {
+            "id": "r",
+            "type": "SPAN",
+            "name": "agent.run",
+            "startTime": "1",
+            "metadata": {"gen_ai.approval.decision": "approved"},
+        },
+    ]
+    with _app_with(observations) as client:
+        resp = client.get("/langfuse/traces/abc", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["approval_decision"] == "approved"
+
+
+def test_get_trace_approval_decision_null_when_absent(
+    auth_headers: dict[str, str],
+) -> None:
+    # The ordinary case: no approval was resumed this turn.
+    observations = [{"id": "r", "type": "SPAN", "name": "agent.run", "startTime": "1"}]
+    with _app_with(observations) as client:
+        resp = client.get("/langfuse/traces/abc", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["approval_decision"] is None
+
+
 def test_get_trace_404_when_no_observations(
     auth_headers: dict[str, str],
 ) -> None:
