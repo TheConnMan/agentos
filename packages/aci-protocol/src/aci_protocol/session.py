@@ -340,6 +340,15 @@ class BootEnv(_AciModel):
     approval_resumed_kind: str | None = Field(
         default=None, json_schema_extra=_env("AGENTOS_APPROVAL_RESUMED_KIND", "kernel")
     )
+    # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
+    # ('approved'/'rejected'/'expired') of the approval this resume boot is
+    # resuming from, so the runner can stamp it onto the turn's OTel span and
+    # close the "did an approval get requested" gap ADR-0038 named open. Also
+    # an authority-free fact, like approval_resumed_kind -- it confers no
+    # capability, it only reports an outcome the worker already resolved.
+    approval_decision: str | None = Field(
+        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_DECISION", "kernel")
+    )
     # Names which boot keys are per-agent connector secrets (ADR-0009, #429), so
     # the k8s substrate strips those plaintext values off the claim CR. Declared
     # here so the key is typed, exported, and parseable, but the worker's
@@ -577,6 +586,8 @@ class BootEnv(_AciModel):
             env[self.env_key("approval_grant_tool")] = self.approval_grant_tool
         if self.approval_resumed_kind is not None:
             env[self.env_key("approval_resumed_kind")] = self.approval_resumed_kind
+        if self.approval_decision is not None:
+            env[self.env_key("approval_decision")] = self.approval_decision
         if self.connector_secret_keys:
             env[self.env_key("connector_secret_keys")] = ",".join(self.connector_secret_keys)
         if self.port is not None:
@@ -624,6 +635,7 @@ class BootEnv(_AciModel):
             approval_required_tools=_list_or_none(env.get("AGENTOS_APPROVAL_REQUIRED_TOOLS")),
             approval_grant_tool=_stripped_or_none(env.get("AGENTOS_APPROVAL_GRANT_TOOL")),
             approval_resumed_kind=_stripped_or_none(env.get("AGENTOS_APPROVAL_RESUMED_KIND")),
+            approval_decision=_stripped_or_none(env.get("AGENTOS_APPROVAL_DECISION")),
             connector_secret_keys=_list_or_none(env.get("AGENTOS_CONNECTOR_SECRET_KEYS")),
             port=_required_int(env.get("AGENTOS_RUNNER_PORT")),
             base_url=_str_or_none(env.get("ANTHROPIC_BASE_URL")),

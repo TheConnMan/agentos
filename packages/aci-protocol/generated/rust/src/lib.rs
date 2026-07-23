@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.5";
+pub const PROTOCOL_VERSION: &str = "0.2.6";
 
 pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
 
@@ -152,6 +152,8 @@ pub struct BootEnv {
     #[serde(default)]
     pub approval_resumed_kind: Option<String>,
     #[serde(default)]
+    pub approval_decision: Option<String>,
+    #[serde(default)]
     pub connector_secret_keys: Option<Vec<String>>,
     #[serde(default)]
     pub port: Option<i64>,
@@ -173,6 +175,7 @@ pub struct BootEnv {
 /// The env key is the contract; the Rust CLI and the chart render-assert
 /// pin against these instead of retyping the literals.
 pub mod env_keys {
+    pub const AGENTOS_APPROVAL_DECISION: &str = "AGENTOS_APPROVAL_DECISION";
     pub const AGENTOS_APPROVAL_GRANT_TOOL: &str = "AGENTOS_APPROVAL_GRANT_TOOL";
     pub const AGENTOS_APPROVAL_REQUIRED_TOOLS: &str = "AGENTOS_APPROVAL_REQUIRED_TOOLS";
     pub const AGENTOS_APPROVAL_RESUMED_KIND: &str = "AGENTOS_APPROVAL_RESUMED_KIND";
