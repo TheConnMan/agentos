@@ -121,3 +121,51 @@ configures and maintains. As an operator you are responsible for:
   tokens, model API keys), and relying on per-agent RBAC scoping to keep them
   isolated.
 - **Running a supported version** and applying security updates promptly.
+
+## Repository security baseline
+
+This documents the supply-chain and merge-control baseline for the public
+repository itself, distinct from the product trust model above. It is the
+reference for what CI enforces in the tree and for the repository settings that
+admins maintain (issue #632).
+
+### Enforced in the tree (CI)
+
+- **Secret scanning on every push and PR, plus a weekly full-history sweep.** The
+  `Secret Scan` workflow runs gitleaks over the entire history; its scanner image
+  is pinned to an immutable digest so this sensitive path cannot change under us.
+- **Dependency vulnerability audits per ecosystem.** The `Dependency Audit`
+  workflow runs `cargo audit` (Rust), `pip-audit` (the uv/Python workspace), and
+  `pnpm audit` (the `apps/ui` JavaScript workspace) as advisory checks.
+- **CodeQL** static analysis over the Python and JavaScript/TypeScript code.
+- **Dependabot** keeps the four ecosystems (GitHub Actions, Cargo, uv, npm)
+  current through grouped weekly PRs (`.github/dependabot.yml`).
+- **Third-party actions and scanner images on sensitive workflows are pinned to
+  immutable revisions** — a commit SHA for actions, a digest for images;
+  first-party `actions/*` are referenced by major-version tag.
+
+### Configured in repository settings (admin-managed)
+
+These live in the repository's GitHub settings rather than the tree and are
+maintained by repository admins:
+
+- **Secret scanning** with non-provider patterns, validity checks, and **push
+  protection** enabled, so a leaked credential is blocked at push time — not just
+  detected after it lands.
+- **Dependabot alerts** and **Dependabot security updates** enabled; the open
+  alert set is triaged (fixed, or dismissed with a recorded reason).
+- **The `main` branch ruleset** requires all required status checks to pass and
+  to be **up to date with `main`** before merge (no stale-green merges), and all
+  **review conversations resolved**. The audit, secret-scan, and CodeQL checks are
+  among the required set.
+
+### Bypass path and auditability
+
+The `main` ruleset applies to everyone, including admins, save an explicit
+bypass-actor list. Only repository or organization admins may bypass it, and only
+to recover from a stuck state — e.g. a required check wedged by infrastructure
+rather than by the change under review. Every bypass is recorded in the
+organization audit log (ruleset-bypass events), and every merge's check state is
+visible on its PR, so a bypass is observable after the fact and is expected to be
+justified in the PR. Routine merges never bypass; the ruleset is the default and
+only path.

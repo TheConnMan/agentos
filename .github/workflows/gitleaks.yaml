@@ -35,10 +35,16 @@ jobs:
           fetch-depth: 0
       # Run gitleaks from its official public image rather than the marketplace
       # action: the action requires a paid GITLEAKS_LICENSE for organization
-      # accounts, while the CLI/image is MIT-licensed and free. `:latest` keeps
-      # the ruleset current, which is the desired behavior for a secret scanner.
+      # accounts, while the CLI/image is MIT-licensed and free. Pinned to an
+      # immutable digest (not the mutable `:latest`) so a compromised or silently
+      # retagged upstream image cannot alter what runs on this sensitive secret-
+      # scanning path (#632); the human-readable version tag rides alongside for
+      # legibility. Dependabot's github-actions ecosystem does not bump an image
+      # ref inside a `run:` step, so bump this by hand when adopting a newer
+      # gitleaks release -- re-resolve the digest with
+      # `docker buildx imagetools inspect ghcr.io/gitleaks/gitleaks:<tag>`.
       - name: Run gitleaks
         run: |
           docker run --rm -v "${{ github.workspace }}:/repo" \
-            ghcr.io/gitleaks/gitleaks:latest \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             detect --source /repo --redact --verbose --exit-code 1
