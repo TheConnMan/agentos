@@ -44,6 +44,11 @@ async function stubBackend(page: Page) {
   );
   await page.route("**/api/observability/metrics/summary*", (route) => route.fulfill(json(200, SUMMARY)));
   await page.route("**/api/langfuse/traces*", (route) => route.fulfill(json(200, [])));
+  // A fresh workspace has no eval runs: the matrix comes back empty, so the
+  // wired Evals view degrades to its honest empty state (no fixture cases).
+  await page.route("**/api/evals/matrix*", (route) =>
+    route.fulfill(json(200, { suite: "default", versions: [], cases: [], rows: [], models: [], model_summaries: [] })),
+  );
   return { agents, posted };
 }
 

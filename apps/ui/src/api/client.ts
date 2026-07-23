@@ -222,6 +222,57 @@ export async function promoteTraceToEvalCase(traceId: string): Promise<EvalCaseO
   return jsonOrThrow<EvalCaseOut>(resp);
 }
 
+// ---- K1: the eval matrix — cases × versions grid + per-model rollup ----
+
+// One cell of the eval matrix: a case's outcome on a version column.
+// `plumbing_ok` means the case ran to completion but no grader judged it (the
+// fake-model tier); it is neither a pass nor a fail and must never read green.
+export type EvalStatus = "pass" | "fail" | "plumbing_ok" | "missing";
+
+export interface EvalCell {
+  version: string;
+  status: EvalStatus;
+  // The model the result was produced under, or null when the run was unlabelled.
+  model: string | null;
+}
+
+export interface EvalMatrixRow {
+  case_id: string;
+  cells: EvalCell[];
+}
+
+// A per-model rollup across the suite. `passed`/`total` exclude non-graded
+// (plumbing) rows, counted separately in `plumbing`; `completed` (⊆ `total`) is
+// the graded rows whose turn actually reached a verdict, so `total > 0` with
+// `completed === 0` is a model that never answered — distinct from a real 0%.
+export interface EvalModelSummary {
+  model: string | null;
+  passed: number;
+  total: number;
+  cost_usd: number | null;
+  plumbing: number;
+  completed: number;
+}
+
+export interface EvalMatrix {
+  suite: string;
+  // Version columns, most-recently-exercised first, capped at the requested N.
+  versions: string[];
+  cases: string[];
+  rows: EvalMatrixRow[];
+  models: (string | null)[];
+  model_summaries: EvalModelSummary[];
+}
+
+// Read the eval matrix for a suite. The matrix is filtered by suite (the real
+// dimension on eval traces); `versions` caps the number of version columns.
+export async function getEvalMatrix(suite: string, versions = 5): Promise<EvalMatrix> {
+  const resp = await fetch(url(`/evals/matrix${query({ suite, versions })}`), {
+    headers: headers(),
+  });
+  return jsonOrThrow<EvalMatrix>(resp);
+}
+
 // ---- observability (OB1): Langfuse-backed metrics + runner-pod log proxy ----
 
 export type MetricKey = "runs" | "latency_p95_ms" | "tokens" | "cost_usd" | "error_rate";
