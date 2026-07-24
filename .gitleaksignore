@@ -18,3 +18,11 @@ b92e955c86e199c23c7ae47697e3949cb6b41a29:apps/ui/src/views/obs/RealMetrics.tsx:g
 be962e4a37f8644539244e2e872937f2fd8371a0:AGENTS.md:curl-auth-user:105
 7279a29e6fd7115bc002d3fed6e73d636e8912d7:AGENTS.md:curl-auth-user:105
 8d6184d608c0bf28e7323e65578bee1e5f077fb5:CLAUDE.md:curl-auth-user:75
+
+# The same documented dev-default keys and the ADR-0079 HMAC prose as swept by
+# the Curie rename in a superseded pre-squash commit. That commit is orphaned
+# from main but remains reachable through PR branches cut before the squash;
+# the full-history scan fetches every branch, so the fingerprints stay
+# allowlisted here. The lines on main carry inline gitleaks:allow markers.
+c8b1ccb28faa51d3ec996d60883fde48a303b0bd:AGENTS.md:curl-auth-user:154
+c8b1ccb28faa51d3ec996d60883fde48a303b0bd:docs/adr/0079-inbound-triggers-as-a-new-event-kind.md:generic-api-key:46
