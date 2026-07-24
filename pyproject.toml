@@ -48,7 +48,7 @@ dev = [
     "agentos-wire-tolerance-gate",
     "agentos-test-support",
     "pytest>=8.3",
-    "ruff>=0.15.22",
+    "ruff>=0.16.0",
     "mypy>=2.3.0",
     "types-PyYAML>=6.0",
     "opentelemetry-sdk>=1.44.0",
