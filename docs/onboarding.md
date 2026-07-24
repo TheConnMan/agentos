@@ -11,7 +11,7 @@ Install the local path tools:
 - `uv`, the Python workspace manager, and Python `3.13`. The workspace requires
   `>=3.13`.
 - Docker with Compose v2, for the dev stack and the local runner container.
-- An `curie` CLI binary. Download, verify, and install the prebuilt binary for
+- A `curie` CLI binary. Download, verify, and install the prebuilt binary for
   your platform by following
   [docs/release-verification.md](release-verification.md#verify-the-cli-before-installing-it).
 

@@ -1,5 +1,5 @@
 {
-  "$id": "https://schemas.curie.dev/runner/otel-attributes/v1.json",
+  "$id": "https://schemas.curietech.ai/runner/otel-attributes/v1.json",
   "schema_version": "v1",
   "keys": {
     "curie.sandbox_id": "str",

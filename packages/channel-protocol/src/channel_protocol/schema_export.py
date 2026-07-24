@@ -16,7 +16,7 @@ from .models import (
     OutboundMessage,
 )
 
-SCHEMA_ID = "https://curie.tech/curie/channel-protocol.schema.json"
+SCHEMA_ID = "https://curietech.ai/schemas/channel-protocol.schema.json"
 _MODELS = (
     ChannelCapabilities,
     OutboundMessage,

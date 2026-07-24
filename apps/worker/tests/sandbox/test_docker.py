@@ -52,7 +52,7 @@ def test_create_claim_argv_carries_boot_env() -> None:
             "CURIE_FAKE_MODEL": "1",
             "CURIE_PLUGIN_DIR": "/bundles/current",
         },
-        labels={"curie.dev/thread-hash": "abc"},
+        labels={"curietech.ai/thread-hash": "abc"},
     )
     argv = client.calls[0]
     joined = " ".join(argv)
@@ -60,8 +60,8 @@ def test_create_claim_argv_carries_boot_env() -> None:
     assert "127.0.0.1::8080" in _flag_values(argv, "-p")
     assert "curie_default" in _flag_values(argv, "--network")
     labels = _flag_values(argv, "--label")
-    assert "curie.dev/managed-by=curie-sandbox-substrate" in labels
-    assert "curie.dev/thread-hash=abc" in labels
+    assert "curietech.ai/managed-by=curie-sandbox-substrate" in labels
+    assert "curietech.ai/thread-hash=abc" in labels
     envs = _flag_values(argv, "-e")
     assert "CURIE_PLUGIN_DIR=/bundles/current" in envs
     assert "CURIE_SANDBOX_ID=thread-abc" in envs

@@ -65,7 +65,7 @@ _REDIRECT_CAPTURE_KEYS = frozenset(
 # declared boot contract since #488) and ``sdk_auth.MODEL_BASE_URL_ENV``.
 #
 # This list is enumeration, not enforcement: the prefix rule is what actually
-# reserves an ``CURIE_`` name, so adding or dropping an entry here is
+# reserves a ``CURIE_`` name, so adding or dropping an entry here is
 # policy-neutral (pinned by test). ``CURIE_AGENT_ID`` was dropped in #488 when
 # its write site went away; it stays reserved via the prefix.
 _CURIE_BOOT_KEYS = frozenset(

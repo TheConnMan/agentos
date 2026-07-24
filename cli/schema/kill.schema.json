@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.curie.dev/cli/kill/v1.json",
+  "$id": "https://schemas.curietech.ai/cli/kill/v1.json",
   "title": "curie <tier> kill --json",
   "description": "The agent-facing payload of `curie <tier> kill <agent>`: the dry-run plan, or the resulting kill state.",
   "$defs": {

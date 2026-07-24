@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.curie.dev/cli/comms/v1.json",
+  "$id": "https://schemas.curietech.ai/cli/comms/v1.json",
   "title": "curie <tier> comms --json",
   "description": "The agent-facing payload of `curie local comms` / `curie cluster comms`: the dry-run plan, or the resulting Slack wiring state.",
   "$defs": {

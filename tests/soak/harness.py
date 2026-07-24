@@ -70,7 +70,7 @@ class SoakConfig:
 def thread_hash(thread_key: str) -> str:
     """The sha256[:10] thread hash the worker stamps on claim names and labels.
 
-    Mirrors ``SubstrateConfig.claim_name_for`` and the ``curie.dev/thread-hash``
+    Mirrors ``SubstrateConfig.claim_name_for`` and the ``curietech.ai/thread-hash``
     label so the soak can select a thread's cluster-side resources by label.
     """
 
@@ -220,7 +220,7 @@ def live_sandboxclaims(cfg: SoakConfig, thread_hash_value: str) -> list[dict[str
         "get",
         "sandboxclaims",
         "-l",
-        f"curie.dev/thread-hash={thread_hash_value}",
+        f"curietech.ai/thread-hash={thread_hash_value}",
         "-o",
         "json",
     )

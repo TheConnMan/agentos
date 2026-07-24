@@ -44,7 +44,7 @@ Pydantic models mirroring the Claude Code shapes:
   matching tool call — exit 0 allows, exit 2 denies (stderr = reason), any other
   non-zero is a non-blocking hook error. Only `PreToolUse` is consumed today;
   other events validate but are not yet wired.
-- `TriggerDeclaration` (the manifest `triggers` field, an Curie extension for
+- `TriggerDeclaration` (the manifest `triggers` field, a Curie extension for
   triggers beyond chat, #273/#270): a list of `{type, ...}`. `type` is `cron`
   (requires a non-empty `schedule` cron expression) or `webhook` (requires a
   non-empty `path`). Declaring triggers in the bundle keeps an agent's full

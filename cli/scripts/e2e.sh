@@ -10,7 +10,7 @@
 # assertion) covers deploying a bundle against a running platform API, so this
 # script no longer does so itself (issue #694).
 #
-# Requirements: docker, an curie-runner image (build per runner/README.md),
+# Requirements: docker, a curie-runner image (build per runner/README.md),
 # and a cargo toolchain (or $CURIE_BIN). Run from anywhere:
 #
 #   bash cli/scripts/e2e.sh

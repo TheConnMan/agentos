@@ -440,7 +440,7 @@ pub async fn build(tag: &str) -> Result<()> {
     }
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `curie build` \
-         from an curie repo checkout -- a release binary pulls the runner image from GHCR \
+         from a curie repo checkout -- a release binary pulls the runner image from GHCR \
          automatically and never needs to build.",
     )?;
     ui.note(&format!(
@@ -470,7 +470,7 @@ pub async fn install(update: bool) -> Result<()> {
     let ui = crate::ui::ui();
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `curie install` \
-         from an curie source checkout -- a release binary has nothing to install.",
+         from a curie source checkout -- a release binary has nothing to install.",
     )?;
 
     // 1. Local config is user-owned. It is gitignored and only created once,
@@ -592,7 +592,7 @@ pub async fn dev_script(rel_path: &str) -> Result<()> {
     let ui = crate::ui::ui();
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `curie dev` \
-         from an curie source checkout -- a release binary has no dev scripts.",
+         from a curie source checkout -- a release binary has no dev scripts.",
     )?;
     let script = root.join(rel_path);
     if !script.is_file() {
@@ -618,7 +618,7 @@ pub async fn dev_script(rel_path: &str) -> Result<()> {
 pub async fn list_agents() -> Result<()> {
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `curie list-agents` \
-         from an curie source checkout.",
+         from a curie source checkout.",
     )?;
     let bundles = crate::discover::discover_bundles(&root.join("agents"))?;
     crate::ui::ui().emit(&ListAgentsOutput {
@@ -680,7 +680,7 @@ impl crate::ui::CliOutput for ListAgentsOutput {
 fn resolve_agent_folder(folder: &str) -> Result<std::path::PathBuf> {
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `curie deploy-local` from \
-         an curie source checkout.",
+         a curie source checkout.",
     )?;
     let agents_root = root.join("agents");
     let dir = agents_root.join(folder);
@@ -762,7 +762,7 @@ pub async fn bump_version(version: &str, dry_run: bool) -> Result<()> {
     }
     let root = find_repo_root().context(
         "runner/Dockerfile not found here or in any parent directory. Run `curie dev \
-         bump-version` from an curie source checkout.",
+         bump-version` from a curie source checkout.",
     )?;
 
     let cargo_path = root.join("cli/Cargo.toml");
@@ -1612,7 +1612,7 @@ fn warn_if_not_cli_managed(
         return;
     }
     ui.warn(&format!(
-        "container '{container}' does not carry the {} label, so it may not be an Curie runner; removing it anyway",
+        "container '{container}' does not carry the {} label, so it may not be a Curie runner; removing it anyway",
         docker::CLI_MANAGED_LABEL
     ));
 }
@@ -4052,7 +4052,7 @@ fn human_env_line(env: &str) -> String {
 /// declared, so calls run without approval" would be flatly false against a runner
 /// booted with that override set.
 fn gates_summary_line(gates: &[(String, String)]) -> String {
-    let unseen = "an CURIE_APPROVAL_REQUIRED_TOOLS override applied at container boot may gate more, and is not visible from the bundle";
+    let unseen = "a CURIE_APPROVAL_REQUIRED_TOOLS override applied at container boot may gate more, and is not visible from the bundle";
     if gates.is_empty() {
         format!("the bundle declares no approval gates ({unseen})")
     } else {

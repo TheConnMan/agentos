@@ -111,7 +111,7 @@ async fn cluster_down_fails_forward_through_real_down() {
     // P1: a no-json human operator sees the resume command in the message itself.
     let shown = err.to_string();
     assert!(
-        shown.contains("curie.dev/created-by=prod-release"),
+        shown.contains("curietech.ai/created-by=prod-release"),
         "the human message must carry the label-scoped resume command: {shown}"
     );
 

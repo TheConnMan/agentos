@@ -13,7 +13,7 @@ The durable workflow-state store shipped under #248: the API state router over
 Postgres JSONB (`/agents/{id}/state/{namespace}/{key}`), with get / put-CAS /
 list / delete / append. Memory (#264) and conversation history (#20) already
 consume it as two fixed namespaces, each through a runner-local loader that
-dereferences an `CURIE_*_REF` URL with a scoped `state` token (ADR-0033).
+dereferences a `CURIE_*_REF` URL with a scoped `state` token (ADR-0033).
 
 What was still missing (#249) is a way for a *bundle skill* to read and write
 general workflow state across a suspend/resume cycle. Without a platform-provided
@@ -38,7 +38,7 @@ data survives the cold-pod suspend/resume of ADR-0003 for free. `memory` and
 fast, legible error, and the API refuses them for the bundle's token server-side
 (below) so the refusal cannot be bypassed by calling the store directly.
 
-**An `CURIE_STATE_URL` / `CURIE_STATE_TOKEN` boot-env pair** for a bundle
+**A `CURIE_STATE_URL` / `CURIE_STATE_TOKEN` boot-env pair** for a bundle
 script that talks to the store directly (a shell or python step, not the model).
 Both are declared `BootEnv` fields (#488, ADR-0049), produced by the worker
 binding per claim under the same closed-world contract that governs every other

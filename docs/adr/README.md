@@ -50,7 +50,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0018 | [Greeting/help pre-model short-circuit in the kernel](0018-greeting-help-pre-model-short-circuit.md) | Accepted |
 | 0019 | [Freeze the eval-case format: one schema, frozen in place under apps/worker](0019-freeze-eval-case-format.md) | Accepted |
 | 0020 | [The message port: a rendering-free channel interface with capability negotiation](0020-message-port-rendering-free-channel-interface.md) | Accepted |
-| 0021 | [Curie is a harness for coding agents: the CLI's primary user is Claude Code](0021-curie-is-a-harness-for-coding-agents.md) | Accepted |
+| 0021 | [Curie is a harness for coding agents: the CLI's primary user is Claude Code](0021-agentos-is-a-harness-for-coding-agents.md) | Accepted |
 | 0022 | [Eval completeness: run the same evals at every tier, grade what actually happened, and promote real traces into cases](0022-eval-completeness-tier-parity-and-trace-promotion.md) | Accepted |
 | 0023 | [Controller NetworkPolicy RBAC: cluster-scope read, namespace-scope mutate](0023-controller-networkpolicy-rbac-cluster-read-namespace-mutate.md) | Accepted |
 | 0024 | [`cluster deploy` reaches the platform API via the UI `/api` proxy](0024-deploy-reaches-api-via-ui-proxy.md) | Accepted |
@@ -102,11 +102,12 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0070 | [A bundle-local `.env` is an opt-in, lowest-priority credential source](0070-bundle-local-dotenv-is-an-opt-in-lowest-priority-credential-source.md) | Accepted |
 | 0071 | [Adopting a pre-plugin bundle scaffolds the skeleton, not the logic](0071-adopting-a-pre-plugin-bundle-scaffolds-the-skeleton-not-the-logic.md) | Accepted |
 | 0072 | [Keep the hand-rolled Rust ACI emitter; typify cannot express the wire contract's runtime semantics](0072-keep-the-hand-rolled-rust-aci-emitter-over-typify.md) | Accepted |
-| 0073 | [The durable state store reaches bundle code as an auto-mounted MCP server, not a bundle-shipped one](0073-curie-state-mcp-server-and-state-boot-env.md) | Accepted |
+| 0073 | [The durable state store reaches bundle code as an auto-mounted MCP server, not a bundle-shipped one](0073-agentos-state-mcp-server-and-state-boot-env.md) | Accepted |
 | 0074 | [Versioned JSON Schemas for every agent-facing CLI result](0074-versioned-json-schemas-for-cli-results.md) | Accepted |
 | 0075 | [The Agent Proxy: credentials and egress leave the sandbox](0075-the-agent-proxy-credential-and-egress-boundary.md) | Draft |
 | 0076 | [A closed, versioned attribute schema for the runner's OTel span stream](0076-closed-typed-telemetry-attribute-schema.md) | Accepted |
 | 0077 | [Skill-tier durable approvals stay unavailable, reported not absent](0077-skill-tier-durable-approvals-stay-unavailable.md) | Accepted |
 | 0078 | [Route message-driven approval cards through the connected Slack transport](0078-approval-cards-over-connected-transport.md) | Accepted |
 | 0079 | [Inbound triggers as a new event kind, ingested by the API](0079-inbound-triggers-as-a-new-event-kind.md) | Proposed |
+| 0080 | [Rename the project to Curie](0080-rename-to-curie.md) | Accepted |
 <!-- END GENERATED: adr-index -->

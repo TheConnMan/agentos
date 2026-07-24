@@ -136,7 +136,7 @@ class FakeSandboxClient:
         self.claims[name] = FakeClaim(
             name=name,
             env=dict(env or {}),
-            labels={"curie.dev/managed-by": "curie-sandbox-substrate", **(labels or {})},
+            labels={"curietech.ai/managed-by": "curie-sandbox-substrate", **(labels or {})},
             sandbox_name=sandbox_name,
             ready=self.bind_ready,
         )

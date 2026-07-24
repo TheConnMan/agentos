@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.curie.dev/cli/cluster-up/v1.json",
+  "$id": "https://schemas.curietech.ai/cli/cluster-up/v1.json",
   "title": "curie cluster up --json",
   "description": "The agent-facing payload of `curie cluster up`: the dry-run plan, or the installed release's namespace and name.",
   "$defs": {

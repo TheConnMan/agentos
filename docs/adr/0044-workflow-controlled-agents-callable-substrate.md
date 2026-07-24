@@ -73,7 +73,7 @@ Three integration shapes fall out of these facts:
   framework-authored workflow — one control plane across a heterogeneous fleet.
 - **C — inverted (callable step).** The developer's deterministic workflow is the
   *outer* loop; at each open-ended-AI or gated-side-effect step, a node/task calls
-  *into* an Curie sandbox to run a model-controlled turn as one unit of work.
+  *into* a Curie sandbox to run a model-controlled turn as one unit of work.
 
 Prior decisions frame this:
 

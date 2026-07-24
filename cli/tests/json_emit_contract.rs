@@ -1093,7 +1093,7 @@ fn cluster_down_failforward_error_is_transient_with_resume_fix() {
     // The resume command an incomplete teardown surfaces: only the outstanding
     // steps, label-scoped per #707 (the ownership-scope invariant).
     let resume =
-        "kubectl delete namespace -l curie.dev/created-by=prod-release --ignore-not-found";
+        "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found";
     let err: anyhow::Error =
         CliError::transient("cluster teardown could not complete; the API server was unreachable")
             .with_fix(resume)
@@ -1108,7 +1108,7 @@ fn cluster_down_failforward_error_is_transient_with_resume_fix() {
     // The fix carries the exact resume command, and it stays label-scoped.
     let fix = fix.expect("a fail-forward teardown error carries a resume command in fix");
     assert!(
-        fix.contains("curie.dev/created-by="),
+        fix.contains("curietech.ai/created-by="),
         "fix must carry the label-scoped resume command: {fix}"
     );
 
@@ -1120,7 +1120,7 @@ fn cluster_down_failforward_error_is_transient_with_resume_fix() {
         json["fix"]
             .as_str()
             .unwrap()
-            .contains("curie.dev/created-by="),
+            .contains("curietech.ai/created-by="),
         "fix names the label-scoped resume command: {}",
         json["fix"]
     );

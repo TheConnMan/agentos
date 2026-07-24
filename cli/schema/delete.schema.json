@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.curie.dev/cli/delete/v1.json",
+  "$id": "https://schemas.curietech.ai/cli/delete/v1.json",
   "title": "curie <tier> delete --json",
   "description": "The agent-facing payload of `curie <tier> delete <agent>`: the dry-run plan, or the deleted agent's name.",
   "$defs": {

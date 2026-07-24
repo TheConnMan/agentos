@@ -458,7 +458,7 @@ fn count_removed(rm_stdout: &str) -> usize {
 }
 
 /// The label that worker-local stamps on every runner container it spawns.
-pub const SANDBOX_LABEL: &str = "curie.dev/managed-by=curie-sandbox-substrate";
+pub const SANDBOX_LABEL: &str = "curietech.ai/managed-by=curie-sandbox-substrate";
 
 /// The runner image's short name (the dev/local tag, and the base of the GHCR
 /// release ref). One definition (#497) instead of the literal scattered across
@@ -473,10 +473,10 @@ pub const RUNNER_CONTAINER_LOCAL: &str = "curie-runner-local";
 /// identifiable as ours. Distinct from [`SANDBOX_LABEL`] on purpose: that one is
 /// the worker substrate's and drives `local down`'s reap set, which this must
 /// not widen.
-pub const CLI_MANAGED_LABEL: &str = "curie.dev/managed-by=curie-cli";
+pub const CLI_MANAGED_LABEL: &str = "curietech.ai/managed-by=curie-cli";
 
 /// The component label on CLI-booted runner containers (#747).
-pub const RUNNER_COMPONENT_LABEL: &str = "curie.dev/component=runner";
+pub const RUNNER_COMPONENT_LABEL: &str = "curietech.ai/component=runner";
 
 /// The key and value halves of [`CLI_MANAGED_LABEL`]. Split from the one
 /// declaration rather than restated, so the `--format` read below cannot drift
@@ -787,7 +787,7 @@ mod tests {
         let joined =
             ollama_run_args("curie-ollama", "curie-net", "ollama/ollama:0.24.0").join(" ");
         assert!(
-            joined.contains("--label curie.dev/managed-by=curie-cli"),
+            joined.contains("--label curietech.ai/managed-by=curie-cli"),
             "{joined}"
         );
         // Still outside the worker substrate's reap set.
@@ -837,11 +837,11 @@ mod tests {
         // CLI-booted runners are identifiable as ours (#747)...
         let joined = spec().run_args().join(" ");
         assert!(
-            joined.contains("--label curie.dev/managed-by=curie-cli"),
+            joined.contains("--label curietech.ai/managed-by=curie-cli"),
             "{joined}"
         );
         assert!(
-            joined.contains("--label curie.dev/component=runner"),
+            joined.contains("--label curietech.ai/component=runner"),
             "{joined}"
         );
         // ...without joining the worker substrate's reap set, which `local down`

@@ -522,7 +522,7 @@ def test_resolve_sdk_env_default_env_key_path_unchanged() -> None:
 # state tokens (ADR-0033) the runner authenticates to the state API with. Naming
 # one of those as a credential source under a base-URL override would forward it
 # to a third-party endpoint as x-api-key -- a secret-exfiltration primitive. The
-# platform's own boot vars are never a model credential, so an CURIE_-prefixed
+# platform's own boot vars are never a model credential, so a CURIE_-prefixed
 # target is either a mistake or an attack, and the runner refuses either way.
 # CURIE_CREDENTIALS is the one exception: it IS the canonical credential name.
 # The existing reserved_env fence guards the name a connector secret may DECLARE;

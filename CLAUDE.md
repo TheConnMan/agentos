@@ -5,7 +5,7 @@ See [AGENTS.md](AGENTS.md) - the agent instructions for this repo live there.
 Dev and operator flows go through the `curie` CLI, not loose shell scripts or
 bare tool invocations. When you would otherwise add a `./scripts/foo.sh`, tell
 someone to run a raw `docker`/`helm`/`uv`/`pnpm` command, or document a
-multi-step setup, add or extend an `curie` subcommand instead — a single,
+multi-step setup, add or extend a `curie` subcommand instead — a single,
 discoverable surface beats a scatter of scripts. The script or tool call can
 stay the *implementation*; it just isn't the interface.
 
@@ -15,7 +15,7 @@ stay the *implementation*; it just isn't the interface.
 - Contributor/CI scripts (contract codegen, chart render-asserts, the e2e round-trip) → `curie dev <...>`. The `dev` namespace fences off commands that need a **source checkout + dev toolchains**; they error clearly when run from a released binary.
 - Operator/product commands stay top-level: `init`, `build`, `skill`, `local`, `cluster`.
 
-New tooling ships as an `curie` subcommand (add the clap surface in
+New tooling ships as a `curie` subcommand (add the clap surface in
 `cli/src/main.rs`, the handler in `cli/src/commands.rs`); a new loose script in
 `scripts/` should be the exception with a reason, not the default.
 

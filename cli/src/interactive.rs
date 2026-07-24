@@ -744,7 +744,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
         Tier::Cluster => "deployed release: cluster deploy -> cluster comms --slack.",
     };
     intro.push(format!(
-        "This connects an Curie agent to a real Slack workspace through the {flow}"
+        "This connects a Curie agent to a real Slack workspace through the {flow}"
     ));
     if tier == Tier::Cluster {
         intro.push("Requires an installed release (curie cluster up) with a model credential.");

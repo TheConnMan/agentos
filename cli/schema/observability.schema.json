@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.curie.dev/cli/observability/v1.json",
+  "$id": "https://schemas.curietech.ai/cli/observability/v1.json",
   "title": "curie local|cluster observability --json",
   "description": "The agent-facing payload of `curie local observability --json` and `curie cluster observability --json`. Exactly one of two shapes is emitted per invocation: the resolved observability surfaces, or (cluster tier only) a `--dry-run` descriptor of the discovery commands a real run would execute.",
   "oneOf": [

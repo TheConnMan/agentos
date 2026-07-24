@@ -18,9 +18,9 @@ from typing import Literal, Protocol
 # Substrate-neutral labels: every backend tags its managed objects with these
 # (the Kubernetes adapter on claims, the Docker adapter on containers), so they
 # live here rather than in either concrete adapter.
-MANAGED_BY_LABEL = "curie.dev/managed-by"
+MANAGED_BY_LABEL = "curietech.ai/managed-by"
 MANAGED_BY_VALUE = "curie-sandbox-substrate"
-THREAD_HASH_LABEL = "curie.dev/thread-hash"
+THREAD_HASH_LABEL = "curietech.ai/thread-hash"
 
 
 class RouteState(StrEnum):

@@ -198,7 +198,7 @@ def parse_env_keys(raw: str) -> tuple[str, ...]:
     wrong shape (a non-string array member, a mapping, a bare number) and a list
     that reduces to nothing are config errors, raised loudly.
 
-    An ``CURIE_``-prefixed target is refused (``CURIE_CREDENTIALS``, the
+    A ``CURIE_``-prefixed target is refused (``CURIE_CREDENTIALS``, the
     canonical credential name, excepted). The runner boot env is shared: it also
     carries the platform's own scoped state tokens (ADR-0033) and the agent's
     connector secrets. Naming one of those as a credential source under a

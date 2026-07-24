@@ -38,7 +38,7 @@ visible.
 1. **Every agent-facing `--json` result maps to a committed JSON Schema with an
    explicit version identity.** Schemas live in `cli/schema/*.schema.json`. Each
    carries a versioned `$id` whose last path segment is `vN` (e.g.
-   `https://schemas.curie.dev/cli/kill/v1.json`); that `N` is the schema's
+   `https://schemas.curietech.ai/cli/kill/v1.json`); that `N` is the schema's
    version identity. Several results may map to one schema (all `message`
    variants share `message.schema.json`; every `--dry-run` plan is the
    `dry-run.schema.json` shape, embedded as one branch of each family's schema).

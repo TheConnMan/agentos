@@ -114,7 +114,7 @@ fn every_committed_schema_compiles_and_declares_a_version() {
 #[test]
 fn version_from_id_parses_the_v_segment() {
     assert_eq!(
-        version_from_id("https://schemas.curie.dev/cli/kill/v1.json"),
+        version_from_id("https://schemas.curietech.ai/cli/kill/v1.json"),
         Some(1)
     );
     assert_eq!(version_from_id(".../foo/v12.json"), Some(12));

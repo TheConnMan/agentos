@@ -1052,7 +1052,7 @@ pub(crate) fn nodes_cmd() -> OpsCommand {
 /// `helm uninstall` then a namespace sweep of only the namespaces THIS release
 /// created (runtime sandboxes, PVCs and job pods Helm does not own). #707: the
 /// sweep is scoped by the release ownership label `up` stamped
-/// (`curie.dev/created-by=<release>`) rather than a hardcoded namespace pair,
+/// (`curietech.ai/created-by=<release>`) rather than a hardcoded namespace pair,
 /// so a pre-existing (unlabeled) namespace is never deleted. `--ignore-not-found`
 /// keeps a partial teardown re-runnable and the label selector tolerates zero
 /// matches. CRDs are never targeted (retention is by-construction).
@@ -1073,7 +1073,7 @@ pub fn down_commands(o: &CommonOpts) -> Vec<OpsCommand> {
                 plain("delete"),
                 plain("namespace"),
                 plain("-l"),
-                plain(format!("curie.dev/created-by={}", o.release)),
+                plain(format!("curietech.ai/created-by={}", o.release)),
                 plain("--ignore-not-found"),
             ],
         ),
@@ -1343,7 +1343,7 @@ fn ownership_label_commands(o: &CommonOpts, namespace_existed: bool) -> Vec<OpsC
             plain("label"),
             plain("namespace"),
             plain(&o.namespace),
-            plain(format!("curie.dev/created-by={}", o.release)),
+            plain(format!("curietech.ai/created-by={}", o.release)),
             plain("--overwrite"),
         ],
     )]
@@ -1886,12 +1886,12 @@ pub async fn down(opts: DownOpts) -> Result<ClusterDownOutput> {
         }));
     }
     ui.warn(&format!(
-        "this uninstalls release '{0}' and deletes the namespaces it created (labeled curie.dev/created-by={0}), leaving any pre-existing namespaces untouched",
+        "this uninstalls release '{0}' and deletes the namespaces it created (labeled curietech.ai/created-by={0}), leaving any pre-existing namespaces untouched",
         opts.common.release
     ));
     if !opts.yes
         && !confirm(&format!(
-            "This uninstalls release '{0}' and deletes the namespaces it created (labeled curie.dev/created-by={0}). Continue? [y/N] ",
+            "This uninstalls release '{0}' and deletes the namespaces it created (labeled curietech.ai/created-by={0}). Continue? [y/N] ",
             opts.common.release
         ))?
     {
@@ -3384,7 +3384,7 @@ mod tests {
         // Label-selector-scoped delete keyed on THIS release's ownership label.
         assert_eq!(
             sweep,
-            "kubectl delete namespace -l curie.dev/created-by=prod-release --ignore-not-found"
+            "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found"
         );
         // Negative case: the pre-existing shared namespace is no longer an
         // unconditional delete target (that would strand pre-existing state).
@@ -3428,7 +3428,7 @@ mod tests {
         // namespace arg is the namespace; the label VALUE is the release.
         assert_eq!(
             cmds[0].display(),
-            "kubectl label namespace agent-ns curie.dev/created-by=prod-release --overwrite"
+            "kubectl label namespace agent-ns curietech.ai/created-by=prod-release --overwrite"
         );
     }
 
@@ -3518,11 +3518,11 @@ mod tests {
         let cmd = resume_command(&[TeardownStep::NamespaceSweep], &o);
         assert_eq!(
             cmd,
-            "kubectl delete namespace -l curie.dev/created-by=prod-release --ignore-not-found"
+            "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found"
         );
         // #707 ownership-scope invariant: the sweep stays keyed on THIS release's
         // label and is never widened to an unconditional namespace delete.
-        assert!(cmd.contains("curie.dev/created-by=prod-release"), "{cmd}");
+        assert!(cmd.contains("curietech.ai/created-by=prod-release"), "{cmd}");
         assert!(
             !cmd.contains("delete namespace prod-release"),
             "must never be an unscoped delete: {cmd}"
@@ -3555,7 +3555,7 @@ mod tests {
         );
         let helm_cmd = "helm uninstall prod-release -n agent-ns";
         let sweep_cmd =
-            "kubectl delete namespace -l curie.dev/created-by=prod-release --ignore-not-found";
+            "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found";
         assert_eq!(
             cmd,
             format!(
@@ -3586,7 +3586,7 @@ mod tests {
             "the resume line's own exit status must aggregate both captured statuses: {cmd}"
         );
         // The sweep half stays label-scoped even when combined with helm.
-        assert!(cmd.contains("curie.dev/created-by=prod-release"), "{cmd}");
+        assert!(cmd.contains("curietech.ai/created-by=prod-release"), "{cmd}");
         assert!(cmd.contains("--ignore-not-found"), "{cmd}");
     }
 
@@ -3793,14 +3793,14 @@ mod tests {
         // P1: the resume command is IN the human Display message, not only the fix.
         let shown = err.to_string();
         assert!(
-            shown.contains("curie.dev/created-by=prod-release"),
+            shown.contains("curietech.ai/created-by=prod-release"),
             "the human message must carry the label-scoped resume command: {shown}"
         );
 
         // --json path: the fix carries the same label-scoped resume command.
         let fix = fix.expect("a fail-forward teardown carries a resume command");
         assert!(
-            fix.contains("curie.dev/created-by=prod-release"),
+            fix.contains("curietech.ai/created-by=prod-release"),
             "fix must carry the label-scoped resume command: {fix}"
         );
     }
@@ -3932,7 +3932,7 @@ mod tests {
         // Fail-forward still surfaces the resume command in message and fix.
         let shown = err.to_string();
         assert!(
-            shown.contains("curie.dev/created-by=prod-release"),
+            shown.contains("curietech.ai/created-by=prod-release"),
             "even a permanent failure surfaces the label-scoped resume command: {shown}"
         );
         // Codex P2: the permanent-failure message must surface the underlying
@@ -3943,7 +3943,7 @@ mod tests {
             "the permanent-failure message must surface the underlying stderr reason: {shown}"
         );
         let fix = fix.expect("a fail-forward teardown carries a resume command");
-        assert!(fix.contains("curie.dev/created-by=prod-release"), "{fix}");
+        assert!(fix.contains("curietech.ai/created-by=prod-release"), "{fix}");
     }
 
     // Codex P2: in a MIXED failure the surfaced reason must be the failure that

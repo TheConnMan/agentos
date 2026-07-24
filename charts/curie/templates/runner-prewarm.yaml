@@ -43,7 +43,7 @@ spec:
         # Rolls the prewarm pods on every `helm upgrade` so imagePullPolicy Always
         # re-pulls a churned `latest` (a digest-only change does not otherwise
         # alter the pod spec). See the file header.
-        curie.dev/prewarm-revision: {{ .Release.Revision | quote }}
+        curietech.ai/prewarm-revision: {{ .Release.Revision | quote }}
     spec:
       {{- with $runner.imagePullSecrets }}
       imagePullSecrets:

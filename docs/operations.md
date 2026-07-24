@@ -85,7 +85,7 @@ installed by the chart's preflights; see `charts/curie/README.md`).
   deployed UI proxies `/api/` there).
 - `curie cluster down` uninstalls the release and deletes only the namespaces
   this release created, identified by the ownership label `up` stamped on them
-  (`curie.dev/created-by=<release>`); pre-existing (unlabeled) namespaces and
+  (`curietech.ai/created-by=<release>`); pre-existing (unlabeled) namespaces and
   the `agents.x-k8s.io` CRDs are left untouched. It prompts before deleting
   unless `--yes` is passed. If `helm uninstall` fails (for example a transient
   API-server blip), teardown does not abort: the ownership-scoped namespace

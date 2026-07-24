@@ -14,7 +14,7 @@ that each emitted value's runtime type matches what was committed.
 Regenerate the committed file after a deliberate schema change by running, from
 the repo root: import ``json``, ``SCHEMA_VERSION``, ``SpanAttributeKey``, and
 ``SPAN_ATTRIBUTE_VALUE_TYPES`` from ``curie_runner.otel``, then write
-``{"$id": "https://schemas.curie.dev/runner/otel-attributes/v1.json",
+``{"$id": "https://schemas.curietech.ai/runner/otel-attributes/v1.json",
 "schema_version": SCHEMA_VERSION, "keys": {member.value:
 SPAN_ATTRIBUTE_VALUE_TYPES[member] for member in sorted(SpanAttributeKey,
 key=lambda m: m.value)}}`` as indented JSON to

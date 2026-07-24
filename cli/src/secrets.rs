@@ -13,7 +13,7 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "dev.curie.curie";
+const SERVICE: &str = "ai.curietech.curie";
 const VAULT_ACCOUNT: &str = "curie:global:vault";
 
 #[derive(Clone, Debug)]

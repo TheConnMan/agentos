@@ -14,7 +14,7 @@ from .models import EvalCase, EvalSuite, Grader
 
 _MODELS = (EvalSuite, EvalCase, Grader)
 
-SCHEMA_ID = "https://curie.tech/curie/eval-cases.schema.json"
+SCHEMA_ID = "https://curietech.ai/schemas/eval-cases.schema.json"
 
 
 def schema_path() -> Path:

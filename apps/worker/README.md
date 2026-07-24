@@ -398,7 +398,7 @@ Contract notes the kernel must know:
   not reintroduce a frame-captured resume id.
 - **Reaping.** `release()` deletes the claim (the claim owns its sandbox and
   pod). Routes that expire in Valkey leave orphaned claims; `reap_orphans()`
-  lists claims labeled `curie.dev/managed-by=curie-sandbox-substrate` and
+  lists claims labeled `curietech.ai/managed-by=curie-sandbox-substrate` and
   deletes any not referenced by a live route. Run it on a periodic worker tick.
 - The client seam (`SandboxClient` protocol) is sync; wrap calls in a thread if
   the kernel goes async. Unit tests fake only this protocol (the K8s control

@@ -601,7 +601,7 @@ The scripted E2E (real runner container, fake model by default, offline):
 bash cli/scripts/e2e.sh
 ```
 
-Requires an `curie-runner` image (`docker build -f runner/Dockerfile -t
+Requires a `curie-runner` image (`docker build -f runner/Dockerfile -t
 curie-runner .` from the repo root) and a cargo toolchain, unless
 `CURIE_BIN` points at a prebuilt binary (skips the `cargo build --release`).
 `CURIE_E2E_LIVE=1` drops `--fake-model` and runs the skill rung against a

@@ -46,7 +46,7 @@ with `name`/`description` required and `allowed_tools` aliased to the verbatim `
 (remote). A second consumer must accept exactly these shapes.
 
 The seam is bidirectional, and both directions are contracts. **Inbound**, leniency means any
-bundle written for Claude Code validates here unchanged. **Outbound**, an Curie bundle must
+bundle written for Claude Code validates here unchanged. **Outbound**, a Curie bundle must
 validate unmodified as a Claude Code plugin — that direction is what makes the shape a
 distribution wedge rather than a lookalike. The gate that defends it is
 `scripts/check-plugin-compat.sh` (run it as `curie dev plugin-compat`), which discovers every

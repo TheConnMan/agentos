@@ -17,7 +17,7 @@
 # installed; the ladder never installs or uninstalls one.
 #
 # What it is NOT: it is not a compose test and not a helm test. Every step goes
-# through an `curie` verb, because the point is to catch a tier whose verb
+# through a `curie` verb, because the point is to catch a tier whose verb
 # drifted from its sibling. The one raw-docker use is the post-teardown
 # assertion that nothing curie-related survived.
 #
@@ -86,7 +86,7 @@ LOCAL_STACK_OWNED=0
 # (cli/src/docker.rs SANDBOX_LABEL, apps/worker sandbox/types.py). Container
 # NAMES are per-thread (curie-thread-<digest>-<nonce>), so a name filter
 # matches nothing; the label is the only handle that actually selects them.
-SANDBOX_LABEL="curie.dev/managed-by=curie-sandbox-substrate"
+SANDBOX_LABEL="curietech.ai/managed-by=curie-sandbox-substrate"
 
 # The leftover-runner case (#747) stands in a container of its own. The name is
 # unique to this run and is NEVER curie-runner-local: that default belongs to

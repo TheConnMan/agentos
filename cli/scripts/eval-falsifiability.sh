@@ -17,7 +17,7 @@
 # only ever say "all done", so those exemplars cannot be expressed through this
 # real path. Together the two halves are the gate.
 #
-# Requirements: docker + an curie-runner image (built by CI, or `curie build`
+# Requirements: docker + a curie-runner image (built by CI, or `curie build`
 # locally). The CLI binary is reused from $CURIE_BIN if set+executable, else
 # built with cargo. Run from anywhere:
 #

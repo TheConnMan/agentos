@@ -252,7 +252,7 @@ fn every_command_the_primer_prints_exists_in_the_cli_surface() {
         let cmd = rung["command"].as_str().expect("rung command is a string");
         assert!(
             cmd.starts_with("curie "),
-            "rung command `{cmd}` is not an curie invocation"
+            "rung command `{cmd}` is not a curie invocation"
         );
         match surface.resolve(cmd) {
             Ok(Some(_)) => {}

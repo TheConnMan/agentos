@@ -123,7 +123,7 @@ class _FakeK8s:
         self.claims[name] = _FakeClaim(
             name=name,
             sandbox_name=f"sbx-{name}",
-            labels={"curie.dev/managed-by": "curie-sandbox-substrate", **(labels or {})},
+            labels={"curietech.ai/managed-by": "curie-sandbox-substrate", **(labels or {})},
             env=dict(env or {}),
         )
 

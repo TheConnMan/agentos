@@ -5,7 +5,7 @@
 #
 #   1. Each `agentSandbox.connectorSecrets.<agent>` entry renders its OWN Opaque
 #      Secret named <fullname>-agent-<agent>-connector-secrets, labelled
-#      curie.dev/agent=<agent>, carrying that agent's named values.
+#      curietech.ai/agent=<agent>, carrying that agent's named values.
 #   2. Those values are NOT merged into the shared chart Secret
 #      (<fullname>) -- one agent's connector token must not be readable by every
 #      component.
@@ -36,8 +36,8 @@ per_agent="$(printf '%s' "$rendered" | awk '
 
 printf '%s' "$per_agent" | grep -q "name: curie-agent-github-issues-connector-secrets" \
   || fail "per-agent Secret 'curie-agent-github-issues-connector-secrets' did not render"
-printf '%s' "$per_agent" | grep -q 'curie.dev/agent: "github-issues"' \
-  || fail "per-agent Secret missing the curie.dev/agent label"
+printf '%s' "$per_agent" | grep -q 'curietech.ai/agent: "github-issues"' \
+  || fail "per-agent Secret missing the curietech.ai/agent label"
 printf '%s' "$per_agent" | grep -q 'GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_assert"' \
   || fail "per-agent Secret missing the connector value"
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.curie.dev/cli/deploy/v1.json",
+  "$id": "https://schemas.curietech.ai/cli/deploy/v1.json",
   "title": "curie <tier> deploy --json",
   "description": "The agent-facing payload of `curie local deploy` / `curie cluster deploy`: the deployed agent, version, channel, bundle, and deployment summary.",
   "type": "object",
