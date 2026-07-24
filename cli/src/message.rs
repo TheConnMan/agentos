@@ -474,6 +474,7 @@ pub fn dry_run_lines(opts: &MessageOpts, advertise_host: &str) -> Vec<String> {
          on stream {}",
         opts.stream
     ));
+    lines.push(connected_transport_dry_run_note());
     lines
 }
 
@@ -860,6 +861,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             format!("stub advertised at {reply_endpoint}"),
             channel_line,
             format!("enqueue a synthetic QueuedTurn on stream {}", opts.stream),
+            connected_transport_dry_run_note(),
         ];
         ui.emit(&MessageDryRunOutput {
             target: "local",
@@ -873,6 +875,35 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 
     // Connect Valkey up front so a down stack fails fast, before the stub binds.
     let mut conn = connect(&valkey_url).await?;
+
+    // Connected-transport path (#770/ADR-0078): when a real workspace is wired up
+    // (`local comms --slack` set a genuine bot token, not the `xoxb-dev` stub
+    // sentinel), post a real placeholder and enqueue against its ts with no
+    // per-turn endpoint so the reply and any approval card ride that transport.
+    // Resolving the channel first keeps the behavior identical to the stub path.
+    if let Some(bot_token) = local_connected_bot_token() {
+        let channel = match opts.channel.as_deref() {
+            Some(channel) => channel.to_string(),
+            None => {
+                let api = ApiClient::new(&api_base, &opts.api_key)?;
+                let agents = api.list_agents().await.with_context(|| {
+                    format!("listing agents via {api_base} (is `curie local up` running?)")
+                })?;
+                select_channel(&agents, None)?
+            }
+        };
+        ui.note(&format!(
+            "routing to channel {channel} over the connected Slack transport"
+        ));
+        return enqueue_over_connected_transport(
+            &opts,
+            &mut conn,
+            TurnVerb::Local,
+            &channel,
+            &bot_token,
+        )
+        .await;
+    }
 
     // Bind the stub and advertise the reply endpoint so the compose worker can
     // reach it. Native-Linux host networking shares the host loopback, so bind
@@ -1320,6 +1351,98 @@ async fn resume_after_approval(
 }
 
 /// The shared target noun message handler.
+/// The local stub's sentinel bot token (`comms::LOCAL_SLACK_STUB_BOT_TOKEN`).
+/// `local comms --disconnect` restores this value, so seeing it means the compose
+/// dispatcher is wired to the local stub -- NOT a real workspace.
+const LOCAL_STUB_BOT_TOKEN: &str = "xoxb-dev";
+
+/// The workspace bot token that means "a real Slack workspace is connected" at
+/// local tier, or `None` when this is the stub/disconnected setup. Candidates are
+/// tried in precedence order (`CURIE_SLACK_BOT_TOKEN`, `SLACK_BOT_TOKEN`, the
+/// persisted secret); the first CONFIGURED one decides, and if that is the stub
+/// sentinel the answer is "not connected" rather than falling through to a
+/// staler value -- the effective config wins, so a deliberate `--disconnect`
+/// is never overridden by a leftover persisted token. Pure, so the precedence
+/// and the sentinel rejection are unit-testable without env or a secrets store.
+fn connected_local_bot_token(candidates: [Option<String>; 3]) -> Option<String> {
+    let configured = candidates
+        .into_iter()
+        .flatten()
+        .map(|token| token.trim().to_string())
+        .find(|token| !token.is_empty())?;
+    (configured != LOCAL_STUB_BOT_TOKEN).then_some(configured)
+}
+
+/// Process-level wrapper over [`connected_local_bot_token`] reading the real env
+/// and the persisted secret store (#749). A secrets-store read failure is treated
+/// as "absent" rather than fatal: it only means we fall back to the stub path.
+fn local_connected_bot_token() -> Option<String> {
+    let env_var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    connected_local_bot_token([
+        env_var("CURIE_SLACK_BOT_TOKEN"),
+        env_var("SLACK_BOT_TOKEN"),
+        crate::secrets::get_value("SLACK_BOT_TOKEN").ok().flatten(),
+    ])
+}
+
+/// The human dry-run line noting that a connected workspace changes the plan
+/// (#770/ADR-0078). `--dry-run` never touches the network, so it cannot probe for
+/// a dispatcher; it states the conditional instead of guessing.
+fn connected_transport_dry_run_note() -> String {
+    "if a Slack workspace is connected, the plan changes: no stub is bound -- \
+     the CLI posts a real placeholder to the channel over the workspace bot token \
+     and enqueues against its ts with no per-turn endpoint, so the reply and any \
+     approval card ride the connected transport"
+        .to_string()
+}
+
+/// Post a real placeholder over the connected transport and enqueue the turn
+/// against its ts with NO per-turn endpoint (#770/ADR-0078), then report where the
+/// reply will land. Shared by both tiers: the caller supplies an open Valkey
+/// connection, the resolved channel, and the workspace bot token.
+///
+/// Because the placeholder is a real Slack message, the worker edits it in place
+/// and the requesting-channel approval card threads under it on the EXISTING
+/// kernel/sink paths -- no per-turn endpoint means the turn rides the worker's
+/// default (connected) transport, exactly like a real mention.
+async fn enqueue_over_connected_transport(
+    opts: &MessageOpts,
+    conn: &mut MultiplexedConnection,
+    verb: TurnVerb,
+    channel: &str,
+    bot_token: &str,
+) -> Result<()> {
+    let ui = crate::ui::ui();
+    let (channel, thread_ts, _synthetic_placeholder) =
+        resolve_targets(Some(channel), opts.thread.as_deref());
+
+    let placeholder_ts = crate::slack::post_placeholder(bot_token, &channel, "\u{2026}")
+        .await
+        .context("posting the placeholder to the connected Slack workspace")?;
+
+    let event = synthetic_turn(
+        &channel,
+        &opts.user,
+        &opts.text,
+        &thread_ts,
+        &placeholder_ts,
+        None,
+    );
+    let stream_id = xadd(conn, &opts.stream, &event).await?;
+    ui.note(&format!(
+        "enqueued {} on {} as {stream_id}",
+        event.event_id, opts.stream
+    ));
+
+    // The reply, approval card, and any resumed reply land in Slack, not here.
+    persist_and_hint(opts, verb, &channel, &thread_ts);
+    ui.emit(&MessageOutcomeOutput::Enqueued {
+        channel,
+        thread: thread_ts,
+    });
+    Ok(())
+}
+
 /// Resolve the target channel (and the sole-agent hint for resolve messages) for
 /// a cluster turn: an explicit `--channel`, else the sole deployed agent via a
 /// short-lived API port-forward (dropped once the lookup returns). Shared by the
@@ -1384,9 +1507,9 @@ async fn message_connected(opts: MessageOpts) -> Result<()> {
         "routing to channel {channel} over the connected Slack transport"
     ));
 
-    // Bot token: explicit AGENTOS_SLACK_BOT_TOKEN override, else the release
+    // Bot token: explicit CURIE_SLACK_BOT_TOKEN override, else the release
     // Secret. Never printed; used only to post the placeholder.
-    let bot_token = match std::env::var("AGENTOS_SLACK_BOT_TOKEN")
+    let bot_token = match std::env::var("CURIE_SLACK_BOT_TOKEN")
         .ok()
         .filter(|value| !value.is_empty())
     {
@@ -1394,41 +1517,13 @@ async fn message_connected(opts: MessageOpts) -> Result<()> {
         None => crate::ops::discover_slack_bot_token(&opts.namespace, &opts.release).await?,
     };
 
-    let (channel, thread_ts, _synthetic) = resolve_targets(Some(&channel), opts.thread.as_deref());
-
-    // Post the real placeholder the worker edits in place; its ts anchors the
-    // turn (the approval card threads under it). No per-turn endpoint => the turn
-    // rides the worker's default (connected) transport, like a real mention.
-    let placeholder_ts = crate::slack::post_placeholder(&bot_token, &channel, "\u{2026}")
-        .await
-        .context("posting the placeholder to the connected Slack workspace")?;
-
     let valkey_url = format!(
         "redis://:{}@localhost:{}",
         opts.valkey_password, opts.valkey_local_port
     );
     let mut conn = connect(&valkey_url).await?;
-    let event = synthetic_turn(
-        &channel,
-        &opts.user,
-        &opts.text,
-        &thread_ts,
-        &placeholder_ts,
-        None,
-    );
-    let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
-    ui.note(&format!(
-        "enqueued {} on {} as {stream_id}",
-        event.event_id, opts.stream
-    ));
-
-    // The reply, approval card, and any resumed reply land in Slack, not here.
-    persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
-    ui.emit(&MessageOutcomeOutput::Enqueued {
-        channel,
-        thread: thread_ts,
-    });
-    Ok(())
+    enqueue_over_connected_transport(&opts, &mut conn, TurnVerb::Cluster, &channel, &bot_token)
+        .await
 }
 
 pub async fn message(opts: MessageOpts) -> Result<()> {
@@ -2974,6 +3069,57 @@ mod tests {
         assert_eq!(
             resolve_local_stub_binding(Some(String::new()), true),
             resolve_local_stub_binding(None, true),
+        );
+    }
+
+    #[test]
+    fn connected_local_bot_token_precedence_and_stub_sentinel() {
+        let t = |s: &str| Some(s.to_string());
+        // Precedence: CURIE_ override, then SLACK_BOT_TOKEN, then the secret.
+        assert_eq!(
+            connected_local_bot_token([t("xoxb-a"), t("xoxb-b"), t("xoxb-c")]).as_deref(),
+            Some("xoxb-a")
+        );
+        assert_eq!(
+            connected_local_bot_token([None, t("xoxb-b"), t("xoxb-c")]).as_deref(),
+            Some("xoxb-b")
+        );
+        assert_eq!(
+            connected_local_bot_token([None, None, t("xoxb-c")]).as_deref(),
+            Some("xoxb-c")
+        );
+        // Nothing configured -> not connected (stub path).
+        assert_eq!(connected_local_bot_token([None, None, None]), None);
+        // Empty is unset, not a token (#540's empty-is-unset rule).
+        assert_eq!(
+            connected_local_bot_token([t(""), t("  "), t("xoxb-c")]).as_deref(),
+            Some("xoxb-c")
+        );
+        // The stub sentinel means NOT connected -- and a deliberate --disconnect
+        // is never overridden by a staler persisted token further down the chain.
+        assert_eq!(
+            connected_local_bot_token([t(LOCAL_STUB_BOT_TOKEN), None, None]),
+            None
+        );
+        assert_eq!(
+            connected_local_bot_token([t(LOCAL_STUB_BOT_TOKEN), t("xoxb-real"), None]),
+            None
+        );
+        // Surrounding whitespace is trimmed off a real token.
+        assert_eq!(
+            connected_local_bot_token([t(" xoxb-real "), None, None]).as_deref(),
+            Some("xoxb-real")
+        );
+    }
+
+    #[test]
+    fn both_dry_run_plans_note_the_connected_transport_branch() {
+        // --dry-run never touches the network, so it cannot probe for a
+        // dispatcher; it must state the conditional instead (#770/ADR-0078).
+        let lines = dry_run_lines(&opts(Some("C123")), "10.1.2.3");
+        assert!(
+            lines.iter().any(|l| l.contains("no stub is bound")),
+            "cluster plan must note the connected branch: {lines:?}"
         );
     }
 

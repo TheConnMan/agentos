@@ -2217,7 +2217,7 @@ pub async fn discover_slack_bot_token(namespace: &str, release: &str) -> Result<
 }
 
 /// Whether a `<release>-dispatcher` Deployment exists in `namespace` -- i.e. a
-/// real Slack workspace is connected (via `agentos cluster comms --slack`). In
+/// real Slack workspace is connected (via `curie cluster comms --slack`). In
 /// that case `cluster message` posts a real placeholder and routes the approval
 /// card + resumed reply over that connected transport rather than a throwaway
 /// stub (#770/ADR-0078). A kubectl failure (cluster unreachable, no such

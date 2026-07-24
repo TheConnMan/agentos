@@ -436,7 +436,7 @@ mod tests {
         // #770/ADR-0078: the connected-transport path posts a REAL placeholder and
         // enqueues against its ts with NO per-turn endpoint, so the turn rides the
         // worker's default (connected) transport -- exactly like a real mention.
-        let turn = synthetic_turn("C-real", "U-agentos-chat", "hi", "1.1", "1717.42", None);
+        let turn = synthetic_turn("C-real", "U-curie-chat", "hi", "1.1", "1717.42", None);
         assert!(turn.reply_handle.endpoint.is_none());
         // The placeholder is the real Slack ts we posted, not a stub-minted one.
         assert_eq!(turn.reply_handle.placeholder, "1717.42");
