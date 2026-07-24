@@ -3608,7 +3608,7 @@
     },
     "/agents/{agent_id}/state": {
       "get": {
-        "description": "List the namespaces an agent has stored, each with its key count and the\nmost recent write time (#250). This is the enumeration the operator's\nread/inspect surface needs on top of get-by-key + list-by-namespace; it stays\nwithin the store's non-goals (no query language, just a grouped summary).\nNamespaces are returned most-recently-written first.",
+        "description": "List the namespaces an agent has stored, each with its key count and the\nmost recent write time (#250). This is the enumeration the operator's\nread/inspect surface needs on top of get-by-key + list-by-namespace; it stays\nwithin the store's non-goals (no query language, just a grouped summary).\nNamespaces are returned most-recently-written first.\n\nThis route has no ``namespace`` path param, so ``forbid_reserved_namespace``\ncannot gate it; instead the reserved namespaces are filtered out for the\nnarrow app (bundle) token (#856), the enumeration equivalent of that guard.\nThe platform key (the UI inspector) and the broad ``state`` loaders keep full\nreach. ``require_state_access`` is a router-level dependency, so re-declaring\nit here only surfaces the already-resolved caller (FastAPI caches it).",
         "operationId": "list_namespaces_agents__agent_id__state_get",
         "parameters": [
           {

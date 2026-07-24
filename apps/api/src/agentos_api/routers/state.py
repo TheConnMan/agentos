@@ -265,13 +265,22 @@ async def append_state(
 
 @router.get("/{agent_id}/state", response_model=list[StateNamespaceOut])
 async def list_namespaces(
-    agent_id: uuid.UUID, session: SessionDep
+    agent_id: uuid.UUID,
+    session: SessionDep,
+    caller: Annotated[StateCaller, Depends(require_state_access)],
 ) -> list[StateNamespaceOut]:
     """List the namespaces an agent has stored, each with its key count and the
     most recent write time (#250). This is the enumeration the operator's
     read/inspect surface needs on top of get-by-key + list-by-namespace; it stays
     within the store's non-goals (no query language, just a grouped summary).
     Namespaces are returned most-recently-written first.
+
+    This route has no ``namespace`` path param, so ``forbid_reserved_namespace``
+    cannot gate it; instead the reserved namespaces are filtered out for the
+    narrow app (bundle) token (#856), the enumeration equivalent of that guard.
+    The platform key (the UI inspector) and the broad ``state`` loaders keep full
+    reach. ``require_state_access`` is a router-level dependency, so re-declaring
+    it here only surfaces the already-resolved caller (FastAPI caches it).
     """
     rows = await session.execute(
         select(
@@ -290,6 +299,10 @@ async def list_namespaces(
             last_updated=row.last_updated,
         )
         for row in rows
+        # The narrow app (bundle) token must not even learn the reserved
+        # namespaces exist -- their key counts and write times are exactly what
+        # the state.app scope fences off (#856).
+        if not (caller is StateCaller.APP and row.namespace in RESERVED_NAMESPACES)
     ]
 
 
