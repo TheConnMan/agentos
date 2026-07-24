@@ -400,6 +400,34 @@ def test_namespace_over_the_per_namespace_cap_is_rejected(
         get_settings.cache_clear()
 
 
+def test_namespace_count_over_the_per_agent_cap_is_rejected(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # #852: a per-agent cap on the NUMBER of namespaces refuses a NEW namespace
+    # once the agent is at its limit, so a sandbox cannot loop creating unbounded
+    # namespaces (each under the byte caps). Writes to an existing namespace are
+    # unaffected. Same lru_cache mutate-and-reset pattern as the byte-cap tests.
+    aid = _agent(client, auth_headers)
+
+    def put(ns: str, key: str = "k") -> Any:
+        return client.put(
+            f"/agents/{aid}/state/{ns}/{key}", json={"value": 1}, headers=auth_headers
+        )
+
+    get_settings().state_max_namespaces = 2
+    try:
+        assert put("ns1").status_code == 200
+        assert put("ns2").status_code == 200
+        # A third, NEW namespace is refused with a clear 4xx, not a 500.
+        over = put("ns3")
+        assert over.status_code == 403, over.text
+        assert "cap" in over.text.lower() and "namespace" in over.text.lower()
+        # More keys in an EXISTING namespace still succeed (not a new namespace).
+        assert put("ns1", "k2").status_code == 200
+    finally:
+        get_settings.cache_clear()
+
+
 def test_list_namespaces_summarizes_the_store_recent_first(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
