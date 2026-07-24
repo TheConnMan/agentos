@@ -18,7 +18,10 @@ from agentos_runner.harness.contribution import (
     HarnessContribution,
     InstallSpec,
 )
-from agentos_runner.harness.registry import UnknownHarnessError
+from agentos_runner.harness.registry import (
+    MalformedHarnessContributionError,
+    UnknownHarnessError,
+)
 
 _BUDGET = '{"max_output_tokens_per_run": 10000, "max_usd_per_day": 1.0}'
 
@@ -121,4 +124,21 @@ def test_resolve_harness_falls_back_to_builtin_when_registry_misses(monkeypatch)
     monkeypatch.setattr(boot, "resolve_harness", miss)
     assert _resolve_harness(DEFAULT_HARNESS).name == "claude"
     with pytest.raises(UnknownHarnessError):
+        _resolve_harness("other")
+
+
+def test_default_harness_survives_a_malformed_sibling(monkeypatch) -> None:
+    # #865: a malformed / colliding / import-crashing sibling entry point makes
+    # discover_contributions raise a GUARD error (not UnknownHarnessError), which
+    # the old code let propagate past the fallback and take the built-in down with
+    # it. The built-in must never depend on that scan, so a built-in name -- its
+    # declared name AND every alias -- still resolves to Claude. A non-built-in
+    # name still surfaces the guard error loudly rather than silently falling back.
+    def boom(name: str, **kwargs: object) -> HarnessContribution:
+        raise MalformedHarnessContributionError("a sibling entry point is broken")
+
+    monkeypatch.setattr(boot, "resolve_harness", boom)
+    assert _resolve_harness(DEFAULT_HARNESS).name == "claude"
+    assert _resolve_harness("claude-sdk").name == "claude"  # aliases protected too
+    with pytest.raises(MalformedHarnessContributionError):
         _resolve_harness("other")
