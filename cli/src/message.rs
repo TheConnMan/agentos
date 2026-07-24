@@ -214,7 +214,7 @@ fn resolve_local_stub_binding(env_override: Option<String>, is_macos: bool) -> L
     if is_macos {
         return LocalStubBinding {
             bind_host: "0.0.0.0".to_string(),
-            advertise_host: "host.docker.internal".to_string(),
+            advertise_host: DOCKER_INTERNAL_HOST.to_string(),
         };
     }
     LocalStubBinding {
@@ -666,6 +666,31 @@ impl crate::ui::CliOutput for MessageOutcomeOutput {
 /// The routable host the stub advertises: `--listen-host` verbatim, otherwise
 /// the local IP the kernel would use to reach the cluster's API server (via a
 /// UDP-connect that sends no packets -- it only resolves the source interface).
+/// The address a container/pod uses to reach the Docker Desktop host from inside
+/// the Docker VM (macOS/Windows). Not routable on native-Linux Docker, where the
+/// host is reached via the bridge gateway instead.
+const DOCKER_INTERNAL_HOST: &str = "host.docker.internal";
+
+/// Whether the cluster-message reply stub should advertise `host.docker.internal`
+/// rather than a host-local IP. True only under Docker Desktop's VM topology
+/// (macOS/Windows) talking to a loopback-exposed API server -- i.e. a local
+/// cluster (kind) whose in-VM worker cannot reach the host's own LAN IP or the
+/// kind bridge gateway (both live in the VM), only `host.docker.internal` (#900).
+/// `platform_is_docker_vm` is passed in (a compile-time OS check at the call
+/// site) so the decision stays unit-testable off those platforms.
+fn prefers_docker_internal_host(server_host: &str, platform_is_docker_vm: bool) -> bool {
+    platform_is_docker_vm && host_is_loopback(server_host)
+}
+
+/// Whether `host` names the loopback interface (`localhost`, `127.0.0.0/8`, `::1`).
+fn host_is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
 async fn resolve_advertise_host(listen_host: Option<&str>) -> Result<String> {
     if let Some(host) = listen_host {
         return Ok(host.to_string());
@@ -685,6 +710,17 @@ async fn resolve_advertise_host(listen_host: Option<&str>) -> Result<String> {
     let (host, port) = server_host_and_port(server).with_context(|| {
         format!("could not parse the kubeconfig server url {server:?}; pass --listen-host <host>")
     })?;
+    // Docker Desktop (macOS/Windows) runs the cluster inside a LinuxKit VM, so a
+    // host-local IP or the kind bridge gateway is unreachable from the in-cluster
+    // worker -- it reaches the host only via host.docker.internal. Detect that
+    // (a loopback-exposed API server on a Docker-VM platform, i.e. a local kind
+    // cluster) and advertise host.docker.internal instead of the local egress IP
+    // (#900). Native-Docker Linux (CI included) is unaffected: it passes
+    // --listen-host explicitly (returned above), and this branch is false off
+    // macOS/Windows anyway.
+    if prefers_docker_internal_host(&host, cfg!(any(target_os = "macos", target_os = "windows"))) {
+        return Ok(DOCKER_INTERNAL_HOST.to_string());
+    }
     let ip = detect_local_ip(&host, port).with_context(|| {
         format!("could not detect the local IP toward {host}:{port}; pass --listen-host <host>")
     })?;
@@ -2832,6 +2868,34 @@ mod tests {
             resolve_local_stub_binding(Some(String::new()), true),
             resolve_local_stub_binding(None, true),
         );
+    }
+
+    #[test]
+    fn host_is_loopback_recognizes_loopback_names_and_addresses() {
+        assert!(host_is_loopback("localhost"));
+        assert!(host_is_loopback("LocalHost")); // case-insensitive
+        assert!(host_is_loopback("127.0.0.1"));
+        assert!(host_is_loopback("127.0.0.5")); // all of 127.0.0.0/8
+        assert!(host_is_loopback("::1"));
+        assert!(!host_is_loopback("10.0.0.5"));
+        assert!(!host_is_loopback("192.168.65.254"));
+        assert!(!host_is_loopback("my-eks.example.com"));
+    }
+
+    #[test]
+    fn docker_internal_advertise_only_under_vm_platform_and_loopback_server() {
+        // Docker Desktop (VM platform) + a loopback-exposed API server (local
+        // kind) -> advertise host.docker.internal (#900).
+        assert!(prefers_docker_internal_host("127.0.0.1", true));
+        assert!(prefers_docker_internal_host("localhost", true));
+        assert!(prefers_docker_internal_host("::1", true));
+        // Native-Docker Linux never rewrites, even with a loopback API server
+        // (it reaches the host via the bridge gateway / an explicit --listen-host).
+        assert!(!prefers_docker_internal_host("127.0.0.1", false));
+        // A remote / non-loopback API server keeps the local-IP detection path
+        // even on a VM platform (not the local-kind case #900 addresses).
+        assert!(!prefers_docker_internal_host("10.0.0.5", true));
+        assert!(!prefers_docker_internal_host("my-eks.example.com", true));
     }
 
     #[test]
