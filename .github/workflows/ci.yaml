@@ -617,7 +617,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download the curie binary built by the Rust job
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: curie-x86_64-linux-${{ github.sha }}
           path: cli/target/release
