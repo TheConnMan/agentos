@@ -1,5 +1,6 @@
 """Pydantic v2 request/response models for the API surface."""
 
+import json
 import re
 import uuid
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Annotated, Any, Literal
 # ``ApprovalCreate``; ``EvalReport`` kept its name.
 from aci_protocol import ApprovalRequest as ApprovalRequest
 from aci_protocol import EvalReport as EvalReport
+from fastapi import HTTPException
 from plugin_format import is_reserved_boot_env_name
 from pydantic import (
     BaseModel,
@@ -22,6 +24,7 @@ from pydantic import (
     model_validator,
 )
 
+from .config import get_settings
 from .models import Environment
 
 # Slack channel IDs start with C (public/private channel), D (DM), or G (legacy
@@ -139,6 +142,24 @@ class BehaviorPacksConfig(BaseModel):
     help: HelpPackConfig = HelpPackConfig()
     settings: SettingsPackConfig = SettingsPackConfig()
     nav: NavPackConfig = NavPackConfig()
+
+
+def enforce_behavior_packs_size(config: BehaviorPacksConfig) -> None:
+    """Reject a behavior-packs write over the per-agent byte cap (#936).
+
+    Shared by both write paths (the PUT and the create) so the cap is a
+    property of the config, not of one endpoint. Size is the serialized-JSON
+    byte length of the whole config, the unit ``behavior_packs_max_bytes`` is
+    measured in (mirrors the durable-state ``_enforce_caps`` in state.py)."""
+    limit = get_settings().behavior_packs_max_bytes
+    size = len(
+        json.dumps(config.model_dump(), separators=(",", ":")).encode("utf-8")
+    )
+    if size > limit:
+        raise HTTPException(
+            413,
+            f"behavior packs are {size} bytes, over the {limit}-byte cap",
+        )
 
 
 def _validate_tool_names(value: list[str] | None) -> list[str] | None:

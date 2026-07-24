@@ -21,6 +21,7 @@ from ..schemas import (
     CostReport,
     KillState,
     ThreadResetState,
+    enforce_behavior_packs_size,
 )
 
 router = APIRouter(
@@ -160,6 +161,7 @@ async def put_behavior_packs(
     agent_id: uuid.UUID, config: BehaviorPacksConfig, session: SessionDep
 ) -> BehaviorPacksConfig:
     agent = await _load_agent(session, agent_id)
+    enforce_behavior_packs_size(config)
     updated = await crud.update_behavior_packs(session, agent, config.model_dump())
     return BehaviorPacksConfig.model_validate(updated.behavior_packs)
 
