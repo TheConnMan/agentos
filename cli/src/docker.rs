@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use curie_aci_protocol::env_keys;
 use anyhow::{bail, Context, Result};
+use curie_aci_protocol::env_keys;
 use tokio::process::Command;
 
 /// Everything `docker run` needs to boot a local runner container.
@@ -784,8 +784,7 @@ mod tests {
         // The sidecar is CLI-booted and removable by name, so it must be
         // identifiable as ours (#747) or `skill down --name <bundle>-ollama`
         // warns about a container this feature itself created.
-        let joined =
-            ollama_run_args("curie-ollama", "curie-net", "ollama/ollama:0.24.0").join(" ");
+        let joined = ollama_run_args("curie-ollama", "curie-net", "ollama/ollama:0.24.0").join(" ");
         assert!(
             joined.contains("--label curietech.ai/managed-by=curie-cli"),
             "{joined}"

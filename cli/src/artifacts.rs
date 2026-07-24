@@ -228,9 +228,8 @@ mod tests {
     #[test]
     fn release_compose_fetches_release_remote_and_ignores_local_candidate() {
         let expected = Resolved::Fetch {
-            url:
-                "https://github.com/curie-eng/curie/releases/download/v0.1.0/compose.release.yaml"
-                    .to_string(),
+            url: "https://github.com/curie-eng/curie/releases/download/v0.1.0/compose.release.yaml"
+                .to_string(),
             cache_path: PathBuf::from("/tmp/xdgcache/curie/v0.1.0/compose.release.yaml"),
         };
 

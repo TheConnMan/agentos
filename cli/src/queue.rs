@@ -12,10 +12,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::{Context, Result};
 use curie_aci_protocol::{
     QueuedTurn, ReplyHandle, RUNS_STREAM_DEFAULT, STREAM_PAYLOAD_FIELD, WORKER_GROUP_DEFAULT,
 };
-use anyhow::{Context, Result};
 use redis::aio::MultiplexedConnection;
 use redis::streams::{StreamInfoGroupsReply, StreamPendingCountReply, StreamPendingReply};
 use redis::AsyncCommands;

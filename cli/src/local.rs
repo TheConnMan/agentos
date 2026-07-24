@@ -870,10 +870,9 @@ mod tests {
             String::from("CURIE_DOCKER_NETWORK"),
             String::from("curie_runner"),
         )));
-        assert!(cmd.env.contains(&(
-            String::from("COMPOSE_PROJECT_NAME"),
-            String::from("curie"),
-        )));
+        assert!(cmd
+            .env
+            .contains(&(String::from("COMPOSE_PROJECT_NAME"), String::from("curie"),)));
     }
 
     /// `--minimal` starts the `core` profile, which has no otel-collector, so
@@ -1328,10 +1327,9 @@ mod tests {
         assert!(cmd
             .env
             .contains(&(String::from("CURIE_MODEL"), String::from("qwen3:4b"))));
-        assert!(cmd.env.contains(&(
-            String::from("COMPOSE_PROJECT_NAME"),
-            String::from("curie"),
-        )));
+        assert!(cmd
+            .env
+            .contains(&(String::from("COMPOSE_PROJECT_NAME"), String::from("curie"),)));
     }
 
     #[test]

@@ -3522,7 +3522,10 @@ mod tests {
         );
         // #707 ownership-scope invariant: the sweep stays keyed on THIS release's
         // label and is never widened to an unconditional namespace delete.
-        assert!(cmd.contains("curietech.ai/created-by=prod-release"), "{cmd}");
+        assert!(
+            cmd.contains("curietech.ai/created-by=prod-release"),
+            "{cmd}"
+        );
         assert!(
             !cmd.contains("delete namespace prod-release"),
             "must never be an unscoped delete: {cmd}"
@@ -3586,7 +3589,10 @@ mod tests {
             "the resume line's own exit status must aggregate both captured statuses: {cmd}"
         );
         // The sweep half stays label-scoped even when combined with helm.
-        assert!(cmd.contains("curietech.ai/created-by=prod-release"), "{cmd}");
+        assert!(
+            cmd.contains("curietech.ai/created-by=prod-release"),
+            "{cmd}"
+        );
         assert!(cmd.contains("--ignore-not-found"), "{cmd}");
     }
 
@@ -3943,7 +3949,10 @@ mod tests {
             "the permanent-failure message must surface the underlying stderr reason: {shown}"
         );
         let fix = fix.expect("a fail-forward teardown carries a resume command");
-        assert!(fix.contains("curietech.ai/created-by=prod-release"), "{fix}");
+        assert!(
+            fix.contains("curietech.ai/created-by=prod-release"),
+            "{fix}"
+        );
     }
 
     // Codex P2: in a MIXED failure the surfaced reason must be the failure that
@@ -4613,7 +4622,9 @@ mod tests {
         assert_eq!(ep.url, None);
         assert_eq!(
             ep.note.as_deref(),
-            Some("kubectl -n curie port-forward svc/curie-api 8000:8000  then http://localhost:8000")
+            Some(
+                "kubectl -n curie port-forward svc/curie-api 8000:8000  then http://localhost:8000"
+            )
         );
         assert!(!ep.browsable);
         assert_no_api_url_hint(&ep);
@@ -4643,7 +4654,9 @@ mod tests {
         assert_eq!(ep.url, None);
         assert_eq!(
             ep.note.as_deref(),
-            Some("kubectl -n curie port-forward svc/curie-api 8000:8000  then http://localhost:8000")
+            Some(
+                "kubectl -n curie port-forward svc/curie-api 8000:8000  then http://localhost:8000"
+            )
         );
         assert!(!ep.browsable);
         assert_no_api_url_hint(&ep);
@@ -4758,10 +4771,7 @@ mod tests {
             true,
         );
         assert_eq!(ep.url, None);
-        assert_eq!(
-            ep.note.as_deref(),
-            Some("could not read service curie-ui")
-        );
+        assert_eq!(ep.note.as_deref(), Some("could not read service curie-ui"));
         assert!(!ep.browsable);
     }
 

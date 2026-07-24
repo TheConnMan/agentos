@@ -213,12 +213,8 @@ fn message_dry_run_json_validates_against_message_schema() {
     assert_eq!(with_channel["target"], serde_json::json!("local"));
     assert_eq!(with_channel["channel"], serde_json::json!("C123"));
     // Null channel (cluster target, sole-agent resolution).
-    let no_channel = message_dry_run_json(
-        "cluster",
-        "curie:turns",
-        None,
-        "http://10.1.2.3:8155/api/",
-    );
+    let no_channel =
+        message_dry_run_json("cluster", "curie:turns", None, "http://10.1.2.3:8155/api/");
     assert!(
         v.is_valid(&no_channel),
         "message_dry_run_json (no channel) must validate: {no_channel}"
@@ -426,9 +422,7 @@ use curie::comms::CommsOutput;
 use curie::local::{
     LocalDownOutput, LocalRebuildOutput, LocalStatusOutput, LocalUpOutput, ModelMode,
 };
-use curie::ops::{
-    ClusterDownOutput, ClusterStatus, ClusterStatusOutput, ClusterUpOutput, PodRow,
-};
+use curie::ops::{ClusterDownOutput, ClusterStatus, ClusterStatusOutput, ClusterUpOutput, PodRow};
 use curie::secrets::SecretsListOutput;
 
 fn assert_valid(schema_file: &str, value: &serde_json::Value) {
@@ -784,10 +778,7 @@ fn comms_output_validates_both_variants() {
 #[test]
 fn local_up_output_validates_both_variants() {
     let up = LocalUpOutput::Up {
-        endpoints: vec![(
-            "Curie API".to_string(),
-            "http://localhost:8155".to_string(),
-        )],
+        endpoints: vec![("Curie API".to_string(), "http://localhost:8155".to_string())],
         slack: false,
     };
     assert_valid("local-up.schema.json", &up.to_json());

@@ -1068,9 +1068,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 ///   passing it is harmless there.)
 fn approval_resolve_command(tier: &str, agent: Option<&str>, channel: &str, id: &str) -> String {
     let agent = agent.unwrap_or("<AGENT>");
-    format!(
-        "curie {tier} approvals {agent} --resolve {id} --as <user> --actor-channel '{channel}'"
-    )
+    format!("curie {tier} approvals {agent} --resolve {id} --as <user> --actor-channel '{channel}'")
 }
 
 /// The awaiting-approval terminal wording a `local`/`cluster message` prints when

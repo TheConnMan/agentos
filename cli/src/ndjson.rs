@@ -5,8 +5,8 @@
 //! reassembles lines across arbitrary chunk boundaries; parsing delegates to the
 //! generated crate, whose deserializer enforces the protocol version.
 
-use curie_aci_protocol::OutboundEvent;
 use anyhow::{Context, Result};
+use curie_aci_protocol::OutboundEvent;
 
 /// Reassembles complete lines from a chunked byte stream.
 #[derive(Default)]

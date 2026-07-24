@@ -24,9 +24,7 @@
 //! inline lib tests.
 
 use curie::api::is_insecure_endpoint;
-use curie::commands::{
-    deploy_needs_key_discovery, deploy_port_forward, normalize_deploy_api_key,
-};
+use curie::commands::{deploy_needs_key_discovery, deploy_port_forward, normalize_deploy_api_key};
 
 /// (1) Auto path (no `--api-url`) builds a kubectl port-forward to the api
 /// service: a loopback tunnel is the whole point of Option C, so the discovered

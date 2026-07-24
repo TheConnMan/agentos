@@ -62,8 +62,9 @@ A short list of identifiers could not be settled by regex and is decided here.
 
 5. **ADR filenames `0021-agentos-...` and `0073-agentos-...` keep the old name.**
    Their filenames are stable link anchors that inbound references resolve
-   against; renaming them would break those links for no gain. The gate that
-   asserts no tracked path contains `agentos` exempts exactly these two. Their
+   against; renaming them would break those links for no gain. The rename's
+   verification asserted no tracked path contains `agentos` except these two
+   filenames. Their
    heading and body text are swept to Curie like every other ADR; only the
    filename is frozen.
 

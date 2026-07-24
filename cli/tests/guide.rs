@@ -18,10 +18,7 @@ fn bin() -> &'static str {
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(bin())
-        .args(args)
-        .output()
-        .expect("run curie")
+    Command::new(bin()).args(args).output().expect("run curie")
 }
 
 fn out_str(o: &Output) -> String {

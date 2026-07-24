@@ -6,6 +6,8 @@
 
 use std::path::PathBuf;
 
+use anyhow::{bail, Result};
+use clap::{Args, Parser, Subcommand};
 use curie::api;
 use curie::artifacts;
 use curie::commands::{
@@ -19,8 +21,6 @@ use curie::ops::{self, CommonOpts, DownOpts, UpOpts};
 use curie::secrets;
 use curie::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
 use curie::ui::{self, ColorFlag, Ui};
-use anyhow::{bail, Result};
-use clap::{Args, Parser, Subcommand};
 
 /// Per-tier defaults for the flags shared by the agent-target verbs. The only
 /// thing that differs between `local` and `cluster` is where the platform API
@@ -919,11 +919,7 @@ enum LocalAction {
         /// Daily spend cap in USD. Must be > 0.
         #[arg(long)]
         limit: f64,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "CURIE_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
         #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
@@ -934,11 +930,7 @@ enum LocalAction {
     Kill {
         /// Agent name or id.
         agent: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "CURIE_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
         #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
@@ -952,11 +944,7 @@ enum LocalAction {
     Resume {
         /// Agent name or id.
         agent: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "CURIE_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
         #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
@@ -975,11 +963,7 @@ enum LocalAction {
         /// The thread key to reset (e.g. the Slack thread ts).
         #[arg(long, value_name = "THREAD_KEY")]
         thread_key: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "CURIE_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
         #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
@@ -2047,9 +2031,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                         // Default `agentSandbox.runner.model` from the shell
                         // `CURIE_MODEL` (None when unset/empty) for cross-tier
                         // parity with `local up` (#361).
-                        model: std::env::var("CURIE_MODEL")
-                            .ok()
-                            .filter(|s| !s.is_empty()),
+                        model: std::env::var("CURIE_MODEL").ok().filter(|s| !s.is_empty()),
                         // Populated by ops::up (generate on fresh install / reuse on
                         // upgrade); empty here so the pure builder starts clean.
                         secrets: vec![],
@@ -2675,8 +2657,7 @@ mod tests {
 
     #[test]
     fn list_agents_parses() {
-        let cli =
-            Cli::try_parse_from(["curie", "list-agents"]).expect("list-agents should parse");
+        let cli = Cli::try_parse_from(["curie", "list-agents"]).expect("list-agents should parse");
         assert!(matches!(cli.command, Some(Command::ListAgents)));
     }
 
@@ -2809,8 +2790,7 @@ mod tests {
 
     #[test]
     fn interactive_parses_with_aliases() {
-        let cli =
-            Cli::try_parse_from(["curie", "interactive"]).expect("interactive should parse");
+        let cli = Cli::try_parse_from(["curie", "interactive"]).expect("interactive should parse");
         assert!(matches!(cli.command, Some(Command::Interactive)));
         let cli = Cli::try_parse_from(["curie", "ui"]).expect("ui alias should parse");
         assert!(matches!(cli.command, Some(Command::Interactive)));
@@ -2866,8 +2846,8 @@ mod tests {
 
     #[test]
     fn dev_subcommands_parse() {
-        let cli = Cli::try_parse_from(["curie", "dev", "contracts"])
-            .expect("dev contracts should parse");
+        let cli =
+            Cli::try_parse_from(["curie", "dev", "contracts"]).expect("dev contracts should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Dev {
@@ -2889,8 +2869,8 @@ mod tests {
                 action: DevAction::E2e
             })
         ));
-        let cli = Cli::try_parse_from(["curie", "dev", "docs-lint"])
-            .expect("dev docs-lint should parse");
+        let cli =
+            Cli::try_parse_from(["curie", "dev", "docs-lint"]).expect("dev docs-lint should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Dev {
@@ -3125,10 +3105,7 @@ mod tests {
         let cases = [
             (["curie", "local", "up", "-f", "custom.yaml"], "up"),
             (["curie", "local", "down", "-f", "custom.yaml"], "down"),
-            (
-                ["curie", "local", "status", "-f", "custom.yaml"],
-                "status",
-            ),
+            (["curie", "local", "status", "-f", "custom.yaml"], "status"),
         ];
 
         for (argv, verb) in cases {
@@ -3675,8 +3652,7 @@ mod tests {
         // The --clear + --gate conflict is a RUNTIME usage error (asserted in the
         // commands.rs handler tests), not a clap parse error.
         assert!(
-            Cli::try_parse_from(["curie", "skill", "approvals", "--clear", "--gate", "X"])
-                .is_ok()
+            Cli::try_parse_from(["curie", "skill", "approvals", "--clear", "--gate", "X"]).is_ok()
         );
     }
 

@@ -14,8 +14,8 @@
 
 use std::path::Path;
 
-use curie_aci_protocol::{OutboundEvent, SessionStatus};
 use anyhow::{anyhow, bail, Context, Result};
+use curie_aci_protocol::{OutboundEvent, SessionStatus};
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 

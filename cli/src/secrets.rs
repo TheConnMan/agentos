@@ -385,8 +385,7 @@ fn config_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("CURIE_CONFIG_DIR") {
         return Ok(PathBuf::from(dir));
     }
-    let home =
-        std::env::var("HOME").context("HOME is not set; cannot locate Curie config dir")?;
+    let home = std::env::var("HOME").context("HOME is not set; cannot locate Curie config dir")?;
     Ok(PathBuf::from(home).join(".config/curie"))
 }
 

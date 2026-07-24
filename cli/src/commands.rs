@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use curie_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
+use curie_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
@@ -4690,11 +4690,7 @@ mod tests {
         // recorded runner keeps its state file, ollama container, and network
         // instead of being silently orphaned (#747).
         assert_eq!(
-            plan_skill_down(
-                Some("curie-runner-local"),
-                Some("curie-example-42"),
-                true
-            ),
+            plan_skill_down(Some("curie-runner-local"), Some("curie-example-42"), true),
             DownPlan::Targeted {
                 container: "curie-example-42".into()
             }
@@ -4707,11 +4703,7 @@ mod tests {
         // real teardown from a no-op. Absence has to come from the probe, or the
         // verb reports "stopped and removed" for a container that was never
         // there (#747). Still not an error -- just not a removal.
-        let plan = plan_skill_down(
-            Some("curie-runner-local"),
-            Some("curie-747-absent"),
-            false,
-        );
+        let plan = plan_skill_down(Some("curie-runner-local"), Some("curie-747-absent"), false);
         assert_eq!(
             plan,
             DownPlan::TargetedAbsent {

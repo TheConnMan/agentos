@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
-use curie_aci_protocol::{EventType, InboundMessage, OutboundEvent};
 use anyhow::{bail, Context, Result};
+use curie_aci_protocol::{EventType, InboundMessage, OutboundEvent};
 use futures_util::StreamExt;
 
 use crate::ndjson::{parse_outbound, LineSplitter};

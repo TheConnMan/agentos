@@ -715,10 +715,7 @@ mod tests {
             let cmds = local_disconnect_commands(&local_comms_opts(true, mode));
             let worker_cmd = &cmds[1];
             assert!(
-                !worker_cmd
-                    .env
-                    .iter()
-                    .any(|(k, _)| k == "CURIE_FAKE_MODEL"),
+                !worker_cmd.env.iter().any(|(k, _)| k == "CURIE_FAKE_MODEL"),
                 "{mode:?} must not inject CURIE_FAKE_MODEL; env={:?}",
                 worker_cmd.env
             );
@@ -786,9 +783,8 @@ mod tests {
                 .clone();
             let up_override: Option<&(String, String)> =
                 up_env.iter().find(|(k, _)| k == "CURIE_FAKE_MODEL");
-            let disconnect_override: Option<&(String, String)> = disconnect_env
-                .iter()
-                .find(|(k, _)| k == "CURIE_FAKE_MODEL");
+            let disconnect_override: Option<&(String, String)> =
+                disconnect_env.iter().find(|(k, _)| k == "CURIE_FAKE_MODEL");
             assert_eq!(
                 up_override, disconnect_override,
                 "{mode:?}: up_command and local_disconnect_commands disagree on \
