@@ -87,11 +87,25 @@ _ZIP64_EOCD_LOCATOR_SIZE = 20
 # central directory until it has consumed `size_cd` bytes (it does NOT trust
 # the declared entry count to bound that loop), so an attacker cannot evade the
 # cap by under-declaring the count -- the SIZE is what bounds zipfile's work.
-# A central-directory header is 46 fixed bytes + the file name; 512 leaves
-# generous room for long paths (a legitimate <=10k-file bundle stays well under
-# max_members*512, while a 100k+ zero-byte-member DoS blows past it), so this
-# rejects the DoS without false-rejecting a real bundle near the count cap.
-_ZIP_CENTRAL_DIR_BYTES_PER_MEMBER = 512
+#
+# A central-directory header is 46 FIXED bytes + the file name (+ extra field +
+# file comment, both 0 in a normal bundle), so 46 is the smallest a real entry
+# can be and `size_cd / 46` is the most entries zipfile can materialize from
+# `size_cd` bytes. The old 512 budget (a ~466-byte filename allowance) let a
+# compact real central directory of short-named headers pack ~size_cd/46 real
+# entries under a size_cd/512 cap -- roughly an 11x entry-count amplification
+# over max_members, so a caller could still be pushed to materialize ~106k
+# ZipInfos at the default cap by under-declaring the EOCD count (#861).
+# Tightening to 128 (the 46-byte minimum header + an 82-byte modest filename
+# allowance) cuts the worst case to ~2.8x while still clearing a full
+# max_members-file bundle whose paths average up to ~82 chars -- the realistic
+# ceiling for nested plugin-bundle paths. The bare 46-byte minimum would close
+# the amplification entirely but false-reject realistic medium bundles with
+# nested paths, so this keeps the modest allowance the header shape genuinely
+# needs (the issue's option 1); max_members is operator-overridable for a bundle
+# that legitimately needs more headroom, and size_cd is bounded by the upload
+# cap regardless, so the residual amplification stays bounded.
+_ZIP_CENTRAL_DIR_BYTES_PER_MEMBER = 128
 
 
 class UnsupportedArchive(Exception):

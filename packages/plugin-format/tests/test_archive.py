@@ -469,6 +469,30 @@ def test_zip_eocd_precheck_allows_within_cap() -> None:
     _reject_zip_over_member_count(_synthetic_eocd(total_entries=42, size_cd=5_000), 10_000)
 
 
+def test_zip_eocd_precheck_closes_bounded_count_amplification() -> None:
+    """#861: an under-declared count (1) paired with a central-directory SIZE
+    that would let ``zipfile`` materialize far more than ``max_members``
+    minimum-size (46-byte) headers is rejected. The size sits just over the
+    tightened per-member budget yet well under the old 512-byte budget, so it
+    would have slipped past the pre-#861 guard while ``zipfile`` parsed
+    ``size_cd / 46`` (~2.8x the cap here) real headers regardless of the tiny
+    declared count. The tightened budget is what closes that window."""
+    from plugin_format.archive import (
+        _ZIP_CENTRAL_DIR_BYTES_PER_MEMBER,
+        _reject_zip_over_member_count,
+    )
+
+    max_members = 10_000
+    size_cd = max_members * _ZIP_CENTRAL_DIR_BYTES_PER_MEMBER + 1
+    # The window this fix closes: rejected now, but under the old 512-byte budget
+    # this same size_cd was accepted while holding ~size_cd/46 real headers.
+    assert size_cd < max_members * 512
+    with pytest.raises(UnsupportedArchive, match="member-count"):
+        _reject_zip_over_member_count(
+            _synthetic_eocd(total_entries=1, size_cd=size_cd), max_members=max_members
+        )
+
+
 def test_zip_eocd_precheck_ignores_a_spurious_trailing_signature() -> None:
     """A later byte run that itself starts with the EOCD signature is the record
     ``rfind`` now locates (matching CPython, which rfinds the LAST signature in
