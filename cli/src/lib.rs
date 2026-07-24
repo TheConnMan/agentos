@@ -32,6 +32,7 @@ pub mod scaffold;
 pub mod schema;
 pub mod schemas;
 pub mod secrets;
+pub mod slack;
 pub mod spec;
 pub mod state;
 pub mod ui;
