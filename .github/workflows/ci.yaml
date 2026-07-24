@@ -611,12 +611,33 @@ jobs:
   # theory above is right. Kept a SEPARATE job from `e2e-ladder` on purpose: the
   # skill/local signal must never be reddened by a kind or Helm flake.
   # Gate the expensive kind rung so it runs ONLY when a change could affect the
-  # cluster deploy-then-message path (charts / cli / app+runner images / the ACI
-  # wire / this workflow), and always on push to main. An unrelated PR (docs,
-  # etc.) skips it entirely -- no red check, no kind-cluster minutes. Pure
-  # git-diff, no third-party action. (It is not a required check either way --
-  # the ruleset requires only Compose/Contracts/Python/Rust/UI -- so it can never
-  # block a merge; this just keeps it off PRs it has no bearing on.)
+  # cluster deploy-then-message path (charts / cli / app+runner images / any
+  # frozen contract package / this workflow), and always on push to main. An
+  # unrelated PR (docs, etc.) skips it entirely -- no red check, no kind-cluster
+  # minutes. Pure git-diff, no third-party action.
+  #
+  # The filter matches ALL of `packages/`, not an enumerated subset (#859). The
+  # cluster deploy exercises every workspace contract package the deployed
+  # components import -- `aci-protocol` + `plugin-format` (api, runner) and
+  # additionally `channel-protocol` (worker) -- so an earlier filter that named
+  # only `packages/aci-protocol/` silently skipped this rung on a
+  # `plugin-format` or `channel-protocol` change that could break cluster deploy
+  # at bundle-unpack or reply-render time (e.g. #828's archive caps touched only
+  # `packages/plugin-format/`). Matching `packages/` wholesale makes that class
+  # of drift STRUCTURALLY impossible -- there is no enumeration to fall out of
+  # sync with what the cluster path imports -- at the cost of occasionally
+  # running the rung on a `packages/test-support/`-only PR, a rare and cheap
+  # over-trigger that is the right trade for a parity gate (over-run, never
+  # under-run).
+  #
+  # DECISION (#859): this rung stays ADVISORY, not a required check. The branch
+  # ruleset requires only Compose/Contracts/Python/Rust/UI, so a red here can
+  # never block a merge -- deliberately, because a kind/Helm flake must not gate
+  # merges (the skill/local signal carries that weight; this is a post-merge gate
+  # on main plus an opt-in PR signal). Promoting it to required is a
+  # branch-protection ruleset change (repo admin), not a workflow edit, and is
+  # intentionally NOT taken here; revisit once the kind rung has a proven-stable
+  # track record on main. Do not read a green tick here as a merge gate.
   changes:
     name: Detect cluster-relevant changes
     runs-on: ubuntu-latest
@@ -637,7 +658,7 @@ jobs:
           base="${{ github.base_ref }}"
           git fetch --quiet origin "$base"
           if git diff --name-only "origin/$base...HEAD" \
-              | grep -qE '^(charts/|cli/|apps/|runner/|packages/aci-protocol/|\.github/workflows/ci\.yaml)'; then
+              | grep -qE '^(charts/|cli/|apps/|runner/|packages/|\.github/workflows/ci\.yaml)'; then
             echo "cluster=true" >> "$GITHUB_OUTPUT"
           else
             echo "cluster=false" >> "$GITHUB_OUTPUT"
