@@ -106,4 +106,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0074 | [Versioned JSON Schemas for every agent-facing CLI result](0074-versioned-json-schemas-for-cli-results.md) | Accepted |
 | 0076 | [A closed, versioned attribute schema for the runner's OTel span stream](0076-closed-typed-telemetry-attribute-schema.md) | Accepted |
 | 0077 | [Skill-tier durable approvals stay unavailable, reported not absent](0077-skill-tier-durable-approvals-stay-unavailable.md) | Accepted |
+| 0078 | [Route message-driven approval cards through the connected Slack transport](0078-approval-cards-over-connected-transport.md) | Accepted |
 <!-- END GENERATED: adr-index -->
