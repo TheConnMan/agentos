@@ -41,3 +41,9 @@ updates:
     groups:
       pnpm:
         patterns: ["*"]
+    # TypeScript 7.0 is the Go-based tsgo rewrite; @typescript-eslint refuses it
+    # (peer ceiling <6.1.0) and our compiler-API test does not match its surface.
+    # Hold the major until the ecosystem catches up; minors/patches still update.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
