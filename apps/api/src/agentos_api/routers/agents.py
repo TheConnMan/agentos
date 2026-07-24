@@ -19,6 +19,7 @@ from ..schemas import (
     BundleFiles,
     VersionCreate,
     VersionOut,
+    enforce_behavior_packs_size,
 )
 
 router = APIRouter(
@@ -78,6 +79,9 @@ def classify_integrity_error(exc: IntegrityError) -> tuple[int, str] | None:
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
 async def create_agent(data: AgentCreate, session: SessionDep) -> AgentOut:
+    # Reject oversized behavior packs (#936) before we touch the DB.
+    if data.behavior_packs is not None:
+        enforce_behavior_packs_size(data.behavior_packs)
     # name and repo_full_name are unique. A collision is a caller conflict (409),
     # not a server fault: catch the DB IntegrityError and map it, rather than
     # letting it bubble as an opaque 500. A non-unique violation (NOT NULL, FK)

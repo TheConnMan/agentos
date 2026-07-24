@@ -219,6 +219,12 @@ class Settings(BaseSettings):
     # namespace are both bounded. Sizes are the serialized-JSON byte length.
     state_max_value_bytes: int = 64 * 1024  # 64 KiB per value
     state_max_namespace_bytes: int = 1024 * 1024  # 1 MiB per (agent, namespace)
+    # Cap on behavior-packs content per agent (#936, introduced by #883). Packs
+    # are stored on the agent row and injected verbatim into the runner context
+    # at each bind, so an uncapped pack bloats both the row and the prompt. Size
+    # is the serialized-JSON byte length of the whole packs config, mirroring the
+    # durable-state per-value cap above.
+    behavior_packs_max_bytes: int = 64 * 1024  # 64 KiB
     # Per-agent cap on the NUMBER of namespaces (#852). #840 made the namespace an
     # arbitrary model-supplied string, so without this a single sandbox could
     # create unbounded namespaces -- each under the byte caps -- bloating the
