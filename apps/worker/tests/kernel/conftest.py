@@ -21,6 +21,9 @@ import aiohttp
 import pytest
 import redis
 from aci_protocol import Final, OutboundEvent, SessionStatus
+from aiohttp import web
+from aiohttp.test_utils import TestServer
+from channel_protocol import OutboundMessage
 from curie_test_support.valkey import (
     VALKEY_HOST as _VALKEY_HOST,
 )
@@ -43,9 +46,6 @@ from curie_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfi
 from curie_worker.sandbox.types import ClaimView, SandboxView
 from curie_worker.slack_sink import SlackSink
 from curie_worker.threadlock import ThreadLock
-from aiohttp import web
-from aiohttp.test_utils import TestServer
-from channel_protocol import OutboundMessage
 from redis.asyncio import Redis as AsyncRedis
 
 

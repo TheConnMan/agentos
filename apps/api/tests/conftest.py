@@ -17,10 +17,10 @@ from typing import Any
 
 import asyncpg
 import pytest
-from curie_api.config import get_settings
-from curie_api.main import create_app
 from alembic import command
 from alembic.config import Config
+from curie_api.config import get_settings
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 from sqlalchemy import make_url
 from sqlalchemy.engine import URL

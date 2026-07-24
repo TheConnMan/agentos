@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import Any
 
 import anyio
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from curie_runner.state import (
     RESERVED_NAMESPACES,
     STATE_SERVER_NAME,
@@ -26,8 +28,6 @@ from curie_runner.state import (
     op_set,
     resolve_state_client,
 )
-from aiohttp import web
-from aiohttp.test_utils import TestServer
 
 
 def _fake_state_app() -> tuple[web.Application, dict]:

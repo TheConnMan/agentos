@@ -11,9 +11,9 @@ from typing import Any
 
 import pytest
 from aci_protocol import Event, Final, SessionStatus, TextDelta
-from curie_worker.runner_client import RunnerClient
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from curie_worker.runner_client import RunnerClient
 
 DONE = SessionStatus.DONE
 

@@ -254,7 +254,7 @@ services:
         condition: service_started
     environment:
       # base64("pk-lf-curie-dev:sk-lf-curie-dev"); matches the LANGFUSE_INIT keys above.
-      LANGFUSE_OTLP_AUTH_HEADER: ${LANGFUSE_OTLP_AUTH_HEADER:-Basic cGstbGYtYWdlbnRvcy1kZXY6c2stbGYtYWdlbnRvcy1kZXY=}
+      LANGFUSE_OTLP_AUTH_HEADER: ${LANGFUSE_OTLP_AUTH_HEADER:-Basic cGstbGYtY3VyaWUtZGV2OnNrLWxmLWN1cmllLWRldg==}
     volumes:
       - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
     ports:

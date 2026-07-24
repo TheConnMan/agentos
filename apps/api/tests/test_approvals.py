@@ -27,6 +27,8 @@ import pytest
 import redis
 import redis.asyncio as aioredis
 from aci_protocol import QueuedTurn
+from alembic import command
+from alembic.config import Config
 from curie_api import crud
 from curie_api.config import get_settings
 from curie_api.deps import get_approver_sets
@@ -41,8 +43,6 @@ from curie_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
 from curie_test_support.valkey import (
     connect_or_skip,
 )
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import make_url, text
 from sqlalchemy.exc import IntegrityError

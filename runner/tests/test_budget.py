@@ -2,11 +2,11 @@
 
 import anyio
 from aci_protocol import Event, SessionStatus, parse_ndjson
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 from curie_runner import BudgetTracker, RunTracer, SideEffectClassifier
 from curie_runner.budget import BUDGET_CLASSIFICATION
 from curie_runner.fake import FakeModelSession
 from curie_runner.session import SessionRunner
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 
 def test_tracker_sums_per_message_output() -> None:

@@ -7,14 +7,14 @@ import json
 
 import aiohttp
 import pytest
-from curie_worker.config import WorkerConfig
-from curie_worker.slack_sink import AsyncSlackSink
 from channel_protocol import (
     MESSAGE_VERSION,
     Action,
     ConfirmIntent,
     OutboundMessage,
 )
+from curie_worker.config import WorkerConfig
+from curie_worker.slack_sink import AsyncSlackSink
 from slack_sdk.errors import SlackApiError
 
 

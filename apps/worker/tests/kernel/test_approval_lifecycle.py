@@ -15,9 +15,9 @@ import uuid
 import aiohttp
 import pytest
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
+from channel_protocol import ConfirmIntent
 from curie_worker.approvals import ApprovalBackendError, ApprovalRequest, CreatedApproval
 from curie_worker.sandbox.types import RouteState
-from channel_protocol import ConfirmIntent
 
 DONE = SessionStatus.DONE
 AWAITING = SessionStatus.AWAITING_APPROVAL

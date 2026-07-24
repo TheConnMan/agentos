@@ -7,6 +7,8 @@ provenance round-trip are verified end-to-end over real HTTP without the API.
 
 import anyio
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from curie_runner.memory import (
     ConsolidationResult,
     MemoryError,
@@ -20,8 +22,6 @@ from curie_runner.memory import (
     merge_provenance,
     resolve_memory,
 )
-from aiohttp import web
-from aiohttp.test_utils import TestServer
 
 
 def _fake_state_app() -> tuple[web.Application, list]:

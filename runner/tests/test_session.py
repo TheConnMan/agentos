@@ -4,10 +4,10 @@ import logging
 
 import anyio
 from aci_protocol import Event, Interrupt, SessionStatus, parse_ndjson
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 from curie_runner import RunTracer, SideEffectClassifier, build_options
 from curie_runner.fake import FakeModelSession, default_turn
 from curie_runner.session import SessionRunner
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 
 def _runner(

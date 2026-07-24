@@ -9,6 +9,8 @@ a real turn through the SessionRunner with the fake model.
 
 import anyio
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from curie_runner.history import (
     HistoryError,
     NullTranscriptStore,
@@ -18,8 +20,6 @@ from curie_runner.history import (
     format_conversation_preamble,
     resolve_history,
 )
-from aiohttp import web
-from aiohttp.test_utils import TestServer
 
 
 def _fake_state_app() -> tuple[web.Application, list]:

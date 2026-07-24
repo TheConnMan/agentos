@@ -10,10 +10,10 @@ co-tenant's migrations still see an empty public schema.
 
 import asyncio
 
+from alembic import context
 from curie_api import models  # noqa: F401  (register tables on the metadata)
 from curie_api.config import get_settings
 from curie_api.db import SCHEMA, Base
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config

@@ -131,8 +131,8 @@ def test_live_steer_and_cache_reuse() -> None:
     reason="no OPENROUTER_API_KEY (sk-or-...) in env",
 )
 def test_live_openrouter_cache_reuse() -> None:
-    from curie_runner.sdk_auth import CREDENTIALS_ENV, resolve_model_credential
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+    from curie_runner.sdk_auth import CREDENTIALS_ENV, resolve_model_credential
 
     env: dict[str, str] = {CREDENTIALS_ENV: _OPENROUTER_KEY}
     resolve_model_credential(env)

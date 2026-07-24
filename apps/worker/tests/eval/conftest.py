@@ -21,12 +21,12 @@ from pathlib import Path
 import pytest
 from aci_protocol import Final, SessionStatus, ToolNote
 from aci_protocol.s3 import build_s3_client
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from curie_worker.bundle_store import BundleStore
 from curie_worker.config import WorkerConfig
 from curie_worker.eval import EvalSuite
 from curie_worker.runner_client import RunnerClient
-from aiohttp import web
-from aiohttp.test_utils import TestServer
 
 # The committed cross-language eval-case fixture, shared by the model and stream
 # tests. conftest.py -> parents[2] is apps/worker.

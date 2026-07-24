@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 
+from channel_protocol import Action, ChoiceIntent, ConfirmIntent, OutboundMessage
 from curie_worker.behaviorpacks import NavPack
 from curie_worker.blocks import Reply, _reply_from_message, chunk, parse_reply, render, to_blocks
-from channel_protocol import Action, ChoiceIntent, ConfirmIntent, OutboundMessage
 
 # An enabled nav pack, same shape as tests/test_behaviorpacks.py.
 _NAV = NavPack(enabled=True, hub_label="Help", hub_command="help")

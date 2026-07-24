@@ -16,6 +16,12 @@ import logging
 import anyio
 import pytest
 from aci_protocol import Event
+from claude_agent_sdk import (
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+)
 from curie_runner import RunTracer, SideEffectClassifier
 from curie_runner.fake import FakeModelSession
 from curie_runner.redact import (
@@ -26,12 +32,6 @@ from curie_runner.redact import (
     redact_text,
 )
 from curie_runner.session import SessionRunner
-from claude_agent_sdk import (
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-    ToolUseBlock,
-)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter

@@ -13,6 +13,12 @@ import json
 import anyio
 import pytest
 from aci_protocol import Event, Final, SessionStatus
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 from curie_runner.adapter import build_options
 from curie_runner.approval import (
     APPROVAL_SUMMARY_PREFIX,
@@ -39,12 +45,6 @@ from curie_runner.otel import RunTracer
 from curie_runner.session import SessionRunner, _apply_approval_override
 from curie_runner.side_effects import SideEffectClassifier
 from curie_runner.translate import TurnState, translate_message
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
-from claude_agent_sdk.types import (
-    PermissionResultAllow,
-    PermissionResultDeny,
-    ToolPermissionContext,
-)
 from mcp import types as mcp_types
 from plugin_format import validate_bundle
 
