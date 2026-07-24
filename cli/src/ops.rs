@@ -2188,6 +2188,34 @@ pub async fn discover_valkey_password(namespace: &str, release: &str) -> Result<
         })
 }
 
+/// A usage error whose fix hint points at the Slack bot-token escape hatch.
+fn slack_bot_token_usage_err(msg: impl Into<String>) -> anyhow::Error {
+    crate::exit::CliError::usage(msg)
+        .with_fix("set AGENTOS_SLACK_BOT_TOKEN, or connect the workspace with `agentos cluster comms --slack`")
+        .into()
+}
+
+/// Discover a Helm release's Slack bot token from the same chart Secret
+/// (`<release>-secrets`, data key `slackBotToken`). In connected mode
+/// `cluster message` posts a real placeholder to the workspace with this token so
+/// the approval card and resumed reply ride the connected transport, instead of
+/// the throwaway stub (#770/ADR-0078). Only reached when a `<release>-dispatcher`
+/// is present (a workspace IS connected), so the token is expected to be set; an
+/// empty or unreadable value is an actionable error. The value is never printed
+/// -- it flows only into the `chat.postMessage` auth header.
+pub async fn discover_slack_bot_token(namespace: &str, release: &str) -> Result<String> {
+    read_release_secret(namespace, release, "slackBotToken")
+        .await
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| {
+            slack_bot_token_usage_err(format!(
+                "could not read a Slack bot token from secret {release}-secrets in namespace \
+                 {namespace}; the workspace may not be connected (run `agentos cluster comms \
+                 --slack`), or set AGENTOS_SLACK_BOT_TOKEN"
+            ))
+        })
+}
+
 /// Read one data key out of a release's chart Secret, decoded server-side by
 /// kubectl's `base64decode` so the plaintext never lands in argv (#524). `None`
 /// when the Secret, the key, or the cluster is unreachable; the caller turns
