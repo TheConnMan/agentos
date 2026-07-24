@@ -13,13 +13,13 @@ decision was taken, and the ADR records that moment, not today's tree.
 
 Proposes the agent-facing observability query surface for the CLI. Research and
 proposal only; it ships no code. Extends
-[ADR-0021](0021-agentos-is-a-harness-for-coding-agents.md) (the CLI's primary
+[ADR-0021](0021-curie-is-a-harness-for-coding-agents.md) (the CLI's primary
 user is a coding agent) and [ADR-0004](0004-langfuse-observability-and-eval-backbone.md)
 (Langfuse as the observability backbone), and reuses the thin-client-over-api
 pattern of [ADR-0024](0024-deploy-reaches-api-via-ui-proxy.md). Implements the
-research ticket [#461](https://github.com/curie-eng/agentos/issues/461); the
+research ticket [#461](https://github.com/curie-eng/curie/issues/461); the
 mechanical `--open` split of the current human verb is the separate
-[#460](https://github.com/curie-eng/agentos/issues/460).
+[#460](https://github.com/curie-eng/curie/issues/460).
 
 ## Context
 
@@ -29,7 +29,7 @@ happened: did my tool calls fire, what did that run cost, is my error rate
 climbing, show me trace `X`. It must get those answers as structured data
 through the CLI, not by opening a browser tab it cannot read.
 
-Today's `agentos local observability` is the wrong shape for that consumer. The
+Today's `curie local observability` is the wrong shape for that consumer. The
 handler prints two hardcoded localhost URLs (`http://localhost:28080/?api=1` and
 `http://localhost:23000`) and shells `xdg-open`/`open` at them best-effort
 (`cli/src/commands.rs:1547-1577`). It takes no arguments, fetches no data, and
@@ -45,7 +45,7 @@ and it deliberately does not ship it (Proposed, for human review first).
 
 Ground the answer in what the runner actually emits, not a generic dashboard
 feature list. The runner produces a fixed three-span tree per turn
-(`runner/src/agentos_runner/otel.py:1-8`): a root `agent.run` (SpanKind.SERVER)
+(`runner/src/curie_runner/otel.py:1-8`): a root `agent.run` (SpanKind.SERVER)
 carrying `langfuse.trace.name`, a child `llm.generation` holding
 `gen_ai.request.model` and the `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens`
 counts, and one `execute_tool` child per tool call stamped with
@@ -73,18 +73,18 @@ open item rather than a promise.
 Langfuse is the single backend, and `apps/api` already proxies its read API on
 two paths, so the query logic exists server-side and needs no reimplementation.
 
-- **Per-run detail.** `apps/api/src/agentos_api/langfuse.py` is a thin async
+- **Per-run detail.** `apps/api/src/curie_api/langfuse.py` is a thin async
   client over Langfuse's public read API; `build_tree` reconstructs the tool-call
   tree from the flat observation list via `parentObservationId`
   (`langfuse.py:96-130`). The routes are `GET /langfuse/traces` (list, optional
   `agent_id`) and `GET /langfuse/traces/{trace_id}` (single trace plus the
   reconstructed observation tree and `sandbox_id`), in
-  `apps/api/src/agentos_api/routers/runs.py:26-52`.
-- **Aggregates.** `apps/api/src/agentos_api/metrics.py` builds Langfuse Metrics
+  `apps/api/src/curie_api/routers/runs.py:26-52`.
+- **Aggregates.** `apps/api/src/curie_api/metrics.py` builds Langfuse Metrics
   API queries for five metrics: `runs`, `latency_p95_ms`, `tokens`, `cost_usd`
   (`metrics.py:35-46`), plus `error_rate` derived from an observations `level`
   query. These are served at `GET /observability/metrics/summary` and
-  `GET /observability/metrics/series` (`apps/api/src/agentos_api/routers/observability.py`),
+  `GET /observability/metrics/series` (`apps/api/src/curie_api/routers/observability.py`),
   filterable by `environment` and `agent`.
 
 `apps/api/CLAUDE.md` states the invariant plainly: these observability endpoints
@@ -120,12 +120,12 @@ this decision.
 ### Research 4: tier applicability
 
 Correcting the ticket's worry. Skill tier does not export to a "wrong Langfuse
-project"; it exports nothing by default. `agentos skill up`'s `--otel-endpoint`
+project"; it exports nothing by default. `curie skill up`'s `--otel-endpoint`
 is a plain optional flag with no default value (`cli/src/main.rs`,
 `SkillAction::Up`, `otel_endpoint: Option<String>`), threaded to the container
 only `if let Some(endpoint)` (`cli/src/docker.rs:112-115`). Since the runner's
 tracer is a no-op whenever the endpoint is unset
-(`runner/src/agentos_runner/otel.py:48-49`), a plain `agentos skill up` with no
+(`runner/src/curie_runner/otel.py:48-49`), a plain `curie skill up` with no
 flags produces no traces at all, anywhere. Skill tier only exports when the
 operator explicitly wires `--otel-endpoint` onto a reachable collector network,
 and even then it has no `apps/api` to read them back through.
@@ -133,7 +133,7 @@ and even then it has no `apps/api` to read them back through.
 Local and cluster both auto-wire the collector: compose defines an
 `otel-collector` service, and the chart sets the sandbox pod's
 `OTEL_EXPORTER_OTLP_ENDPOINT` at the release's collector under
-`otelCollector.deploy` (`charts/agentos/templates/agent-sandbox.yaml:432-437`).
+`otelCollector.deploy` (`charts/curie/templates/agent-sandbox.yaml:432-437`).
 Both tiers run an `apps/api` that reaches a Langfuse. So local and cluster can
 answer the observability query fully; skill tier structurally cannot in the
 default loop.
@@ -185,10 +185,10 @@ blocked on it and must not claim isolation it lacks.
   'stauts', did you mean 'status'?").
 - **ccusage** is the cautionary tale: Claude Code shipped a human-only `/cost`,
   so the agent-facing usage surface had to be rebuilt externally by parsing raw
-  JSONL. AgentOS shipping the machine surface itself, day one, is the direct
+  JSONL. Curie shipping the machine surface itself, day one, is the direct
   argument for this ADR.
 - Cross-tool gap: none of the surveyed tools offers a first-class `--latest` /
-  "my last run" shortcut, yet that is exactly the agent's real question. AgentOS
+  "my last run" shortcut, yet that is exactly the agent's real question. Curie
   should fill it (prior-art section 4).
 
 ## Decision

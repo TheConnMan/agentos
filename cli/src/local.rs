@@ -1,4 +1,4 @@
-//! `agentos local <up|down|status>`: wrap the repo's local dev stack
+//! `curie local <up|down|status>`: wrap the repo's local dev stack
 //! (`compose.dev.yaml`: Postgres + Valkey + Langfuse + ClickHouse + MinIO +
 //! OTel) the same way `ops.rs` wraps Helm -- a deliberately thin CLI over
 //! `docker compose`, which stays the source of truth. Each verb builds its
@@ -29,9 +29,9 @@ const ENDPOINTS: &[(&str, &str, bool)] = &[
     // The three observability port literals live once, in `observability.rs`
     // (#460); these rows reference them so the two cannot drift. Values are
     // unchanged, so `endpoints_match_compose_file` stays green.
-    ("AgentOS API", crate::observability::LOCAL_API_URL, true),
+    ("Curie API", crate::observability::LOCAL_API_URL, true),
     (
-        "AgentOS Console",
+        "Curie Console",
         crate::observability::LOCAL_CONSOLE_URL,
         false,
     ),
@@ -53,7 +53,7 @@ const ENDPOINTS: &[(&str, &str, bool)] = &[
 /// `compose.dev.yaml`). Any one set non-empty makes `local up` go live, matching
 /// `skill up`. Empty counts as unset (the empty-string-is-not-a-credential rule).
 pub const CREDENTIAL_ENV_VARS: &[&str] = &[
-    "AGENTOS_CREDENTIALS",
+    "CURIE_CREDENTIALS",
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
 ];
@@ -64,25 +64,25 @@ pub const CREDENTIAL_ENV_VARS: &[&str] = &[
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ModelMode {
     /// A credential is present and fake is not pinned truthy: inject
-    /// AGENTOS_FAKE_MODEL=0 so local goes live like `skill up`.
+    /// CURIE_FAKE_MODEL=0 so local goes live like `skill up`.
     LiveFromCredential,
-    /// A credential is present but AGENTOS_FAKE_MODEL is pinned truthy: run fake
+    /// A credential is present but CURIE_FAKE_MODEL is pinned truthy: run fake
     /// anyway (the operator asked for it) but warn loudly.
     FakePinnedDespiteCredential,
     /// No credential: compose's fake default stands; nothing to inject.
     DefaultFake,
 }
 
-/// Match the runner's truthy parse of `AGENTOS_FAKE_MODEL`
-/// (`runner/src/agentos_runner/__main__.py`): lowercase one of `1`/`true`/`yes`.
-/// The runtime's own reading of `AGENTOS_FAKE_MODEL`. Shared with the eval
+/// Match the runner's truthy parse of `CURIE_FAKE_MODEL`
+/// (`runner/src/curie_runner/__main__.py`): lowercase one of `1`/`true`/`yes`.
+/// The runtime's own reading of `CURIE_FAKE_MODEL`. Shared with the eval
 /// sweep's worker probe (`message::probe_fake_model`) so the CLI judges a
 /// deployed worker's fake-ness by the same rule the worker judges itself.
 pub(crate) fn fake_model_is_truthy(v: &str) -> bool {
     matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
 }
 
-/// Pure parity core. `explicit_fake_model` is the shell AGENTOS_FAKE_MODEL (None
+/// Pure parity core. `explicit_fake_model` is the shell CURIE_FAKE_MODEL (None
 /// when unset or empty). `has_credential` is whether any CREDENTIAL_ENV_VARS is
 /// set non-empty.
 pub fn resolve_model_mode(explicit_fake_model: Option<&str>, has_credential: bool) -> ModelMode {
@@ -98,14 +98,14 @@ pub fn resolve_model_mode(explicit_fake_model: Option<&str>, has_credential: boo
 /// The single injection step every worker-restarting command shares: flip
 /// compose's fake default to live when (and only when) a credential is present
 /// and fake is not explicitly pinned. `FakePinnedDespiteCredential` and
-/// `DefaultFake` return `None` so compose's `${AGENTOS_FAKE_MODEL:-1}` default
+/// `DefaultFake` return `None` so compose's `${CURIE_FAKE_MODEL:-1}` default
 /// stands. This is the one place that decision is made -- `up_command` and
 /// `local comms`'s connect/disconnect commands all call it instead of each
 /// re-deriving the pair inline, which is what let `local comms` drift out of
 /// parity with `local up` (issue #450).
 pub fn fake_model_env_override(mode: ModelMode) -> Option<(String, String)> {
     match mode {
-        ModelMode::LiveFromCredential => Some(("AGENTOS_FAKE_MODEL".into(), "0".into())),
+        ModelMode::LiveFromCredential => Some(("CURIE_FAKE_MODEL".into(), "0".into())),
         ModelMode::FakePinnedDespiteCredential | ModelMode::DefaultFake => None,
     }
 }
@@ -131,8 +131,8 @@ pub fn otel_endpoint_env_override(minimal: bool) -> Option<(String, String)> {
     }
 }
 
-/// Snapshot the shell for the parity decision. An empty AGENTOS_FAKE_MODEL is
-/// treated as unset (matches compose's `${AGENTOS_FAKE_MODEL:-1}` and the
+/// Snapshot the shell for the parity decision. An empty CURIE_FAKE_MODEL is
+/// treated as unset (matches compose's `${CURIE_FAKE_MODEL:-1}` and the
 /// empty-string-is-not-a-credential rule); a credential is any non-empty
 /// CREDENTIAL_ENV_VARS value.
 pub fn model_mode_from_env() -> ModelMode {
@@ -142,11 +142,11 @@ pub fn model_mode_from_env() -> ModelMode {
 /// The shell parity decision, folding in whether an opt-in `.env` supplied a
 /// model credential the shell did not (#749). `file_has_credential` makes the
 /// stack go live exactly like a shell credential would, unless the shell pins
-/// `AGENTOS_FAKE_MODEL` truthy -- in which case the pin still wins
+/// `CURIE_FAKE_MODEL` truthy -- in which case the pin still wins
 /// (`FakePinnedDespiteCredential`). Reads the shell for the pin and for its own
 /// credentials; a `.env`-only credential is the sole extra input.
 pub fn model_mode_from_env_with_file_credential(file_has_credential: bool) -> ModelMode {
-    let explicit = std::env::var("AGENTOS_FAKE_MODEL")
+    let explicit = std::env::var("CURIE_FAKE_MODEL")
         .ok()
         .filter(|s| !s.is_empty());
     let has_credential = file_has_credential
@@ -158,7 +158,7 @@ pub fn model_mode_from_env_with_file_credential(file_has_credential: bool) -> Mo
 
 /// Resolve the opt-in bundle `.env` plan for `local up` (#749, ADR-0070): the
 /// model credentials to inject into the compose child, plus the effective model
-/// mode. Pure -- the shell-presence predicate and the explicit `AGENTOS_FAKE_MODEL`
+/// mode. Pure -- the shell-presence predicate and the explicit `CURIE_FAKE_MODEL`
 /// pin are injected -- so both the precedence (shell env wins over `.env`) and
 /// the "a `.env`-only credential still boots live" rule are unit-testable without
 /// touching the process environment.
@@ -194,7 +194,7 @@ pub fn load_env_file_up_plan(
         return Ok((Vec::new(), model_mode_from_env()));
     };
     let parsed = crate::commands::parse_credential_env_file(path)?;
-    let explicit = std::env::var("AGENTOS_FAKE_MODEL")
+    let explicit = std::env::var("CURIE_FAKE_MODEL")
         .ok()
         .filter(|s| !s.is_empty());
     let shell_has_credential = CREDENTIAL_ENV_VARS
@@ -235,7 +235,7 @@ pub struct LocalDownOpts {
 
 pub struct LocalRebuildOpts {
     pub common: LocalOpts,
-    /// The compose service to rebuild + recreate, e.g. `agentos-worker`.
+    /// The compose service to rebuild + recreate, e.g. `curie-worker`.
     pub service: String,
 }
 
@@ -274,31 +274,31 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
     let mut cmd = OpsCommand::new("docker", args);
     // `with_env` REPLACES the env vec, so build it once. `--local-model` and the
     // credential-driven live injection are mutually exclusive: local-model
-    // carries its own live env (AGENTOS_FAKE_MODEL=0 + the ollama routing), so
+    // carries its own live env (CURIE_FAKE_MODEL=0 + the ollama routing), so
     // the parity injection only applies when no local model is requested.
     let mut env: Vec<(String, String)> = if let Some(model) = &o.local_model {
         vec![
-            ("AGENTOS_FAKE_MODEL".into(), "0".into()),
+            ("CURIE_FAKE_MODEL".into(), "0".into()),
             (
-                "AGENTOS_MODEL_BASE_URL".into(),
+                "CURIE_MODEL_BASE_URL".into(),
                 format!("http://ollama:{OLLAMA_PORT}"),
             ),
-            ("AGENTOS_MODEL".into(), model.clone()),
+            ("CURIE_MODEL".into(), model.clone()),
             // Spawned runners join the dedicated, data-tier-free runner network
             // (#631). ollama is multi-homed onto it, so `--local-model` resolves
             // `ollama` by name without exposing postgres/valkey/minio.
-            ("AGENTOS_DOCKER_NETWORK".into(), "agentos_runner".into()),
+            ("CURIE_DOCKER_NETWORK".into(), "curie_runner".into()),
             // Pin the compose project name so the default network is always
-            // `agentos_default`, regardless of the working-directory basename
+            // `curie_default`, regardless of the working-directory basename
             // (which is what compose otherwise derives the project name from).
-            ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
+            ("COMPOSE_PROJECT_NAME".into(), "curie".into()),
         ]
     } else {
         // Delegate to `fake_model_env_override`, which discriminates on
-        // `o.model_mode`: LiveFromCredential injects AGENTOS_FAKE_MODEL=0 so
+        // `o.model_mode`: LiveFromCredential injects CURIE_FAKE_MODEL=0 so
         // compose goes live, matching `skill up`. FakePinnedDespiteCredential
         // and DefaultFake inject nothing, so compose's
-        // `${AGENTOS_FAKE_MODEL:-1}` default stands for those two modes.
+        // `${CURIE_FAKE_MODEL:-1}` default stands for those two modes.
         fake_model_env_override(o.model_mode).into_iter().collect()
     };
     // Delegate to `otel_endpoint_env_override`, the single source of truth for
@@ -316,7 +316,7 @@ pub fn up_command(o: &LocalOpts) -> OpsCommand {
 /// -f <file> up -d --build --force-recreate --no-deps <service>` (#714).
 ///
 /// A targeted single-service rebuild -- e.g. picking up a code change to just
-/// `agentos-worker` -- carries the SAME env injection as `up_command`
+/// `curie-worker` -- carries the SAME env injection as `up_command`
 /// (credential/model-mode parity, the core-profile OTel suppression). Without
 /// it, a raw `docker compose up --no-deps <service>` silently reverts that one
 /// service to compose's fake-model/dev-stub defaults, because compose's
@@ -355,14 +355,14 @@ pub fn rebuild_command(o: &LocalOpts, service: &str) -> OpsCommand {
     // existing function's internals.
     let mut env: Vec<(String, String)> = if let Some(model) = &o.local_model {
         vec![
-            ("AGENTOS_FAKE_MODEL".into(), "0".into()),
+            ("CURIE_FAKE_MODEL".into(), "0".into()),
             (
-                "AGENTOS_MODEL_BASE_URL".into(),
+                "CURIE_MODEL_BASE_URL".into(),
                 format!("http://ollama:{OLLAMA_PORT}"),
             ),
-            ("AGENTOS_MODEL".into(), model.clone()),
-            ("AGENTOS_DOCKER_NETWORK".into(), "agentos_runner".into()),
-            ("COMPOSE_PROJECT_NAME".into(), "agentos".into()),
+            ("CURIE_MODEL".into(), model.clone()),
+            ("CURIE_DOCKER_NETWORK".into(), "curie_runner".into()),
+            ("COMPOSE_PROJECT_NAME".into(), "curie".into()),
         ]
     } else {
         fake_model_env_override(o.model_mode).into_iter().collect()
@@ -450,9 +450,9 @@ impl crate::ui::CliOutput for LocalUpOutput {
                 }
                 ui.note("Drive the local product loop (no Slack, no Kubernetes):");
                 ui.note(
-                    "  agentos local deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
+                    "  curie local deploy --plugin-dir <dir> --slack-channel <C...> --api-url http://localhost:28000",
                 );
-                ui.note("  agentos local message \"<your question>\"");
+                ui.note("  curie local message \"<your question>\"");
             }
         }
     }
@@ -511,13 +511,13 @@ pub async fn up(mut o: LocalOpts) -> Result<LocalUpOutput> {
     if o.local_model.is_none() {
         match o.model_mode {
             ModelMode::LiveFromCredential => ui.note(
-                "Running the LIVE model: a credential is set in your shell (parity with `agentos skill up`). Set AGENTOS_FAKE_MODEL=1 to force the offline fake model.",
+                "Running the LIVE model: a credential is set in your shell (parity with `curie skill up`). Set CURIE_FAKE_MODEL=1 to force the offline fake model.",
             ),
             ModelMode::FakePinnedDespiteCredential => ui.warn(
-                "Running the FAKE model despite a credential in your shell: AGENTOS_FAKE_MODEL is pinned on. Unset it or set AGENTOS_FAKE_MODEL=0 to go live.",
+                "Running the FAKE model despite a credential in your shell: CURIE_FAKE_MODEL is pinned on. Unset it or set CURIE_FAKE_MODEL=0 to go live.",
             ),
             ModelMode::DefaultFake => ui.note(
-                "Running the fake model (no credential set). Provide a credential (ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN / AGENTOS_CREDENTIALS) or --local-model to go live.",
+                "Running the fake model (no credential set). Provide a credential (ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN / CURIE_CREDENTIALS) or --local-model to go live.",
             ),
         }
     }
@@ -573,7 +573,7 @@ impl crate::ui::CliOutput for LocalRebuildOutput {
                         "Came back up on the LIVE model: a credential is set in your shell.",
                     ),
                     ModelMode::FakePinnedDespiteCredential => ui.warn(
-                        "Came back up on the FAKE model despite a credential in your shell: AGENTOS_FAKE_MODEL is pinned on.",
+                        "Came back up on the FAKE model despite a credential in your shell: CURIE_FAKE_MODEL is pinned on.",
                     ),
                     ModelMode::DefaultFake => ui.note(
                         "Came back up on the fake model (no credential set in this shell).",
@@ -584,7 +584,7 @@ impl crate::ui::CliOutput for LocalRebuildOutput {
     }
 }
 
-/// `agentos local rebuild <service>`: rebuild + recreate ONE compose service
+/// `curie local rebuild <service>`: rebuild + recreate ONE compose service
 /// (e.g. after a code change) without losing the stack's already-resolved
 /// credential/model-mode wiring (#714) -- see `rebuild_command`'s doc comment
 /// for the footgun this exists to close. Re-resolves `ModelMode` from THIS
@@ -719,7 +719,7 @@ impl crate::ui::CliOutput for LocalDownOutput {
                     ui.payload("dev stack stopped; volumes wiped");
                 } else {
                     ui.payload("dev stack stopped");
-                    ui.note("volumes kept (fast restart with `agentos local up`)");
+                    ui.note("volumes kept (fast restart with `curie local up`)");
                 }
             }
         }
@@ -858,21 +858,21 @@ mod tests {
         assert!(display.contains("up -d --wait"), "{display}");
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+            .contains(&(String::from("CURIE_FAKE_MODEL"), String::from("0"))));
         assert!(cmd.env.contains(&(
-            String::from("AGENTOS_MODEL_BASE_URL"),
+            String::from("CURIE_MODEL_BASE_URL"),
             String::from("http://ollama:11434"),
         )));
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+            .contains(&(String::from("CURIE_MODEL"), String::from("qwen3:4b"))));
         assert!(cmd.env.contains(&(
-            String::from("AGENTOS_DOCKER_NETWORK"),
-            String::from("agentos_runner"),
+            String::from("CURIE_DOCKER_NETWORK"),
+            String::from("curie_runner"),
         )));
         assert!(cmd.env.contains(&(
             String::from("COMPOSE_PROJECT_NAME"),
-            String::from("agentos"),
+            String::from("curie"),
         )));
     }
 
@@ -911,7 +911,7 @@ mod tests {
         // The local-model wiring must survive the suppression.
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+            .contains(&(String::from("CURIE_MODEL"), String::from("qwen3:4b"))));
     }
 
     /// The default (full-profile) `up` starts otel-collector, so it must NOT
@@ -939,29 +939,29 @@ mod tests {
     /// lands as the final token.
     #[test]
     fn rebuild_command_targets_one_service() {
-        let cmd = rebuild_command(&opts(DEFAULT_COMPOSE_FILE), "agentos-worker");
+        let cmd = rebuild_command(&opts(DEFAULT_COMPOSE_FILE), "curie-worker");
         let display = cmd.display();
-        assert!(display.contains("up -d --build --force-recreate --no-deps agentos-worker"));
+        assert!(display.contains("up -d --build --force-recreate --no-deps curie-worker"));
         assert!(!display.contains("--wait"));
     }
 
     /// #714: the whole point -- a credential in the shell must still flip
-    /// AGENTOS_FAKE_MODEL=0 on a targeted rebuild, exactly like `local up`,
+    /// CURIE_FAKE_MODEL=0 on a targeted rebuild, exactly like `local up`,
     /// instead of the rebuilt service silently reverting to compose's fake
     /// default.
     #[test]
     fn rebuild_command_carries_live_model_parity() {
         let mut o = opts(DEFAULT_COMPOSE_FILE);
         o.model_mode = ModelMode::LiveFromCredential;
-        let cmd = rebuild_command(&o, "agentos-worker");
+        let cmd = rebuild_command(&o, "curie-worker");
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+            .contains(&(String::from("CURIE_FAKE_MODEL"), String::from("0"))));
     }
 
     #[test]
     fn rebuild_command_default_fake_injects_nothing() {
-        let cmd = rebuild_command(&opts(DEFAULT_COMPOSE_FILE), "agentos-worker");
+        let cmd = rebuild_command(&opts(DEFAULT_COMPOSE_FILE), "curie-worker");
         assert!(cmd.env.is_empty(), "env={:?}", cmd.env);
     }
 
@@ -969,21 +969,21 @@ mod tests {
     fn rebuild_command_carries_local_model_wiring() {
         let cmd = rebuild_command(
             &opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b"),
-            "agentos-worker",
+            "curie-worker",
         );
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+            .contains(&(String::from("CURIE_MODEL"), String::from("qwen3:4b"))));
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+            .contains(&(String::from("CURIE_FAKE_MODEL"), String::from("0"))));
     }
 
     #[test]
     fn rebuild_command_minimal_suppresses_otel_endpoint() {
         let mut o = opts(DEFAULT_COMPOSE_FILE);
         o.minimal = true;
-        let cmd = rebuild_command(&o, "agentos-worker");
+        let cmd = rebuild_command(&o, "curie-worker");
         assert!(cmd
             .env
             .contains(&(String::from("OTEL_EXPORTER_OTLP_ENDPOINT"), String::new())));
@@ -994,7 +994,7 @@ mod tests {
     fn rebuild_command_respects_slack_profile() {
         let mut o = opts(DEFAULT_COMPOSE_FILE);
         o.slack = true;
-        let display = rebuild_command(&o, "agentos-dispatcher").display();
+        let display = rebuild_command(&o, "curie-dispatcher").display();
         assert!(display.contains("--profile slack"));
     }
 
@@ -1038,7 +1038,7 @@ mod tests {
         assert_eq!(mode, ModelMode::LiveFromCredential);
     }
 
-    /// The shell's `AGENTOS_FAKE_MODEL` pin still wins over a `.env` credential:
+    /// The shell's `CURIE_FAKE_MODEL` pin still wins over a `.env` credential:
     /// the operator explicitly asked for the fake model, so a file credential
     /// does not silently override it (parity with a shell credential).
     #[test]
@@ -1100,13 +1100,13 @@ mod tests {
         let creds = vec![("ANTHROPIC_API_KEY".to_string(), secret.to_string())];
 
         let up = up_command(&o).with_secret_env(creds.clone());
-        let rebuilt = rebuild_command(&o, "agentos-worker").with_secret_env(creds.clone());
+        let rebuilt = rebuild_command(&o, "curie-worker").with_secret_env(creds.clone());
 
         // The live-model flip is present on both, and the plain env + masked
         // credential wiring match exactly across the two verbs.
         assert!(up
             .env
-            .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))));
+            .contains(&(String::from("CURIE_FAKE_MODEL"), String::from("0"))));
         assert_eq!(up.env, rebuilt.env, "rebuild env drifted from up env");
         assert_eq!(
             up.secret_env, rebuilt.secret_env,
@@ -1127,7 +1127,7 @@ mod tests {
         let secret = "sk-ant-supersecretvalue";
         let mut o = opts(DEFAULT_COMPOSE_FILE);
         o.model_mode = ModelMode::LiveFromCredential;
-        let cmd = rebuild_command(&o, "agentos-worker")
+        let cmd = rebuild_command(&o, "curie-worker")
             .with_secret_env(vec![("ANTHROPIC_API_KEY".to_string(), secret.to_string())]);
         let display = cmd.display();
         assert!(
@@ -1195,7 +1195,7 @@ mod tests {
     fn fake_model_env_override_maps_all_three_modes() {
         assert_eq!(
             fake_model_env_override(ModelMode::LiveFromCredential),
-            Some(("AGENTOS_FAKE_MODEL".to_string(), "0".to_string()))
+            Some(("CURIE_FAKE_MODEL".to_string(), "0".to_string()))
         );
         assert_eq!(
             fake_model_env_override(ModelMode::FakePinnedDespiteCredential),
@@ -1211,12 +1211,12 @@ mod tests {
         let cmd = up_command(&o);
         assert!(
             cmd.env
-                .contains(&(String::from("AGENTOS_FAKE_MODEL"), String::from("0"))),
-            "live-from-credential must inject AGENTOS_FAKE_MODEL=0; env={:?}",
+                .contains(&(String::from("CURIE_FAKE_MODEL"), String::from("0"))),
+            "live-from-credential must inject CURIE_FAKE_MODEL=0; env={:?}",
             cmd.env
         );
         assert!(
-            cmd.display().contains("AGENTOS_FAKE_MODEL=0"),
+            cmd.display().contains("CURIE_FAKE_MODEL=0"),
             "display must show the injected env: {}",
             cmd.display()
         );
@@ -1228,7 +1228,7 @@ mod tests {
         o.model_mode = ModelMode::FakePinnedDespiteCredential;
         let cmd = up_command(&o);
         assert!(
-            !cmd.env.iter().any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
+            !cmd.env.iter().any(|(k, _)| k == "CURIE_FAKE_MODEL"),
             "fake-pinned must leave compose's default alone; env={:?}",
             cmd.env
         );
@@ -1238,7 +1238,7 @@ mod tests {
     fn up_default_fake_does_not_inject() {
         let cmd = up_command(&opts(DEFAULT_COMPOSE_FILE));
         assert!(
-            !cmd.env.iter().any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
+            !cmd.env.iter().any(|(k, _)| k == "CURIE_FAKE_MODEL"),
             "default-fake must leave compose's default alone; env={:?}",
             cmd.env
         );
@@ -1247,7 +1247,7 @@ mod tests {
     #[test]
     fn up_local_model_unchanged_by_model_mode() {
         // --local-model owns the live env; a LiveFromCredential model_mode must
-        // not duplicate or override it (exactly one AGENTOS_FAKE_MODEL=0, plus the
+        // not duplicate or override it (exactly one CURIE_FAKE_MODEL=0, plus the
         // ollama routing env).
         let mut o = opts_with_local_model(DEFAULT_COMPOSE_FILE, "qwen3:4b");
         o.model_mode = ModelMode::LiveFromCredential;
@@ -1255,17 +1255,17 @@ mod tests {
         assert_eq!(
             cmd.env
                 .iter()
-                .filter(|(k, _)| k == "AGENTOS_FAKE_MODEL")
+                .filter(|(k, _)| k == "CURIE_FAKE_MODEL")
                 .count(),
             1,
-            "exactly one AGENTOS_FAKE_MODEL under --local-model; env={:?}",
+            "exactly one CURIE_FAKE_MODEL under --local-model; env={:?}",
             cmd.env
         );
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+            .contains(&(String::from("CURIE_MODEL"), String::from("qwen3:4b"))));
         assert!(cmd.env.contains(&(
-            String::from("AGENTOS_MODEL_BASE_URL"),
+            String::from("CURIE_MODEL_BASE_URL"),
             String::from("http://ollama:11434"),
         )));
     }
@@ -1327,10 +1327,10 @@ mod tests {
         assert!(!display.contains("--profile full"), "{display}");
         assert!(cmd
             .env
-            .contains(&(String::from("AGENTOS_MODEL"), String::from("qwen3:4b"))));
+            .contains(&(String::from("CURIE_MODEL"), String::from("qwen3:4b"))));
         assert!(cmd.env.contains(&(
             String::from("COMPOSE_PROJECT_NAME"),
-            String::from("agentos"),
+            String::from("curie"),
         )));
     }
 
@@ -1423,8 +1423,8 @@ mod tests {
         let compose = read_compose("compose.dev.yaml");
         // Each printed host port must appear as a `"<host>:<container>"` mapping.
         for (label, host_port) in [
-            ("AgentOS API", "28000"),
-            ("AgentOS Console", "28080"),
+            ("Curie API", "28000"),
+            ("Curie Console", "28080"),
             ("Langfuse UI", "23000"),
             ("Postgres", "25432"),
             ("Valkey", "26379"),
@@ -1448,11 +1448,11 @@ mod tests {
         // carries this param.
         let console = ENDPOINTS
             .iter()
-            .find(|(label, _, _)| *label == "AgentOS Console")
-            .expect("AgentOS Console endpoint present");
+            .find(|(label, _, _)| *label == "Curie Console")
+            .expect("Curie Console endpoint present");
         assert!(
             console.1.contains("api=1"),
-            "AgentOS Console endpoint must be the wired ?api=1 URL, got {}",
+            "Curie Console endpoint must be the wired ?api=1 URL, got {}",
             console.1
         );
     }
@@ -1463,9 +1463,9 @@ mod tests {
         "valkey",
         "minio",
         "minio-init",
-        "agentos-migrate",
-        "agentos-api",
-        "agentos-worker",
+        "curie-migrate",
+        "curie-api",
+        "curie-worker",
     ];
 
     /// The 5 services that must carry `profiles: *full_profiles`.
@@ -1474,7 +1474,7 @@ mod tests {
         "langfuse-worker",
         "langfuse-web",
         "otel-collector",
-        "agentos-ui",
+        "curie-ui",
     ];
 
     /// Return the YAML block for `service`: everything from its `  <service>:`
@@ -1557,7 +1557,7 @@ mod tests {
         assert_eq!(
             core,
             vec![
-                "AgentOS API",
+                "Curie API",
                 "Postgres",
                 "Valkey",
                 "MinIO S3",
@@ -1585,9 +1585,9 @@ mod tests {
     fn compose_file_declares_slack_dispatcher_profile() {
         let compose = read_compose("compose.dev.yaml");
         let dispatcher = compose
-            .split("  agentos-dispatcher:")
+            .split("  curie-dispatcher:")
             .nth(1)
-            .expect("agentos-dispatcher service present");
+            .expect("curie-dispatcher service present");
         assert!(dispatcher.contains("    profiles: [slack]"));
         assert!(!dispatcher.contains("profiles: *core_profiles"));
         assert!(!dispatcher.contains("profiles: *full_profiles"));

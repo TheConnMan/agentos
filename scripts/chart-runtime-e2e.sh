@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# chart-runtime-e2e.sh -- one-command RUNTIME e2e for the AgentOS Helm chart.
+# chart-runtime-e2e.sh -- one-command RUNTIME e2e for the Curie Helm chart.
 #
 # WHY THIS EXISTS
 # ---------------
@@ -18,7 +18,7 @@
 # 1. Install a trimmed chart slice on k8scratch (MinIO + agent-sandbox only).
 # 2. Seed a real bundle object into MinIO.
 # 3. Render the SandboxTemplate.spec.podTemplate into a BOUND sandbox Pod
-#    (AGENTOS_BUNDLE_REF pointing at the seeded object) and apply it -- so the
+#    (CURIE_BUNDLE_REF pointing at the seeded object) and apply it -- so the
 #    real bundle-fetch/bundle-extract init containers actually run.
 # 4. Wait for the init pair to complete and the runner container to be Running.
 # 5. `kubectl exec` into the runner and ASSERT on what it can see.
@@ -35,9 +35,9 @@ set -euo pipefail
 # --------------------------------------------------------------------------
 # Config / flags
 # --------------------------------------------------------------------------
-NAMESPACE="agentos-e2eharness"
+NAMESPACE="curie-e2eharness"
 RELEASE="e2eharness"
-CHART="charts/agentos"
+CHART="charts/curie"
 KEEP=0
 FORCE=0
 RUNNER_IMAGE=""
@@ -49,15 +49,15 @@ usage() {
   cat <<'EOF'
 Usage: scripts/chart-runtime-e2e.sh [options]
 
-Stands up a trimmed AgentOS chart slice on the k8scratch cluster, seeds a real
+Stands up a trimmed Curie chart slice on the k8scratch cluster, seeds a real
 bundle into MinIO, renders a bound agent-sandbox Pod, runs its bundle-fetch/
 extract init containers, and execs the runner to assert the #56 credential is
 NOT readable off the shared bundle volume (and the bundle really was provisioned).
 
 Options:
-  --namespace <ns>       Namespace to use (default: agentos-e2eharness)
+  --namespace <ns>       Namespace to use (default: curie-e2eharness)
   --release <name>       Helm release name (default: e2eharness)
-  --chart <path>         Chart path, relative to repo root (default: charts/agentos)
+  --chart <path>         Chart path, relative to repo root (default: charts/curie)
   --runner-image <img>   Override ONLY the runner container image with this image
                          (command: sleep 3600, probes/ports stripped). Robustness
                          fallback when the real runner image will not reach Running
@@ -94,23 +94,23 @@ case "$CHART" in
   *) CHART_PATH="$REPO_ROOT/$CHART" ;;
 esac
 
-# Derived resource names -- mirror the chart's `agentos.fullname` helper exactly
+# Derived resource names -- mirror the chart's `curie.fullname` helper exactly
 # (nameOverride/fullnameOverride empty): fullname == release if it already
-# contains the chart name "agentos", else "<release>-agentos".
-if [[ "$RELEASE" == *agentos* ]]; then
+# contains the chart name "curie", else "<release>-curie".
+if [[ "$RELEASE" == *curie* ]]; then
   FULLNAME="$RELEASE"
 else
-  FULLNAME="$RELEASE-agentos"
+  FULLNAME="$RELEASE-curie"
 fi
 SANDBOX_TEMPLATE="$FULLNAME-runner"
 MINIO_SVC="$FULLNAME-minio"
 SECRET_NAME="$FULLNAME-secrets"
-MINIO_BUCKET="agentos-bundles"
+MINIO_BUCKET="curie-bundles"
 MINIO_USER="minio"
 # Ownership label stamped on any namespace THIS script creates. The script only
 # ever deletes a namespace carrying this label, so pointing --namespace at a
 # pre-existing namespace (e.g. `default`) can never destroy it.
-OWNED_LABEL="agentos-e2e-harness/owned"
+OWNED_LABEL="curie-e2e-harness/owned"
 
 banner() { echo; echo "== $* =="; }
 fail() { echo; echo "FAIL: $*"; exit 1; }
@@ -118,7 +118,7 @@ fail() { echo; echo "FAIL: $*"; exit 1; }
 # ns_is_owned <ns> : true iff the namespace exists AND carries the ownership label.
 ns_is_owned() {
   local ns="$1" val
-  val="$(kubectl get ns "$ns" -o "jsonpath={.metadata.labels['agentos-e2e-harness/owned']}" 2>/dev/null || echo "")"
+  val="$(kubectl get ns "$ns" -o "jsonpath={.metadata.labels['curie-e2e-harness/owned']}" 2>/dev/null || echo "")"
   [[ "$val" == "true" ]]
 }
 
@@ -208,16 +208,16 @@ namespace = os.environ["NAMESPACE"]
 bundle_ref = os.environ["BUNDLE_REF"]
 runner_image = os.environ.get("RUNNER_IMAGE", "")
 
-# Bind the bundle: replace any AGENTOS_BUNDLE_REF env (drop valueFrom) with the
+# Bind the bundle: replace any CURIE_BUNDLE_REF env (drop valueFrom) with the
 # seeded object key, in every container and initContainer that declares it.
 def bind_ref(container):
     env = container.get("env")
     if not env:
         return
     for e in env:
-        if e.get("name") == "AGENTOS_BUNDLE_REF":
+        if e.get("name") == "CURIE_BUNDLE_REF":
             e.clear()
-            e["name"] = "AGENTOS_BUNDLE_REF"
+            e["name"] = "CURIE_BUNDLE_REF"
             e["value"] = bundle_ref
 
 for c in spec.get("initContainers", []):

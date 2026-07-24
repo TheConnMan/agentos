@@ -2,7 +2,7 @@
 //!
 //! [`manifest`] walks a built `clap::Command` tree and emits structured JSON:
 //! every target/verb, its args and flags, their env vars, defaults, and help
-//! text. The `agentos schema` (hidden) subcommand prints [`manifest_json`] to
+//! text. The `curie schema` (hidden) subcommand prints [`manifest_json`] to
 //! stdout; the checked-in `cli/command-manifest.json` is that output, and
 //! `cli/tests/command_surface.rs` regenerates it and fails on drift -- the same
 //! generated-artifact-plus-CI-gate discipline the repo applies to

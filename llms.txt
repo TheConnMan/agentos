@@ -1,4 +1,4 @@
-# AgentOS
+# Curie
 
 > A harness that runs the same immutable bundle and the same evals across three targets (skill, local, cluster), so an agent that worked locally does not silently break once deployed. Its CLI's primary user is a coding agent driven by a developer, not a human at a prompt.
 
@@ -7,7 +7,7 @@ The point of the three targets (`skill` in-process, `local` via docker compose, 
 ## Start here
 
 - [QUICKSTART.md](QUICKSTART.md): first agent reply in about a minute, the fastest path in.
-- [README.md](README.md): what AgentOS is, how to run it, and the target-by-target CLI walkthroughs.
+- [README.md](README.md): what Curie is, how to run it, and the target-by-target CLI walkthroughs.
 - [docs/vision.md](docs/vision.md): the north star, who it is for, and the parity thesis new features are held against.
 
 ## The parity ladder (skill -> local -> cluster)
@@ -15,7 +15,7 @@ The point of the three targets (`skill` in-process, `local` via docker compose, 
 - [README.md#why-did-my-agent-work-locally-but-break-once-deployed](README.md#why-did-my-agent-work-locally-but-break-once-deployed): the parity thesis, why the same bundle on a heavier substrate is the fix.
 - [README.md#how-do-i-test-an-agent-the-same-way-locally-and-on-kubernetes](README.md#how-do-i-test-an-agent-the-same-way-locally-and-on-kubernetes): running the same `evals/cases.json` at every tier so a divergence is signal.
 - [README.md#which-target-do-i-want](README.md#which-target-do-i-want): the target table, which of skill/local/cluster answers your question.
-- [cli/README.md](cli/README.md): the full `agentos` command reference across all three targets.
+- [cli/README.md](cli/README.md): the full `curie` command reference across all three targets.
 - [docs/operations.md](docs/operations.md): the cluster runbook (credential model, Slack connect, zero-Slack message flow).
 - [docs/release-verification.md](docs/release-verification.md): verify a downloaded release asset (checksums, cosign signature, provenance, SBOMs) before running it.
 
@@ -27,7 +27,7 @@ The point of the three targets (`skill` in-process, `local` via docker compose, 
 
 ## Examples
 
-- [examples/weather/](examples/weather/): the first-party example bundle, a runnable web-search skill that `agentos init` scaffolds.
+- [examples/weather/](examples/weather/): the first-party example bundle, a runnable web-search skill that `curie init` scaffolds.
 - [examples/text-stats-engine/README.md](examples/text-stats-engine/README.md): a bundle that ships its own tools as an in-bundle stdio MCP server, a shape a hosted harness cannot do.
 
 ## Optional

@@ -4,11 +4,11 @@ Date: 2026-07-21
 
 Status: Accepted
 
-Sits alongside the `agentos init` scaffold (`cli/src/scaffold.rs`, which produces
+Sits alongside the `curie init` scaffold (`cli/src/scaffold.rs`, which produces
 the frozen `packages/plugin-format` shape verbatim) and ADR-0021 (the CLI is a
 harness for coding agents). Supersedes nothing.
 
-Closes the code half of [#745](https://github.com/curie-eng/agentos/issues/745)
+Closes the code half of [#745](https://github.com/curie-eng/curie/issues/745)
 ("no adoption path for an existing non-plugin-shape bundle"), found in an
 onboarding dogfood where "stand up the demo app on the skill tier" was not
 completable because the agent already existed in the older `agent-ss-template`
@@ -16,14 +16,14 @@ shape.
 
 ## Context
 
-`agentos skill up` requires a plugin bundle: `.claude-plugin/plugin.json`,
+`curie skill up` requires a plugin bundle: `.claude-plugin/plugin.json`,
 `skills/<name>/SKILL.md`, `.mcp.json`, `evals/cases.json`. An agent in the older
 `agent-ss-template` shape — a Python package (`src/`, `Makefile`, `Dockerfile`,
 `compose.yaml`, a Flask/Slack `server.py`) — has none of those, so `skill up`
 dead-ends at `no plugin manifest under <dir>` with no path forward. Every
 internal agent that predates the plugin format is in this position, so "point
-AgentOS at the agent I already have" has no answer today. Our own cold-start
-ladder never exercises this: every run begins with `agentos init <name>` against
+Curie at the agent I already have" has no answer today. Our own cold-start
+ladder never exercises this: every run begins with `curie init <name>` against
 a *freshly scaffolded* bundle, so the whole adopt-an-existing-bundle journey is a
 structural blind spot.
 
@@ -48,7 +48,7 @@ format. So (2) and (3) are complements, not alternatives.
 
 Adopt options **2 + 3**, and reject option 1.
 
-- **`agentos init --adopt <DIR>`** scaffolds the plugin skeleton *into* an
+- **`curie init --adopt <DIR>`** scaffolds the plugin skeleton *into* an
   existing directory: the same byte-compatible file set `init` already produces
   (`scaffold::scaffold`), with the plugin name derived from the directory's own
   name (kebab-sanitized; an explicit positional `NAME` overrides). It reuses the
@@ -66,7 +66,7 @@ Adopt options **2 + 3**, and reject option 1.
 
 ## Consequences
 
-- An operator with a pre-plugin agent runs `agentos init --adopt .`, gets a
+- An operator with a pre-plugin agent runs `curie init --adopt .`, gets a
   runnable plugin skeleton next to their code, and follows the guide to move the
   logic in — the dogfood blocker becomes a two-step on-ramp.
 - The scaffold stays byte-identical to `init`'s (adopt reuses it verbatim), so
@@ -75,4 +75,4 @@ Adopt options **2 + 3**, and reject option 1.
   expectation rather than implying a magic converter.
 - Deferred (out of scope, tracked under #745): the `revenue-leak-agent`
   README/COMMANDS docs that drive everything through `make`/`./rl` and never
-  mention `agentos skill` — that doc fix lives in the agent's own repo.
+  mention `curie skill` — that doc fix lives in the agent's own repo.

@@ -1,7 +1,7 @@
 //! Semantic exit codes and error classification for the agent-facing CLI
 //! contract (ADR-0021 decision 1).
 //!
-//! An agent driving `agentos` needs to branch on *why* a command failed without
+//! An agent driving `curie` needs to branch on *why* a command failed without
 //! parsing prose. The scheme is five stable exit classes:
 //!
 //! - `0` Success: the command did what was asked.
@@ -209,7 +209,7 @@ mod tests {
         let err = unsupported(
             "versions",
             "the skill tier has no deployed release to inspect",
-            "use agentos cluster versions <agent>",
+            "use curie cluster versions <agent>",
         );
         let (class, fix) = classify(&err);
         assert_eq!(class, ExitClass::Unsupported);
@@ -228,7 +228,7 @@ mod tests {
         let err = unsupported(
             "versions",
             "the skill tier has no deployed release to inspect",
-            "use agentos cluster versions <agent>",
+            "use curie cluster versions <agent>",
         );
         let shown = format!("{err:#}");
         assert!(
@@ -236,7 +236,7 @@ mod tests {
             "the human message must carry the reason: {shown}"
         );
         assert!(
-            shown.contains("agentos cluster versions"),
+            shown.contains("curie cluster versions"),
             "the human message must carry the cross-tier alternative, not only the fix field: {shown}"
         );
     }
@@ -246,7 +246,7 @@ mod tests {
         let err = unsupported(
             "versions",
             "the skill tier has no deployed release to inspect",
-            "use agentos cluster versions <agent>",
+            "use curie cluster versions <agent>",
         );
         let json = error_json(&err);
         let obj = json.as_object().expect("error_json is an object");

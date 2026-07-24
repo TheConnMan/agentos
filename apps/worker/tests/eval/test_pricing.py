@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from agentos_worker.eval.pricing import cost_usd
+from curie_worker.eval.pricing import cost_usd
 
 
 def test_prices_known_model_from_input_and_output_tokens() -> None:

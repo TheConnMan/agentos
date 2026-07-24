@@ -72,4 +72,4 @@ byte-level conformance test.
   `expect_status`, so `local message`/`cluster message` eval parity holds an
   `awaiting-approval` case green exactly when the turn parked awaiting approval.
 
-Reference issue [#262](https://github.com/curie-eng/agentos/issues/262).
+Reference issue [#262](https://github.com/curie-eng/curie/issues/262).

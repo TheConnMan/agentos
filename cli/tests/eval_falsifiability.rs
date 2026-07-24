@@ -2,7 +2,7 @@
 //!
 //! This is a FALSIFIABILITY gate, NOT an end-to-end test: it never runs a real
 //! agent or makes a model call. It exercises the frozen graders (the same
-//! `agentos::evals::Grader::grade` the runner path grades with) against
+//! `curie::evals::Grader::grade` the runner path grades with) against
 //! controlled synthetic outputs to prove every committed case is falsifiable --
 //! i.e. that a plausibly-broken agent (#527) cannot pass it, and that the grader
 //! is not simply broken for everything.
@@ -15,7 +15,7 @@
 //!      a silent empty answer. A case that greens here calls no tool and reads no
 //!      input yet passes, which is exactly the unfalsifiable shape #527 forbids.
 //!      The real-path form of this control (boot the fake runner, run
-//!      `agentos skill eval`, assert the red rollup) lives in
+//!      `curie skill eval`, assert the red rollup) lives in
 //!      `cli/scripts/eval-falsifiability.sh` and its CI job; this is the fast,
 //!      credential-free mirror.
 //!
@@ -38,8 +38,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use agentos::evals::{load_suite, turn_passes, EvalCase, EvalSuite};
-use agentos_aci_protocol::{OutboundEvent, SessionStatus, PROTOCOL_VERSION};
+use curie::evals::{load_suite, turn_passes, EvalCase, EvalSuite};
+use curie_aci_protocol::{OutboundEvent, SessionStatus, PROTOCOL_VERSION};
 use serde::Deserialize;
 
 /// Repo root, resolved from the crate manifest dir (`cli/`).
@@ -49,7 +49,7 @@ fn repo_root() -> PathBuf {
 
 /// The committed eval suites the gate covers, discovered on disk so a new suite
 /// is picked up with no edit: every `examples/*/evals/cases.json`, plus the
-/// `agentos init` scaffold seed at `apps/worker/schema/eval-cases.example.json`.
+/// `curie init` scaffold seed at `apps/worker/schema/eval-cases.example.json`.
 /// Returns `(key_prefix, suite)` where `key_prefix` is the suite name used to
 /// build the stable `<suite>/<case-id>` key.
 fn discover_suites() -> Vec<(String, EvalSuite)> {

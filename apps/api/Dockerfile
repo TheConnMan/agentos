@@ -1,15 +1,15 @@
-# AgentOS API image (FastAPI + uvicorn).
+# Curie API image (FastAPI + uvicorn).
 #
 # BUILD FROM THE REPO ROOT, not from apps/api/, because the app resolves against
 # the uv workspace (packages/*, uv.lock at the root):
 #
-#   docker build -f apps/api/Dockerfile -t agentos-api .
+#   docker build -f apps/api/Dockerfile -t curie-api .
 #
 # The per-Dockerfile ignore (apps/api/Dockerfile.dockerignore) trims the root
 # context. runner/Dockerfile is the sibling reference for the workspace build.
 #
 # Multi-stage: the builder resolves the frozen workspace with uv and installs the
-# `agentos-api` member (and only its deps) as non-editable wheels into /app/.venv;
+# `curie-api` member (and only its deps) as non-editable wheels into /app/.venv;
 # the runtime carries just that venv plus the Alembic migration tree so the chart
 # can run `alembic upgrade head` from the same image.
 FROM python:3.13-slim AS builder
@@ -19,7 +19,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable --package agentos-api
+RUN uv sync --frozen --no-dev --no-editable --package curie-api
 
 FROM python:3.13-slim
 # git is a RUNTIME dependency: the git-flow engine (gitflow.py) shells out to
@@ -40,4 +40,4 @@ COPY --from=builder --chown=app:app /app/apps/api/alembic.ini /app/alembic.ini
 ENV PATH="/app/.venv/bin:$PATH"
 USER 1000
 EXPOSE 8000
-CMD ["uvicorn", "agentos_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "curie_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

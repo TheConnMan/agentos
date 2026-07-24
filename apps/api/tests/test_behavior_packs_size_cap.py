@@ -12,7 +12,7 @@ These tests currently FAIL (200/201 instead of 413) until the cap is added.
 
 from typing import Any
 
-from agentos_api.config import get_settings
+from curie_api.config import get_settings
 
 
 def _create_agent(client: Any, auth_headers: dict[str, str], **body: Any) -> dict[str, Any]:

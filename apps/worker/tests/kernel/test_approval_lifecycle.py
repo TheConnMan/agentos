@@ -15,8 +15,8 @@ import uuid
 import aiohttp
 import pytest
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
-from agentos_worker.approvals import ApprovalBackendError, ApprovalRequest, CreatedApproval
-from agentos_worker.sandbox.types import RouteState
+from curie_worker.approvals import ApprovalBackendError, ApprovalRequest, CreatedApproval
+from curie_worker.sandbox.types import RouteState
 from channel_protocol import ConfirmIntent
 
 DONE = SessionStatus.DONE
@@ -203,20 +203,20 @@ def test_resume_injects_boot_env_into_replacement_claim(make_harness) -> None:
 
             h.runner.default_script = [Final(text="Shipped.", status=DONE)]
             boot_env = {
-                "AGENTOS_BUNDLE_REF": "bundles/agent-v7.tgz",
-                "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+                "CURIE_BUNDLE_REF": "bundles/agent-v7.tgz",
+                "CURIE_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
             }
             handle = await h.kernel._claim_or_resume(thread, boot_env)
             assert handle is not None
 
             resumed_env = h.fake_k8s.claim_envs[-1]
             assert resumed_env is not None
-            assert resumed_env["AGENTOS_BUNDLE_REF"] == "bundles/agent-v7.tgz"
-            assert "AGENTOS_BUDGET" in resumed_env
+            assert resumed_env["CURIE_BUNDLE_REF"] == "bundles/agent-v7.tgz"
+            assert "CURIE_BUDGET" in resumed_env
             # The substrate still guarantees session identity and a fresh
             # runner token on the replacement claim.
-            assert resumed_env.get("AGENTOS_SESSION_ID")
-            assert resumed_env.get("AGENTOS_RUNNER_TOKEN")
+            assert resumed_env.get("CURIE_SESSION_ID")
+            assert resumed_env.get("CURIE_RUNNER_TOKEN")
 
     asyncio.run(go())
 
@@ -235,7 +235,7 @@ class GrantBinding:
         self.agent_id = uuid.uuid4()
 
     async def resolve(self, channel: str):  # noqa: ANN201
-        from agentos_worker.binding import ResolvedDeployment
+        from curie_worker.binding import ResolvedDeployment
 
         return ResolvedDeployment(
             agent_id=self.agent_id,
@@ -247,7 +247,7 @@ class GrantBinding:
         )
 
     def packs_for(self, resolved):  # noqa: ANN001, ANN201
-        from agentos_worker.behaviorpacks import BehaviorPacks
+        from curie_worker.behaviorpacks import BehaviorPacks
 
         return BehaviorPacks.from_config(None)
 
@@ -257,7 +257,7 @@ class GrantBinding:
         return Budget(max_output_tokens_per_run=1000, max_usd_per_day=1.0)
 
     def boot_env(self, resolved, thread_key):  # noqa: ANN001, ANN201
-        return {"AGENTOS_SESSION_ID": f"s-{thread_key}"}
+        return {"CURIE_SESSION_ID": f"s-{thread_key}"}
 
     async def approval_grant_tool(self, event_id: str, agent_id):  # noqa: ANN001, ANN201
         return self.grant_tool if event_id == self.grant_event_id else None
@@ -265,11 +265,11 @@ class GrantBinding:
 
 def test_resume_claim_injects_approval_grant_tool_env(make_harness) -> None:
     """#430: a resume claim for an approved permission-gate approval injects
-    AGENTOS_APPROVAL_GRANT_TOOL into the boot env passed to the replacement
+    CURIE_APPROVAL_GRANT_TOOL into the boot env passed to the replacement
     claim; a fresh (non-approval) mention injects nothing (the gate re-arms)."""
 
     async def go() -> None:
-        from agentos_api.resumequeue import resume_event_id
+        from curie_api.resumequeue import resume_event_id
 
         grant_event = resume_event_id(uuid.uuid4())
         binding = GrantBinding(
@@ -288,7 +288,7 @@ def test_resume_claim_injects_approval_grant_tool_env(make_harness) -> None:
             )
             resumed_env = h.fake_k8s.claim_envs[-1]
             assert resumed_env is not None
-            assert resumed_env.get("AGENTOS_APPROVAL_GRANT_TOOL") == "mcp__github__create_issue"
+            assert resumed_env.get("CURIE_APPROVAL_GRANT_TOOL") == "mcp__github__create_issue"
 
             # A fresh, unrelated mention has a different event id -> no grant env
             # (re-armed), so an adopted/warm follow-up cannot inherit an allowance.
@@ -297,7 +297,7 @@ def test_resume_claim_injects_approval_grant_tool_env(make_harness) -> None:
             )
             fresh_env = h.fake_k8s.claim_envs[-1]
             assert fresh_env is not None
-            assert "AGENTOS_APPROVAL_GRANT_TOOL" not in fresh_env
+            assert "CURIE_APPROVAL_GRANT_TOOL" not in fresh_env
 
     asyncio.run(go())
 
@@ -443,7 +443,7 @@ class RoutedBinding:
         self.agent_id = uuid.uuid4()
 
     async def resolve(self, channel: str):  # noqa: ANN201
-        from agentos_worker.binding import ResolvedDeployment
+        from curie_worker.binding import ResolvedDeployment
 
         return ResolvedDeployment(
             agent_id=self.agent_id,
@@ -456,7 +456,7 @@ class RoutedBinding:
         )
 
     def packs_for(self, resolved):  # noqa: ANN001, ANN201
-        from agentos_worker.behaviorpacks import BehaviorPacks
+        from curie_worker.behaviorpacks import BehaviorPacks
 
         return BehaviorPacks.from_config(None)
 
@@ -466,7 +466,7 @@ class RoutedBinding:
         return Budget(max_output_tokens_per_run=1000, max_usd_per_day=1.0)
 
     def boot_env(self, resolved, thread_key):  # noqa: ANN001, ANN201
-        return {"AGENTOS_SESSION_ID": f"s-{thread_key}"}
+        return {"CURIE_SESSION_ID": f"s-{thread_key}"}
 
 
 def test_routed_approval_cards_go_to_the_bound_channel(make_harness) -> None:
@@ -764,7 +764,7 @@ def test_resume_reply_best_effort_completes_offline_when_endpoint_is_dead(
     """
 
     async def go() -> None:
-        from agentos_api.resumequeue import resume_event_id
+        from curie_api.resumequeue import resume_event_id
 
         grant_event = resume_event_id(uuid.uuid4())
         binding = GrantBinding(
@@ -801,7 +801,7 @@ def test_resume_reply_best_effort_completes_offline_when_endpoint_is_dead(
             resumed_env = h.fake_k8s.claim_envs[-1]
             assert resumed_env is not None
             assert (
-                resumed_env.get("AGENTOS_APPROVAL_GRANT_TOOL")
+                resumed_env.get("CURIE_APPROVAL_GRANT_TOOL")
                 == "mcp__github__create_issue"
             )
 

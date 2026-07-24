@@ -2,9 +2,9 @@
 
 import anyio
 from aci_protocol import SessionStatus, parse_ndjson
-from agentos_runner import RunTracer, SideEffectClassifier, create_app
-from agentos_runner.fake import FakeModelSession
-from agentos_runner.session import SessionRunner
+from curie_runner import RunTracer, SideEffectClassifier, create_app
+from curie_runner.fake import FakeModelSession
+from curie_runner.session import SessionRunner
 from aiohttp.test_utils import TestClient, TestServer
 
 

@@ -4,11 +4,11 @@ Date: 2026-07-17
 
 Status: Accepted
 
-Implements [#488](https://github.com/curie-eng/agentos/issues/488).
+Implements [#488](https://github.com/curie-eng/curie/issues/488).
 Builds on [ADR-0036](0036-aci-semver-and-reader-policy.md) (the semver and
 reader policy this change is classed against) and preserves the seams
-[#457](https://github.com/curie-eng/agentos/issues/457) and
-[#429](https://github.com/curie-eng/agentos/issues/429) hardened.
+[#457](https://github.com/curie-eng/curie/issues/457) and
+[#429](https://github.com/curie-eng/curie/issues/429) hardened.
 Supersedes nothing.
 
 ## Context
@@ -16,8 +16,8 @@ Supersedes nothing.
 The env the worker injects into a sandbox and the runner reads at boot is a
 cross-lane contract that was never written down. `SessionConfig` froze six vars.
 The other ~13 the runner behaviorally depends on lived as **paired string
-literals**: a `*_ENV` constant in `apps/worker/src/agentos_worker/binding.py` and
-a bare `env.get("AGENTOS_...")` in `runner/src/agentos_runner/config.py`. The
+literals**: a `*_ENV` constant in `apps/worker/src/curie_worker/binding.py` and
+a bare `env.get("CURIE_...")` in `runner/src/curie_runner/config.py`. The
 Rust CLI retyped a third copy, and the chart a fourth.
 
 Rename either side of a pair and the sandbox boots, runs, and **silently drops
@@ -37,7 +37,7 @@ only the declaration does.
 
 `SessionConfig` is the ACI v0.1 section-0 contract: the surface a third-party
 ACI-conformant runner implements and what `run_conformance` checks. A runner
-token, approval plumbing, a bundle ref, and a history port are **AgentOS platform
+token, approval plumbing, a bundle ref, and a history port are **Curie platform
 operations, not ACI**.
 
 `BootEnv` is therefore the superset — `session: SessionConfig` as a *field*, plus
@@ -52,7 +52,7 @@ boundary, and making it visible is the point.
 
 ### 2. Env keys ride in the schema, so codegen emits them
 
-The env key (`AGENTOS_RUNNER_TOKEN`) is not the field name (`runner_token`), so
+The env key (`CURIE_RUNNER_TOKEN`) is not the field name (`runner_token`), so
 the mapping must be machine-readable for codegen to emit constants. Each field
 carries `json_schema_extra={"env": ..., "producer": [...]}`, and `rust_export`
 grows a deterministic `pub mod env_keys` of `&str` constants that the CLI and the
@@ -73,7 +73,7 @@ Each key declares **every** producer that writes it, drawn from
 contradicts. What matters is not the *arity* but the **authority class**, and
 conflating the two is a live bug:
 
-- **Substrate-authoritative** (`AGENTOS_SANDBOX_ID`, `AGENTOS_RUNNER_PORT`):
+- **Substrate-authoritative** (`CURIE_SANDBOX_ID`, `CURIE_RUNNER_PORT`):
   `producers == {substrate}`; `worker` must never appear. Identity derives from
   the pod name via `fieldRef: metadata.name`, and because the chart sets
   `envVarsInjectionPolicy: Overrides` a worker write would **replace** the pod's
@@ -81,14 +81,14 @@ conflating the two is a live bug:
   stamping (`otel.py`) and operator correlation depend on. The docker tier is
   only *incidentally* shielded by `_WORKER_OWNED_ENV`; k8s has no such shield.
 - **Worker-authoritative with substrate fallback** (`ANTHROPIC_BASE_URL`,
-  `AGENTOS_MODEL`, `AGENTOS_FAKE_MODEL`, `AGENTOS_CREDENTIALS`,
-  `AGENTOS_PLUGIN_DIR`, `AGENTOS_SESSION_ID`, `AGENTOS_BUDGET`): genuinely two
+  `CURIE_MODEL`, `CURIE_FAKE_MODEL`, `CURIE_CREDENTIALS`,
+  `CURIE_PLUGIN_DIR`, `CURIE_SESSION_ID`, `CURIE_BUDGET`): genuinely two
   producers, and worker-wins under `Overrides` is **intended layering** — the
   chart branch is a baked template default keeping a warm, unclaimed pod
   bootable, the worker's value is per-claim routing and identity.
 
   The full set is what the runner container in `agent-sandbox.yaml` actually
-  writes; the boot surface is the **runner's**, so `AGENTOS_BUNDLE_REF` staying
+  writes; the boot surface is the **runner's**, so `CURIE_BUNDLE_REF` staying
   worker-only is correct despite appearing in the chart — its two writes are in
   the `bundle-fetch` and `bundle-extract` **init containers**, which are not
   boot-env consumers.
@@ -107,10 +107,10 @@ one — it does not know `sandbox_id` — and emitting the full union from the w
 
 The worker gets the one real render surface, `render_worker(...)`, whose emitted
 keys are a **subset** of the worker-producer keys with the difference exactly
-`{AGENTOS_CONNECTOR_SECRET_KEYS}`. The kernel overlay and substrate set a few
+`{CURIE_CONNECTOR_SECRET_KEYS}`. The kernel overlay and substrate set a few
 individual keys and need only the constants, not a renderer. `from_env` remains
 the single consumer parse of the full union, keeping `SessionConfig.from_env`'s
-fail-loud `KeyError` on a missing `AGENTOS_SANDBOX_ID`: every real boot surface
+fail-loud `KeyError` on a missing `CURIE_SANDBOX_ID`: every real boot surface
 supplies it, so a miss means a broken substrate and the runner should refuse to
 boot.
 
@@ -129,7 +129,7 @@ Against the change-class table in `packages/CLAUDE.md`: every existing model is
 untouched, and `BootEnv` is a **new top-level model no shipped consumer decodes**,
 so no consumer can break on it — strictly more compatible than the table's
 "new optional field -> patch" row, its most compatible entry. The rendered env is
-byte-identical minus `AGENTOS_AGENT_ID`, which is in no schema and has no reader,
+byte-identical minus `CURIE_AGENT_ID`, which is in no schema and has no reader,
 so its removal is not the table's "field removal" row. `from_env`'s required set
 is unchanged: exactly `SessionConfig`'s existing six.
 
@@ -145,12 +145,12 @@ surface get declared.**
 
 | Var | Verdict | Reason |
 |---|---|---|
-| `AGENTOS_AGENT_ID` | **DELETE** | Written by `binding.boot_env`, read by nothing. Not a field removal: it was never on the contract. |
-| `AGENTOS_IDEMPOTENT_TOOLS` | **DELETE the env read** | Nothing sets it in any lane, so this removes zero shipped behavior. It *widens* the deny-by-default read-only allowlist the kernel's no-auto-retry-after-side-effects rule depends on, so wiring it through would hand any env-setting surface a widening knob over a safety flag. The in-process seam (`DEFAULT_IDEMPOTENT_TOOLS`, `SideEffectClassifier(idempotent_tools=...)`) is retained. A real per-agent surface belongs in its own change with a security review. |
-| `AGENTOS_SYSTEM_PROMPT` | **DELETE the env read** | An *override* of the bundle's system prompt. The bundle is the declared surface; a second undeclared env path competing with it is exactly the shadow config this ADR exists to end. Nothing sets it. |
-| `AGENTOS_MAX_TURNS` | **DECLARE** | A platform-wide runaway bound, not per-agent policy, and already reachable through the chart's `runner.extraEnv` and docker `-e` — a real documented operator surface. |
-| `AGENTOS_HISTORY_MAX_TURNS` | **DECLARE** | Same class; it was read by a bare `os.environ` that bypassed the config loader entirely. Declaring pulls it into the single parse path. |
-| `AGENTOS_HISTORY_MAX_BYTES` | **DECLARE** | Same as above. |
+| `CURIE_AGENT_ID` | **DELETE** | Written by `binding.boot_env`, read by nothing. Not a field removal: it was never on the contract. |
+| `CURIE_IDEMPOTENT_TOOLS` | **DELETE the env read** | Nothing sets it in any lane, so this removes zero shipped behavior. It *widens* the deny-by-default read-only allowlist the kernel's no-auto-retry-after-side-effects rule depends on, so wiring it through would hand any env-setting surface a widening knob over a safety flag. The in-process seam (`DEFAULT_IDEMPOTENT_TOOLS`, `SideEffectClassifier(idempotent_tools=...)`) is retained. A real per-agent surface belongs in its own change with a security review. |
+| `CURIE_SYSTEM_PROMPT` | **DELETE the env read** | An *override* of the bundle's system prompt. The bundle is the declared surface; a second undeclared env path competing with it is exactly the shadow config this ADR exists to end. Nothing sets it. |
+| `CURIE_MAX_TURNS` | **DECLARE** | A platform-wide runaway bound, not per-agent policy, and already reachable through the chart's `runner.extraEnv` and docker `-e` — a real documented operator surface. |
+| `CURIE_HISTORY_MAX_TURNS` | **DECLARE** | Same class; it was read by a bare `os.environ` that bypassed the config loader entirely. Declaring pulls it into the single parse path. |
+| `CURIE_HISTORY_MAX_BYTES` | **DECLARE** | Same as above. |
 
 **Rejected: deleting the three knobs** (the cross-engine alternate's verdict, on
 the premise that no declared producer sets them). The premise is false: the
@@ -161,7 +161,7 @@ silently break an operator using that surface.
 The declared knobs are `int | None = None`, with defaults applied **consumer-side**
 (max_turns 20, history 40 / 16_000). A non-None model default would render keys
 no producer sends and move the wire. Parse tolerance is deliberately **not
-unified**: `AGENTOS_MAX_TURNS` keeps its bare-`int` raise, and the history pair
+unified**: `CURIE_MAX_TURNS` keeps its bare-`int` raise, and the history pair
 keeps `_int_env`'s degrade-to-default on garbage *and* nonpositive values. A typo
 in an operator's `extraEnv` must not become a boot crash where it used to
 degrade. Unifying them would be a behavior change wearing a consistency costume.
@@ -174,9 +174,9 @@ The shared `_str_or_none` helper now applies it to `model`, `history_ref`,
 `bundle_ref`, `base_url`, `memory_token`, and `history_token` as well, where
 pre-change `config.py:94,97` used a bare `env.get(...)` that preserved `""`.
 Every widened field was chased for reachability and none is reachable: the chart
-gates `AGENTOS_MODEL` behind `{{- else if $runner.model }}`
+gates `CURIE_MODEL` behind `{{- else if $runner.model }}`
 (`agent-sandbox.yaml:391`) so it is never emitted empty, `render_worker` omits
-falsy values on all of them, and `AGENTOS_HISTORY_REF=""` was always already
+falsy values on all of them, and `CURIE_HISTORY_REF=""` was always already
 equivalent to `None` via `resolve_history`'s `if not history_ref`
 (`history.py:175`). One helper with one rule is the point of the freeze; a
 per-field carve-out preserving an unreachable `""` would be shadow config of the
@@ -186,7 +186,7 @@ kind this ADR ends.
 `__main__._int_env` logged a warning on both the invalid and the nonpositive
 path; `session._tolerant_int` degrades silently. The *value* behavior is
 identical and pinned by test, but an operator who typos
-`AGENTOS_HISTORY_MAX_TURNS=fourty` now gets the default with no signal, and
+`CURIE_HISTORY_MAX_TURNS=fourty` now gets the default with no signal, and
 tolerance's whole justification is that a typo must not crash the boot. Accepted
 here rather than fixed: `aci-protocol` is a frozen contract package with no
 logging surface, and giving it one to serve a runner diagnostic would be scope
@@ -201,14 +201,14 @@ applied. See Follow-ups.
   `check-contracts.sh`.
 - The `#457` reserved-boot-env pin is **retargeted**, not deleted: its dynamic
   discovery moves from the binding's (now removed) constants to `BootEnv`'s
-  declared keys, keeping its non-vacuity floor. Dropping `AGENTOS_AGENT_ID` from
-  the enumeration is policy-neutral — the `AGENTOS_` prefix catch-all still
+  declared keys, keeping its non-vacuity floor. Dropping `CURIE_AGENT_ID` from
+  the enumeration is policy-neutral — the `CURIE_` prefix catch-all still
   reserves the name, pinned by test.
 - Cost: `BootEnv.session` nests, and the nine frozen `SessionConfig`/OTel keys
   need a companion producer map (they cannot be annotated in a frozen model),
   pinned by test against what `SessionConfig.to_env` actually writes.
 - A rolling upgrade is a non-event: `render_worker`'s output is byte-identical to
-  today's, and `AGENTOS_AGENT_ID` disappearing is safe precisely because nothing
+  today's, and `CURIE_AGENT_ID` disappearing is safe precisely because nothing
   reads it.
 
 ## Follow-ups
@@ -219,6 +219,6 @@ applied. See Follow-ups.
   log at the consumer where the default is applied (`__main__._load_history`)
   when the parsed value is `None` but the raw env was set and non-empty, keeping
   the logging out of the contract package.
-- `plugin-format`'s `_AGENTOS_BOOT_KEYS` importing the key list from
+- `plugin-format`'s `_CURIE_BOOT_KEYS` importing the key list from
   `aci-protocol` directly instead of pinning by test — a cross-frozen-package
   dependency direction that deserves its own ADR.

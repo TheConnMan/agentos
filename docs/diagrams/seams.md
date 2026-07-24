@@ -69,19 +69,19 @@ on that table.
 
 | Port | Where the line is drawn | Today | Honesty |
 |---|---|---|---|
-| `SandboxClient` | [`apps/worker/src/agentos_worker/sandbox/k8s.py`](../../apps/worker/src/agentos_worker/sandbox/k8s.py) | k8s + docker | **CLEAN, 2 impls.** The strongest claim on this page: two real substrates. [Drawn in detail](kubernetes.md). |
+| `SandboxClient` | [`apps/worker/src/curie_worker/sandbox/k8s.py`](../../apps/worker/src/curie_worker/sandbox/k8s.py) | k8s + docker | **CLEAN, 2 impls.** The strongest claim on this page: two real substrates. [Drawn in detail](kubernetes.md). |
 | ACI protocol | [`packages/aci-protocol`](../../packages/aci-protocol) | 1 + reference | **A-.** Versioned wire, tri-language, wire-lock gated. [See the ACI](aci.md). |
-| `ModelSession` | [`runner/src/agentos_runner/adapter.py`](../../runner/src/agentos_runner/adapter.py) | claude-agent-sdk + fake | **A-.** In-proc harness seam. |
+| `ModelSession` | [`runner/src/curie_runner/adapter.py`](../../runner/src/curie_runner/adapter.py) | claude-agent-sdk + fake | **A-.** In-proc harness seam. |
 | Channel / ingress | [`interfaces/channel-ingress`](../interfaces/channel-ingress/INTERFACE.md) | Slack, CLI stub | **C, 1 impl.** The weakest line here. `QueuedTurn` is channel-neutral; egress is not. |
-| `SlackSink` | [`slack_sink.py`](../../apps/worker/src/agentos_worker/slack_sink.py) | Slack `chat.update` | Egress assumes edit-in-place. A channel-neutral post/update sink is the open work. |
-| `StreamBroker` | [`broker.py`](../../apps/worker/src/agentos_worker/broker.py) | redis-py / Valkey | **CLEAN, 1 impl.** Thin port at a non-sacred seam; second broker deferred by decision (ADR-0027). |
-| `ObjectStore` | [`storage.py`](../../apps/api/src/agentos_api/storage.py) | MinIO / S3 | **B+.** The API's port: read + write. The non-S3 adapter is deferred until real demand (ADR-0026). |
-| `BundleReader` | [`bundle_store.py`](../../apps/worker/src/agentos_worker/bundle_store.py) | MinIO / S3 | The worker's own read-only slice (`get(key) -> bytes`), a **local Protocol** — the worker deliberately does not import the API package. Two adapters hit the same backend; a second backend must satisfy both. |
+| `SlackSink` | [`slack_sink.py`](../../apps/worker/src/curie_worker/slack_sink.py) | Slack `chat.update` | Egress assumes edit-in-place. A channel-neutral post/update sink is the open work. |
+| `StreamBroker` | [`broker.py`](../../apps/worker/src/curie_worker/broker.py) | redis-py / Valkey | **CLEAN, 1 impl.** Thin port at a non-sacred seam; second broker deferred by decision (ADR-0027). |
+| `ObjectStore` | [`storage.py`](../../apps/api/src/curie_api/storage.py) | MinIO / S3 | **B+.** The API's port: read + write. The non-S3 adapter is deferred until real demand (ADR-0026). |
+| `BundleReader` | [`bundle_store.py`](../../apps/worker/src/curie_worker/bundle_store.py) | MinIO / S3 | The worker's own read-only slice (`get(key) -> bytes`), a **local Protocol** — the worker deliberately does not import the API package. Two adapters hit the same backend; a second backend must satisfy both. |
 | Relational DB | [`interfaces/relational-db`](../interfaces/relational-db/INTERFACE.md) | Postgres | **A-.** The swap is a DSN change, minus two Postgres-isms. |
-| `ApprovalCreator` / `ApproverSet` | [`approvals.py`](../../apps/worker/src/agentos_worker/approvals.py), [`approvers.py`](../../apps/api/src/agentos_api/approvers.py) | 3 approver sets, one authorizer | **CLEAN.** The governance seam ([the approval branch](message-flow.md)). |
-| `MemoryStore` | [`runner/src/agentos_runner/memory.py`](../../runner/src/agentos_runner/memory.py) | `StateApiMemoryStore` | **CLEAN, 1 loader.** |
-| `TranscriptStore` | [`runner/src/agentos_runner/history.py`](../../runner/src/agentos_runner/history.py) | `StateApiTranscriptStore` | **CLEAN, 1 loader.** |
-| `Scorer` | [`apps/worker/src/agentos_worker/eval/scorer.py`](../../apps/worker/src/agentos_worker/eval/scorer.py) | grader + trajectory | **B.** Two real scorers behind one port. |
+| `ApprovalCreator` / `ApproverSet` | [`approvals.py`](../../apps/worker/src/curie_worker/approvals.py), [`approvers.py`](../../apps/api/src/curie_api/approvers.py) | 3 approver sets, one authorizer | **CLEAN.** The governance seam ([the approval branch](message-flow.md)). |
+| `MemoryStore` | [`runner/src/curie_runner/memory.py`](../../runner/src/curie_runner/memory.py) | `StateApiMemoryStore` | **CLEAN, 1 loader.** |
+| `TranscriptStore` | [`runner/src/curie_runner/history.py`](../../runner/src/curie_runner/history.py) | `StateApiTranscriptStore` | **CLEAN, 1 loader.** |
+| `Scorer` | [`apps/worker/src/curie_worker/eval/scorer.py`](../../apps/worker/src/curie_worker/eval/scorer.py) | grader + trajectory | **B.** Two real scorers behind one port. |
 | Telemetry / OTLP | [`interfaces/telemetry-otel`](../interfaces/telemetry-otel/INTERFACE.md) | Langfuse | **B+.** Write side clean but for three vendor span attributes. |
 
 ## What is deliberately not a seam

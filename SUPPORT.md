@@ -1,6 +1,6 @@
 # Support
 
-Thanks for using AgentOS. This page points you to the right place for the kind
+Thanks for using Curie. This page points you to the right place for the kind
 of help you need.
 
 ## Before asking
@@ -9,7 +9,7 @@ of help you need.
   [`QUICKSTART.md`](QUICKSTART.md) for the fastest path to a running system.
 - Check [`ARCHITECTURE.md`](ARCHITECTURE.md) and the area `CLAUDE.md` files if
   your question is about how a component behaves.
-- Search existing [GitHub issues](https://github.com/curie-eng/agentos/issues)
+- Search existing [GitHub issues](https://github.com/curie-eng/curie/issues)
   in case your question is already answered or tracked.
 
 ## Where to get help
@@ -30,7 +30,7 @@ of help you need.
 > label.
 
 **Bug reports and feature requests.** Open a
-[GitHub issue](https://github.com/curie-eng/agentos/issues). For a bug, include
+[GitHub issue](https://github.com/curie-eng/curie/issues). For a bug, include
 the version or commit, your environment (local Docker vs Kubernetes), steps to
 reproduce, and what you expected versus what happened. For a feature, describe
 the what and the why; see [`CONTRIBUTING.md`](CONTRIBUTING.md) for how proposals

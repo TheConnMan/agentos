@@ -5,8 +5,8 @@ Date: 2026-07-14
 Status: Accepted
 
 Implements transcript persistence across unplanned runner restarts for issue
-[#20](https://github.com/curie-eng/agentos/issues/20). This is the first loader
-for `AGENTOS_HISTORY_REF`, the runner-local rehydration ref that until now was
+[#20](https://github.com/curie-eng/curie/issues/20). This is the first loader
+for `CURIE_HISTORY_REF`, the runner-local rehydration ref that until now was
 read into `RunnerConfig` and fed to the SDK `resume=` option but, in practice,
 never carried a usable value. It is the sibling of ADR-0025 (the memory port and
 its first loader): same store, same boot-preamble delivery, a different scope
@@ -45,7 +45,7 @@ existing state store, behind a small `TranscriptStore` port, and deliver it to a
 (platform-owned, harness-agnostic replay), chosen over Option A (SDK-native
 resume).
 
-- **The port** (`runner/src/agentos_runner/history.py`) is a `Protocol` with two
+- **The port** (`runner/src/curie_runner/history.py`) is a `Protocol` with two
   methods, `load() -> list[TurnRecord]` and `append(record)`. A `TurnRecord` is a
   `user` message plus the `assistant` reply (and a `ts`). No query language and
   no summarization -- windowing/compaction is later work.
@@ -56,12 +56,12 @@ resume).
   `NullTranscriptStore` is used when no ref is configured, so the boot path is
   uniform. Durability, size caps, and survive-restart come from the state store
   for free, with no new datastore to operate.
-- **`AGENTOS_HISTORY_REF` is repurposed as the transcript-namespace URL**, exactly
-  as ADR-0025 did for `AGENTOS_MEMORY_REF`: an `http(s)://` ref resolves to the
+- **`CURIE_HISTORY_REF` is repurposed as the transcript-namespace URL**, exactly
+  as ADR-0025 did for `CURIE_MEMORY_REF`: an `http(s)://` ref resolves to the
   `StateApiTranscriptStore`; any other scheme (an old SDK-resume id, `s3://`) is
   rejected loudly at boot. It is a runner-local env, never part of the frozen ACI
   `SessionConfig`, so this is **not a frozen-contract change**. The state-API
-  bearer travels as the runner-local `AGENTOS_HISTORY_TOKEN`.
+  bearer travels as the runner-local `CURIE_HISTORY_TOKEN`.
 - **The runner stops feeding `history_ref` to the SDK `resume=` option.** The
   harness-specific resume path is retired in favor of the harness-agnostic
   preamble; `build_options` keeps its `resume` parameter (an explicit caller may
@@ -77,9 +77,9 @@ resume).
   `final`, it appends `{user, assistant}` to the transcript store. Best-effort --
   a transient store failure logs and never fails the turn (and boot degrades to
   "no history" rather than blocking, like memory).
-- **The worker delivers the ref:** `binding.boot_env` sets `AGENTOS_HISTORY_REF`
+- **The worker delivers the ref:** `binding.boot_env` sets `CURIE_HISTORY_REF`
   to the thread's transcript-namespace URL and forwards the API key as
-  `AGENTOS_HISTORY_TOKEN`, mirroring the memory-ref wiring.
+  `CURIE_HISTORY_TOKEN`, mirroring the memory-ref wiring.
 
 ## Alternatives considered
 
@@ -107,7 +107,7 @@ resume).
   worker change is one `boot_env` block mirroring memory.
 - History and memory are distinct namespaces over one store: `transcript/<thread>`
   (this conversation) vs `memory` (durable cross-session lessons). The runner
-  reinterpretation of `AGENTOS_HISTORY_REF` (URL, not SDK resume id) supersedes the
+  reinterpretation of `CURIE_HISTORY_REF` (URL, not SDK resume id) supersedes the
   old `config.py` framing; `runner/CLAUDE.md` is updated to match.
 - **Known limitations (follow-up):** the transcript is an unbounded append log
   under the state store's size caps, so a very long thread will eventually hit the

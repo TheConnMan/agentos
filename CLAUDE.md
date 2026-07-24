@@ -1,21 +1,21 @@
 See [AGENTS.md](AGENTS.md) - the agent instructions for this repo live there.
 
-## One entry point: `agentos <command>`
+## One entry point: `curie <command>`
 
-Dev and operator flows go through the `agentos` CLI, not loose shell scripts or
+Dev and operator flows go through the `curie` CLI, not loose shell scripts or
 bare tool invocations. When you would otherwise add a `./scripts/foo.sh`, tell
 someone to run a raw `docker`/`helm`/`uv`/`pnpm` command, or document a
-multi-step setup, add or extend an `agentos` subcommand instead — a single,
+multi-step setup, add or extend an `curie` subcommand instead — a single,
 discoverable surface beats a scatter of scripts. The script or tool call can
 stay the *implementation*; it just isn't the interface.
 
-- Building the runner image → `agentos build` (not a copy-pasted `docker build -f runner/Dockerfile ...`).
-- First-run dev bootstrap → `agentos install` (or `./get-agentos.sh` from a source checkout, which also puts `agentos` on PATH the first time by building it).
-- Refresh the on-PATH CLI after a code change → `agentos update` (rebuilds and `cargo install`s the CLI to `~/.cargo/bin`; `--image` also rebuilds the runner). The per-change loop, so you never re-run the bootstrap script.
-- Contributor/CI scripts (contract codegen, chart render-asserts, the e2e round-trip) → `agentos dev <...>`. The `dev` namespace fences off commands that need a **source checkout + dev toolchains**; they error clearly when run from a released binary.
+- Building the runner image → `curie build` (not a copy-pasted `docker build -f runner/Dockerfile ...`).
+- First-run dev bootstrap → `curie install` (or `./get-curie.sh` from a source checkout, which also puts `curie` on PATH the first time by building it).
+- Refresh the on-PATH CLI after a code change → `curie update` (rebuilds and `cargo install`s the CLI to `~/.cargo/bin`; `--image` also rebuilds the runner). The per-change loop, so you never re-run the bootstrap script.
+- Contributor/CI scripts (contract codegen, chart render-asserts, the e2e round-trip) → `curie dev <...>`. The `dev` namespace fences off commands that need a **source checkout + dev toolchains**; they error clearly when run from a released binary.
 - Operator/product commands stay top-level: `init`, `build`, `skill`, `local`, `cluster`.
 
-New tooling ships as an `agentos` subcommand (add the clap surface in
+New tooling ships as an `curie` subcommand (add the clap surface in
 `cli/src/main.rs`, the handler in `cli/src/commands.rs`); a new loose script in
 `scripts/` should be the exception with a reason, not the default.
 

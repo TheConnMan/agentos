@@ -1,8 +1,8 @@
 """SDK-message to ACI-outbound-event translation."""
 
 from aci_protocol import SessionStatus
-from agentos_runner import SideEffectClassifier
-from agentos_runner.translate import TurnState, translate_message
+from curie_runner import SideEffectClassifier
+from curie_runner.translate import TurnState, translate_message
 from claude_agent_sdk import (
     AssistantMessage,
     RateLimitEvent,

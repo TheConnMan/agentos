@@ -1,9 +1,9 @@
 {
-  "$id": "https://schemas.agentos.dev/runner/otel-attributes/v1.json",
+  "$id": "https://schemas.curie.dev/runner/otel-attributes/v1.json",
   "schema_version": "v1",
   "keys": {
-    "agentos.sandbox_id": "str",
-    "agentos.session_id": "str",
+    "curie.sandbox_id": "str",
+    "curie.session_id": "str",
     "gen_ai.approval.decision": "str",
     "gen_ai.operation.name": "str",
     "gen_ai.request.model": "str",

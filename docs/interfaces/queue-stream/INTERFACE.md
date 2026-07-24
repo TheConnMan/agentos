@@ -10,8 +10,8 @@ order: 11
 ---
 # INTERFACE: Queue / stream (Valkey)
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 (redis-py) behind the broker port &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -22,9 +22,9 @@ order: 11
 The seam is the Valkey Stream wire contract between the dispatcher (producer) and the
 worker (consumer): a named stream carrying a frozen one-field payload. As of #284 /
 ADR-0027 the stream verbs are drawn behind a thin **broker port** at the two non-sacred
-seams — a `StreamPublisher` `Protocol` on the producer (`apps/dispatcher/src/agentos_dispatcher/queue.py::StreamPublisher`:
+seams — a `StreamPublisher` `Protocol` on the producer (`apps/dispatcher/src/curie_dispatcher/queue.py::StreamPublisher`:
 `xadd` + the `SET NX EX` dedupe-claim) and a `StreamBroker` `Protocol` on the consumer
-transport (`apps/worker/src/agentos_worker/broker.py::StreamBroker`:
+transport (`apps/worker/src/curie_worker/broker.py::StreamBroker`:
 `xgroup_create`/`xreadgroup`/`xack`/`xautoclaim`/`xpending_range`/`xrange`/`xadd`).
 The routing, consumer-group concurrency, dedupe, and reclaim rules stay opinionated
 **core**. `redis.Redis` / `redis.asyncio.Redis` structurally satisfy the ports, so
@@ -38,62 +38,62 @@ exists (ADR-0007); only the port is extracted.
 
 A second broker must honor the stream key, the payload encoding, and the Stream verbs:
 
-- **Stream key** — `"agentos:runs"`, defaulted identically on both ends:
-  `DispatcherConfig.stream` (`apps/dispatcher/src/agentos_dispatcher/config.py::DispatcherConfig`,
-  env `AGENTOS_STREAM`) and `WorkerConfig.stream`
-  (`apps/worker/src/agentos_worker/config.py::WorkerConfig`).
+- **Stream key** — `"curie:runs"`, defaulted identically on both ends:
+  `DispatcherConfig.stream` (`apps/dispatcher/src/curie_dispatcher/config.py::DispatcherConfig`,
+  env `CURIE_STREAM`) and `WorkerConfig.stream`
+  (`apps/worker/src/curie_worker/config.py::WorkerConfig`).
 - **Payload encoding** — one Stream field, `STREAM_PAYLOAD_FIELD = "payload"`
-  (`apps/dispatcher/src/agentos_dispatcher/queue.py::STREAM_PAYLOAD_FIELD`),
+  (`apps/dispatcher/src/curie_dispatcher/queue.py::STREAM_PAYLOAD_FIELD`),
   holding `model_dump_json()`. Produced by `enqueue` via `redis_client.xadd(config.stream, fields)`
-  (`apps/dispatcher/src/agentos_dispatcher/queue.py::enqueue`) and reconstructed by
-  `from_stream_fields` (`apps/dispatcher/src/agentos_dispatcher/queue.py::from_stream_fields`)
+  (`apps/dispatcher/src/curie_dispatcher/queue.py::enqueue`) and reconstructed by
+  `from_stream_fields` (`apps/dispatcher/src/curie_dispatcher/queue.py::from_stream_fields`)
   into a `QueuedTurn`.
 - **Consumer verbs** — the worker reads with `xreadgroup` over a consumer group
-  (`apps/worker/src/agentos_worker/consumer.py::Consumer._read_loop`), rebuilds the model at
-  `apps/worker/src/agentos_worker/consumer.py::Consumer._handle`, and acknowledges with `xack`
-  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._ack`). The group is
-  `"agentos-workers"` (`WorkerConfig.consumer_group`, `apps/worker/src/agentos_worker/config.py::WorkerConfig`).
+  (`apps/worker/src/curie_worker/consumer.py::Consumer._read_loop`), rebuilds the model at
+  `apps/worker/src/curie_worker/consumer.py::Consumer._handle`, and acknowledges with `xack`
+  (`apps/worker/src/curie_worker/stream_consumer.py::StreamConsumer._ack`). The group is
+  `"curie-workers"` (`WorkerConfig.consumer_group`, `apps/worker/src/curie_worker/config.py::WorkerConfig`).
 - **Delivery cap and dead-letter graveyard** (#505, ADR-0039) — an entry already
   delivered `WorkerConfig.max_delivery` times (default 5, floor 2) is dead-lettered
   instead of reclaimed again. `StreamConsumer._dead_letter_over_cap`
-  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._dead_letter_over_cap`) reads
+  (`apps/worker/src/curie_worker/stream_consumer.py::StreamConsumer._dead_letter_over_cap`) reads
   the pending list's delivery counts with `xpending_range` before the reclaim's
   `xautoclaim` bumps them; an over-cap entry's original fields are fetched with
   `xrange` in `StreamConsumer._entry_fields`
-  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._entry_fields`)
+  (`apps/worker/src/curie_worker/stream_consumer.py::StreamConsumer._entry_fields`)
   and moved with `xadd` in `StreamConsumer._dead_letter`
-  (`apps/worker/src/agentos_worker/stream_consumer.py::StreamConsumer._dead_letter`), then acked off
+  (`apps/worker/src/curie_worker/stream_consumer.py::StreamConsumer._dead_letter`), then acked off
   the group. The target stream is `WorkerConfig.dead_letter_stream`
-  (`apps/worker/src/agentos_worker/config.py::WorkerConfig`), defaulting to
+  (`apps/worker/src/curie_worker/config.py::WorkerConfig`), defaulting to
   `"<stream>:dead"`.
 
 Idempotency lives beside the stream, not in it: `claim_event` does a
-`SET <dedupe_key> 1 NX EX <ttl>` before `XADD` (`apps/dispatcher/src/agentos_dispatcher/queue.py::claim_event`).
+`SET <dedupe_key> 1 NX EX <ttl>` before `XADD` (`apps/dispatcher/src/curie_dispatcher/queue.py::claim_event`).
 
 ## Implementations today
 
 One, redis-py against Valkey. The dispatcher `XADD`s
-(`apps/dispatcher/src/agentos_dispatcher/queue.py::enqueue`); the worker runs
+(`apps/dispatcher/src/curie_dispatcher/queue.py::enqueue`); the worker runs
 a consumer group with `XREADGROUP`/`XACK`, crash-recovery `XAUTOCLAIM`, and the
 delivery-cap dead-letter path's `XPENDING`/`XRANGE`/`XADD`
-(`apps/worker/src/agentos_worker/consumer.py`). A second, sibling stream
-`"agentos:evals"` uses the same one-field `payload` convention
-(`apps/worker/src/agentos_worker/eval/stream.py`), reinforcing the wire shape as the
+(`apps/worker/src/curie_worker/consumer.py`). A second, sibling stream
+`"curie:evals"` uses the same one-field `payload` convention
+(`apps/worker/src/curie_worker/eval/stream.py`), reinforcing the wire shape as the
 real contract.
 
 ## The port (as of #284 / ADR-0027)
 
 Drawn only at the **non-sacred** seams; the sacred concurrency kernel
-(`apps/worker/src/agentos_worker/kernel.py` / `apps/worker/src/agentos_worker/consumer.py` /
-`apps/worker/src/agentos_worker/threadlock.py` / `apps/worker/src/agentos_worker/markers.py`)
+(`apps/worker/src/curie_worker/kernel.py` / `apps/worker/src/curie_worker/consumer.py` /
+`apps/worker/src/curie_worker/threadlock.py` / `apps/worker/src/curie_worker/markers.py`)
 is not touched:
 
-- **Producer** — `StreamPublisher` (`apps/dispatcher/src/agentos_dispatcher/queue.py::StreamPublisher`): `xadd` and the
+- **Producer** — `StreamPublisher` (`apps/dispatcher/src/curie_dispatcher/queue.py::StreamPublisher`): `xadd` and the
   `SET NX EX` dedupe-claim. `enqueue`/`claim_event` type against it.
-- **Consumer transport** — `StreamBroker` (`apps/worker/src/agentos_worker/broker.py::StreamBroker`):
+- **Consumer transport** — `StreamBroker` (`apps/worker/src/curie_worker/broker.py::StreamBroker`):
   `xgroup_create`/`xreadgroup`/`xack`/`xautoclaim`, plus — since the bounded-delivery
   dead-letter path (#505, ADR-0039) — `xpending_range`/`xrange`/`xadd`. The non-sacred `StreamConsumer`
-  base (`apps/worker/src/agentos_worker/stream_consumer.py`) holds a `StreamBroker`; the sacred `consumer.py` subclass
+  base (`apps/worker/src/curie_worker/stream_consumer.py`) holds a `StreamBroker`; the sacred `consumer.py` subclass
   inherits it unchanged (its `XAUTOCLAIM` reclaim now targets the port by inheritance).
 
 The verbs return a bare `Awaitable`/value matching redis-py's own typing, so
@@ -103,12 +103,12 @@ The verbs return a bare `Awaitable`/value matching redis-py's own typing, so
 
 - **Reclaim + composition root still touch redis directly.** `consumer.py`'s
   `XAUTOCLAIM` call (sacred file, by rule) and the client construction in
-  `apps/worker/src/agentos_worker/run.py` (the composition root, by design) reference
+  `apps/worker/src/curie_worker/run.py` (the composition root, by design) reference
   redis directly.
 - **The API writes the runs stream outside the broker port.** Correcting an earlier claim
   that the API's redis only backs the kill-switch / eval-queue: the approval-resume path
-  enqueues resume turns directly onto the same `agentos:runs` stream via `ResumeQueue`
-  (`apps/api/src/agentos_api/resumequeue.py::ResumeQueue`) and the expiry sweeper, an `xadd`
+  enqueues resume turns directly onto the same `curie:runs` stream via `ResumeQueue`
+  (`apps/api/src/curie_api/resumequeue.py::ResumeQueue`) and the expiry sweeper, an `xadd`
   that bypasses the dispatcher's `StreamPublisher` port entirely. A second broker must
   account for this third producer (the API) that does not go through the port today.
 - **The redis-py exception surface leaks.** The ports type the verbs but not the error
@@ -127,5 +127,5 @@ The verbs return a bare `Awaitable`/value matching redis-py's own typing, so
 
 - **Epic(s):** #85 — vision: make the broker itself swappable behind the stream contract
 - **Epic(s):** #7 — payload promotion into `packages/aci-protocol` (overlaps the channel seam, landed)
-- **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — opinionated core (`agentos:runs` stream), not one of the six swap jobs
+- **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — opinionated core (`curie:runs` stream), not one of the six swap jobs
 - **ADR(s):** [ADR-0027](../../adr/0027-thin-broker-port-defer-second-broker.md) — the broker port at the non-sacred seams; [ADR-0007](../../adr/0007-adopt-not-build-boundaries.md) — adopt-not-build (Valkey adopted; second broker deferred); [ADR-0039](../../adr/0039-bounded-delivery-and-a-dead-letter-graveyard.md) — the delivery cap and dead-letter graveyard that added `xpending_range`/`xrange`/`xadd` to the port

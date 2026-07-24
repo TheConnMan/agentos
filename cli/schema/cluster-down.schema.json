@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/cluster-down/v1.json",
-  "title": "agentos cluster down --json",
-  "description": "The agent-facing payload of `agentos cluster down`: the dry-run plan, an operator abort, or the removed release (`release_was_absent` true when there was nothing installed to remove).",
+  "$id": "https://schemas.curie.dev/cli/cluster-down/v1.json",
+  "title": "curie cluster down --json",
+  "description": "The agent-facing payload of `curie cluster down`: the dry-run plan, an operator abort, or the removed release (`release_was_absent` true when there was nothing installed to remove).",
   "$defs": {
     "dryRun": {
       "type": "object",

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .conftest import RunLint, write
 
-DATA = "runner/src/agentos_runner/approval.py::SomeData"
+DATA = "runner/src/curie_runner/approval.py::SomeData"
 
 
 def test_extra_field_fails(clean_repo: Path, run_lint: RunLint) -> None:
@@ -78,7 +78,7 @@ def test_non_sealed_prose_does_not_fire(clean_repo: Path, run_lint: RunLint) -> 
 def test_class_without_annotated_fields_is_skipped(clean_repo: Path, run_lint: RunLint) -> None:
     # ApprovalGate has methods but no annotated fields; a listed "field" must not
     # produce a mismatch finding (there is nothing to compare against).
-    cls = "runner/src/agentos_runner/approval.py::ApprovalGate"
+    cls = "runner/src/curie_runner/approval.py::ApprovalGate"
     write(
         clean_repo,
         "docs/fields_methods.md",

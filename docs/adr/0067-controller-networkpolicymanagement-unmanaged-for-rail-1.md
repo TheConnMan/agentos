@@ -9,10 +9,10 @@ Issue #765 (release-blocker, security): a cluster-tier install with a tight
 egress allowlist (`--allow-web-egress <github>/32`, `--allow-egress-host
 openrouter`) did not actually get one. Packet-level evidence on a live k3s
 install of v0.4.2: the chart rendered its own containment correctly --
-`agentos-runner-default-deny-egress` (egress: none) and
-`agentos-runner-allow-egress` (TCP/443 scoped to exactly the declared /32s) --
+`curie-runner-default-deny-egress` (egress: none) and
+`curie-runner-allow-egress` (TCP/443 scoped to exactly the declared /32s) --
 but the vendored agent-sandbox controller (ADR-0023) independently created
-`agentos-runner-network-policy` with a broad egress rule (`0.0.0.0/0` minus
+`curie-runner-network-policy` with a broad egress rule (`0.0.0.0/0` minus
 RFC1918/link-local, both address families). A non-allowlisted host
 (example.com) was reachable from a real sandbox pod.
 
@@ -30,7 +30,7 @@ unioned away by a second policy the chart does not control.
 
 ### The controller's actual behavior (verified, not assumed)
 
-The vendored controller (`charts/agentos/files/agent-sandbox/controller.yaml`,
+The vendored controller (`charts/curie/files/agent-sandbox/controller.yaml`,
 upstream `kubernetes-sigs/agent-sandbox` v0.5.0,
 `registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.0`) runs with args
 `--leader-elect=true --extensions` -- no flag governs NetworkPolicy generation
@@ -38,7 +38,7 @@ or scope (ADR-0023 already established there is no `--namespace` flag either;
 same conclusion holds for network-policy behavior: it is not a controller
 flag). The lever lives in the CRD instead: the vendored
 `sandboxtemplates.extensions.agents.x-k8s.io` CRD
-(`charts/agentos/crds/crd-sandboxtemplates.yaml`) already carries two spec
+(`charts/curie/crds/crd-sandboxtemplates.yaml`) already carries two spec
 fields on `SandboxTemplate`, present in this repo before this change but never
 set by the chart:
 

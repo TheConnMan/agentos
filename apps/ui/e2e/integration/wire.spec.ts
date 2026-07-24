@@ -3,11 +3,11 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
 // Live-backend E2E for H1b. Requires: the compose dev stack, apps/api uvicorn,
-// and AGENTOS_API_TARGET pointing at it (the preview proxies /api there). Run:
+// and CURIE_API_TARGET pointing at it (the preview proxies /api there). Run:
 //   PW_INTEGRATION=1 pnpm exec playwright test --project=integration
 
-const API = process.env.AGENTOS_API_TARGET ?? "http://localhost:8000";
-const API_KEY = process.env.AGENTOS_API_KEY ?? "agentos-dev-key";
+const API = process.env.CURIE_API_TARGET ?? "http://localhost:8000";
+const API_KEY = process.env.CURIE_API_KEY ?? "curie-dev-key";
 const REPO_ROOT = resolve(process.cwd(), "../..");
 
 const api = (path: string, init?: RequestInit) =>

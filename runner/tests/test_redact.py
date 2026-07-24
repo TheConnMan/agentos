@@ -16,16 +16,16 @@ import logging
 import anyio
 import pytest
 from aci_protocol import Event
-from agentos_runner import RunTracer, SideEffectClassifier
-from agentos_runner.fake import FakeModelSession
-from agentos_runner.redact import (
+from curie_runner import RunTracer, SideEffectClassifier
+from curie_runner.fake import FakeModelSession
+from curie_runner.redact import (
     REDACTION_BOUNDARIES,
     REDACTION_RULES,
     install_stdout_redaction,
     redact_span_attribute,
     redact_text,
 )
-from agentos_runner.session import SessionRunner
+from curie_runner.session import SessionRunner
 from claude_agent_sdk import (
     AssistantMessage,
     ResultMessage,
@@ -55,7 +55,7 @@ FAKE_BEARER_HEADER = "Bearer " + "abc0000FAKEFAKEFAKEFAKEFAKEFAKE"
 FAKE_JWT = "eyJ" + "hbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.FAKEFAKEFAKEFAKEFAKEFAKE00"
 FAKE_URL_WITH_TOKEN = "https://example.invalid/hook?token=" + "0000FAKEFAKEFAKEFAKE"
 FAKE_SECRET_ASSIGNMENT = "secret=" + "0000FAKEFAKEFAKEVALUE"
-FAKE_HOME_PATH = "/home/theconnman/.config/agentos/settings.json"
+FAKE_HOME_PATH = "/home/theconnman/.config/curie/settings.json"
 
 # The sensitive substring that must be absent from every boundary's output,
 # keyed by rule name. VECTORS is derived from this so the two cannot drift.
@@ -101,7 +101,7 @@ def _log_through_stdout(*args: object) -> str:
     root.addHandler(handler)
     try:
         install_stdout_redaction()
-        logger = logging.getLogger("agentos_runner.test_redact")
+        logger = logging.getLogger("curie_runner.test_redact")
         logger.setLevel(logging.INFO)
         logger.info(*args)
     finally:

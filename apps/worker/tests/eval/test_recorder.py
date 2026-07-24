@@ -15,17 +15,17 @@ from typing import Any
 
 import httpx
 import pytest
-from agentos_worker.eval import (
+from curie_worker.eval import (
     EvalCaseResult,
     EvalOutcome,
     EvalRunResult,
     LangfuseEvalRecorder,
 )
-from agentos_worker.eval.recorder import SCORE_NAME
+from curie_worker.eval.recorder import SCORE_NAME
 
 _LF_HOST = os.environ.get("TEST_LANGFUSE_HOST", "http://localhost:23000")
-_LF_PK = os.environ.get("TEST_LANGFUSE_PUBLIC_KEY", "pk-lf-agentos-dev")
-_LF_SK = os.environ.get("TEST_LANGFUSE_SECRET_KEY", "sk-lf-agentos-dev")
+_LF_PK = os.environ.get("TEST_LANGFUSE_PUBLIC_KEY", "pk-lf-curie-dev")
+_LF_SK = os.environ.get("TEST_LANGFUSE_SECRET_KEY", "sk-lf-curie-dev")
 
 
 async def _traces_for_version(client: httpx.AsyncClient, version: str) -> list[dict[str, Any]]:

@@ -3,25 +3,25 @@
 This is the check that actually enforces #488's thesis. The boot env is a
 cross-lane contract: every name the worker writes, the runner reads. Today each
 name is typed TWICE, once as a ``*_ENV`` constant in
-``apps/worker/src/agentos_worker/binding.py`` and once as a bare
-``env.get("AGENTOS_...")`` in ``runner/src/agentos_runner/config.py``. Rename
+``apps/worker/src/curie_worker/binding.py`` and once as a bare
+``env.get("CURIE_...")`` in ``runner/src/curie_runner/config.py``. Rename
 either side and the sandbox boots, runs, and silently drops the feature -- no
 import error, no test failure, no log line. After #488 the ONE declaration is
 ``aci_protocol.BootEnv``, and a string literal of a declared boot key in either
 lane's ``src`` is a reintroduction of the drift.
 
 The corpus is every env name in the boot contract's namespace, which is the three
-prefixes ``AGENTOS_``, ``OTEL_EXPORTER_OTLP_`` and ``ANTHROPIC_`` -- the same
+prefixes ``CURIE_``, ``OTEL_EXPORTER_OTLP_`` and ``ANTHROPIC_`` -- the same
 three the sibling gates in the other two lanes scan (``cli/tests/
-boot_env_contract.rs``, ``charts/agentos/ci/render-assertions.sh``). A narrower
-``AGENTOS_``-only corpus would leave ``ANTHROPIC_BASE_URL`` and the OTel trio,
+boot_env_contract.rs``, ``charts/curie/ci/render-assertions.sh``). A narrower
+``CURIE_``-only corpus would leave ``ANTHROPIC_BASE_URL`` and the OTel trio,
 a sixth of the declared keys, invisible to the one gate that claims to enforce
 AC2.
 
 The scan is AST-based, not a raw grep, and looks only for DECLARATIONS: a string
-literal whose whole value is an env name (``"AGENTOS_MODEL"``) or the ``NAME=``
+literal whose whole value is an env name (``"CURIE_MODEL"``) or the ``NAME=``
 head of an assignment, whether the value is interpolated
-(``f"AGENTOS_SANDBOX_ID={name}"``) or static
+(``f"CURIE_SANDBOX_ID={name}"``) or static
 (``"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"``) -- both are the docker
 substrate's ``-e`` argv form. A name mentioned inside a sentence -- a docstring, a
 comment, an operator-facing error message -- is not a declaration: rename the key
@@ -56,7 +56,7 @@ from pathlib import Path
 from aci_protocol import BootEnv
 
 # The boot contract's whole env namespace, matching the CLI and chart gates.
-_PREFIXES = ("AGENTOS_", "OTEL_EXPORTER_OTLP_", "ANTHROPIC_")
+_PREFIXES = ("CURIE_", "OTEL_EXPORTER_OTLP_", "ANTHROPIC_")
 
 # A declaration, not a mention: the literal IS the name, or is the `NAME=` head
 # of an assignment (the docker substrate's `-e` argv form), with the value either
@@ -89,48 +89,48 @@ _NON_BOOT_ALLOWLIST: frozenset[str] = frozenset(
     {
         # The worker service's own settings (WorkerConfig validation_alias), read
         # from the WORKER's env at worker startup. Never a sandbox boot key.
-        "AGENTOS_BOOTING_TEXT",
-        "AGENTOS_CONSUMER_GROUP",
-        "AGENTOS_CONSUMER_NAME",
-        "AGENTOS_DEAD_LETTER_MAXLEN",
-        "AGENTOS_MAX_ATTEMPTS",
-        "AGENTOS_MAX_DELIVERY",
-        "AGENTOS_SLACK_NO_EDIT_STREAMING",
-        "AGENTOS_EVAL_CONSUMER_GROUP",
-        "AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS",
-        "AGENTOS_EVAL_STREAM",
-        "AGENTOS_EVAL_STREAM_MAX_AGE_HOURS",
+        "CURIE_BOOTING_TEXT",
+        "CURIE_CONSUMER_GROUP",
+        "CURIE_CONSUMER_NAME",
+        "CURIE_DEAD_LETTER_MAXLEN",
+        "CURIE_MAX_ATTEMPTS",
+        "CURIE_MAX_DELIVERY",
+        "CURIE_SLACK_NO_EDIT_STREAMING",
+        "CURIE_EVAL_CONSUMER_GROUP",
+        "CURIE_EVAL_MAX_CONCURRENT_CLAIMS",
+        "CURIE_EVAL_STREAM",
+        "CURIE_EVAL_STREAM_MAX_AGE_HOURS",
         # The eval harness's own knobs, read by the eval entrypoint, not injected.
-        "AGENTOS_EVAL_SUITE",
-        "AGENTOS_EVAL_TARGET_URL",
-        "AGENTOS_EVAL_VERSION",
+        "CURIE_EVAL_SUITE",
+        "CURIE_EVAL_TARGET_URL",
+        "CURIE_EVAL_VERSION",
         # Multi-sample / variance-aware grading policy (#332), read by the eval
         # entrypoint (run.py::_sample_config_from_env), not a sandbox boot key.
-        "AGENTOS_EVAL_SAMPLES",
-        "AGENTOS_EVAL_AGGREGATION",
-        "AGENTOS_EVAL_PASS_AT_K",
+        "CURIE_EVAL_SAMPLES",
+        "CURIE_EVAL_AGGREGATION",
+        "CURIE_EVAL_PASS_AT_K",
         # Substrate wiring: how the worker provisions sandboxes, not what it puts
         # inside one. SubstrateConfig reads these from the worker's env.
-        "AGENTOS_CLAIM_TIMEOUT_SECONDS",
-        "AGENTOS_DOCKER_NETWORK",
-        "AGENTOS_NAMESPACE",
-        "AGENTOS_RUNNER_IMAGE",
-        "AGENTOS_SANDBOX_SUBSTRATE",
-        "AGENTOS_WARM_POOL",
+        "CURIE_CLAIM_TIMEOUT_SECONDS",
+        "CURIE_DOCKER_NETWORK",
+        "CURIE_NAMESPACE",
+        "CURIE_RUNNER_IMAGE",
+        "CURIE_SANDBOX_SUBSTRATE",
+        "CURIE_WARM_POOL",
         # The runner-facing API base (#678): WorkerConfig reads it from the
-        # WORKER's env to MINT AGENTOS_MEMORY_REF/AGENTOS_HISTORY_REF (which ARE
+        # WORKER's env to MINT CURIE_MEMORY_REF/CURIE_HISTORY_REF (which ARE
         # declared boot keys, rendered from the declaration). It is a worker-side
         # knob for what URL those refs carry, never itself a sandbox boot key.
-        "AGENTOS_RUNNER_API_URL",
+        "CURIE_RUNNER_API_URL",
         # The local-model demo base URL: an operator knob on the WORKER and on the
         # runner's sdk_auth mapping. It is not a BootEnv field; the boot key the
         # worker actually emits from it is ANTHROPIC_BASE_URL.
-        "AGENTOS_MODEL_BASE_URL",
-        # CLI-owned: `agentos skill check` sets it on its own offline subprocess.
+        "CURIE_MODEL_BASE_URL",
+        # CLI-owned: `curie skill check` sets it on its own offline subprocess.
         # The worker never injects it (see the plan's prior-intent note on 20cb18c).
-        "AGENTOS_CHECK_TIMEOUT_S",
+        "CURIE_CHECK_TIMEOUT_S",
         # The claude-agent-sdk's OWN credential vars, whose names the SDK owns, not
-        # this contract. sdk_auth resolves AGENTOS_CREDENTIALS (which IS a declared
+        # this contract. sdk_auth resolves CURIE_CREDENTIALS (which IS a declared
         # boot key, and is read from the declaration) onto them; the worker forwards
         # the ambient ones by name. Renaming a BootEnv key cannot move these.
         "ANTHROPIC_API_KEY",
@@ -138,21 +138,21 @@ _NON_BOOT_ALLOWLIST: frozenset[str] = frozenset(
         # PR #663 operator-tunable Docker runner hardening knobs; the docker
         # substrate reads these from its OWN env, never injected into the runner
         # boot contract.
-        "AGENTOS_RUNNER_HARDENING",
-        "AGENTOS_RUNNER_WRITABLE_PATHS",
-        "AGENTOS_RUNNER_PIDS_LIMIT",
-        "AGENTOS_RUNNER_READ_ONLY",
-        "AGENTOS_RUNNER_CAP_DROP_ALL",
-        "AGENTOS_RUNNER_NO_NEW_PRIVILEGES",
-        "AGENTOS_RUNNER_MEMORY_LIMIT",
-        "AGENTOS_RUNNER_CPU_LIMIT",
+        "CURIE_RUNNER_HARDENING",
+        "CURIE_RUNNER_WRITABLE_PATHS",
+        "CURIE_RUNNER_PIDS_LIMIT",
+        "CURIE_RUNNER_READ_ONLY",
+        "CURIE_RUNNER_CAP_DROP_ALL",
+        "CURIE_RUNNER_NO_NEW_PRIVILEGES",
+        "CURIE_RUNNER_MEMORY_LIMIT",
+        "CURIE_RUNNER_CPU_LIMIT",
         # runner-local false-completion knob; read by the runner from its own env,
         # not a boot contract key.
-        "AGENTOS_FALSE_COMPLETION_CHECK",
+        "CURIE_FALSE_COMPLETION_CHECK",
         # runner-local harness selection (ADR-0060, #844); read by the runner from
         # its own env to pick the active harness, unset selects the built-in
         # Claude. Not a boot contract key.
-        "AGENTOS_HARNESS",
+        "CURIE_HARNESS",
     }
 )
 
@@ -186,21 +186,21 @@ _EXEMPT: dict[tuple[str, str], str] = {
     # WorkerConfig reads the WORKER's env under these names to decide what to
     # inject; the name collision with the boot key it later emits is real but
     # the consumer is the worker process, not the sandbox.
-    ("apps/worker/src/agentos_worker/config.py", "AGENTOS_PLUGIN_DIR"): "worker service config",
-    ("apps/worker/src/agentos_worker/config.py", "AGENTOS_MODEL"): "worker service config",
-    ("apps/worker/src/agentos_worker/config.py", "AGENTOS_FAKE_MODEL"): "worker service config",
-    ("apps/worker/src/agentos_worker/config.py", "AGENTOS_CREDENTIALS"): "worker service config",
+    ("apps/worker/src/curie_worker/config.py", "CURIE_PLUGIN_DIR"): "worker service config",
+    ("apps/worker/src/curie_worker/config.py", "CURIE_MODEL"): "worker service config",
+    ("apps/worker/src/curie_worker/config.py", "CURIE_FAKE_MODEL"): "worker service config",
+    ("apps/worker/src/curie_worker/config.py", "CURIE_CREDENTIALS"): "worker service config",
     # Same shape as the four above: the operator declares the endpoint's wire
     # protocol and credential key(s) (#514) on the WORKER's env, and WorkerConfig
     # reads them there to decide what to inject. The sandbox-side names are
     # rendered from the declaration (BootEnv.render_worker) and read from it in
     # the runner (sdk_auth), so a rename still moves both real boot sites.
     (
-        "apps/worker/src/agentos_worker/config.py",
-        "AGENTOS_MODEL_API_BACKEND",
+        "apps/worker/src/curie_worker/config.py",
+        "CURIE_MODEL_API_BACKEND",
     ): "worker service config",
-    ("apps/worker/src/agentos_worker/config.py", "AGENTOS_MODEL_ENV_KEY"): "worker service config",
-    ("apps/worker/src/agentos_worker/eval/run.py", "AGENTOS_MODEL"): "eval entrypoint env read",
+    ("apps/worker/src/curie_worker/config.py", "CURIE_MODEL_ENV_KEY"): "worker service config",
+    ("apps/worker/src/curie_worker/eval/run.py", "CURIE_MODEL"): "eval entrypoint env read",
     # run.py reads the WORKER's own OTel endpoint -- the standard var its own
     # deployment sets to point the worker process at the collector -- to warn when
     # middle mode has none and to hand the docker client a target. The consumer is
@@ -208,25 +208,25 @@ _EXEMPT: dict[tuple[str, str], str] = {
     # the declaration (sandbox/docker.py). Renaming the boot key must not rename
     # the worker's own OTel var, so this site is not the drift.
     (
-        "apps/worker/src/agentos_worker/run.py",
+        "apps/worker/src/curie_worker/run.py",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
     ): "worker service config",
     # Substrate-authoritative producers. The chart/docker own pod identity and
     # the runner port; the worker must never render them (see BootEnv).
-    ("apps/worker/src/agentos_worker/run.py", "AGENTOS_RUNNER_PORT"): "substrate producer",
+    ("apps/worker/src/curie_worker/run.py", "CURIE_RUNNER_PORT"): "substrate producer",
     (
-        "apps/worker/src/agentos_worker/sandbox/docker.py",
-        "AGENTOS_SANDBOX_ID",
+        "apps/worker/src/curie_worker/sandbox/docker.py",
+        "CURIE_SANDBOX_ID",
     ): "substrate producer",
     (
-        "apps/worker/src/agentos_worker/sandbox/docker.py",
-        "AGENTOS_RUNNER_PORT",
+        "apps/worker/src/curie_worker/sandbox/docker.py",
+        "CURIE_RUNNER_PORT",
     ): "substrate producer",
 }
 
 
 def _literals(path: Path) -> list[tuple[int, str]]:
-    """Every AGENTOS_ name DECLARED by a string literal, with its line number.
+    """Every CURIE_ name DECLARED by a string literal, with its line number.
 
     Docstrings are excluded (they discuss these names by design) and comments
     never reach the AST at all.
@@ -267,7 +267,7 @@ def _scan() -> list[tuple[str, int, str]]:
 
 
 def test_boot_env_keys_are_declared_once_in_aci_protocol() -> None:
-    # The WHOLE declared surface, not the AGENTOS_ slice of it: a scan that could
+    # The WHOLE declared surface, not the CURIE_ slice of it: a scan that could
     # not see ANTHROPIC_BASE_URL or the OTel trio would call a redeclaration of
     # one of them "unclassified" instead of naming it the drift it is.
     boot_keys = set(BootEnv.env_keys())
@@ -336,11 +336,11 @@ def test_exemptions_and_allowlist_are_live() -> None:
 
 
 def test_agent_id_is_not_declared_anywhere_in_the_lanes() -> None:
-    """AGENTOS_AGENT_ID is written by the worker and read by nobody (#488, AC4)."""
+    """CURIE_AGENT_ID is written by the worker and read by nobody (#488, AC4)."""
 
-    hits = [f"{rel}:{lineno}" for rel, lineno, name in _scan() if name == "AGENTOS_AGENT_ID"]
+    hits = [f"{rel}:{lineno}" for rel, lineno, name in _scan() if name == "CURIE_AGENT_ID"]
     assert not hits, (
-        "AGENTOS_AGENT_ID is injected into every sandbox boot env and no consumer "
+        "CURIE_AGENT_ID is injected into every sandbox boot env and no consumer "
         "ever reads it. Delete the write site rather than declaring it:\n  "
         + "\n  ".join(hits)
     )

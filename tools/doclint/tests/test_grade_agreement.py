@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentos_doclint import main
+from curie_doclint import main
 
 from .conftest import RunLint
 

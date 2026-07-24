@@ -2,10 +2,10 @@
 
 import anyio
 from aci_protocol import Event, SessionStatus, parse_ndjson
-from agentos_runner import BudgetTracker, RunTracer, SideEffectClassifier
-from agentos_runner.budget import BUDGET_CLASSIFICATION
-from agentos_runner.fake import FakeModelSession
-from agentos_runner.session import SessionRunner
+from curie_runner import BudgetTracker, RunTracer, SideEffectClassifier
+from curie_runner.budget import BUDGET_CLASSIFICATION
+from curie_runner.fake import FakeModelSession
+from curie_runner.session import SessionRunner
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 

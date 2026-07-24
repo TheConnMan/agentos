@@ -59,7 +59,7 @@ describe("App shell (wired)", () => {
   it("shows onboarding for a fresh workspace with no agents", async () => {
     vi.mocked(getAgents).mockResolvedValue([]);
     renderApp();
-    expect(await screen.findByText("Welcome to AgentOS")).toBeInTheDocument();
+    expect(await screen.findByText("Welcome to Curie")).toBeInTheDocument();
   });
 
   it("shows the configured workspace name from the live config", async () => {

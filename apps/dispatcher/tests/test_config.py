@@ -3,7 +3,7 @@
 ``populate_by_name=True`` lets tests construct the config with field-name
 kwargs, but it must NOT make the env source read the bare uppercased field name
 as a fallback for a field that carries a ``validation_alias``. An aliased field
-must read only its ``AGENTOS_*`` alias; a stray generic env var (``STREAM``,
+must read only its ``CURIE_*`` alias; a stray generic env var (``STREAM``,
 ``SHIMMER``, ...) in the pod env must be ignored, as it was before the
 BaseSettings refactor.
 """
@@ -11,7 +11,7 @@ BaseSettings refactor.
 from __future__ import annotations
 
 import pytest
-from agentos_dispatcher.config import DispatcherConfig
+from curie_dispatcher.config import DispatcherConfig
 from pydantic import ValidationError
 
 
@@ -45,22 +45,22 @@ _DISPATCHER_OVERRIDES: dict[str, tuple[str, str, object]] = {
     "VALKEY_PORT": ("valkey_port", "6380", 6380),
     "VALKEY_PASSWORD": ("valkey_password", "vk-pass", "vk-pass"),
     "VALKEY_DB": ("valkey_db", "7", 7),
-    "AGENTOS_STREAM": ("stream", "sentinel:runs", "sentinel:runs"),
-    "AGENTOS_DEDUPE_PREFIX": (
+    "CURIE_STREAM": ("stream", "sentinel:runs", "sentinel:runs"),
+    "CURIE_DEDUPE_PREFIX": (
         "dedupe_prefix",
         "sentinel:dedupe:",
         "sentinel:dedupe:",
     ),
-    "AGENTOS_DEDUPE_TTL_SECONDS": ("dedupe_ttl_seconds", "7200", 7200),
-    "AGENTOS_PLACEHOLDER_TEXT": (
+    "CURIE_DEDUPE_TTL_SECONDS": ("dedupe_ttl_seconds", "7200", 7200),
+    "CURIE_PLACEHOLDER_TEXT": (
         "placeholder_text",
         "Sentinel placeholder.",
         "Sentinel placeholder.",
     ),
-    "AGENTOS_SHIMMER": ("shimmer", "true", True),
-    "AGENTOS_BACKOFF_INITIAL_SECONDS": ("backoff_initial_seconds", "2.5", 2.5),
-    "AGENTOS_BACKOFF_MAX_SECONDS": ("backoff_max_seconds", "45.5", 45.5),
-    "AGENTOS_BACKOFF_MULTIPLIER": ("backoff_multiplier", "3.5", 3.5),
+    "CURIE_SHIMMER": ("shimmer", "true", True),
+    "CURIE_BACKOFF_INITIAL_SECONDS": ("backoff_initial_seconds", "2.5", 2.5),
+    "CURIE_BACKOFF_MAX_SECONDS": ("backoff_max_seconds", "45.5", 45.5),
+    "CURIE_BACKOFF_MULTIPLIER": ("backoff_multiplier", "3.5", 3.5),
 }
 
 
@@ -72,12 +72,12 @@ def test_aliased_field_ignores_bare_field_name_env(
 
     config = DispatcherConfig()
 
-    assert config.stream == "agentos:runs"  # the default, not "stray:stream"
+    assert config.stream == "curie:runs"  # the default, not "stray:stream"
 
 
 def test_aliased_field_reads_its_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The intended AGENTOS_* alias is still read from the env."""
-    monkeypatch.setenv("AGENTOS_STREAM", "intended:stream")
+    """The intended CURIE_* alias is still read from the env."""
+    monkeypatch.setenv("CURIE_STREAM", "intended:stream")
 
     assert DispatcherConfig().stream == "intended:stream"
 
@@ -85,7 +85,7 @@ def test_aliased_field_reads_its_alias(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_alias_wins_over_bare_field_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """With both set, only the alias is read and the bare name is ignored."""
     monkeypatch.setenv("STREAM", "stray:stream")
-    monkeypatch.setenv("AGENTOS_STREAM", "intended:stream")
+    monkeypatch.setenv("CURIE_STREAM", "intended:stream")
 
     assert DispatcherConfig().stream == "intended:stream"
 
@@ -126,8 +126,8 @@ def test_defaults_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.valkey_port == 6379
     assert config.valkey_password == ""
     assert config.valkey_db == 0
-    assert config.stream == "agentos:runs"
-    assert config.dedupe_prefix == "agentos:dedupe:"
+    assert config.stream == "curie:runs"
+    assert config.dedupe_prefix == "curie:dedupe:"
     assert config.dedupe_ttl_seconds == 3600
     assert config.placeholder_text == "On it. Working on your request."
     assert config.shimmer is False
@@ -162,7 +162,7 @@ def test_overrides_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None
 # the default is correct for its only real audience (a dispatcher run bare on a
 # laptop against a local API), and every containerized context has a manifest
 # whose whole job is to declare the wiring. The obvious "fix"
-# (http://agentos-api:8000) hardcodes a compose service name into application
+# (http://curie-api:8000) hardcodes a compose service name into application
 # code -- wrong in the chart, wrong on a laptop, wrong for any BYO deployment.
 # The default also deliberately mirrors the worker's for the same seam (#246).
 # These lock that decision, and cover the setting the boot gate reads.
@@ -187,9 +187,9 @@ def test_api_preflight_timeout_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_api_preflight_timeout_reads_its_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The deadline is tunable via AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS, and float-coerced."""
+    """The deadline is tunable via CURIE_API_PREFLIGHT_TIMEOUT_SECONDS, and float-coerced."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", "5.5")
+    monkeypatch.setenv("CURIE_API_PREFLIGHT_TIMEOUT_SECONDS", "5.5")
 
     config = DispatcherConfig()
 
@@ -217,7 +217,7 @@ def test_api_preflight_timeout_rejects_non_positive(
     button the gate exists to prevent.
     """
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", "0")
+    monkeypatch.setenv("CURIE_API_PREFLIGHT_TIMEOUT_SECONDS", "0")
 
     with pytest.raises(ValidationError):
         DispatcherConfig()
@@ -235,7 +235,7 @@ def test_api_preflight_timeout_rejects_non_finite(
     failure AC2 exists to eliminate, so the value is rejected at boot instead.
     """
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", token)
+    monkeypatch.setenv("CURIE_API_PREFLIGHT_TIMEOUT_SECONDS", token)
 
     with pytest.raises(ValidationError):
         DispatcherConfig()
@@ -255,7 +255,7 @@ def test_bool_dispatcher_truthy_tokens_including_on(
 ) -> None:
     """The dispatcher truthy set includes "on" (case/space-insensitive)."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_SHIMMER", token)
+    monkeypatch.setenv("CURIE_SHIMMER", token)
 
     assert DispatcherConfig().shimmer is True
 
@@ -266,7 +266,7 @@ def test_bool_dispatcher_falsy_tokens(
 ) -> None:
     """Falsy tokens ("off" included) parse to False."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_SHIMMER", token)
+    monkeypatch.setenv("CURIE_SHIMMER", token)
 
     assert DispatcherConfig().shimmer is False
 
@@ -274,12 +274,12 @@ def test_bool_dispatcher_falsy_tokens(
 def test_bool_on_divergence_between_services(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AGENTOS_SHIMMER=on: dispatcher True, worker False -- the documented per-service split."""
-    from agentos_worker.config import WorkerConfig
+    """CURIE_SHIMMER=on: dispatcher True, worker False -- the documented per-service split."""
+    from curie_worker.config import WorkerConfig
 
     _clear_all_config_env(monkeypatch)
-    monkeypatch.delenv("AGENTOS_SHIMMER", raising=False)
-    monkeypatch.setenv("AGENTOS_SHIMMER", "on")
+    monkeypatch.delenv("CURIE_SHIMMER", raising=False)
+    monkeypatch.setenv("CURIE_SHIMMER", "on")
 
     assert DispatcherConfig().shimmer is True
     assert WorkerConfig().shimmer is False

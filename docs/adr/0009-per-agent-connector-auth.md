@@ -11,13 +11,13 @@ and a stdio or remote MCP server almost always needs a secret (an API key, a
 bearer token). The platform has no place for that secret today.
 
 The only credential the platform resolves is the single model credential: it
-flows from a chart Secret through `AGENTOS_CREDENTIALS` and is mapped by prefix
-onto the SDK's auth env (`runner/src/agentos_runner/sdk_auth.py`), and an
+flows from a chart Secret through `CURIE_CREDENTIALS` and is mapped by prefix
+onto the SDK's auth env (`runner/src/curie_runner/sdk_auth.py`), and an
 explicit SDK credential already in the env wins. An `McpServer.env` field exists
 in the plugin format but is static (literal strings baked into `.mcp.json`); the
 Claude Code CLI expands `${VAR}` in those values, but the platform injects no
 operator-provided variables into the runtime for such an expansion to resolve
-against. Egress is default-deny (`charts/agentos/templates/security-networkpolicy.yaml`),
+against. Egress is default-deny (`charts/curie/templates/security-networkpolicy.yaml`),
 so a connector that reaches an external endpoint is dropped unless allowlisted.
 
 Notably the frozen ACI already anticipates this: `SessionConfig.credentials_ref`
@@ -57,10 +57,10 @@ optional `secrets: [NAME, …]` field: the versioned, evaluable list of named
 secrets the bundle requires. It carries **no values**. (`packages/plugin-format`.)
 
 **skill tier (already shipped).** The CLI forwards the value by name into the
-runner container with `agentos skill up --secret NAME`, resolving it from the
+runner container with `curie skill up --secret NAME`, resolving it from the
 process env or the host secret vault (`cli/src/secrets.rs`). No platform involved.
 
-**local tier — values on the agent record.** `agentos local deploy --secret NAME`
+**local tier — values on the agent record.** `curie local deploy --secret NAME`
 resolves each value from the host vault and sends it to the platform API, which
 stores it in a nullable `secrets` JSONB column on the agent row (mirroring
 `behavior_packs`). The worker, resolving a deployment, reads that column and
@@ -72,11 +72,11 @@ minimum that restores parity for authed-MCP bundles.
 **cluster tier — per-agent K8s Secret, never on the CR.** The agent's `secrets`
 column carries **names only** at this tier; values live in a per-agent Kubernetes
 Secret (`<release>-agent-<id>-connector-secrets`), written by
-`agentos cluster deploy --secret` via `helm upgrade` using the higher-sensitivity
+`curie cluster deploy --secret` via `helm upgrade` using the higher-sensitivity
 `-f` values-file path (not the argv-masked `--set` the Slack connect verb uses).
 Delivery is by **`secretKeyRef`** into the sandbox, through a per-agent
 SandboxTemplate/warm pool — the mechanism the chart already uses for the model
-credential (`charts/agentos/templates/agent-sandbox.yaml`). The `SandboxClaim`
+credential (`charts/curie/templates/agent-sandbox.yaml`). The `SandboxClaim`
 env schema is **value-only (no `secretKeyRef`)**, so connector secret values are
 **kept off the claim CR entirely** and supplied only via the template's
 `secretKeyRef`. Binding or rotating requires a pod rollout (`secretKeyRef` env

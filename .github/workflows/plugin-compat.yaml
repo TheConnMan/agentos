@@ -1,7 +1,7 @@
 name: Plugin compat
 
 # The bundle format is the Claude Code plugin shape verbatim, so outbound
-# compatibility (an AgentOS bundle validates unmodified as a Claude Code plugin)
+# compatibility (an Curie bundle validates unmodified as a Claude Code plugin)
 # is a contract we owe, not a claim we make. This gate defends it.
 #
 # Both triggers are deliberate, because there are two independent drift vectors:

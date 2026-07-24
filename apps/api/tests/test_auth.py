@@ -3,8 +3,8 @@
 import uuid
 from typing import Any
 
-from agentos_api.config import get_settings
-from agentos_api.sandbox_token import mint
+from curie_api.config import get_settings
+from curie_api.sandbox_token import mint
 
 
 def test_health_is_open(client: Any) -> None:

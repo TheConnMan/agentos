@@ -6,10 +6,10 @@ Status: Accepted
 Status corrected from `Proposed` under
 [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
 decision is built. The durable `Approval` record and its audit trail are in
-`apps/api/src/agentos_api/models.py::Approval` /
+`apps/api/src/curie_api/models.py::Approval` /
 `::ApprovalAuditEntry`, the resolve endpoint in
-`apps/api/src/agentos_api/routers/approvals.py::resolve_approval`, and the
-kernel's client in `apps/worker/src/agentos_worker/approvals.py::ApprovalRequest`.
+`apps/api/src/curie_api/routers/approvals.py::resolve_approval`, and the
+kernel's client in `apps/worker/src/curie_worker/approvals.py::ApprovalRequest`.
 Three Accepted ADRs (0033, 0034, 0035) already build on this one.
 
 ## Context
@@ -17,7 +17,7 @@ Three Accepted ADRs (0033, 0034, 0035) already build on this one.
 Production business agents pause for a human decision: a discount needs sign-off,
 a remediation needs a yes before it runs. Today the platform offers nothing for
 this and builders would hand-roll all of it. Concretely, the runner hardcodes
-`permission_mode="bypassPermissions"` (`runner/src/agentos_runner/adapter.py`),
+`permission_mode="bypassPermissions"` (`runner/src/curie_runner/adapter.py`),
 there is no tool-permission callback, and the ACI `SessionStatus` has only
 `done` / `idle-awaiting-input` / `classified-failure` - no awaiting-approval
 state (`packages/aci-protocol`). The suspend/resume path (ADR-0003) is built but

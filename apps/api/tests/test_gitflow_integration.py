@@ -15,8 +15,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from agentos_api import crud
-from agentos_api.config import get_settings
+from curie_api import crud
+from curie_api.config import get_settings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 SECRET = get_settings().github_webhook_secret

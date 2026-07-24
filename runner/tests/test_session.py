@@ -4,9 +4,9 @@ import logging
 
 import anyio
 from aci_protocol import Event, Interrupt, SessionStatus, parse_ndjson
-from agentos_runner import RunTracer, SideEffectClassifier, build_options
-from agentos_runner.fake import FakeModelSession, default_turn
-from agentos_runner.session import SessionRunner
+from curie_runner import RunTracer, SideEffectClassifier, build_options
+from curie_runner.fake import FakeModelSession, default_turn
+from curie_runner.session import SessionRunner
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 
@@ -53,7 +53,7 @@ def test_turn_lifecycle_logged(caplog) -> None:
     runner, _ = _runner()
     event = Event(type="message", text="go", user="U-log", ts="1")
 
-    with caplog.at_level(logging.INFO, logger="agentos_runner.session"):
+    with caplog.at_level(logging.INFO, logger="curie_runner.session"):
         events = _drain(runner, event)
 
     messages = [record.getMessage() for record in caplog.records]
@@ -173,7 +173,7 @@ def test_sdk_exception_logs_turn_failure(caplog) -> None:
         classifier=SideEffectClassifier(),
         trace_name="t",
     )
-    with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
+    with caplog.at_level(logging.ERROR, logger="curie_runner.session"):
         events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
 
     messages = [record.getMessage() for record in caplog.records]
@@ -206,14 +206,14 @@ def test_auth_rejection_fails_fast_not_retried(caplog) -> None:
     ]
     runner, fake = _runner(lambda: script)
 
-    with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
+    with caplog.at_level(logging.ERROR, logger="curie_runner.session"):
         events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
 
     # Distinct, terminal, credential-rejected classification (not "runner-error",
     # not "budget-exceeded", not the raw SDK "authentication_failed").
     assert [e.type for e in events] == ["error", "final"]
     assert events[0].classification == "model-credential-rejected"
-    assert "AGENTOS_CREDENTIALS" in events[0].message
+    assert "CURIE_CREDENTIALS" in events[0].message
     assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
     assert runner.status == SessionStatus.CLASSIFIED_FAILURE
     # Fast-fail: aborted at the rejection, never consuming later messages, and
@@ -247,7 +247,7 @@ def test_auth_fast_fail_survives_a_wedged_interrupt(caplog) -> None:
         trace_name="t",
     )
 
-    with caplog.at_level(logging.ERROR, logger="agentos_runner.session"):
+    with caplog.at_level(logging.ERROR, logger="curie_runner.session"):
         events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
 
     # Still the terminal credential-rejected classification -- NOT the retryable
@@ -301,7 +301,7 @@ def test_budget_halt_logged(caplog) -> None:
     ]
     runner, _ = _runner(lambda: script, ceiling=10)
 
-    with caplog.at_level(logging.WARNING, logger="agentos_runner.session"):
+    with caplog.at_level(logging.WARNING, logger="curie_runner.session"):
         events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
 
     assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
@@ -327,7 +327,7 @@ def test_error_result_body_not_logged(caplog) -> None:
     ]
     runner, _ = _runner(lambda: script)
 
-    with caplog.at_level(logging.WARNING, logger="agentos_runner.session"):
+    with caplog.at_level(logging.WARNING, logger="curie_runner.session"):
         events = _drain(runner, Event(type="message", text="go", user="U", ts="1"))
 
     assert events[-1].status == SessionStatus.CLASSIFIED_FAILURE
@@ -338,7 +338,7 @@ def test_turn_logging_does_not_include_message_body(caplog) -> None:
     runner, _ = _runner()
     sentinel = "SENTINEL-SECRET-BODY-9f3a"
 
-    with caplog.at_level(logging.INFO, logger="agentos_runner.session"):
+    with caplog.at_level(logging.INFO, logger="curie_runner.session"):
         _drain(runner, Event(type="message", text=sentinel, user="U", ts="1"))
 
     assert all(sentinel not in record.getMessage() for record in caplog.records)

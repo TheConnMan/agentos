@@ -11,9 +11,9 @@
 
 mod support;
 
-use agentos::api::ApiClient;
-use agentos::commands::{approvals, AgentActionOpts, ApprovalCmd, ApprovalsOutput};
-use agentos::ui::CliOutput;
+use curie::api::ApiClient;
+use curie::commands::{approvals, AgentActionOpts, ApprovalCmd, ApprovalsOutput};
+use curie::ui::CliOutput;
 use support::{serve, MockServer, Response};
 
 const AGENT_ID: &str = "11111111-1111-1111-1111-111111111111";

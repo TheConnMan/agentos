@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { getAgents, getConfig, type AgentOut } from "../api/client";
 
 // Fallback workspace name shown while config is loading.
-const DEFAULT_ORG_NAME = "AgentOS";
+const DEFAULT_ORG_NAME = "Curie";
 
 // The real-data layer for the console. It fetches GET /agents and derives whether
 // the account is fresh (onboarding) or has agents (live shell), plus the

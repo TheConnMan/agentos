@@ -1,13 +1,13 @@
-//! Integration tests for issue #325: `agentos init --from-spec <PATH>`.
+//! Integration tests for issue #325: `curie init --from-spec <PATH>`.
 //!
 //! These pin the acceptance criteria for scaffolding a Claude Code plugin
 //! bundle NON-INTERACTIVELY from an agent-authored spec file, and for the
 //! scaffolded `evals/cases.json` being loadable by the SAME loader that
-//! `agentos skill eval` uses (`agentos::evals::load_suite`). The parity
+//! `curie skill eval` uses (`curie::evals::load_suite`). The parity
 //! guarantee is the whole point: a spec authored by an agent must produce a
 //! bundle whose eval suite the platform eval path accepts unchanged.
 //!
-//! Written test-first: the `agentos::spec` module, `scaffold_from_spec`, and
+//! Written test-first: the `curie::spec` module, `scaffold_from_spec`, and
 //! the `--from-spec` clap flag do not exist yet, so this file fails to compile
 //! and/or fails at runtime until the implementer builds the feature.
 //!
@@ -20,12 +20,12 @@
 use std::path::Path;
 use std::process::Command;
 
-use agentos::evals::{load_suite, GraderKind};
-use agentos::scaffold::{read_manifest, scaffold_from_spec};
-use agentos::spec::parse;
+use curie::evals::{load_suite, GraderKind};
+use curie::scaffold::{read_manifest, scaffold_from_spec};
+use curie::spec::parse;
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn output_text(output: &std::process::Output) -> String {
@@ -101,7 +101,7 @@ fn scaffolds_the_full_bundle_from_a_valid_spec() {
 
     // 5. .gitignore ignores local workstation state.
     let gitignore = std::fs::read_to_string(out.join(".gitignore")).unwrap();
-    assert!(gitignore.contains(".agentos/"), "{gitignore}");
+    assert!(gitignore.contains(".curie/"), "{gitignore}");
 }
 
 /// A spec declaring `secrets` and `approvalPolicy` scaffolds a gated, authed
@@ -399,7 +399,7 @@ fn writes_empty_mcp_servers_when_no_connectors() {
 }
 
 /// The scaffolded `evals/cases.json` is the suite object and is loadable by the
-/// SAME loader `agentos skill eval` uses. This is the parity guarantee: the
+/// SAME loader `curie skill eval` uses. This is the parity guarantee: the
 /// eval suite an agent-authored spec produces must load unchanged on the eval
 /// path. Deleting the eval-writing impl breaks `load_suite`.
 #[test]
@@ -690,9 +690,9 @@ fn refuses_to_truncate_an_existing_target_and_writes_no_manifest() {
     );
 }
 
-// --- CLI surface through the agentos binary --------------------------------
+// --- CLI surface through the curie binary --------------------------------
 
-/// `agentos init --from-spec <valid>` is fully non-interactive (no stdin),
+/// `curie init --from-spec <valid>` is fully non-interactive (no stdin),
 /// exits 0, and produces a bundle whose manifest name is the SPEC's name (not
 /// any positional argument -- none is passed).
 #[test]
@@ -709,7 +709,7 @@ fn cli_init_from_spec_scaffolds_non_interactively() {
         .arg(&out)
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos init --from-spec");
+        .expect("run curie init --from-spec");
 
     assert!(
         output.status.success(),
@@ -723,7 +723,7 @@ fn cli_init_from_spec_scaffolds_non_interactively() {
     );
 }
 
-/// `agentos init --from-spec <invalid>` exits non-zero and names the problem.
+/// `curie init --from-spec <invalid>` exits non-zero and names the problem.
 #[test]
 fn cli_init_from_spec_rejects_an_invalid_spec() {
     let dir = tempfile::tempdir().unwrap();
@@ -740,7 +740,7 @@ fn cli_init_from_spec_rejects_an_invalid_spec() {
         .arg(&out)
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos init --from-spec");
+        .expect("run curie init --from-spec");
 
     assert!(
         !output.status.success(),
@@ -754,7 +754,7 @@ fn cli_init_from_spec_rejects_an_invalid_spec() {
     );
 }
 
-/// `agentos init` with NEITHER a positional name NOR `--from-spec` exits
+/// `curie init` with NEITHER a positional name NOR `--from-spec` exits
 /// non-zero and tells the user to pass a name or `--from-spec`.
 #[test]
 fn cli_init_without_name_or_spec_errors_with_guidance() {
@@ -767,7 +767,7 @@ fn cli_init_without_name_or_spec_errors_with_guidance() {
         .arg(&out)
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos init with no name");
+        .expect("run curie init with no name");
 
     assert!(
         !output.status.success(),

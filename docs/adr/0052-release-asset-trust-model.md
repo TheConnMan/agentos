@@ -4,18 +4,18 @@ Date: 2026-07-17
 
 Status: Accepted
 
-Implements [#629](https://github.com/curie-eng/agentos/issues/629).
+Implements [#629](https://github.com/curie-eng/curie/issues/629).
 Scoped to downloadable GitHub release assets. Signing, provenance, and SBOMs for
-the GHCR container images are [#62](https://github.com/curie-eng/agentos/issues/62)
+the GHCR container images are [#62](https://github.com/curie-eng/curie/issues/62)
 and are deliberately not decided here.
 
 ## Context
 
-A release publishes the `agentos` CLI binaries, the packaged Helm chart, and
+A release publishes the `curie` CLI binaries, the packaged Helm chart, and
 `compose.release.yaml`. None of them carried a checksum, a signature, provenance,
 or an SBOM. The documented install path was `curl` the binary, `chmod +x`, `sudo
 mv` it onto `PATH`, and immediately point it at a cluster -- so the first thing a
-new user did with AgentOS was run an unverifiable binary as root. Nothing let
+new user did with Curie was run an unverifiable binary as root. Nothing let
 them answer "is this the artifact that repo's workflow built?", and nothing let
 us answer it either after the fact.
 

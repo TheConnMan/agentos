@@ -8,8 +8,8 @@ semantics + crash recovery) plus xpending_range, xrange, xadd (#505 delivery
 cap / dead-letter).
 """
 
-from agentos_worker.broker import StreamBroker
-from agentos_worker.stream_consumer import StreamConsumer
+from curie_worker.broker import StreamBroker
+from curie_worker.stream_consumer import StreamConsumer
 from redis.asyncio import Redis
 
 

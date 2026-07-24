@@ -1,4 +1,4 @@
-# OTel Collector config for the AgentOS dev stack.
+# OTel Collector config for the Curie dev stack.
 #
 # Receives OTLP from our services over BOTH gRPC (4317) and HTTP (4318), and
 # forwards to Langfuse. Langfuse OTLP ingest is HTTP-only (gRPC is silently

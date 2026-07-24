@@ -4,15 +4,15 @@
 //! exist yet, so this file will not compile / the schema loads fail at red; the
 //! implementer creates the schemas alongside the `--json` wiring.
 
-use agentos::commands::{eval_json, status_json};
-use agentos::evals::CaseOutcome;
-use agentos::exit;
-use agentos::message::{
+use curie::commands::{eval_json, status_json};
+use curie::evals::CaseOutcome;
+use curie::exit;
+use curie::message::{
     message_awaiting_approval_json, message_dry_run_json, message_reply_json, message_timeout_json,
 };
-use agentos::observability::{local_endpoints, Endpoint, ObservabilityOutput};
-use agentos::ui::{CliOutput, DryRunPlan};
-use agentos_aci_protocol::SessionStatus;
+use curie::observability::{local_endpoints, Endpoint, ObservabilityOutput};
+use curie::ui::{CliOutput, DryRunPlan};
+use curie_aci_protocol::SessionStatus;
 
 fn load_schema(name: &str) -> serde_json::Value {
     let path = format!("{}/schema/{}", env!("CARGO_MANIFEST_DIR"), name);
@@ -201,7 +201,7 @@ fn message_dry_run_json_validates_against_message_schema() {
     // Explicit channel (local target).
     let with_channel = message_dry_run_json(
         "local",
-        "agentos:turns",
+        "curie:turns",
         Some("C123"),
         "http://localhost:8155/api/",
     );
@@ -215,7 +215,7 @@ fn message_dry_run_json_validates_against_message_schema() {
     // Null channel (cluster target, sole-agent resolution).
     let no_channel = message_dry_run_json(
         "cluster",
-        "agentos:turns",
+        "curie:turns",
         None,
         "http://10.1.2.3:8155/api/",
     );
@@ -292,15 +292,15 @@ fn observability_json_validates_against_observability_schema() {
     // degraded row (url null, note set).
     let value = ObservabilityOutput::Surfaces(vec![
         Endpoint {
-            name: "AgentOS Console".to_string(),
+            name: "Curie Console".to_string(),
             url: Some("http://localhost:28080/?api=1".to_string()),
             note: None,
             browsable: true,
         },
         Endpoint {
-            name: "AgentOS API".to_string(),
+            name: "Curie API".to_string(),
             url: None,
-            note: Some("service agentos-ui not found".to_string()),
+            note: Some("service curie-ui not found".to_string()),
             browsable: false,
         },
     ])
@@ -314,7 +314,7 @@ fn observability_json_validates_against_observability_schema() {
     assert!(value["surfaces"][1]["url"].is_null());
     assert_eq!(
         value["surfaces"][1]["note"],
-        serde_json::json!("service agentos-ui not found")
+        serde_json::json!("service curie-ui not found")
     );
 }
 
@@ -343,8 +343,8 @@ fn observability_dry_run_json_validates_against_observability_schema() {
     let v = validator(&schema);
     let value = ObservabilityOutput::DryRun(DryRunPlan {
         lines: vec![
-            "kubectl get pods -n agentos".to_string(),
-            "helm get values agentos".to_string(),
+            "kubectl get pods -n curie".to_string(),
+            "helm get values curie".to_string(),
         ],
     })
     .to_json();
@@ -357,7 +357,7 @@ fn observability_dry_run_json_validates_against_observability_schema() {
     assert_eq!(value["dry_run"], serde_json::json!(true));
     assert_eq!(
         value["plan"],
-        serde_json::json!(["kubectl get pods -n agentos", "helm get values agentos"])
+        serde_json::json!(["kubectl get pods -n curie", "helm get values curie"])
     );
 }
 
@@ -366,7 +366,7 @@ fn observability_schema_gate_has_teeth() {
     // negative control: proves the schema gate discriminates
     let schema = load_schema("observability.schema.json");
     let mut value = ObservabilityOutput::Surfaces(vec![Endpoint {
-        name: "AgentOS Console".to_string(),
+        name: "Curie Console".to_string(),
         url: Some("http://localhost:28080/?api=1".to_string()),
         note: None,
         browsable: true,
@@ -415,21 +415,21 @@ fn eval_schema_gate_has_teeth() {
 // (cli/tests/schema_inventory.rs) proves the set below is exhaustive.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use agentos::api::{ApprovalRecord, MemoryEntry, Version};
-use agentos::commands::{
+use curie::api::{ApprovalRecord, MemoryEntry, Version};
+use curie::commands::{
     ApprovalsOutput, BudgetOutput, BumpVersionOutput, CheckMatch, CheckReport, DeclaredServer,
     DeleteOutput, DeployOutput, KillOutput, ListAgentsOutput, LocalAgentSummary, MemoryOutput,
     ResetThreadOutput, ResumeOutput, SkillApprovalsOutput, SkillMessageOutput, SweepRow,
     VersionsOutput,
 };
-use agentos::comms::CommsOutput;
-use agentos::local::{
+use curie::comms::CommsOutput;
+use curie::local::{
     LocalDownOutput, LocalRebuildOutput, LocalStatusOutput, LocalUpOutput, ModelMode,
 };
-use agentos::ops::{
+use curie::ops::{
     ClusterDownOutput, ClusterStatus, ClusterStatusOutput, ClusterUpOutput, PodRow,
 };
-use agentos::secrets::SecretsListOutput;
+use curie::secrets::SecretsListOutput;
 
 fn assert_valid(schema_file: &str, value: &serde_json::Value) {
     let schema = load_schema(schema_file);
@@ -446,7 +446,7 @@ fn assert_valid(schema_file: &str, value: &serde_json::Value) {
 fn dry_run_plan_validates() {
     let plan = DryRunPlan {
         lines: vec![
-            "helm upgrade agentos".to_string(),
+            "helm upgrade curie".to_string(),
             "kubectl get pods".to_string(),
         ],
     };
@@ -456,7 +456,7 @@ fn dry_run_plan_validates() {
 #[test]
 fn init_output_validates() {
     use std::path::PathBuf;
-    let with_spec = agentos::commands::InitOutput {
+    let with_spec = curie::commands::InitOutput {
         name: "deal-desk".to_string(),
         dir: PathBuf::from("deal-desk"),
         from_spec: Some(PathBuf::from("spec.yaml")),
@@ -464,7 +464,7 @@ fn init_output_validates() {
         success_msg: "ok".to_string(),
     };
     assert_valid("init.schema.json", &with_spec.to_json());
-    let plain = agentos::commands::InitOutput {
+    let plain = curie::commands::InitOutput {
         name: "deal-desk".to_string(),
         dir: PathBuf::from("deal-desk"),
         from_spec: None,
@@ -561,7 +561,7 @@ fn check_output_validates() {
 #[test]
 fn guide_output_validates() {
     // GuideOutput::to_json is `serde_json::to_value(primer())`.
-    let value = serde_json::to_value(agentos::guide::primer()).unwrap();
+    let value = serde_json::to_value(curie::guide::primer()).unwrap();
     assert_valid("guide.schema.json", &value);
 }
 
@@ -595,7 +595,7 @@ fn sweep_json_validates() {
             plumbing: 0,
         },
     ];
-    assert_valid("sweep.schema.json", &agentos::commands::sweep_json(&rows));
+    assert_valid("sweep.schema.json", &curie::commands::sweep_json(&rows));
 }
 
 #[test]
@@ -764,8 +764,8 @@ fn skill_approvals_output_validates_both_variants() {
     };
     assert_valid("skill-approvals.schema.json", &gates.to_json());
     let env = SkillApprovalsOutput::Env {
-        env: "AGENTOS_APPROVALS=Bash".to_string(),
-        restart: "agentos skill up --replace".to_string(),
+        env: "CURIE_APPROVALS=Bash".to_string(),
+        restart: "curie skill up --replace".to_string(),
         bundle_note: "declared in .claude-plugin".to_string(),
     };
     assert_valid("skill-approvals.schema.json", &env.to_json());
@@ -785,7 +785,7 @@ fn comms_output_validates_both_variants() {
 fn local_up_output_validates_both_variants() {
     let up = LocalUpOutput::Up {
         endpoints: vec![(
-            "AgentOS API".to_string(),
+            "Curie API".to_string(),
             "http://localhost:8155".to_string(),
         )],
         slack: false,
@@ -842,8 +842,8 @@ fn local_down_output_validates_all_variants() {
 #[test]
 fn cluster_up_output_validates_both_variants() {
     let up = ClusterUpOutput::Up {
-        namespace: "agentos".to_string(),
-        release: "agentos".to_string(),
+        namespace: "curie".to_string(),
+        release: "curie".to_string(),
     };
     assert_valid("cluster-up.schema.json", &up.to_json());
     let dry = ClusterUpOutput::DryRun(DryRunPlan {
@@ -855,13 +855,13 @@ fn cluster_up_output_validates_both_variants() {
 #[test]
 fn cluster_status_output_validates_both_variants() {
     let status = ClusterStatus {
-        namespace: "agentos".to_string(),
+        namespace: "curie".to_string(),
         revision: "3".to_string(),
         release_state: "deployed".to_string(),
         release_found: true,
         release_missing_note: None,
         pods: vec![PodRow {
-            name: "agentos-worker-0".to_string(),
+            name: "curie-worker-0".to_string(),
             ready: "1/1".to_string(),
             status: "Running".to_string(),
         }],

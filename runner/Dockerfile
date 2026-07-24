@@ -1,14 +1,14 @@
-# AgentOS runner image. Productizes prototypes/runner/Dockerfile (PT-E) into the
+# Curie runner image. Productizes prototypes/runner/Dockerfile (PT-E) into the
 # full ACI v0.1 runner.
 #
 # BUILD FROM THE REPO ROOT, not from runner/, because the runner compiles against
 # the frozen workspace packages (packages/aci-protocol, packages/plugin-format):
 #
-#   docker build -f runner/Dockerfile -t agentos-runner .
+#   docker build -f runner/Dockerfile -t curie-runner .
 #
 # The claude-agent-sdk drives the `claude` CLI, so the image carries Node plus the
 # @anthropic-ai/claude-code CLI alongside the Python runner. With
-# AGENTOS_FAKE_MODEL=1 the container answers synthetic events offline (no CLI/model
+# CURIE_FAKE_MODEL=1 the container answers synthetic events offline (no CLI/model
 # call), which is how the container smoke round-trips without a credential.
 # Python 3.13 is required by the frozen workspace packages; Node 22 is required
 # by the Claude Code CLI the SDK spawns. Base on python:3.13 and add Node.
@@ -74,8 +74,8 @@ RUN groupadd --gid 1000 runner \
 ENV HOME=/home/runner
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENV AGENTOS_RUNNER_PORT=8080
+ENV CURIE_RUNNER_PORT=8080
 EXPOSE 8080
 
 USER 1000:1000
-CMD ["python", "-m", "agentos_runner"]
+CMD ["python", "-m", "curie_runner"]

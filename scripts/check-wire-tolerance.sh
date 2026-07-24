@@ -13,4 +13,4 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-uv run python -m agentos_wire_tolerance_gate
+uv run python -m curie_wire_tolerance_gate

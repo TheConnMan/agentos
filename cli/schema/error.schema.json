@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/error/v1.json",
-  "title": "agentos --json error",
+  "$id": "https://schemas.curie.dev/cli/error/v1.json",
+  "title": "curie --json error",
   "description": "The agent-facing error payload emitted to stdout when a command fails under --json: the rendered error message plus an optional actionable fix hint (null when none applies).",
   "type": "object",
   "additionalProperties": false,

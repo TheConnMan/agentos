@@ -10,9 +10,9 @@ order: 5
 
 # INTERFACE: Channel interaction
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 2 renderers (Slack, terminal) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -51,7 +51,7 @@ Until ACI gains a native semantic-message event, a runner carries the message
 inside its final text as a complete fenced block:
 
 ````text
-```agentos-reply
+```curie-reply
 {"version":"1.0","text":"Which view?","interaction":{"kind":"choice","id":"view","options":[{"label":"Open issues","value":"show open issues"}]}}
 ```
 ````
@@ -73,7 +73,7 @@ during migration but is not valid v1 authoring.
 
 ## TUI behavior
 
-The AgentOS TUI advertises `interactive-actions`, `live-steering`, `streaming`,
+The Curie TUI advertises `interactive-actions`, `live-steering`, `streaming`,
 and `threading`. It renders agent-authored actions first and appends `Type a
 message...` as the final selector option when free text is allowed. Selecting
 that option enters an explicit compose mode; it is a terminal affordance and is
@@ -97,23 +97,23 @@ returns a new interaction.
 Two renderers consume the same `OutboundMessage`, and neither leaks its widgets
 back into the contract:
 
-1. **Slack (Block Kit)** — `apps/worker/src/agentos_worker/blocks.py`. The worker
-   parses the `agentos-reply` envelope out of the runner's final text
-   (`apps/worker/src/agentos_worker/blocks.py::parse_reply`), maps it onto the
-   internal `apps/worker/src/agentos_worker/blocks.py::Reply` shape
-   (`apps/worker/src/agentos_worker/blocks.py::_reply_from_message`), and renders
+1. **Slack (Block Kit)** — `apps/worker/src/curie_worker/blocks.py`. The worker
+   parses the `curie-reply` envelope out of the runner's final text
+   (`apps/worker/src/curie_worker/blocks.py::parse_reply`), maps it onto the
+   internal `apps/worker/src/curie_worker/blocks.py::Reply` shape
+   (`apps/worker/src/curie_worker/blocks.py::_reply_from_message`), and renders
    Block Kit sections/buttons via
-   `apps/worker/src/agentos_worker/blocks.py::to_blocks`. `apps/worker/src/agentos_worker/blocks.py::render`
+   `apps/worker/src/curie_worker/blocks.py::to_blocks`. `apps/worker/src/curie_worker/blocks.py::render`
    is the fallback boundary: anything that is not a complete, valid envelope
    degrades to plain text, so a half-streamed block never shows raw JSON. Slack's
    3000-char section cap is absorbed here by
-   `apps/worker/src/agentos_worker/blocks.py::chunk`, not pushed onto the agent.
+   `apps/worker/src/curie_worker/blocks.py::chunk`, not pushed onto the agent.
    The approval card (ADR-0010) travels the same seam: the kernel emits a
    `confirm` intent and the adapter renders it below the line via
-   `apps/worker/src/agentos_worker/blocks.py::approval_card` inside
-   `apps/worker/src/agentos_worker/slack_sink.py::AsyncSlackSink.post` (its
+   `apps/worker/src/curie_worker/blocks.py::approval_card` inside
+   `apps/worker/src/curie_worker/slack_sink.py::AsyncSlackSink.post` (its
    settled/expired form via
-   `apps/worker/src/agentos_worker/blocks.py::expired_approval_card`), so no Block
+   `apps/worker/src/curie_worker/blocks.py::expired_approval_card`), so no Block
    Kit is built above the seam.
 2. **Terminal (TUI selector)** — `cli/src/channel.rs`. It parses the same fence
    (`REPLY_FENCE`) into a `TerminalMessage` of plain lines plus actions, which the

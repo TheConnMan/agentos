@@ -1,0 +1,127 @@
+{{- if .Values.otelCollector.deploy }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "curie.fullname" . }}-otel-collector
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+data:
+  collector-config.yaml: |
+    # Receives OTLP over gRPC (4317) and HTTP (4318) from app services and
+    # forwards to Langfuse over HTTP. Langfuse OTLP ingest is HTTP-only (gRPC is
+    # silently unsupported), so the collector is the adapter. Langfuse appends
+    # /v1/traces to the otlphttp base path itself.
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      otlphttp/langfuse:
+        endpoint: http://{{ include "curie.langfuse.webHost" . }}:{{ .Values.langfuse.web.service.port }}/api/public/otel
+        headers:
+          Authorization: ${env:LANGFUSE_OTLP_AUTH_HEADER}
+      debug:
+        verbosity: normal
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    service:
+      extensions: [health_check]
+      telemetry:
+        metrics:
+          level: none
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp/langfuse, debug]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "curie.fullname" . }}-otel-collector
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "curie.selectorLabels" (dict "root" . "component" "otel-collector") | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.otelCollector.service.grpcPort }}
+      targetPort: 4317
+    - name: otlp-http
+      port: {{ .Values.otelCollector.service.httpPort }}
+      targetPort: 4318
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "curie.fullname" . }}-otel-collector
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "curie.selectorLabels" (dict "root" . "component" "otel-collector") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ printf "%s|%s" (include "curie.langfuse.webHost" .) (include "curie.otlpAuthHeader" .) | sha256sum }}
+      labels:
+        {{- include "curie.labels" . | nindent 8 }}
+        {{- include "curie.selectorLabels" (dict "root" . "component" "otel-collector") | nindent 8 }}
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "curie.fullname" . }}-otel-collector
+      containers:
+        - name: otel-collector
+          image: {{ .Values.otelCollector.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.otelCollector.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args: ["--config=/etc/otel/collector-config.yaml"]
+          env:
+            - name: LANGFUSE_OTLP_AUTH_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "curie.secretName" . }}
+                  key: otlpAuthHeader
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+{{- end }}

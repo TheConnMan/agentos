@@ -13,8 +13,8 @@ import asyncio
 import time
 
 import pytest
-from agentos_worker.config import WorkerConfig
-from agentos_worker.heartbeat import run_heartbeat
+from curie_worker.config import WorkerConfig
+from curie_worker.heartbeat import run_heartbeat
 
 
 def test_run_heartbeat_touches_file_and_exits_promptly_on_stop(tmp_path) -> None:
@@ -89,20 +89,20 @@ def test_run_heartbeat_survives_touch_failure_and_exits_on_stop() -> None:
 
 
 def test_worker_config_heartbeat_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AGENTOS_HEARTBEAT_FILE", raising=False)
-    monkeypatch.delenv("AGENTOS_HEARTBEAT_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("CURIE_HEARTBEAT_FILE", raising=False)
+    monkeypatch.delenv("CURIE_HEARTBEAT_INTERVAL_SECONDS", raising=False)
 
     cfg = WorkerConfig()
 
-    assert cfg.heartbeat_file == "/tmp/agentos-worker.heartbeat"
+    assert cfg.heartbeat_file == "/tmp/curie-worker.heartbeat"
     assert cfg.heartbeat_interval_s == 10.0
 
 
 def test_worker_config_reads_heartbeat_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_HEARTBEAT_FILE", "/var/run/agentos/wk.hb")
-    monkeypatch.setenv("AGENTOS_HEARTBEAT_INTERVAL_SECONDS", "2.5")
+    monkeypatch.setenv("CURIE_HEARTBEAT_FILE", "/var/run/curie/wk.hb")
+    monkeypatch.setenv("CURIE_HEARTBEAT_INTERVAL_SECONDS", "2.5")
 
     cfg = WorkerConfig()
 
-    assert cfg.heartbeat_file == "/var/run/agentos/wk.hb"
+    assert cfg.heartbeat_file == "/var/run/curie/wk.hb"
     assert cfg.heartbeat_interval_s == 2.5

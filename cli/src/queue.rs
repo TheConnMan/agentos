@@ -4,7 +4,7 @@
 //! the real Valkey stream, and (on timeout) print the same stream diagnostics.
 //! The queue seam is the frozen `QueuedTurn` contract promoted into
 //! `packages/aci-protocol` (issue #7): the CLI uses the generated
-//! `agentos_aci_protocol` types directly rather than hand-mirroring them. The
+//! `curie_aci_protocol` types directly rather than hand-mirroring them. The
 //! wire form is one `payload` field holding this model's JSON. The stream,
 //! consumer-group, and payload-field transport literals come from that same
 //! generated crate (issue #492), so a rename cannot drift this lane out of sync
@@ -12,7 +12,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentos_aci_protocol::{
+use curie_aci_protocol::{
     QueuedTurn, ReplyHandle, RUNS_STREAM_DEFAULT, STREAM_PAYLOAD_FIELD, WORKER_GROUP_DEFAULT,
 };
 use anyhow::{Context, Result};
@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 pub const DEFAULT_STREAM: &str = RUNS_STREAM_DEFAULT;
 pub const DEFAULT_VALKEY_URL: &str = "redis://:valkeypass@localhost:26379";
-/// The worker's consumer group (AGENTOS_CONSUMER_GROUP default); used to detect
+/// The worker's consumer group (CURIE_CONSUMER_GROUP default); used to detect
 /// completion (the worker acks an entry only after the turn finalizes).
 pub const WORKER_GROUP: &str = WORKER_GROUP_DEFAULT;
 
@@ -154,16 +154,16 @@ pub struct StreamScan {
 /// This is how the CLI observes an approval's resume turn (#766): when a human
 /// resolves a pending approval, the platform API appends a normal `QueuedTurn`
 /// onto this same runs stream under the DETERMINISTIC event id
-/// `approval-<approval_id>-resolved` (`apps/api/src/agentos_api/resumequeue.py`,
+/// `approval-<approval_id>-resolved` (`apps/api/src/curie_api/resumequeue.py`,
 /// `resume_event_id`), replaying the original turn's placeholder and reply
 /// endpoint. The resume entry is ALWAYS appended after the CLI's own original
 /// turn, so seeding `after` with that original entry id and advancing it each
 /// scan bounds every read to entries enqueued since our turn (typically 0-2)
-/// instead of the whole never-trimmed `agentos:runs` history. Finding the entry
+/// instead of the whole never-trimmed `curie:runs` history. Finding the entry
 /// gives the caller a stream id it can wait on with the ordinary ack-based
 /// [`entry_acked`] completion signal.
 ///
-/// Decoding goes through the generated `agentos_aci_protocol::QueuedTurn` (never
+/// Decoding goes through the generated `curie_aci_protocol::QueuedTurn` (never
 /// a hand-mirror), so a contract rename cannot silently break the match. The
 /// XRANGE read itself needs a live Valkey; it is exercised by the Valkey-backed
 /// integration test `cli/tests/resume_wait.rs`, the same way [`entry_acked`] is
@@ -376,7 +376,7 @@ mod tests {
     fn payload_json_carries_the_exact_seam_field_names() {
         let turn = synthetic_turn(
             "C-SIM-x",
-            "U-agentos-chat",
+            "U-curie-chat",
             "hello",
             "1720000000.000100",
             "1720000000.000200",
@@ -413,7 +413,7 @@ mod tests {
         // posts back to this stub without re-pointing its global setting.
         let turn = synthetic_turn(
             "C-SIM-x",
-            "U-agentos-chat",
+            "U-curie-chat",
             "hi",
             "1.1",
             "1.2",
@@ -448,7 +448,7 @@ mod tests {
         let turn = QueuedTurn {
             event_id: event_id.to_string(),
             conversation_id: "1720000000.000100".into(),
-            author: "U-agentos-message".into(),
+            author: "U-curie-message".into(),
             text: "hi".into(),
             reply_handle: ReplyHandle {
                 channel: "C-SIM-x".into(),

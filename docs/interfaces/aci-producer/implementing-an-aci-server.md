@@ -32,7 +32,7 @@ and `GET /status` (session status + readiness). The chart's readiness probe hits
 are token-gated.
 
 Session setup is **not** on the wire — it comes from the environment. Read it once
-at startup with `SessionConfig.from_env()` (the `AGENTOS_*` mapping: `plugin_dir`,
+at startup with `SessionConfig.from_env()` (the `CURIE_*` mapping: `plugin_dir`,
 `session_id`, `sandbox_id`, `budget`, optional `memory_ref`, `credentials_ref`,
 `otel`).
 
@@ -178,13 +178,13 @@ At process start, build your config from env and honor it:
 ```python
 from aci_protocol import SessionConfig
 
-cfg = SessionConfig.from_env()   # AGENTOS_PLUGIN_DIR, AGENTOS_SESSION_ID, ...
+cfg = SessionConfig.from_env()   # CURIE_PLUGIN_DIR, CURIE_SESSION_ID, ...
 # cfg.plugin_dir: mount point of the Claude Code plugin bundle to load
 # cfg.budget:     Budget{max_output_tokens_per_run, task_budget_hint?, max_usd_per_day}
 # cfg.otel:       optional OTLP endpoint/headers/protocol
 ```
 
-Your server must interpret the plugin bundle mounted at `AGENTOS_PLUGIN_DIR` (the
+Your server must interpret the plugin bundle mounted at `CURIE_PLUGIN_DIR` (the
 Claude Code plugin shape — see the
 [bundle-format seam](../bundle-format/INTERFACE.md)). This is the one documented
 entanglement: a foreign harness still has to load that bundle shape.
@@ -193,7 +193,7 @@ entanglement: a foreign harness still has to load that bundle shape.
 
 Make conformance a permanent gate, exactly as the protocol package and the runner
 do. The runner builds its producer by driving the real session to completion and
-collecting the NDJSON it emits (`runner/src/agentos_runner/conformance.py`); your
+collecting the NDJSON it emits (`runner/src/curie_runner/conformance.py`); your
 producer can do the same over your implementation:
 
 ```python
@@ -218,7 +218,7 @@ You have a conformant ACI server when:
 - [ ] `POST /v1/event` streams `application/x-ndjson`; `/v1/steer` returns 409 with
       no live turn; `/v1/interrupt` reclassifies to idle.
 - [ ] `GET /healthz` and `GET /status` are open and unauthenticated.
-- [ ] `SessionConfig.from_env()` is honored and the `AGENTOS_PLUGIN_DIR` bundle is
+- [ ] `SessionConfig.from_env()` is honored and the `CURIE_PLUGIN_DIR` bundle is
       loaded.
 
 ## Cross-links
@@ -227,4 +227,4 @@ You have a conformant ACI server when:
 - `packages/aci-protocol/README.md` — the full contract surface and decisions.
 - `packages/aci-protocol/src/aci_protocol/conformance.py` — the suite this guide is driven from.
 - `packages/aci-protocol/src/aci_protocol/reference.py` — a minimal conformant `reference_producer` to copy from.
-- `runner/src/agentos_runner/conformance.py` — the reference producer built over a real session (the pattern for Step 5).
+- `runner/src/curie_runner/conformance.py` — the reference producer built over a real session (the pattern for Step 5).

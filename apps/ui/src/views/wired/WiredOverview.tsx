@@ -58,7 +58,7 @@ function Onboarding() {
   const { dispatch } = useStore();
   return (
     <div>
-      <SectionTitle title="Welcome to AgentOS" sub="Get your first agent live in Slack." />
+      <SectionTitle title="Welcome to Curie" sub="Get your first agent live in Slack." />
       <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
         <ConnectSlackPanel />
         <Card>

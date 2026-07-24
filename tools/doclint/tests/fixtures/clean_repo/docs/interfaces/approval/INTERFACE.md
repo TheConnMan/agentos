@@ -12,12 +12,12 @@ order: 2
 
 # Approval
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 1 + fake &nbsp;·&nbsp; **Swap-readiness grade:** B+
 <!-- END GENERATED: header -->
 
-Current contract: the gate is `runner/src/agentos_runner/approval.py::authorize_approval`,
-built on `runner/src/agentos_runner/approval.py::ApprovalGate` and its
-`runner/src/agentos_runner/approval.py::ApprovalGate.consume_grant` method. The
+Current contract: the gate is `runner/src/curie_runner/approval.py::authorize_approval`,
+built on `runner/src/curie_runner/approval.py::ApprovalGate` and its
+`runner/src/curie_runner/approval.py::ApprovalGate.consume_grant` method. The
 option builder is re-exported here as
-`runner/src/agentos_runner/approval.py::build_options`.
+`runner/src/curie_runner/approval.py::build_options`.

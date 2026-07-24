@@ -10,12 +10,12 @@ def test_choice_message_round_trips() -> None:
         interaction=ChoiceIntent(
             kind="choice",
             id="repo",
-            options=[Action(label="AgentOS", value="curie-eng/agentos")],
+            options=[Action(label="Curie", value="curie-eng/curie")],
         ),
     )
     decoded = OutboundMessage.model_validate_json(message.model_dump_json())
     assert isinstance(decoded.interaction, ChoiceIntent)
-    assert decoded.interaction.options[0].value == "curie-eng/agentos"
+    assert decoded.interaction.options[0].value == "curie-eng/curie"
 
 
 def test_confirm_is_semantic_and_free_text_is_off_by_default() -> None:

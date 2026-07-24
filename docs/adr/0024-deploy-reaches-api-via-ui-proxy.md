@@ -12,14 +12,14 @@ only as the explicit-`--api-url` escape hatch, and the discovery this ADR perfor
 for `cluster status` stands.
 
 Supersedes the abandoned self-plumbed port-forward approach for `cluster deploy`
-(#352 / PR #357). Implements [#359](https://github.com/curie-eng/agentos/issues/359).
+(#352 / PR #357). Implements [#359](https://github.com/curie-eng/curie/issues/359).
 
 ## Context
 
-`agentos cluster deploy` ships a bundle to the deployed release's platform API
+`curie cluster deploy` ships a bundle to the deployed release's platform API
 over plain HTTP (find-or-create agent, create version, upload bundle, create
 deployment). Until now it defaulted `--api-url` to `http://localhost:8000` and
-required the operator to first open a `kubectl port-forward svc/agentos-api`
+required the operator to first open a `kubectl port-forward svc/curie-api`
 themselves. That is a manual pre-step the CLI cannot verify, and the failure mode
 (a connection refused against localhost) is opaque.
 
@@ -35,14 +35,14 @@ tunnel: `http://<node-host>:<ui-nodeport>/api`.
 
 ## Decision
 
-When `--api-url` (and `AGENTOS_API_URL`) is omitted, `cluster deploy`
+When `--api-url` (and `CURIE_API_URL`) is omitted, `cluster deploy`
 auto-discovers the UI `/api` proxy URL and dials that. It reads the
 `<release>-ui` service, requires it to be NodePort-exposed, resolves a routable
 node host (kubeconfig `cluster.server` hostname, falling back to the first node's
 InternalIP), and builds `http://<host>:<ui-nodeport>/api`. It **never** self-plumbs
 a port-forward.
 
-An explicit `--api-url` or `AGENTOS_API_URL` is still dialed exactly as given.
+An explicit `--api-url` or `CURIE_API_URL` is still dialed exactly as given.
 Every discovery failure (UI service unreadable, not NodePort-exposed, no assigned
 nodePort, no resolvable host) is a usage error naming `--api-url` as the escape
 hatch; the non-NodePort case also names `--no-expose` as the likely cause.
@@ -64,7 +64,7 @@ needed.
   auto-discovery there yields an unreachable URL; the operator passes `--api-url`
   explicitly (the same escape hatch as `--no-expose`). This mirrors the discovery
   `cluster status` already performs and is a deliberate scope boundary of #359.
-- `cluster deploy` gains `--namespace` / `--release` (default `agentos`) purely to
+- `cluster deploy` gains `--namespace` / `--release` (default `curie`) purely to
   locate the UI service for discovery; they do not change the shipped bytes.
 - Discovery reuses the existing status-path host/service helpers (`resolve_node_host`,
   `parse_service`), so there is one definition of "the node host" and "read the UI

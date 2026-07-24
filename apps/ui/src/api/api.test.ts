@@ -102,7 +102,7 @@ describe("api client", () => {
   });
 
   it("lists runner pods and surfaces a 503 no-cluster as ApiError(status=503)", async () => {
-    const ok = vi.fn().mockResolvedValue(jsonResponse(200, { namespace: "agentos", pods: ["runner-a", "runner-b"] }));
+    const ok = vi.fn().mockResolvedValue(jsonResponse(200, { namespace: "curie", pods: ["runner-a", "runner-b"] }));
     vi.stubGlobal("fetch", ok);
     const pods = await listRunnerPods();
     expect(ok.mock.calls[0][0]).toBe("/api/observability/runners");

@@ -1,10 +1,10 @@
-//! `agentos guide` (#322 / ADR-0021): the self-describing harness primer.
+//! `curie guide` (#322 / ADR-0021): the self-describing harness primer.
 //!
 //! These tests pin the acceptance criteria: the primer prints to stdout, `--json`
 //! emits a structured variant with the data on stdout (human text goes to stderr),
 //! the primer is self-contained and roughly 100 lines, and -- the drift guard --
-//! every `agentos ...` command the primer prints resolves to a real command in
-//! the CLI's own machine-readable manifest (`agentos schema`). The test reads the
+//! every `curie ...` command the primer prints resolves to a real command in
+//! the CLI's own machine-readable manifest (`curie schema`). The test reads the
 //! grammar from that manifest, so it tracks the CLI surface automatically and
 //! fails the build if the primer ever references a command that does not exist.
 
@@ -14,14 +14,14 @@ use std::process::{Command, Output};
 use serde_json::Value;
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn run(args: &[&str]) -> Output {
     Command::new(bin())
         .args(args)
         .output()
-        .expect("run agentos")
+        .expect("run curie")
 }
 
 fn out_str(o: &Output) -> String {
@@ -32,7 +32,7 @@ fn err_str(o: &Output) -> String {
     String::from_utf8(o.stderr.clone()).expect("stderr utf-8")
 }
 
-/// The CLI's real command surface, read from `agentos schema` (the #145/#278
+/// The CLI's real command surface, read from `curie schema` (the #145/#278
 /// manifest): a map from a parent command path ("" == root) to the set of its
 /// direct subcommand names. This is the ground truth the primer is validated
 /// against, so the test tracks the grammar automatically.
@@ -45,7 +45,7 @@ impl Surface {
         let out = run(&["schema"]);
         assert!(
             out.status.success(),
-            "agentos schema failed:\n{}",
+            "curie schema failed:\n{}",
             err_str(&out)
         );
         let root: Value = serde_json::from_str(&out_str(&out)).expect("manifest is json");
@@ -54,16 +54,16 @@ impl Surface {
         Surface { children }
     }
 
-    /// Resolve a printed `agentos ...` invocation to its subcommand path.
+    /// Resolve a printed `curie ...` invocation to its subcommand path.
     /// `Ok(Some(path))` when it resolves, `Ok(None)` when the line carries no
     /// invocation, `Err(reason)` when a bare token that should name a subcommand
     /// does not exist in the grammar (the drift/typo this guard exists to catch).
     fn resolve(&self, line: &str) -> Result<Option<String>, String> {
-        let idx = match line.find("agentos ") {
+        let idx = match line.find("curie ") {
             Some(i) => i,
             None => return Ok(None),
         };
-        let rest = &line[idx + "agentos ".len()..];
+        let rest = &line[idx + "curie ".len()..];
         let empty = BTreeSet::new();
         let mut path = String::new();
         let mut matched = 0usize;
@@ -88,12 +88,12 @@ impl Surface {
                 break; // leaf reached: this token is a positional value
             } else {
                 return Err(format!(
-                    "`agentos {path} {tok}` -- `{tok}` is not a real subcommand"
+                    "`curie {path} {tok}` -- `{tok}` is not a real subcommand"
                 ));
             }
         }
         if matched == 0 {
-            return Err(format!("`agentos {rest}` names no real command"));
+            return Err(format!("`curie {rest}` names no real command"));
         }
         Ok(Some(path))
     }
@@ -125,7 +125,7 @@ fn guide_prints_primer_to_stdout() {
     let out = run(&["guide"]);
     assert!(
         out.status.success(),
-        "agentos guide failed:\n{}",
+        "curie guide failed:\n{}",
         err_str(&out)
     );
     let text = out_str(&out);
@@ -155,7 +155,7 @@ fn guide_json_emits_pure_structured_data_on_stdout() {
     let out = run(&["guide", "--json"]);
     assert!(
         out.status.success(),
-        "agentos guide --json failed:\n{}",
+        "curie guide --json failed:\n{}",
         err_str(&out)
     );
     // stdout is exclusively the data payload: it parses as one JSON value with no
@@ -195,8 +195,8 @@ fn guide_documents_gvisor_fail_closed_opt_out() {
             "{label} primer missing the gVisor opt-out `security.gvisor.mode=off`\n{text}"
         );
         assert!(
-            text.contains("agentos-preflight-gvisor"),
-            "{label} primer missing the preflight symptom `agentos-preflight-gvisor`\n{text}"
+            text.contains("curie-preflight-gvisor"),
+            "{label} primer missing the preflight symptom `curie-preflight-gvisor`\n{text}"
         );
         assert!(
             text.contains("running runner pods on the host kernel"),
@@ -237,7 +237,7 @@ fn every_command_the_primer_prints_exists_in_the_cli_surface() {
     for expected in ["init", "skill up", "skill eval", "local up", "cluster up"] {
         assert!(
             resolved.iter().any(|p| p == expected),
-            "primer never prints `agentos {expected}`; resolved={resolved:?}"
+            "primer never prints `curie {expected}`; resolved={resolved:?}"
         );
     }
 
@@ -251,8 +251,8 @@ fn every_command_the_primer_prints_exists_in_the_cli_surface() {
     for rung in ladder {
         let cmd = rung["command"].as_str().expect("rung command is a string");
         assert!(
-            cmd.starts_with("agentos "),
-            "rung command `{cmd}` is not an agentos invocation"
+            cmd.starts_with("curie "),
+            "rung command `{cmd}` is not an curie invocation"
         );
         match surface.resolve(cmd) {
             Ok(Some(_)) => {}

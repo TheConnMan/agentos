@@ -20,7 +20,7 @@ lanes proceed.
 
 1. Bump `aci_protocol.version.PROTOCOL_VERSION` to the class the change earns
    (the plugin-format schema has no separate version today). The ACI is
-   versioned as **semver, independent of the AgentOS release**: the number
+   versioned as **semver, independent of the Curie release**: the number
    tracks the wire contract's compatibility, not the product's cadence.
    **Backward compatibility is the default expectation.** A consumer accepts a
    wire version with the same `major.minor` under 0.x (the same `major` after

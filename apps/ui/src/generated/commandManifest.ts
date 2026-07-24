@@ -2,7 +2,7 @@
 // Do not edit by hand. Run `pnpm gen:manifest` (or any pre* script) to refresh.
 /* eslint-disable */
 export const commandManifest = {
-  "about": "AgentOS CLI: run `agentos` for the interactive terminal, or pass a subcommand for scripts",
+  "about": "Curie CLI: run `curie` for the interactive terminal, or pass a subcommand for scripts",
   "args": [
     {
       "global": true,
@@ -59,7 +59,7 @@ export const commandManifest = {
     }
   ],
   "hidden": false,
-  "name": "agentos",
+  "name": "curie",
   "subcommands": [
     {
       "about": "Scaffold a new plugin bundle (Claude Code plugin shape)",
@@ -120,7 +120,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Runner image. Default: version-pinned `ghcr.io/curie-eng/agentos-runner:<version>` on release builds; local `agentos-runner` on dev builds. Pass to override",
+              "help": "Runner image. Default: version-pinned `ghcr.io/curie-eng/curie-runner:<version>` on release builds; local `curie-runner` on dev builds. Pass to override",
               "id": "image",
               "long": "image",
               "positional": false,
@@ -139,7 +139,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-runner-local"
+                "curie-runner-local"
               ],
               "global": false,
               "help": "Container name",
@@ -162,7 +162,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Docker network to join (e.g. agentos_default for the dev stack)",
+              "help": "Docker network to join (e.g. curie_default for the dev stack)",
               "id": "network",
               "long": "network",
               "positional": false,
@@ -189,7 +189,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Model id, forwarded as AGENTOS_MODEL. Omit for the SDK default. Setting it makes token usage attributable in Langfuse traces",
+              "help": "Model id, forwarded as CURIE_MODEL. Omit for the SDK default. Setting it makes token usage attributable in Langfuse traces",
               "id": "model",
               "long": "model",
               "positional": false,
@@ -217,7 +217,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST- priority model-credential source, so the bundle boots live with no `set -a; source .env` step. Precedence: shell env > stored secret (`agentos secrets set`) > this file. Only AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other key in the file is ignored (#749)",
+              "help": "Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST- priority model-credential source, so the bundle boots live with no `set -a; source .env` step. Precedence: shell env > stored secret (`curie secrets set`) > this file. Only CURIE_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other key in the file is ignored (#749)",
               "id": "env_file",
               "long": "env-file",
               "positional": false,
@@ -312,7 +312,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "List pending approval RECORDS (not gate config). Accepted so it can be DECLINED with a reason at this tier rather than error like a typo: the skill tier's local runner keeps no durable approval store (ADR-0063, ADR-0077). Use `agentos local/cluster approvals --list`",
+              "help": "List pending approval RECORDS (not gate config). Accepted so it can be DECLINED with a reason at this tier rather than error like a typo: the skill tier's local runner keeps no durable approval store (ADR-0063, ADR-0077). Use `curie local/cluster approvals --list`",
               "id": "list",
               "long": "list",
               "positional": false,
@@ -355,12 +355,12 @@ export const commandManifest = {
           "name": "approvals"
         },
         {
-          "about": "Not available at this tier: `skill up` runs the bundle bytes on disk, so no deployed version is assigned; use `agentos local versions <agent>` or `agentos cluster versions <agent>` for a deployed agent",
+          "about": "Not available at this tier: `skill up` runs the bundle bytes on disk, so no deployed version is assigned; use `curie local versions <agent>` or `curie cluster versions <agent>` for a deployed agent",
           "hidden": false,
           "name": "versions"
         },
         {
-          "about": "Not available at this tier: this tier configures no memory namespace: `skill up` never sets a memory ref, and there is no platform here to own or address one; use `agentos local memory <agent>` or `agentos cluster memory <agent>` for a deployed agent",
+          "about": "Not available at this tier: this tier configures no memory namespace: `skill up` never sets a memory ref, and there is no platform here to own or address one; use `curie local memory <agent>` or `curie cluster memory <agent>` for a deployed agent",
           "hidden": false,
           "name": "memory"
         },
@@ -369,7 +369,7 @@ export const commandManifest = {
           "args": [
             {
               "global": false,
-              "help": "Container name to remove. Defaults to the recorded runner, then to `agentos-runner-local`. Pass it to clear a leftover container from a directory with no `.agentos/runner.json`",
+              "help": "Container name to remove. Defaults to the recorded runner, then to `curie-runner-local`. Pass it to clear a leftover container from a directory with no `.curie/runner.json`",
               "id": "name",
               "long": "name",
               "positional": false,
@@ -589,7 +589,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST- priority model-credential source, so the compose stack boots live with no `set -a; source .env` step. Precedence: shell env > this file. Only AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other key in the file is ignored, and the value never reaches argv or logs (#749)",
+              "help": "Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST- priority model-credential source, so the compose stack boots live with no `set -a; source .env` step. Precedence: shell env > this file. Only CURIE_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other key in the file is ignored, and the value never reaches argv or logs (#749)",
               "id": "env_file",
               "long": "env-file",
               "positional": false,
@@ -597,7 +597,7 @@ export const commandManifest = {
             }
           ],
           "hidden": false,
-          "long_about": "Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.\n\nModel parity with `agentos skill up`: `local up` runs the real model when a model credential is present in the shell, and the offline fake model otherwise. Providers are first-class beyond Anthropic: an Anthropic key (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`) OR the provider-agnostic `AGENTOS_CREDENTIALS` (with `ANTHROPIC_BASE_URL` for an OpenAI-compatible endpoint such as OpenRouter). Set `AGENTOS_FAKE_MODEL=1` to force the fake even with a credential; set `AGENTOS_FAKE_MODEL=0` (or provide a credential) to go live.",
+          "long_about": "Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.\n\nModel parity with `curie skill up`: `local up` runs the real model when a model credential is present in the shell, and the offline fake model otherwise. Providers are first-class beyond Anthropic: an Anthropic key (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`) OR the provider-agnostic `CURIE_CREDENTIALS` (with `ANTHROPIC_BASE_URL` for an OpenAI-compatible endpoint such as OpenRouter). Set `CURIE_FAKE_MODEL=1` to force the fake even with a credential; set `CURIE_FAKE_MODEL=0` (or provide a credential) to go live.",
           "name": "up"
         },
         {
@@ -605,7 +605,7 @@ export const commandManifest = {
           "args": [
             {
               "global": false,
-              "help": "The compose service to rebuild, e.g. `agentos-worker`",
+              "help": "The compose service to rebuild, e.g. `curie-worker`",
               "id": "service",
               "positional": true,
               "required": true
@@ -677,7 +677,7 @@ export const commandManifest = {
             }
           ],
           "hidden": false,
-          "long_about": "Rebuild + recreate ONE compose service (e.g. after a code change) without losing the stack's already-resolved credential/model-mode wiring.\n\nA raw `docker compose up --no-deps <service>` silently reverts that one service to compose's fake-model/dev-stub defaults, because compose's `${VAR-default}` substitution reads THIS invocation's shell, not what the rest of the stack is running with -- export the same credential / AGENTOS_FAKE_MODEL you want, same as `local up`.",
+          "long_about": "Rebuild + recreate ONE compose service (e.g. after a code change) without losing the stack's already-resolved credential/model-mode wiring.\n\nA raw `docker compose up --no-deps <service>` silently reverts that one service to compose's fake-model/dev-stub defaults, because compose's `${VAR-default}` substitution reads THIS invocation's shell, not what the rest of the stack is running with -- export the same credential / CURIE_FAKE_MODEL you want, same as `local up`.",
           "name": "rebuild"
         },
         {
@@ -876,7 +876,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Reuse the last turn's context (channel, thread, transport) recorded in .agentos/last-turn.json in the working directory; type only the new message text",
+              "help": "Reuse the last turn's context (channel, thread, transport) recorded in .curie/last-turn.json in the working directory; type only the new message text",
               "id": "continue",
               "long": "continue",
               "positional": false,
@@ -890,9 +890,9 @@ export const commandManifest = {
               "default_values": [
                 "valkeypass"
               ],
-              "env": "AGENTOS_VALKEY_PASSWORD",
+              "env": "CURIE_VALKEY_PASSWORD",
               "global": false,
-              "help": "Valkey password (compose default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "help": "Valkey password (compose default `valkeypass`). Prefer the CURIE_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
               "id": "valkey_password",
               "long": "valkey-password",
               "positional": false,
@@ -908,9 +908,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup",
               "id": "api_key",
@@ -920,7 +920,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "U-agentos-message"
+                "U-curie-message"
               ],
               "global": false,
               "help": "Synthetic Slack user id for the enqueued event",
@@ -931,9 +931,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos:runs"
+                "curie:runs"
               ],
-              "env": "AGENTOS_STREAM",
+              "env": "CURIE_STREAM",
               "global": false,
               "help": "Stream the dispatcher enqueues onto",
               "id": "stream",
@@ -988,9 +988,9 @@ export const commandManifest = {
               "default_values": [
                 "valkeypass"
               ],
-              "env": "AGENTOS_VALKEY_PASSWORD",
+              "env": "CURIE_VALKEY_PASSWORD",
               "global": false,
-              "help": "Valkey password (compose default `valkeypass`). Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "help": "Valkey password (compose default `valkeypass`). Prefer the CURIE_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
               "id": "valkey_password",
               "long": "valkey-password",
               "positional": false,
@@ -1006,9 +1006,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup",
               "id": "api_key",
@@ -1018,7 +1018,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "U-agentos-message"
+                "U-curie-message"
               ],
               "global": false,
               "help": "Synthetic Slack user id for the enqueued events",
@@ -1029,9 +1029,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos:runs"
+                "curie:runs"
               ],
-              "env": "AGENTOS_STREAM",
+              "env": "CURIE_STREAM",
               "global": false,
               "help": "Stream the dispatcher enqueues onto",
               "id": "stream",
@@ -1103,7 +1103,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL",
               "id": "api_url",
@@ -1113,9 +1113,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key",
               "id": "api_key",
@@ -1156,7 +1156,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault (`agentos secrets set <NAME>`) and sent to the platform, which stores it on the agent so the worker forwards it into the sandbox for a bundle's authed MCP server. The value never appears in argv. Repeatable",
+              "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault (`curie secrets set <NAME>`) and sent to the platform, which stores it on the agent so the worker forwards it into the sandbox for a bundle's authed MCP server. The value never appears in argv. Repeatable",
               "id": "secret",
               "long": "secret",
               "positional": false,
@@ -1180,7 +1180,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1189,9 +1189,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1227,7 +1227,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1236,9 +1236,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1274,7 +1274,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1283,9 +1283,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1384,7 +1384,7 @@ export const commandManifest = {
           "name": "approvals"
         },
         {
-          "about": "Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base)",
+          "about": "Show the local observability surfaces (Curie Console + Langfuse traces/cost + API base)",
           "args": [
             {
               "global": false,
@@ -1424,7 +1424,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1433,9 +1433,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1471,7 +1471,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1480,9 +1480,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1530,7 +1530,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1539,9 +1539,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1585,7 +1585,7 @@ export const commandManifest = {
               "default_values": [
                 "http://localhost:28000"
               ],
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "id": "api_url",
               "long": "api-url",
@@ -1594,9 +1594,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos-dev-key"
+                "curie-dev-key"
               ],
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "id": "api_key",
               "long": "api-key",
@@ -1638,11 +1638,11 @@ export const commandManifest = {
       "name": "cluster",
       "subcommands": [
         {
-          "about": "Install or upgrade the AgentOS release via Helm (helm upgrade --install). By default it puts the UI and Langfuse on node ports for tailnet/LAN access; pass --no-expose to keep them ClusterIP-only. Set AGENTOS_CREDENTIALS (an Anthropic API key; AGENTOS_MODEL_CREDENTIALS is a deprecated alias) to install with the real model; without it the install is sealed (fake model, canned replies). A real model is still unreachable behind the fail-closed sandbox until you open its egress with --allow-egress-host <provider> (or --allow-web-egress <CIDR> for a raw range)",
+          "about": "Install or upgrade the Curie release via Helm (helm upgrade --install). By default it puts the UI and Langfuse on node ports for tailnet/LAN access; pass --no-expose to keep them ClusterIP-only. Set CURIE_CREDENTIALS (an Anthropic API key; CURIE_MODEL_CREDENTIALS is a deprecated alias) to install with the real model; without it the install is sealed (fake model, canned replies). A real model is still unreachable behind the fail-closed sandbox until you open its egress with --allow-egress-host <provider> (or --allow-web-egress <CIDR> for a raw range)",
           "args": [
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Kubernetes namespace",
@@ -1653,7 +1653,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Helm release name",
@@ -1664,7 +1664,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override",
+              "help": "Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/curie` on dev builds. Pass a path or ref to override",
               "id": "chart",
               "long": "chart",
               "positional": false,
@@ -1684,7 +1684,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Force the sealed fake-model install even when AGENTOS_CREDENTIALS is set (dev/CI escape hatch); suppresses the fake-model warning",
+              "help": "Force the sealed fake-model install even when CURIE_CREDENTIALS is set (dev/CI escape hatch); suppresses the fake-model warning",
               "id": "fake_model",
               "long": "fake-model",
               "positional": false,
@@ -1763,7 +1763,7 @@ export const commandManifest = {
           "args": [
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Kubernetes namespace",
@@ -1774,7 +1774,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Helm release name",
@@ -1816,7 +1816,7 @@ export const commandManifest = {
           "args": [
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Kubernetes namespace",
@@ -1827,7 +1827,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Helm release name",
@@ -1853,11 +1853,11 @@ export const commandManifest = {
           "name": "status"
         },
         {
-          "about": "Show the release's observability surfaces (AgentOS Console + Langfuse traces/cost + API base)",
+          "about": "Show the release's observability surfaces (Curie Console + Langfuse traces/cost + API base)",
           "args": [
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Kubernetes namespace",
@@ -1868,7 +1868,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Helm release name",
@@ -1958,7 +1958,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Kubernetes namespace",
@@ -1969,7 +1969,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
               "help": "Helm release name",
@@ -1980,7 +1980,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override",
+              "help": "Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/curie` on dev builds. Pass a path or ref to override",
               "id": "chart",
               "long": "chart",
               "positional": false,
@@ -2030,7 +2030,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Reuse the last turn's context (channel, thread, transport) recorded in .agentos/last-turn.json in the working directory; type only the new message text",
+              "help": "Reuse the last turn's context (channel, thread, transport) recorded in .curie/last-turn.json in the working directory; type only the new message text",
               "id": "continue",
               "long": "continue",
               "positional": false,
@@ -2042,7 +2042,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2050,7 +2050,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2058,7 +2058,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override",
+              "help": "Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/curie` on dev builds. Pass a path or ref to override",
               "id": "chart",
               "long": "chart",
               "positional": false,
@@ -2095,9 +2095,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_VALKEY_PASSWORD",
+              "env": "CURIE_VALKEY_PASSWORD",
               "global": false,
-              "help": "Valkey password. Omit to read the release's own password from its chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "help": "Valkey password. Omit to read the release's own password from its chart Secret. Prefer the CURIE_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
               "id": "valkey_password",
               "long": "valkey-password",
               "positional": false,
@@ -2115,7 +2115,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup. Omit to read the release's own key from its chart Secret",
               "id": "api_key",
@@ -2125,7 +2125,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "U-agentos-message"
+                "U-curie-message"
               ],
               "global": false,
               "help": "Synthetic Slack user id for the enqueued event",
@@ -2136,9 +2136,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos:runs"
+                "curie:runs"
               ],
-              "env": "AGENTOS_STREAM",
+              "env": "CURIE_STREAM",
               "global": false,
               "help": "Stream the dispatcher enqueues onto",
               "id": "stream",
@@ -2191,10 +2191,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2202,10 +2202,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2242,9 +2242,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_VALKEY_PASSWORD",
+              "env": "CURIE_VALKEY_PASSWORD",
               "global": false,
-              "help": "Valkey password. Omit to read the release's own password from its chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
+              "help": "Valkey password. Omit to read the release's own password from its chart Secret. Prefer the CURIE_VALKEY_PASSWORD env var over passing a real secret on the command line, where it leaks via `ps` and shell history",
               "id": "valkey_password",
               "long": "valkey-password",
               "positional": false,
@@ -2262,7 +2262,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key for the default-channel lookup. Omit to read the release's own key from its chart Secret",
               "id": "api_key",
@@ -2272,7 +2272,7 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "U-agentos-message"
+                "U-curie-message"
               ],
               "global": false,
               "help": "Synthetic Slack user id for the enqueued events",
@@ -2283,9 +2283,9 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos:runs"
+                "curie:runs"
               ],
-              "env": "AGENTOS_STREAM",
+              "env": "CURIE_STREAM",
               "global": false,
               "help": "Stream the dispatcher enqueues onto",
               "id": "stream",
@@ -2354,9 +2354,9 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
-              "help": "Platform API base URL. Omit to self-plumb a kubectl port-forward to the release's api service (a loopback tunnel); AGENTOS_API_URL or an explicit value direct-dials the given URL with no tunnel",
+              "help": "Platform API base URL. Omit to self-plumb a kubectl port-forward to the release's api service (a loopback tunnel); CURIE_API_URL or an explicit value direct-dials the given URL with no tunnel",
               "id": "api_url",
               "long": "api-url",
               "positional": false,
@@ -2364,10 +2364,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release (for the port-forward + key discovery). Default: agentos",
+              "help": "Kubernetes namespace of the release (for the port-forward + key discovery). Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2375,17 +2375,17 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name (for the port-forward + key discovery). Default: agentos",
+              "help": "Helm release name (for the port-forward + key discovery). Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to auto-discover the release Secret key (`<release>-secrets`); the discovered key travels only in the X-API-Key header over the loopback tunnel, never over the cleartext NodePort proxy (ADR-0057). An explicit value wins",
               "id": "api_key",
@@ -2426,7 +2426,7 @@ export const commandManifest = {
             },
             {
               "global": false,
-              "help": "Per-agent connector secrets are NOT yet delivered at the cluster tier (#440): this flag is accepted only so it can be DECLINED with a reason instead of erroring like a typo. Until per-agent K8s Secret + secretKeyRef delivery lands, a value-only SandboxClaim CR would persist the token in plaintext in etcd. Use `agentos local deploy --secret` today. See ADR-0009",
+              "help": "Per-agent connector secrets are NOT yet delivered at the cluster tier (#440): this flag is accepted only so it can be DECLINED with a reason instead of erroring like a typo. Until per-agent K8s Secret + secretKeyRef delivery lands, a value-only SandboxClaim CR would persist the token in plaintext in etcd. Use `curie local deploy --secret` today. See ADR-0009",
               "id": "secret",
               "long": "secret",
               "positional": false,
@@ -2447,7 +2447,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2456,7 +2456,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2466,10 +2466,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2477,10 +2477,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2525,7 +2525,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2534,7 +2534,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2544,10 +2544,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2555,10 +2555,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2599,7 +2599,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2608,7 +2608,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2618,10 +2618,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2629,10 +2629,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2673,7 +2673,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2682,7 +2682,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2692,10 +2692,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2703,10 +2703,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2751,7 +2751,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2760,7 +2760,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2770,10 +2770,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2781,10 +2781,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2829,7 +2829,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2838,7 +2838,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2848,10 +2848,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2859,10 +2859,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2894,7 +2894,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2903,7 +2903,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2913,10 +2913,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2924,10 +2924,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -2959,7 +2959,7 @@ export const commandManifest = {
               "required": true
             },
             {
-              "env": "AGENTOS_API_URL",
+              "env": "CURIE_API_URL",
               "global": false,
               "help": "Platform API base URL. Omit to discover the release's UI `/api` proxy",
               "id": "api_url",
@@ -2968,7 +2968,7 @@ export const commandManifest = {
               "required": false
             },
             {
-              "env": "AGENTOS_API_KEY",
+              "env": "CURIE_API_KEY",
               "global": false,
               "help": "Platform API key. Omit to read the release's `api.apiKey` from its Secret",
               "id": "api_key",
@@ -2978,10 +2978,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Kubernetes namespace of the release. Default: agentos",
+              "help": "Kubernetes namespace of the release. Default: curie",
               "id": "namespace",
               "long": "namespace",
               "positional": false,
@@ -2989,10 +2989,10 @@ export const commandManifest = {
             },
             {
               "default_values": [
-                "agentos"
+                "curie"
               ],
               "global": false,
-              "help": "Helm release name. Default: agentos",
+              "help": "Helm release name. Default: curie",
               "id": "release",
               "long": "release",
               "positional": false,
@@ -3110,7 +3110,7 @@ export const commandManifest = {
           "default_values": [
             "http://localhost:28000"
           ],
-          "env": "AGENTOS_API_URL",
+          "env": "CURIE_API_URL",
           "global": false,
           "help": "Platform API base URL",
           "id": "api_url",
@@ -3120,9 +3120,9 @@ export const commandManifest = {
         },
         {
           "default_values": [
-            "agentos-dev-key"
+            "curie-dev-key"
           ],
-          "env": "AGENTOS_API_KEY",
+          "env": "CURIE_API_KEY",
           "global": false,
           "help": "Platform API key",
           "id": "api_key",
@@ -3163,7 +3163,7 @@ export const commandManifest = {
         },
         {
           "global": false,
-          "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault (`agentos secrets set <NAME>`) and sent to the platform. Repeatable",
+          "help": "Bind a per-agent connector secret by NAME (ADR-0009, #429). The value is resolved from your environment or the host secret vault (`curie secrets set <NAME>`) and sent to the platform. Repeatable",
           "id": "secret",
           "long": "secret",
           "positional": false,
@@ -3178,7 +3178,7 @@ export const commandManifest = {
       "args": [
         {
           "default_values": [
-            "agentos-runner"
+            "curie-runner"
           ],
           "global": false,
           "help": "Image tag to build",
@@ -3209,7 +3209,7 @@ export const commandManifest = {
         }
       ],
       "hidden": false,
-      "long_about": "Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).\n\nFrom the repo root, runs (each idempotent, streaming output): copy `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in `apps/ui`, `cargo install --path cli` (builds AND puts `agentos` on PATH, so re-running install refreshes the live CLI), then builds the runner image. With `--update`, already-present heavyweight artifacts like the runner image are reused. `agentos update` is the fast CLI-only subset. A release binary has no source tree to install and errors clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.",
+      "long_about": "Bootstrap or update a dev checkout: install deps and build, start nothing (source checkout only).\n\nFrom the repo root, runs (each idempotent, streaming output): copy `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in `apps/ui`, `cargo install --path cli` (builds AND puts `curie` on PATH, so re-running install refreshes the live CLI), then builds the runner image. With `--update`, already-present heavyweight artifacts like the runner image are reused. `curie update` is the fast CLI-only subset. A release binary has no source tree to install and errors clearly; a missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.",
       "name": "install"
     },
     {
@@ -3229,7 +3229,7 @@ export const commandManifest = {
         }
       ],
       "hidden": false,
-      "long_about": "Rebuild this CLI from the source checkout and reinstall it on PATH (source checkout only).\n\nThe fast per-change refresh: runs `cargo install --path cli --force` from the repo root so a code change to the CLI is live on the next `agentos` invocation, without re-running the bootstrap script. Pass `--image` to also rebuild the local runner image (for `runner/` changes). A release binary cannot rebuild itself and errors clearly.",
+      "long_about": "Rebuild this CLI from the source checkout and reinstall it on PATH (source checkout only).\n\nThe fast per-change refresh: runs `cargo install --path cli --force` from the repo root so a code change to the CLI is live on the next `curie` invocation, without re-running the bootstrap script. Pass `--image` to also rebuild the local runner image (for `runner/` changes). A release binary cannot rebuild itself and errors clearly.",
       "name": "update"
     },
     {
@@ -3239,12 +3239,12 @@ export const commandManifest = {
       "name": "interactive"
     },
     {
-      "about": "Store and manage local secrets in AgentOS private storage",
+      "about": "Store and manage local secrets in Curie private storage",
       "hidden": false,
       "name": "secrets",
       "subcommands": [
         {
-          "about": "Save a secret in AgentOS private storage. Prompts with hidden input by default",
+          "about": "Save a secret in Curie private storage. Prompts with hidden input by default",
           "args": [
             {
               "global": false,
@@ -3266,7 +3266,7 @@ export const commandManifest = {
           "name": "set"
         },
         {
-          "about": "List saved AgentOS secret names. Values are never printed",
+          "about": "List saved Curie secret names. Values are never printed",
           "hidden": false,
           "name": "list"
         },
@@ -3289,7 +3289,7 @@ export const commandManifest = {
     {
       "about": "Run a repo dev script (contracts, chart-check, e2e) -- source checkout only",
       "hidden": false,
-      "long_about": "Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.\n\nThin wrappers over the repo's dev scripts so contributors get a unified `agentos <command>` surface; the scripts stay the implementation. A release binary has no scripts and errors clearly.",
+      "long_about": "Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.\n\nThin wrappers over the repo's dev scripts so contributors get a unified `curie <command>` surface; the scripts stay the implementation. A release binary has no scripts and errors clearly.",
       "name": "dev",
       "subcommands": [
         {
@@ -3298,7 +3298,7 @@ export const commandManifest = {
           "name": "contracts"
         },
         {
-          "about": "Render-assert the Helm chart (`bash charts/agentos/ci/render-assertions.sh`)",
+          "about": "Render-assert the Helm chart (`bash charts/curie/ci/render-assertions.sh`)",
           "hidden": false,
           "name": "chart-check"
         },
@@ -3398,7 +3398,7 @@ export const commandManifest = {
         }
       ],
       "hidden": false,
-      "long_about": "Print the committed, versioned JSON Schemas for the `--json` result outputs.\n\nWith no NAME, emits the schema inventory index (`cli/schema/index.json`): every agent-facing result family, the schema file it maps to, and its version. With a NAME (e.g. `kill`, or `kill.schema.json`), emits that schema. The schemas are embedded in the binary, so this works from a released `agentos` with no source checkout (issue #634).",
+      "long_about": "Print the committed, versioned JSON Schemas for the `--json` result outputs.\n\nWith no NAME, emits the schema inventory index (`cli/schema/index.json`): every agent-facing result family, the schema file it maps to, and its version. With a NAME (e.g. `kill`, or `kill.schema.json`), emits that schema. The schemas are embedded in the binary, so this works from a released `curie` with no source checkout (issue #634).",
       "name": "schema-index"
     },
     {

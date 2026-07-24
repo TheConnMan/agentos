@@ -30,23 +30,23 @@ chasing exactly-once in the broker. Concretely:
 
 - **Transport: raw Valkey Streams with consumer groups** (`redis-py`,
   `XADD` / `XREADGROUP` / `XAUTOCLAIM`), one group for interactive runs
-  (`agentos:runs`) and a **separate** group for evals (`agentos:evals`) so eval
+  (`curie:runs`) and a **separate** group for evals (`curie:evals`) so eval
   load never starves interactive turns
-  ([`consumer.py:83`](../../apps/worker/src/agentos_worker/consumer.py),
-  [`eval/stream.py:216`](../../apps/worker/src/agentos_worker/eval/stream.py)).
+  ([`consumer.py:83`](../../apps/worker/src/curie_worker/consumer.py),
+  [`eval/stream.py:216`](../../apps/worker/src/curie_worker/eval/stream.py)).
 - **Dispatcher-side idempotency**: a `SET NX` on `dedupe:<event_id>` drops
   redelivered Slack events before they enqueue
-  ([`apps/dispatcher/.../queue.py:73`](../../apps/dispatcher/src/agentos_dispatcher/queue.py)).
+  ([`apps/dispatcher/.../queue.py:73`](../../apps/dispatcher/src/curie_dispatcher/queue.py)).
 - **One live session per thread**: a Valkey `SET NX PX` thread lock is the
-  routing CAS ([`threadlock.py:60`](../../apps/worker/src/agentos_worker/threadlock.py)).
+  routing CAS ([`threadlock.py:60`](../../apps/worker/src/curie_worker/threadlock.py)).
 - **The finish race**: a follow-up during a live turn is a steer; if the turn
   finished first the runner returns 409 and the kernel opens a fresh turn on the
-  same idle sandbox ([`kernel.py:402`](../../apps/worker/src/agentos_worker/kernel.py)).
+  same idle sandbox ([`kernel.py:402`](../../apps/worker/src/curie_worker/kernel.py)).
 - **No auto-retry after a side effect**: if a prior attempt flagged a side
   effect the kernel escalates to a human instead of retrying
-  ([`kernel.py:201`](../../apps/worker/src/agentos_worker/kernel.py)).
+  ([`kernel.py:201`](../../apps/worker/src/curie_worker/kernel.py)).
 - **Crash recovery without backlog replay**: pending entries are reclaimed with
-  `XAUTOCLAIM` ([`consumer.py:178`](../../apps/worker/src/agentos_worker/consumer.py))
+  `XAUTOCLAIM` ([`consumer.py:178`](../../apps/worker/src/curie_worker/consumer.py))
   and the runs group is created at `$` so a cold worker never replays old events.
 - **`kernel.py` is sacred**: changes require escalated adversarial review, and
   the kernel never keyword-guesses intent.
@@ -79,6 +79,6 @@ chasing exactly-once in the broker. Concretely:
   the resume path is where duplicate side effects are most likely to hide.
 - Shared stream-consumer helper extraction and promoting the turn payload into
   `aci-protocol` are follow-ups
-  ([#9](https://github.com/curie-eng/agentos/issues/9),
-  [#7](https://github.com/curie-eng/agentos/issues/7)); they must preserve these
+  ([#9](https://github.com/curie-eng/curie/issues/9),
+  [#7](https://github.com/curie-eng/curie/issues/7)); they must preserve these
   semantics, not just the surface API.

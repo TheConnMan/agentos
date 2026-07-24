@@ -3,7 +3,7 @@
 ``populate_by_name=True`` lets tests construct the config with field-name
 kwargs, but it must NOT make the env source read the bare uppercased field name
 as a fallback for a field that carries a ``validation_alias``. An aliased field
-must read only its ``AGENTOS_*`` alias; a stray generic env var (``API_KEY``,
+must read only its ``CURIE_*`` alias; a stray generic env var (``API_KEY``,
 ``CREDENTIALS``, ...) in the pod env must be ignored, as it was before the
 BaseSettings refactor.
 """
@@ -14,7 +14,7 @@ import os
 import socket
 
 import pytest
-from agentos_worker.config import WorkerConfig
+from curie_worker.config import WorkerConfig
 
 
 def _clear_all_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,18 +54,18 @@ _WORKER_OVERRIDES: dict[str, tuple[str, str, object]] = {
         "postgresql+asyncpg://u:p@db:5432/x",
     ),
     "DB_SCHEMA": ("db_schema", "myschema", "myschema"),
-    "AGENTOS_PLUGIN_DIR": ("bundle_plugin_dir", "/custom/bundles", "/custom/bundles"),
-    "AGENTOS_FAKE_MODEL": ("fake_model", "true", True),
-    "AGENTOS_SHIMMER": ("shimmer", "yes", True),
-    "AGENTOS_CREDENTIALS": ("credentials", "cred-sentinel", "cred-sentinel"),
-    "AGENTOS_MODEL_BASE_URL": (
+    "CURIE_PLUGIN_DIR": ("bundle_plugin_dir", "/custom/bundles", "/custom/bundles"),
+    "CURIE_FAKE_MODEL": ("fake_model", "true", True),
+    "CURIE_SHIMMER": ("shimmer", "yes", True),
+    "CURIE_CREDENTIALS": ("credentials", "cred-sentinel", "cred-sentinel"),
+    "CURIE_MODEL_BASE_URL": (
         "model_base_url",
         "http://model.local:1",
         "http://model.local:1",
     ),
-    "AGENTOS_MODEL": ("model", "claude-sentinel", "claude-sentinel"),
-    "AGENTOS_EVAL_STREAM": ("eval_stream", "sentinel:evals", "sentinel:evals"),
-    "AGENTOS_EVAL_CONSUMER_GROUP": (
+    "CURIE_MODEL": ("model", "claude-sentinel", "claude-sentinel"),
+    "CURIE_EVAL_STREAM": ("eval_stream", "sentinel:evals", "sentinel:evals"),
+    "CURIE_EVAL_CONSUMER_GROUP": (
         "eval_consumer_group",
         "sentinel-eval-workers",
         "sentinel-eval-workers",
@@ -75,27 +75,27 @@ _WORKER_OVERRIDES: dict[str, tuple[str, str, object]] = {
     "S3_SECRET_KEY": ("s3_secret_key", "sk-sentinel", "sk-sentinel"),
     "S3_REGION": ("s3_region", "eu-west-9", "eu-west-9"),
     "BUNDLE_BUCKET": ("bundle_bucket", "sentinel-bundles", "sentinel-bundles"),
-    "AGENTOS_API_URL": (
+    "CURIE_API_URL": (
         "api_base_url",
         "http://api.local:3",
         "http://api.local:3",
     ),
-    "AGENTOS_API_KEY": ("api_key", "key-sentinel", "key-sentinel"),
+    "CURIE_API_KEY": ("api_key", "key-sentinel", "key-sentinel"),
     "LANGFUSE_HOST": ("langfuse_host", "http://lf.local:4", "http://lf.local:4"),
     "LANGFUSE_PUBLIC_KEY": ("langfuse_public_key", "pk-sentinel", "pk-sentinel"),
     "LANGFUSE_SECRET_KEY": ("langfuse_secret_key", "sk-lf-sentinel", "sk-lf-sentinel"),
-    "AGENTOS_STREAM": ("stream", "sentinel:runs", "sentinel:runs"),
-    "AGENTOS_CONSUMER_GROUP": (
+    "CURIE_STREAM": ("stream", "sentinel:runs", "sentinel:runs"),
+    "CURIE_CONSUMER_GROUP": (
         "consumer_group",
         "sentinel-workers",
         "sentinel-workers",
     ),
-    "AGENTOS_CONSUMER_NAME": (
+    "CURIE_CONSUMER_NAME": (
         "consumer_name",
         "sentinel-consumer",
         "sentinel-consumer",
     ),
-    "AGENTOS_MAX_ATTEMPTS": ("max_attempts", "9", 9),
+    "CURIE_MAX_ATTEMPTS": ("max_attempts", "9", 9),
 }
 
 
@@ -108,14 +108,14 @@ def test_aliased_field_ignores_bare_field_name_env(
 
     config = WorkerConfig()
 
-    assert config.api_key == "agentos-dev-key"  # the default, not "stray"
+    assert config.api_key == "curie-dev-key"  # the default, not "stray"
     assert config.credentials == ""  # the default, not "stray-creds"
 
 
 def test_aliased_field_reads_its_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The intended AGENTOS_* alias is still read from the env."""
-    monkeypatch.setenv("AGENTOS_API_KEY", "intended")
-    monkeypatch.setenv("AGENTOS_CREDENTIALS", "intended-creds")
+    """The intended CURIE_* alias is still read from the env."""
+    monkeypatch.setenv("CURIE_API_KEY", "intended")
+    monkeypatch.setenv("CURIE_CREDENTIALS", "intended-creds")
 
     config = WorkerConfig()
 
@@ -126,7 +126,7 @@ def test_aliased_field_reads_its_alias(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_alias_wins_over_bare_field_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """With both set, only the alias is read and the bare name is ignored."""
     monkeypatch.setenv("API_KEY", "stray")
-    monkeypatch.setenv("AGENTOS_API_KEY", "intended")
+    monkeypatch.setenv("CURIE_API_KEY", "intended")
 
     assert WorkerConfig().api_key == "intended"
 
@@ -134,13 +134,13 @@ def test_alias_wins_over_bare_field_name(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_api_url_accepts_the_deprecated_base_url_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#496: the platform API base URL is canonically AGENTOS_API_URL, but the
-    historical AGENTOS_API_BASE_URL still resolves for one release, and the
+    """#496: the platform API base URL is canonically CURIE_API_URL, but the
+    historical CURIE_API_BASE_URL still resolves for one release, and the
     canonical name wins when both are set."""
-    monkeypatch.setenv("AGENTOS_API_BASE_URL", "http://deprecated:8000")
+    monkeypatch.setenv("CURIE_API_BASE_URL", "http://deprecated:8000")
     assert WorkerConfig().api_base_url == "http://deprecated:8000"
 
-    monkeypatch.setenv("AGENTOS_API_URL", "http://canonical:8000")
+    monkeypatch.setenv("CURIE_API_URL", "http://canonical:8000")
     assert WorkerConfig().api_base_url == "http://canonical:8000"
 
 
@@ -159,13 +159,13 @@ def test_non_aliased_field_still_reads_plain_env(
     """Fields without an alias keep reading their uppercased field name."""
     monkeypatch.setenv("VALKEY_HOST", "valkey.internal")
     monkeypatch.setenv(
-        "DATABASE_URL", "postgresql+asyncpg://u:p@db:5432/agentos"
+        "DATABASE_URL", "postgresql+asyncpg://u:p@db:5432/curie"
     )
 
     config = WorkerConfig()
 
     assert config.valkey_host == "valkey.internal"
-    assert config.database_url == "postgresql+asyncpg://u:p@db:5432/agentos"
+    assert config.database_url == "postgresql+asyncpg://u:p@db:5432/curie"
 
 
 # --- Env-var parity vs the pre-pydantic from_env (review #178) ---------------
@@ -195,7 +195,7 @@ def test_defaults_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         config.database_url
         == "postgresql+asyncpg://postgres:postgres@localhost:25432/postgres"
     )
-    assert config.db_schema == "agentos"
+    assert config.db_schema == "curie"
     # Deployment-to-runtime binding
     assert config.bundle_plugin_dir == "/bundles/current"
     assert config.default_max_usd_per_day == 10.0
@@ -208,8 +208,8 @@ def test_defaults_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Shimmer
     assert config.shimmer is False
     # Stream / consumer group
-    assert config.stream == "agentos:runs"
-    assert config.consumer_group == "agentos-workers"
+    assert config.stream == "curie:runs"
+    assert config.consumer_group == "curie-workers"
     # Read loop
     assert config.read_count == 16
     assert config.read_block_ms == 5000
@@ -232,25 +232,25 @@ def test_defaults_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.runner_connect_timeout_s == 10.0
     assert config.runner_total_timeout_s == 600.0
     # Eval stream
-    assert config.eval_stream == "agentos:evals"
-    assert config.eval_consumer_group == "agentos-eval-workers"
+    assert config.eval_stream == "curie:evals"
+    assert config.eval_consumer_group == "curie-eval-workers"
     # MinIO / S3
     assert config.s3_endpoint_url == "http://localhost:29000"
     assert config.s3_access_key == "minio"
     assert config.s3_secret_key == "miniosecret"
     assert config.s3_region == "us-east-1"
-    assert config.bundle_bucket == "agentos-bundles"
+    assert config.bundle_bucket == "curie-bundles"
     # Platform API
     assert config.api_base_url == "http://localhost:8000"
-    assert config.api_key == "agentos-dev-key"
+    assert config.api_key == "curie-dev-key"
     assert config.report_max_attempts == 3
     assert config.report_backoff_base_s == 0.5
     # Langfuse
     assert config.langfuse_host == "http://localhost:23000"
-    assert config.langfuse_public_key == "pk-lf-agentos-dev"
-    assert config.langfuse_secret_key == "sk-lf-agentos-dev"
+    assert config.langfuse_public_key == "pk-lf-curie-dev"
+    assert config.langfuse_secret_key == "sk-lf-curie-dev"
     # Key prefix
-    assert config.key_prefix == "agentos:worker"
+    assert config.key_prefix == "curie:worker"
 
     # Factory-defaulted names have no static default: the old from_env produced
     # ``f"{hostname}-{pid}"`` via ``_default_consumer_name``. Assert that shape.
@@ -283,7 +283,7 @@ def test_overrides_parity_with_from_env(monkeypatch: pytest.MonkeyPatch) -> None
 
 # --- Operator-scoped model wire declaration (#514) ---------------------------
 #
-# Two new fields mirroring model_base_url: they read only their AGENTOS_* alias
+# Two new fields mirroring model_base_url: they read only their CURIE_* alias
 # and default to "" (not declared). They are deliberately absent from the
 # _WORKER_OVERRIDES parity oracle above -- that dict pins the vars the old
 # hand-rolled from_env read, and these are new, not a port of anything.
@@ -306,8 +306,8 @@ def test_worker_config_reads_model_api_backend_and_env_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_MODEL_API_BACKEND", "messages")
-    monkeypatch.setenv("AGENTOS_MODEL_ENV_KEY", '["ANTHROPIC_AUTH_TOKEN"]')
+    monkeypatch.setenv("CURIE_MODEL_API_BACKEND", "messages")
+    monkeypatch.setenv("CURIE_MODEL_ENV_KEY", '["ANTHROPIC_AUTH_TOKEN"]')
 
     config = WorkerConfig()
 
@@ -318,7 +318,7 @@ def test_worker_config_reads_model_api_backend_and_env_key(
 def test_model_api_backend_and_env_key_ignore_bare_field_name_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Aliased like every other AGENTOS_* knob: a stray bare-name env var in the
+    """Aliased like every other CURIE_* knob: a stray bare-name env var in the
     pod env must not leak in."""
     _clear_all_config_env(monkeypatch)
     monkeypatch.setenv("MODEL_API_BACKEND", "chat_completions")
@@ -341,7 +341,7 @@ def test_model_api_backend_and_env_key_populate_by_field_name() -> None:
 # --- Runner-facing API base (#678) -------------------------------------------
 #
 # A field distinct from api_base_url (the worker's self-dial URL): the API base a
-# SPAWNED RUNNER dials. Defaults to "" (undivided) and reads only its AGENTOS_*
+# SPAWNED RUNNER dials. Defaults to "" (undivided) and reads only its CURIE_*
 # alias. Kept out of the _WORKER_OVERRIDES parity oracle -- like the #514 fields,
 # it is new, not a port of the old hand-rolled from_env.
 
@@ -362,17 +362,17 @@ def test_worker_config_reads_runner_api_base_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_RUNNER_API_URL", "http://agentos-api:8000")
+    monkeypatch.setenv("CURIE_RUNNER_API_URL", "http://curie-api:8000")
 
     config = WorkerConfig()
 
-    assert config.runner_api_base_url == "http://agentos-api:8000"
+    assert config.runner_api_base_url == "http://curie-api:8000"
 
 
 def test_runner_api_base_url_ignores_bare_field_name_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Aliased like every other AGENTOS_* knob: a stray bare-name env var in the
+    """Aliased like every other CURIE_* knob: a stray bare-name env var in the
     pod env must not leak in."""
     _clear_all_config_env(monkeypatch)
     monkeypatch.setenv("RUNNER_API_BASE_URL", "http://stray:9000")
@@ -388,7 +388,7 @@ def test_runner_facing_api_base_url_falls_back_to_self_dial(
     """Unset runner_api_base_url resolves to api_base_url, so k8s and single-host
     local -- where the runner reaches the API at the worker's URL -- are unchanged."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_API_URL", "http://in-cluster-api:8000")
+    monkeypatch.setenv("CURIE_API_URL", "http://in-cluster-api:8000")
 
     config = WorkerConfig()
 
@@ -402,24 +402,24 @@ def test_runner_facing_api_base_url_prefers_the_runner_override(
     """When the two networks diverge (docker substrate), the runner-facing base
     wins over the worker's localhost self-dial URL."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_API_URL", "http://localhost:28000")
-    monkeypatch.setenv("AGENTOS_RUNNER_API_URL", "http://agentos-api:8000")
+    monkeypatch.setenv("CURIE_API_URL", "http://localhost:28000")
+    monkeypatch.setenv("CURIE_RUNNER_API_URL", "http://curie-api:8000")
 
     config = WorkerConfig()
 
     assert config.api_base_url == "http://localhost:28000"
-    assert config.runner_facing_api_base_url == "http://agentos-api:8000"
+    assert config.runner_facing_api_base_url == "http://curie-api:8000"
 
 
-def test_agentos_dead_letter_stream_reaches_the_dead_letter_field(
+def test_curie_dead_letter_stream_reaches_the_dead_letter_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AGENTOS_DEAD_LETTER_STREAM (#505/#668) populates dead_letter_stream and
+    """CURIE_DEAD_LETTER_STREAM (#505/#668) populates dead_letter_stream and
     is reflected by dead_letter_stream_name(), the graveyard the API's
     dead-letter watcher must agree with (see apps/api/tests/test_config_parity.py)."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_STREAM", "operations")
-    monkeypatch.setenv("AGENTOS_DEAD_LETTER_STREAM", "operations:dead")
+    monkeypatch.setenv("CURIE_STREAM", "operations")
+    monkeypatch.setenv("CURIE_DEAD_LETTER_STREAM", "operations:dead")
 
     config = WorkerConfig()
 
@@ -439,8 +439,8 @@ def test_bool_shared_truthy_tokens(
 ) -> None:
     """The truthy set shared with the dispatcher parses to True (case/space-insensitive)."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_SHIMMER", token)
-    monkeypatch.setenv("AGENTOS_FAKE_MODEL", token)
+    monkeypatch.setenv("CURIE_SHIMMER", token)
+    monkeypatch.setenv("CURIE_FAKE_MODEL", token)
 
     config = WorkerConfig()
 
@@ -454,8 +454,8 @@ def test_bool_worker_rejects_on_and_falsy_tokens(
 ) -> None:
     """The worker does NOT treat "on" as truthy (the dispatcher does); falsy tokens are False."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_SHIMMER", token)
-    monkeypatch.setenv("AGENTOS_FAKE_MODEL", token)
+    monkeypatch.setenv("CURIE_SHIMMER", token)
+    monkeypatch.setenv("CURIE_FAKE_MODEL", token)
 
     config = WorkerConfig()
 
@@ -467,7 +467,7 @@ def test_bool_worker_rejects_on_and_falsy_tokens(
 #
 # A ceiling on eval SandboxClaims created/bound concurrently, so a single-node
 # cluster is not flooded. Defaults to 1 (sequential-with-backpressure) and reads
-# only its AGENTOS_* alias; kept out of the _WORKER_OVERRIDES parity oracle since
+# only its CURIE_* alias; kept out of the _WORKER_OVERRIDES parity oracle since
 # it is new, not a port of the old hand-rolled from_env.
 
 
@@ -486,7 +486,7 @@ def test_worker_config_reads_eval_max_concurrent_claims(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS", "4")
+    monkeypatch.setenv("CURIE_EVAL_MAX_CONCURRENT_CLAIMS", "4")
 
     config = WorkerConfig()
 
@@ -496,7 +496,7 @@ def test_worker_config_reads_eval_max_concurrent_claims(
 def test_eval_max_concurrent_claims_ignores_bare_field_name_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Aliased like every other AGENTOS_* knob: a stray bare-name env var must not
+    """Aliased like every other CURIE_* knob: a stray bare-name env var must not
     leak in."""
     _clear_all_config_env(monkeypatch)
     monkeypatch.setenv("EVAL_MAX_CONCURRENT_CLAIMS", "7")
@@ -511,7 +511,7 @@ def test_eval_max_concurrent_claims_rejects_zero(
 ) -> None:
     """Floor of 1: a bound of 0 would create no claims at all (no eval could run)."""
     _clear_all_config_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_EVAL_MAX_CONCURRENT_CLAIMS", "0")
+    monkeypatch.setenv("CURIE_EVAL_MAX_CONCURRENT_CLAIMS", "0")
 
     with pytest.raises(ValueError):
         WorkerConfig()

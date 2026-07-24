@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
 //    compose stack + apps/api. Only added when PW_INTEGRATION=1 so the default
 //    run (and CI) stays stackless and green.
 //
-// The preview proxies /api to AGENTOS_API_TARGET (default the local uvicorn),
+// The preview proxies /api to CURIE_API_TARGET (default the local uvicorn),
 // so pointing the integration run at a different API host is one env var.
 // Dedicated preview port (away from the 5173 review dev server and any stray
 // 4173 preview) so the proxy-enabled preview is always the one under test.
@@ -50,7 +50,7 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI && !integration,
         timeout: 120_000,
         env: {
-          AGENTOS_API_TARGET: process.env.AGENTOS_API_TARGET ?? "http://localhost:8000",
+          CURIE_API_TARGET: process.env.CURIE_API_TARGET ?? "http://localhost:8000",
         },
       },
 });

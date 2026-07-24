@@ -1,8 +1,8 @@
-//! Private local secret storage for AgentOS workflows.
+//! Private local secret storage for Curie workflows.
 //!
-//! Secret values live in a mode-0600 file under the AgentOS config directory,
+//! Secret values live in a mode-0600 file under the Curie config directory,
 //! avoiding repeated platform credential-store authorization dialogs. `keyring`
-//! remains only as a read-only migration path for older AgentOS installations.
+//! remains only as a read-only migration path for older Curie installations.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -13,8 +13,8 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "dev.curie.agentos";
-const VAULT_ACCOUNT: &str = "agentos:global:vault";
+const SERVICE: &str = "dev.curie.curie";
+const VAULT_ACCOUNT: &str = "curie:global:vault";
 
 #[derive(Clone, Debug)]
 pub struct SetSecretOpts {
@@ -59,7 +59,7 @@ pub fn set(opts: SetSecretOpts) -> Result<()> {
         None => prompt_secret(&opts.name)?,
     };
     save_value(&opts.name, &value)?;
-    crate::ui::ui().success(&format!("saved {} in AgentOS private storage", opts.name));
+    crate::ui::ui().success(&format!("saved {} in Curie private storage", opts.name));
     Ok(())
 }
 
@@ -85,7 +85,7 @@ impl crate::ui::CliOutput for SecretsListOutput {
 
     fn render(&self, ui: &crate::ui::Ui) {
         if self.names.is_empty() {
-            ui.note("no AgentOS secrets saved");
+            ui.note("no Curie secrets saved");
         } else {
             ui.payload_plain(&self.names.join("\n"));
         }
@@ -249,11 +249,11 @@ fn prompt_secret(name: &str) -> Result<String> {
 
 fn vault_entry() -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, VAULT_ACCOUNT)
-        .context("opening the AgentOS OS credential-store vault")
+        .context("opening the Curie OS credential-store vault")
 }
 
 fn legacy_entry(name: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, &format!("agentos:global:{name}"))
+    keyring::Entry::new(SERVICE, &format!("curie:global:{name}"))
         .with_context(|| format!("opening legacy OS credential-store entry for {name}"))
 }
 
@@ -264,14 +264,14 @@ fn vault_cache() -> &'static Mutex<VaultCache> {
 fn read_vault() -> Result<SecretVault> {
     let mut cache = vault_cache()
         .lock()
-        .map_err(|_| anyhow::anyhow!("AgentOS credential vault cache is unavailable"))?;
+        .map_err(|_| anyhow::anyhow!("Curie credential vault cache is unavailable"))?;
     if cache.loaded {
         return Ok(cache.vault.clone());
     }
     let vault = match vault_entry()?.get_password() {
-        Ok(raw) => serde_json::from_str(&raw).context("parsing the AgentOS credential vault")?,
+        Ok(raw) => serde_json::from_str(&raw).context("parsing the Curie credential vault")?,
         Err(keyring::Error::NoEntry) => SecretVault::default(),
-        Err(err) => return Err(err).context("reading the AgentOS OS credential-store vault"),
+        Err(err) => return Err(err).context("reading the Curie OS credential-store vault"),
     };
     cache.loaded = true;
     cache.vault = vault.clone();
@@ -284,18 +284,18 @@ fn read_credentials() -> Result<SecretVault> {
         return Ok(SecretVault::default());
     }
     let raw = fs::read_to_string(&path)
-        .with_context(|| format!("reading AgentOS credentials {}", path.display()))?;
+        .with_context(|| format!("reading Curie credentials {}", path.display()))?;
     serde_json::from_str(&raw)
-        .with_context(|| format!("parsing AgentOS credentials {}", path.display()))
+        .with_context(|| format!("parsing Curie credentials {}", path.display()))
 }
 
 fn write_credentials(credentials: &SecretVault) -> Result<()> {
     let path = credentials_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .with_context(|| format!("creating AgentOS config dir {}", parent.display()))?;
+            .with_context(|| format!("creating Curie config dir {}", parent.display()))?;
     }
-    let body = serde_json::to_vec_pretty(credentials).context("serializing AgentOS credentials")?;
+    let body = serde_json::to_vec_pretty(credentials).context("serializing Curie credentials")?;
     write_private(&path, &body)
 }
 
@@ -345,7 +345,7 @@ fn write_index(index: &SecretIndex) -> Result<()> {
     let path = index_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .with_context(|| format!("creating AgentOS config dir {}", parent.display()))?;
+            .with_context(|| format!("creating Curie config dir {}", parent.display()))?;
     }
     let body = serde_json::to_vec_pretty(index).context("serializing secret index")?;
     write_private(&path, &body)
@@ -382,12 +382,12 @@ fn credentials_path() -> Result<PathBuf> {
 }
 
 fn config_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("AGENTOS_CONFIG_DIR") {
+    if let Ok(dir) = std::env::var("CURIE_CONFIG_DIR") {
         return Ok(PathBuf::from(dir));
     }
     let home =
-        std::env::var("HOME").context("HOME is not set; cannot locate AgentOS config dir")?;
-    Ok(PathBuf::from(home).join(".config/agentos"))
+        std::env::var("HOME").context("HOME is not set; cannot locate Curie config dir")?;
+    Ok(PathBuf::from(home).join(".config/curie"))
 }
 
 #[cfg(test)]
@@ -471,7 +471,7 @@ mod tests {
         let decoded: SecretVault = serde_json::from_str(&raw).unwrap();
 
         assert_eq!(decoded.values, vault.values);
-        assert_eq!(VAULT_ACCOUNT, "agentos:global:vault");
+        assert_eq!(VAULT_ACCOUNT, "curie:global:vault");
     }
 
     #[cfg(unix)]

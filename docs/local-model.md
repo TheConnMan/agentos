@@ -9,22 +9,22 @@ production agent path — the built-in fake model stays the zero-dependency defa
 Use the flag on whichever target you are running:
 
 ```bash
-agentos skill up --local-model
-agentos local up --local-model
-agentos cluster up --local-model
+curie skill up --local-model
+curie local up --local-model
+curie cluster up --local-model
 ```
 
 Bare `--local-model` uses `qwen3:4b`. Override it by passing a model name:
 
 ```bash
-agentos local up --local-model qwen3-coder:30b
+curie local up --local-model qwen3-coder:30b
 ```
 
 Combine `--minimal` with `--local-model` when you want the core local loop plus
 Ollama, without Langfuse or the UI:
 
 ```bash
-agentos local up --minimal --local-model
+curie local up --minimal --local-model
 ```
 
 ## How it runs

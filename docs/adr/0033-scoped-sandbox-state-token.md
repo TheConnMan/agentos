@@ -4,24 +4,24 @@ Date: 2026-07-15
 
 Status: Accepted
 
-Implements [#410](https://github.com/curie-eng/agentos/issues/410).
+Implements [#410](https://github.com/curie-eng/curie/issues/410).
 
 ## Context
 
 The worker forwards the one shared platform API key into every sandbox so the
 runner can rehydrate the agent's memory and transcript at boot.
-`binding.boot_env()` sets `AGENTOS_MEMORY_TOKEN` and `AGENTOS_HISTORY_TOKEN` to
-`self._config.api_key` (`apps/worker/src/agentos_worker/binding.py`), and the
+`binding.boot_env()` sets `CURIE_MEMORY_TOKEN` and `CURIE_HISTORY_TOKEN` to
+`self._config.api_key` (`apps/worker/src/curie_worker/binding.py`), and the
 runner sends that value verbatim as the `X-API-Key` header on its calls to the
-durable state store (`runner/src/agentos_runner/memory.py`,
-`runner/src/agentos_runner/history.py`). The state store routes
+durable state store (`runner/src/curie_runner/memory.py`,
+`runner/src/curie_runner/history.py`). The state store routes
 (`/agents/{id}/state/...`) and every other authenticated route, including
 `/approvals/{id}/resolve`, are guarded by the same `require_api_key` dependency
-(`apps/api/src/agentos_api/auth.py`), which compares the header against the
+(`apps/api/src/curie_api/auth.py`), which compares the header against the
 single `Settings.api_key` with `hmac.compare_digest`.
 
 The composition of these separately merged decisions is a HIGH-severity hole.
-A sandboxed agent can read `AGENTOS_HISTORY_TOKEN` (the platform key) from its
+A sandboxed agent can read `CURIE_HISTORY_TOKEN` (the platform key) from its
 own environment and use it to:
 
 1. Resolve its own gated approval by POSTing `/approvals/{id}/resolve` with a
@@ -68,8 +68,8 @@ key inherits that protection for free.
 
 **Minting (worker).** `binding.boot_env()` mints a token for
 `resolved.agent_id` with scope `state` and a fixed TTL, signing with
-`self._config.api_key`, and forwards that token as both `AGENTOS_MEMORY_TOKEN`
-and `AGENTOS_HISTORY_TOKEN` instead of the raw key. Because `boot_env` is
+`self._config.api_key`, and forwards that token as both `CURIE_MEMORY_TOKEN`
+and `CURIE_HISTORY_TOKEN` instead of the raw key. Because `boot_env` is
 recomputed on every claim through the kernel consume path
 (`kernel.py` -> `boot_env` -> `substrate.claim/resume(env=...)`), a fresh token
 is minted every turn, including on resume. A generous fixed TTL (24 hours)
@@ -77,7 +77,7 @@ safely covers a multi-day approval pause, since a paused thread is a cold
 rehydrate on the next mention, not a live process holding a stale token.
 
 **Verification (API).** The `state` router
-(`apps/api/src/agentos_api/routers/state.py`) gets a new auth dependency that
+(`apps/api/src/curie_api/routers/state.py`) gets a new auth dependency that
 accepts **either**:
 
 - the platform key (operators, CLI, and the worker keep full access, so there is

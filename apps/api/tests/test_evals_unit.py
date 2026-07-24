@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agentos_api.evals import build_matrix
+from curie_api.evals import build_matrix
 
 
 def _trace(tid: str, version: str, case: str, ts: str, passed: bool) -> dict[str, Any]:

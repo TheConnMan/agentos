@@ -1,0 +1,110 @@
+# Single-node dev profile for the Curie umbrella chart.
+#
+#   helm install curie-dev charts/curie -n curie-dev --create-namespace \
+#     -f charts/curie/values-dev.yaml
+#
+# Sized to fit a ~4 GB / 4-core scratch cluster. Sum of memory
+# requests here is ~1.7 GB, leaving headroom for the kubelet/system and for
+# ClickHouse/Langfuse to burst toward their limits. Everything is single-replica
+# and ClickHouse cluster mode is off. This mirrors compose.dev.yaml (same
+# images, same :24.8 ClickHouse pin) so V1 (compose) and V3 (chart) verify the
+# same stack.
+
+langfuse:
+  web:
+    # Node's default heap cap OOM-crashes the web app under a 1Gi limit; give it
+    # room. ~1Gi heap fits comfortably in the 1536Mi container limit.
+    nodeOptions: "--max-old-space-size=1024"
+    resources:
+      requests: { cpu: 150m, memory: 384Mi }
+      limits: { cpu: "1", memory: 1536Mi }
+  worker:
+    nodeOptions: "--max-old-space-size=640"
+    resources:
+      requests: { cpu: 150m, memory: 384Mi }
+      limits: { cpu: "1", memory: 1Gi }
+
+postgres:
+  persistence:
+    size: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+valkey:
+  persistence:
+    size: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+clickhouse:
+  # Keep the :24.8 SSE4.2-safe pin. Cluster mode off for single-node.
+  clusterEnabled: false
+  persistence:
+    size: 3Gi
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "2", memory: 1536Mi }
+
+minio:
+  persistence:
+    size: 3Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+otelCollector:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+# The sandbox substrate stays OFF in this offline profile. The chart now defaults
+# agentSandbox.deploy and controller.deploy to true (a bare install pulls the
+# GHCR runner and the registry.k8s.io agent-sandbox controller), which a
+# disconnected scratch cluster cannot satisfy. Turn both back off here so
+# values-dev renders no remote-pull sandbox resources; the sandbox e2e re-enables the
+# substrate explicitly with the backbone toggled down (see charts/curie/README.md).
+# When it IS enabled for dev/e2e, use the locally-built, cluster-imported runner
+# image rather than the GHCR default, so an offline cluster never tries (and
+# fails) to pull.
+agentSandbox:
+  deploy: false
+  controller:
+    deploy: false
+  runner:
+    image: curie-runner
+    tag: latest
+    imagePullPolicy: Never
+
+# First-party apps: locally-built images imported into the cluster runtime
+# (docker build + `k3s ctr images import`), pulled Never so an offline scratch
+# cluster never reaches out to GHCR. Mirrors the runner override above.
+api:
+  image:
+    repository: curie-api
+    tag: local
+    pullPolicy: Never
+
+dispatcher:
+  image:
+    repository: curie-dispatcher
+    tag: local
+    pullPolicy: Never
+
+worker:
+  image:
+    repository: curie-worker
+    tag: local
+    pullPolicy: Never
+
+ui:
+  image:
+    repository: curie-ui
+    tag: local
+    pullPolicy: Never
+
+security:
+  # Deterministic dev credentials: keep the published defaults from values.yaml
+  # instead of generating per-release randoms (mirrors compose.dev.yaml).
+  allowDevDefaults: true

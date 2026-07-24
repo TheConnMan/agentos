@@ -9,9 +9,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import redis
-from agentos_dispatcher.app import build_app
-from agentos_dispatcher.config import DispatcherConfig
-from agentos_dispatcher.queue import from_stream_fields
+from curie_dispatcher.app import build_app
+from curie_dispatcher.config import DispatcherConfig
+from curie_dispatcher.queue import from_stream_fields
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk.socket_mode.request import SocketModeRequest

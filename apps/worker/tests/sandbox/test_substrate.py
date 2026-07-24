@@ -8,7 +8,7 @@ import time
 
 import pytest
 from aci_protocol import BootEnv
-from agentos_worker.sandbox import (
+from curie_worker.sandbox import (
     AffinityStore,
     ClaimTimeoutError,
     ClaimView,
@@ -44,7 +44,7 @@ def test_claim_binds_and_routes_thread(
 ) -> None:
     handle = substrate.claim("1700000000.000100")
 
-    assert handle.sandbox_name.startswith("sbx-agentos-thread-")
+    assert handle.sandbox_name.startswith("sbx-curie-thread-")
     assert handle.service_fqdn.endswith(".svc.cluster.local")
     assert handle.base_url == f"http://{handle.service_fqdn}:8080"
     assert fake_k8s.claims[handle.claim_name].env == {}
@@ -324,7 +324,7 @@ def test_claim_on_suspended_route_refuses_to_fork(
 # --- Per-sandbox runner token (issue #63) -------------------------------------
 # The env-var name is the cross-package contract with the runner; asserted by its
 # literal string.
-RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+RUNNER_TOKEN_ENV = "CURIE_RUNNER_TOKEN"
 
 
 def test_resume_mints_fresh_runner_token(
@@ -362,15 +362,15 @@ def test_resume_merges_caller_boot_env(
     substrate.suspend("T1", history_ref="h-42")
 
     boot_env = {
-        "AGENTOS_BUNDLE_REF": "bundles/agent-v7.tgz",
-        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+        "CURIE_BUNDLE_REF": "bundles/agent-v7.tgz",
+        "CURIE_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
         RUNNER_TOKEN_ENV: "tok-fresh",
     }
     resumed = substrate.resume("T1", env=boot_env)
 
     env = fake_k8s.claims[resumed.claim_name].env
-    assert env["AGENTOS_BUNDLE_REF"] == "bundles/agent-v7.tgz"
-    assert env["AGENTOS_BUDGET"] == boot_env["AGENTOS_BUDGET"]
+    assert env["CURIE_BUNDLE_REF"] == "bundles/agent-v7.tgz"
+    assert env["CURIE_BUDGET"] == boot_env["CURIE_BUDGET"]
     # A caller-minted token is kept (binding.boot_env mints one per claim).
     assert env[RUNNER_TOKEN_ENV] == "tok-fresh"
     # Session identity and the recorded history ref are preserved.

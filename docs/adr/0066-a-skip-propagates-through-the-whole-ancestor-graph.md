@@ -15,7 +15,7 @@ environment) is unaffected and stands exactly as decided; only the claim that an
 `always()` on `build` alone is enough to keep the continuous image path running
 is corrected here.
 
-Fixes [#787](https://github.com/curie-eng/agentos/issues/787).
+Fixes [#787](https://github.com/curie-eng/curie/issues/787).
 
 ## Context
 
@@ -37,7 +37,7 @@ The failure was silent in the worst way. Each `build` leg pushes its image *by
 digest only*; the tags come from `merge`, which assembles the multi-arch
 manifest and applies `sha-<sha>` and `latest`. With `merge` skipped, every main
 push published unreferenced digests and no tags, so
-`ghcr.io/curie-eng/agentos-*:latest` sat frozen at the last tag push while the
+`ghcr.io/curie-eng/curie-*:latest` sat frozen at the last tag push while the
 workflow stayed green. Run 29843949137 on main is a concrete instance: ten
 successful builds, six skipped merges.
 

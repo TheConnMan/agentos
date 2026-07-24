@@ -276,10 +276,10 @@ describe("WiredAgentDetail — CLI hint (#279)", () => {
     // Deploy only renders once versions + bundle files resolve.
     expect(await screen.findByRole("button", { name: "Deploy new version" })).toBeInTheDocument();
 
-    // The hint copies the exact `agentos cluster deploy` (env clamps to prod at
+    // The hint copies the exact `curie cluster deploy` (env clamps to prod at
     // level 3), resolved from the command manifest via cliCommand().
     expect(
-      screen.getByRole("button", { name: "Copy command: agentos cluster deploy" }),
+      screen.getByRole("button", { name: "Copy command: curie cluster deploy" }),
     ).toBeInTheDocument();
   });
 });

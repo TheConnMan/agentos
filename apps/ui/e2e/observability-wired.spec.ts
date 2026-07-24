@@ -125,13 +125,13 @@ test("Logs tab shows the 503 no-cluster degraded state", async ({ page }) => {
 });
 
 test("Logs tab renders a single pod's logs from the dropdown", async ({ page }) => {
-  await stubRunnerPods(page, 200, { namespace: "agentos", pods: ["runner-deal-desk-abc123", "runner-billing-xyz"] });
+  await stubRunnerPods(page, 200, { namespace: "curie", pods: ["runner-deal-desk-abc123", "runner-billing-xyz"] });
   await page.route("**/api/observability/runners/*/*/logs*", (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        namespace: "agentos",
+        namespace: "curie",
         pod: "runner-deal-desk-abc123",
         container: "runner",
         logs: "14:02:07 info request received\n14:02:08 info verdict routed",
@@ -148,13 +148,13 @@ test("Logs tab renders a single pod's logs from the dropdown", async ({ page }) 
 });
 
 test("Logs tab aggregates logs across all runner pods by default", async ({ page }) => {
-  await stubRunnerPods(page, 200, { namespace: "agentos", pods: ["runner-a", "runner-b"] });
+  await stubRunnerPods(page, 200, { namespace: "curie", pods: ["runner-a", "runner-b"] });
   await page.route("**/api/observability/runners/*/*/logs*", (route) => {
     const pod = new URL(route.request().url()).pathname.split("/").slice(-2)[0];
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ namespace: "agentos", pod, container: "runner", logs: `line from ${pod}` }),
+      body: JSON.stringify({ namespace: "curie", pod, container: "runner", logs: `line from ${pod}` }),
     });
   });
   await page.goto("/?state=3&api=1");
@@ -180,7 +180,7 @@ test("an agent's View traces opens the Traces list pre-filtered to that agent", 
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([{ id: "t1", name: `agentos-run:agent-${agent.id}-thread-1`, timestamp: "2026-07-05T00:00:00Z" }]),
+      body: JSON.stringify([{ id: "t1", name: `curie-run:agent-${agent.id}-thread-1`, timestamp: "2026-07-05T00:00:00Z" }]),
     });
   });
 

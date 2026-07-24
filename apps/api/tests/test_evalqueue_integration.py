@@ -18,8 +18,8 @@ from typing import Any
 import redis
 import redis.asyncio as aioredis
 from aci_protocol import STREAM_PAYLOAD_FIELD, EvalJob
-from agentos_api.config import get_settings
-from agentos_api.evalqueue import EvalQueue, from_stream_fields, now_iso
+from curie_api.config import get_settings
+from curie_api.evalqueue import EvalQueue, from_stream_fields, now_iso
 
 SECRET = get_settings().github_webhook_secret
 REPO = "octo/k1-fanout"
@@ -30,7 +30,7 @@ VALID_FILES = {
 
 
 def test_enqueue_lands_with_exact_shape() -> None:
-    stream = f"agentos:evals:test-{secrets.token_hex(4)}"
+    stream = f"curie:evals:test-{secrets.token_hex(4)}"
     agent_id, version_id = uuid.uuid4(), uuid.uuid4()
     request = EvalJob(
         agent_id=agent_id,
@@ -145,7 +145,7 @@ def _post_push(client: Any, ref: str, sha: str, clone_url: str) -> Any:
 def _eval_entry_for(sha: str) -> dict[str, Any] | None:
     sync = redis.from_url(get_settings().valkey_dsn())
     try:
-        for _id, fields in sync.xrevrange("agentos:evals", count=50):
+        for _id, fields in sync.xrevrange("curie:evals", count=50):
             payload = json.loads(fields[STREAM_PAYLOAD_FIELD.encode()])
             if payload.get("sha") == sha:
                 return payload
@@ -156,13 +156,13 @@ def _eval_entry_for(sha: str) -> dict[str, Any] | None:
 
 def _count_eval_entries_for_agent(agent_id: str) -> int:
     # Scope by agent_id (a fresh UUID per test) rather than sha or total count:
-    # the shared agentos:evals stream is never cleaned between tests, and two
+    # the shared curie:evals stream is never cleaned between tests, and two
     # tests building identical repo content can collide on sha.
     sync = redis.from_url(get_settings().valkey_dsn())
     try:
         return sum(
             1
-            for _id, fields in sync.xrevrange("agentos:evals", count=200)
+            for _id, fields in sync.xrevrange("curie:evals", count=200)
             if json.loads(fields[STREAM_PAYLOAD_FIELD.encode()]).get("agent_id")
             == agent_id
         )
@@ -191,7 +191,7 @@ def test_dev_push_fans_out_prod_push_does_not(
     # A prod push (same sha) promotes but must NOT add another eval entry.
     sync = redis.from_url(get_settings().valkey_dsn())
     try:
-        before = len(sync.xrange("agentos:evals"))
+        before = len(sync.xrange("curie:evals"))
     finally:
         sync.close()
     assert _post_push(client, "refs/heads/main", sha, clone_url).json()["status"] == (
@@ -199,7 +199,7 @@ def test_dev_push_fans_out_prod_push_does_not(
     )
     sync = redis.from_url(get_settings().valkey_dsn())
     try:
-        after = len(sync.xrange("agentos:evals"))
+        after = len(sync.xrange("curie:evals"))
     finally:
         sync.close()
     assert after == before

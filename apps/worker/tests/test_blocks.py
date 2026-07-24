@@ -1,11 +1,11 @@
-"""Structured-reply rendering + the agentos-reply parsing convention (pure)."""
+"""Structured-reply rendering + the curie-reply parsing convention (pure)."""
 
 from __future__ import annotations
 
 import json
 
-from agentos_worker.behaviorpacks import NavPack
-from agentos_worker.blocks import Reply, _reply_from_message, chunk, parse_reply, render, to_blocks
+from curie_worker.behaviorpacks import NavPack
+from curie_worker.blocks import Reply, _reply_from_message, chunk, parse_reply, render, to_blocks
 from channel_protocol import Action, ChoiceIntent, ConfirmIntent, OutboundMessage
 
 # An enabled nav pack, same shape as tests/test_behaviorpacks.py.
@@ -31,7 +31,7 @@ def _action_labels(blocks: list[dict]) -> list[str]:
 
 _BLOCK = """Here you go:
 
-```agentos-reply
+```curie-reply
 {"header": "Top leaks", "text": "**3** open", "fields": [["Open", "3"]],
  "buttons": [["Details", "details"], ["← Back", "home"]], "footer": "now"}
 ```"""
@@ -87,7 +87,7 @@ def test_choice_intent_prompt_reaches_the_reply() -> None:
             kind="choice",
             id="repo",
             prompt="Which repository?",
-            options=[Action(label="AgentOS", value="curie-eng/agentos")],
+            options=[Action(label="Curie", value="curie-eng/curie")],
         ),
     )
     reply = _reply_from_message(message)
@@ -103,7 +103,7 @@ def test_choice_intent_with_no_prompt_reaches_the_reply_as_none() -> None:
         interaction=ChoiceIntent(
             kind="choice",
             id="repo",
-            options=[Action(label="AgentOS", value="curie-eng/agentos")],
+            options=[Action(label="Curie", value="curie-eng/curie")],
         ),
     )
     reply = _reply_from_message(message)
@@ -142,7 +142,7 @@ def test_parse_reply_extracts_a_complete_block() -> None:
 
 def test_parse_reply_maps_versioned_choice_contract_to_slack_actions() -> None:
     reply = parse_reply(
-        "```agentos-reply\n"
+        "```curie-reply\n"
         '{"version":"1.0","text":"Which view?","interaction":'
         '{"kind":"choice","id":"view","options":['
         '{"label":"Open issues","value":"show open issues"}]}}\n'
@@ -155,7 +155,7 @@ def test_parse_reply_maps_versioned_choice_contract_to_slack_actions() -> None:
 
 def test_parse_reply_maps_versioned_confirmation_to_two_actions() -> None:
     reply = parse_reply(
-        "```agentos-reply\n"
+        "```curie-reply\n"
         '{"version":"1.0","text":"Deploy?","interaction":'
         '{"kind":"confirm","id":"deploy","prompt":"Deploy?",'
         '"confirm":{"label":"Deploy","value":"deploy"},'
@@ -169,7 +169,7 @@ def test_parse_reply_maps_versioned_confirmation_to_two_actions() -> None:
 def test_versioned_reply_rejects_unknown_channel_native_fields() -> None:
     assert (
         parse_reply(
-            '```agentos-reply\n{"version":"1.0","text":"x","blocks":[]}\n```'
+            '```curie-reply\n{"version":"1.0","text":"x","blocks":[]}\n```'
         )
         is None
     )
@@ -180,7 +180,7 @@ def test_parse_reply_none_without_a_block() -> None:
 
 
 def test_parse_reply_defensive_on_bad_json() -> None:
-    assert parse_reply("```agentos-reply\n{not json}\n```") is None
+    assert parse_reply("```curie-reply\n{not json}\n```") is None
 
 
 def test_render_complete_block_returns_blocks() -> None:
@@ -192,10 +192,10 @@ def test_render_complete_block_returns_blocks() -> None:
 
 def test_render_hides_half_streamed_block() -> None:
     # Fence opened mid-stream, not yet closed: never show the raw JSON.
-    partial = "Working...\n```agentos-reply\n{\"header\": \"T"
+    partial = "Working...\n```curie-reply\n{\"header\": \"T"
     text, blocks = render(partial)
     assert blocks is None
-    assert "agentos-reply" not in text
+    assert "curie-reply" not in text
     assert text.startswith("Working")
 
 
@@ -267,13 +267,13 @@ def test_status_is_rendered_as_authored_not_mrkdwn_converted() -> None:
 
 
 def test_parse_reply_extracts_status() -> None:
-    reply = parse_reply('```agentos-reply\n{"status": "Working", "text": "b"}\n```')
+    reply = parse_reply('```curie-reply\n{"status": "Working", "text": "b"}\n```')
     assert reply is not None
     assert reply.status == "Working"
 
 
 def test_parse_reply_status_is_none_without_the_key() -> None:
-    reply = parse_reply('```agentos-reply\n{"text": "b"}\n```')
+    reply = parse_reply('```curie-reply\n{"text": "b"}\n```')
     assert reply is not None
     assert reply.status is None
 
@@ -315,14 +315,14 @@ def test_links_all_invalid_emits_no_actions_block() -> None:
 
 
 def test_parse_reply_extracts_links() -> None:
-    reply = parse_reply('```agentos-reply\n{"links": [["Docs", "https://x/y"]], "text": "b"}\n```')
+    reply = parse_reply('```curie-reply\n{"links": [["Docs", "https://x/y"]], "text": "b"}\n```')
     assert reply is not None
     assert reply.links == [("Docs", "https://x/y")]
 
 
 def test_parse_reply_drops_malformed_links() -> None:
     reply = parse_reply(
-        '```agentos-reply\n'
+        '```curie-reply\n'
         '{"links": [["only-one"], ["a", "b", "c"], ["Docs", "https://x/y"]], "text": "b"}\n'
         '```'
     )
@@ -416,7 +416,7 @@ def test_render_bounds_fallback_text_for_oversized_body() -> None:
     # text cap (~40000). render must still return blocks (it is a complete
     # reply) AND bound the accessibility/fallback text, or the text-only retry
     # in AsyncSlackSink.update re-raises and re-opens the unbounded paid loop.
-    text = "```agentos-reply\n" + json.dumps({"header": "H", "text": "x" * 60000}) + "\n```"
+    text = "```curie-reply\n" + json.dumps({"header": "H", "text": "x" * 60000}) + "\n```"
     rendered_text, blocks = render(text)
     assert blocks is not None
     assert len(rendered_text) <= 40000
@@ -425,8 +425,8 @@ def test_render_bounds_fallback_text_for_oversized_body() -> None:
 def test_approval_card_shape_and_click_contract() -> None:
     # The card carries what needs approval, who asked, and two buttons whose
     # action ids are the dispatcher's click contract with the record id as value.
-    from agentos_dispatcher.approval_actions import APPROVE_ACTION_ID, REJECT_ACTION_ID
-    from agentos_worker.blocks import approval_card
+    from curie_dispatcher.approval_actions import APPROVE_ACTION_ID, REJECT_ACTION_ID
+    from curie_worker.blocks import approval_card
 
     fallback, card = approval_card(
         approval_id="appr-1",
@@ -450,7 +450,7 @@ def test_approval_card_shape_and_click_contract() -> None:
 
 
 def test_approval_card_clamps_oversized_summary() -> None:
-    from agentos_worker.blocks import approval_card
+    from curie_worker.blocks import approval_card
 
     fallback, card = approval_card(
         approval_id="appr-2", summary="x" * 10000, requested_by="U1"
@@ -463,7 +463,7 @@ def test_approval_card_clamps_oversized_summary() -> None:
 def test_expired_approval_card_drops_buttons_and_marks_expired() -> None:
     # #419: the expired form keeps the summary but has NO actions block, and
     # states it can no longer be resolved -- so the card cannot be clicked.
-    from agentos_worker.blocks import expired_approval_card
+    from curie_worker.blocks import expired_approval_card
 
     fallback, card = expired_approval_card(summary="Give ACME a 20% discount")
     assert "Give ACME a 20% discount" in fallback
@@ -474,7 +474,7 @@ def test_expired_approval_card_drops_buttons_and_marks_expired() -> None:
 
 
 def test_expired_approval_card_clamps_oversized_summary() -> None:
-    from agentos_worker.blocks import expired_approval_card
+    from curie_worker.blocks import expired_approval_card
 
     fallback, card = expired_approval_card(summary="x" * 10000)
     assert len(card[1]["text"]["text"]) <= 2900

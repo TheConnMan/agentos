@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from agentos_doclint import main
+from curie_doclint import main
 
 from .conftest import RunLint, write
 
@@ -32,11 +32,11 @@ def test_link_text_repo_path_to_missing_file_fails(
         clean_repo,
         "docs/blind.md",
         "The gate lives in "
-        "[`apps/api/src/agentos_api/ghost.py`](../apps/api/src/agentos_api/ghost.py).\n",
+        "[`apps/api/src/curie_api/ghost.py`](../apps/api/src/curie_api/ghost.py).\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
-    assert "apps/api/src/agentos_api/ghost.py" in out
+    assert "apps/api/src/curie_api/ghost.py" in out
     assert "does not exist" in out.lower()
 
 
@@ -158,8 +158,8 @@ def test_link_text_repo_path_to_real_file_passes(
         clean_repo,
         "docs/good.md",
         "The gate lives in "
-        "[`runner/src/agentos_runner/approval.py`]"
-        "(../runner/src/agentos_runner/approval.py).\n",
+        "[`runner/src/curie_runner/approval.py`]"
+        "(../runner/src/curie_runner/approval.py).\n",
     )
     code, out = run_lint(clean_repo)
     assert code == 0, out

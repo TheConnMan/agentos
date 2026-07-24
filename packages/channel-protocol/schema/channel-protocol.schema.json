@@ -283,8 +283,8 @@
       "type": "object"
     }
   },
-  "$id": "https://curie.tech/agentos/channel-protocol.schema.json",
+  "$id": "https://curie.tech/curie/channel-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "messageVersion": "1.0",
-  "title": "AgentOS Channel Protocol v1.0"
+  "title": "Curie Channel Protocol v1.0"
 }

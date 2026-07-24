@@ -2,7 +2,7 @@
 //! contract, and every producer references that declaration instead of
 //! retyping it.
 //!
-//! The CLI is a boot-env producer: `agentos skill up` and `agentos skill check`
+//! The CLI is a boot-env producer: `curie skill up` and `curie skill check`
 //! hand a runner container its env on the `docker run` command line. Today
 //! `cli/src/docker.rs` spells those names out as bare string literals, so a
 //! rename in the contract leaves the CLI silently emitting a key the runner
@@ -17,26 +17,26 @@
 
 use std::path::PathBuf;
 
-use agentos::docker::StartSpec;
-use agentos_aci_protocol::env_keys;
+use curie::docker::StartSpec;
+use curie_aci_protocol::env_keys;
 
 /// Env namespaces the frozen `BootEnv` contract governs. A string literal in
 /// this namespace inside `docker.rs` is a hand-typed copy of a declared key.
-const CONTRACT_PREFIXES: [&str; 3] = ["AGENTOS_", "OTEL_EXPORTER_OTLP_", "ANTHROPIC_"];
+const CONTRACT_PREFIXES: [&str; 3] = ["CURIE_", "OTEL_EXPORTER_OTLP_", "ANTHROPIC_"];
 
 /// The one contract-namespaced literal `docker.rs` may keep.
 ///
-/// `AGENTOS_CHECK_TIMEOUT_S` is NOT a boot-env key and deliberately is not one.
-/// It configures `agentos skill check`, a one-shot `python -m
-/// agentos_runner.check` container that runs `--network none` with no session,
+/// `CURIE_CHECK_TIMEOUT_S` is NOT a boot-env key and deliberately is not one.
+/// It configures `curie skill check`, a one-shot `python -m
+/// curie_runner.check` container that runs `--network none` with no session,
 /// no budget, and no sandbox identity (`CheckSpec`), and it is read by
-/// `runner/src/agentos_runner/check.py:418` alone. `BootEnv` is the
+/// `runner/src/curie_runner/check.py:418` alone. `BootEnv` is the
 /// multi-producer worker-to-runner SESSION boot contract; this var has exactly
 /// one producer (this file) and one consumer (check.py), and neither the chart
 /// nor the worker ever emits it. Forcing it into the frozen contract would add
 /// a non-session var to a wire-locked model and make `from_env` parse it on
 /// every sandbox boot. It is allowlisted rather than declared.
-const ALLOWED_LITERALS: [&str; 1] = ["AGENTOS_CHECK_TIMEOUT_S"];
+const ALLOWED_LITERALS: [&str; 1] = ["CURIE_CHECK_TIMEOUT_S"];
 
 fn docker_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/docker.rs");
@@ -48,7 +48,7 @@ fn docker_rs() -> String {
 ///
 /// A small hand lexer rather than a regex: the point is to see string literals
 /// specifically, since after the fix the same names appear as IDENTIFIERS
-/// (`env_keys::AGENTOS_MODEL`), which must not be flagged.
+/// (`env_keys::CURIE_MODEL`), which must not be flagged.
 fn string_literals(source: &str) -> Vec<String> {
     let bytes: Vec<char> = source.chars().collect();
     let mut literals = Vec::new();
@@ -133,7 +133,7 @@ fn docker_rs_carries_no_bare_boot_env_literal() {
         offenders.is_empty(),
         "cli/src/docker.rs retypes boot-env keys as bare string literals: {offenders:?}\n\
          The boot env is declared once, in aci_protocol.session.BootEnv (issue #488). \
-         Import the generated constants (`use agentos_aci_protocol::env_keys::*;`) and \
+         Import the generated constants (`use curie_aci_protocol::env_keys::*;`) and \
          build these args from them, so a contract rename breaks the build here instead \
          of silently emitting a key the runner never reads."
     );
@@ -141,15 +141,15 @@ fn docker_rs_carries_no_bare_boot_env_literal() {
 
 fn spec() -> StartSpec {
     StartSpec {
-        image: "agentos-runner".into(),
-        container_name: "agentos-runner-local".into(),
+        image: "curie-runner".into(),
+        container_name: "curie-runner-local".into(),
         host_port: 7245,
         plugin_dir: PathBuf::from("/tmp/deal-desk"),
         session_id: "local-1".into(),
         sandbox_id: "local".into(),
         budget_json: r#"{"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}"#.into(),
         fake_model: true,
-        network: Some("agentos_default".into()),
+        network: Some("curie_default".into()),
         otel_endpoint: Some("http://otel-collector:4318".into()),
         model_base_url: Some("http://x-ollama:11434".into()),
         model: Some("claude-opus-4-8".into()),
@@ -172,19 +172,19 @@ fn start_spec_run_args_are_the_frozen_argv() {
         "run",
         "-d",
         "--name",
-        "agentos-runner-local",
+        "curie-runner-local",
         "-p",
         "7245:8080",
         "-v",
         "/tmp/deal-desk:/plugin:ro",
         "-e",
-        "AGENTOS_PLUGIN_DIR=/plugin",
+        "CURIE_PLUGIN_DIR=/plugin",
         "-e",
-        "AGENTOS_SESSION_ID=local-1",
+        "CURIE_SESSION_ID=local-1",
         "-e",
-        "AGENTOS_SANDBOX_ID=local",
+        "CURIE_SANDBOX_ID=local",
         "-e",
-        r#"AGENTOS_BUDGET={"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}"#,
+        r#"CURIE_BUDGET={"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}"#,
         "--read-only",
         "--tmpfs",
         "/tmp:rw,mode=1777",
@@ -195,20 +195,20 @@ fn start_spec_run_args_are_the_frozen_argv() {
         "--security-opt",
         "no-new-privileges",
         "--label",
-        "agentos.dev/managed-by=agentos-cli",
+        "curie.dev/managed-by=curie-cli",
         "--label",
-        "agentos.dev/component=runner",
+        "curie.dev/component=runner",
         "-e",
-        "AGENTOS_FAKE_MODEL=1",
+        "CURIE_FAKE_MODEL=1",
         "-e",
-        "AGENTOS_MODEL=claude-opus-4-8",
+        "CURIE_MODEL=claude-opus-4-8",
         "-e",
         "ANTHROPIC_BASE_URL=http://x-ollama:11434",
         "--network",
-        "agentos_default",
+        "curie_default",
         "-e",
         "OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318",
-        "agentos-runner",
+        "curie-runner",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -228,12 +228,12 @@ fn start_spec_run_args_are_the_frozen_argv() {
 #[test]
 fn every_emitted_env_name_is_a_declared_boot_env_key() {
     let declared = [
-        env_keys::AGENTOS_PLUGIN_DIR,
-        env_keys::AGENTOS_SESSION_ID,
-        env_keys::AGENTOS_SANDBOX_ID,
-        env_keys::AGENTOS_BUDGET,
-        env_keys::AGENTOS_FAKE_MODEL,
-        env_keys::AGENTOS_MODEL,
+        env_keys::CURIE_PLUGIN_DIR,
+        env_keys::CURIE_SESSION_ID,
+        env_keys::CURIE_SANDBOX_ID,
+        env_keys::CURIE_BUDGET,
+        env_keys::CURIE_FAKE_MODEL,
+        env_keys::CURIE_MODEL,
         env_keys::ANTHROPIC_BASE_URL,
         env_keys::OTEL_EXPORTER_OTLP_ENDPOINT,
     ];

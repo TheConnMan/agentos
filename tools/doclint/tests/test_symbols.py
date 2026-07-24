@@ -11,7 +11,7 @@ import pytest
 
 from .conftest import RunLint, write
 
-APPROVAL = "runner/src/agentos_runner/approval.py"
+APPROVAL = "runner/src/curie_runner/approval.py"
 
 
 # --- Test 2: unresolvable symbol fails -------------------------------------
@@ -55,13 +55,13 @@ def test_syntax_error_in_cited_file_reports_cleanly(
 ) -> None:
     write(
         clean_repo,
-        "runner/src/agentos_runner/broken.py",
+        "runner/src/curie_runner/broken.py",
         "def oops(:\n    pass\n",  # deliberate syntax error
     )
     write(
         clean_repo,
         "docs/broken_cite.md",
-        "See `runner/src/agentos_runner/broken.py::oops`.\n",
+        "See `runner/src/curie_runner/broken.py::oops`.\n",
     )
     # Must not raise an unhandled SyntaxError; must fail naming the file.
     code, out = run_lint(clean_repo)

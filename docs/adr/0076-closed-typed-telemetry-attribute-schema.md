@@ -4,7 +4,7 @@ Date: 2026-07-23
 
 Status: Accepted
 
-Implements Stone 0 of [#512](https://github.com/curie-eng/agentos/issues/512)
+Implements Stone 0 of [#512](https://github.com/curie-eng/curie/issues/512)
 ("Epic: closed-typed telemetry schema and close the approval-gate
 observability gap"). Extends [ADR-0004](0004-langfuse-observability-and-eval-backbone.md)
 (Langfuse as the single observability backbone) and mirrors the versioning
@@ -18,12 +18,12 @@ single-backend decision.
 
 ## Context
 
-`runner/src/agentos_runner/otel.py` emits three span kinds (`agent.run`,
+`runner/src/curie_runner/otel.py` emits three span kinds (`agent.run`,
 `llm.generation`, `execute_tool`) with a fixed but ungated set of attributes:
 `langfuse.trace.name`, `langfuse.session.id`, `langfuse.user.id`,
 `gen_ai.request.model`, `model`, `gen_ai.usage.{input,output,cache_read_input,
 cache_creation_input}_tokens`, `gen_ai.tool.name`, `gen_ai.operation.name`, plus
-resource attributes `service.name`, `agentos.session_id`, `agentos.sandbox_id`.
+resource attributes `service.name`, `curie.session_id`, `curie.sandbox_id`.
 Every span attribute passes through `_set()` (otel.py:38-45), which routes the
 value through `redact_span_attribute` (`redact.py`) — but `_set()` accepts any
 string key. Nothing stops a new call site from attaching an arbitrary key, and
@@ -85,15 +85,15 @@ a bad key un-constructible in the first place.
 
 **4. Approval-decision emission seam: the worker threads the decision through
 boot env; the runner stamps it on the resumed turn's span.** The resolved
-`ApprovalStatus` (`approved`/`rejected`/`expired`, `apps/api/src/agentos_api/
+`ApprovalStatus` (`approved`/`rejected`/`expired`, `apps/api/src/curie_api/
 models.py`) is known server-side, in the worker, before the resumed turn's
-sandbox boots — `apps/worker/src/agentos_worker/kernel.py`'s `process_event()`
+sandbox boots — `apps/worker/src/curie_worker/kernel.py`'s `process_event()`
 already reads it via `binding.py`'s `approval_grant_tool()` /
 `approval_resumed_kind()` to build that turn's boot env. Stone 3 adds one more
-boot-env value alongside the existing `AGENTOS_APPROVAL_GRANT_TOOL` /
+boot-env value alongside the existing `CURIE_APPROVAL_GRANT_TOOL` /
 `RESUMED_KIND_ENV` pattern, and `otel.py` stamps it as a new registry member
 (e.g. `gen_ai.approval.decision`) on that turn's `agent.run` span. This is
-chosen over having the runner-side `ApprovalGate` (`runner/src/agentos_runner/
+chosen over having the runner-side `ApprovalGate` (`runner/src/curie_runner/
 approval.py`) emit it directly, because the worker is the party that actually
 observes the terminal decision (including `expired`, from the SLA sweeper
 path) — the runner only ever sees a grant or a block, not the three-way

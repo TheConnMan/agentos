@@ -10,24 +10,24 @@ Status: Accepted
 sniff), replacing it with durable runner-authored provenance. The one-shot grant
 lifecycle established below is otherwise unchanged.
 
-Implements [#430](https://github.com/curie-eng/agentos/issues/430).
+Implements [#430](https://github.com/curie-eng/curie/issues/430).
 
 ## Context
 
 The permission gate (#245, ADR-0010) marks tools approval-required and denies
 them proactively through the runner's `can_use_tool` callback
-(`runner/src/agentos_runner/approval.py`): a gated call is blocked, the turn ends
+(`runner/src/curie_runner/approval.py`): a gated call is blocked, the turn ends
 `awaiting-approval`, the worker persists a durable `Approval` and suspends the
 session (ADR-0003). When a human resolves the approval, the API enqueues a resume
-turn (`apps/api/src/agentos_api/resumequeue.py`) that walks the ordinary
+turn (`apps/api/src/curie_api/resumequeue.py`) that walks the ordinary
 consumer -> kernel -> claim path, and the platform-authored resume text tells the
 model to "proceed with the approved action."
 
 But the resume turn re-calls the gated tool and `can_use_tool` **denies it again**.
 The approval-required tool set is rebuilt from durable config on every claim,
 including the resume: `binding.boot_env()` re-injects
-`AGENTOS_APPROVAL_REQUIRED_TOOLS` identically for fresh and resume claims
-(`apps/worker/src/agentos_worker/binding.py`, `kernel.py`), and the runner rebuilds
+`CURIE_APPROVAL_REQUIRED_TOOLS` identically for fresh and resume claims
+(`apps/worker/src/curie_worker/binding.py`, `kernel.py`), and the runner rebuilds
 `ApprovalGate.required` from that env plus the bundle manifest's `approvalPolicy`
 gates. A genuinely-approved action therefore cannot complete.
 
@@ -48,7 +48,7 @@ When the kernel builds the boot env for a claim whose `event_id` is the determin
 resume id `approval-<id>-resolved` (`resumequeue.resume_event_id`) AND that approval
 is `status='approved'` AND its `summary` is a permission-gate block (the
 `summarize_tool_call` prefix `"Tool call awaiting approval: <tool> ..."`), the worker
-sets `AGENTOS_APPROVAL_GRANT_TOOL=<approved-tool-name>` into the boot env. The runner's
+sets `CURIE_APPROVAL_GRANT_TOOL=<approved-tool-name>` into the boot env. The runner's
 `ApprovalGate` allows exactly one call to that tool on the boot turn (a new
 `consume_grant(tool_name)`), then re-denies; `reset()` (start of every turn) expires
 any unspent grant on the second turn.
@@ -93,7 +93,7 @@ Load-bearing properties:
 - **A structured approved-tool field on the ACI `Final`.** Rejected as unnecessary.
   The approved tool name is already recoverable server-side from the persisted
   `Approval.summary`, and `binding` -> runner env is explicitly non-frozen (precedent:
-  `AGENTOS_APPROVAL_REQUIRED_TOOLS`). Name-scoping needs no `packages/aci-protocol`
+  `CURIE_APPROVAL_REQUIRED_TOOLS`). Name-scoping needs no `packages/aci-protocol`
   (frozen-contract) change.
 - **A name-agnostic grant** (allow the first gated call regardless of tool). Simpler but
   strictly less safe: it would let the resume turn run a different gated tool than the

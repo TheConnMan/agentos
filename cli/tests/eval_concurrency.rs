@@ -8,7 +8,7 @@
 //! single-node-saturation hint.
 //!
 //! These tests pin two pure functions the implementer will add to
-//! `cli/src/message.rs` (imported here from the `agentos` lib), plus a new
+//! `cli/src/message.rs` (imported here from the `curie` lib), plus a new
 //! `pub concurrency: usize` field on `EvalOpts`:
 //!
 //!   pub fn resolve_eval_concurrency(requested: usize) -> anyhow::Result<usize>
@@ -24,7 +24,7 @@
 //! it imports from the lib rather than adding inline lib tests. The lib
 //! itself still compiles.
 
-use agentos::message::{resolve_eval_concurrency, schedulable_node_count};
+use curie::message::{resolve_eval_concurrency, schedulable_node_count};
 
 /// The refusal seam, negative case: any requested concurrency above the
 /// sequential default of 1 must be refused (implement-or-explicitly-decline),

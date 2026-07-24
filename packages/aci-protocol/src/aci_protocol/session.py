@@ -7,15 +7,15 @@ SessionConfig is the typed view of those variables, with helpers to render them
 to and parse them from a process environment.
 
 Env mapping:
-    AGENTOS_PLUGIN_DIR     -> plugin_dir
-    AGENTOS_MEMORY_REF     -> memory_ref        (optional)
-    AGENTOS_CREDENTIALS    -> credentials_ref   (optional)
-    AGENTOS_SESSION_ID     -> session_id
-    AGENTOS_SANDBOX_ID     -> sandbox_id
-    AGENTOS_BUDGET         -> budget            (JSON object)
+    CURIE_PLUGIN_DIR     -> plugin_dir
+    CURIE_MEMORY_REF     -> memory_ref        (optional)
+    CURIE_CREDENTIALS    -> credentials_ref   (optional)
+    CURIE_SESSION_ID     -> session_id
+    CURIE_SANDBOX_ID     -> sandbox_id
+    CURIE_BUDGET         -> budget            (JSON object)
     OTEL_EXPORTER_OTLP_*   -> otel              (endpoint / headers / protocol)
 
-``BootEnv`` (#488, ADR-0049) is the AgentOS-platform superset: SessionConfig
+``BootEnv`` (#488, ADR-0049) is the Curie-platform superset: SessionConfig
 COMPOSED as a field plus the platform-operational boot vars (runner token,
 bundle ref, approval plumbing, history port, model routing, the operator knobs).
 It is deliberately not an extension of SessionConfig -- see ADR-0049 and the
@@ -31,7 +31,7 @@ from .events import _AciModel
 
 
 class Budget(_AciModel):
-    """Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.
+    """Per-agent budget spec, carried as JSON in CURIE_BUDGET.
 
     ``task_budget_hint`` is the optional hint passed through to the model so it
     self paces (section 6b); it is not a hard ceiling.
@@ -58,7 +58,7 @@ class OtelConfig(_AciModel):
 class SessionConfig(_AciModel):
     """The typed session setup contract.
 
-    ``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);
+    ``credentials_ref`` is a reference to injected secrets (CURIE_CREDENTIALS);
     section 0 describes these as per-tool secrets via K8s Secret refs, so the
     contract carries the reference, not the secret material itself.
     """
@@ -78,15 +78,15 @@ class SessionConfig(_AciModel):
         """
 
         env: dict[str, str] = {
-            "AGENTOS_PLUGIN_DIR": self.plugin_dir,
-            "AGENTOS_SESSION_ID": self.session_id,
-            "AGENTOS_SANDBOX_ID": self.sandbox_id,
-            "AGENTOS_BUDGET": self.budget.model_dump_json(),
+            "CURIE_PLUGIN_DIR": self.plugin_dir,
+            "CURIE_SESSION_ID": self.session_id,
+            "CURIE_SANDBOX_ID": self.sandbox_id,
+            "CURIE_BUDGET": self.budget.model_dump_json(),
         }
         if self.memory_ref is not None:
-            env["AGENTOS_MEMORY_REF"] = self.memory_ref
+            env["CURIE_MEMORY_REF"] = self.memory_ref
         if self.credentials_ref is not None:
-            env["AGENTOS_CREDENTIALS"] = self.credentials_ref
+            env["CURIE_CREDENTIALS"] = self.credentials_ref
         if self.otel.endpoint is not None:
             env["OTEL_EXPORTER_OTLP_ENDPOINT"] = self.otel.endpoint
         if self.otel.headers is not None:
@@ -99,7 +99,7 @@ class SessionConfig(_AciModel):
     def from_env(cls, env: Mapping[str, str]) -> "SessionConfig":
         """Parse a SessionConfig from a process environment mapping.
 
-        Missing required variables and a malformed AGENTOS_BUDGET raise the
+        Missing required variables and a malformed CURIE_BUDGET raise the
         usual pydantic ValidationError via the model constructor.
         """
 
@@ -108,14 +108,14 @@ class SessionConfig(_AciModel):
             headers=env.get("OTEL_EXPORTER_OTLP_HEADERS"),
             protocol=env.get("OTEL_EXPORTER_OTLP_PROTOCOL"),
         )
-        budget = Budget.model_validate_json(env["AGENTOS_BUDGET"])
+        budget = Budget.model_validate_json(env["CURIE_BUDGET"])
         return cls(
-            plugin_dir=env["AGENTOS_PLUGIN_DIR"],
-            session_id=env["AGENTOS_SESSION_ID"],
-            sandbox_id=env["AGENTOS_SANDBOX_ID"],
+            plugin_dir=env["CURIE_PLUGIN_DIR"],
+            session_id=env["CURIE_SESSION_ID"],
+            sandbox_id=env["CURIE_SANDBOX_ID"],
             budget=budget,
-            memory_ref=env.get("AGENTOS_MEMORY_REF"),
-            credentials_ref=env.get("AGENTOS_CREDENTIALS"),
+            memory_ref=env.get("CURIE_MEMORY_REF"),
+            credentials_ref=env.get("CURIE_CREDENTIALS"),
             otel=otel,
         )
 
@@ -127,7 +127,7 @@ Producer = Literal["worker", "kernel", "substrate", "operator"]
 
 # Producer tags for the nine keys ``SessionConfig`` owns. They cannot be carried
 # on the fields themselves: SessionConfig is the frozen ACI section-0 contract
-# and stays byte-identical, so it grows no AgentOS-platform annotations. This
+# and stays byte-identical, so it grows no Curie-platform annotations. This
 # companion map is scoped to exactly those nine keys and is pinned by test
 # against what ``SessionConfig.to_env`` actually writes, so it cannot drift into
 # tagging a key the frozen model does not have.
@@ -138,15 +138,15 @@ _SESSION_ENV: dict[str, tuple[str, tuple[Producer, ...]]] = {
     # Worker-authoritative with a substrate fallback: the chart bakes a warm-pool
     # default into the pod template and the worker's per-claim value wins under
     # ``envVarsInjectionPolicy: Overrides``.
-    "plugin_dir": ("AGENTOS_PLUGIN_DIR", ("worker", "substrate")),
-    "session_id": ("AGENTOS_SESSION_ID", ("worker", "substrate")),
+    "plugin_dir": ("CURIE_PLUGIN_DIR", ("worker", "substrate")),
+    "session_id": ("CURIE_SESSION_ID", ("worker", "substrate")),
     # Substrate-authoritative: the chart derives it from the pod name via
     # ``fieldRef: metadata.name``. The worker must never write it.
-    "sandbox_id": ("AGENTOS_SANDBOX_ID", ("substrate",)),
-    "budget": ("AGENTOS_BUDGET", ("worker", "substrate")),
+    "sandbox_id": ("CURIE_SANDBOX_ID", ("substrate",)),
+    "budget": ("CURIE_BUDGET", ("worker", "substrate")),
     # Worker-only: absent from the runner container in the chart.
-    "memory_ref": ("AGENTOS_MEMORY_REF", ("worker",)),
-    "credentials_ref": ("AGENTOS_CREDENTIALS", ("worker", "substrate")),
+    "memory_ref": ("CURIE_MEMORY_REF", ("worker",)),
+    "credentials_ref": ("CURIE_CREDENTIALS", ("worker", "substrate")),
     "otel_endpoint": ("OTEL_EXPORTER_OTLP_ENDPOINT", ("substrate",)),
     # Operator-owned: no code producer emits it. The chart writes only the
     # endpoint and the protocol, and compose only the endpoint, so the reachable
@@ -185,11 +185,11 @@ def _str_or_none(raw: str | None) -> str | None:
 def _fake_model_or_none(raw: str | None) -> bool | None:
     """Absent means unset; otherwise mirror the runner's strict truthy set.
 
-    The only consumer of ``AGENTOS_FAKE_MODEL`` on the platform is the runner
+    The only consumer of ``CURIE_FAKE_MODEL`` on the platform is the runner
     (__main__.py:262), which accepts exactly ``1``/``true``/``yes``
     case-insensitively and treats everything else as off. This parse mirrors that
     set so ``BootEnv.from_env(env).fake_model`` cannot disagree with the running
-    sandbox: ``AGENTOS_FAKE_MODEL=false`` is off in both. A declared-but-empty
+    sandbox: ``CURIE_FAKE_MODEL=false`` is off in both. A declared-but-empty
     var stays ``None`` (unset), matching the other optional fields, so the
     ``to_env`` round trip (``"1"``/``"0"``) survives unchanged.
     """
@@ -226,8 +226,8 @@ def _list_or_none(raw: str | None) -> list[str] | None:
 def _required_int(raw: str | None) -> int | None:
     """Parse an int, RAISING on garbage. None when the var is absent.
 
-    The deliberate asymmetry against ``_tolerant_int``: ``AGENTOS_MAX_TURNS``
-    (config.py:98) and ``AGENTOS_RUNNER_PORT`` (config.py:104) use a bare
+    The deliberate asymmetry against ``_tolerant_int``: ``CURIE_MAX_TURNS``
+    (config.py:98) and ``CURIE_RUNNER_PORT`` (config.py:104) use a bare
     ``int()`` today and DO raise. Each var keeps the behavior it has -- unifying
     the two would be a behavior change wearing a consistency costume.
     """
@@ -259,7 +259,7 @@ class BootEnv(_AciModel):
 
     ``session`` COMPOSES the frozen ``SessionConfig`` rather than extending it.
     That nesting is the ACI-vs-platform boundary: a runner token, approval
-    plumbing, and a history port are AgentOS platform operations, not the
+    plumbing, and a history port are Curie platform operations, not the
     interface a third-party ACI-conformant runner implements. Inheriting would
     tell every future implementer otherwise (ADR-0049).
 
@@ -270,8 +270,8 @@ class BootEnv(_AciModel):
     deliberately no whole-model ``to_env`` on the wire path. ``render_worker`` is
     the one real render surface; ``to_env`` exists for round-trip checks only.
 
-    **Authority, not arity, is the invariant.** ``AGENTOS_SANDBOX_ID`` and
-    ``AGENTOS_RUNNER_PORT`` are substrate-authoritative: identity derives from
+    **Authority, not arity, is the invariant.** ``CURIE_SANDBOX_ID`` and
+    ``CURIE_RUNNER_PORT`` are substrate-authoritative: identity derives from
     the pod name (``fieldRef: metadata.name``), and because the chart sets
     ``envVarsInjectionPolicy: Overrides`` a worker write would REPLACE it and
     break the "pod name IS the sandbox id" invariant that trace stamping relies
@@ -283,62 +283,62 @@ class BootEnv(_AciModel):
 
     session: SessionConfig
 
-    # The MinIO object key sandbox provisioning fetches into AGENTOS_PLUGIN_DIR.
+    # The MinIO object key sandbox provisioning fetches into CURIE_PLUGIN_DIR.
     bundle_ref: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_BUNDLE_REF", "worker")
+        default=None, json_schema_extra=_env("CURIE_BUNDLE_REF", "worker")
     )
     # Per-claim bearer token the runner enforces on its ACI POST routes (#63).
     # Enforced only when configured, so local/fake sandboxes are unaffected.
     runner_token: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_RUNNER_TOKEN", "worker")
+        default=None, json_schema_extra=_env("CURIE_RUNNER_TOKEN", "worker")
     )
     # The agent's pinned model (#254), overriding the worker default. The chart
     # also bakes a template default (inference.model, or runner.model) so a warm
     # pod boots resolvable; the per-claim value wins under Overrides.
     model: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_MODEL", "worker", "substrate")
+        default=None, json_schema_extra=_env("CURIE_MODEL", "worker", "substrate")
     )
     fake_model: bool | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_FAKE_MODEL", "worker", "substrate")
+        default=None, json_schema_extra=_env("CURIE_FAKE_MODEL", "worker", "substrate")
     )
     # This thread's transcript key on the state store (#20, ADR-0029).
     # Deliberately NOT derived from memory_ref: memory is per-agent durable
     # lessons, history is this thread's conversation (ADR-0025 keeps them apart).
     history_ref: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_HISTORY_REF", "worker")
+        default=None, json_schema_extra=_env("CURIE_HISTORY_REF", "worker")
     )
     # Scoped ``state`` tokens (ADR-0033, #410), not the raw platform key.
     history_token: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_HISTORY_TOKEN", "worker")
+        default=None, json_schema_extra=_env("CURIE_HISTORY_TOKEN", "worker")
     )
     memory_token: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_MEMORY_TOKEN", "worker")
+        default=None, json_schema_extra=_env("CURIE_MEMORY_TOKEN", "worker")
     )
     # The durable state store exposed to bundle code (#249, epic #23). state_url
     # is the agent's state namespace base on the API state router
-    # (``.../agents/<id>/state``); the auto-mounted ``agentos-state`` MCP server
+    # (``.../agents/<id>/state``); the auto-mounted ``curie-state`` MCP server
     # and any bundle script that talks to the store directly compose
     # ``/<namespace>/<key>`` onto it. state_token is the scoped ``state`` token
     # (ADR-0033) the caller presents as X-API-Key -- the same per-turn scoped
     # derivative used for memory/history, never the raw platform key.
     state_url: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_STATE_URL", "worker")
+        default=None, json_schema_extra=_env("CURIE_STATE_URL", "worker")
     )
     state_token: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_STATE_TOKEN", "worker")
+        default=None, json_schema_extra=_env("CURIE_STATE_TOKEN", "worker")
     )
     # Per-agent permission gates (#245, ADR-0010).
     approval_required_tools: list[str] | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_REQUIRED_TOOLS", "worker")
+        default=None, json_schema_extra=_env("CURIE_APPROVAL_REQUIRED_TOOLS", "worker")
     )
     # One-shot post-approval allowance (#430, ADR-0035) and the authority-free
     # turn-end reconciliation marker (#544). Both are the kernel resume overlay's:
     # the binding never writes them, only the resume path does.
     approval_grant_tool: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_GRANT_TOOL", "kernel")
+        default=None, json_schema_extra=_env("CURIE_APPROVAL_GRANT_TOOL", "kernel")
     )
     approval_resumed_kind: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_RESUMED_KIND", "kernel")
+        default=None, json_schema_extra=_env("CURIE_APPROVAL_RESUMED_KIND", "kernel")
     )
     # ADR-0076 Stone 3 (#889, epic #512): the resolved terminal decision
     # ('approved'/'rejected'/'expired') of the approval this resume boot is
@@ -347,7 +347,7 @@ class BootEnv(_AciModel):
     # an authority-free fact, like approval_resumed_kind -- it confers no
     # capability, it only reports an outcome the worker already resolved.
     approval_decision: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_APPROVAL_DECISION", "kernel")
+        default=None, json_schema_extra=_env("CURIE_APPROVAL_DECISION", "kernel")
     )
     # Names which boot keys are per-agent connector secrets (ADR-0009, #429), so
     # the k8s substrate strips those plaintext values off the claim CR. Declared
@@ -355,11 +355,11 @@ class BootEnv(_AciModel):
     # ``inject_connector_secrets`` stays its SOLE writer: its value is computed
     # from the undeclared operator-named keys, which the model cannot see.
     connector_secret_keys: list[str] | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_CONNECTOR_SECRET_KEYS", "worker")
+        default=None, json_schema_extra=_env("CURIE_CONNECTOR_SECRET_KEYS", "worker")
     )
     # Substrate-authoritative; see the class docstring's anti-clobber note.
     port: int | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_RUNNER_PORT", "substrate")
+        default=None, json_schema_extra=_env("CURIE_RUNNER_PORT", "substrate")
     )
     # Worker-authoritative with a chart fallback default.
     base_url: str | None = Field(
@@ -369,26 +369,26 @@ class BootEnv(_AciModel):
     # inferred, so an OpenAI-shaped endpoint is rejected up front in the runner's
     # sdk_auth instead of being silently mis-dialed.
     api_backend: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_MODEL_API_BACKEND", "worker")
+        default=None, json_schema_extra=_env("CURIE_MODEL_API_BACKEND", "worker")
     )
     # Which env var(s) carry the model credential (#514): a bare name or a JSON
     # array of them, walked in order. Unset, the runner falls back to
-    # AGENTOS_CREDENTIALS, which is today's behavior.
+    # CURIE_CREDENTIALS, which is today's behavior.
     model_env_key: str | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_MODEL_ENV_KEY", "worker")
+        default=None, json_schema_extra=_env("CURIE_MODEL_ENV_KEY", "worker")
     )
     # Operator-owned bounds, reachable through the chart's ``runner.extraEnv``
     # and docker ``-e``. No code producer emits them, and they hold no default
     # here: a non-None default would render keys nobody sends and move the wire.
     # The defaults live where the runner consumes the parsed value.
     max_turns: int | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_MAX_TURNS", "operator")
+        default=None, json_schema_extra=_env("CURIE_MAX_TURNS", "operator")
     )
     history_max_turns: int | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_HISTORY_MAX_TURNS", "operator")
+        default=None, json_schema_extra=_env("CURIE_HISTORY_MAX_TURNS", "operator")
     )
     history_max_bytes: int | None = Field(
-        default=None, json_schema_extra=_env("AGENTOS_HISTORY_MAX_BYTES", "operator")
+        default=None, json_schema_extra=_env("CURIE_HISTORY_MAX_BYTES", "operator")
     )
 
     @classmethod
@@ -401,7 +401,7 @@ class BootEnv(_AciModel):
         honest.
 
         Flattened means the nested ``SessionConfig``/OTel keys are included: the
-        chart bakes ``AGENTOS_RUNNER_PORT`` and the OTel keys into the runner
+        chart bakes ``CURIE_RUNNER_PORT`` and the OTel keys into the runner
         container itself, so a non-flattened list would fail the render-assert on
         a default render.
         """
@@ -450,9 +450,9 @@ class BootEnv(_AciModel):
         """The env NAME one declared boot field travels as.
 
         The per-key accessor a producer uses instead of retyping a literal, e.g.
-        ``BootEnv.env_key("model") == "AGENTOS_MODEL"``. It reaches the composed
+        ``BootEnv.env_key("model") == "CURIE_MODEL"``. It reaches the composed
         ``SessionConfig``/OTel keys by their own field names
-        (``BootEnv.env_key("budget") == "AGENTOS_BUDGET"``) without touching that
+        (``BootEnv.env_key("budget") == "CURIE_BUDGET"``) without touching that
         frozen model, so a producer that cannot use ``render_worker`` -- the eval
         consumer sets neither memory_ref nor history_ref and must not emit them --
         still derives every name from this one declaration.
@@ -496,12 +496,12 @@ class BootEnv(_AciModel):
 
         The one real render surface. Its emitted keys are a subset of the
         ``worker``-producer keys, with the difference exactly
-        ``{AGENTOS_CONNECTOR_SECRET_KEYS}`` -- the worker's
+        ``{CURIE_CONNECTOR_SECRET_KEYS}`` -- the worker's
         ``inject_connector_secrets`` sets that marker on the merged dict after
         this returns, keeping the #457 order-independent filter and the #429
         marker semantics byte-identical.
 
-        It never emits ``AGENTOS_SANDBOX_ID`` or ``AGENTOS_RUNNER_PORT``: both
+        It never emits ``CURIE_SANDBOX_ID`` or ``CURIE_RUNNER_PORT``: both
         are substrate-authoritative and ``envVarsInjectionPolicy: Overrides``
         would make a worker write clobber the substrate's real value.
 
@@ -613,38 +613,38 @@ class BootEnv(_AciModel):
         The runner is the single consumer of every producer's union, so this is
         the one full parse. It inherits ``SessionConfig.from_env``'s fail-loud
         requiredness, including the ``KeyError`` on a missing
-        ``AGENTOS_SANDBOX_ID`` -- every real boot surface supplies it, so a miss
+        ``CURIE_SANDBOX_ID`` -- every real boot surface supplies it, so a miss
         means a genuinely broken substrate and the runner should refuse to boot.
 
         Parse tolerance is deliberately NOT unified across the knobs: each var
         keeps the behavior it has today (see ``_tolerant_int`` versus the bare
-        ``int`` on ``AGENTOS_MAX_TURNS``, which config.py:98 raises on).
+        ``int`` on ``CURIE_MAX_TURNS``, which config.py:98 raises on).
         """
 
         return cls(
             session=SessionConfig.from_env(env),
-            bundle_ref=_str_or_none(env.get("AGENTOS_BUNDLE_REF")),
-            runner_token=_str_or_none(env.get("AGENTOS_RUNNER_TOKEN")),
-            model=_str_or_none(env.get("AGENTOS_MODEL")),
-            fake_model=_fake_model_or_none(env.get("AGENTOS_FAKE_MODEL")),
-            history_ref=_str_or_none(env.get("AGENTOS_HISTORY_REF")),
-            history_token=_str_or_none(env.get("AGENTOS_HISTORY_TOKEN")),
-            memory_token=_str_or_none(env.get("AGENTOS_MEMORY_TOKEN")),
-            state_url=_str_or_none(env.get("AGENTOS_STATE_URL")),
-            state_token=_str_or_none(env.get("AGENTOS_STATE_TOKEN")),
-            approval_required_tools=_list_or_none(env.get("AGENTOS_APPROVAL_REQUIRED_TOOLS")),
-            approval_grant_tool=_stripped_or_none(env.get("AGENTOS_APPROVAL_GRANT_TOOL")),
-            approval_resumed_kind=_stripped_or_none(env.get("AGENTOS_APPROVAL_RESUMED_KIND")),
-            approval_decision=_stripped_or_none(env.get("AGENTOS_APPROVAL_DECISION")),
-            connector_secret_keys=_list_or_none(env.get("AGENTOS_CONNECTOR_SECRET_KEYS")),
-            port=_required_int(env.get("AGENTOS_RUNNER_PORT")),
+            bundle_ref=_str_or_none(env.get("CURIE_BUNDLE_REF")),
+            runner_token=_str_or_none(env.get("CURIE_RUNNER_TOKEN")),
+            model=_str_or_none(env.get("CURIE_MODEL")),
+            fake_model=_fake_model_or_none(env.get("CURIE_FAKE_MODEL")),
+            history_ref=_str_or_none(env.get("CURIE_HISTORY_REF")),
+            history_token=_str_or_none(env.get("CURIE_HISTORY_TOKEN")),
+            memory_token=_str_or_none(env.get("CURIE_MEMORY_TOKEN")),
+            state_url=_str_or_none(env.get("CURIE_STATE_URL")),
+            state_token=_str_or_none(env.get("CURIE_STATE_TOKEN")),
+            approval_required_tools=_list_or_none(env.get("CURIE_APPROVAL_REQUIRED_TOOLS")),
+            approval_grant_tool=_stripped_or_none(env.get("CURIE_APPROVAL_GRANT_TOOL")),
+            approval_resumed_kind=_stripped_or_none(env.get("CURIE_APPROVAL_RESUMED_KIND")),
+            approval_decision=_stripped_or_none(env.get("CURIE_APPROVAL_DECISION")),
+            connector_secret_keys=_list_or_none(env.get("CURIE_CONNECTOR_SECRET_KEYS")),
+            port=_required_int(env.get("CURIE_RUNNER_PORT")),
             base_url=_str_or_none(env.get("ANTHROPIC_BASE_URL")),
             # Empty is "not declared" for both, matching sdk_auth's own
             # `env.get(...) or <default>` reads: an empty backend falls back to
-            # `messages`, an empty key list to (AGENTOS_CREDENTIALS,).
-            api_backend=_str_or_none(env.get("AGENTOS_MODEL_API_BACKEND")),
-            model_env_key=_str_or_none(env.get("AGENTOS_MODEL_ENV_KEY")),
-            max_turns=_required_int(env.get("AGENTOS_MAX_TURNS")),
-            history_max_turns=_tolerant_int(env.get("AGENTOS_HISTORY_MAX_TURNS")),
-            history_max_bytes=_tolerant_int(env.get("AGENTOS_HISTORY_MAX_BYTES")),
+            # `messages`, an empty key list to (CURIE_CREDENTIALS,).
+            api_backend=_str_or_none(env.get("CURIE_MODEL_API_BACKEND")),
+            model_env_key=_str_or_none(env.get("CURIE_MODEL_ENV_KEY")),
+            max_turns=_required_int(env.get("CURIE_MAX_TURNS")),
+            history_max_turns=_tolerant_int(env.get("CURIE_HISTORY_MAX_TURNS")),
+            history_max_bytes=_tolerant_int(env.get("CURIE_HISTORY_MAX_BYTES")),
         )

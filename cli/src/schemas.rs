@@ -4,9 +4,9 @@
 //! The CLI's primary consumer is a coding agent (ADR-0021). Every result it
 //! emits under `--json` maps to a committed schema under `cli/schema/` with an
 //! explicit version identity (the `/vN` segment of the schema's `$id`). Those
-//! files are embedded into the binary by `build.rs`, so a released `agentos`
+//! files are embedded into the binary by `build.rs`, so a released `curie`
 //! ships its own schemas and can print them with no source checkout -- the
-//! documented discovery path (`agentos schema-index [NAME]`). `cli/schema/index.json`
+//! documented discovery path (`curie schema-index [NAME]`). `cli/schema/index.json`
 //! is the inventory that maps each result family to its schema and version, and
 //! the contract test `cli/tests/schema_inventory.rs` fails CI if a new result
 //! family lands without one. The compatibility policy (additive vs breaking;

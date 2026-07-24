@@ -13,7 +13,7 @@ opt-in. Every other property this ADR established (durable
 reconciliation, and the convergence of the two gate paths on one lifecycle) is
 unchanged.
 
-Implements [#544](https://github.com/curie-eng/agentos/issues/544).
+Implements [#544](https://github.com/curie-eng/curie/issues/544).
 Supersedes the provenance discriminator of
 [ADR-0035](0035-one-shot-post-approval-allowance.md) (the summary-prefix sniff);
 the one-shot grant lifecycle ADR-0035 established is otherwise unchanged.
@@ -28,7 +28,7 @@ never actually converged:
   carrying the reserved prefix `"Tool call awaiting approval: "` plus the route
   the manifest declares for that tool.
 - **Policy gate** (#244): the model itself calls the in-process MCP tool
-  `mcp__agentos__request_approval(summary, route?)`, whose `route` is optional.
+  `mcp__curie__request_approval(summary, route?)`, whose `route` is optional.
 
 With the same bundle and prompt, the model sometimes did one and sometimes the
 other. That model-dependence produced two failures (#544), both of which
@@ -133,8 +133,8 @@ action.
 
 The residual is narrower: a model that, after approval, simply never re-calls
 the tool. To make that observable, the worker injects an **authority-free**
-marker `AGENTOS_APPROVAL_RESUMED_KIND=policy` at resume boot (a fact about the
-past, granting nothing — contrast `AGENTOS_APPROVAL_GRANT_TOOL`, which confers
+marker `CURIE_APPROVAL_RESUMED_KIND=policy` at resume boot (a fact about the
+past, granting nothing — contrast `CURIE_APPROVAL_GRANT_TOOL`, which confers
 authority). At boot-turn end, if the marker is present, the agent has gates
 armed, no permission-gate block occurred, and no side-effecting tool ran, the
 runner emits a structured warning frame

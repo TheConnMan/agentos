@@ -123,7 +123,7 @@ def parse_queued_turn(raw: str | bytes) -> QueuedTurn:
 def parse_eval_job(raw: str | bytes) -> EvalJob:
     """Decode an eval-job payload tolerantly (the sanctioned consumer decode).
 
-    The ``agentos:evals`` counterpart to ``parse_queued_turn``, with the same
+    The ``curie:evals`` counterpart to ``parse_queued_turn``, with the same
     policy for the same reason: a newer API adding an optional field must not
     make an older worker reject the job. Carries no ``version`` field, so there
     is no version gate -- a pure tolerant field decode. Producers stay strict.

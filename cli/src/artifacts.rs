@@ -16,7 +16,7 @@ impl Channel {
     /// Read the build-stamped channel. Uses option_env! so it compiles even
     /// before build.rs exists; defaults to Dev when unset or unrecognized.
     pub fn current() -> Channel {
-        match option_env!("AGENTOS_BUILD_CHANNEL") {
+        match option_env!("CURIE_BUILD_CHANNEL") {
             Some("release") => Channel::Release,
             _ => Channel::Dev,
         }
@@ -47,15 +47,15 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// XDG_CACHE_HOME or $HOME/.cache, joined with "agentos". Err (never panic) when
+/// XDG_CACHE_HOME or $HOME/.cache, joined with "curie". Err (never panic) when
 /// neither env var is set, with a message naming the vars + the override flags.
 pub fn cache_root() -> Result<PathBuf> {
     if let Some(value) = env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(value).join("agentos"));
+        return Ok(PathBuf::from(value).join("curie"));
     }
 
     if let Some(value) = env::var_os("HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(value).join(".cache").join("agentos"));
+        return Ok(PathBuf::from(value).join(".cache").join("curie"));
     }
 
     Err(anyhow!(
@@ -77,14 +77,14 @@ pub fn resolve_compose(
     match channel {
         Channel::Release => Ok(Resolved::Fetch {
             url: format!(
-                "https://github.com/curie-eng/agentos/releases/download/v{version}/compose.release.yaml"
+                "https://github.com/curie-eng/curie/releases/download/v{version}/compose.release.yaml"
             ),
             cache_path: cache_root()?
                 .join(format!("v{version}"))
                 .join("compose.release.yaml"),
         }),
         Channel::Dev if local_exists => Ok(Resolved::Local(PathBuf::from("compose.dev.yaml"))),
-        // compose.dev.yaml is not self-contained (it builds agentos-worker from
+        // compose.dev.yaml is not self-contained (it builds curie-worker from
         // ./compose, which is absent from a fetched copy), so there is nothing
         // safe to fall back to. Error instead of fetching a file that cannot run.
         Channel::Dev => Err(anyhow!(
@@ -107,15 +107,15 @@ pub fn resolve_chart(
     match channel {
         Channel::Release => Ok(Resolved::Fetch {
             url: format!(
-                "https://github.com/curie-eng/agentos/releases/download/v{version}/agentos-{version}.tgz"
+                "https://github.com/curie-eng/curie/releases/download/v{version}/curie-{version}.tgz"
             ),
             cache_path: cache_root()?
                 .join(format!("v{version}"))
-                .join(format!("agentos-{version}.tgz")),
+                .join(format!("curie-{version}.tgz")),
         }),
-        Channel::Dev if local_exists => Ok(Resolved::Local(PathBuf::from("charts/agentos"))),
+        Channel::Dev if local_exists => Ok(Resolved::Local(PathBuf::from("charts/curie"))),
         Channel::Dev => Err(anyhow!(
-            "dev build with no charts/agentos in cwd; pass --chart <path-or-tgz> or use a released binary"
+            "dev build with no charts/curie in cwd; pass --chart <path-or-tgz> or use a released binary"
         )),
     }
 }
@@ -191,7 +191,7 @@ async fn download_to_cache(url: &str, cache_path: &Path) -> Result<()> {
 
     let partial_id = NEXT_PARTIAL_ID.fetch_add(1, Ordering::Relaxed);
     let partial_path = parent.join(format!(
-        ".agentos.{}.{}.partial",
+        ".curie.{}.{}.partial",
         std::process::id(),
         partial_id
     ));
@@ -229,9 +229,9 @@ mod tests {
     fn release_compose_fetches_release_remote_and_ignores_local_candidate() {
         let expected = Resolved::Fetch {
             url:
-                "https://github.com/curie-eng/agentos/releases/download/v0.1.0/compose.release.yaml"
+                "https://github.com/curie-eng/curie/releases/download/v0.1.0/compose.release.yaml"
                     .to_string(),
-            cache_path: PathBuf::from("/tmp/xdgcache/agentos/v0.1.0/compose.release.yaml"),
+            cache_path: PathBuf::from("/tmp/xdgcache/curie/v0.1.0/compose.release.yaml"),
         };
 
         assert_eq!(
@@ -239,7 +239,7 @@ mod tests {
                 None,
                 Channel::Release,
                 VERSION,
-                || Ok(PathBuf::from("/tmp/xdgcache/agentos")),
+                || Ok(PathBuf::from("/tmp/xdgcache/curie")),
                 false,
             )
             .unwrap(),
@@ -250,7 +250,7 @@ mod tests {
                 None,
                 Channel::Release,
                 VERSION,
-                || Ok(PathBuf::from("/tmp/xdgcache/agentos")),
+                || Ok(PathBuf::from("/tmp/xdgcache/curie")),
                 true,
             )
             .unwrap(),
@@ -265,14 +265,14 @@ mod tests {
                 None,
                 Channel::Release,
                 VERSION,
-                || Ok(PathBuf::from("/tmp/xdgcache/agentos")),
+                || Ok(PathBuf::from("/tmp/xdgcache/curie")),
                 false,
             )
             .unwrap(),
             Resolved::Fetch {
-                url: "https://github.com/curie-eng/agentos/releases/download/v0.1.0/agentos-0.1.0.tgz"
+                url: "https://github.com/curie-eng/curie/releases/download/v0.1.0/curie-0.1.0.tgz"
                     .to_string(),
-                cache_path: PathBuf::from("/tmp/xdgcache/agentos/v0.1.0/agentos-0.1.0.tgz"),
+                cache_path: PathBuf::from("/tmp/xdgcache/curie/v0.1.0/curie-0.1.0.tgz"),
             }
         );
     }
@@ -281,14 +281,14 @@ mod tests {
     fn release_image_uses_versioned_runner_ref_without_v_prefix() {
         assert_eq!(
             resolve_image(None, Channel::Release, VERSION),
-            "ghcr.io/curie-eng/agentos-runner:0.1.0".to_string()
+            "ghcr.io/curie-eng/curie-runner:0.1.0".to_string()
         );
     }
 
     #[test]
     fn overrides_short_circuit_resolution_in_both_channels() {
         for channel in [Channel::Release, Channel::Dev] {
-            for value in ["anything", "charts/agentos", "compose.dev.yaml"] {
+            for value in ["anything", "charts/curie", "compose.dev.yaml"] {
                 assert_eq!(
                     resolve_compose(
                         Some(value),
@@ -341,7 +341,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            Resolved::Local(PathBuf::from("charts/agentos"))
+            Resolved::Local(PathBuf::from("charts/curie"))
         );
     }
 
@@ -351,7 +351,7 @@ mod tests {
             None,
             Channel::Dev,
             VERSION,
-            || Ok(PathBuf::from("/tmp/xdgcache/agentos")),
+            || Ok(PathBuf::from("/tmp/xdgcache/curie")),
             false,
         )
         .unwrap_err();
@@ -365,7 +365,7 @@ mod tests {
             None,
             Channel::Dev,
             VERSION,
-            || Ok(PathBuf::from("/tmp/xdgcache/agentos")),
+            || Ok(PathBuf::from("/tmp/xdgcache/curie")),
             false,
         )
         .unwrap_err();
@@ -377,7 +377,7 @@ mod tests {
     fn dev_image_keeps_bare_runner_default() {
         assert_eq!(
             resolve_image(None, Channel::Dev, VERSION),
-            "agentos-runner".to_string()
+            "curie-runner".to_string()
         );
     }
 

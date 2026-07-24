@@ -38,7 +38,7 @@ def test_mcp_server_accepts_stdio_and_remote_shapes() -> None:
 
 
 def test_manifest_system_prompt_field() -> None:
-    """The AgentOS ``systemPrompt`` authoring extension round-trips (#271)."""
+    """The Curie ``systemPrompt`` authoring extension round-trips (#271)."""
     manifest = PluginManifest.model_validate(
         {"name": "demo", "systemPrompt": "Be terse; cite the CRM record, not the message."}
     )
@@ -58,7 +58,7 @@ def test_manifest_starter_prompts_round_trip() -> None:
 
 
 def test_manifest_secrets_field() -> None:
-    """The AgentOS ``secrets`` policy extension round-trips (ADR-0009 / #429)."""
+    """The Curie ``secrets`` policy extension round-trips (ADR-0009 / #429)."""
     manifest = PluginManifest.model_validate(
         {"name": "demo", "secrets": ["GITHUB_PERSONAL_ACCESS_TOKEN"]}
     )
@@ -72,7 +72,7 @@ def test_manifest_secrets_field() -> None:
 
 
 def test_manifest_trigger_and_approval_policy_fields() -> None:
-    """The AgentOS trigger + approval-policy authoring extensions parse (#273)."""
+    """The Curie trigger + approval-policy authoring extensions parse (#273)."""
     manifest = PluginManifest.model_validate(
         {
             "name": "demo",

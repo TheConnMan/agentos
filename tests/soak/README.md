@@ -1,7 +1,7 @@
 # tests/soak
 
 The soak and chaos suite. It proves the definition-of-done under sustained load
-against a STANDING agentos cluster: concurrent threads plus a mid-thread batch
+against a STANDING curie cluster: concurrent threads plus a mid-thread batch
 job, a sandbox killed mid-run, and a resume-rehydrate under load, asserting no
 cross-talk between threads, no duplicate side effects, and a sandbox-affinity
 (prompt-cache warmth) proxy. It runs against a real cluster sized to the
@@ -14,14 +14,14 @@ sandbox pod followed by `POST /v1/event` (NDJSON frames ending in a `final`).
 
 ## Opt-in gate
 
-The scenario never runs in default CI. It is gated on `AGENTOS_SOAK=1` and skips
+The scenario never runs in default CI. It is gated on `CURIE_SOAK=1` and skips
 cleanly with no cluster. The pure-helper unit tests in `test_harness_unit.py`
 always run (offline, no cluster) and cover the deterministic harness logic.
 
 Only `test_harness_unit.py` is in the pytest `testpaths` (`pyproject.toml`), so
 the offline helpers run in default CI while `test_soak_resilience.py` (the
 cluster scenario) stays out of default collection and runs only when invoked by
-explicit path or under `AGENTOS_SOAK=1`.
+explicit path or under `CURIE_SOAK=1`.
 
 ## How to run
 
@@ -34,10 +34,10 @@ uv run pytest tests/soak/test_harness_unit.py -q
 Full scenario, three consecutive runs, against a standing cluster and dev stack:
 
 ```bash
-AGENTOS_SOAK=1 AGENTOS_SOAK_RUNS=3 uv run pytest tests/soak -q
+CURIE_SOAK=1 CURIE_SOAK_RUNS=3 uv run pytest tests/soak -q
 ```
 
-Size the warm pool to at least `AGENTOS_SOAK_CONCURRENCY + AGENTOS_SOAK_BATCH`
+Size the warm pool to at least `CURIE_SOAK_CONCURRENCY + CURIE_SOAK_BATCH`
 ready replicas (the `pool_ready` fixture blocks until the pool reports that many)
 so the concurrent claims and the batch burst never starve.
 
@@ -45,12 +45,12 @@ so the concurrent claims and the batch burst never starve.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AGENTOS_SOAK` | unset | Set to `1` to enable the scenario. Unset skips it. |
-| `AGENTOS_SOAK_CONCURRENCY` | `5` | Distinct concurrent Phase-A threads. |
-| `AGENTOS_SOAK_BATCH` | `3` | Concurrent Phase-B batch-burst threads. |
-| `AGENTOS_SOAK_RUNS` | `1` | Consecutive runs in one invocation (set `3` for the DoD). |
-| `AGENTOS_SANDBOX_E2E_NAMESPACE` | `agentos-g1` | Cluster namespace. |
-| `AGENTOS_SANDBOX_E2E_POOL` | `agentos-g1-runner-pool` | Warm pool name. |
+| `CURIE_SOAK` | unset | Set to `1` to enable the scenario. Unset skips it. |
+| `CURIE_SOAK_CONCURRENCY` | `5` | Distinct concurrent Phase-A threads. |
+| `CURIE_SOAK_BATCH` | `3` | Concurrent Phase-B batch-burst threads. |
+| `CURIE_SOAK_RUNS` | `1` | Consecutive runs in one invocation (set `3` for the DoD). |
+| `CURIE_SANDBOX_E2E_NAMESPACE` | `curie-g1` | Cluster namespace. |
+| `CURIE_SANDBOX_E2E_POOL` | `curie-g1-runner-pool` | Warm pool name. |
 | `TEST_VALKEY_HOST` | `localhost` | Dev-stack Valkey host. |
 | `TEST_VALKEY_PORT` | `26379` | Dev-stack Valkey port. |
 | `TEST_VALKEY_PW` | `valkeypass` | Dev-stack Valkey password. |
@@ -70,16 +70,16 @@ echo the prompt.
 | A | Concurrent threads | Distinct threads bind distinct sandboxes (isolation); re-claim returns the same sandbox (affinity); with live creds each reply carries its own marker and no foreign marker (no content cross-talk). |
 | B | Mid-thread batch job | A batch burst runs while Phase-A threads are held; all batch turns reach `final` and Phase-A pod UIDs are unchanged (undisturbed under load). |
 | C | Sandbox killed mid-run | Unclean `kubectl delete pod`; re-claim yields a fresh pod (new UID) that answers `/healthz` and reaches `final`; exactly one live `SandboxClaim` survives for the thread hash (no orphan or duplicate). |
-| D | Resume-rehydrate under load | Suspend deletes the pod; resume creates a new claim whose pod carries `AGENTOS_HISTORY_REF`; concurrently loaded threads keep their pods. |
+| D | Resume-rehydrate under load | Suspend deletes the pod; resume creates a new claim whose pod carries `CURIE_HISTORY_REF`; concurrently loaded threads keep their pods. |
 | Cache warmth | Prompt-cache affinity proxy | A non-killed, non-suspended thread keeps the same pod UID across consecutive turns (`EVIDENCE same_pod_across_turns`). |
 
 ## Documented assumptions and gaps
 
 1. **"Batch job" is interpreted as a concurrent burst under sustained load.** The
-   batch phase launches `AGENTOS_SOAK_BATCH` additional threads while the Phase-A
+   batch phase launches `CURIE_SOAK_BATCH` additional threads while the Phase-A
    threads are still held claimed, and asserts the batch turns complete without
    disturbing the held threads. An alternative reading of "batch job" is an eval
-   fan-out (an `XADD` to the `agentos:evals` stream consumed by a separate
+   fan-out (an `XADD` to the `curie:evals` stream consumed by a separate
    consumer group). That path is not part of the sandbox substrate this suite
    drives, so it is noted here as an alternative rather than exercised.
 
@@ -93,7 +93,7 @@ echo the prompt.
    asserts the observable substrate-level proxy: after an unclean kill and
    re-claim, exactly one live `SandboxClaim` remains for the thread hash (no
    orphaned or duplicated claim). Re-driving turns through the kernel path (a
-   Valkey `agentos:runs` producer plus a fake Slack sink plus the in-cluster
+   Valkey `curie:runs` producer plus a fake Slack sink plus the in-cluster
    consumer) to count actual side-effect executions is deliberately left out of
    this footprint: it would duplicate the kernel suite's existing coverage and
    pull the soak away from the substrate seam it is meant to stress. See the
@@ -101,7 +101,7 @@ echo the prompt.
 
 3. **`cache_read_input_tokens` is not observable at the cluster level, so the
    suite asserts pod-UID affinity as the cache-warmth proxy.** The runner's OTel
-   export (`runner/src/agentos_runner/otel.py`, `_GenerationSpan.record_usage`)
+   export (`runner/src/curie_runner/otel.py`, `_GenerationSpan.record_usage`)
    exports only `gen_ai.usage.input_tokens` and `output_tokens` and drops the
    cache-token fields, so Langfuse never records `cache_read_input_tokens`. It is
    asserted only at the SDK layer in `runner/tests/test_live.py`. The soak
@@ -115,11 +115,11 @@ echo the prompt.
 
 ## Follow-ups noted (outside this footprint)
 
-- Extend `runner/src/agentos_runner/otel.py` to export the cache-token usage
+- Extend `runner/src/curie_runner/otel.py` to export the cache-token usage
   fields (see gap 3 above); the `xfail` probe becomes a real assertion then.
 - Add an end-to-end side-effect-idempotency soak that drives turns through the
-  kernel path (a Valkey `agentos:runs` producer plus a fake Slack sink plus the
+  kernel path (a Valkey `curie:runs` producer plus a fake Slack sink plus the
   in-cluster consumer), kills a sandbox after a side-effecting tool call fires,
   re-drives, and asserts the effect executed exactly once (see gap 2 above).
 - If an eval-fanout batch interpretation is wanted, add a phase that drives the
-  `agentos:evals` stream and its consumer group (see gap 1 above).
+  `curie:evals` stream and its consumer group (see gap 1 above).

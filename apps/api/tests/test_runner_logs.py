@@ -12,8 +12,8 @@ import logging
 from typing import Any
 
 import pytest
-from agentos_api.deps import get_pod_lister, get_pod_log_reader
-from agentos_api.k8s import (
+from curie_api.deps import get_pod_lister, get_pod_log_reader
+from curie_api.k8s import (
     LazyPodLogReader,
     NullPodLister,
     NullPodLogReader,
@@ -21,12 +21,12 @@ from agentos_api.k8s import (
     PodLogReader,
     build_pod_log_reader,
 )
-from agentos_api.main import create_app
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 
-# runner-abc lives in the configured runner namespace ("agentos"); the old URL
+# runner-abc lives in the configured runner namespace ("curie"); the old URL
 # used "preview-pr-1", which is now out of scope and would be a 403.
-URL = "/observability/runners/agentos/runner-abc/logs"
+URL = "/observability/runners/curie/runner-abc/logs"
 
 
 class FakeReader:
@@ -130,10 +130,10 @@ def test_returns_logs_for_valid_runner_pod(auth_headers: dict[str, str]) -> None
         resp = client.get(URL, headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
-    assert body["namespace"] == "agentos"
+    assert body["namespace"] == "curie"
     assert body["pod"] == "runner-abc"
     assert body["container"] is None
-    assert body["logs"] == "logs for agentos/runner-abc"
+    assert body["logs"] == "logs for curie/runner-abc"
     assert lister.calls  # membership verified first
     assert reader.calls  # then the reader was invoked
 
@@ -213,7 +213,7 @@ def test_build_reader_warns_not_errors_when_creds_absent(
     with caplog.at_level(logging.WARNING):
         reader = build_pod_log_reader("/nonexistent/kubeconfig-path.yaml")
     assert isinstance(reader, NullPodLogReader)
-    records = [r for r in caplog.records if r.name == "agentos_api.k8s"]
+    records = [r for r in caplog.records if r.name == "curie_api.k8s"]
     assert len(records) == 1
     assert records[0].levelno == logging.WARNING
     assert not any(r.levelno >= logging.ERROR for r in caplog.records)

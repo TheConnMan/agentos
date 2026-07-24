@@ -2,8 +2,8 @@
 
 mod support;
 
-use agentos::runner::RunnerClient;
-use agentos_aci_protocol::{EventType, OutboundEvent, SessionStatus, PROTOCOL_VERSION};
+use curie::runner::RunnerClient;
+use curie_aci_protocol::{EventType, OutboundEvent, SessionStatus, PROTOCOL_VERSION};
 use support::{serve, Response};
 
 fn frame(json: serde_json::Value) -> String {

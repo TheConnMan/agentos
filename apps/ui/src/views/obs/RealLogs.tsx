@@ -75,7 +75,7 @@ export function RealLogs() {
   // the cluster). Absent that identity, the prefill is a best-effort preselect.
   const { state } = useStore();
   const prefill = state.logsPod;
-  const [namespace, setNamespace] = useState("agentos");
+  const [namespace, setNamespace] = useState("curie");
   const [pods, setPods] = useState<Pods>({ kind: "loading" });
   const [selected, setSelected] = useState<string>(prefill ?? ALL);
   const [result, setResult] = useState<Result>({ kind: "idle" });
@@ -99,7 +99,7 @@ export function RealLogs() {
   // Load pods on mount and whenever a new sandbox prefill arrives, keeping the
   // prefilled pod selected across the reload (a namespace change resets to ALL).
   useEffect(() => {
-    void loadPods("agentos", prefill ?? ALL);
+    void loadPods("curie", prefill ?? ALL);
   }, [loadPods, prefill]);
 
   // Aggregate logs across every listed pod, one labeled block per pod. A single
@@ -203,7 +203,7 @@ export function RealLogs() {
         </div>
       ) : pods.pods.length === 0 ? (
         <div data-testid="pods-note" style={{ fontSize: 12, color: C.muted, marginBottom: 12, fontFamily: C.mono }}>
-          No runner pods found in {namespace || "agentos"}.
+          No runner pods found in {namespace || "curie"}.
         </div>
       ) : null}
 

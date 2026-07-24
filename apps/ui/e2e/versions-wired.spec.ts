@@ -44,7 +44,7 @@ test("Versions tab renders real version rows without an Eval column", async ({ p
   // The Eval column was dropped.
   await expect(page.getByText("Eval", { exact: true })).toHaveCount(0);
   // No fixture agents leak (the fixture Versions table had synthetic rows).
-  await expect(page.getByText("@agentos-dev")).toHaveCount(0);
+  await expect(page.getByText("@curie-dev")).toHaveCount(0);
 });
 
 test("Versions tab falls back to ComingSoon when the API is unreachable", async ({ page }) => {

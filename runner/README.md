@@ -3,7 +3,7 @@
 The runner image and SDK adapter: the productized prototype,
 a long-lived streaming session server that implements the full ACI
 v0.1 contract from `packages/aci-protocol`. Built on `claude-agent-sdk` (Python).
-Runs inside a claimed Agent Sandbox; the CLI (`agentos skill up`) also runs it
+Runs inside a claimed Agent Sandbox; the CLI (`curie skill up`) also runs it
 locally in Docker.
 
 ## What it does
@@ -13,7 +13,7 @@ locally in Docker.
 - Accepts inbound ACI frames (`event` of type message | job | eval_case, and
   `interrupt`) and streams outbound NDJSON (`text_delta` | `tool_note` | `final`
   | `error` | `side_effect_flag`) with protocol-version enforcement.
-- Enforces `AGENTOS_BUDGET.max_output_tokens_per_run` (halts a run with a
+- Enforces `CURIE_BUDGET.max_output_tokens_per_run` (halts a run with a
   classified-failure final) and hands the daily USD cap to the SDK natively.
 - Emits `side_effect_flag` when a non-idempotent tool executes (read-only
   allowlist, deny-by-default; see `side_effects.py`).
@@ -38,7 +38,7 @@ proven steering pattern). The finish race (a steer arriving as a turn ends,
 409) is owned by the worker.
 
 The three POST routes (`/v1/event`, `/v1/steer`, `/v1/interrupt`) require an
-`Authorization: Bearer <token>` header matching `AGENTOS_RUNNER_TOKEN` when that
+`Authorization: Bearer <token>` header matching `CURIE_RUNNER_TOKEN` when that
 env var is set, returning 401 otherwise; this is per-sandbox transport auth
 (defense-in-depth on the ACI ingress alongside the NetworkPolicy), not part of
 the frozen ACI wire contract. Enforcement is only-when-configured: with the var
@@ -48,49 +48,49 @@ readinessProbe hits `/healthz`).
 
 ## Environment
 
-ACI-frozen (`aci-protocol.SessionConfig`): `AGENTOS_PLUGIN_DIR`,
-`AGENTOS_SESSION_ID`, `AGENTOS_SANDBOX_ID`, `AGENTOS_BUDGET`, optional
-`AGENTOS_MEMORY_REF` / `AGENTOS_CREDENTIALS`, `OTEL_EXPORTER_OTLP_*`.
-Runner-local: `AGENTOS_MODEL`, `AGENTOS_MAX_TURNS`,
-`AGENTOS_HISTORY_REF` (rehydrate; falls back to `AGENTOS_MEMORY_REF`),
-`AGENTOS_HISTORY_MAX_TURNS` / `AGENTOS_HISTORY_MAX_BYTES` (bound the rehydrated
+ACI-frozen (`aci-protocol.SessionConfig`): `CURIE_PLUGIN_DIR`,
+`CURIE_SESSION_ID`, `CURIE_SANDBOX_ID`, `CURIE_BUDGET`, optional
+`CURIE_MEMORY_REF` / `CURIE_CREDENTIALS`, `OTEL_EXPORTER_OTLP_*`.
+Runner-local: `CURIE_MODEL`, `CURIE_MAX_TURNS`,
+`CURIE_HISTORY_REF` (rehydrate; falls back to `CURIE_MEMORY_REF`),
+`CURIE_HISTORY_MAX_TURNS` / `CURIE_HISTORY_MAX_BYTES` (bound the rehydrated
 history preamble to a tail window; defaults 40 turns / 16000 bytes, a
 nonpositive value falls back to the default),
-`AGENTOS_RUNNER_PORT`, `AGENTOS_RUNNER_TOKEN` (per-sandbox bearer token gating the
-three ACI POST routes; enforced only when set), `AGENTOS_FAKE_MODEL` (offline
+`CURIE_RUNNER_PORT`, `CURIE_RUNNER_TOKEN` (per-sandbox bearer token gating the
+three ACI POST routes; enforced only when set), `CURIE_FAKE_MODEL` (offline
 smoke; no model call).
 
 ## Build and smoke
 
 The image compiles against the frozen workspace packages, so build from the repo
-root with `agentos build` (the one build entry point; it wraps the
+root with `curie build` (the one build entry point; it wraps the
 `docker build -f runner/Dockerfile` under the hood):
 
 ```bash
-agentos build
+curie build
 # Offline round-trip (fake model, no credential), OTel to the dev collector:
-docker run -d --name runner-smoke --network agentos_default \
-  -e AGENTOS_FAKE_MODEL=1 -e AGENTOS_PLUGIN_DIR=/unused \
-  -e AGENTOS_SESSION_ID=smoke -e AGENTOS_SANDBOX_ID=sbx \
-  -e 'AGENTOS_BUDGET={"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}' \
+docker run -d --name runner-smoke --network curie_default \
+  -e CURIE_FAKE_MODEL=1 -e CURIE_PLUGIN_DIR=/unused \
+  -e CURIE_SESSION_ID=smoke -e CURIE_SANDBOX_ID=sbx \
+  -e 'CURIE_BUDGET={"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}' \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-  -p 18080:8080 agentos-runner
+  -p 18080:8080 curie-runner
 curl -sN -X POST http://localhost:18080/v1/event -H 'Content-Type: application/json' \
   -d '{"kind":"event","type":"message","text":"hi","user":"U","ts":"1.0"}'
 ```
 
 ## MCP load check (offline, credential-free)
 
-`python -m agentos_runner.check` is a separate, one-shot entrypoint (issue #337)
+`python -m curie_runner.check` is a separate, one-shot entrypoint (issue #337)
 that answers "do this bundle's MCP tools actually load?" without a model turn. It
 validates the bundle via the frozen `load_plugins`, then builds a real
 `ClaudeSDKClient` and `connect()`s (no query), polls `get_mcp_status()` until the
 bundle's own servers settle, and compares the **declared** servers against the
-plugin-owned **registered** ones. It reads `AGENTOS_PLUGIN_DIR` (and optional
-`AGENTOS_CHECK_TIMEOUT_S`, default 30); it forwards and reads **no** credential.
+plugin-owned **registered** ones. It reads `CURIE_PLUGIN_DIR` (and optional
+`CURIE_CHECK_TIMEOUT_S`, default 30); it forwards and reads **no** credential.
 
 ```bash
-AGENTOS_PLUGIN_DIR=/plugin python -m agentos_runner.check
+CURIE_PLUGIN_DIR=/plugin python -m curie_runner.check
 ```
 
 It prints exactly one JSON object to **stdout** (all logging goes to **stderr**)
@@ -108,7 +108,7 @@ verdict is not green. A manifest `mcpServers` string pointer is now rejected by
 `plugin_format` validation (step 1, `invalid_bundle`) before this check ever runs,
 so the #336 string-pointer hint fires only when `extract_declared`/`evaluate` are
 exercised directly (e.g. in tests), not through this entrypoint.
-The `agentos skill check` CLI verb wraps this as a one-shot container.
+The `curie skill check` CLI verb wraps this as a one-shot container.
 
 ## Verify (from repo root)
 

@@ -1,4 +1,4 @@
-//! Stream B tests for `agentos skill check` (issue #337): the offline,
+//! Stream B tests for `curie skill check` (issue #337): the offline,
 //! credential-free MCP load check.
 //!
 //! These pin the frozen Section-3 runner<->CLI JSON seam and the docker argv
@@ -8,9 +8,9 @@
 //! this binary fails to compile until the Implementer adds it. That RED state
 //! is the intended contract handoff.
 
-use agentos::commands::{check_outcome, parse_check_report};
-use agentos::docker::CheckSpec;
-use agentos::exit::ExitClass;
+use curie::commands::{check_outcome, parse_check_report};
+use curie::docker::CheckSpec;
+use curie::exit::ExitClass;
 
 /// A realistic green seam payload (Section 3): declared server registered as a
 /// connected, plugin-owned (`scope: "dynamic"`) server with tools.
@@ -126,7 +126,7 @@ const VERSION_2_JSON: &str = r#"{
 #[test]
 fn check_run_args_are_the_exact_offline_argv() {
     let spec = CheckSpec {
-        image: "agentos-runner".into(),
+        image: "curie-runner".into(),
         plugin_dir: "/tmp/deal-desk".into(),
         timeout_s: 30,
     };
@@ -153,13 +153,13 @@ fn check_run_args_are_the_exact_offline_argv() {
         "-v",
         "/tmp/deal-desk:/plugin:ro",
         "-e",
-        "AGENTOS_PLUGIN_DIR=/plugin",
+        "CURIE_PLUGIN_DIR=/plugin",
         "-e",
-        "AGENTOS_CHECK_TIMEOUT_S=30",
-        "agentos-runner",
+        "CURIE_CHECK_TIMEOUT_S=30",
+        "curie-runner",
         "python",
         "-m",
-        "agentos_runner.check",
+        "curie_runner.check",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -178,9 +178,9 @@ fn check_run_args_are_the_exact_offline_argv() {
     // Read-only bundle mount.
     assert!(joined.contains("-v /tmp/deal-desk:/plugin:ro"));
     // The timeout is plumbed through as the container deadline.
-    assert!(joined.contains("-e AGENTOS_CHECK_TIMEOUT_S=30"));
+    assert!(joined.contains("-e CURIE_CHECK_TIMEOUT_S=30"));
     // The CMD override runs check mode, not the ACI session entrypoint.
-    assert!(joined.ends_with("python -m agentos_runner.check"));
+    assert!(joined.ends_with("python -m curie_runner.check"));
 
     // Absence: check mode is not an ACI session and carries no credentials.
     assert!(!joined.contains("-p "), "check must not publish a port");
@@ -192,10 +192,10 @@ fn check_run_args_are_the_exact_offline_argv() {
         !joined.contains("--name"),
         "check is one-shot, no container name"
     );
-    assert!(!joined.contains("AGENTOS_SESSION_ID"));
-    assert!(!joined.contains("AGENTOS_SANDBOX_ID"));
-    assert!(!joined.contains("AGENTOS_BUDGET"));
-    assert!(!joined.contains("AGENTOS_FAKE_MODEL"));
+    assert!(!joined.contains("CURIE_SESSION_ID"));
+    assert!(!joined.contains("CURIE_SANDBOX_ID"));
+    assert!(!joined.contains("CURIE_BUDGET"));
+    assert!(!joined.contains("CURIE_FAKE_MODEL"));
     // No credential env of any kind (spike-verified credential-free connect).
     assert!(!joined.contains("ANTHROPIC"));
     assert!(!joined.contains("CLAUDE_CODE_OAUTH_TOKEN"));
@@ -205,14 +205,14 @@ fn check_run_args_are_the_exact_offline_argv() {
 #[test]
 fn check_run_args_carry_the_specced_timeout() {
     let spec = CheckSpec {
-        image: "ghcr.io/example/agentos-runner:1.2.3".into(),
+        image: "ghcr.io/example/curie-runner:1.2.3".into(),
         plugin_dir: "/work/bundle".into(),
         timeout_s: 45,
     };
     let joined = spec.run_args().join(" ");
-    assert!(joined.contains("-e AGENTOS_CHECK_TIMEOUT_S=45"));
+    assert!(joined.contains("-e CURIE_CHECK_TIMEOUT_S=45"));
     assert!(joined.contains("-v /work/bundle:/plugin:ro"));
-    assert!(joined.contains("ghcr.io/example/agentos-runner:1.2.3"));
+    assert!(joined.contains("ghcr.io/example/curie-runner:1.2.3"));
 }
 
 // --- Test 7: verdict-JSON -> outcome mapping -------------------------------

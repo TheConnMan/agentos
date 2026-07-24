@@ -13,8 +13,8 @@ that each emitted value's runtime type matches what was committed.
 
 Regenerate the committed file after a deliberate schema change by running, from
 the repo root: import ``json``, ``SCHEMA_VERSION``, ``SpanAttributeKey``, and
-``SPAN_ATTRIBUTE_VALUE_TYPES`` from ``agentos_runner.otel``, then write
-``{"$id": "https://schemas.agentos.dev/runner/otel-attributes/v1.json",
+``SPAN_ATTRIBUTE_VALUE_TYPES`` from ``curie_runner.otel``, then write
+``{"$id": "https://schemas.curie.dev/runner/otel-attributes/v1.json",
 "schema_version": SCHEMA_VERSION, "keys": {member.value:
 SPAN_ATTRIBUTE_VALUE_TYPES[member] for member in sorted(SpanAttributeKey,
 key=lambda m: m.value)}}`` as indented JSON to
@@ -27,10 +27,10 @@ from pathlib import Path
 
 import anyio
 from aci_protocol import Event, OtelConfig
-from agentos_runner import RunTracer, SideEffectClassifier, build_tracer_provider
-from agentos_runner.fake import FakeModelSession
-from agentos_runner.otel import SCHEMA_VERSION, SPAN_ATTRIBUTE_VALUE_TYPES, SpanAttributeKey
-from agentos_runner.session import SessionRunner
+from curie_runner import RunTracer, SideEffectClassifier, build_tracer_provider
+from curie_runner.fake import FakeModelSession
+from curie_runner.otel import SCHEMA_VERSION, SPAN_ATTRIBUTE_VALUE_TYPES, SpanAttributeKey
+from curie_runner.session import SessionRunner
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -115,7 +115,7 @@ def test_a_real_run_only_emits_attributes_within_the_committed_schema() -> None:
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         session_id="s1",
         model="fake-model",
     )

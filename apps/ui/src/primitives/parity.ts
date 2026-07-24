@@ -1,7 +1,7 @@
 // Console/CLI parity registry (epic #145).
 //
 // The single source of truth for "which wired console action maps to which
-// `agentos` command". Every action a wired surface exposes is listed here with
+// `curie` command". Every action a wired surface exposes is listed here with
 // EITHER a manifest-derived `command` (an `ActionId`, so a renamed/removed CLI
 // verb breaks `pnpm typecheck` at this call site) OR an explicit
 // `noCliEquivalent` marker carrying the tracking issue for the gap.
@@ -17,7 +17,7 @@ import type { ActionId } from "./cliCommand";
 
 // The parity epic tracks every still-unmapped wired action; a `noCliEquivalent`
 // entry links here until a dedicated verb lands.
-export const PARITY_TRACKING_ISSUE = "https://github.com/curie-eng/agentos/issues/145";
+export const PARITY_TRACKING_ISSUE = "https://github.com/curie-eng/curie/issues/145";
 
 export type CliMapping =
   | { readonly command: ActionId }
@@ -70,7 +70,7 @@ export const WIRED_ACTIONS = [
   { id: "memory-delete", label: "Delete a learned memory entry", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
 
   // WiredEvals (#868) — the eval matrix is read from GET /evals/matrix. There is
-  // no top-level `agentos` verb that just reads the matrix (the CLI polls it
+  // no top-level `curie` verb that just reads the matrix (the CLI polls it
   // internally during a model sweep), so the view renders the honest amber gap.
   { id: "eval-matrix", label: "View the eval matrix", mapping: { noCliEquivalent: PARITY_TRACKING_ISSUE } },
 

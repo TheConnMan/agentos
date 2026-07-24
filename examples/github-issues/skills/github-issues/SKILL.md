@@ -27,7 +27,7 @@ issue for review.
 server, declared in this bundle's `.mcp.json`. It authenticates with a GitHub
 personal access token read from `GITHUB_PERSONAL_ACCESS_TOKEN` in the sandbox
 environment. That token is NOT in the bundle: you forward it at launch with
-`agentos skill up --secret GITHUB_PERSONAL_ACCESS_TOKEN` (see the README), which
+`curie skill up --secret GITHUB_PERSONAL_ACCESS_TOKEN` (see the README), which
 passes the variable by name into the container the same way model credentials
 are forwarded. A read-scoped token is enough for listing and reading; creating
 an issue needs `repo`/`issues` write scope.

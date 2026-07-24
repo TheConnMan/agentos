@@ -1,0 +1,66 @@
+{{/*
+Runner-image prewarm DaemonSet.
+
+WHY THIS EXISTS: a sandbox pod is cold-created per Slack THREAD, so the runner
+image's pullPolicy is IfNotPresent (see agentSandbox.runner.imagePullPolicy) --
+`Always` would drop a ~380MB (re-)pull of a churned `latest` inside the
+per-thread boot window, which once blew past the worker's 90s claim timeout and
+killed the run. This DaemonSet keeps that image pulled and pinned on every node
+so those cold boots bind an already-present image instantly.
+
+It is a long-idle DaemonSet, not a one-shot Job, on purpose:
+  - DaemonSet covers every node (single-node clusters get exactly one pod).
+  - The kubelet treats the image as in-use, so image GC never evicts it between
+    threads.
+  - The container just `sleep infinity`s at near-zero cost -- the pinned image is
+    the point, not the process.
+
+ROLL-TO-REFRESH: with a mutable `latest` tag the pod spec does not change when
+only the remote digest churns, so a plain DaemonSet would never re-pull. The
+Release-revision annotation on the pod template changes on every `helm upgrade`,
+which rolls the pods; imagePullPolicy Always on this container then fetches the
+fresh `latest`. That is the whole cache-refresh mechanism.
+*/}}
+{{- if and .Values.agentSandbox.deploy .Values.agentSandbox.runner.prewarm.enabled }}
+{{- $runner := .Values.agentSandbox.runner }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "curie.fullname" . }}-runner-prewarm
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runner-prewarm
+spec:
+  selector:
+    matchLabels:
+      {{- include "curie.selectorLabels" (dict "root" . "component" "runner-prewarm") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "curie.labels" . | nindent 8 }}
+        {{- include "curie.selectorLabels" (dict "root" . "component" "runner-prewarm") | nindent 8 }}
+      annotations:
+        # Rolls the prewarm pods on every `helm upgrade` so imagePullPolicy Always
+        # re-pulls a churned `latest` (a digest-only change does not otherwise
+        # alter the pod spec). See the file header.
+        curie.dev/prewarm-revision: {{ .Release.Revision | quote }}
+    spec:
+      {{- with $runner.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: prewarm
+          image: {{ include "curie.image" (dict "repository" $runner.image "tag" $runner.tag "digest" $runner.digest "defaultTag" $.Chart.AppVersion) | quote }}
+          # Always (the default) so the roll above re-pulls the pinned ref (and
+          # picks up a moved tag on the rare cluster that still overrides tag back
+          # to a mutable one); on an immutable digest/version pin it is a no-op.
+          # Overridable via agentSandbox.runner.prewarm.imagePullPolicy for an
+          # offline cluster whose runner image was imported into the node store
+          # (kind/k3s) rather than published, where `Always` would ErrImagePull a
+          # registry-less ref that is already present locally.
+          imagePullPolicy: {{ $runner.prewarm.imagePullPolicy }}
+          command: ["sleep", "infinity"]
+          resources:
+            {{- toYaml $runner.prewarm.resources | nindent 12 }}
+{{- end }}

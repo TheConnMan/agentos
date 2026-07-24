@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/local-status/v1.json",
-  "title": "agentos local status --json",
-  "description": "The agent-facing payload of `agentos local status`: the dry-run plan, or the `docker compose ps` output as one line per service.",
+  "$id": "https://schemas.curie.dev/cli/local-status/v1.json",
+  "title": "curie local status --json",
+  "description": "The agent-facing payload of `curie local status`: the dry-run plan, or the `docker compose ps` output as one line per service.",
   "$defs": {
     "dryRun": {
       "type": "object",

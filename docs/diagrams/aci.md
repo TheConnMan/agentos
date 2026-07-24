@@ -13,7 +13,7 @@ inside the box is the runner's business.
 ## The protocol (worker to runner)
 
 Three routes, served by the runner at
-[`runner/src/agentos_runner/server.py`](../../runner/src/agentos_runner/server.py):
+[`runner/src/curie_runner/server.py`](../../runner/src/curie_runner/server.py):
 
 | Route | Meaning |
 |---|---|
@@ -71,7 +71,7 @@ The runner's job on each turn:
 The credential reaches the model without any app process brokering it. The
 runner maps a prefixed credential onto the SDK's env var and **fails loud** on
 anything it cannot use
-([`runner/src/agentos_runner/sdk_auth.py`](../../runner/src/agentos_runner/sdk_auth.py)):
+([`runner/src/curie_runner/sdk_auth.py`](../../runner/src/curie_runner/sdk_auth.py)):
 
 | Credential prefix | Maps to |
 |---|---|
@@ -88,7 +88,7 @@ it points `ANTHROPIC_BASE_URL` at the target and carries a non-empty placeholder
 the opt-in **bundled local model** (Ollama / Qwen3 demo mode) ride this seam.
 
 **Real model is the default.** The runner makes a real model call unless
-`AGENTOS_FAKE_MODEL` is set (a test-only knob that swaps in a scripted fake). A
+`CURIE_FAKE_MODEL` is set (a test-only knob that swaps in a scripted fake). A
 missing credential is fail-closed, not a silent downgrade to fake.
 
 ## What actually holds the contract
@@ -109,7 +109,7 @@ instead:
 
 - **Semver, not a freeze.** `PROTOCOL_VERSION` is `0.2.0`
   ([`packages/aci-protocol/src/aci_protocol/version.py`](../../packages/aci-protocol/src/aci_protocol/version.py)),
-  versioned independently of the AgentOS release. Under 0.x a consumer accepts
+  versioned independently of the Curie release. Under 0.x a consumer accepts
   the same `major.minor`; only a new optional field is compatible (patch), and
   every other change class bumps the minor.
 - **Strict producers, tolerant consumers.** Constructing an event with an
@@ -140,7 +140,7 @@ unchanged.
 | Piece | Path |
 |---|---|
 | ACI protocol (frozen) | [`packages/aci-protocol/`](../../packages/aci-protocol) |
-| Runner / ACI server | [`runner/src/agentos_runner/server.py`](../../runner/src/agentos_runner/server.py) |
-| Runner interface contract | [`runner/src/agentos_runner/INTERFACE.md`](../../runner/src/agentos_runner/INTERFACE.md) |
-| Credential mapping + base-URL override | [`runner/src/agentos_runner/sdk_auth.py`](../../runner/src/agentos_runner/sdk_auth.py) |
+| Runner / ACI server | [`runner/src/curie_runner/server.py`](../../runner/src/curie_runner/server.py) |
+| Runner interface contract | [`runner/src/curie_runner/INTERFACE.md`](../../runner/src/curie_runner/INTERFACE.md) |
+| Credential mapping + base-URL override | [`runner/src/curie_runner/sdk_auth.py`](../../runner/src/curie_runner/sdk_auth.py) |
 | Plugin / skill bundle shape | [`packages/plugin-format/`](../../packages/plugin-format) |

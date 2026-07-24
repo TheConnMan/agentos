@@ -6,8 +6,8 @@ watcher reads a stream the worker never writes to and every dead-letter goes
 unobserved. This module is the parity contract: `Settings.dead_letter_stream_name()`
 (apps/api) and `WorkerConfig.dead_letter_stream_name()` (apps/worker) must
 resolve to the SAME value under every operator override, including
-`AGENTOS_STREAM` alone (today the API only reads `RUNS_STREAM` for its base
-stream, so overriding `AGENTOS_STREAM` diverges the two lanes).
+`CURIE_STREAM` alone (today the API only reads `RUNS_STREAM` for its base
+stream, so overriding `CURIE_STREAM` diverges the two lanes).
 
 Pure unit tests: no fixtures, no Postgres/Valkey/network. `get_settings()` is
 `lru_cache`d, so every case constructs `Settings()` directly for a fresh read
@@ -17,15 +17,15 @@ of the env this case set up.
 from __future__ import annotations
 
 import pytest
-from agentos_api.config import Settings
-from agentos_worker.config import WorkerConfig
+from curie_api.config import Settings
+from curie_worker.config import WorkerConfig
 
 
 def _clear_stream_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "RUNS_STREAM",
-        "AGENTOS_STREAM",
-        "AGENTOS_DEAD_LETTER_STREAM",
+        "CURIE_STREAM",
+        "CURIE_DEAD_LETTER_STREAM",
         "RESUME_DEAD_LETTER_STREAM",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -34,21 +34,21 @@ def _clear_stream_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_no_overrides_agree_on_the_default_graveyard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Clean env: both lanes derive `agentos:runs:dead` from the shared default."""
+    """Clean env: both lanes derive `curie:runs:dead` from the shared default."""
     _clear_stream_env(monkeypatch)
 
     api_name = Settings().dead_letter_stream_name()
     worker_name = WorkerConfig().dead_letter_stream_name()
 
-    assert api_name == worker_name == "agentos:runs:dead"
+    assert api_name == worker_name == "curie:runs:dead"
 
 
 def test_dead_letter_stream_override_agrees_across_lanes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An explicit AGENTOS_DEAD_LETTER_STREAM reaches both lanes identically."""
+    """An explicit CURIE_DEAD_LETTER_STREAM reaches both lanes identically."""
     _clear_stream_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_DEAD_LETTER_STREAM", "operations:dead")
+    monkeypatch.setenv("CURIE_DEAD_LETTER_STREAM", "operations:dead")
 
     api_name = Settings().dead_letter_stream_name()
     worker_name = WorkerConfig().dead_letter_stream_name()
@@ -56,19 +56,19 @@ def test_dead_letter_stream_override_agrees_across_lanes(
     assert api_name == worker_name == "operations:dead"
 
 
-def test_agentos_stream_override_alone_agrees_across_lanes(
+def test_curie_stream_override_alone_agrees_across_lanes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Overriding only AGENTOS_STREAM (no explicit dead-letter override) must
+    """Overriding only CURIE_STREAM (no explicit dead-letter override) must
     still derive the same graveyard name on both lanes.
 
     This is the case that fails today: the API's `runs_stream` currently reads
-    only `RUNS_STREAM`, so an operator who overrides `AGENTOS_STREAM` (the
+    only `RUNS_STREAM`, so an operator who overrides `CURIE_STREAM` (the
     worker's base-stream var) moves the worker's graveyard to
-    `operations:dead` while the API's watcher stays on `agentos:runs:dead`.
+    `operations:dead` while the API's watcher stays on `curie:runs:dead`.
     """
     _clear_stream_env(monkeypatch)
-    monkeypatch.setenv("AGENTOS_STREAM", "operations")
+    monkeypatch.setenv("CURIE_STREAM", "operations")
 
     api_name = Settings().dead_letter_stream_name()
     worker_name = WorkerConfig().dead_letter_stream_name()
@@ -76,12 +76,12 @@ def test_agentos_stream_override_alone_agrees_across_lanes(
     assert api_name == worker_name == "operations:dead"
 
 
-def test_runs_stream_takes_precedence_over_agentos_stream(
+def test_runs_stream_takes_precedence_over_curie_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Historical RUNS_STREAM precedence is preserved once AliasChoices lands.
 
-    With both `RUNS_STREAM` and `AGENTOS_STREAM` set, the API's `runs_stream`
+    With both `RUNS_STREAM` and `CURIE_STREAM` set, the API's `runs_stream`
     must resolve to the `RUNS_STREAM` value -- the narrower, historically
     supported override wins over the newer shared alias. Today, with no
     AliasChoices in place, `runs_stream` reads only `RUNS_STREAM`, so this
@@ -89,7 +89,7 @@ def test_runs_stream_takes_precedence_over_agentos_stream(
     """
     _clear_stream_env(monkeypatch)
     monkeypatch.setenv("RUNS_STREAM", "runs-legacy")
-    monkeypatch.setenv("AGENTOS_STREAM", "operations")
+    monkeypatch.setenv("CURIE_STREAM", "operations")
 
     assert Settings().runs_stream == "runs-legacy"
 
@@ -105,9 +105,9 @@ class TestResumeDeadLetterStreamCoherence:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """No RESUME_DEAD_LETTER_STREAM: the fallback derives the worker's
-        graveyard name from AGENTOS_DEAD_LETTER_STREAM, same as the watcher."""
+        graveyard name from CURIE_DEAD_LETTER_STREAM, same as the watcher."""
         _clear_stream_env(monkeypatch)
-        monkeypatch.setenv("AGENTOS_DEAD_LETTER_STREAM", "operations:dead")
+        monkeypatch.setenv("CURIE_DEAD_LETTER_STREAM", "operations:dead")
 
         settings = Settings()
         resolved = settings.resume_dead_letter_stream or settings.dead_letter_stream_name()
@@ -119,7 +119,7 @@ class TestResumeDeadLetterStreamCoherence:
     ) -> None:
         """A narrower RESUME_DEAD_LETTER_STREAM override beats the derived name."""
         _clear_stream_env(monkeypatch)
-        monkeypatch.setenv("AGENTOS_DEAD_LETTER_STREAM", "operations:dead")
+        monkeypatch.setenv("CURIE_DEAD_LETTER_STREAM", "operations:dead")
         monkeypatch.setenv("RESUME_DEAD_LETTER_STREAM", "custom:grave")
 
         settings = Settings()

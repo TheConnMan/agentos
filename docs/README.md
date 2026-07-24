@@ -9,7 +9,7 @@ git history (`git log -- docs/`).
 - [`onboarding.md`](onboarding.md): the local dev onboarding path for a new
   engineer, from a fresh clone to a verified local turn with no Slack and no
   cluster.
-- [`vision.md`](vision.md): the north star. What AgentOS is, who it is for, and
+- [`vision.md`](vision.md): the north star. What Curie is, who it is for, and
   what it could become. The document we hold new features against. Read this to
   understand *why* the project exists before *how* it works.
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md): the as-built architecture reference
@@ -49,7 +49,7 @@ git history (`git log -- docs/`).
   cluster.
 
 Forward-looking work is planned and tracked in
-[GitHub issues](https://github.com/curie-eng/agentos/issues), with larger
+[GitHub issues](https://github.com/curie-eng/curie/issues), with larger
 journeys filed as `epic`-labeled issues.
 - [`adr/`](adr/): Architecture Decision Records, the load-bearing choices and
   the live evidence behind them.

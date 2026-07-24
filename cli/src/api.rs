@@ -1,6 +1,6 @@
 //! Client for the platform API (apps/api, committed openapi.json contract).
 //!
-//! `agentos cluster deploy` pushes a local bundle to the platform: find-or-create the
+//! `curie cluster deploy` pushes a local bundle to the platform: find-or-create the
 //! agent, create a version, upload the tar.gz bundle (validated server-side by
 //! the frozen plugin-format package), and create a deployment. Auth is the
 //! X-API-Key header.
@@ -557,7 +557,7 @@ impl ApiClient {
             .find(|a| a.name == identifier || a.id == identifier)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "no agent found matching {identifier:?} (by name or id); deploy it first with `agentos cluster deploy`"
+                    "no agent found matching {identifier:?} (by name or id); deploy it first with `curie cluster deploy`"
                 )
             })
     }

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentos_wire_tolerance_gate import find_violations
+from curie_wire_tolerance_gate import find_violations
 
 _FIXTURE_REPO = Path(__file__).parent / "fixtures" / "repo"
 _REPO_ROOT = Path(__file__).resolve().parents[3]

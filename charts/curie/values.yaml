@@ -1,0 +1,1158 @@
+# Default values for the Curie umbrella chart.
+#
+# Conventions (do not break):
+#   - Values keys are camelCase. Helm's Go templates cannot dot-index a key with
+#     a hyphen, so hyphenated keys silently break `.Values.foo-bar`.
+#   - Every backing store is condition-gated by `<store>.deploy` and carries a
+#     bring-your-own block on the SAME object: to use an external instance, set
+#     `deploy: false` and fill `host` / `port` / `auth` (or `existingSecret`).
+#
+# SIZING: the defaults below carry a modest single-node footprint (sum of memory
+# requests ~1.7 GB) so a bare `helm install` schedules on an 8-16 GB node without
+# any overlay. This is NOT sized for production load -- for production raise every
+# `resources` block and persistence size, supply real secrets (or `existingSecret`),
+# and point the stores at managed services via the BYO blocks. For a laptop / fully
+# offline cluster use `-f values-dev.yaml`, which additionally swaps every image for
+# a locally-built, cluster-imported tag.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imagePullPolicy: IfNotPresent
+  # "" uses the cluster default StorageClass. Set to pin a class (e.g. local-path
+  # on k3s, gp3 on EKS).
+  storageClass: ""
+
+# ---------------------------------------------------------------------------
+# PriorityClass (ADR-0059 decision 5): ranks the control plane -- worker, api,
+# dispatcher, and the data tier (postgres, valkey, clickhouse, minio) -- above
+# sandbox pods for node-pressure eviction, so the components that supervise,
+# drain, and reclaim a sandbox are never themselves preferred for eviction over
+# the sandboxes they manage. Priority is a ranking and preemption lever, not
+# immunity: a node fully out of a resource (e.g. disk) can still take anything
+# down regardless of priority.
+#
+# Both names are cluster-scoped (PriorityClass has no namespace), so installing
+# a second curie release into the SAME cluster must override one release's
+# names to avoid an ownership conflict. `sandbox.name` is also the intended
+# `scopeSelector` handle for the sandbox-namespace ResourceQuota (issue #758) --
+# keep the two in sync if you rename it.
+# ---------------------------------------------------------------------------
+priorityClasses:
+  platform:
+    # Renders the PriorityClass and sets priorityClassName on every
+    # control-plane pod. Set false (and repoint `name` at an existing class) if
+    # the cluster/another release already defines an equivalent one.
+    create: true
+    name: curie-platform
+    value: 1000000
+  sandbox:
+    # Renders the PriorityClass and sets priorityClassName on the sandbox
+    # runner pod template.
+    create: true
+    name: curie-sandbox
+    value: 100000
+
+# ---------------------------------------------------------------------------
+# Langfuse app (web + worker). The observability + eval backbone. Its backing
+# stores (Postgres, ClickHouse, Valkey, MinIO) are the separate blocks below so
+# each can be toggled or BYO'd independently.
+# ---------------------------------------------------------------------------
+langfuse:
+  deploy: true
+  image:
+    web: langfuse/langfuse
+    worker: langfuse/langfuse-worker
+    tag: "3"
+  telemetryEnabled: false
+  enableExperimentalFeatures: true
+  # NEXTAUTH_URL the browser reaches the web UI at. Override for a real ingress.
+  nextauthUrl: http://localhost:23000
+  # Dev-only secret material. Override in prod or set `existingSecret` to a
+  # Secret carrying keys: langfuseEncryptionKey, langfuseSalt,
+  # langfuseNextauthSecret, langfuseInitProjectSecretKey, langfuseInitUserPassword.
+  # ENCRYPTION_KEY must be 64 hex chars (openssl rand -hex 32).
+  encryptionKey: "0000000000000000000000000000000000000000000000000000000000000000"
+  salt: dev-salt-change-me
+  nextauthSecret: dev-nextauth-secret-change-me
+  existingSecret: ""
+  # Headless bootstrap: seeds a fixed org/project + keys on first boot so the
+  # OTel trace path authenticates with no manual key-minting. Dev values.
+  init:
+    orgId: curie
+    orgName: Curie
+    projectId: curie-dev
+    projectName: curie-dev
+    projectPublicKey: pk-lf-curie-dev
+    projectSecretKey: sk-lf-curie-dev
+    userEmail: dev@curie.local
+    userName: Curie Dev
+    userPassword: curie-dev-password
+  # Seed Langfuse model-price definitions so the Cost view is non-zero on a fresh
+  # install. Langfuse computes a generation's cost by matching its model name to a
+  # price row; with no matching row it reports calculatedTotalCost 0 even when the
+  # generation carries real token usage. A post-install/post-upgrade hook Job POSTs
+  # these to the Langfuse public models API (/api/public/models) using the init
+  # project keys as basic auth. Idempotent: a model whose name already exists is
+  # skipped, so re-upgrades are safe. Gated on langfuse.deploy.
+  modelPricing:
+    enabled: true
+    image: curlimages/curl:8.11.1
+    # Per-token prices (unit TOKENS). matchPattern is an anchored, case-insensitive
+    # regex Langfuse matches against the generation's model name.
+    # Prices are strings so they render as plain decimals (a float would render
+    # in scientific notation); the seed Job injects them unquoted into the JSON
+    # body, so Langfuse still receives them as numbers.
+    models:
+      - modelName: claude-sonnet-5
+        matchPattern: "(?i)^(claude-sonnet-5)$"
+        inputPrice: "0.000003"
+        outputPrice: "0.000015"
+      - modelName: claude-sonnet-4-6
+        matchPattern: "(?i)^(claude-sonnet-4-6)$"
+        inputPrice: "0.000003"
+        outputPrice: "0.000015"
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 128Mi }
+  web:
+    service:
+      type: ClusterIP
+      port: 3000
+      # Pinned NodePort used when service.type is flipped to NodePort (e.g. by
+      # `curie up`). Empty lets Kubernetes allocate one from 30000-32767 --
+      # but an auto-allocated port changes on every helm install/upgrade, which
+      # breaks any URL or `curie deploy --api-url` that hardcodes a port. The
+      # default pins it so a down/up cycle keeps the same URL. Override or set
+      # to "" to restore auto-allocation.
+      nodePort: 30000
+    # Extra Node flags. The Langfuse web image is a Node app whose default heap
+    # cap (~512Mi) OOM-crashes under a tight container limit; raise it in step
+    # with the memory limit. Empty = leave the image default.
+    nodeOptions: "--max-old-space-size=1024"
+    resources:
+      requests: { cpu: 150m, memory: 384Mi }
+      limits: { cpu: "1", memory: 1536Mi }
+    # Container securityContext (issue #67). Restricted-PSS baseline: the Langfuse
+    # image runs as a non-root uid and needs no Linux capabilities, so all are
+    # dropped and privilege escalation is denied. readOnlyRootFilesystem stays
+    # false -- the Next.js server writes to its rootfs (.next cache, /tmp).
+    # The numeric runAsUser is required, not optional (issue #351): runAsNonRoot:
+    # true alone is unverifiable because both Langfuse images declare a NAMED user
+    # (nextjs for web, expressjs for worker), and the kubelet refuses to create a
+    # container whose non-root uid it cannot confirm, failing with
+    # CreateContainerConfigError. Both named users resolve to uid 1001, so the
+    # numeric uid is pinned here.
+    # To opt out, override the fields (e.g. runAsNonRoot: false for a fork whose
+    # image must run as root), or set the whole block to null to drop it.
+    containerSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+  worker:
+    nodeOptions: "--max-old-space-size=640"
+    resources:
+      requests: { cpu: 150m, memory: 384Mi }
+      limits: { cpu: "1", memory: 1Gi }
+    # See langfuse.web.containerSecurityContext above. The worker image's named
+    # user is expressjs (also uid 1001), so it shares the same numeric runAsUser.
+    containerSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# Postgres. Langfuse's transactional store AND the app-state DB (agents,
+# versions, deployments). BYO: deploy=false + host/port/auth (or existingSecret
+# with key postgresPassword).
+# ---------------------------------------------------------------------------
+postgres:
+  deploy: true
+  image: postgres:16-alpine
+  host: ""
+  port: 5432
+  auth:
+    username: postgres
+    password: postgres
+    database: postgres
+  existingSecret: ""
+  # fsGroup that owns the mounted data volume. Defaults to the postgres:16-alpine
+  # image's postgres user (999); parameterized for BYO images with a different UID.
+  podSecurityContext:
+    fsGroup: 999
+  persistence:
+    enabled: true
+    size: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  # Container securityContext (issue #67). The postgres image entrypoint starts
+  # as root to initialise/own PGDATA (chown, then gosu drop to the `postgres`
+  # user), so runAsNonRoot and capabilities.drop:[ALL] would break init and are
+  # deliberately NOT set here -- full restricted-PSS on this store needs a
+  # validated runAsUser + writable dirs on a real cluster (pod-level fsGroup is
+  # already set in the template). These two knobs are safe on a root entrypoint:
+  # they still deny privilege escalation and pin the RuntimeDefault seccomp
+  # profile. Override fields or set the whole block to null to opt out.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Valkey (Redis-compatible). Langfuse cache/queue AND the dispatcher's Streams
+# queue. BYO: deploy=false + host/port (existingSecret key valkeyPassword).
+# ---------------------------------------------------------------------------
+valkey:
+  deploy: true
+  image: valkey/valkey:8-alpine
+  host: ""
+  port: 6379
+  password: valkeypass
+  existingSecret: ""
+  persistence:
+    enabled: true
+    size: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  # Container securityContext (issue #67). Safe subset only -- the valkey-alpine
+  # entrypoint starts as root and drops to the `valkey` user (gosu), so
+  # runAsNonRoot / capabilities.drop are left unset. See
+  # postgres.containerSecurityContext for the full rationale.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# ClickHouse. Langfuse's OLAP store for traces/observations/scores. The AVX
+# preflight guards the image tag: newer ClickHouse needs AVX and SIGILLs with
+# exit 132 on SSE4.2-only hosts, so the tag is pinned to an SSE4.2-safe build.
+# DO NOT bump `image.tag` past the sse42SafeTags list unless every node has AVX.
+# BYO: deploy=false + host/httpPort/nativePort (existingSecret key clickhousePassword).
+# ---------------------------------------------------------------------------
+clickhouse:
+  deploy: true
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "24.8"
+  # Tags whose upstream binaries still ship an SSE4.2 build (no AVX required).
+  # The AVX preflight passes an AVX-less node only if the configured tag begins
+  # with one of these. 24.8/24.3 are LTS lines; 23.8 is the prior LTS.
+  sse42SafeTags:
+    - "24.8"
+    - "24.3"
+    - "23.8"
+  host: ""
+  httpPort: 8123
+  nativePort: 9000
+  auth:
+    username: default
+    password: clickhouse
+  existingSecret: ""
+  # fsGroup that owns the mounted data volume. Defaults to the clickhouse-server
+  # image's clickhouse user (101); parameterized for BYO images with a different UID.
+  podSecurityContext:
+    fsGroup: 101
+  clusterEnabled: false
+  persistence:
+    enabled: true
+    size: 3Gi
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "2", memory: 1536Mi }
+  # Container securityContext (issue #67). Safe subset only -- the ClickHouse
+  # image entrypoint starts as root to own /var/lib/clickhouse and drops to the
+  # `clickhouse` user, so runAsNonRoot / capabilities.drop are left unset. See
+  # postgres.containerSecurityContext for the full rationale.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# MinIO. Langfuse object storage (events, media, exports). BYO real S3 in prod:
+# deploy=false + host/port/auth (existingSecret key minioRootPassword).
+# ---------------------------------------------------------------------------
+minio:
+  deploy: true
+  image: minio/minio
+  mcImage: minio/mc
+  host: ""
+  port: 9000
+  consolePort: 9001
+  bucket: langfuse
+  auth:
+    rootUser: minio
+    rootPassword: miniosecret
+  existingSecret: ""
+  # fsGroup that owns the mounted data volume. Defaults to the minio image's
+  # user (1000); parameterized for BYO images with a different UID.
+  podSecurityContext:
+    fsGroup: 1000
+  persistence:
+    enabled: true
+    size: 3Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  # Container securityContext (issue #67). Safe subset only -- the MinIO image
+  # defaults to running as root; forcing runAsNonRoot / capabilities.drop here
+  # without a validated uid + writable data dir on a real cluster risks breaking
+  # startup. See postgres.containerSecurityContext for the full rationale.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+  # Optional PodDisruptionBudget for this single-replica store. OFF by default:
+  # a minAvailable:1 budget on one replica blocks voluntary node drains. Enable
+  # for prod HA after raising replicas or pointing at a managed/replicated
+  # instance via the BYO block. See README "High availability and
+  # PodDisruptionBudgets".
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Local inference endpoint for demo clusters. Opt in only: fake model stays the
+# default, and production agent paths should use the external model allowlist.
+# ---------------------------------------------------------------------------
+inference:
+  deploy: false
+  image: ollama/ollama:0.24.0
+  model: qwen3:4b
+  port: 11434
+  pullModel: true
+  persistence:
+    enabled: false
+    size: 10Gi
+  resources: {}
+  service:
+    port: 11434
+
+# ---------------------------------------------------------------------------
+# OTel Collector. Receives OTLP (gRPC 4317 / HTTP 4318) from app services and
+# forwards to Langfuse over HTTP (Langfuse's OTLP ingest is HTTP-only). Deploy
+# false to send app traces to an external collector.
+# ---------------------------------------------------------------------------
+otelCollector:
+  deploy: true
+  image: otel/opentelemetry-collector-contrib:0.119.0
+  # base64("<publicKey>:<secretKey>"). Left empty, it is derived from
+  # langfuse.init keys at render time.
+  otlpAuthHeader: ""
+  service:
+    grpcPort: 4317
+    httpPort: 4318
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  # Container securityContext (issue #67). Full restricted-PSS: the collector
+  # image runs as a non-root uid, needs no capabilities, and only reads a mounted
+  # (read-only) config while writing nothing to its rootfs -- so the root
+  # filesystem is read-only too. Override fields or set the whole block to null
+  # to opt out.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# First-party app services (A4). The control plane the runner fleet serves:
+#   - api        FastAPI control-plane REST API (agents/versions/deployments,
+#                Langfuse proxy, bundle store, git-flow webhooks, kill switch)
+#   - dispatcher Slack Bolt Socket Mode ingress -> Valkey Streams
+#   - worker     concurrency kernel + sandbox substrate + eval runner
+#   - ui         static React SPA served by nginx, proxying /api to the API
+#
+# IMAGE DEFAULTS: every app image defaults to the GHCR package the Release
+# workflow publishes. The `tag` is left EMPTY so it resolves to the chart
+# `appVersion` (see Chart.yaml) -- an immutable, per-release version tag rather
+# than the mutable `latest`. That makes installs deterministic and rollback-able:
+# the same chart version always renders the same image ref (`helm template` shows
+# `...-api:<appVersion>`, not `:latest`). For the strongest guarantee set `digest`
+# to a `sha256:...` content digest instead (it wins over `tag` and pins by digest,
+# verifiable via `cosign verify-attestation` / `gh attestation verify`); the
+# Release workflow prints each published image's digest. `pullPolicy: Always` on
+# an immutable ref is a cheap no-op that still self-heals a node that cached a
+# same-named ref, so it is kept.
+# The repo and its packages are public, so NO imagePullSecret is needed by
+# default; the `imagePullSecrets` plumbing stays for private forks. For offline
+# dev/e2e use values-dev.yaml, which repoints each image at a locally-built,
+# cluster-imported image with imagePullPolicy Never (mirroring the runner pattern).
+# ---------------------------------------------------------------------------
+api:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/curie-api
+    # Empty -> chart appVersion (immutable). Set to pin an explicit version tag.
+    tag: ""
+    # Optional "sha256:..." content digest; when set it wins over `tag`.
+    digest: ""
+    pullPolicy: Always
+  imagePullSecrets: []
+  # Deploy environment the API boots as (`dev` or `prod`), rendered as
+  # ENVIRONMENT on the api container. `prod` arms the API production boot gate,
+  # which refuses to start on the dev-default `apiKey`/`githubWebhookSecret`
+  # below -- so this backs up the render-time secret gate as defense in depth.
+  # Left at `dev` so a bare `helm install` and the dev overlays boot without
+  # real secrets; set to `prod` (with real secrets) for a production install.
+  environment: dev
+  # Single shared API key the UI and CLI authenticate with. Dev default; override
+  # (or point at an existingSecret) in any shared deployment.
+  apiKey: curie-dev-key
+  # Human-readable org/workspace name the UI reads from the open /config endpoint.
+  # Override to white-label the app for a deployment.
+  orgName: Curie
+  # HMAC secret the GitHub git-flow webhook authenticates inbound events with.
+  githubWebhookSecret: dev-webhook-secret
+  # How often (seconds) the API scans for lapsed pending approvals and resumes
+  # their stranded sessions (#412). Set to 0 (or any value <= 0) to disable the
+  # expiry sweeper entirely. Default matches the app's built-in 30s cadence.
+  approvalSweepIntervalSeconds: 30
+  # How long (seconds) the API reuses a fetched Slack user-group member set when
+  # resolving a user-group approver (#420). Default matches the app's built-in
+  # 60s. The tradeoff: within the window a member revoked from the group can
+  # still approve. Set to 0 to force a fetch on every resolve and close that lag
+  # entirely, at the cost of Slack Tier 2 rate-limit headroom on
+  # usergroups.users.list (~20 req/min) -- under the fail-closed rule a rate
+  # limit becomes a false denial of a legitimate approver, so 0 suits low-volume
+  # or strict-revocation deployments.
+  slackUsergroupCacheTtlSeconds: 60
+  service:
+    type: ClusterIP
+    port: 8000
+  # Run `alembic upgrade head` in an init container before the server starts, so
+  # a fresh Postgres gets the `curie` schema + tables. Disable only when an
+  # external migration step owns the DB.
+  migrate:
+    enabled: true
+  # Resume reconciler (#411): the background loop that re-enqueues resume turns
+  # for approvals whose inline enqueue failed, so a suspended session is never
+  # permanently stranded. `enabled` is the off-switch -- with it false the loop
+  # does not run AND the resolve endpoint fails loud (500) on an enqueue failure
+  # instead of returning 200 and deferring to the (now-absent) backstop.
+  # `graceSeconds` is load-bearing: it MUST exceed the worker's max single-turn
+  # time (the worker's runner_total_timeout_s, a Python default of 600s that is
+  # not currently Helm-configurable) so a re-enqueue never lands in a still-live
+  # resume turn (which would re-run the approved action).
+  resumeReconciler:
+    enabled: true
+    intervalSeconds: 30
+    graceSeconds: 900
+    batchLimit: 100
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  # Container securityContext (issue #67). Restricted-PSS baseline: the image runs
+  # as non-root uid 1000 (see apps/api/Dockerfile) and needs no Linux
+  # capabilities. readOnlyRootFilesystem stays false -- the app writes to its
+  # rootfs (/tmp, $HOME); enable it only with matching writable emptyDir mounts.
+  # To opt out, override the fields (e.g. runAsNonRoot: false for a fork whose
+  # image must run as root), or set the whole block to null to drop it.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
+dispatcher:
+  deploy: true
+  replicas: 1
+  # Platform API the dispatcher resolves Slack approval clicks against. Empty
+  # (the default) derives the in-chart API Service,
+  # http://<fullname>-api:<api.service.port>. Set it to a full base URL to point
+  # at an API this chart did not deploy; that BYO value renders verbatim and is
+  # required when api.deploy is false, where no in-chart Service exists to derive.
+  # Pair it with api.apiKey set to a key the BYO API accepts -- the chart Secret's
+  # own generated apiKey still resolves otherwise, and the boot preflight cannot
+  # catch the mismatch since /health is unauthenticated and proves reachability
+  # only, not that the key is right.
+  apiBaseUrl: ""
+  image:
+    repository: ghcr.io/curie-eng/curie-dispatcher
+    # Empty -> chart appVersion (immutable). Set to pin an explicit version tag.
+    tag: ""
+    # Optional "sha256:..." content digest; when set it wins over `tag`.
+    digest: ""
+    pullPolicy: Always
+  imagePullSecrets: []
+  # Slack credentials. Socket Mode means the process dials out (no ingress), so
+  # there is no Service. Left empty the supervisor just backs off and retries, so
+  # the pod stays up without them; fill them (or an existingSecret) to connect.
+  # slackBotToken is shared with the worker (it edits the Slack placeholder) and,
+  # when set, with the API, whose approval user-group authorizers look up
+  # usergroup membership themselves (#420, ADR-0034). That lookup needs the
+  # `usergroups:read` bot scope, which existing Slack apps get only by
+  # reinstalling the app to the workspace. Changing this token requires a pod
+  # rollout of the consumers, not just a `helm upgrade`: a secretKeyRef env
+  # resolves once at pod start.
+  slack:
+    appToken: ""
+    botToken: ""
+    signingSecret: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  # Container securityContext (issue #67). Image runs as non-root uid 1000 (see
+  # apps/dispatcher/Dockerfile). readOnlyRootFilesystem stays false -- the
+  # dispatcher writes a heartbeat file under /tmp. See api.containerSecurityContext.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
+worker:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/curie-worker
+    # Empty -> chart appVersion (immutable). Set to pin an explicit version tag.
+    tag: ""
+    # Optional "sha256:..." content digest; when set it wins over `tag`.
+    digest: ""
+    pullPolicy: Always
+  imagePullSecrets: []
+  # The worker drives the Kubernetes API to claim/manage agent-sandbox CRDs, so
+  # it gets a ServiceAccount + a namespaced Role scoped to exactly those verbs
+  # (see templates/worker.yaml). Its token IS mounted (unlike the runner SA).
+  serviceAccount:
+    create: true
+  # The SandboxWarmPool the substrate claims from. Empty -> derived as
+  # `<release>-runner-pool` (the name templates/agent-sandbox.yaml gives it).
+  warmPool: ""
+  # Seconds claim() waits for a cold sandbox create (pod scheduling +
+  # bundle-fetch/extract init containers + runner boot + readiness) to bind
+  # before giving up. Must stay below the worker's per-thread lock TTL (120s) so
+  # the lock never lapses mid-claim; raise it only on a slow cluster.
+  claimTimeoutSeconds: 90
+  # No-Slack egress routing. When non-empty, renders SLACK_API_BASE_URL on the
+  # worker Deployment so the worker's Slack sink posts placeholder edits at this
+  # base URL instead of real Slack -- the seam `curie cluster message` drives when it
+  # points the deployed worker at its local Slack Web API stub. Empty (the
+  # default) leaves the worker on real Slack. `curie cluster message --wire` sets this
+  # via `helm upgrade --reuse-values`; connecting real Slack (a `helm upgrade
+  # --reuse-values` that sets the dispatcher tokens) clears it back to empty in
+  # the same command, so that upgrade un-wires any stub routing.
+  slackApiBaseUrl: ""
+  # Extra env for the worker container, list of {name, value}. For SLACK_API_BASE_URL
+  # prefer the first-class slackApiBaseUrl above; use extraEnv for any other
+  # worker override the fixed env block does not cover.
+  extraEnv: []
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  # Container securityContext (issue #67). Image runs as non-root uid 1000 (see
+  # apps/worker/Dockerfile). This pod mounts a Kubernetes API token and drives
+  # the sandbox lifecycle, so the hardening matters most here. readOnlyRootFilesystem
+  # stays false -- the worker writes a heartbeat file under /tmp. See
+  # api.containerSecurityContext.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
+ui:
+  deploy: true
+  replicas: 1
+  image:
+    repository: ghcr.io/curie-eng/curie-ui
+    # Empty -> chart appVersion (immutable). Set to pin an explicit version tag.
+    tag: ""
+    # Optional "sha256:..." content digest; when set it wins over `tag`.
+    digest: ""
+    pullPolicy: Always
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+    port: 80
+    # Pinned NodePort used when service.type is flipped to NodePort (e.g. by
+    # `curie up`). Empty lets Kubernetes allocate one from 30000-32767, but
+    # an auto-allocated port changes on every helm install/upgrade -- breaking
+    # `curie deploy --api-url http://<host>:<port>/api` and any bookmarked
+    # URL across a redeploy. The default pins it so a down/up cycle keeps the
+    # same URL. Override or set to "" to restore auto-allocation.
+    nodePort: 30080
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+  # Container securityContext (issue #67). The UI is served by nginx-unprivileged,
+  # which already runs as non-root uid 101 and binds :8080 (no CAP_NET_BIND_SERVICE
+  # needed), so all capabilities are dropped. readOnlyRootFilesystem stays false --
+  # nginx writes to /var/cache/nginx, /var/run and /tmp; enable it only with
+  # matching writable emptyDir mounts. Override fields or set the whole block to
+  # null to opt out.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# Install-time preflights. Both are Helm hooks that block a broken install, and
+# both are re-runnable via `helm test`.
+# ---------------------------------------------------------------------------
+preflights:
+  # (a) CPU-AVX / ClickHouse-pin check. Runs as a pre-install/pre-upgrade hook
+  # Job on the cluster. It reads the node's /proc/cpuinfo, and if the node lacks
+  # AVX it FAILS the install unless the configured ClickHouse tag is SSE4.2-safe
+  # (in clickhouse.sse42SafeTags) -- catching the exit-132 SIGILL before pods
+  # crash-loop. Skipped when clickhouse.deploy is false (BYO ClickHouse).
+  avxCheck:
+    enabled: true
+    image: busybox:1.36
+    # Test knob: pretend the node has no AVX to exercise the fallback branch on
+    # an AVX-capable node. Never set true in a real install.
+    forceNoAvx: false
+    resources:
+      requests: { cpu: 50m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 64Mi }
+  # (b) NetworkPolicy-enforcement probe. A CNI that silently ignores
+  # NetworkPolicy produces a security false-pass: the chart's isolation policies
+  # render but do nothing. This probe does a before/after egress check -- reach
+  # an external target with no policy (expect reachable), apply a default-deny
+  # egress policy to itself, retry (expect blocked). enforcement=true only if
+  # the after-egress is actually blocked. Runs as a helm test.
+  networkPolicyProbe:
+    enabled: true
+    image: alpine/k8s:1.31.2
+    # External target the probe tries to reach. Must be routable from a pod when
+    # egress is unrestricted. Uses TCP 443.
+    externalTarget: "1.1.1.1"
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+  # (c) Controller-ready install-time gate. The vendored agent-sandbox controller
+  # runs a CLUSTER-scope NetworkPolicy informer; if its RBAC cannot satisfy that
+  # cluster LIST the manager crash-loops and no SandboxClaim ever binds (issue
+  # #350). This post-install/upgrade hook Job fails the Helm operation unless the
+  # controller reaches "Starting workers" (all informer caches synced), so an RBAC
+  # regression fails at install, not at first turn. Gated also on
+  # agentSandbox.controller.deploy.
+  controllerReady:
+    enabled: true
+    image: alpine/k8s:1.31.2
+    # Max seconds to wait for the controller to become Available and log
+    # "Starting workers". Sized for a fresh install; an upgrade over a
+    # crash-looping controller may need a manual pod delete + `helm test`.
+    timeoutSeconds: 180
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+
+# ---------------------------------------------------------------------------
+# Agent Sandbox substrate. The runner SandboxTemplate + SandboxWarmPool
+# that the worker's sandbox substrate claims from (one claimed sandbox per
+# Slack thread). Requires the agent-sandbox CRDs (shipped in this chart's
+# crds/ directory, installed automatically on `helm install`) and the upstream
+# controller with the extensions enabled: `agentSandbox.controller.deploy: true`
+# installs the vendored v0.5.0 controller bundle.
+# Default ON so a bare `helm install` deploys the runner substrate end to end. On
+# a cluster that ALREADY runs agent-sandbox, set controller.deploy=false (the
+# controller is cluster-scoped, one per cluster).
+# ---------------------------------------------------------------------------
+agentSandbox:
+  deploy: true
+  # Per-agent connector secrets (ADR-0009, #429): a map of agent name -> the
+  # named connector secret VALUES that agent's authed MCP servers need. Each
+  # entry renders as its OWN Kubernetes Secret
+  # (<fullname>-agent-<name>-connector-secrets), kept off the shared chart
+  # Secret and off the value-only SandboxClaim CR. The runner sandbox reads a
+  # value via a per-agent SandboxTemplate `secretKeyRef` (the binding half is
+  # cluster-verified, tracked separately). Empty by default; supply per agent,
+  # e.g.:
+  #   connectorSecrets:
+  #     github-issues:
+  #       GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+  # Prefer `--set-file`/a sealed values file over inlining a real token.
+  connectorSecrets: {}
+  controller:
+    # Installs the vendored kubernetes-sigs/agent-sandbox v0.5.0 controller
+    # (namespace agent-sandbox-system, RBAC, webhook Service, Deployment with
+    # --extensions). Cluster-scoped; one install per cluster, so set this
+    # false when the cluster already runs the controller.
+    deploy: true
+  warmPool:
+    # Pre-warmed generic runner sandboxes ready to be claimed sub-second.
+    # The SandboxWarmPool object itself is ALWAYS rendered while the substrate is
+    # deployed: the worker's SandboxClaims reference the pool by name
+    # (spec.warmPoolRef.name), so an absent pool makes every claim fail
+    # Ready=False reason=WarmPoolNotFound and the run time out. This value is the
+    # pre-warmed replica count only. Default 0 = no pre-warmed pods; claims
+    # cold-create sandboxes from the template (the intended behavior). Raise it
+    # only for a fake-model/dev pool where an unbound warm pod boots cleanly -- a
+    # real-model warm pod has no bundle (CURIE_PLUGIN_DIR=/unused, no
+    # CURIE_BUNDLE_REF), raises PluginBundleError, and CrashLoopBackOffs, and a
+    # real claim cold-creates anyway (per-claim env injection forces a cold
+    # create, the envVarsInjectionPolicy: Overrides gotcha).
+    replicas: 0
+    updateStrategy: OnReplenish
+  runner:
+    # Defaults to the image published to GHCR by the Release workflow. For
+    # offline dev/e2e (a locally-built, cluster-imported image) use values-dev,
+    # which overrides this back to `curie-runner` with imagePullPolicy Never.
+    image: ghcr.io/curie-eng/curie-runner
+    # Empty -> chart appVersion (immutable per-release tag, not mutable `latest`),
+    # so the prewarm cache and the per-thread IfNotPresent bind are the SAME
+    # pinned ref -- which also removes the `latest`-churn race behind the
+    # 2026-07-06 claim-timeout incident (an in-boot re-pull of a moved tag).
+    # Override to pin an explicit version, or set `digest` for a sha256 pin.
+    tag: ""
+    # Optional "sha256:..." content digest; when set it wins over `tag`.
+    digest: ""
+    # IfNotPresent -- NOT Always, unlike the four Deployment-managed services.
+    # A sandbox pod is cold-created per Slack thread, so `Always` would put a
+    # (re-)pull of this ~380MB image inside the per-thread boot window; when
+    # `latest` has churned that pull blew past the worker's 90s claim timeout and
+    # killed the run. Sandbox cold boot must never contain an image download.
+    # Freshness is handled out of band by the runner-prewarm DaemonSet below,
+    # which pulls `Always` and pins the image in the node cache between threads;
+    # `IfNotPresent` here then binds the already-present image instantly.
+    imagePullPolicy: IfNotPresent
+    # GHCR packages on a private repo are NOT anonymously pullable -- the node
+    # needs a docker-registry pull Secret. List pre-created Secret names here,
+    # e.g. [{ name: ghcr-pull }]. Leave empty when the package is public or for
+    # local dev. See the chart README "Publishing and pulling images".
+    imagePullSecrets: []
+    # Runner-image prewarm DaemonSet. Keeps this image pulled and pinned on every
+    # node so per-thread sandbox cold boots (imagePullPolicy IfNotPresent above)
+    # bind an already-present image instead of downloading it inside the claim
+    # window. Rendered only while the sandbox substrate is deployed
+    # (agentSandbox.deploy). Each `helm upgrade` rolls the pods (a Release-revision
+    # annotation on the pod template) so the DaemonSet's `Always` pull refreshes a
+    # churned `latest` -- a plain DaemonSet would not re-pull on a digest-only
+    # change since its pod spec is unchanged. Tiny idle container (sleep infinity);
+    # the point is the pinned image, not the process.
+    prewarm:
+      enabled: true
+      # Pull policy for the prewarm DaemonSet container. `Always` (the default)
+      # is what refreshes a churned `latest` on every `helm upgrade` roll -- the
+      # whole point of the DaemonSet (see runner-prewarm.yaml). Override to
+      # `Never`/`IfNotPresent` on a cluster whose runner image was imported into
+      # the node store rather than published to a registry (offline dev / kind /
+      # k3s with `kind load` or `ctr images import`): there `Always` would try a
+      # registry pull of a ref that only exists locally and ErrImagePull-loop the
+      # prewarm pods, even though the image is already present. Mirrors the
+      # imagePullPolicy override the per-thread sandbox already exposes above.
+      imagePullPolicy: Always
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 50m, memory: 32Mi }
+    port: 8080
+    # Fake-model mode round-trips ACI events offline with no credential; flip
+    # false (and provide credentials) for real model runs.
+    fakeModel: true
+    # Default model for real (non-fake) runs, baked into the sandbox pod template
+    # as CURIE_MODEL. The runner passes it to the SDK; leaving it unset lets the
+    # SDK pick its own default (historically an older Sonnet), which also has no
+    # matching Langfuse price row, so the Cost view reads zero. Pinning it here
+    # both fixes the model and pairs with langfuse.modelPricing below. Baked into
+    # the template (not per-claim) so warm-pool binds stay fast. Empty = unset.
+    model: "claude-sonnet-5"
+    # Opaque model credential (CURIE_CREDENTIALS) the worker forwards into each
+    # claim and the warm template bakes as a fallback. EMPTY by default: fake
+    # model needs none, and a real credential is per-agent (see the runner
+    # ServiceAccount note below), so a global one is opt-in. When set it is stored
+    # in the chart Secret (key agentCredentials), never inlined into a manifest.
+    credentials: ""
+    pluginDir: /unused
+    budget:
+      maxOutputTokensPerRun: 100000
+      maxUsdPerDay: 5.0
+    # Readiness probe on the runner's ACI /healthz. A tight cadence turns a
+    # booted runner Ready fast, shaving the cold-create latency the worker's
+    # claim() waits on; failureThreshold is generous so a genuinely slow boot is
+    # tolerated without the pod being marked unready. Probe settings live here
+    # (not the template) per the chart's values-not-templates invariant.
+    readinessProbe:
+      initialDelaySeconds: 2
+      periodSeconds: 2
+      timeoutSeconds: 2
+      failureThreshold: 30
+    # Per-claim env injection (the resume path injects CURIE_HISTORY_REF and
+    # CURIE_SESSION_ID) must be able to override the template's baked env.
+    envVarsInjectionPolicy: Overrides
+    # Extra env for the runner container, list of {name, value}.
+    extraEnv: []
+    # --- BYO model: LiteLLM Anthropic-format sidecar (part of #24) ---
+    # Off by default. Enable ONLY for genuine multi-model routing/fallback: a
+    # LiteLLM proxy runs as a sidecar in the sandbox pod, serving the Anthropic
+    # API shape on localhost, and the runner's ANTHROPIC_BASE_URL is repointed at
+    # it (http://localhost:<port>). For a single model per agent prefer the
+    # OpenRouter / provider-native path (leave this off and set runner.model +
+    # runner.credentials, or a per-agent credential) -- a sidecar per sandbox pod
+    # is pure overhead when no routing is needed. Ignored while local
+    # inference.deploy is on (that path already binds ANTHROPIC_BASE_URL to the
+    # in-cluster Ollama endpoint).
+    liteLLM:
+      enabled: false
+      image: ghcr.io/berriai/litellm:main-stable
+      imagePullPolicy: IfNotPresent
+      # Port the proxy listens on inside the pod; the runner reaches it over
+      # localhost, so it is never exposed as a Service.
+      port: 4000
+      # Name of a pre-created Secret (or ConfigMap-shaped Secret) holding the
+      # LiteLLM config.yaml -- the model_list and router/fallback settings. It is
+      # mounted read-only at /etc/litellm/config.yaml and passed to the proxy via
+      # --config. REQUIRED when enabled; provider API keys the config references
+      # are supplied through extraEnv (secretKeyRef), never inlined here.
+      configExistingSecret: ""
+      # Key within that Secret that carries the config file body.
+      configKey: config.yaml
+      # Extra env for the sidecar, list of {name, value} (or full env entries with
+      # valueFrom.secretKeyRef for provider credentials, e.g. OPENAI_API_KEY).
+      extraEnv: []
+      # ephemeral-storage alongside cpu/memory (ADR-0059 decision 1): the sidecar
+      # only reads its mounted config and proxies to an upstream model API, with
+      # no bundle/writable-path volume of its own, so its own disk footprint is
+      # just its writable layer and logs -- a small, fixed ceiling is enough.
+      # Both request (the scheduling-time floor that keeps the node from being
+      # overcommitted) and limit (the periodic-measurement backstop) are
+      # required and do different jobs (decision 2); override either for a
+      # heavier sidecar image.
+      resources:
+        requests: { cpu: 50m, memory: 128Mi, ephemeral-storage: 64Mi }
+        limits: { cpu: "1", memory: 512Mi, ephemeral-storage: 256Mi }
+    # --- Bundle-fetch provisioning ---
+    # CURIE_BUNDLE_REF is a MinIO object key the substrate injects per-claim
+    # (bound sandboxes carry it; warm/unbound pods do not). Before the runner
+    # starts, an init pair fetches that object and extracts it into the shared
+    # bundle volume at <mountPath>/current, which the worker points
+    # CURIE_PLUGIN_DIR at. Fail-closed: a set-but-unfetchable ref fails the pod
+    # rather than booting the wrong (empty) capability set; a clean no-op (empty
+    # plugin dir) when the ref is unset. Two images because no stock image ships
+    # both an authenticated S3 client and archive tools: mc fetches, busybox
+    # extracts (.tar.gz / .tar / .zip). The S3 endpoint + creds come from the
+    # minio block (BYO S3 via minio.deploy=false + minio.host).
+    bundleFetch:
+      enabled: true
+      bucket: curie-bundles
+      fetchImage: minio/mc
+      extractImage: busybox:1.36
+      # Shared bundle volume mount point in the sandbox pod. The plugin dir the
+      # worker injects (CURIE_PLUGIN_DIR=/bundles/current) is `<mountPath>/current`.
+      mountPath: /bundles
+      # ADR-0059 decision 2: ceiling on the shared `bundles` emptyDir (the
+      # fetched archive plus the extracted plugin dir), so an oversized or
+      # zip-bomb-shaped bundle exhausts its own pod's envelope instead of node
+      # disk. Raise per-agent for a legitimately large bundle. NOTE: sizeLimit
+      # is enforced by periodic kubelet measurement, not a write-time cap -- a
+      # fast writer can overshoot it briefly before the pod is evicted. That
+      # makes it a fast, attributable backstop, not an instantaneous quota;
+      # pair it with the `runner.resources` `ephemeral-storage` request/limit
+      # (ADR-0059 decision 1, tracked in #755) for the scheduling-time bound.
+      sizeLimit: 2Gi
+      # Ceiling on the init-only `mc-config` volume, which holds nothing but
+      # the mc credential file written by the bundle-fetch init container.
+      # Small and fixed since nothing else is ever written there.
+      mcConfigSizeLimit: 16Mi
+    # ephemeral-storage alongside cpu/memory (ADR-0059 decision 1): this same
+    # block is reused for the runner container AND both bundle init containers
+    # (bundle-fetch, bundle-extract), matching how cpu/memory already work here.
+    # Disk was previously the one resource dimension with no ceiling at all --
+    # the kubelet had no per-pod ephemeral-storage to schedule against or measure
+    # an overrunning pod against, so node-level DiskPressure eviction was the
+    # only backstop, and it ranks victims by raw usage across the WHOLE node
+    # rather than by fault. Sized to bound a runaway (an agent that clones a
+    # large repo, installs a big dependency tree, or generates large artifacts),
+    # not to constrain that same legitimate work -- a limit tight enough to
+    # break ordinary builder-agent use would be routinely overridden away and
+    # would protect nothing. Both the request (the scheduling-time floor that
+    # keeps a node from being overcommitted) and the limit (the periodic-
+    # measurement backstop) are required and do different jobs (decision 2);
+    # raise either per agent/workload via a values override.
+    resources:
+      requests: { cpu: 50m, memory: 192Mi, ephemeral-storage: 512Mi }
+      limits: { cpu: "1", memory: 768Mi, ephemeral-storage: 4Gi }
+    # --- security rails on the runner surface ---
+    # Rail 3: container hardening. non-root + read-only rootfs + dropped caps +
+    # no privilege escalation + RuntimeDefault seccomp. readOnlyRootFilesystem
+    # needs writable scratch, so the chart mounts an emptyDir at each writablePath
+    # and points HOME at one of them (the runner/CLI must not write to `/`).
+    hardening:
+      enabled: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      # emptyDir mounts provided so a read-only rootfs container can still write.
+      writablePaths:
+        - /tmp
+        - /home/runner
+      # HOME for the non-root user (one of writablePaths). The Claude CLI and
+      # Python both write under HOME/tmp; pointing HOME at a writable emptyDir
+      # keeps the root filesystem read-only.
+      home: /home/runner
+      # ADR-0059 decision 2: ceiling applied to EVERY writablePaths emptyDir
+      # (one shared default rather than a per-path value, since writablePaths
+      # is a plain path list, not a list of objects -- restructuring it into
+      # {path, sizeLimit} entries just to carry one differing value per path
+      # wasn't worth the schema churn). Sized for CLI/interpreter scratch and
+      # tmp writes, not for durable output (that belongs in the `bundles`
+      # volume or an external store). Raise it for a writablePaths entry a
+      # heavy agent legitimately fills. Same periodic-measurement caveat as
+      # bundleFetch.sizeLimit above: the kubelet samples usage rather than
+      # capping writes inline, so this is a fast, attributable backstop (the
+      # offending pod is evicted, not the node degraded), not a hard quota.
+      writablePathSizeLimit: 512Mi
+    # Rail 4 (gVisor kernel isolation) is controlled by security.gvisor.mode
+    # below -- the effective pod runtimeClassName is computed from that tri-state,
+    # not set here.
+    # Pod DNS policy for sandbox pods. Defaults to ClusterFirst because the
+    # bundle-fetch init container resolves the in-chart MinIO by Service name and
+    # the runner exports OTLP to the in-chart collector by Service name -- both
+    # need cluster DNS. Left unset, the agent-sandbox controller injects a
+    # public-resolver default (8.8.8.8/1.1.1.1) that cannot resolve those names,
+    # so the bundle-fetch init fails and bound sandboxes never bind. ClusterFirst
+    # queries CoreDNS (which the runner-allow-dns NetworkPolicy permits) and still
+    # forwards external names upstream, so real-model egress is unaffected. Set to
+    # "" only with fully external (BYO) MinIO + collector reached by IP/allowlist.
+    dnsPolicy: ClusterFirst
+    # Rail 2: the runner ServiceAccount. Least privilege: no secret list/get on
+    # its own. The per-agent secret Role (resourceNames-scoped to that agent's
+    # credential Secret) is created per agent by the control plane, not the chart
+    # -- the chart ships the isolation MODEL, the control plane binds it per SA.
+    serviceAccount:
+      create: true
+      # The runner does not call the K8s API, so its token is not mounted.
+      automountToken: false
+
+# ---------------------------------------------------------------------------
+# Security rails. The four security-boundary rails shipped ON by default. They
+# attach to the agent-sandbox runner surface, so the NetworkPolicy / RBAC / probe
+# resources render only when agentSandbox.deploy is true (there are no runner
+# pods to protect otherwise) -- which keeps the default and dev renders identical
+# to a chart without the rails. Each rail is individually toggleable, but the
+# secure posture is the default, per ADR-0006.
+# ---------------------------------------------------------------------------
+security:
+  # Rail 1: default-deny egress on runner sandboxes, with explicit allows for DNS
+  # + the model API + declared MCP endpoints. Everything else -- arbitrary
+  # internet AND the cloud metadata endpoint 169.254.169.254 -- is denied by
+  # construction (fail-closed).
+  networkPolicy:
+    enabled: true
+    # Allow DNS egress so the runner can resolve its allowed hosts.
+    allowDNS: true
+    dnsNamespace: kube-system
+    # Egress allowlist = model API + declared MCP endpoints + any operator-declared
+    # skill/tool web-access egress (e.g. a web-search provider a skill calls). Each
+    # entry is {cidr, ports: [{protocol, port}]}, appended additively -- the
+    # `curie cluster up --allow-web-egress <CIDR>` flag adds entries here after the model
+    # carve-out at index [0] without weakening it. EMPTY by default: a fresh install
+    # denies ALL egress except DNS until the operator declares where the model API
+    # and MCP servers live. Deliberately fail-closed -- an unset allowlist must never
+    # mean "allow everything".
+    allowedEgress: []
+    #  - cidr: 160.79.104.0/23           # e.g. api.anthropic.com
+    #    ports: [{ protocol: TCP, port: 443 }]
+    # Also restrict ingress to the runner ACI port from inside the cluster. The
+    # worker dials the claimed sandbox, so ingress is allowed from the release
+    # namespace only. Egress policies do not affect ingress; this adds the lock.
+    lockIngress: true
+  # Rail: default-deny ingress + scoped-allow around the data tier (Postgres,
+  # MinIO, ClickHouse, Valkey). The backing stores hold every credential and all
+  # trace/app data; by default any pod in a NetworkPolicy-enforcing cluster can
+  # open Postgres:5432 and exfiltrate. This restricts ingress to each deployed
+  # store's ports to THIS release's app pods only (by name+instance label).
+  # Same fail-closed, default-on posture as the runner rail. Lower priority on a
+  # single-tenant single-node dev cluster; matters for the shared/production path.
+  dataTierNetworkPolicy:
+    enabled: true
+  # Rail 4: gVisor (runsc) kernel isolation for runner sandbox pods.
+  gvisor:
+    # Tri-state, default `auto`:
+    #   auto    - at install/upgrade time the chart looks up the `runtimeClassName`
+    #             RuntimeClass. If present, runner pods run under it; if absent,
+    #             pods run with NO runtimeClassName (isolation OFF) and NOTES.txt
+    #             prints a prominent warning. NOTE: Helm's `lookup` returns empty
+    #             under `helm template`/--dry-run, so a templated render always
+    #             shows the no-gvisor shape. This graceful degradation applies ONLY
+    #             to the fake-model/dev default; enabling a real model
+    #             (agentSandbox.runner.fakeModel=false or local inference.deploy)
+    #             makes `auto` render the blocking enforcement preflight, so a
+    #             runsc-less real-model install fails closed instead of silently
+    #             running on the host kernel.
+    #   require - always stamp the runtimeClassName AND run the enforcement
+    #             preflight as a blocking hook; a missing or downgraded runtime
+    #             fails the install (the fail-hard, production posture).
+    #   off     - never stamp a runtimeClassName; kernel isolation disabled
+    #             knowingly (what values-e2e-nogvisor.yaml selects).
+    mode: auto
+    # The RuntimeClass name to use / look up / verify.
+    runtimeClassName: gvisor
+    # Optionally create the RuntimeClass object. The NODE must independently have
+    # runsc + the containerd runtime handler installed; the object alone does not
+    # install the runtime. Default false: assume the cluster already provides the
+    # runtimeclass, which `require` mode's preflight verifies.
+    installRuntimeClass: false
+    handler: runsc
+  # Enforcement preflight for `require` mode: verify the RuntimeClass EXISTS and is
+  # actually ENFORCED (a pod under it reports a distinct gVisor kernel), so a
+  # missing or silently-downgraded runtime fails the install with remediation
+  # instead of shipping runner pods with no kernel isolation. Renders when
+  # security.gvisor.mode is `require`, OR mode is `auto` with a real (non-fake)
+  # model; fake-model `auto` degrades gracefully; `off` skips it.
+  gvisorPreflight:
+    enabled: true
+    image: busybox:1.36
+    resources:
+      requests: { cpu: 50m, memory: 32Mi }
+      limits: { cpu: 200m, memory: 64Mi }
+  # The security-boundary probe suite as a helm test. Re-runs the four
+  # claims against the chart's rendered defaults: egress+metadata blocked (with a
+  # before/after control), cross-agent secret isolation, non-root/RO-rootfs, and
+  # gVisor enforcement. See README "Security rails".
+  probe:
+    enabled: true
+    # Driver image (must carry kubectl + bash); drives all three claims.
+    kubectlImage: alpine/k8s:1.31.2
+    # Egress-probe pod image (must carry curl + nslookup) the driver pod execs
+    # into to test egress under the chart's real NetworkPolicy.
+    netshootImage: nicolaka/netshoot
+    busyboxImage: busybox:1.36
+    # A public host the egress policy must BLOCK (reached on the baseline, denied
+    # under the policy -- the before/after control that proves the CNI enforces).
+    blockedTarget: example.com
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+  # Render-time credential gate (issue #198). When true, the chart refuses to
+  # render if a Langfuse bootstrap identity (langfuse.init.projectSecretKey /
+  # langfuse.init.userPassword) still carries the published dev default from this
+  # file -- the published admin password is a Langfuse admin-takeover risk on a
+  # reachable UI, and the project secret key also feeds the OTel Collector auth
+  # header. Clear the gate by overriding those values or supplying
+  # langfuse.existingSecret (the secretKeyRef escape, keys langfuseInitProjectSecretKey
+  # + langfuseInitUserPassword). Off by default so the flagship zero-secret bare
+  # install stays green and the dev/e2e overlays render unchanged; flip it on for a
+  # shared/production cluster. (#57 will extend this same gate to the nine
+  # store/control-plane secrets once its design pass lands.)
+  checkDefaultCredentials: false
+  # Auto-generate per-release chart credentials (issue #195). Default false: a
+  # no-override `helm install` GENERATES a strong random per release for the nine
+  # chart-owned credentials (postgres/valkey/clickhouse/minio passwords, the
+  # Langfuse salt/encryptionKey/nextauthSecret, and the api/webhook keys) instead
+  # of shipping the published dev defaults. Generated values are persisted via a
+  # `lookup` of the release Secret, so `helm upgrade` re-uses them and never
+  # rotates a live store credential. Set true (values-dev.yaml does) for a
+  # deterministic dev/CI render that keeps the published defaults byte-for-byte.
+  # A per-store `existingSecret` and explicit `--set` overrides still win in every
+  # mode -- an override that differs from the published default beats the persisted
+  # value on install AND upgrade, so rotation/recovery works.
+  # Caveat: generation relies on Helm `lookup`, which is empty under client-side
+  # rendering. Driving this chart via `helm template | kubectl apply` or ArgoCD's
+  # client-side Helm (no live API lookup) regenerates these values on every sync
+  # and would rotate live store credentials -- pin them via `--set`/`existingSecret`
+  # (or use the `helm install/upgrade` path / `curie cluster up`) in that case.
+  allowDevDefaults: false
+
+# ---------------------------------------------------------------------------
+# Tenant capacity ceiling (ADR-0059 decision 4). ADR-0008 decides
+# namespace-per-tenant compute, which bounds REACHABILITY; these two objects
+# complete it with a bound on CONSUMPTION, because nodes are shared beneath
+# the namespace boundary and one tenant's sandboxes can otherwise exhaust node
+# capacity another tenant's sandboxes depend on. See
+# docs/adr/0059-sandbox-is-a-bounded-resource-envelope.md.
+# ---------------------------------------------------------------------------
+# ResourceQuota: an aggregate cpu/memory + sandbox pod-count ceiling for the
+# tenant namespace, so a tenant cannot exceed its allocation regardless of how
+# many sandboxes it claims. (No ephemeral-storage line: a PriorityClass-scoped
+# quota may not constrain it -- see tenant-resourcequota.yaml; the per-pod
+# ephemeral limit x this pod-count cap is the effective disk ceiling.)
+resourceQuota:
+  enabled: true
+  # The PriorityClass name this quota's scopeSelector keys on, so the quota
+  # binds only sandbox pods -- NOT the platform pods (api/worker/dispatcher)
+  # or the data tier, which in the N=1 self-host topology share this same
+  # release namespace. This is the sandbox PriorityClass ADR-0059 decision 5 /
+  # issue #759 defines; #759 is being implemented in parallel and this is an
+  # assumed name pending that PR landing. If #759 ships a different name,
+  # override this value (or reconcile the two constant strings) so the
+  # scopeSelector actually matches. A name that matches no pod yet (#759 not
+  # merged) makes this quota inertly present rather than an error -- Kubernetes
+  # does not validate a scopeSelector's PriorityClass name against an existing
+  # object.
+  sandboxPriorityClassName: curie-sandbox
+  hard:
+    requestsCpu: "4"
+    requestsMemory: 8Gi
+    limitsCpu: "8"
+    limitsMemory: 16Gi
+    # Aggregate sandbox pod count, scoped by the same scopeSelector -- closes
+    # the "claim more, smaller sandboxes" route around the limits above.
+    sandboxPodCount: "50"
+# LimitRange: per-container defaults (request + limit) so a sandbox pod
+# created outside this chart's own SandboxTemplate -- and, as a floor, any
+# first-party container that omits a dimension -- still inherits a ceiling
+# rather than running unbounded. Has no scopeSelector (LimitRange does not
+# support one), so it applies namespace-wide; this is safe for the N=1
+# self-host control plane because every first-party component in this chart
+# already declares its own cpu+memory request/limit, so these defaults only
+# ever fill the one dimension nothing in the chart sets today,
+# `ephemeral-storage` -- they never override an already-declared value.
+limitRange:
+  enabled: true
+  container:
+    defaultRequest:
+      cpu: 50m
+      memory: 128Mi
+      ephemeralStorage: 256Mi
+    default:
+      cpu: "1"
+      memory: 1Gi
+      ephemeralStorage: 2Gi

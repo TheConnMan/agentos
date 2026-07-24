@@ -12,8 +12,8 @@ import logging
 import tarfile
 from pathlib import Path
 
-from agentos_worker.bundle_store import extract_bundle
-from agentos_worker.sandbox.docker import (
+from curie_worker.bundle_store import extract_bundle
+from curie_worker.sandbox.docker import (
     RUNNER_CONTAINER_PORT,
     DockerError,
     DockerSandboxClient,
@@ -38,47 +38,47 @@ def _plugin_tar_gz(wrapper: str | None) -> bytes:
 
 def test_create_claim_argv_carries_boot_env() -> None:
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        network="agentos_default",
+        network="curie_default",
         otel_endpoint="http://otel:4318",
     )
     client.create_claim(
         "thread-abc",
         pool="pool",
         env={
-            "AGENTOS_BUDGET": '{"max_usd_per_day":5.0}',
-            "AGENTOS_SESSION_ID": "sess-1",
-            "AGENTOS_FAKE_MODEL": "1",
-            "AGENTOS_PLUGIN_DIR": "/bundles/current",
+            "CURIE_BUDGET": '{"max_usd_per_day":5.0}',
+            "CURIE_SESSION_ID": "sess-1",
+            "CURIE_FAKE_MODEL": "1",
+            "CURIE_PLUGIN_DIR": "/bundles/current",
         },
-        labels={"agentos.dev/thread-hash": "abc"},
+        labels={"curie.dev/thread-hash": "abc"},
     )
     argv = client.calls[0]
     joined = " ".join(argv)
     assert joined.startswith("run -d --name thread-abc")
     assert "127.0.0.1::8080" in _flag_values(argv, "-p")
-    assert "agentos_default" in _flag_values(argv, "--network")
+    assert "curie_default" in _flag_values(argv, "--network")
     labels = _flag_values(argv, "--label")
-    assert "agentos.dev/managed-by=agentos-sandbox-substrate" in labels
-    assert "agentos.dev/thread-hash=abc" in labels
+    assert "curie.dev/managed-by=curie-sandbox-substrate" in labels
+    assert "curie.dev/thread-hash=abc" in labels
     envs = _flag_values(argv, "-e")
-    assert "AGENTOS_PLUGIN_DIR=/bundles/current" in envs
-    assert "AGENTOS_SANDBOX_ID=thread-abc" in envs
-    assert "AGENTOS_RUNNER_PORT=8080" in envs
-    assert 'AGENTOS_BUDGET={"max_usd_per_day":5.0}' in envs
-    assert "AGENTOS_FAKE_MODEL=1" in envs
+    assert "CURIE_PLUGIN_DIR=/bundles/current" in envs
+    assert "CURIE_SANDBOX_ID=thread-abc" in envs
+    assert "CURIE_RUNNER_PORT=8080" in envs
+    assert 'CURIE_BUDGET={"max_usd_per_day":5.0}' in envs
+    assert "CURIE_FAKE_MODEL=1" in envs
     assert "OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318" in envs
-    assert argv[-1] == "agentos-runner"
+    assert argv[-1] == "curie-runner"
 
 
 def test_create_claim_fetches_and_unwraps_bundle() -> None:
     store = _FakeBundleStore(_plugin_tar_gz(wrapper="deal-desk"))
-    client = _RecordingDocker(image="agentos-runner", bundle_store=store)
+    client = _RecordingDocker(image="curie-runner", bundle_store=store)
     client.create_claim(
         "t1",
         pool="pool",
-        env={"AGENTOS_BUNDLE_REF": "bundles/b.tar.gz", "AGENTOS_PLUGIN_DIR": "/bundles/current"},
+        env={"CURIE_BUNDLE_REF": "bundles/b.tar.gz", "CURIE_PLUGIN_DIR": "/bundles/current"},
     )
     assert store.requested == ["bundles/b.tar.gz"]  # the worker fetched the bundle
     mounts = _flag_values(client.calls[0], "-v")
@@ -89,12 +89,12 @@ def test_create_claim_fetches_and_unwraps_bundle() -> None:
     # Unwrapped: the manifest sits at the mount root, not under the wrapper dir.
     assert (Path(host_dir) / ".claude-plugin" / "plugin.json").is_file()
     # The MinIO object key itself is not forwarded into the container env.
-    assert all("AGENTOS_BUNDLE_REF" not in e for e in _flag_values(client.calls[0], "-e"))
+    assert all("CURIE_BUNDLE_REF" not in e for e in _flag_values(client.calls[0], "-e"))
 
 
 def test_create_claim_without_bundle_ref_mounts_nothing() -> None:
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1"})
     assert _flag_values(client.calls[0], "-v") == []
 
 
@@ -102,11 +102,11 @@ def test_sdk_credential_forwarded_by_name_only() -> None:
     # A real-model run: the SDK token is present in the worker env. It must be
     # forwarded by NAME (docker reads the value), never with its value in the argv.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={"CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER-never-real"},
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    client.create_claim("t1", pool="pool", env={"CURIE_BUDGET": "{}"})
     argv = client.calls[0]
     envs = _flag_values(argv, "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" in envs  # forwarded by name
@@ -114,69 +114,69 @@ def test_sdk_credential_forwarded_by_name_only() -> None:
 
 
 def test_sdk_credential_not_forwarded_when_absent() -> None:
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore(), environ={})
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore(), environ={})
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1"})
     envs = _flag_values(client.calls[0], "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs
     assert "ANTHROPIC_API_KEY" not in envs
 
 
-def test_agentos_credentials_forwarded_by_name_never_as_value() -> None:
+def test_curie_credentials_forwarded_by_name_never_as_value() -> None:
     # The ACI credential reference must reach the runner (which maps it) without
     # its value ever appearing in the docker argv.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        environ={"AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"},
+        environ={"CURIE_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"},
     )
     # The worker also hands it in the boot env (from config.credentials); it must
     # still never be emitted as a -e KEY=value pair.
-    client.create_claim("t1", pool="pool", env={"AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"})
+    client.create_claim("t1", pool="pool", env={"CURIE_CREDENTIALS": "sk-ant-PLACEHOLDER-secret"})
     argv = client.calls[0]
     envs = _flag_values(argv, "-e")
-    assert "AGENTOS_CREDENTIALS" in envs  # forwarded by name
+    assert "CURIE_CREDENTIALS" in envs  # forwarded by name
     assert all("PLACEHOLDER-secret" not in a for a in argv)  # value never in argv
-    assert "AGENTOS_CREDENTIALS=sk-ant-PLACEHOLDER-secret" not in envs
+    assert "CURIE_CREDENTIALS=sk-ant-PLACEHOLDER-secret" not in envs
 
 
-def test_ambient_sdk_creds_not_forwarded_when_agentos_credentials_set() -> None:
-    # BYO model: an explicit AGENTOS_CREDENTIALS is present, and the operator's
+def test_ambient_sdk_creds_not_forwarded_when_curie_credentials_set() -> None:
+    # BYO model: an explicit CURIE_CREDENTIALS is present, and the operator's
     # shell also carries ambient SDK tokens. Positive selection forwards exactly
-    # AGENTOS_CREDENTIALS by name and does NOT forward the ambient SDK vars (which
+    # CURIE_CREDENTIALS by name and does NOT forward the ambient SDK vars (which
     # would re-inject the operator's token and shadow the BYO credential in the
     # runner).
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={
             "CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER-oauth",
             "ANTHROPIC_API_KEY": "sk-ant-PLACEHOLDER-key",
-            "AGENTOS_CREDENTIALS": "sk-or-PLACEHOLDER-byo",
+            "CURIE_CREDENTIALS": "sk-or-PLACEHOLDER-byo",
         },
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    client.create_claim("t1", pool="pool", env={"CURIE_BUDGET": "{}"})
     argv = client.calls[0]
     envs = _flag_values(argv, "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient OAuth token not forwarded by name
     assert "ANTHROPIC_API_KEY" not in envs  # ambient API key not forwarded by name
-    assert "AGENTOS_CREDENTIALS" in envs  # explicit BYO reference still forwarded by name
+    assert "CURIE_CREDENTIALS" in envs  # explicit BYO reference still forwarded by name
     assert all("PLACEHOLDER" not in a for a in argv)  # no secret value leaks into argv
 
 
-def test_ambient_sdk_creds_forwarded_when_agentos_credentials_empty() -> None:
-    # Legacy real-model path: an empty AGENTOS_CREDENTIALS placeholder (a blank
+def test_ambient_sdk_creds_forwarded_when_curie_credentials_empty() -> None:
+    # Legacy real-model path: an empty CURIE_CREDENTIALS placeholder (a blank
     # line in compose's .env) must NOT suppress a real ambient OAuth token.
     # Positive selection keys on VALUE-truthiness, not key-presence, so an empty
-    # AGENTOS_CREDENTIALS is treated as absent and the ambient SDK var is forwarded.
+    # CURIE_CREDENTIALS is treated as absent and the ambient SDK var is forwarded.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={
-            "AGENTOS_CREDENTIALS": "",
+            "CURIE_CREDENTIALS": "",
             "CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER-oauth",
         },
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    client.create_claim("t1", pool="pool", env={"CURIE_BUDGET": "{}"})
     argv = client.calls[0]
     envs = _flag_values(argv, "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" in envs  # ambient OAuth token forwarded by name
@@ -193,21 +193,21 @@ _AMBIENT_OAUTH = "sk-PLACEHOLDER-oauth"
 def test_no_credential_forwarded_under_fake_model() -> None:
     # A fake-model run needs no model credential: neither the explicit BYO
     # reference nor the ambient SDK token must ride into the untrusted runner.
-    # Gating keys on the boot env (AGENTOS_FAKE_MODEL present), not the worker
+    # Gating keys on the boot env (CURIE_FAKE_MODEL present), not the worker
     # environ, so even a fully-credentialed worker leaks nothing.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={
             "CLAUDE_CODE_OAUTH_TOKEN": _AMBIENT_OAUTH,
-            "AGENTOS_CREDENTIALS": "sk-ant-PLACEHOLDER",
+            "CURIE_CREDENTIALS": "sk-ant-PLACEHOLDER",
         },
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1", "AGENTOS_BUDGET": "{}"})
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1", "CURIE_BUDGET": "{}"})
     envs = _flag_values(client.calls[0], "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token not forwarded
     assert "ANTHROPIC_API_KEY" not in envs
-    assert "AGENTOS_CREDENTIALS" not in envs  # BYO reference not forwarded either
+    assert "CURIE_CREDENTIALS" not in envs  # BYO reference not forwarded either
     assert all("PLACEHOLDER" not in a for a in client.calls[0])  # no value leaks
 
 
@@ -216,14 +216,14 @@ def test_ambient_sdk_creds_not_forwarded_under_local_model() -> None:
     # runner at a local endpoint that needs no Anthropic credential, so the ambient
     # SDK token must not ride into that container.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={"CLAUDE_CODE_OAUTH_TOKEN": _AMBIENT_OAUTH},
     )
     client.create_claim(
         "t1",
         pool="pool",
-        env={"ANTHROPIC_BASE_URL": "http://ollama:11434", "AGENTOS_BUDGET": "{}"},
+        env={"ANTHROPIC_BASE_URL": "http://ollama:11434", "CURIE_BUDGET": "{}"},
     )
     envs = _flag_values(client.calls[0], "-e")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token not forwarded
@@ -234,30 +234,30 @@ def test_ambient_sdk_creds_not_forwarded_under_local_model() -> None:
 def test_explicit_credential_forwarded_under_base_url_override() -> None:
     # BYO OpenRouter with a preset base URL: the runner routes an sk-or- key into
     # ANTHROPIC_API_KEY even when ANTHROPIC_BASE_URL is set (runner sdk_auth), so an
-    # EXPLICIT AGENTOS_CREDENTIALS must still be forwarded by name -- while the
+    # EXPLICIT CURIE_CREDENTIALS must still be forwarded by name -- while the
     # ambient SDK token still must not ride along.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={
             "CLAUDE_CODE_OAUTH_TOKEN": _AMBIENT_OAUTH,
-            "AGENTOS_CREDENTIALS": "sk-or-PLACEHOLDER",
+            "CURIE_CREDENTIALS": "sk-or-PLACEHOLDER",
         },
     )
     client.create_claim(
         "t1",
         pool="pool",
-        env={"ANTHROPIC_BASE_URL": "https://openrouter.ai/api", "AGENTOS_BUDGET": "{}"},
+        env={"ANTHROPIC_BASE_URL": "https://openrouter.ai/api", "CURIE_BUDGET": "{}"},
     )
     envs = _flag_values(client.calls[0], "-e")
-    assert "AGENTOS_CREDENTIALS" in envs  # BYO OpenRouter key still forwarded by name
+    assert "CURIE_CREDENTIALS" in envs  # BYO OpenRouter key still forwarded by name
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in envs  # ambient SDK token still suppressed
     assert "ANTHROPIC_API_KEY" not in envs
     assert all("PLACEHOLDER" not in a for a in client.calls[0])  # value never in argv
 
 
 def test_get_sandbox_reports_published_port_and_mode() -> None:
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
     client.outputs = {
         "inspect": "running\t{}",
         "port": "127.0.0.1:49173\n",
@@ -275,7 +275,7 @@ def test_get_sandbox_reports_published_port_and_mode() -> None:
 
 
 def test_get_sandbox_none_when_container_absent() -> None:
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
     client.outputs = {"inspect": ""}  # docker inspect on a missing container
     assert client.get_sandbox("gone") is None
 
@@ -283,7 +283,7 @@ def test_get_sandbox_none_when_container_absent() -> None:
 def test_get_sandbox_treats_dead_container_as_gone() -> None:
     # An exited/dead/created container is NOT a live sandbox: report it gone so
     # the substrate evicts the stale route instead of dialing a dead runner.
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
     for dead in ("exited", "dead", "created", "restarting"):
         client.outputs = {"inspect": f"{dead}\t{{}}", "port": ""}
         assert client.get_sandbox("t1") is None, dead
@@ -312,10 +312,10 @@ def test_get_sandbox_dials_container_ip_on_shared_network() -> None:
     # host-loopback publish, but can reach its shared-network container IP. So the
     # dial target is that IP at the fixed container port, not the host port.
     client = _NetworkAwareDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        network="agentos_default",
-        networks_json='{"agentos_default": {"IPAddress": "172.20.0.11"}}',
+        network="curie_default",
+        networks_json='{"curie_default": {"IPAddress": "172.20.0.11"}}',
     )
     view = client.get_sandbox("t1")
     assert view is not None
@@ -328,9 +328,9 @@ def test_get_sandbox_falls_back_to_published_port_without_network_ip() -> None:
     # No shared-network IP yet (or no network): dial the Docker-assigned host
     # loopback port, preserving the host-process worker path.
     client = _NetworkAwareDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        network="agentos_default",
+        network="curie_default",
         networks_json="{}",
     )
     view = client.get_sandbox("t1")
@@ -344,7 +344,7 @@ def test_prepare_bundle_is_readable_by_nonroot_runner() -> None:
     # the tree must be group/other traversable+readable. mkdtemp defaults to 0700,
     # which the non-root runner cannot enter -- _prepare_bundle must widen it.
     client = _RecordingDocker(
-        image="agentos-runner", bundle_store=_FakeBundleStore(_plugin_tar_gz(wrapper=None))
+        image="curie-runner", bundle_store=_FakeBundleStore(_plugin_tar_gz(wrapper=None))
     )
     root = Path(client._prepare_bundle("t1", "bundles/b.tar.gz"))
     nested_dir = root / ".claude-plugin"
@@ -358,37 +358,37 @@ def test_prepare_bundle_is_readable_by_nonroot_runner() -> None:
 def test_runner_token_forwarded_as_docker_env() -> None:
     # The per-sandbox runner token rides the generic claim-env loop (it is not a
     # worker-owned or credential var), so it must be emitted as -e KEY=value.
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
     client.create_claim(
         "t1",
         pool="pool",
-        env={"AGENTOS_BUDGET": "{}", "AGENTOS_RUNNER_TOKEN": "tok-25"},
+        env={"CURIE_BUDGET": "{}", "CURIE_RUNNER_TOKEN": "tok-25"},
     )
     envs = _flag_values(client.calls[0], "-e")
-    assert "AGENTOS_RUNNER_TOKEN=tok-25" in envs
+    assert "CURIE_RUNNER_TOKEN=tok-25" in envs
 
 
 def test_runner_token_forwarded_even_when_credentials_selected() -> None:
-    # Credential selection (PR #109) forwards AGENTOS_CREDENTIALS by name and
+    # Credential selection (PR #109) forwards CURIE_CREDENTIALS by name and
     # suppresses ambient SDK vars, but must not disturb the token, which travels
     # in the claim env as an ordinary value.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        environ={"AGENTOS_CREDENTIALS": "sk-PLACEHOLDER-byo"},
+        environ={"CURIE_CREDENTIALS": "sk-PLACEHOLDER-byo"},
     )
     client.create_claim(
         "t1",
         pool="pool",
         env={
-            "AGENTOS_CREDENTIALS": "sk-PLACEHOLDER-byo",
-            "AGENTOS_RUNNER_TOKEN": "tok-25b",
+            "CURIE_CREDENTIALS": "sk-PLACEHOLDER-byo",
+            "CURIE_RUNNER_TOKEN": "tok-25b",
         },
     )
     envs = _flag_values(client.calls[0], "-e")
-    assert "AGENTOS_RUNNER_TOKEN=tok-25b" in envs
-    assert "AGENTOS_CREDENTIALS" in envs  # still forwarded by name
-    assert "AGENTOS_CREDENTIALS=sk-PLACEHOLDER-byo" not in envs  # never as a value
+    assert "CURIE_RUNNER_TOKEN=tok-25b" in envs
+    assert "CURIE_CREDENTIALS" in envs  # still forwarded by name
+    assert "CURIE_CREDENTIALS=sk-PLACEHOLDER-byo" not in envs  # never as a value
 
 
 def test_extract_bundle_unwraps_single_wrapper_dir() -> None:
@@ -451,7 +451,7 @@ def test_prepare_bundle_rejects_oversized_bundle_and_writes_nothing() -> None:
 
     data = _plugin_tar_gz_with_filler(5000)
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(data),
         bundle_max_uncompressed_bytes=1000,
     )
@@ -474,8 +474,8 @@ def test_prepare_bundle_rejects_oversized_bundle_and_writes_nothing() -> None:
 def test_create_claim_applies_container_hardening_by_default() -> None:
     # A default client hardens every runner: read-only rootfs + tmpfs for the
     # writable paths, all caps dropped, no-new-privileges, bounded pids/mem/cpu.
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1"})
     argv = client.calls[0]
     assert "--read-only" in argv
     tmpfs = _flag_values(argv, "--tmpfs")
@@ -494,23 +494,23 @@ def test_runner_never_receives_the_docker_socket() -> None:
     # AC3: the runner must not be able to reach the Docker daemon. Only the worker
     # mounts the socket; a spawned runner never gets it as a bind mount.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         environ={"CLAUDE_CODE_OAUTH_TOKEN": "sk-PLACEHOLDER"},
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_BUDGET": "{}"})
+    client.create_claim("t1", pool="pool", env={"CURIE_BUDGET": "{}"})
     assert all("docker.sock" not in m for m in _flag_values(client.calls[0], "-v"))
 
 
 def test_hardening_disabled_emits_no_hardening_flags() -> None:
-    # An explicit opt-out (AGENTOS_RUNNER_HARDENING=0) degrades to the
+    # An explicit opt-out (CURIE_RUNNER_HARDENING=0) degrades to the
     # pre-hardening argv exactly, for debugging a bundle the rails break.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        hardening=RunnerHardening.from_env({"AGENTOS_RUNNER_HARDENING": "0"}),
+        hardening=RunnerHardening.from_env({"CURIE_RUNNER_HARDENING": "0"}),
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1"})
     argv = client.calls[0]
     assert "--read-only" not in argv
     assert _flag_values(argv, "--cap-drop") == []
@@ -522,18 +522,18 @@ def test_hardening_env_overrides_limits_and_paths() -> None:
     # needs without editing code.
     hardening = RunnerHardening.from_env(
         {
-            "AGENTOS_RUNNER_MEMORY_LIMIT": "2g",
-            "AGENTOS_RUNNER_CPU_LIMIT": "2",
-            "AGENTOS_RUNNER_PIDS_LIMIT": "1024",
-            "AGENTOS_RUNNER_WRITABLE_PATHS": "/tmp, /home/runner, /var/scratch",
+            "CURIE_RUNNER_MEMORY_LIMIT": "2g",
+            "CURIE_RUNNER_CPU_LIMIT": "2",
+            "CURIE_RUNNER_PIDS_LIMIT": "1024",
+            "CURIE_RUNNER_WRITABLE_PATHS": "/tmp, /home/runner, /var/scratch",
         }
     )
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
         hardening=hardening,
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1"})
     argv = client.calls[0]
     assert "2g" in _flag_values(argv, "--memory")
     assert "2" in _flag_values(argv, "--cpus")
@@ -547,11 +547,11 @@ def test_hardening_read_only_opt_out_keeps_other_rails() -> None:
     # Turning off just the read-only rootfs (a bundle that legitimately writes
     # outside the tmpfs paths) still drops caps and blocks privilege escalation.
     client = _RecordingDocker(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        hardening=RunnerHardening.from_env({"AGENTOS_RUNNER_READ_ONLY": "false"}),
+        hardening=RunnerHardening.from_env({"CURIE_RUNNER_READ_ONLY": "false"}),
     )
-    client.create_claim("t1", pool="pool", env={"AGENTOS_FAKE_MODEL": "1"})
+    client.create_claim("t1", pool="pool", env={"CURIE_FAKE_MODEL": "1"})
     argv = client.calls[0]
     assert "--read-only" not in argv
     assert _flag_values(argv, "--tmpfs") == []  # no read-only -> no tmpfs needed
@@ -562,23 +562,23 @@ def test_hardening_read_only_opt_out_keeps_other_rails() -> None:
 def test_ensure_image_pulls_when_absent() -> None:
     # docker image inspect returns "" (with check=False) when the image is not
     # cached locally, so ensure_image must pull it -- the IfNotPresent + prewarm.
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
     client.outputs = {}  # "image" inspect -> "" == absent
     client.ensure_image()
-    assert ["image", "inspect", "agentos-runner"] in client.calls
-    assert ["pull", "agentos-runner"] in client.calls
-    inspect_at = client.calls.index(["image", "inspect", "agentos-runner"])
-    pull_at = client.calls.index(["pull", "agentos-runner"])
+    assert ["image", "inspect", "curie-runner"] in client.calls
+    assert ["pull", "curie-runner"] in client.calls
+    inspect_at = client.calls.index(["image", "inspect", "curie-runner"])
+    pull_at = client.calls.index(["pull", "curie-runner"])
     assert inspect_at < pull_at  # inspect first, then pull
 
 
 def test_ensure_image_skips_pull_when_present() -> None:
     # A non-empty inspect means the image is already cached: no pull, so an
     # offline run with the image present must not touch the network.
-    client = _RecordingDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
+    client = _RecordingDocker(image="curie-runner", bundle_store=_FakeBundleStore())
     client.outputs = {"image": '[{"Id":"sha256:cafef00d"}]'}
     client.ensure_image()
-    assert ["image", "inspect", "agentos-runner"] in client.calls
+    assert ["image", "inspect", "curie-runner"] in client.calls
     assert all(argv[0] != "pull" for argv in client.calls)
 
 
@@ -597,12 +597,12 @@ def test_ensure_image_is_best_effort_on_pull_failure(caplog) -> None:
                 raise DockerError("docker pull failed (1): SENTINEL_STDERR_LEAK")
             return ""  # inspect: absent
 
-    client = _PullFailsDocker(image="agentos-runner", bundle_store=_FakeBundleStore())
-    with caplog.at_level(logging.WARNING, logger="agentos_worker.sandbox.docker"):
+    client = _PullFailsDocker(image="curie-runner", bundle_store=_FakeBundleStore())
+    with caplog.at_level(logging.WARNING, logger="curie_worker.sandbox.docker"):
         client.ensure_image()  # must return normally, no exception propagates
-    assert ["pull", "agentos-runner"] in client.calls
+    assert ["pull", "curie-runner"] in client.calls
     text = caplog.text
-    assert "agentos-runner" in text  # the warning names the image
+    assert "curie-runner" in text  # the warning names the image
     assert "SENTINEL_STDERR_LEAK" not in text  # but never dumps the stderr
 
 
@@ -625,11 +625,11 @@ def test_ensure_image_is_best_effort_when_docker_unavailable(caplog) -> None:
                 raise FileNotFoundError("docker")
             return ""
 
-    client = _DockerUnavailable(image="agentos-runner", bundle_store=_FakeBundleStore())
-    with caplog.at_level(logging.WARNING, logger="agentos_worker.sandbox.docker"):
+    client = _DockerUnavailable(image="curie-runner", bundle_store=_FakeBundleStore())
+    with caplog.at_level(logging.WARNING, logger="curie_worker.sandbox.docker"):
         client.ensure_image()  # must return normally, no exception propagates
-    assert ["image", "inspect", "agentos-runner"] in client.calls
-    assert "agentos-runner" in caplog.text  # the warning names the image
+    assert ["image", "inspect", "curie-runner"] in client.calls
+    assert "curie-runner" in caplog.text  # the warning names the image
 
 
 def test_missing_runner_network_error_carries_a_remediation_hint(monkeypatch) -> None:
@@ -639,37 +639,37 @@ def test_missing_runner_network_error_carries_a_remediation_hint(monkeypatch) ->
     DockerError that tells the reader what to DO, not just what failed."""
     import subprocess
 
-    from agentos_worker.sandbox.docker import DockerError as _DockerError
+    from curie_worker.sandbox.docker import DockerError as _DockerError
 
     class _FakeCompletedProcess:
         returncode = 125
         stderr = (
             "docker: Error response from daemon: failed to set up container"
-            " networking: network agentos_runner not found."
+            " networking: network curie_runner not found."
         )
         stdout = ""
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _FakeCompletedProcess())
 
     client = DockerSandboxClient(
-        image="agentos-runner",
+        image="curie-runner",
         bundle_store=_FakeBundleStore(),
-        network="agentos_runner",
+        network="curie_runner",
     )
     try:
-        client._docker(["run", "--rm", "agentos-runner"])
+        client._docker(["run", "--rm", "curie-runner"])
         raise AssertionError("expected DockerError")
     except _DockerError as exc:
-        assert "agentos_runner" in str(exc)
-        assert "agentos local up" in str(exc)
+        assert "curie_runner" in str(exc)
+        assert "curie local up" in str(exc)
 
 
 def test_docker_error_without_a_matching_network_name_carries_no_hint() -> None:
     """The remediation hint is specific to OUR configured network going
     missing -- an unrelated docker failure (e.g. no such image) must not gain
-    a misleading "run agentos local up" tacked onto it."""
+    a misleading "run curie local up" tacked onto it."""
     client = DockerSandboxClient(
-        image="agentos-runner", bundle_store=_FakeBundleStore(), network="agentos_runner"
+        image="curie-runner", bundle_store=_FakeBundleStore(), network="curie_runner"
     )
-    hint = client._network_remediation_hint("Error: No such image: agentos-runner:latest")
+    hint = client._network_remediation_hint("Error: No such image: curie-runner:latest")
     assert hint == ""

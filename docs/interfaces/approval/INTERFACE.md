@@ -10,9 +10,9 @@ order: 13
 
 # INTERFACE: Approval / authorizer
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 3 approver sets behind one authorizer (Slack channel, Slack user group, explicit user list) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -35,7 +35,7 @@ and the policy/route/audit layer with #247 — the epic's full primitive is live
 in code now:
 
 - **The durable record + resolve-once semantics (landed, #244).** The `Approval` table
-  (`apps/api/src/agentos_api/models.py`) with the resolve-once compare-and-set
+  (`apps/api/src/curie_api/models.py`) with the resolve-once compare-and-set
   (`crud.claim_approval_resolution`, a conditional `UPDATE ... WHERE status='pending'`) behind
   `POST /approvals/{id}/resolve`; losers of the claim race get 409 naming who resolved it,
   a past-SLA record flips to expired (410) and now also enqueues the expiry resume turn
@@ -53,15 +53,15 @@ in code now:
   `Approval` record (migration `0015_approval_gate_provenance`). They replace the old
   summary-prefix sniff as the durable source of grant provenance — see the #430 bullet below.
 - **The lifecycle (landed, #244).** A skill raises a policy gate through the runner's
-  in-process `mcp__agentos__request_approval` tool (`runner/src/agentos_runner/approval.py`);
+  in-process `mcp__curie__request_approval` tool (`runner/src/curie_runner/approval.py`);
   the turn ends `awaiting-approval`, the worker persists the record and suspends the sandbox
   (`kernel._pause_for_approval` — the first live use of the dormant ADR-0003 suspend path);
   resolution enqueues a resume turn onto the ordinary runs stream
-  (`apps/api/src/agentos_api/resumequeue.py`), and the kernel's claim path rehydrates the
+  (`apps/api/src/curie_api/resumequeue.py`), and the kernel's claim path rehydrates the
   thread with its bound boot env (`substrate.resume(env=...)`).
 - **Expiry resume (landed, #412).** A prior gap: an approval whose SLA lapsed with no
   resolver stayed `pending` forever, since the only expiry path lived inside the resolve
-  endpoint. A periodic sweeper in the API lifespan (`apps/api/src/agentos_api/sweeper.py`,
+  endpoint. A periodic sweeper in the API lifespan (`apps/api/src/curie_api/sweeper.py`,
   `run_expiry_sweeper` driving `sweep_expired_approvals`) now flips lapsed `pending` records
   to `expired` through the same `crud.expire_approval` compare-and-set, appends an `expired`
   audit row (`authorizer="ExpirySweeper"`), and enqueues a platform-authored (`author="system"`)
@@ -76,10 +76,10 @@ in code now:
   a pod shutdown mid-batch) can still drop that one wakeup, since the flipped record is no
   longer re-selected; a durable outbox to close this is tracked as follow-up.
 - **The permission gate (landed, #245).** Per-agent config
-  (`agents.approval_required_tools`, forwarded as `AGENTOS_APPROVAL_REQUIRED_TOOLS` by the
+  (`agents.approval_required_tools`, forwarded as `CURIE_APPROVAL_REQUIRED_TOOLS` by the
   worker binding) marks tools approval-required; the runner intercepts those calls
   proactively through an SDK `can_use_tool` callback (`build_can_use_tool`,
-  `runner/src/agentos_runner/approval.py`) -- the call is denied before execution, and the
+  `runner/src/curie_runner/approval.py`) -- the call is denied before execution, and the
   turn ends `awaiting-approval` on the same override the policy gate uses, so both trigger
   types share one record/suspend/resume lifecycle. An agent with no configured gates keeps
   the historical `bypassPermissions` posture verbatim (zero behavior change).
@@ -95,9 +95,9 @@ in code now:
   (`binding.approval_grant_tool`) decides grant eligibility from the **durable
   `gate_kind`/`granted_tool` columns** rather than sniffing the summary (ADR-0046 supersedes
   ADR-0035's summary-prefix discriminator): for a `gate_kind='permission'` row it injects
-  `AGENTOS_APPROVAL_GRANT_TOOL=<granted_tool>` (`GRANT_TOOL_ENV`, the exact tool name
+  `CURIE_APPROVAL_GRANT_TOOL=<granted_tool>` (`GRANT_TOOL_ENV`, the exact tool name
   `can_use_tool` denied, a trusted runner-authored value); for a `gate_kind='policy'` row it
-  injects the same `AGENTOS_APPROVAL_GRANT_TOOL` from the `granted_tool` column **when that
+  injects the same `CURIE_APPROVAL_GRANT_TOOL` from the `granted_tool` column **when that
   column is non-null** — the runner sets it only for a manifest gate the operator opted into
   grantability via `grantableViaPolicy` (#558, ADR-0056), with the granted tool sourced from
   the manifest's `gate` value, **never a model-supplied string**, so the model's arguments still
@@ -133,7 +133,7 @@ in code now:
   argument-scoping remains open (deferred to #558's operator-gated grantability).
 - **Observe-only resume reconciliation (landed, #544, ADR-0046, Decision A2).** To make the
   residual "approved, then the model never re-called the tool" case observable, the worker
-  injects an **authority-free** marker `AGENTOS_APPROVAL_RESUMED_KIND=policy` (`RESUMED_KIND_ENV`,
+  injects an **authority-free** marker `CURIE_APPROVAL_RESUMED_KIND=policy` (`RESUMED_KIND_ENV`,
   `binding.approval_resumed_kind`) at resume boot — a fact about the past that grants nothing,
   set only for a `status='approved'` policy approval, contrast the authority-conferring
   `GRANT_TOOL_ENV` above. At boot-turn end, if the marker is present, gates are armed, no
@@ -153,7 +153,7 @@ in code now:
   declared policy that cannot be armed exactly — unparseable, or any distinct declared gate
   name arming nothing — refuses the boot instead of returning the empty map, which builds no
   gate at all and silently restores the bypass posture. The gated-tool set stays the UNION of
-  the manifest gates and the operator's `AGENTOS_APPROVAL_REQUIRED_TOOLS`, and that union is
+  the manifest gates and the operator's `CURIE_APPROVAL_REQUIRED_TOOLS`, and that union is
   the anti-hollow-out mechanism: a bundle may ADD gated names but can never remove an
   operator's. The policy-gate tool accepts an
   optional `route` argument for skill-raised requests, and the runner now **validates that
@@ -174,7 +174,7 @@ in code now:
   approvers. **A named-but-unbound route now escalates loudly and creates no approval**
   (#544, ADR-0046, AC2), reversing #247's earlier warn-and-route-to-requesting-channel
   fallback — authority must never silently widen. This is distinct from the API's
-  `get_approval_route_binding` channel fallback (`apps/api/src/agentos_api/crud.py`), which is
+  `get_approval_route_binding` channel fallback (`apps/api/src/curie_api/crud.py`), which is
   for genuinely agent-less generic approvals (ADR-0034) and is UNCHANGED. The
   card's transport follows the same split (#451): a bound channel that differs from the
   requesting channel is deployment policy, not part of the triggering conversation, so the
@@ -189,13 +189,13 @@ in code now:
 ### Arming a gate: bare MCP shorthand is normalized; unresolvable names fail closed
 
 The permission gate (`agents.approval_required_tools`, forwarded as
-`AGENTOS_APPROVAL_REQUIRED_TOOLS`) matches a tool by its LIVE, fully-namespaced
+`CURIE_APPROVAL_REQUIRED_TOOLS`) matches a tool by its LIVE, fully-namespaced
 runtime name. For a bundle-declared MCP tool that live name is
 `mcp__plugin_<bundle>_<server>__<tool>`, where `<bundle>` is the
 .claude-plugin/plugin.json `name` and `<server>` is the `.mcp.json` server key,
 for example `mcp__plugin_github-issues_github__create_issue`.
 
-**Since #703**, `build_approval_gate` (`runner/src/agentos_runner/approval.py`)
+**Since #703**, `build_approval_gate` (`runner/src/curie_runner/approval.py`)
 normalizes each operator-supplied name to its effective form before arming:
 a bare `mcp__<server>__<tool>` shorthand is rewritten to the
 `mcp__plugin_<bundle>_<server>__<tool>` name when `<server>` matches a
@@ -208,7 +208,7 @@ runner refuses to boot with `ApprovalPolicyError` rather than arming nothing
 matched and the gated tool ran with no approval whatsoever.
 
 Confirm the exact live name before arming a gate rather than guessing it.
-`agentos skill check` prints a `match: <server> -> plugin:<bundle>:<server>`
+`curie skill check` prints a `match: <server> -> plugin:<bundle>:<server>`
 line; rewrite that `plugin:<bundle>:<server>` value into the
 `mcp__plugin_<bundle>_<server>__<tool>` prefix and append the tool name. A
 tool-call trace also shows the exact live name directly.
@@ -222,13 +222,13 @@ is not in the path this gate uses. The SDK `can_use_tool` callback that
 `build_can_use_tool` compares against always reports the canonical name, so
 an operator who gates on an alias arms a literal that never matches and the
 gate silently arms nothing. Gate on the canonical name. Since #736,
-`build_approval_gate` (`runner/src/agentos_runner/approval.py`) treats alias
+`build_approval_gate` (`runner/src/curie_runner/approval.py`) treats alias
 names as unrecognized on purpose, so arming one still trips the existing
 "may be a silent no-op" warning.
 
 ## Implementations today
 
-**One authorizer** (`apps/api/src/agentos_api/authorizer.py`, pure policy with no Slack in
+**One authorizer** (`apps/api/src/curie_api/authorizer.py`, pure policy with no Slack in
 it) over **three approver sets** behind the `ApproverSet` port (ADR-0034). A set answers
 only "is this actor in the set"; every rule that is not membership lives in the authorizer,
 applied identically whatever the set. Self-approval is the rule that matters:
@@ -257,7 +257,7 @@ Slack feature.
 - **`ExplicitUsers`** (#420, `approvers.py`), a literal allowlist of user IDs. Pure, no I/O.
   It owes Slack no *lookup*, but it can still only be **configured with Slack-validated user
   IDs**: the binding schema rejects anything that is not a Slack `U`/`W`-prefixed ID
-  (`apps/api/src/agentos_api/schemas.py::_SLACK_USER_ID`), never a handle or a name, so even this
+  (`apps/api/src/curie_api/schemas.py::_SLACK_USER_ID`), never a handle or a name, so even this
   "Slack-free" set is expressed in Slack-shaped identifiers.
 
 Platform-RBAC remains the epic's fourth set and is not built.
@@ -389,7 +389,7 @@ One limit the audit trail must not be read as overstating (#420, ADR-0034): the 
 proves that the ASSERTED identity satisfied policy at click time; it does not prove who
 clicked. Identity is dispatcher-verified on the Slack path — the dispatcher populates the
 actor from Slack's authenticated interaction payload
-(`apps/dispatcher/src/agentos_dispatcher/approval_actions.py::process_approval_action`) — and
+(`apps/dispatcher/src/curie_dispatcher/approval_actions.py::process_approval_action`) — and
 caller-asserted on the platform-API-key path, the named ADR-0033 residual tracked as a follow-up.
 **The channel evidence is asserted on the same footing:** `actor_channel` on the platform-key
 path is caller-supplied and unvalidated too, so the residual is not identity-only — a
@@ -402,6 +402,6 @@ actor is established*.
 
 ## Cross-links
 
-- **Epic(s):** [#22](https://github.com/curie-eng/agentos/issues/22) — approval gates and human-in-the-loop; adds the durable record, `awaiting-approval` status, `canUseTool` gate, and the authorizer interface.
+- **Epic(s):** [#22](https://github.com/curie-eng/curie/issues/22) — approval gates and human-in-the-loop; adds the durable record, `awaiting-approval` status, `canUseTool` gate, and the authorizer interface.
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — not one of the six graded jobs; a cross-cutting core lifecycle change, not separately graded.
 - **ADR(s):** [ADR-0010](../../adr/0010-approval-gates-and-human-in-the-loop.md) — Approval gates and human-in-the-loop (Proposed); grounds this intended line, including the authorizer sequence (channel membership first, then user-group, explicit user-list, platform-RBAC). [ADR-0034](../../adr/0034-approval-authorizers-resolve-membership-in-the-api.md) — Approval authorizers resolve membership in the API (Accepted); adds the user-group and user-list sets, the API-resident membership lookup, the scoped fail-closed rule, and fresh-read binding resolution. Supersedes ADR-0010's framing of those four as `Authorizer` implementations: they are approver SETS behind one authorizer, and platform-RBAC becomes the fourth set. Composes with [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) (stateless-first suspend/resume, the pause mechanism).

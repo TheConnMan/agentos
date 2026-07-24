@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentos_doclint import render_index_table
+from curie_doclint import render_index_table
 
 from .conftest import RunLint, write
 
-_BEGIN = "<!-- BEGIN GENERATED: seam-table (agentos dev docs-lint) -->"
+_BEGIN = "<!-- BEGIN GENERATED: seam-table (curie dev docs-lint) -->"
 _END = "<!-- END GENERATED: seam-table -->"
 
 

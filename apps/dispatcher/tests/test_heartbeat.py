@@ -11,8 +11,8 @@ import threading
 import time
 
 import pytest
-from agentos_dispatcher.config import DispatcherConfig
-from agentos_dispatcher.heartbeat import start_heartbeat
+from curie_dispatcher.config import DispatcherConfig
+from curie_dispatcher.heartbeat import start_heartbeat
 
 
 def _wait_for(predicate, timeout: float) -> bool:
@@ -50,22 +50,22 @@ def test_start_heartbeat_touches_file_then_stops_on_event(tmp_path) -> None:
 def test_dispatcher_config_heartbeat_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("AGENTOS_HEARTBEAT_FILE", raising=False)
-    monkeypatch.delenv("AGENTOS_HEARTBEAT_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("CURIE_HEARTBEAT_FILE", raising=False)
+    monkeypatch.delenv("CURIE_HEARTBEAT_INTERVAL_SECONDS", raising=False)
 
     cfg = DispatcherConfig()
 
-    assert cfg.heartbeat_file == "/tmp/agentos-dispatcher.heartbeat"
+    assert cfg.heartbeat_file == "/tmp/curie-dispatcher.heartbeat"
     assert cfg.heartbeat_interval_s == 10.0
 
 
 def test_dispatcher_config_reads_heartbeat_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENTOS_HEARTBEAT_FILE", "/var/run/agentos/dp.hb")
-    monkeypatch.setenv("AGENTOS_HEARTBEAT_INTERVAL_SECONDS", "3.5")
+    monkeypatch.setenv("CURIE_HEARTBEAT_FILE", "/var/run/curie/dp.hb")
+    monkeypatch.setenv("CURIE_HEARTBEAT_INTERVAL_SECONDS", "3.5")
 
     cfg = DispatcherConfig()
 
-    assert cfg.heartbeat_file == "/var/run/agentos/dp.hb"
+    assert cfg.heartbeat_file == "/var/run/curie/dp.hb"
     assert cfg.heartbeat_interval_s == 3.5

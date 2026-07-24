@@ -8,7 +8,7 @@
 use std::process::Command;
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn help(args: &[&str]) -> (bool, String) {
@@ -16,7 +16,7 @@ fn help(args: &[&str]) -> (bool, String) {
         .args(args)
         .arg("--help")
         .output()
-        .expect("run agentos --help");
+        .expect("run curie --help");
     let text = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
     (output.status.success(), text)
@@ -50,7 +50,7 @@ fn json_global_flag_parses_on_skill_status_and_eval() {
         let (ok, text) = help(&args);
         assert!(
             ok,
-            "`agentos {} --help` must exit 0 (global --json):\n{text}",
+            "`curie {} --help` must exit 0 (global --json):\n{text}",
             args.join(" ")
         );
     }
@@ -62,17 +62,17 @@ fn json_global_flag_parses_before_subcommand() {
     let (ok, text) = help(&["--json", "skill", "status"]);
     assert!(
         ok,
-        "`agentos --json skill status --help` must exit 0:\n{text}"
+        "`curie --json skill status --help` must exit 0:\n{text}"
     );
 }
 
 #[test]
-fn bare_agentos_requires_a_tty_in_non_interactive_contexts() {
-    let output = Command::new(bin()).output().expect("run bare agentos");
+fn bare_curie_requires_a_tty_in_non_interactive_contexts() {
+    let output = Command::new(bin()).output().expect("run bare curie");
     assert_eq!(
         output.status.code(),
         Some(2),
-        "bare agentos should dispatch to the interactive UI and fail as usage without a TTY\nstderr: {}",
+        "bare curie should dispatch to the interactive UI and fail as usage without a TTY\nstderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -85,7 +85,7 @@ fn skill_status_connection_refused_exits_transient() {
     let output = Command::new(bin())
         .args(["skill", "status", "--url", "http://127.0.0.1:1"])
         .output()
-        .expect("run agentos skill status");
+        .expect("run curie skill status");
     assert_eq!(
         output.status.code(),
         Some(3),
@@ -102,7 +102,7 @@ fn cluster_kill_without_yes_exits_usage() {
     let output = Command::new(bin())
         .args(["cluster", "kill", "someagent"])
         .output()
-        .expect("run agentos cluster kill");
+        .expect("run curie cluster kill");
     assert_eq!(
         output.status.code(),
         Some(2),

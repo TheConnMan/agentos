@@ -1,7 +1,7 @@
 """On-demand eval trigger endpoint (issue #10) against real Postgres + Valkey.
 
 Asserts POST /evals/trigger resolves an agent's active dev deployment (or an
-explicit version) and enqueues the SAME EvalJob shape onto agentos:evals
+explicit version) and enqueues the SAME EvalJob shape onto curie:evals
 that the git-push fan-out uses -- minus the push-only gate. Mirrors
 test_evalqueue_integration's stream assertions and the router auth tests.
 """
@@ -13,9 +13,9 @@ from typing import Any
 
 import redis
 from aci_protocol import STREAM_PAYLOAD_FIELD, EvalJob
-from agentos_api import crud
-from agentos_api.config import get_settings
-from agentos_api.models import Environment
+from curie_api import crud
+from curie_api.config import get_settings
+from curie_api.models import Environment
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 REPO = "octo/trigger-10"
@@ -91,7 +91,7 @@ def _seed(
 def _payload_for_stream_id(stream_id: str) -> dict[str, Any] | None:
     sync = redis.from_url(get_settings().valkey_dsn())
     try:
-        entries = sync.xrange("agentos:evals", min=stream_id, max=stream_id)
+        entries = sync.xrange("curie:evals", min=stream_id, max=stream_id)
         if not entries:
             return None
         _id, fields = entries[0]
@@ -105,7 +105,7 @@ def _count_eval_entries_for_agent(agent_id: str) -> int:
     try:
         return sum(
             1
-            for _id, fields in sync.xrevrange("agentos:evals", count=200)
+            for _id, fields in sync.xrevrange("curie:evals", count=200)
             if json.loads(fields[STREAM_PAYLOAD_FIELD.encode()]).get("agent_id")
             == agent_id
         )

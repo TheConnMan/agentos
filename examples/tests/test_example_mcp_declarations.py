@@ -1,6 +1,6 @@
 """Every example bundle declares its MCP servers in a form the real runner loads.
 
-Two landmines the ``agentos guide`` documents get enforced here across *all*
+Two landmines the ``curie guide`` documents get enforced here across *all*
 example bundles (discovered dynamically, so a future third example is covered
 without editing this file):
 

@@ -1,7 +1,7 @@
 """The one path-style S3/MinIO client construction (#501).
 
-The API's write path (`agentos_api.storage.BundleStore`) and the worker's read
-path (`agentos_worker.bundle_store.BundleStore`) must build their boto3 client
+The API's write path (`curie_api.storage.BundleStore`) and the worker's read
+path (`curie_worker.bundle_store.BundleStore`) must build their boto3 client
 identically -- same endpoint, credentials, region, and (load-bearing for MinIO)
 path-style addressing. That construction used to be hand-copied in each app (and a
 third time in a worker test fixture), a seam the blob-storage INTERFACE flagged as
@@ -9,7 +9,7 @@ third time in a worker test fixture), a seam the blob-storage INTERFACE flagged 
 alignment cannot drift.
 
 It takes primitives, not either app's config object, so it couples to neither
-`agentos_api.Settings` nor `agentos_worker.WorkerConfig`. `boto3` is imported
+`curie_api.Settings` nor `curie_worker.WorkerConfig`. `boto3` is imported
 lazily inside the function so importing this module (and the rest of
 ``aci_protocol``) never requires boto3 for consumers that do not touch S3.
 """

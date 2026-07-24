@@ -7,7 +7,7 @@ language without the other fails that language's test.
 
 The rule itself is never restated here: it lives in the vector file, and the
 worker's implementation of it lives at
-``agentos_worker/sandbox/docker.py``'s positive single-credential selection.
+``curie_worker/sandbox/docker.py``'s positive single-credential selection.
 """
 
 from __future__ import annotations
@@ -71,15 +71,15 @@ def _assert_known_keys(vector: dict[str, object]) -> None:
 def _run_vector(vector: dict[str, object]) -> list[str]:
     # Two different dicts, deliberately: the state flags are read from the boot
     # env, the credential presence from the worker environ.
-    env: dict[str, str] = {"AGENTOS_BUDGET": "{}"}
+    env: dict[str, str] = {"CURIE_BUDGET": "{}"}
     if vector["fake_model"]:
-        env["AGENTOS_FAKE_MODEL"] = "1"
+        env["CURIE_FAKE_MODEL"] = "1"
     if vector["base_url_override"]:
         env["ANTHROPIC_BASE_URL"] = "http://ollama:11434"
 
     environ: dict[str, str] = {}
     if vector["byo_credential"]:
-        environ["AGENTOS_CREDENTIALS"] = (
+        environ["CURIE_CREDENTIALS"] = (
             _BYO_OAUTH_CREDENTIAL if vector["byo_oauth_shaped"] else _BYO_CREDENTIAL
         )
     if vector["ambient_oauth"]:
@@ -88,7 +88,7 @@ def _run_vector(vector: dict[str, object]) -> list[str]:
         environ["ANTHROPIC_API_KEY"] = _AMBIENT_ANTHROPIC_CRED
 
     client = _RecordingDocker(
-        image="agentos-runner", bundle_store=_FakeBundleStore(), environ=environ
+        image="curie-runner", bundle_store=_FakeBundleStore(), environ=environ
     )
     client.create_claim("t1", pool="pool", env=env)
     argv = client.calls[0]

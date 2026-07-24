@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import anyio
-from agentos_runner import hooks, load_bundle_hooks
+from curie_runner import hooks, load_bundle_hooks
 
 
 def _bundle(tmp_path: Path, hooks: object) -> str:

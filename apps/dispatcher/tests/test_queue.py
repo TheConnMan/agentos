@@ -5,8 +5,8 @@ from pathlib import Path
 
 import redis
 from aci_protocol import QueuedTurn, ReplyHandle
-from agentos_dispatcher.config import DispatcherConfig
-from agentos_dispatcher.queue import (
+from curie_dispatcher.config import DispatcherConfig
+from curie_dispatcher.queue import (
     claim_event,
     enqueue,
     from_stream_fields,

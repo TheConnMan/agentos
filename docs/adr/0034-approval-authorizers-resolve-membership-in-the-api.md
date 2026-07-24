@@ -4,7 +4,7 @@ Date: 2026-07-15
 
 Status: Accepted
 
-Implements [#420](https://github.com/curie-eng/agentos/issues/420). Supersedes
+Implements [#420](https://github.com/curie-eng/curie/issues/420). Supersedes
 ADR-0010's framing of the authorizer line: where ADR-0010 named channel
 membership, user-group, explicit user-list, and platform-RBAC as four
 `Authorizer` implementations, this decision makes them four APPROVER SETS behind
@@ -23,7 +23,7 @@ first landed. This ADR extends that line with the next two, and reshapes what
 
 Today "who may approve" is fused to "where the card posts". The only
 implementation is `ChannelMembershipAuthorizer`
-(`apps/api/src/agentos_api/authorizer.py`), and the approver set is whoever can
+(`apps/api/src/curie_api/authorizer.py`), and the approver set is whoever can
 see the channel the worker routed the card into. That forces a choice no
 operator should have to make: post the card somewhere visible and accept a broad
 approver set, or narrow the approver set by hiding the conversation. Unfusing the
@@ -275,7 +275,7 @@ fact worth keeping.
   at click time. It does not prove who clicked. Identity is dispatcher-verified
   on the Slack path: the dispatcher populates the actor from Slack's
   authenticated interaction payload
-  (`apps/dispatcher/src/agentos_dispatcher/approval_actions.py:146`). On the
+  (`apps/dispatcher/src/curie_dispatcher/approval_actions.py:146`). On the
   platform-API-key path it remains caller-asserted, the named residual from
   [ADR-0033](0033-scoped-sandbox-state-token.md) and a tracked follow-up. Richer
   evidence makes a forged resolution look MORE legitimate in the trail than

@@ -4,7 +4,7 @@ Date: 2026-07-21
 
 Status: Accepted
 
-Implements [#559](https://github.com/curie-eng/agentos/issues/559).
+Implements [#559](https://github.com/curie-eng/curie/issues/559).
 Records the enforce/observe decision that
 [ADR-0046](0046-converged-approval-gates-and-durable-provenance.md) §3
 deferred to #559 ("ships observe-only and earns the data for a later enforce
@@ -18,7 +18,7 @@ ADR-0046 §3 shipped the policy-gate resume reconciliation observe-only: when a
 resumed policy-gate turn has gates armed, records no permission-gate block, and
 ends clean with no side-effecting tool, the runner emits a warning frame
 (`APPROVAL_NOT_ACTED_CLASSIFICATION`) and leaves the final clean
-(`runner/src/agentos_runner/session.py`, `_approval_not_acted_lines`). ADR-0046
+(`runner/src/curie_runner/session.py`, `_approval_not_acted_lines`). ADR-0046
 named its signal (`side_effect_emitted`) a proxy for "some tool ran," not "the
 approved action ran," with two accepted failure modes: a false alarm on the
 common text-only path, and a false pass when an incidental non-allowlisted tool
@@ -42,7 +42,7 @@ nothing is promoted.
 
 Three findings, in increasing order of how decisive they are.
 
-1. **The acceptance criterion's data cannot exist yet.** AgentOS is
+1. **The acceptance criterion's data cannot exist yet.** Curie is
    pre-release; there is no production gated-agent traffic to sample
    false-alarm and false-pass rates from. Waiting on that data is not a
    near-term path to a decision — it is a block until release. In its place we
@@ -57,10 +57,10 @@ Three findings, in increasing order of how decisive they are.
    tweak.** #559 suggests "binding the check to the specific gated tool rather
    than the blunt `side_effect_emitted` proxy." But on the resume turn the
    runner does not know which tool was approved: the resume marker is
-   deliberately **authority-free** (`AGENTOS_APPROVAL_RESUMED_KIND=policy`,
+   deliberately **authority-free** (`CURIE_APPROVAL_RESUMED_KIND=policy`,
    carrying no tool, by the #430/#544 security design so a model-authored
    request can never mint a bypass — ADR-0046 §3 contrasts it explicitly with
-   the authority-conferring `AGENTOS_APPROVAL_GRANT_TOOL`). `TurnState` also
+   the authority-conferring `CURIE_APPROVAL_GRANT_TOOL`). `TurnState` also
    records only a tool-call *count*, not tool names. Binding the check to the
    approved tool therefore requires extending the authority-free boot-env marker
    to carry the manifest-derived granted tool, threading it through the worker

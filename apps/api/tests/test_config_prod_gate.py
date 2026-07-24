@@ -1,7 +1,7 @@
 """The production boot gate (#57): ENVIRONMENT=prod must refuse dev-default secrets."""
 
 import pytest
-from agentos_api.config import Settings
+from curie_api.config import Settings
 from pydantic import ValidationError
 
 
@@ -19,7 +19,7 @@ def _settings(**overrides: str) -> Settings:
 def test_dev_environment_allows_defaults() -> None:
     # The dev default construction (what every local run uses) must still work.
     s = Settings(_env_file=None, environment="dev")
-    assert s.api_key == "agentos-dev-key"
+    assert s.api_key == "curie-dev-key"
 
 
 def test_prod_with_real_secrets_boots() -> None:
@@ -30,7 +30,7 @@ def test_prod_with_real_secrets_boots() -> None:
 @pytest.mark.parametrize(
     "overrides, offender",
     [
-        ({"api_key": "agentos-dev-key"}, "API_KEY"),
+        ({"api_key": "curie-dev-key"}, "API_KEY"),
         ({"api_key": ""}, "API_KEY"),
         ({"github_webhook_secret": "dev-webhook-secret"}, "GITHUB_WEBHOOK_SECRET"),
         ({"github_webhook_secret": ""}, "GITHUB_WEBHOOK_SECRET"),
@@ -46,4 +46,4 @@ def test_prod_refuses_dev_default_or_empty_secret(
 
 def test_prod_is_case_insensitive() -> None:
     with pytest.raises(ValidationError):
-        _settings(environment="PROD", api_key="agentos-dev-key")
+        _settings(environment="PROD", api_key="curie-dev-key")

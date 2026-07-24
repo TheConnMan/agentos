@@ -12,8 +12,8 @@ b92e955c86e199c23c7ae47697e3949cb6b41a29:apps/ui/src/views/obs/RealMetrics.tsx:g
 # Dummy placeholder Slack tokens in a Rust test (xapp-123456789 / xoxb-123456789).
 7a7d2bd42b286326c1ffd87fcf6b08d7af9e65e5:cli/src/comms.rs:generic-api-key:347
 
-# Documented dev-default Langfuse bootstrap keys (pk-lf-agentos-dev /
-# sk-lf-agentos-dev) shown in curl examples. These are fixed public dev defaults
+# Documented dev-default Langfuse bootstrap keys (pk-lf-curie-dev /
+# sk-lf-curie-dev) shown in curl examples. These are fixed public dev defaults
 # baked into the headless bootstrap, not production credentials.
 be962e4a37f8644539244e2e872937f2fd8371a0:AGENTS.md:curl-auth-user:105
 7279a29e6fd7115bc002d3fed6e73d636e8912d7:AGENTS.md:curl-auth-user:105

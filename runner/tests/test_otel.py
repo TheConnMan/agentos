@@ -2,10 +2,10 @@
 
 import anyio
 from aci_protocol import Event, OtelConfig
-from agentos_runner import RunTracer, SideEffectClassifier, build_tracer_provider
-from agentos_runner.fake import FakeModelSession
-from agentos_runner.otel import _SchemaValidatingSpanProcessor
-from agentos_runner.session import SessionRunner
+from curie_runner import RunTracer, SideEffectClassifier, build_tracer_provider
+from curie_runner.fake import FakeModelSession
+from curie_runner.otel import _SchemaValidatingSpanProcessor
+from curie_runner.session import SessionRunner
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -21,7 +21,7 @@ def test_run_emits_agent_generation_and_tool_spans() -> None:
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         model="fake-model",
     )
 
@@ -34,7 +34,7 @@ def test_run_emits_agent_generation_and_tool_spans() -> None:
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
     assert {"agent.run", "llm.generation", "execute_tool"} <= set(spans)
-    assert spans["agent.run"].attributes["langfuse.trace.name"] == "agentos-run:test"
+    assert spans["agent.run"].attributes["langfuse.trace.name"] == "curie-run:test"
     gen = spans["llm.generation"]
     assert gen.attributes["gen_ai.request.model"] == "fake-model"
     assert gen.attributes["gen_ai.usage.output_tokens"] == 8
@@ -42,7 +42,7 @@ def test_run_emits_agent_generation_and_tool_spans() -> None:
 
 
 def test_generation_model_backfilled_from_sdk_when_unconfigured() -> None:
-    # AGENTOS_MODEL unset (model=None) must NOT leave the generation span
+    # CURIE_MODEL unset (model=None) must NOT leave the generation span
     # model-less: Langfuse would then ingest it as an untyped span and drop token
     # usage to zero. The runner backfills the model the SDK reports on its first
     # assistant message (the fake scripts model="fake-model"), so the span stays a
@@ -56,7 +56,7 @@ def test_generation_model_backfilled_from_sdk_when_unconfigured() -> None:
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         model=None,
     )
 
@@ -87,7 +87,7 @@ def test_run_stamps_langfuse_session_and_user_ids() -> None:
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         session_id="agent-abc-thread-123",
         model="fake-model",
     )
@@ -116,7 +116,7 @@ def test_run_omits_langfuse_user_id_when_event_user_empty() -> None:
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         session_id="agent-abc-thread-123",
         model="fake-model",
     )
@@ -134,7 +134,7 @@ def test_run_omits_langfuse_user_id_when_event_user_empty() -> None:
 
 
 def test_run_stamps_approval_decision_when_resuming_a_resolved_approval() -> None:
-    # ADR-0076 Stone 3 (#889): the authority-free AGENTOS_APPROVAL_DECISION fact
+    # ADR-0076 Stone 3 (#889): the authority-free CURIE_APPROVAL_DECISION fact
     # threaded from the worker lands on the root span, so an operator can see
     # the outcome of an approval gate from the trace.
     exporter = InMemorySpanExporter()
@@ -146,7 +146,7 @@ def test_run_stamps_approval_decision_when_resuming_a_resolved_approval() -> Non
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         model="fake-model",
         approval_decision="rejected",
     )
@@ -174,7 +174,7 @@ def test_run_omits_approval_decision_on_an_ordinary_turn() -> None:
         ceiling=0,
         tracer=RunTracer(provider),
         classifier=SideEffectClassifier(),
-        trace_name="agentos-run:test",
+        trace_name="curie-run:test",
         model="fake-model",
     )
 
@@ -202,14 +202,14 @@ def test_tracer_provider_built_with_endpoint() -> None:
 
 
 def test_resource_stamps_sandbox_id_when_present() -> None:
-    # The sandbox id (ACI AGENTOS_SANDBOX_ID) lets a trace be attributed to the
+    # The sandbox id (ACI CURIE_SANDBOX_ID) lets a trace be attributed to the
     # concrete sandbox that produced it, not just the session.
     otel = OtelConfig(endpoint="http://localhost:24318")
     provider = build_tracer_provider(otel, "s1", "sandbox-abc")
     assert provider is not None
     attrs = provider.resource.attributes
-    assert attrs["agentos.session_id"] == "s1"
-    assert attrs["agentos.sandbox_id"] == "sandbox-abc"
+    assert attrs["curie.session_id"] == "s1"
+    assert attrs["curie.sandbox_id"] == "sandbox-abc"
     provider.shutdown()
 
 
@@ -220,7 +220,7 @@ def test_resource_omits_sandbox_id_when_absent_or_empty() -> None:
     for sandbox_id in (None, ""):
         provider = build_tracer_provider(otel, "s1", sandbox_id)
         assert provider is not None
-        assert "agentos.sandbox_id" not in provider.resource.attributes
+        assert "curie.sandbox_id" not in provider.resource.attributes
         provider.shutdown()
 
 
@@ -274,9 +274,9 @@ def test_validator_leaves_clean_allowed_attributes_untouched() -> None:
     provider, exporter = _validated_exporter()
     tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("agent.run") as span:
-        span.set_attribute("langfuse.trace.name", "agentos-run:test")
+        span.set_attribute("langfuse.trace.name", "curie-run:test")
         span.set_attribute("gen_ai.usage.input_tokens", 12)
 
     (finished,) = exporter.get_finished_spans()
-    assert finished.attributes["langfuse.trace.name"] == "agentos-run:test"
+    assert finished.attributes["langfuse.trace.name"] == "curie-run:test"
     assert finished.attributes["gen_ai.usage.input_tokens"] == 12

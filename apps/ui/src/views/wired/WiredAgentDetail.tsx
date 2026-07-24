@@ -171,7 +171,7 @@ export function WiredAgentDetail() {
     setModelError(null);
     try {
       // Trimmed value; empty string clears the pin so the platform default
-      // applies (apply_model_env treats an empty AGENTOS_MODEL as unset).
+      // applies (apply_model_env treats an empty CURIE_MODEL as unset).
       const next = model.trim();
       await updateAgent(agent.id, { model: next });
       refetch();
@@ -355,7 +355,7 @@ export function WiredAgentDetail() {
             </div>
           ) : (
             <div style={{ fontSize: 10.5, color: C.muted, maxWidth: 280, textAlign: "right", lineHeight: 1.4 }}>
-              Sets AGENTOS_MODEL at boot; blank uses the platform default.
+              Sets CURIE_MODEL at boot; blank uses the platform default.
             </div>
           )}
         </div>

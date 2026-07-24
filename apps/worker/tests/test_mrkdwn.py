@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentos_worker.mrkdwn import to_mrkdwn
+from curie_worker.mrkdwn import to_mrkdwn
 
 
 def test_bold_double_asterisk_becomes_single() -> None:

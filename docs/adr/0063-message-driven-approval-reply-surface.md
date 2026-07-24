@@ -5,12 +5,12 @@ Status: Accepted
 
 ## Context
 
-`agentos local message` and `agentos cluster message` mint an in-process
+`curie local message` and `curie cluster message` mint an in-process
 `SlackStub` (`cli/src/chat.rs` `SlackStub::start`) and stamp its URL as the
 turn's `reply_handle.endpoint`. When the turn is approval-gated, the worker
 persists that endpoint on the durable `Approval` record as `reply_endpoint`
-(`apps/api/src/agentos_api/resumequeue.py`), suspends the turn, and posts the
-approval card (`apps/worker/src/agentos_worker/kernel.py`, around lines
+(`apps/api/src/curie_api/resumequeue.py`), suspends the turn, and posts the
+approval card (`apps/worker/src/curie_worker/kernel.py`, around lines
 937-953). The CLI then returns `Outcome::AwaitingApproval` and exits, which
 drops the `SlackStub` and aborts its HTTP listener.
 
@@ -39,7 +39,7 @@ connected Slack transport.
 
 On `Outcome::AwaitingApproval`, `local message` and `cluster message` do not
 exit. They keep the same `SlackStub` instance running, extract the approval
-id from the worker's placeholder notice, print a resolve hint (`agentos
+id from the worker's placeholder notice, print a resolve hint (`curie
 <tier> approvals <agent> --resolve <id> --as <user> --actor-channel
 <channel>`), and enter a second bounded
 wait for the resumed reply on the same placeholder.
@@ -47,7 +47,7 @@ wait for the resumed reply on the same placeholder.
 That second wait reuses the SAME ack-based completion signal as the original
 turn, rather than polling approval status over HTTP. Resolving an approval
 does not open a bespoke channel: the platform API appends the resume turn
-onto the same `agentos:runs` stream the CLI already enqueued onto, under the
+onto the same `curie:runs` stream the CLI already enqueued onto, under the
 deterministic event id `approval-<id>-resolved`
 (`resumequeue.resume_event_id`), replaying the original turn's placeholder
 and this stub's reply endpoint. So the CLI scans that stream (over the Valkey
@@ -135,7 +135,7 @@ reports as broken today.
 - The `message` CLI verb's reply-endpoint lifetime changes from
   "throwaway per-turn" to "alive across the approval-pending window,"
   qualifying ADR-0020's implicit one-throwaway-stub assumption. No other
-  consumer of `SlackStub`/`await_reply` (`agentos chat`) is affected; its
+  consumer of `SlackStub`/`await_reply` (`curie chat`) is affected; its
   outcome handling is unchanged.
 - No kernel, worker, API, or dispatcher change. The endpoint value the
   worker already persists on the `Approval` record was already correct; it
@@ -156,7 +156,7 @@ reports as broken today.
 - The awaiting/pending output (human and `--json`) must never claim a
   durable, clickable card exists when no connected Slack transport does.
   Offline, the durable resolution surface is the `Approval` record plus
-  `agentos <tier> approvals <agent> --resolve`, and that is what the CLI's
+  `curie <tier> approvals <agent> --resolve`, and that is what the CLI's
   hint points at.
 - **Follow-up A -- "Route message-driven approval cards + resumed reply
   through the connected Slack transport."** Filed as #770. Implements

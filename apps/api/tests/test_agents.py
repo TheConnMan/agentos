@@ -423,20 +423,20 @@ def test_agent_non_env_var_secret_name_is_422(
 def test_agent_reserved_secret_name_is_422(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
-    # AGENTOS_* names are reserved platform boot-env keys; rejected on write.
+    # CURIE_* names are reserved platform boot-env keys; rejected on write.
     bad = client.post(
         "/agents",
         json={
             "name": "reserved-secret-agent",
             "slack_channel": "C000000S03",
-            "secrets": {"AGENTOS_BUDGET": "x"},
+            "secrets": {"CURIE_BUDGET": "x"},
         },
         headers=auth_headers,
     )
     assert bad.status_code == 422, bad.text
 
 
-# The four runner-owned credential keys are NOT AGENTOS_-prefixed, so #445's
+# The four runner-owned credential keys are NOT CURIE_-prefixed, so #445's
 # prefix fence never caught them; a connector secret named `ANTHROPIC_BASE_URL`
 # would silently redirect the model. #457 rejects them at the write seam too.
 _RESERVED_CREDENTIAL_KEYS = [

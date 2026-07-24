@@ -1,7 +1,7 @@
 [project]
-name = "agentos-dispatcher"
+name = "curie-dispatcher"
 version = "0.0.0"
-description = "AgentOS dispatcher (Slack Bolt for Python, Socket Mode): ack + enqueue to Valkey Streams"
+description = "Curie dispatcher (Slack Bolt for Python, Socket Mode): ack + enqueue to Valkey Streams"
 requires-python = ">=3.13"
 dependencies = [
     "aci-protocol",
@@ -17,4 +17,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentos_dispatcher"]
+packages = ["src/curie_dispatcher"]

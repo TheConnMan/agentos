@@ -18,7 +18,7 @@ or, for a unique violation on some other constraint, a generic message.
 Returns `None` when `exc.orig` is not a unique violation at all (e.g. NOT
 NULL or FK), signalling the caller should re-raise / let it surface as a 500.
 
-This app talks to Postgres over asyncpg (`apps/api/src/agentos_api/config.py`,
+This app talks to Postgres over asyncpg (`apps/api/src/curie_api/config.py`,
 `postgresql+asyncpg://`), not psycopg. asyncpg's `PostgresError` subclasses
 expose the wire-protocol error fields as plain attributes on the exception
 instance -- `sqlstate` and `constraint_name` -- there is no psycopg-style
@@ -29,7 +29,7 @@ the implementation must read.
 
 from typing import Any
 
-from agentos_api.routers.agents import classify_integrity_error
+from curie_api.routers.agents import classify_integrity_error
 from sqlalchemy.exc import IntegrityError
 
 # Real Postgres SQLSTATE codes (see apps/api/tests conftest for the live

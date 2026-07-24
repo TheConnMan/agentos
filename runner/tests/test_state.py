@@ -1,4 +1,4 @@
-"""The ``agentos-state`` MCP server (#249): the client, the tool ops, the wiring.
+"""The ``curie-state`` MCP server (#249): the client, the tool ops, the wiring.
 
 The StateApiClient and every tool op are exercised against a tiny in-memory fake
 of the #248 state endpoints (GET/PUT/POST-append/DELETE a key, GET a namespace),
@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 import anyio
-from agentos_runner.state import (
+from curie_runner.state import (
     RESERVED_NAMESPACES,
     STATE_SERVER_NAME,
     StateApiClient,
@@ -120,7 +120,7 @@ def test_resolve_absent_url_is_none() -> None:
 
 def test_resolve_present_url_builds_client() -> None:
     client = resolve_state_client(
-        {"AGENTOS_STATE_URL": "http://api:8000/agents/A/state", "AGENTOS_STATE_TOKEN": "k"}
+        {"CURIE_STATE_URL": "http://api:8000/agents/A/state", "CURIE_STATE_TOKEN": "k"}
     )
     assert isinstance(client, StateApiClient)
 
@@ -337,7 +337,7 @@ def test_state_server_config_shape() -> None:
     client = StateApiClient("http://api:8000/agents/A/state", token="k")
     config = build_state_server(client)
     assert config["type"] == "sdk"
-    assert config["name"] == STATE_SERVER_NAME == "agentos-state"
+    assert config["name"] == STATE_SERVER_NAME == "curie-state"
 
 
 def test_state_server_exposes_the_five_verbs() -> None:

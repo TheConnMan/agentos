@@ -15,20 +15,20 @@ obligations that follow from moving the boundary.
 
 ## Context
 
-`runner/src/agentos_runner/adapter.py:31-52` puts the harness boundary
+`runner/src/curie_runner/adapter.py:31-52` puts the harness boundary
 in process, as a Protocol whose `receive_turn` yields `AsyncIterator[Any]`. In
 practice that `Any` is always a `claude_agent_sdk` dataclass, because everything
 downstream is written to match one:
-`runner/src/agentos_runner/translate.py:84-107` is an isinstance chain over SDK
+`runner/src/curie_runner/translate.py:84-107` is an isinstance chain over SDK
 types.
 
 The consequence is that the cheapest way to satisfy the seam is to forge the
 Claude engine's types. The withdrawn OpenCode adapter did exactly that, and
 ADR-0031 named the cost the synthesis tax. It is not the spike's invention: the
 runner's own fake does it first and by design.
-`runner/src/agentos_runner/fake.py:1-8` says it "constructs real
+`runner/src/curie_runner/fake.py:1-8` says it "constructs real
 claude-agent-sdk message dataclasses with canned content, so everything above it
-runs unmodified", and `runner/src/agentos_runner/fake.py:38` hand builds a
+runs unmodified", and `runner/src/curie_runner/fake.py:38` hand builds a
 `ResultMessage` with `duration_ms=1`, `duration_api_ms=1`, `num_turns=1` and
 `session_id="fake-session"`: dummy fields nothing reads, which is precisely the
 tax ADR-0031 described. The spike copied our reference implementation.
@@ -106,11 +106,11 @@ but it is real, costed, and mostly written.
   alpha. Its wire is unversioned where ours is frozen and semver governed
   (ADR-0036). Its delivery model carries none of the `side_effect_flag`
   idempotency semantics that [ADR-0013](0013-concurrency-and-delivery-model.md)'s
-  kernel depends on. And it owns no cluster substrate, which is the layer AgentOS
+  kernel depends on. And it owns no cluster substrate, which is the layer Curie
   differentiates on ([ADR-0002](0002-kubernetes-agent-sandbox-as-runtime-substrate.md)).
   Wire compatibility takes the leverage without taking the dependency.
 - **Adopt Omnigent's sandbox and policy layer (Omnibox) too.** Explicitly out of
-  scope here. AgentOS's security rails are chart defaults under
+  scope here. Curie's security rails are chart defaults under
   [ADR-0006](0006-security-rails-as-chart-defaults.md) and hardened locally under
   [ADR-0054](0054-local-docker-runner-hardening.md); replacing that layer is a
   separate decision with a separate blast radius. Noted as possible future work,

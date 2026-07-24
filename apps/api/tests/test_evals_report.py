@@ -3,9 +3,9 @@
 from typing import Any
 
 import httpx
-from agentos_api.deps import get_github_reporter
-from agentos_api.github_checks import GitHubStatusReporter
-from agentos_api.main import create_app
+from curie_api.deps import get_github_reporter
+from curie_api.github_checks import GitHubStatusReporter
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 
 
@@ -138,7 +138,7 @@ def _reporter_rejecting_with(github_status: int) -> GitHubStatusReporter:
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return GitHubStatusReporter(
-        client, api_url="https://api.github.com", token="t", context="agentos/evals"
+        client, api_url="https://api.github.com", token="t", context="curie/evals"
     )
 
 

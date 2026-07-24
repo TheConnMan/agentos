@@ -4,10 +4,10 @@ Date: 2026-07-13
 
 Status: Accepted
 
-Records the decision epic [#285](https://github.com/curie-eng/agentos/issues/285)
+Records the decision epic [#285](https://github.com/curie-eng/curie/issues/285)
 asks for (part of the substrate-seam vision epic
-[#86](https://github.com/curie-eng/agentos/issues/86), cross-referenced from the
-multi-dev epic [#44](https://github.com/curie-eng/agentos/issues/44)). This is a
+[#86](https://github.com/curie-eng/curie/issues/86), cross-referenced from the
+multi-dev epic [#44](https://github.com/curie-eng/curie/issues/44)). This is a
 **decision, not code**: it settles whether substrate portability is ever surfaced
 to users as a product feature.
 
@@ -15,7 +15,7 @@ to users as a product feature.
 
 The sandbox substrate is where a conversation thread claims, dials, suspends, and
 reaps its isolated runner runtime. The worker talks to a clean `SandboxClient`
-`Protocol` (`apps/worker/src/agentos_worker/sandbox/k8s.py:50`) with **two real
+`Protocol` (`apps/worker/src/curie_worker/sandbox/k8s.py:50`) with **two real
 implementations already proving the port**:
 
 - `KubernetesSandboxClient` (`sandbox/k8s.py:101`) — the production path, driving
@@ -23,8 +23,8 @@ implementations already proving the port**:
 - `DockerSandboxClient` (`sandbox/docker.py:94`) — local runner containers
   ("middle mode": a laptop, no cluster).
 
-The implementation is selected by a SOFT boot switch (`AGENTOS_SANDBOX_SUBSTRATE`,
-`apps/worker/src/agentos_worker/run.py:81`). This is the one infra seam whose
+The implementation is selected by a SOFT boot switch (`CURIE_SANDBOX_SUBSTRATE`,
+`apps/worker/src/curie_worker/run.py:81`). This is the one infra seam whose
 interface is already *taught* by a genuine second implementation, so its
 `INTERFACE.md` grades it CLEAN
 (`docs/interfaces/substrate/INTERFACE.md`).
@@ -89,7 +89,7 @@ Concretely:
    decision. Freezing it is a *future* step gated on a real second-vendor demand,
    not on the port merely being clean.
 
-4. **`AGENTOS_SANDBOX_SUBSTRATE` stays an internal/operator switch, not a
+4. **`CURIE_SANDBOX_SUBSTRATE` stays an internal/operator switch, not a
    user-facing product setting.** It selects k8s-vs-docker for a deployment; it is
    not documented or billed as "pick your runtime."
 
@@ -97,7 +97,7 @@ Concretely:
 
 **Substrate portability is resilience, not a product.** Keep the port clean and
 both peers alive because that is cheap insurance against a beta CRD and the cost
-of local dev — but market AgentOS's differentiator as the *verification/eval
+of local dev — but market Curie's differentiator as the *verification/eval
 layer and the leave-behind portable deployment*, not as a bring-your-own-substrate
 platform. If and when a customer genuinely needs a third substrate, the clean
 `SandboxClient` port makes adding it a bounded piece of work; do it then, freeze

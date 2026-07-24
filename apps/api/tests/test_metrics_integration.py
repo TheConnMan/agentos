@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 import pytest
-from agentos_api.config import get_settings
+from curie_api.config import get_settings
 
 
 def _stack_up() -> bool:

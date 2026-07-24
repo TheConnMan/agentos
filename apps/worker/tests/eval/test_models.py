@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from agentos_worker.eval import (
+from curie_worker.eval import (
     EvalCase,
     EvalCaseResult,
     EvalOutcome,

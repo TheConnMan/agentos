@@ -5,7 +5,7 @@ Date: 2026-07-13
 Status: Accepted
 
 Refines how ADR-0007 (adopt-not-build) applies to the queue/stream seam. Issue
-[#284](https://github.com/curie-eng/agentos/issues/284), epic #85. Does **not**
+[#284](https://github.com/curie-eng/curie/issues/284), epic #85. Does **not**
 supersede ADR-0007 — it keeps the "no second broker ahead of demand" rule and
 changes only where the line is drawn in code, and is the queue-seam sibling of
 ADR-0026 (storage port).

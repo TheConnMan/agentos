@@ -4,7 +4,7 @@
 > [INTERFACE.md](./INTERFACE.md) (the frozen bundle shape).
 
 This guide walks an existing **workflow agent** — a deterministic pipeline with an
-LLM at the edges — onto the AgentOS bundle format end to end: scaffold, map each
+LLM at the edges — onto the Curie bundle format end to end: scaffold, map each
 piece, wire tools, validate, run locally, add eval cases, and deploy.
 
 The bundle format is the **Claude Code plugin shape verbatim**
@@ -38,16 +38,16 @@ maps this cleanly — you do **not** turn the pipeline into a prompt.
 | Deterministic pipeline (pricing rules, totals, thresholds) | An MCP tool server in `.mcp.json`, or a `scripts/` helper the skill calls | Keeps determinism out of the prompt; the model *calls* it, never re-derives it. |
 | External systems (pricing DB, CRM) | MCP servers in `.mcp.json` | Wire, don't inline; credentials come from env. |
 | One-time setup (build the pricing index) | scripts/setup.sh | Directory convention; no schema of its own. |
-| Regression cases | evals/cases.json | Feeds `agentos skill eval`. |
+| Regression cases | evals/cases.json | Feeds `curie skill eval`. |
 | Name, version, description | .claude-plugin/plugin.json | The manifest; `name` is the only required field. |
 
 ## Step 0 — scaffold the skeleton
 
 ```bash
-agentos init deal-desk        # -> ./deal-desk
+curie init deal-desk        # -> ./deal-desk
 ```
 
-`agentos init` (`cli/src/scaffold.rs`) writes exactly the frozen shape and refuses
+`curie init` (`cli/src/scaffold.rs`) writes exactly the frozen shape and refuses
 to overwrite anything that already exists:
 
 ```
@@ -56,7 +56,7 @@ deal-desk/
   skills/deal-desk/SKILL.md     # skill with YAML frontmatter
   .mcp.json                     # { "mcpServers": {} }
   evals/cases.json              # { name, cases: [{id, input, grader}] }
-  .gitignore                    # .agentos/
+  .gitignore                    # .curie/
 ```
 
 The name must be kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`) — the same rule the
@@ -194,17 +194,17 @@ pipeline, and the runner loader will all accept it.
 Boot a local runner for the bundle and drive it with synthetic events:
 
 ```bash
-agentos skill up --plugin-dir ./deal-desk --fake-model   # offline, no credential
-agentos skill send "quote 250 seats of Pro, 2-year, EDU discount"
-agentos skill status
-agentos skill down
+curie skill up --plugin-dir ./deal-desk --fake-model   # offline, no credential
+curie skill send "quote 250 seats of Pro, 2-year, EDU discount"
+curie skill status
+curie skill down
 ```
 
-`agentos skill up` boots a local runner container for the bundle (`--plugin-dir`
+`curie skill up` boots a local runner container for the bundle (`--plugin-dir`
 defaults to `.`). `--fake-model` round-trips the ACI events with the scripted fake
 model (no credential) so you can exercise the wiring first; drop it and pass
-`--model` + a credential for a real run. Use `agentos skill up --network
-agentos_default` to join the dev stack if the pipeline's MCP server needs the
+`--model` + a credential for a real run. Use `curie skill up --network
+curie_default` to join the dev stack if the pipeline's MCP server needs the
 compose services.
 
 ## Step 6 — pin behavior with eval cases
@@ -213,7 +213,7 @@ Turn the workflow's known inputs/outputs into regression cases in
 `evals/cases.json` (a suite `{name, cases: [{id, input, grader}]}`), then: <!-- doclint:ignore-line -->
 
 ```bash
-agentos skill eval          # defaults to evals/cases.json, runs through the runner
+curie skill eval          # defaults to evals/cases.json, runs through the runner
 ```
 
 Start with the `contains` grader the scaffold seeds (assert the reply names the
@@ -246,5 +246,5 @@ contract, and you have already met it.
 ## Cross-links
 
 - [INTERFACE.md](./INTERFACE.md) — the frozen bundle format and its validator.
-- `cli/src/scaffold.rs` — `agentos init`, the frozen scaffold this guide starts from.
+- `cli/src/scaffold.rs` — `curie init`, the frozen scaffold this guide starts from.
 - `packages/plugin-format/README.md` — the format surface and decisions.

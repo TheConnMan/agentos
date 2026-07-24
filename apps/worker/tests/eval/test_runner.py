@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Sequence
 
 import pytest
-from agentos_worker.eval import (
+from curie_worker.eval import (
     AggregationPolicy,
     EvalCase,
     EvalOutcome,

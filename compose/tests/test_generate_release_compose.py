@@ -1,10 +1,10 @@
 """Contract tests for the compose release generator (compose/generate_release_compose.py).
 
 The generator turns compose.dev.yaml into a self-contained release compose file via
-three text transforms: (1) replace the agentos-worker build overlay with a pinned
+three text transforms: (1) replace the curie-worker build overlay with a pinned
 worker-local image, (2) inline otel/collector-config.yaml as a top-level `configs:`
 block (re-indented 6 spaces, `${env:` escaped to `$${env:`) and repoint the
-otel-collector service at it, and (3) pin every ghcr agentos-* image tag to the
+otel-collector service at it, and (3) pin every ghcr curie-* image tag to the
 release version. These tests assert on those transforms and on invariants preserved
 from the dev stack. They deliberately do NOT compare byte-for-byte against the
 hand-maintained compose.release.yaml, which has drifted from dev.
@@ -29,8 +29,8 @@ OTEL_PATH = REPO_ROOT / "otel" / "collector-config.yaml"
 DEV_TEXT = DEV_PATH.read_text()
 OTEL_TEXT = OTEL_PATH.read_text()
 
-AGENTOS_LATEST_RE = re.compile(r"ghcr\.io/curie-eng/agentos-[a-z-]+:latest")
-AGENTOS_IMAGE_RE = re.compile(r"ghcr\.io/curie-eng/agentos-[a-z-]+:(\S+)")
+CURIE_LATEST_RE = re.compile(r"ghcr\.io/curie-eng/curie-[a-z-]+:latest")
+CURIE_IMAGE_RE = re.compile(r"ghcr\.io/curie-eng/curie-[a-z-]+:(\S+)")
 # `${env:` not preceded by a `$` -> an UNescaped collector-config reference.
 UNESCAPED_ENV_RE = re.compile(r"(?<!\$)\$\{env:")
 
@@ -91,9 +91,9 @@ def test_worker_build_overlay_becomes_pinned_image():
     generate = load_generate()
     out = generate(DEV_TEXT, OTEL_TEXT, version="9.9.9")
 
-    worker = service_block(out, "agentos-worker")
-    assert worker, "agentos-worker service block not found in generated output"
-    assert "image: ghcr.io/curie-eng/agentos-worker-local:9.9.9" in worker
+    worker = service_block(out, "curie-worker")
+    assert worker, "curie-worker service block not found in generated output"
+    assert "image: ghcr.io/curie-eng/curie-worker-local:9.9.9" in worker
     assert "build:" not in worker
     assert "worker-local.Dockerfile" not in worker
     assert "worker-local.Dockerfile" not in out
@@ -130,17 +130,17 @@ def test_otel_collector_references_config_not_host_mount():
     assert "./otel/collector-config.yaml" not in out
 
 
-def test_agentos_images_pinned_non_agentos_untouched():
+def test_curie_images_pinned_non_curie_untouched():
     generate = load_generate()
     out = generate(DEV_TEXT, OTEL_TEXT, version="9.9.9")
 
-    # Every agentos-* image is pinned to the release version; none left at :latest.
-    assert AGENTOS_LATEST_RE.search(out) is None
-    tags = AGENTOS_IMAGE_RE.findall(out)
-    assert tags, "expected at least one ghcr agentos-* image in the output"
+    # Every curie-* image is pinned to the release version; none left at :latest.
+    assert CURIE_LATEST_RE.search(out) is None
+    tags = CURIE_IMAGE_RE.findall(out)
+    assert tags, "expected at least one ghcr curie-* image in the output"
     assert all(tag == "9.9.9" for tag in tags)
 
-    # Non-agentos images are never rewritten.
+    # Non-curie images are never rewritten.
     assert "image: postgres:16-alpine" in out
     assert "image: otel/opentelemetry-collector-contrib:0.119.0" in out
 
@@ -162,11 +162,11 @@ def test_default_version_latest_leaves_latest_tags():
     generate = load_generate()
     out = generate(DEV_TEXT, OTEL_TEXT, version="latest")
 
-    worker = service_block(out, "agentos-worker")
-    assert "image: ghcr.io/curie-eng/agentos-worker-local:latest" in worker
+    worker = service_block(out, "curie-worker")
+    assert "image: ghcr.io/curie-eng/curie-worker-local:latest" in worker
     assert "build:" not in worker
 
-    tags = AGENTOS_IMAGE_RE.findall(out)
+    tags = CURIE_IMAGE_RE.findall(out)
     assert tags
     assert all(tag == "latest" for tag in tags)
 
@@ -176,8 +176,8 @@ def test_cli_prints_generated_yaml():
     assert result.returncode == 0, result.stderr
     out = result.stdout
 
-    assert "image: ghcr.io/curie-eng/agentos-worker-local:9.9.9" in out
-    assert AGENTOS_LATEST_RE.search(out) is None
+    assert "image: ghcr.io/curie-eng/curie-worker-local:9.9.9" in out
+    assert CURIE_LATEST_RE.search(out) is None
     assert re.search(r"^configs:\s*$", out, re.MULTILINE)
     assert "$${env:LANGFUSE_OTLP_AUTH_HEADER}" in out
     assert service_names(out) == service_names(DEV_TEXT)
@@ -188,8 +188,8 @@ def test_cli_default_version_is_latest():
     assert result.returncode == 0, result.stderr
     out = result.stdout
 
-    assert "image: ghcr.io/curie-eng/agentos-worker-local:latest" in out
-    tags = AGENTOS_IMAGE_RE.findall(out)
+    assert "image: ghcr.io/curie-eng/curie-worker-local:latest" in out
+    tags = CURIE_IMAGE_RE.findall(out)
     assert tags
     assert all(tag == "latest" for tag in tags)
 
@@ -234,14 +234,14 @@ def resolve_shell_default(value):
     `env_map` returns the raw literal from compose.dev.yaml, so a var written as
     `${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}` comes back as
     that literal string, not the resolved endpoint. The acceptance criterion
-    here is about what a plain `agentos local up` does with no shell overrides,
+    here is about what a plain `curie local up` does with no shell overrides,
     so the default inside the wrapper is the value under test, not the wrapper. A
     plain literal (no `${...}` wrapper) passes through untouched.
 
     Both forms appear on purpose and resolve identically for THIS helper's
     question (nothing exported), so both are accepted: `:-` substitutes the
     default when the var is unset OR empty, while `-` substitutes only when it is
-    UNSET. The endpoint uses the `-` form specifically so `agentos local up
+    UNSET. The endpoint uses the `-` form specifically so `curie local up
     --minimal` can suppress it with an explicit empty override; under `:-` an
     empty value could never mean "no endpoint". Still intentionally narrow: no
     `${VAR}`, `${VAR:?err}`, or nested forms.
@@ -262,22 +262,22 @@ def compose_docs():
 
 
 def test_runner_network_excludes_data_tier():
-    """The dedicated `agentos_runner` network carries only the runner's
+    """The dedicated `curie_runner` network carries only the runner's
     documented dependencies, never the data tier (#631).
 
-    A hardened runner joins `agentos_runner` (AGENTOS_DOCKER_NETWORK). Membership
+    A hardened runner joins `curie_runner` (CURIE_DOCKER_NETWORK). Membership
     of that network is the local mirror of the K8s data-tier NetworkPolicy: the
     stores (postgres/valkey/minio/clickhouse) must NOT be on it, so a
     trusted-but-buggy bundle cannot reach their embedded credentials by service
-    name, while otel-collector (telemetry), ollama (local model), and agentos-api
+    name, while otel-collector (telemetry), ollama (local model), and curie-api
     (state) must be, so the documented flows still resolve.
     """
-    runner_net = "agentos_runner"
+    runner_net = "curie_runner"
     data_tier = {"postgres", "valkey", "minio", "clickhouse"}
-    required_members = {"otel-collector", "ollama", "agentos-api"}
+    required_members = {"otel-collector", "ollama", "curie-api"}
     for label, doc in compose_docs():
         # The network is declared with an explicit, project-independent name so
-        # `--network agentos_runner` resolves regardless of the compose project.
+        # `--network curie_runner` resolves regardless of the compose project.
         networks = doc.get("networks") or {}
         assert runner_net in networks, f"{label}: {runner_net} network not declared"
         assert (networks[runner_net] or {}).get("name") == runner_net, (
@@ -305,16 +305,16 @@ def test_runner_network_excludes_data_tier():
 def test_dispatcher_api_base_url_is_in_network():
     """The dispatcher points at the API by compose service name, not localhost.
 
-    `http://agentos-api:8000` is the in-network form the UI already uses
-    (`AGENTOS_API_TARGET`). The published host port (28000) is correct only for
+    `http://curie-api:8000` is the in-network form the UI already uses
+    (`CURIE_API_TARGET`). The published host port (28000) is correct only for
     the host-networked worker and is unreachable from the dispatcher's bridge
     network.
     """
     for label, doc in compose_docs():
-        env = env_map(doc["services"]["agentos-dispatcher"])
-        assert env.get("AGENTOS_API_URL") == "http://agentos-api:8000", (
-            f"{label}: agentos-dispatcher AGENTOS_API_URL is "
-            f"{env.get('AGENTOS_API_URL')!r}; the dispatcher cannot reach the "
+        env = env_map(doc["services"]["curie-dispatcher"])
+        assert env.get("CURIE_API_URL") == "http://curie-api:8000", (
+            f"{label}: curie-dispatcher CURIE_API_URL is "
+            f"{env.get('CURIE_API_URL')!r}; the dispatcher cannot reach the "
             f"API and Slack approval clicks dead-end"
         )
 
@@ -327,16 +327,16 @@ def test_dispatcher_api_key_matches_the_api():
     here instead of at click time with a 401.
     """
     for label, doc in compose_docs():
-        dispatcher = env_map(doc["services"]["agentos-dispatcher"])
-        api = env_map(doc["services"]["agentos-api"])
+        dispatcher = env_map(doc["services"]["curie-dispatcher"])
+        api = env_map(doc["services"]["curie-api"])
 
-        assert "AGENTOS_API_KEY" in dispatcher, (
-            f"{label}: agentos-dispatcher has no AGENTOS_API_KEY; its auth to the "
+        assert "CURIE_API_KEY" in dispatcher, (
+            f"{label}: curie-dispatcher has no CURIE_API_KEY; its auth to the "
             f"API is an accident of two defaults agreeing"
         )
-        assert dispatcher["AGENTOS_API_KEY"] == api["API_KEY"], (
-            f"{label}: agentos-dispatcher AGENTOS_API_KEY "
-            f"{dispatcher['AGENTOS_API_KEY']!r} != agentos-api API_KEY "
+        assert dispatcher["CURIE_API_KEY"] == api["API_KEY"], (
+            f"{label}: curie-dispatcher CURIE_API_KEY "
+            f"{dispatcher['CURIE_API_KEY']!r} != curie-api API_KEY "
             f"{api['API_KEY']!r}; approval resolve calls will be rejected"
         )
 
@@ -349,14 +349,14 @@ def test_dispatcher_depends_on_api_healthy():
     preflight a backstop rather than a race.
     """
     for label, doc in compose_docs():
-        depends = doc["services"]["agentos-dispatcher"].get("depends_on", {})
+        depends = doc["services"]["curie-dispatcher"].get("depends_on", {})
         assert isinstance(depends, dict), (
-            f"{label}: agentos-dispatcher depends_on is list form, which carries "
+            f"{label}: curie-dispatcher depends_on is list form, which carries "
             f"no condition; the API dependency needs service_healthy"
         )
-        entry = depends.get("agentos-api")
+        entry = depends.get("curie-api")
         assert isinstance(entry, dict) and entry.get("condition") == "service_healthy", (
-            f"{label}: agentos-dispatcher does not depend on agentos-api with "
+            f"{label}: curie-dispatcher does not depend on curie-api with "
             f"condition service_healthy (got {entry!r})"
         )
 
@@ -364,21 +364,21 @@ def test_dispatcher_depends_on_api_healthy():
 def test_worker_api_base_url_stays_host_local():
     """Regression guard: the worker's localhost:28000 is CORRECT. Do not "fix" it.
 
-    #442 names the worker's `AGENTOS_API_URL=http://localhost:28000` as the
+    #442 names the worker's `CURIE_API_URL=http://localhost:28000` as the
     defect. It is not. The worker runs `network_mode: host`, so the published
     host port is exactly right for it, and rewriting this line to the in-network
     form breaks the worker. This test passes today and must keep passing.
     """
     for label, doc in compose_docs():
-        worker = doc["services"]["agentos-worker"]
+        worker = doc["services"]["curie-worker"]
         assert worker.get("network_mode") == "host", (
-            f"{label}: agentos-worker is no longer host-networked; the premise of "
+            f"{label}: curie-worker is no longer host-networked; the premise of "
             f"its localhost:28000 API URL has changed"
         )
         env = env_map(worker)
-        assert env.get("AGENTOS_API_URL") == "http://localhost:28000", (
-            f"{label}: agentos-worker AGENTOS_API_URL is "
-            f"{env.get('AGENTOS_API_URL')!r}, expected http://localhost:28000 "
+        assert env.get("CURIE_API_URL") == "http://localhost:28000", (
+            f"{label}: curie-worker CURIE_API_URL is "
+            f"{env.get('CURIE_API_URL')!r}, expected http://localhost:28000 "
             f"(host-networked: the published port is the correct form here)"
         )
 
@@ -399,14 +399,14 @@ def collector_http_port():
 def test_worker_traces_to_shipped_collector_by_default():
     """The worker exports traces to the collector this file ships, by default.
 
-    #545: `agentos local up` boots otel-collector + Langfuse, but the deployed
-    local tier exported ZERO traces because agentos-worker was never given
-    OTEL_EXPORTER_OTLP_ENDPOINT, and AGENTOS_DOCKER_NETWORK defaulted to empty
+    #545: `curie local up` boots otel-collector + Langfuse, but the deployed
+    local tier exported ZERO traces because curie-worker was never given
+    OTEL_EXPORTER_OTLP_ENDPOINT, and CURIE_DOCKER_NETWORK defaulted to empty
     so spawned sandbox containers could not resolve otel-collector by name.
     Both must default to values that work with no manual flags, matching the
     documented manual recipe (README.md).
 
-    This pins the DEFAULT (full-profile) `agentos local up`. `--minimal` selects
+    This pins the DEFAULT (full-profile) `curie local up`. `--minimal` selects
     the `core` profile, which starts no collector, and suppresses the endpoint by
     exporting it empty -- see `up_minimal_suppresses_otel_endpoint` in
     cli/src/local.rs, which is where the profile choice lives.
@@ -416,32 +416,32 @@ def test_worker_traces_to_shipped_collector_by_default():
         assert "otel-collector" in doc["services"], (
             f"{label}: otel-collector service not found in the compose document"
         )
-        env = env_map(doc["services"]["agentos-worker"])
+        env = env_map(doc["services"]["curie-worker"])
         otel_endpoint = resolve_shell_default(env.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
         assert otel_endpoint == expected, (
-            f"{label}: agentos-worker OTEL_EXPORTER_OTLP_ENDPOINT resolves to "
+            f"{label}: curie-worker OTEL_EXPORTER_OTLP_ENDPOINT resolves to "
             f"{otel_endpoint!r}, expected {expected!r} (the collector's own "
             f"OTLP/HTTP receiver); traces from spawned sandbox containers have "
             f"nowhere to go"
         )
-        docker_network = resolve_shell_default(env.get("AGENTOS_DOCKER_NETWORK"))
-        assert docker_network == "agentos_runner", (
-            f"{label}: agentos-worker AGENTOS_DOCKER_NETWORK resolves to "
-            f"{docker_network!r}, expected agentos_runner (#631): the dedicated, "
+        docker_network = resolve_shell_default(env.get("CURIE_DOCKER_NETWORK"))
+        assert docker_network == "curie_runner", (
+            f"{label}: curie-worker CURIE_DOCKER_NETWORK resolves to "
+            f"{docker_network!r}, expected curie_runner (#631): the dedicated, "
             "data-tier-free runner network onto which otel-collector, ollama, and "
-            "agentos-api are multi-homed so a hardened runner resolves its "
+            "curie-api are multi-homed so a hardened runner resolves its "
             "documented dependencies by name without reaching the stores"
         )
 
 
 def assert_init_containers_adopted(compose_text, label):
     """Assert every one-shot init container is adopted via
-    `service_completed_successfully` in every profile combo `agentos local up`
+    `service_completed_successfully` in every profile combo `curie local up`
     can activate.
 
     `docker compose up --wait` treats a one-shot init container's clean exit(0)
     as a failure unless some service in the up-set depends on it with
-    `condition: service_completed_successfully`. `agentos local up` activates a
+    `condition: service_completed_successfully`. `curie local up` activates a
     base profile (core or full), optionally + `local-model`, optionally +
     `slack` -> 8 combos. Every one-shot init started in a combo must be adopted
     by a long-running service that is itself started in that same combo.

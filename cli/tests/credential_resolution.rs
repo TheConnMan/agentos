@@ -1,6 +1,6 @@
 //! Empty-string credentials are absent, not "explicitly supplied" (issue #540, AC6).
 //!
-//! `AGENTOS_API_KEY=""` must resolve identically to the variable being unset, on
+//! `CURIE_API_KEY=""` must resolve identically to the variable being unset, on
 //! every path. The rule is already settled in three places -- `ops.rs`'s
 //! `resolve_up_credentials` filters empty, `secrets.rs`'s `save_value` refuses to
 //! store an empty secret, and `local.rs`'s `model_mode_from_env` calls it out by
@@ -14,7 +14,7 @@
 //! they hold wherever the normalization lands (a `value_parser` on the four
 //! `#[arg]` sites, or another single seam). The outcome they read is issue #112's
 //! contract, which is what an empty key silently defeats today: a turn recorded
-//! with `api_key_env = AGENTOS_API_KEY` must hard-error on `--continue` when that
+//! with `api_key_env = CURIE_API_KEY` must hard-error on `--continue` when that
 //! env source is no longer set, instead of quietly sending a blank key onward.
 //!
 //! Env is set on the CHILD process (`Command::env`), never on the test process --
@@ -25,7 +25,7 @@ use std::io::{BufRead, Write};
 use std::process::{Command, Output};
 use std::sync::{Mutex, MutexGuard};
 
-use agentos::state::{save_turn, TurnContext, TurnVerb};
+use curie::state::{save_turn, TurnContext, TurnVerb};
 
 /// Serializes the binary spawns in this file.
 ///
@@ -53,7 +53,7 @@ fn spawn_lock() -> MutexGuard<'static, ()> {
 }
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn err_str(o: &Output) -> String {
@@ -65,8 +65,8 @@ fn err_str(o: &Output) -> String {
 /// "absent"; not reaching it proves it resolved as "supplied".
 const UNSET_ENV_BAIL: &str = "which is not set now";
 
-/// A project dir holding a `.agentos/last-turn.json` whose api key came from
-/// `$AGENTOS_API_KEY`, built through the real state types rather than a hand-written
+/// A project dir holding a `.curie/last-turn.json` whose api key came from
+/// `$CURIE_API_KEY`, built through the real state types rather than a hand-written
 /// JSON literal so the fixture cannot drift from the shape the CLI loads.
 fn project_with_recorded_env_key() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -76,13 +76,13 @@ fn project_with_recorded_env_key() -> tempfile::TempDir {
             verb: TurnVerb::Local,
             channel: "C-recorded".into(),
             thread_ts: "9.9".into(),
-            namespace: "agentos".into(),
-            release: "agentos".into(),
-            chart: "charts/agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
+            chart: "charts/curie".into(),
             listen_host: None,
             timeout_secs: 1,
             api_url: None,
-            api_key_env: Some("AGENTOS_API_KEY".into()),
+            api_key_env: Some("CURIE_API_KEY".into()),
         },
     )
     .expect("save turn");
@@ -107,17 +107,17 @@ fn continue_turn(
         .args(extra_args)
         .arg("probe");
     match api_key_env {
-        Some(value) => cmd.env("AGENTOS_API_KEY", value),
-        None => cmd.env_remove("AGENTOS_API_KEY"),
+        Some(value) => cmd.env("CURIE_API_KEY", value),
+        None => cmd.env_remove("CURIE_API_KEY"),
     };
-    cmd.output().expect("run agentos local message")
+    cmd.output().expect("run curie local message")
 }
 
 /// The baseline the other cases are measured against: a genuinely unset
-/// `AGENTOS_API_KEY` hard-errors, per issue #112. Every "treated identically to
+/// `CURIE_API_KEY` hard-errors, per issue #112. Every "treated identically to
 /// unset" claim below means "produces exactly this".
 #[test]
-fn unset_agentos_api_key_hard_errors_on_continue() {
+fn unset_curie_api_key_hard_errors_on_continue() {
     let dir = project_with_recorded_env_key();
     let out = continue_turn(&dir, None, &[]);
 
@@ -132,21 +132,21 @@ fn unset_agentos_api_key_hard_errors_on_continue() {
     );
 }
 
-/// AC6: `AGENTOS_API_KEY=""` is unset. Today clap reports `""` as an explicitly
+/// AC6: `CURIE_API_KEY=""` is unset. Today clap reports `""` as an explicitly
 /// supplied key, so the sentinel comparison in `state.rs` takes it as the user's
 /// choice, the #112 bail never fires, and a blank key is sent onward.
 #[test]
-fn empty_agentos_api_key_is_treated_as_unset_on_continue() {
+fn empty_curie_api_key_is_treated_as_unset_on_continue() {
     let dir = project_with_recorded_env_key();
     let out = continue_turn(&dir, Some(""), &[]);
 
     assert!(
         !out.status.success(),
-        "an empty AGENTOS_API_KEY must fail the turn exactly as an unset one does, got success"
+        "an empty CURIE_API_KEY must fail the turn exactly as an unset one does, got success"
     );
     assert!(
         err_str(&out).contains(UNSET_ENV_BAIL),
-        "an empty AGENTOS_API_KEY must resolve as absent and hit the unset-env bail; got stderr: {}",
+        "an empty CURIE_API_KEY must resolve as absent and hit the unset-env bail; got stderr: {}",
         err_str(&out)
     );
 }
@@ -174,23 +174,23 @@ fn empty_api_key_flag_is_treated_as_unset_on_continue() {
 /// still resolve as supplied, so the bail must NOT fire. Without this, a fix that
 /// mapped every value to the sentinel would pass the three tests above.
 #[test]
-fn non_empty_agentos_api_key_is_still_an_explicit_key() {
+fn non_empty_curie_api_key_is_still_an_explicit_key() {
     let dir = project_with_recorded_env_key();
     let out = continue_turn(&dir, Some("sk-real-key"), &[]);
 
     assert!(
         !err_str(&out).contains(UNSET_ENV_BAIL),
-        "a non-empty AGENTOS_API_KEY is an explicit key and must not be normalized to absent; got stderr: {}",
+        "a non-empty CURIE_API_KEY is an explicit key and must not be normalized to absent; got stderr: {}",
         err_str(&out)
     );
 }
 
-/// An explicitly empty `--api-key ""` must resolve to `$AGENTOS_API_KEY`, exactly
+/// An explicitly empty `--api-key ""` must resolve to `$CURIE_API_KEY`, exactly
 /// as an OMITTED flag does.
 ///
 /// clap resolves an explicit flag ahead of its `env` source, so the env value is
 /// already out of the running by the time the `value_parser` sees `""`. Before
-/// the fix the parser mapped `""` straight to the `agentos-dev-key` sentinel,
+/// the fix the parser mapped `""` straight to the `curie-dev-key` sentinel,
 /// which means `--api-key ""` silently sent the well-known dev key on the wire
 /// while the operator's real key sat unused in the environment.
 ///
@@ -205,11 +205,11 @@ fn empty_api_key_flag_falls_back_to_the_env_key_exactly_as_an_omitted_flag_does(
     assert_eq!(
         omitted,
         Some("sk-real-from-env".to_string()),
-        "baseline: an omitted --api-key must send $AGENTOS_API_KEY"
+        "baseline: an omitted --api-key must send $CURIE_API_KEY"
     );
     assert_eq!(
         empty, omitted,
-        "an empty --api-key must send exactly what an omitted one sends ($AGENTOS_API_KEY), \
+        "an empty --api-key must send exactly what an omitted one sends ($CURIE_API_KEY), \
          not the {DEFAULT_API_KEY_SENTINEL} sentinel"
     );
 }
@@ -222,15 +222,15 @@ fn a_non_empty_api_key_flag_still_wins_over_the_env_key() {
     assert_eq!(
         api_key_on_the_wire(&["--api-key", "sk-explicit"]),
         Some("sk-explicit".to_string()),
-        "an explicit non-empty --api-key must win over $AGENTOS_API_KEY"
+        "an explicit non-empty --api-key must win over $CURIE_API_KEY"
     );
 }
 
 /// The dev sentinel `--api-key` falls back to when no env source is available.
-const DEFAULT_API_KEY_SENTINEL: &str = "agentos-dev-key";
+const DEFAULT_API_KEY_SENTINEL: &str = "curie-dev-key";
 
 /// Run `local versions` against a throwaway HTTP peer with
-/// `AGENTOS_API_KEY=sk-real-from-env` on the CHILD, and report the `X-API-Key`
+/// `CURIE_API_KEY=sk-real-from-env` on the CHILD, and report the `X-API-Key`
 /// the CLI actually sent. `None` means the CLI never reached the peer.
 fn api_key_on_the_wire(extra_args: &[&str]) -> Option<String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
@@ -265,15 +265,15 @@ fn api_key_on_the_wire(extra_args: &[&str]) -> Option<String> {
     Command::new(bin())
         .args(["local", "versions", "demo", "--api-url", &url])
         .args(extra_args)
-        .env("AGENTOS_API_KEY", "sk-real-from-env")
+        .env("CURIE_API_KEY", "sk-real-from-env")
         .output()
-        .expect("run agentos local versions");
+        .expect("run curie local versions");
 
     probe.join().expect("probe thread")
 }
 
 /// AC6 on the `skill up` path: `ANTHROPIC_API_KEY=""` exported must NOT suppress
-/// the AgentOS vault fallback.
+/// the Curie vault fallback.
 ///
 /// `secret_store_env` gated on `var_os(name).is_some()`, which is TRUE for
 /// `NAME=""` -- so an empty export shadowed a real saved key and forwarded the
@@ -325,7 +325,7 @@ fn a_non_empty_anthropic_api_key_still_shadows_the_vault() {
 
 /// The note `skill up` prints when it hydrates a credential from the vault.
 /// Reaching it is the observable proof the env value resolved as "absent".
-const VAULT_HYDRATION_NOTE: &str = "ANTHROPIC_API_KEY: loaded from AgentOS private storage";
+const VAULT_HYDRATION_NOTE: &str = "ANTHROPIC_API_KEY: loaded from Curie private storage";
 
 /// Docker's own rejection of [`UNRESOLVABLE_IMAGE`], raised locally at the
 /// `docker run` step, which is the first thing after credential resolution.
@@ -335,9 +335,9 @@ const IMAGE_REJECTED_BAIL: &str = "invalid reference format";
 /// client with no daemon pull and no registry contact at all. A merely
 /// non-existent TAG would be a valid reference, which sends docker to a registry
 /// and makes these tests depend on the network and on pull rate limits.
-const UNRESOLVABLE_IMAGE: &str = "agentos-runner:747-invalid-reference-format!";
+const UNRESOLVABLE_IMAGE: &str = "curie-runner:747-invalid-reference-format!";
 
-/// A private AgentOS config dir holding a saved `ANTHROPIC_API_KEY`, plus a real
+/// A private Curie config dir holding a saved `ANTHROPIC_API_KEY`, plus a real
 /// scaffolded bundle for `skill up` to read. Both are built by driving the real
 /// `secrets set` and `init` verbs rather than hand-writing a vault file or a
 /// manifest, so neither fixture can drift from the shapes the CLI loads.
@@ -345,10 +345,10 @@ fn vault_with_saved_anthropic_key() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     let seed = Command::new(bin())
         .args(["secrets", "set", "ANTHROPIC_API_KEY", "--from-env", "SEED"])
-        .env("AGENTOS_CONFIG_DIR", dir.path().join("cfg"))
+        .env("CURIE_CONFIG_DIR", dir.path().join("cfg"))
         .env("SEED", "sk-vault-real")
         .output()
-        .expect("run agentos secrets set");
+        .expect("run curie secrets set");
     assert!(seed.status.success(), "seed vault: {}", err_str(&seed));
 
     let init = Command::new(bin())
@@ -356,7 +356,7 @@ fn vault_with_saved_anthropic_key() -> tempfile::TempDir {
         .arg(dir.path().join("bundle"))
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos init");
+        .expect("run curie init");
     assert!(init.status.success(), "scaffold bundle: {}", err_str(&init));
     dir
 }
@@ -366,7 +366,7 @@ fn vault_with_saved_anthropic_key() -> tempfile::TempDir {
 /// no state and need no [`SPAWN_LOCK`] (they bind no fixed port either).
 ///
 /// The name and image are pinned so the run is deterministic on a dirty box.
-/// `--name` is unique per process, because the default `agentos-runner-local` is
+/// `--name` is unique per process, because the default `curie-runner-local` is
 /// often already taken by a real local runner and `skill up`'s name-conflict
 /// preflight (#747) would then fail the run before the vault note is printed;
 /// deriving it from the pid also keeps parallel test runs from colliding.
@@ -378,15 +378,15 @@ fn skill_up(fixture: &tempfile::TempDir, anthropic_key: Option<&str>) -> Output 
     cmd.current_dir(fixture.path().join("bundle"))
         .args(["skill", "up"])
         .arg("--name")
-        .arg(format!("agentos-747-cred-test-{}", std::process::id()))
+        .arg(format!("curie-747-cred-test-{}", std::process::id()))
         .args(["--image", UNRESOLVABLE_IMAGE])
-        .env("AGENTOS_CONFIG_DIR", fixture.path().join("cfg"));
+        .env("CURIE_CONFIG_DIR", fixture.path().join("cfg"));
     match anthropic_key {
         Some(value) => cmd.env("ANTHROPIC_API_KEY", value),
         None => cmd.env_remove("ANTHROPIC_API_KEY"),
     };
     // Never let an ambient BYO credential pre-empt the ANTHROPIC_API_KEY probe.
-    cmd.env_remove("AGENTOS_CREDENTIALS")
+    cmd.env_remove("CURIE_CREDENTIALS")
         .env_remove("CLAUDE_CODE_OAUTH_TOKEN");
-    cmd.output().expect("run agentos skill up")
+    cmd.output().expect("run curie skill up")
 }

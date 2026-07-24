@@ -1,6 +1,6 @@
 # Architecture Vision: Swappable Jobs Around an Opinionated Core
 
-AgentOS is a set of jobs with swappable components tied together by one
+Curie is a set of jobs with swappable components tied together by one
 opinionated core: the agent runner platform. The core (dispatcher, queue,
 worker kernel, sandbox substrate, runner behind the frozen ACI protocol, the
 API's git-flow engine, and the UI) is where the opinions live and where the
@@ -24,7 +24,7 @@ seam honestly is not clean yet.
 The core is everything a swap must not touch: `apps/dispatcher` normalizes
 ingress into a queue event, `apps/worker` is the concurrency kernel (one live
 session per thread, steer vs interrupt, no retry after side effects), the
-sandbox substrate (`apps/worker/src/agentos_worker/sandbox/`) claims isolated
+sandbox substrate (`apps/worker/src/curie_worker/sandbox/`) claims isolated
 runtimes on Kubernetes or Docker, `runner/` serves the ACI protocol inside the
 sandbox, `apps/api` owns agents/versions/deployments and the git-flow deploy
 engine, and `apps/ui` and `cli/` are the operator surfaces. The core's own
@@ -38,7 +38,7 @@ schema-compat CI test.
 ### 1. Harness / runtime (Claude Code today)
 
 **Port:** the frozen ACI session protocol in `packages/aci-protocol`:
-`SessionConfig` and its `AGENTOS_*` env mapping
+`SessionConfig` and its `CURIE_*` env mapping
 (`packages/aci-protocol/src/aci_protocol/session.py`) plus the NDJSON event
 union `text_delta | tool_note | final | error | side_effect_flag` and the
 inbound `event | interrupt` frames
@@ -46,14 +46,14 @@ inbound `event | interrupt` frames
 all compile against the generated artifacts; none of them import the SDK.
 
 **Current adapter:** the runner. Inside the boundary it is deliberately
-claude-agent-sdk-coupled: `runner/src/agentos_runner/adapter.py` defines a
+claude-agent-sdk-coupled: `runner/src/curie_runner/adapter.py` defines a
 `ModelSession` protocol and implements it with `ClaudeSDKClient` in
 streaming-input mode (native steer and interrupt), and `translate.py` maps SDK
 messages to ACI events. Above the session sits the declared-package layer from
 ADR-0060: a `HarnessContribution` manifest (name, image, install, auth,
-read-only tool set, spawn env) registered through the `agentos.harness`
-entry-point group (`runner/src/agentos_runner/harness/`), selected at boot via
-`AGENTOS_HARNESS` and defaulting to the built-in Claude contribution. Exactly
+read-only tool set, spawn env) registered through the `curie.harness`
+entry-point group (`runner/src/curie_runner/harness/`), selected at boot via
+`CURIE_HARNESS` and defaulting to the built-in Claude contribution. Exactly
 one contribution exists today, so the registry is a guarded indirection around
 the same adapter; conformance checks for third-party contributions are pending
 (ADR-0062).
@@ -63,7 +63,7 @@ implement a new ACI server (an HTTP process that accepts `/v1/event`,
 `/v1/steer`, `/v1/interrupt`, streams the NDJSON union, and honors the
 `SessionConfig` env contract), package it as a runner image. The platform
 does not change. The runner's conformance suite
-(`runner/src/agentos_runner/conformance.py`, driven by a scripted
+(`runner/src/curie_runner/conformance.py`, driven by a scripted
 `ModelSession`) is the reusable acceptance test for any new implementation.
 
 **Leakage, stated honestly:** the harness port is entangled with the plugin
@@ -71,10 +71,10 @@ format. `packages/plugin-format` is the Claude Code plugin shape verbatim (a
 deliberate distribution wedge), so a non-Claude harness must interpret Claude
 Code plugin bundles or translate them into its own configuration; "implement
 the ACI server" understates that work. Resume, by contrast, is harness-agnostic:
-the boot path passes `resume=None`, and `AGENTOS_HISTORY_REF` is a durable
+the boot path passes `resume=None`, and `CURIE_HISTORY_REF` is a durable
 state-store URL for the thread's transcript that the runner loads and replays as a
 boot-time system-prompt preamble
-(`runner/src/agentos_runner/history.py::format_conversation_preamble`), not an
+(`runner/src/curie_runner/history.py::format_conversation_preamble`), not an
 SDK-native resume identifier (ADR-0029). A second harness rehydrates the same way
 by reusing that state-store contract.
 
@@ -82,17 +82,17 @@ by reusing that state-store contract.
 
 **Port:** OTLP into the collector on the write side; our API DTOs on the read
 side. Services never speak Langfuse directly: the runner exports gen_ai spans
-over OTLP-HTTP to the collector (`runner/src/agentos_runner/otel.py`), and the
+over OTLP-HTTP to the collector (`runner/src/curie_runner/otel.py`), and the
 collector is the single component that authenticates and forwards to Langfuse
-(`charts/agentos/templates/otel-collector.yaml`, needed because Langfuse OTLP
+(`charts/curie/templates/otel-collector.yaml`, needed because Langfuse OTLP
 ingest is HTTP-only). On the read side the UI consumes only our API's schemas
-(`ObservationNode`, `MetricsSummary` in `apps/api/src/agentos_api/schemas.py`).
+(`ObservationNode`, `MetricsSummary` in `apps/api/src/curie_api/schemas.py`).
 
-**Current adapter:** `apps/api/src/agentos_api/langfuse.py` (trace list, tree
+**Current adapter:** `apps/api/src/curie_api/langfuse.py` (trace list, tree
 reconstruction from `parentObservationId`, metrics queries) plus
-`apps/api/src/agentos_api/metrics.py`. Vendor glue lives where an adapter's
+`apps/api/src/curie_api/metrics.py`. Vendor glue lives where an adapter's
 glue should: the model-pricing seed Job is a chart hook
-(`charts/agentos/templates/langfuse-model-pricing.yaml`), config owned by the
+(`charts/curie/templates/langfuse-model-pricing.yaml`), config owned by the
 adapter, not code in the core.
 
 **Swap (candidates: Arize Phoenix, any OTLP-compatible trace backend):**
@@ -102,7 +102,7 @@ adapter behind the same API DTOs. The tree-building and metrics logic in
 API query object) and would be rewritten, not ported.
 
 **Leakage:** the runner stamps a `langfuse.trace.name` span attribute
-(`runner/src/agentos_runner/otel.py`), a vendor attribute on the otherwise
+(`runner/src/curie_runner/otel.py`), a vendor attribute on the otherwise
 neutral write path; a clean seam would use a neutral attribute the collector
 maps. The UI also reaches the read adapter through vendor-named routes
 (`/langfuse/traces` in `apps/ui/src/api/client.ts`), so the vendor name leaks
@@ -111,16 +111,16 @@ into the URL namespace even though the payloads are ours.
 ### 3. Evals (Langfuse datasets/scores today)
 
 **Port:** our own eval plane defines the schema; Langfuse is storage behind
-it. The write path is the `agentos:evals` Valkey stream carrying an
+it. The write path is the `curie:evals` Valkey stream carrying an
 `EvalJob`, the wire model shared between the API producer and the worker
 consumer (`packages/aci-protocol`, issue #492), consumed by
-`apps/worker/src/agentos_worker/eval/stream.py`,
-with results shaped by our models (`apps/worker/src/agentos_worker/eval/models.py`). The UI-facing read path
-is our API's matrix endpoint (`apps/api/src/agentos_api/routers/evals.py`)
+`apps/worker/src/curie_worker/eval/stream.py`,
+with results shaped by our models (`apps/worker/src/curie_worker/eval/models.py`). The UI-facing read path
+is our API's matrix endpoint (`apps/api/src/curie_api/routers/evals.py`)
 returning our `EvalMatrix` schema, and the PR gate is our `/evals/report`
 endpoint turning a rollup into a GitHub commit status.
 
-**Current adapter:** `apps/worker/src/agentos_worker/eval/recorder.py` posts one Langfuse trace plus an
+**Current adapter:** `apps/worker/src/curie_worker/eval/recorder.py` posts one Langfuse trace plus an
 `eval_pass` score per case via the public ingestion API, tagged
 `version:<v>` / `suite:<s>`; the matrix endpoint reads the grid back by those
 tags through the same `LangfuseClient`.
@@ -133,23 +133,23 @@ expressed in Langfuse's tag mechanism, so it translates, but it is
 convention, not a frozen contract.
 
 **Leakage:** the eval-case format is now converged and frozen
-([issue #8](https://github.com/curie-eng/agentos/issues/8), ADR-0019): the CLI
+([issue #8](https://github.com/curie-eng/curie/issues/8), ADR-0019): the CLI
 reads the bundle's evals/cases.json as a suite object `{name, cases:[{id, input, grader}]}`
 (`cli/src/evals.rs`) and the platform's bundle loader validates the same shape
-(`apps/worker/src/agentos_worker/eval/stream.py`), both building to one committed schema
+(`apps/worker/src/curie_worker/eval/stream.py`), both building to one committed schema
 (`apps/worker/schema/eval-cases.schema.json`) kept honest by a drift gate.
 
 ### 4. Blob storage (MinIO today)
 
 **Port:** the S3 protocol. Both writers and readers construct plain boto3 S3
 clients with an `endpoint_url` and path-style addressing: the API's immutable
-bundle store (`apps/api/src/agentos_api/storage.py`) and the worker's
-read-side mirror (`apps/worker/src/agentos_worker/bundle_store.py`). On
+bundle store (`apps/api/src/curie_api/storage.py`) and the worker's
+read-side mirror (`apps/worker/src/curie_worker/bundle_store.py`). On
 Kubernetes the chart's bundle-fetch init container fetches with `mc`
-(`charts/agentos/templates/agent-sandbox.yaml`), also pure S3 protocol.
+(`charts/curie/templates/agent-sandbox.yaml`), also pure S3 protocol.
 
 **Current adapter:** MinIO, deployed by the chart
-(`charts/agentos/templates/minio.yaml`).
+(`charts/curie/templates/minio.yaml`).
 
 **Swap:** AWS S3, Cloudflare R2, or any S3-compatible store is config only
 (endpoint, keys, region). GCS is a real decision: either rely on its
@@ -164,12 +164,12 @@ backend would touch all three.
 ### 5. Relational database (Postgres today)
 
 **Port:** SQL through SQLAlchemy 2.0 plus alembic migrations
-(`apps/api/src/agentos_api/models.py`, `apps/api/alembic/versions/`; run
+(`apps/api/src/curie_api/models.py`, `apps/api/alembic/versions/`; run
 `alembic heads` for the current tip rather than a count pinned here). The core
 schema centers on agents, agent_versions, and deployments.
 
 **Current adapter:** the chart's Postgres
-(`charts/agentos/templates/postgres.yaml`); locally, the compose stack.
+(`charts/curie/templates/postgres.yaml`); locally, the compose stack.
 
 **Swap:** any managed Postgres (RDS, Cloud SQL, Neon) is a connection-string
 change, and that is the realistic swap. A different SQL engine is a small
@@ -177,8 +177,8 @@ refactor, not a rewrite.
 
 **Leakage:** two Postgres-isms are in the models: the
 `sqlalchemy.dialects.postgresql.UUID` column type
-(`apps/api/src/agentos_api/models.py`) and schema-qualified tables plus a
-schema-scoped native enum (`apps/api/src/agentos_api/db.py::SCHEMA`, the
+(`apps/api/src/curie_api/models.py`) and schema-qualified tables plus a
+schema-scoped native enum (`apps/api/src/curie_api/db.py::SCHEMA`, the
 `Environment` enum). Both have portable SQLAlchemy equivalents if a
 non-Postgres target ever materializes.
 
@@ -192,7 +192,7 @@ generic `event_id` idempotency key, a `conversation_id` conversation key, and a
 `ReplyHandle` (`packages/aci-protocol/src/aci_protocol/turn.py::ReplyHandle`)
 carrying the channel and placeholder, so the Slack-shaped field names are gone
 from the core contract. The egress contract is the worker's `SlackSink` protocol
-(`apps/worker/src/agentos_worker/slack_sink.py`), a single
+(`apps/worker/src/curie_worker/slack_sink.py`), a single
 `update(channel, ts, text)` built on `chat.update`. The mrkdwn dialect is
 correctly confined to the sink (`mrkdwn.py`), but the kernel does assume the
 edit-a-placeholder reply shape, which is the remaining Slack coupling.
@@ -200,8 +200,8 @@ edit-a-placeholder reply shape, which is the remaining Slack coupling.
 **Current adapter:** `apps/dispatcher` (Bolt, Socket Mode) on ingress,
 `AsyncSlackSink` on egress.
 
-**Evidence the channel is already semi-swappable:** `agentos local message` and
-`agentos cluster message` (`cli/src/chat.rs`, `cli/src/message.rs`) drive the entire
+**Evidence the channel is already semi-swappable:** `curie local message` and
+`curie cluster message` (`cli/src/chat.rs`, `cli/src/message.rs`) drive the entire
 deployed system with zero Slack contact by minting the exact
 `QueuedTurn` wire payload (`cli/src/queue.rs`) and standing in as the
 Slack Web API. The Slack service swaps; the ingress payload is already
@@ -209,13 +209,13 @@ channel-neutral, and the remaining Slack coupling is the egress reply shape.
 
 **What a channel-neutral port looks like:** the ingress half already matches this
 target — `QueuedTurn` carries `{event_id, conversation_id, author, text,
-reply_handle, received_at}` ([issue #7](https://github.com/curie-eng/agentos/issues/7),
+reply_handle, received_at}` ([issue #7](https://github.com/curie-eng/curie/issues/7),
 landed). What remains is a `ReplySink` with post/update semantics per channel
 adapter. The remaining reshaping cost is bounded: the CLI's mirrored struct already
 tracks the promoted contract, while the kernel's thread-lock and marker keys and the
-channel-based deployment binding (`apps/worker/src/agentos_worker/binding.py`) still
+channel-based deployment binding (`apps/worker/src/curie_worker/binding.py`) still
 assume Slack. Reply routing, by contrast, already landed per turn
-([issue #19](https://github.com/curie-eng/agentos/issues/19)): a turn's
+([issue #19](https://github.com/curie-eng/curie/issues/19)): a turn's
 `ReplyHandle.endpoint` (`packages/aci-protocol/src/aci_protocol/turn.py::ReplyHandle`)
 is the reply target, so a real Slack workspace and a no-Slack CLI stub can coexist on
 one deployment; the worker-global base URL (`worker.slackApiBaseUrl`) is now only the
@@ -234,12 +234,12 @@ increment; the interaction-primitive half is driven now by the approval interfac
 flowchart TB
     subgraph channel["Job 6: communication channel"]
         Slack["Slack via Bolt (today)"]
-        CLIStub["agentos local message / cluster message stub (swap proof)"]
+        CLIStub["curie local message / cluster message stub (swap proof)"]
     end
 
     subgraph core["Opinionated core: agent runner platform"]
         Dispatcher["apps/dispatcher"]
-        Queue["Valkey stream agentos:runs"]
+        Queue["Valkey stream curie:runs"]
         Worker["apps/worker kernel"]
         Substrate["sandbox substrate (k8s Agent Sandbox / Docker)"]
         Runner["runner (ACI server)"]
@@ -292,7 +292,7 @@ flowchart TB
 | Harness / runtime | Frozen ACI protocol (`packages/aci-protocol`), tri-language, CI-guarded | claude-agent-sdk runner | A-: strongest seam in the system; docked for the plugin-format entanglement and SDK-shaped resume | Write the "implement an ACI server" guide from the conformance suite so the port is documented, not just enforced |
 | Observability | OTLP to collector (write), API DTOs (read) | Langfuse behind `langfuse.py` | B+: write side clean but for three vendor span attributes (`langfuse.trace.name`, `langfuse.session.id`, `langfuse.user.id`); read side spans several API modules plus routers | Map the three `langfuse.*` attributes to neutral names in the collector; rename the `/langfuse/*` API routes |
 | Evals | Our stream schema + `EvalMatrix` DTO; store behind recorder | Langfuse traces + `eval_pass` scores | B: schema is ours; the case format converged into one frozen, drift-gated schema (#8, ADR-0019), leaving the `version:`/`suite:` tag convention as the unfrozen part | Freeze the tag convention into the schema, or record it as a deliberate soft contract |
-| Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; the client is now built in one shared place (`packages/aci-protocol/src/aci_protocol/s3.py::build_s3_client`, #572), and the `ObjectStore` port (`apps/api/src/agentos_api/storage.py::ObjectStore`) names the contract, but the second, non-S3 adapter is deferred by decision until a real demand lands (#282) | None needed until a non-S3 demand exists |
+| Blob storage | S3 protocol (boto3 + mc, path-style, endpoint-configurable) | MinIO | B+: config-only within S3-compatible stores; the client is now built in one shared place (`packages/aci-protocol/src/aci_protocol/s3.py::build_s3_client`, #572), and the `ObjectStore` port (`apps/api/src/curie_api/storage.py::ObjectStore`) names the contract, but the second, non-S3 adapter is deferred by decision until a real demand lands (#282) | None needed until a non-S3 demand exists |
 | Relational DB | SQLAlchemy 2.0 + alembic | Postgres | A-: managed-Postgres swap is a DSN change; two Postgres-isms in models | Leave as is; note the `postgresql.UUID` and schema-scoped enum as the two things a non-Postgres target would touch |
 | Communication | `QueuedTurn` (channel-neutral, in `aci-protocol`) + `SlackSink` | Slack (Bolt + chat.update) | C: the ingress payload is now the channel-neutral `QueuedTurn` (#7), but egress still assumes Slack's edit-in-place `chat.update` reply shape; service swappable (CLI stub), egress protocol not | Route replies per turn (#19) and define a channel-neutral `ReplySink` post/update port so a second channel can coexist |
 

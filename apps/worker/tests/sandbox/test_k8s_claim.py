@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentos_worker.sandbox.k8s import (
+from curie_worker.sandbox.k8s import (
     BUNDLE_INIT_CONTAINERS,
     KubernetesSandboxClient,
 )
@@ -43,25 +43,25 @@ def test_bundle_ref_targets_init_containers_by_name() -> None:
     _client(api).create_claim(
         "claim-1",
         pool="pool",
-        env={"AGENTOS_BUNDLE_REF": "bundles/x.tar.gz", "AGENTOS_BUDGET": "{}"},
+        env={"CURIE_BUNDLE_REF": "bundles/x.tar.gz", "CURIE_BUDGET": "{}"},
     )
     entries = _env_entries(api)
 
     # The main runner still receives the ref (unnamed entry).
-    assert {"name": "AGENTOS_BUNDLE_REF", "value": "bundles/x.tar.gz"} in entries
+    assert {"name": "CURIE_BUNDLE_REF", "value": "bundles/x.tar.gz"} in entries
 
     # And each bundle init container receives it by explicit containerName.
     named = {
         (e["containerName"], e["name"]): e["value"] for e in entries if "containerName" in e
     }
     for container in BUNDLE_INIT_CONTAINERS:
-        assert named[(container, "AGENTOS_BUNDLE_REF")] == "bundles/x.tar.gz"
+        assert named[(container, "CURIE_BUNDLE_REF")] == "bundles/x.tar.gz"
 
 
 def test_no_named_env_without_bundle_ref() -> None:
     api = _FakeApi()
     _client(api).create_claim(
-        "claim-1", pool="pool", env={"AGENTOS_BUDGET": "{}", "AGENTOS_SESSION_ID": "s"}
+        "claim-1", pool="pool", env={"CURIE_BUDGET": "{}", "CURIE_SESSION_ID": "s"}
     )
     entries = _env_entries(api)
     assert entries  # the main-container env is still present
@@ -75,13 +75,13 @@ def test_credential_is_never_written_to_the_claim() -> None:
     _client(api).create_claim(
         "claim-1",
         pool="pool",
-        env={"AGENTOS_BUDGET": "{}", "AGENTOS_CREDENTIALS": "super-secret-token"},
+        env={"CURIE_BUDGET": "{}", "CURIE_CREDENTIALS": "super-secret-token"},
     )
     entries = _env_entries(api)
-    assert all(e.get("name") != "AGENTOS_CREDENTIALS" for e in entries)
+    assert all(e.get("name") != "CURIE_CREDENTIALS" for e in entries)
     assert all("super-secret-token" not in e.get("value", "") for e in entries)
     # The rest of the boot env is still written.
-    assert {"name": "AGENTOS_BUDGET", "value": "{}"} in entries
+    assert {"name": "CURIE_BUDGET", "value": "{}"} in entries
 
 
 def test_runner_token_is_a_plaintext_env_entry_credential_excluded() -> None:
@@ -93,30 +93,30 @@ def test_runner_token_is_a_plaintext_env_entry_credential_excluded() -> None:
         "claim-1",
         pool="pool",
         env={
-            "AGENTOS_BUDGET": "{}",
-            "AGENTOS_RUNNER_TOKEN": "tok-26",
-            "AGENTOS_CREDENTIALS": "super-secret-token",
+            "CURIE_BUDGET": "{}",
+            "CURIE_RUNNER_TOKEN": "tok-26",
+            "CURIE_CREDENTIALS": "super-secret-token",
         },
     )
     entries = _env_entries(api)
-    assert {"name": "AGENTOS_RUNNER_TOKEN", "value": "tok-26"} in entries
-    assert all(e.get("name") != "AGENTOS_CREDENTIALS" for e in entries)
+    assert {"name": "CURIE_RUNNER_TOKEN", "value": "tok-26"} in entries
+    assert all(e.get("name") != "CURIE_CREDENTIALS" for e in entries)
 
 
 def test_connector_secrets_are_never_written_to_the_claim() -> None:
     # Per-agent connector secrets (#429) ride the substrate-agnostic boot env by
     # value, but the value-only claim CR would persist them in plaintext in etcd.
-    # The binding marks their keys in AGENTOS_CONNECTOR_SECRET_KEYS; the substrate
+    # The binding marks their keys in CURIE_CONNECTOR_SECRET_KEYS; the substrate
     # strips both the marker and every key it names (cluster delivery is #440).
     api = _FakeApi()
     _client(api).create_claim(
         "claim-1",
         pool="pool",
         env={
-            "AGENTOS_BUDGET": "{}",
+            "CURIE_BUDGET": "{}",
             "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_super_secret",
             "API_KEY": "k-secret",
-            "AGENTOS_CONNECTOR_SECRET_KEYS": "API_KEY,GITHUB_PERSONAL_ACCESS_TOKEN",
+            "CURIE_CONNECTOR_SECRET_KEYS": "API_KEY,GITHUB_PERSONAL_ACCESS_TOKEN",
         },
     )
     entries = _env_entries(api)
@@ -126,6 +126,6 @@ def test_connector_secrets_are_never_written_to_the_claim() -> None:
     names = {e.get("name") for e in entries}
     assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in names
     assert "API_KEY" not in names
-    assert "AGENTOS_CONNECTOR_SECRET_KEYS" not in names
+    assert "CURIE_CONNECTOR_SECRET_KEYS" not in names
     # Non-secret boot env is still written.
-    assert {"name": "AGENTOS_BUDGET", "value": "{}"} in entries
+    assert {"name": "CURIE_BUDGET", "value": "{}"} in entries

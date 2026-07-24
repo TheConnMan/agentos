@@ -39,13 +39,13 @@ import logging
 import uuid
 from typing import Any
 
-import agentos_worker.consumer as consumer_module
+import curie_worker.consumer as consumer_module
 import pytest
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus
-from agentos_dispatcher.queue import to_stream_fields
-from agentos_worker.config import WorkerConfig
-from agentos_worker.consumer import Consumer
-from agentos_worker.dead_letter_alert import install_dead_letter_alerting
+from curie_dispatcher.queue import to_stream_fields
+from curie_worker.config import WorkerConfig
+from curie_worker.consumer import Consumer
+from curie_worker.dead_letter_alert import install_dead_letter_alerting
 from pydantic import ValidationError
 
 DONE = SessionStatus.DONE
@@ -180,7 +180,7 @@ def test_permanently_failing_entry_is_dead_lettered_at_the_cap_and_group_progres
                 assert dl["dl_dead_lettered_at"]
                 # The original entry fields survive so a human can inspect/replay.
                 # The frozen #7 wire encoding is a single JSON blob under
-                # "payload" (agentos_dispatcher.queue.to_stream_fields), not
+                # "payload" (curie_dispatcher.queue.to_stream_fields), not
                 # flat top-level fields, so decode it before asserting.
                 payload = json.loads(dl["payload"])
                 assert payload["event_id"] == "poison"
@@ -784,7 +784,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
     make_harness,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    source_logger = logging.getLogger("agentos_worker.consumer")
+    source_logger = logging.getLogger("curie_worker.consumer")
     original_handlers = list(source_logger.handlers)
     original_propagate = source_logger.propagate
     for handler in original_handlers:
@@ -816,12 +816,12 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                 alerts = [
                     record
                     for record in caplog.records
-                    if record.name == "agentos_worker.alerts.dead_letter"
+                    if record.name == "curie_worker.alerts.dead_letter"
                     and record.levelno == logging.CRITICAL
                 ]
                 assert len(alerts) == 1, f"expected one dead letter alert, got {alerts}"
                 assert alerts[0].getMessage() == (
-                    f"event=agentos.dead_letter entry_id={entry_id} delivery_count=2 "
+                    f"event=curie.dead_letter entry_id={entry_id} delivery_count=2 "
                     f"reason=max-delivery-exceeded dead_stream={dead}"
                 )
 
@@ -843,12 +843,12 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                 assert not [
                     record
                     for record in caplog.records
-                    if record.name == "agentos_worker.alerts.dead_letter"
+                    if record.name == "curie_worker.alerts.dead_letter"
                     and record.levelno == logging.CRITICAL
                 ]
 
                 caplog.clear()
-                child_logger = logging.getLogger("agentos_worker.consumer.child")
+                child_logger = logging.getLogger("curie_worker.consumer.child")
                 child_logger.error(
                     "dead-lettered entry %s after %d deliveries (reason=%s) -> %s",
                     entry_id,
@@ -859,7 +859,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                 assert not [
                     record
                     for record in caplog.records
-                    if record.name == "agentos_worker.alerts.dead_letter"
+                    if record.name == "curie_worker.alerts.dead_letter"
                     and record.levelno == logging.CRITICAL
                 ]
 
@@ -874,7 +874,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                 assert not [
                     record
                     for record in caplog.records
-                    if record.name == "agentos_worker.alerts.dead_letter"
+                    if record.name == "curie_worker.alerts.dead_letter"
                     and record.levelno == logging.CRITICAL
                 ]
 
@@ -889,7 +889,7 @@ def test_dead_letter_emits_one_retention_independent_critical_alert(
                 assert not [
                     record
                     for record in caplog.records
-                    if record.name == "agentos_worker.alerts.dead_letter"
+                    if record.name == "curie_worker.alerts.dead_letter"
                     and record.levelno == logging.CRITICAL
                 ]
             finally:
@@ -918,13 +918,13 @@ def test_max_delivery_below_the_floor_is_rejected() -> None:
     dropping the constraint fails here instead of shipping.
     """
     with pytest.raises(ValidationError):
-        WorkerConfig(stream="agentos:runs", max_delivery=1)
+        WorkerConfig(stream="curie:runs", max_delivery=1)
     with pytest.raises(ValidationError):
-        WorkerConfig(stream="agentos:runs", max_delivery=0)
+        WorkerConfig(stream="curie:runs", max_delivery=0)
 
     # The floor itself, and the default above it, stay valid.
-    assert WorkerConfig(stream="agentos:runs", max_delivery=2).max_delivery == 2
-    assert WorkerConfig(stream="agentos:runs").max_delivery >= 2
+    assert WorkerConfig(stream="curie:runs", max_delivery=2).max_delivery == 2
+    assert WorkerConfig(stream="curie:runs").max_delivery >= 2
 
 
 def test_dead_letter_stream_equal_to_source_stream_is_rejected() -> None:
@@ -937,15 +937,15 @@ def test_dead_letter_stream_equal_to_source_stream_is_rejected() -> None:
     hot loop -- the exact permanent stall the delivery cap exists to prevent.
     Rejecting at construction means an operator learns at boot, not mid-incident.
     """
-    with pytest.raises(ValidationError, match="must not equal AGENTOS_STREAM"):
-        WorkerConfig(stream="agentos:runs", dead_letter_stream="agentos:runs")
+    with pytest.raises(ValidationError, match="must not equal CURIE_STREAM"):
+        WorkerConfig(stream="curie:runs", dead_letter_stream="curie:runs")
 
     # The derived default can never collide, so it stays valid...
-    assert WorkerConfig(stream="agentos:runs").dead_letter_stream == ""
+    assert WorkerConfig(stream="curie:runs").dead_letter_stream == ""
     # ...and so does any genuinely distinct override.
     assert (
         WorkerConfig(
-            stream="agentos:runs", dead_letter_stream="agentos:runs:dead"
+            stream="curie:runs", dead_letter_stream="curie:runs:dead"
         ).dead_letter_stream
-        == "agentos:runs:dead"
+        == "curie:runs:dead"
     )

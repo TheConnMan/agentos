@@ -1,0 +1,50 @@
+{{- if .Values.api.deploy }}
+{{/*
+RBAC for the API's runner-logs observability proxy (OB1). The API lists runner
+pods and reads their logs via the Kubernetes API on behalf of the Logs tab, so
+its pod needs a ServiceAccount with exactly those two permissions -- otherwise
+the cluster rejects the calls (pods is forbidden ... cannot list resource
+"pods"). Scoped to this namespace and to only the verbs the two call sites use:
+  - list_namespaced_pod  -> list on pods       (the runner-pod dropdown)
+  - read_namespaced_pod_log -> get on pods/log (the log reader)
+No other resources, no cluster scope.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "curie.fullname" . }}-api
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "curie.fullname" . }}-api
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "curie.fullname" . }}-api
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "curie.fullname" . }}-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "curie.fullname" . }}-api
+    namespace: {{ .Release.Namespace }}
+{{- end }}

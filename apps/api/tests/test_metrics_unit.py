@@ -2,7 +2,7 @@
 
 import uuid
 
-from agentos_api.metrics import (
+from curie_api.metrics import (
     _cost_known,
     _error_rate,
     _filters,
@@ -34,13 +34,13 @@ def test_cost_known_flags_priced_to_zero_as_unknown() -> None:
 
 
 def test_agent_trace_filter_is_the_agent_id_token() -> None:
-    # The runner names traces agentos-run:agent-<id>-thread-<ts>, so the per-agent
+    # The runner names traces curie-run:agent-<id>-thread-<ts>, so the per-agent
     # filter must be the `agent-<id>` substring, not the agent's display name.
     agent_id = uuid.UUID("00000000-0000-0000-0000-000000000042")
     token = agent_trace_filter(agent_id)
     assert token == "agent-00000000-0000-0000-0000-000000000042"
     # The token is a substring of a real runner trace name.
-    assert token in f"agentos-run:{token}-thread-1720200000"
+    assert token in f"curie-run:{token}-thread-1720200000"
 
 
 def test_agent_filter_matches_the_runner_trace_name() -> None:

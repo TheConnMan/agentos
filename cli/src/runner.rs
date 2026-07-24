@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use agentos_aci_protocol::{EventType, InboundMessage, OutboundEvent};
+use curie_aci_protocol::{EventType, InboundMessage, OutboundEvent};
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
 
@@ -70,7 +70,7 @@ impl RunnerClient {
 
     /// Discard the runner's conversation so the next turn starts fresh (#550).
     ///
-    /// `agentos skill eval` calls this between cases to enforce per-case
+    /// `curie skill eval` calls this between cases to enforce per-case
     /// isolation: a case must not answer from an earlier case's history instead
     /// of actually invoking its tools. Not an ACI wire frame -- a runner control
     /// route like `/status`, so it takes no body. A 409 (a turn is still active)

@@ -2,7 +2,7 @@
 
 Hand-written intro prose that the generator never touches.
 
-<!-- BEGIN GENERATED: seam-table (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: seam-table (curie dev docs-lint) -->
 | Seam | Kind | Impls | Grade | Epic(s) | INTERFACE.md |
 |---|---|---|---|---|---|
 | Substrate | CLEAN | 2 | A | #86 | [Substrate](interfaces/substrate/INTERFACE.md) |

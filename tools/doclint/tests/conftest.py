@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from agentos_doclint import main
+from curie_doclint import main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLEAN_REPO = FIXTURES / "clean_repo"

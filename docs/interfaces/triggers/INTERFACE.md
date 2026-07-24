@@ -10,9 +10,9 @@ order: 17
 
 # INTERFACE: Triggers
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 2 hardcoded (Slack, GH push) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -34,12 +34,12 @@ assert a port that does not exist.
 There is no cross-trigger contract to satisfy — a new trigger today means adding
 another hardcoded handler. The two that exist:
 
-- **Slack mention** — `apps/dispatcher/src/agentos_dispatcher/handlers.py::process_event`:
+- **Slack mention** — `apps/dispatcher/src/curie_dispatcher/handlers.py::process_event`:
   the `@app.event("app_mention")` listener (wired in
-  `apps/dispatcher/src/agentos_dispatcher/handlers.py::register_handlers`) calls
+  `apps/dispatcher/src/curie_dispatcher/handlers.py::register_handlers`) calls
   `process_event(...)` to enqueue a run. (An adjacent `@app.event("message")` DM handler
   in the same `register_handlers`, gated to `channel_type == "im"`, shares the path.)
-- **GitHub push** — `apps/api/src/agentos_api/routers/github.py::github_webhook`:
+- **GitHub push** — `apps/api/src/curie_api/routers/github.py::github_webhook`:
   `@router.post("/webhook")` verifies the HMAC signature, then branches on
   `x_github_event`; a `"push"` event is handed to `process_push(...)`,
   everything else is `"ignored"`.
@@ -48,17 +48,17 @@ The two share no abstraction: one is a Slack Bolt event listener, the other a Fa
 route with GitHub HMAC auth. They converge only downstream (both end up enqueuing work).
 
 **Two further wake paths the inventory omitted.** Beyond the two external triggers, two
-platform-internal paths also turn an event into a run on the same `agentos:runs` stream,
+platform-internal paths also turn an event into a run on the same `curie:runs` stream,
 and a truthful inventory names them:
 
 - **Slack block-action (button click)** —
-  `apps/dispatcher/src/agentos_dispatcher/handlers.py::process_action` normalizes a Block
+  `apps/dispatcher/src/curie_dispatcher/handlers.py::process_action` normalizes a Block
   Kit button click into a `QueuedTurn` (dedupe, in-thread placeholder, enqueue) so a click
   is answered exactly as if the user had typed the button's command. Approval-card clicks
   are excluded here and resolve through the API instead.
 - **Approval-resume** — resolving or expiring a durable approval enqueues a
   platform-authored resume turn onto the runs stream via
-  `apps/api/src/agentos_api/resumequeue.py::ResumeQueue.enqueue`, so a suspended session
+  `apps/api/src/curie_api/resumequeue.py::ResumeQueue.enqueue`, so a suspended session
   wakes down the identical consumer/kernel/claim path a Slack mention takes (see the
   [approval seam](../approval/INTERFACE.md)).
 
@@ -74,12 +74,12 @@ shape; it does not yet wire a live wake-up.
 
 Two external triggers, both hardcoded, in two different processes:
 
-1. Slack `app_mention` in the dispatcher (`apps/dispatcher/src/agentos_dispatcher/handlers.py::process_event`).
-2. GitHub `push` webhook in the API (`apps/api/src/agentos_api/routers/github.py::github_webhook`).
+1. Slack `app_mention` in the dispatcher (`apps/dispatcher/src/curie_dispatcher/handlers.py::process_event`).
+2. GitHub `push` webhook in the API (`apps/api/src/curie_api/routers/github.py::github_webhook`).
 
 Plus two platform-internal wake paths that also enqueue a run: the Slack block-action
-handler (`apps/dispatcher/src/agentos_dispatcher/handlers.py::process_action`) and the
-approval-resume enqueue (`apps/api/src/agentos_api/resumequeue.py::ResumeQueue.enqueue`).
+handler (`apps/dispatcher/src/curie_dispatcher/handlers.py::process_action`) and the
+approval-resume enqueue (`apps/api/src/curie_api/resumequeue.py::ResumeQueue.enqueue`).
 
 ## Known leakage
 

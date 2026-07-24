@@ -7,8 +7,8 @@ as string literals in each service's pydantic config, so a rename could drift on
 out of sync with the other. They are declared ONCE here and imported by both.
 
 This module also owns the one-release deprecation of the platform-API-base-URL
-env name: the canonical name is ``AGENTOS_API_URL`` (the name the CLI and the
-platform API already use), and the services' historical ``AGENTOS_API_BASE_URL``
+env name: the canonical name is ``CURIE_API_URL`` (the name the CLI and the
+platform API already use), and the services' historical ``CURIE_API_BASE_URL``
 is accepted as a deprecated alias that logs a warning naming the replacement.
 """
 
@@ -25,15 +25,15 @@ from pydantic_settings.sources import EnvSettingsSource
 logger = logging.getLogger(__name__)
 
 # The env names the worker and dispatcher share, declared once (#496).
-API_URL_ENV = "AGENTOS_API_URL"
+API_URL_ENV = "CURIE_API_URL"
 # Deprecated twin of API_URL_ENV, accepted for one release with a warning.
-API_URL_ENV_DEPRECATED = "AGENTOS_API_BASE_URL"
-API_KEY_ENV = "AGENTOS_API_KEY"
-STREAM_ENV = "AGENTOS_STREAM"
-DEAD_LETTER_STREAM_ENV = "AGENTOS_DEAD_LETTER_STREAM"
-HEARTBEAT_FILE_ENV = "AGENTOS_HEARTBEAT_FILE"
-HEARTBEAT_INTERVAL_ENV = "AGENTOS_HEARTBEAT_INTERVAL_SECONDS"
-SHIMMER_ENV = "AGENTOS_SHIMMER"
+API_URL_ENV_DEPRECATED = "CURIE_API_BASE_URL"
+API_KEY_ENV = "CURIE_API_KEY"
+STREAM_ENV = "CURIE_STREAM"
+DEAD_LETTER_STREAM_ENV = "CURIE_DEAD_LETTER_STREAM"
+HEARTBEAT_FILE_ENV = "CURIE_HEARTBEAT_FILE"
+HEARTBEAT_INTERVAL_ENV = "CURIE_HEARTBEAT_INTERVAL_SECONDS"
+SHIMMER_ENV = "CURIE_SHIMMER"
 
 # The transport literals the services hand-mirrored, declared once (#492). Same
 # rationale as the env names above: a rename used to drift one lane out of sync
@@ -43,20 +43,20 @@ SHIMMER_ENV = "AGENTOS_SHIMMER"
 #
 # RUNS_STREAM_DEFAULT and WORKER_GROUP_DEFAULT are DEFAULTS: each service binds
 # them through its pydantic config field, so the env-override path (#496's
-# STREAM_ENV / AGENTOS_CONSUMER_GROUP) is preserved. STREAM_PAYLOAD_FIELD is the
+# STREAM_ENV / CURIE_CONSUMER_GROUP) is preserved. STREAM_PAYLOAD_FIELD is the
 # stream field holding a payload model's JSON.
-RUNS_STREAM_DEFAULT = "agentos:runs"
-WORKER_GROUP_DEFAULT = "agentos-workers"
+RUNS_STREAM_DEFAULT = "curie:runs"
+WORKER_GROUP_DEFAULT = "curie-workers"
 STREAM_PAYLOAD_FIELD = "payload"
 
 # The eval lane's twins of the two above (#626, the deliberate deferral from
 # #492). The eval stream and its own consumer group were still hand-mirrored per
 # lane (the API producer, the worker consumer), the same drift risk #492 closed
 # for the runs stream. Same treatment: one declaration here, env-overridable
-# through each lane's pydantic field (AGENTOS_EVAL_STREAM /
-# AGENTOS_EVAL_CONSUMER_GROUP). Not wire models either, so no protocol bump.
-EVAL_STREAM_DEFAULT = "agentos:evals"
-EVAL_CONSUMER_GROUP_DEFAULT = "agentos-eval-workers"
+# through each lane's pydantic field (CURIE_EVAL_STREAM /
+# CURIE_EVAL_CONSUMER_GROUP). Not wire models either, so no protocol bump.
+EVAL_STREAM_DEFAULT = "curie:evals"
+EVAL_CONSUMER_GROUP_DEFAULT = "curie-eval-workers"
 
 
 def derive_dead_letter_stream_name(stream: str, override: str) -> str:
@@ -65,8 +65,8 @@ def derive_dead_letter_stream_name(stream: str, override: str) -> str:
     The worker's delivery cap (ADR-0039, #505) moves a permanently-failing entry
     to this graveyard, and the API's dead-letter watcher (#531) plus the
     ResumeQueue backstop (#532) READ it. Both sides derive the name from the same
-    two operator inputs -- the base runs stream (``AGENTOS_STREAM``) and the
-    explicit override (``AGENTOS_DEAD_LETTER_STREAM``) -- so the writer and the
+    two operator inputs -- the base runs stream (``CURIE_STREAM``) and the
+    explicit override (``CURIE_DEAD_LETTER_STREAM``) -- so the writer and the
     readers can never point at different streams. That drift was issue #668: the
     API hardcoded ``<runs_stream>:dead`` and ignored the override, so any operator
     override silently blinded the watcher while the worker dead-lettered elsewhere.
@@ -83,7 +83,7 @@ def derive_dead_letter_stream_name(stream: str, override: str) -> str:
 
 def api_url_validation_alias() -> AliasChoices:
     """The ``validation_alias`` for the platform API base URL field: the canonical
-    ``AGENTOS_API_URL`` first, then the deprecated ``AGENTOS_API_BASE_URL``.
+    ``CURIE_API_URL`` first, then the deprecated ``CURIE_API_BASE_URL``.
 
     Listing the canonical name first means it wins when both are set. The
     deprecated name still resolves (so a chart/compose/env that predates the
@@ -96,8 +96,8 @@ def api_url_validation_alias() -> AliasChoices:
 def warn_if_deprecated_api_url_env(env: Mapping[str, str] | None = None) -> None:
     """Log a deprecation warning when only the OLD API-base-URL env name is set.
 
-    Fires exactly when ``AGENTOS_API_BASE_URL`` is present and the canonical
-    ``AGENTOS_API_URL`` is not, so a config that already moved to the new name is
+    Fires exactly when ``CURIE_API_BASE_URL`` is present and the canonical
+    ``CURIE_API_URL`` is not, so a config that already moved to the new name is
     silent and one still on the old name is told what to switch to. Uses the
     module logger (not ``warnings.warn``, which is filtered by default) so the
     message actually reaches an operator's service logs (#496).
@@ -119,7 +119,7 @@ class AliasOnlyEnvSource(EnvSettingsSource):
     field-name kwargs (``WorkerConfig(fake_model=True)``). But in
     pydantic-settings that same flag makes the default env source append the
     bare uppercased field name as a fallback env key for every aliased field --
-    so ``api_key`` (alias ``AGENTOS_API_KEY``) would also silently read a stray
+    so ``api_key`` (alias ``CURIE_API_KEY``) would also silently read a stray
     ``API_KEY``. That breaks the behavior-preserving contract of the refactor.
     We drop the field-name fallback for aliased fields; non-aliased fields keep
     reading their plain uppercased name, and kwarg population is untouched

@@ -1,6 +1,6 @@
 # Message flow: how a message comes in and a reply goes out
 
-This is the core loop. Everything else in AgentOS (the UI, git-flow, evals,
+This is the core loop. Everything else in Curie (the UI, git-flow, evals,
 observability) is machinery around this one path: **a message comes into the
 system, an agent handles it, and a reply goes back to the same thread.**
 
@@ -53,14 +53,14 @@ Note the shape of the suspended branch: the approval resolution is **not** the
 same turn waking up. The original event **completes** at
 `SessionStatus.AWAITING_APPROVAL`, and the human's click arrives later as its
 own queued turn
-(`apps/worker/src/agentos_worker/kernel.py::Kernel._pause_for_approval`). That is what lets the
+(`apps/worker/src/curie_worker/kernel.py::Kernel._pause_for_approval`). That is what lets the
 suspension outlive the pod, the worker, and a restart.
 
 The click does **not** go straight from the dispatcher to the queue. The
 dispatcher only forwards the decision to the API
-([`approval_actions.py`](../../apps/dispatcher/src/agentos_dispatcher/approval_actions.py)::`ApprovalResolveClient`),
+([`approval_actions.py`](../../apps/dispatcher/src/curie_dispatcher/approval_actions.py)::`ApprovalResolveClient`),
 and the API's
-[`approvals.py`](../../apps/api/src/agentos_api/routers/approvals.py)::`resolve_approval`
+[`approvals.py`](../../apps/api/src/curie_api/routers/approvals.py)::`resolve_approval`
 is what claims the resolution (resolve-once) and enqueues the resume turn. The
 authorizer runs there, server-side, so the enqueue happens only after the
 decision is claimed and audited — which is why the API, not the dispatcher, is
@@ -82,8 +82,8 @@ flowchart LR
 
 ### 1. The channel is pluggable — on the way in, not on the way out
 
-Today a message comes from **Slack** (Socket Mode) or the **CLI** (`agentos
-local message` / `agentos skill message`, which posts a synthetic event onto the
+Today a message comes from **Slack** (Socket Mode) or the **CLI** (`curie
+local message` / `curie skill message`, which posts a synthetic event onto the
 same queue). The dispatcher's whole job is to turn either of those into one
 normalized queue event.
 
@@ -126,7 +126,7 @@ to yesterday's thread and the old pod is gone, so the worker starts a fresh one
 and rehydrates the history.
 
 There are **two** TTLs, and the difference is the approval story
-([`apps/worker/src/agentos_worker/sandbox/types.py`](../../apps/worker/src/agentos_worker/sandbox/types.py)):
+([`apps/worker/src/curie_worker/sandbox/types.py`](../../apps/worker/src/curie_worker/sandbox/types.py)):
 
 | Route | Default | Why |
 |---|---|---|
@@ -154,8 +154,8 @@ know which pod is running it.
 |---|---|
 | Slack ingress, dedupe, placeholder, enqueue | [`apps/dispatcher/`](../../apps/dispatcher) |
 | CLI channel + synthetic event | [`cli/src/chat.rs`](../../cli/src/chat.rs) |
-| Queue, thread locks, affinity | [`apps/worker/src/agentos_worker/`](../../apps/worker/src/agentos_worker) |
-| Sandbox pod substrate | [`apps/worker/src/agentos_worker/sandbox/`](../../apps/worker/src/agentos_worker/sandbox) |
+| Queue, thread locks, affinity | [`apps/worker/src/curie_worker/`](../../apps/worker/src/curie_worker) |
+| Sandbox pod substrate | [`apps/worker/src/curie_worker/sandbox/`](../../apps/worker/src/curie_worker/sandbox) |
 | The agent inside the pod | [`runner/`](../../runner) — see [the ACI](aci.md) |
 
 For the low-level version (dedupe keys, consumer groups, the finish-race and

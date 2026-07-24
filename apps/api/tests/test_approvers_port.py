@@ -17,9 +17,9 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
-from agentos_api.approvers import ApproverSet, ApproverSetSelector, MembershipVerdict
-from agentos_api.authorizer import AuthzDecision, authorize_approval
-from agentos_api.models import Approval
+from curie_api.approvers import ApproverSet, ApproverSetSelector, MembershipVerdict
+from curie_api.authorizer import AuthzDecision, authorize_approval
+from curie_api.models import Approval
 
 _AUTHOR = "U0AUTHOR1"
 _APPROVER = "U0APPROV1"

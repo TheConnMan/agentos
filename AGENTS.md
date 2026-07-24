@@ -1,4 +1,4 @@
-# AGENTS.md - AgentOS
+# AGENTS.md - Curie
 
 Agent instructions for this repo. Start with [`README.md`](README.md) for what
 the product is and how to run it, and [`ARCHITECTURE.md`](ARCHITECTURE.md) for
@@ -8,7 +8,7 @@ push -> webhook -> bundle pipeline -> deployment). The one-line version: a Slack
 message is answered by a versioned plugin running in an isolated Kubernetes
 sandbox, traced through Langfuse and steerable mid-turn; a git push deploys that
 plugin under a bot identity via the API's git-flow engine. Relay is the project
-codename; `agentos` is the product-surface name (bot handle, CLI binary). Read
+codename; `curie` is the product-surface name (bot handle, CLI binary). Read
 `ARCHITECTURE.md` before touching a cross-component seam. If you are a coding
 agent orienting in this repo, [`llms.txt`](llms.txt) is the curated machine map
 of these docs, organized around the parity ladder. The two questions this repo
@@ -35,7 +35,7 @@ before editing there, in addition to this file.
 | `runner` | Python (claude-agent-sdk) | [`runner/CLAUDE.md`](runner/CLAUDE.md) |
 | `apps/ui` | React (Vite + TS) | [`apps/ui/CLAUDE.md`](apps/ui/CLAUDE.md) |
 | `cli` | Rust (clap + tokio) | [`cli/CLAUDE.md`](cli/CLAUDE.md) |
-| `charts/agentos` | Helm | [`charts/agentos/CLAUDE.md`](charts/agentos/CLAUDE.md) |
+| `charts/curie` | Helm | [`charts/curie/CLAUDE.md`](charts/curie/CLAUDE.md) |
 | `tests/soak` | Python | -- |
 
 The Python packages are one **uv workspace** (root `pyproject.toml`); ruff,
@@ -68,7 +68,7 @@ The app is a real Vite + React + TS project -- see `apps/ui/CLAUDE.md`. The
 top-level CI workflow's `ui` job runs the full pnpm lint, vitest, build, and
 stackless Playwright suite; run `pnpm test`/`pnpm e2e` locally to match it.
 
-**Docs (interface catalog):** `agentos dev docs-lint` regenerates the seam index
+**Docs (interface catalog):** `curie dev docs-lint` regenerates the seam index
 (`docs/interfaces.md`), each `INTERFACE.md` header, and the ADR index
 (`docs/adr/README.md`) from source, then checks that no doc under `docs/` (excluding
 `docs/adr/`, whose citations are immutable history) or the repo-root docs on its
@@ -89,7 +89,7 @@ Assertions about an external API or SDK's shape or auth must be grounded in
 provider docs or observed behavior, cited in a test comment, never in the
 implementation's own assumption. Any read-modify-write on a versioned row needs a
 stale-version conflict test (match the CAS pattern in
-`apps/api/src/agentos_api/routers/state.py`). Every stream consumer lane derives
+`apps/api/src/curie_api/routers/state.py`). Every stream consumer lane derives
 bounded delivery + dead-letter from the shared transport; a lane without a
 delivery cap is a bug.
 
@@ -112,10 +112,10 @@ docker compose -f compose.dev.yaml down -v   # stop and WIPE volumes (throwaway)
 stack up, you MUST take it down when you are done. This box does not have the
 RAM to leave the full stack idling, and this keeps happening: stacks get left
 running across sessions and starve the machine. Before you end a session in
-which you ran `agentos local up` / `docker compose ... up`, run `agentos local
+which you ran `curie local up` / `docker compose ... up`, run `curie local
 down` (or `docker compose -f compose.dev.yaml down`) and confirm with
-`docker ps` that nothing agentos-related is still up. Also remove any stray
-`agentos-runner*` containers a run may have spawned. The thread that brought the
+`docker ps` that nothing curie-related is still up. Also remove any stray
+`curie-runner*` containers a run may have spawned. The thread that brought the
 stack up owns tearing it down — a blocked or crashed test agent never cleans up
 after itself, so do not assume someone else will.
 
@@ -125,7 +125,7 @@ them as a PR — never edit `main` in place to make a local run work. Read-only
 runs against the current tree are fine; the moment you need to change code, cut a
 worktree.
 
-Add `--profile slack` through `agentos local up --slack` to start the optional dispatcher for real Slack.
+Add `--profile slack` through `curie local up --slack` to start the optional dispatcher for real Slack.
 
 Host ports (non-default host ports to avoid local collisions):
 
@@ -143,15 +143,15 @@ stack runs on the baked defaults without one). Load-bearing facts:
 
 - **ClickHouse is pinned to `:24.8`.** Newer ClickHouse requires AVX and SIGILLs
   with exit 132 on CPUs without it. Keep the pin unless every target CPU has AVX.
-  `charts/agentos` turns this into a chart preflight (`preflights.avxCheck`).
+  `charts/curie` turns this into a chart preflight (`preflights.avxCheck`).
 - **Langfuse OTLP ingest is HTTP-only** (gRPC is silently unsupported). Services
   may emit OTLP over gRPC or HTTP to the OTel Collector (4317/4318); the
   collector always exports to Langfuse over HTTP. Send app traces to the
   collector, not directly to Langfuse.
-- **Langfuse is bootstrapped headless** with a fixed dev project (`agentos-dev`)
-  and keys `pk-lf-agentos-dev` / `sk-lf-agentos-dev`, so the OTel path
+- **Langfuse is bootstrapped headless** with a fixed dev project (`curie-dev`)
+  and keys `pk-lf-curie-dev` / `sk-lf-curie-dev`, so the OTel path
   authenticates on first boot with no manual key-minting. Read traces back via
-  `curl -u pk-lf-agentos-dev:sk-lf-agentos-dev http://localhost:23000/api/public/...`.
+  `curl -u pk-lf-curie-dev:sk-lf-curie-dev http://localhost:23000/api/public/...`.
 
 ## Frozen contracts: STOP and escalate
 
@@ -182,11 +182,11 @@ lands on one side of a structural seam while its twin keeps the old behavior.
 Known seam pairs:
 
 - worker vs CLI credential forwarding -- `_SDK_PASSTHROUGH_ENV`
-  (`apps/worker/src/agentos_worker/sandbox/docker.py`) and the CLI picker
+  (`apps/worker/src/curie_worker/sandbox/docker.py`) and the CLI picker
   (`cli/src/commands.rs`) can't share code across Python/Rust, so they are frozen
   together in `tests/vectors/model-credential-forwarding.json`.
-- real SDK vs fake model session in the runner (`FakeModelSession`, `runner/src/agentos_runner/fake.py`).
-- runs lane vs eval lane stream consumers (`apps/worker/src/agentos_worker/consumer.py` vs `eval/stream.py`, both on the shared `stream_consumer.py`).
+- real SDK vs fake model session in the runner (`FakeModelSession`, `runner/src/curie_runner/fake.py`).
+- runs lane vs eval lane stream consumers (`apps/worker/src/curie_worker/consumer.py` vs `eval/stream.py`, both on the shared `stream_consumer.py`).
 - CLI-side vs API-side input validation (validate at the API/persistence boundary, mirror in the CLI).
 - `local up` vs `local down` compose profile sets.
 - `compose.dev.yaml` vs the generated release compose.
@@ -217,7 +217,7 @@ Almost everything here is end-to-end testable, and the CLI makes it cheap: local
 skills, the compose dev stack, and a disposable local k8s cluster (kind/k3s) let
 you exercise a change against the real product loop, not a mock. So every
 behavior-bearing change must be verified end-to-end before it is called done --
-drive the actual surface (the `agentos` CLI, the deployed compose services, a
+drive the actual surface (the `curie` CLI, the deployed compose services, a
 real sandbox on-cluster) with realistic input and assert the real outcome, not
 just that unit tests pass.
 
@@ -267,7 +267,7 @@ just that unit tests pass.
   live binary, so they cannot see the behavior the AC is about (#56, a
   credential-isolation bug in the bundle-fetch init container, was nearly shipped
   green on lint + template alone). How to apply: for chart / sandbox / bundle
-  changes, `agentos dev chart-runtime-e2e` (implemented by
+  changes, `curie dev chart-runtime-e2e` (implemented by
   `scripts/chart-runtime-e2e.sh`) is the one-command way to install a trimmed
   slice, run the init containers, and exec-assert.
 
@@ -286,11 +286,11 @@ just that unit tests pass.
 
 Chart, sandbox, and soak verification need a real cluster; a disposable local
 `kind` or `k3s` cluster works. The cheap default for a chart/sandbox/bundle
-change is `agentos dev chart-runtime-e2e` (implemented by
+change is `curie dev chart-runtime-e2e` (implemented by
 `scripts/chart-runtime-e2e.sh`): it installs a trimmed slice, runs the
 bundle-fetch init pair, and exec-asserts on the runner -- the one-command way to
 satisfy a runtime AC. See
-[`charts/agentos/CLAUDE.md`](charts/agentos/CLAUDE.md) for the install and probe
+[`charts/curie/CLAUDE.md`](charts/curie/CLAUDE.md) for the install and probe
 commands.
 
 ## Branch and commit conventions
@@ -331,9 +331,9 @@ Two different tools; do not conflate them.
 - **Deployment-to-runtime binding is wired; it binds per fresh mention.** The
   worker resolves a thread's Slack channel to its agent, that agent's active
   deployment (prod outranks dev, then most recent), and the resolved
-  `AGENTOS_BUNDLE_REF`, injecting it into each sandbox claim so a fresh mention
+  `CURIE_BUNDLE_REF`, injecting it into each sandbox claim so a fresh mention
   boots the exact bundle version the API's git-flow engine produced
-  (`apps/worker/src/agentos_worker/binding.py`). The seam to remember: an
+  (`apps/worker/src/curie_worker/binding.py`). The seam to remember: an
   existing thread keeps the sandbox and bundle it first booted with; only a new
   mention (a new claim) picks up a newer deployment.
 - **Sandbox cold boots must never pull an image.** The four Deployment services
@@ -342,14 +342,14 @@ Two different tools; do not conflate them.
   `agentSandbox.runner.prewarm` DaemonSet, which pulls at install/upgrade. A
   mid-boot pull of the ~380MB runner image blew the 90s claim timeout in a live
   incident (2026-07-06); never switch the runner image to `Always`
-  (`charts/agentos/templates/runner-prewarm.yaml`, `charts/agentos/values.yaml`).
+  (`charts/curie/templates/runner-prewarm.yaml`, `charts/curie/values.yaml`).
 - **Suspend/resume is a cold rehydrate, not a live hibernate** (ADR-0003). A
   suspended sandbox's pod is deleted; resume creates a new pod and injects
-  `AGENTOS_HISTORY_REF`. Never assume prompt-cache warmth survives a suspend, and
+  `CURIE_HISTORY_REF`. Never assume prompt-cache warmth survives a suspend, and
   never design a feature that needs a sandbox's in-process state to outlive a
   suspend.
 - **Warm-pool claims are fast only without per-claim env.** A claim that needs
-  `AGENTOS_HISTORY_REF`/`AGENTOS_SESSION_ID` injected (the resume path) cannot
+  `CURIE_HISTORY_REF`/`CURIE_SESSION_ID` injected (the resume path) cannot
   bind a pre-warmed sandbox and cold-creates one instead (seconds, not the ~0.2s
   warm-pool bind). This is inherent to `agent-sandbox`'s
   `envVarsInjectionPolicy: Overrides`, not a bug to fix.
@@ -358,5 +358,5 @@ Two different tools; do not conflate them.
   probe (`preflights.networkPolicyProbe`) for exactly this reason -- never trust
   an egress policy without it.
 - **gVisor needs `runsc` on the node**, which the chart cannot install. On a
-  cluster without it, use the ready-made `-f charts/agentos/values-e2e-nogvisor.yaml`
-  overlay rather than hand-editing security values (see `charts/agentos/CLAUDE.md`).
+  cluster without it, use the ready-made `-f charts/curie/values-e2e-nogvisor.yaml`
+  overlay rather than hand-editing security values (see `charts/curie/CLAUDE.md`).

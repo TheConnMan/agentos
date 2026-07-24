@@ -12,7 +12,7 @@ below is unmet at acceptance and `GraderKind.verifier` is not in the tree, so th
 acceptance waives [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md)'s
 rule that a status is promoted only on evidence the decision is built. The gate's
 substance still governs the implementing work
-([#478](https://github.com/curie-eng/agentos/issues/478)), in particular the
+([#478](https://github.com/curie-eng/curie/issues/478)), in particular the
 unresolved model-plane question: continuous scoring needs scoring-token logprobs,
 which the [ADR-0005](0005-claude-agent-sdk-adapter-and-frozen-aci.md)
 claude-agent-sdk/Anthropic default does not expose.
@@ -26,7 +26,7 @@ observability + eval backbone). Composes with
 [ADR-0014](0014-git-push-is-the-deploy.md). Supersedes none. Motivated by
 *LLM-as-a-Verifier: A General-Purpose Verification Framework* (Kwok et al.,
 arXiv:2607.05391), which ships extensions for exactly our target harness
-(Claude Code), making it directly relevant to [ADR-0021](0021-agentos-is-a-harness-for-coding-agents.md).
+(Claude Code), making it directly relevant to [ADR-0021](0021-curie-is-a-harness-for-coding-agents.md).
 
 ## Context
 
@@ -83,7 +83,7 @@ existing seams. Both land as opt-in; neither weakens the deterministic default.*
 ### Application A: a `verifier` grader kind (extends ADR-0019 / ADR-0022)
 
 - Add `GraderKind.verifier` to the frozen eval-case schema
-  (`apps/worker/src/agentos_worker/eval/models.py`), regenerating
+  (`apps/worker/src/curie_worker/eval/models.py`), regenerating
   `eval-cases.schema.json` and the CLI's Rust mirror in the **same reviewed
   change** through ADR-0019's drift gate. The new grader carries a rubric
   (`criteria`, defaulting to the paper's Specification/Output/Errors triad), a
@@ -158,7 +158,7 @@ variance at the chosen `K` small enough that a threshold does not flap in CI, an
   extract them. Our default harness is claude-agent-sdk on Anthropic
   (ADR-0005), which does **not** expose scoring-token logprobs. So the verifier
   must run on a logprob-capable model, which ties this to the OpenRouter
-  ([#24](https://github.com/curie-eng/agentos/issues/24)) and local-model plane,
+  ([#24](https://github.com/curie-eng/curie/issues/24)) and local-model plane,
   **or** use the paper's Appendix B.6 two-stage workaround for frontier models
   without logprobs. The Proposed ADR does not pick one; the spike must, and the
   choice is a follow-up decision an amendment records.
@@ -173,4 +173,4 @@ variance at the chosen `K` small enough that a threshold does not flap in CI, an
   than adding a new lifecycle state.
 - Beyond eval and monitoring, the same continuous score is a dense RL reward in the
   paper (`1.8×` sample efficiency off-policy, `1.1×` on GRPO). We record that as
-  known future headroom, not scope here, since AgentOS trains no policies today.
+  known future headroom, not scope here, since Curie trains no policies today.

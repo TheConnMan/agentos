@@ -147,7 +147,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
         // --- Platform: the primary product functions, leading the TUI ---
         Recipe {
             tabs: &["platform"],
-            title: "Parity ladder (what agentos is)",
+            title: "Parity ladder (what curie is)",
             description: "One bundle + one eval suite across skill -> local -> cluster.",
             kind: RecipeKind::Workflow(Workflow::ParityLadder),
             args: vec![],
@@ -168,13 +168,13 @@ pub(crate) fn recipes() -> Vec<Recipe> {
         Recipe {
             tabs: &["platform"],
             title: "Open observability (Console + Langfuse)",
-            description: "Open the local AgentOS Console and Langfuse traces/cost UIs.",
+            description: "Open the local Curie Console and Langfuse traces/cost UIs.",
             kind: RecipeKind::Command,
             // Local-only on purpose: there is no `cluster observability` verb in
             // the clap grammar yet (the cluster twin is tracked as issue #460).
             args: vec![ArgPart::Literal("local"), ArgPart::Literal("observability")],
             fields: vec![],
-            notes: &["Start the platform first with `agentos local up`."],
+            notes: &["Start the platform first with `curie local up`."],
         },
         Recipe {
             tabs: &["platform"],
@@ -358,7 +358,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
                 default: None,
                 required: true,
             }],
-            notes: &["Requires a running `agentos skill up` session."],
+            notes: &["Requires a running `curie skill up` session."],
         },
         Recipe {
             tabs: &["skill"],
@@ -390,7 +390,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
             args: vec![],
             fields: vec![],
             notes: &[
-                "Requires a saved or environment model credential: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS.",
+                "Requires a saved or environment model credential: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or CURIE_CREDENTIALS.",
                 "Examples request any additional credentials they need after you choose one.",
                 "The runner stays up for a multi-turn conversation and stops when you leave chat.",
             ],
@@ -411,7 +411,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
         Recipe {
             tabs: &["secrets"],
             title: "Save secret",
-            description: "Store a local secret in AgentOS private storage with hidden input.",
+            description: "Store a local secret in Curie private storage with hidden input.",
             kind: RecipeKind::Tui(TuiAction::SaveSecret),
             args: vec![],
             fields: vec![],
@@ -423,7 +423,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
         Recipe {
             tabs: &["secrets"],
             title: "List saved secrets",
-            description: "List saved AgentOS secret names without printing values.",
+            description: "List saved Curie secret names without printing values.",
             kind: RecipeKind::Tui(TuiAction::ListSecrets),
             args: vec![],
             fields: vec![],
@@ -432,7 +432,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
         Recipe {
             tabs: &["secrets"],
             title: "Remove secret",
-            description: "Remove a saved secret from AgentOS private storage.",
+            description: "Remove a saved secret from Curie private storage.",
             kind: RecipeKind::Tui(TuiAction::RemoveSecret),
             args: vec![],
             fields: vec![],
@@ -475,7 +475,7 @@ pub(crate) fn recipes() -> Vec<Recipe> {
                     required: false,
                 },
             ],
-            notes: &["Requires `agentos local up` and a deployed local agent."],
+            notes: &["Requires `curie local up` and a deployed local agent."],
         },
         Recipe {
             tabs: &["local"],
@@ -507,13 +507,13 @@ pub(crate) fn recipes() -> Vec<Recipe> {
                 Field {
                     key: "namespace",
                     label: "Namespace",
-                    default: Some("agentos"),
+                    default: Some("curie"),
                     required: false,
                 },
                 Field {
                     key: "release",
                     label: "Release",
-                    default: Some("agentos"),
+                    default: Some("curie"),
                     required: false,
                 },
             ],

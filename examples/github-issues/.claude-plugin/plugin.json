@@ -6,8 +6,8 @@
   "keywords": ["example", "mcp", "authed", "github", "stdio"],
   "secrets": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
   "starterPrompts": [
-    "List the open issues in curie-eng/agentos and group them by label.",
-    "Summarize the most recently updated pull requests in curie-eng/agentos.",
-    "Find open bug reports in curie-eng/agentos that need triage."
+    "List the open issues in curie-eng/curie and group them by label.",
+    "Summarize the most recently updated pull requests in curie-eng/curie.",
+    "Find open bug reports in curie-eng/curie that need triage."
   ]
 }

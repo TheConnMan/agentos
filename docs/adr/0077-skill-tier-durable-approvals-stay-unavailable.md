@@ -4,8 +4,8 @@ Date: 2026-07-23
 
 Status: Accepted
 
-Implements [#771](https://github.com/curie-eng/agentos/issues/771).
-Follows [#766](https://github.com/curie-eng/agentos/issues/766) and
+Implements [#771](https://github.com/curie-eng/curie/issues/771).
+Follows [#766](https://github.com/curie-eng/curie/issues/766) and
 [ADR-0063](0063-message-driven-approval-reply-surface.md); applies the tier
 answer-or-report rule of [ADR-0041](0041-every-verb-is-answered-at-every-tier.md).
 

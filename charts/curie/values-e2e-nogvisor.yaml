@@ -1,0 +1,25 @@
+# Explicit gVisor OFF switch.
+#
+# Since security.gvisor.mode defaults to `auto` -- which already degrades to
+# no-kernel-isolation (with a NOTES warning) on a cluster that lacks the runsc
+# RuntimeClass -- a bare `helm install` already works on a no-runsc cluster. This
+# overlay is the DETERMINISTIC opt-out: it forces isolation off without the
+# install-time RuntimeClass lookup, so runner pods never get a runtimeClassName
+# and the enforcement preflight never renders. Every OTHER security rail stays ON
+# (default-deny egress + metadata block, per-agent secret isolation, non-root /
+# read-only-rootfs). Use it for e2e/kind/scratch clusters where you want the
+# no-gvisor shape to be explicit and lookup-free. Note that a real-model install
+# (agentSandbox.runner.fakeModel=false) under the default `auto` mode now fails
+# closed on a runsc-less cluster, so this overlay (mode=off) is the supported way
+# to run real code without gVisor knowingly.
+#
+#   helm install <release> charts/curie -n <ns> --create-namespace \
+#     -f charts/curie/values-e2e-nogvisor.yaml
+#
+# To restore kernel isolation, drop this overlay (mode returns to `auto`) once
+# runsc + the containerd handler are installed on the node; or set
+# security.gvisor.mode=require to fail-hard if it is missing.
+
+security:
+  gvisor:
+    mode: "off"

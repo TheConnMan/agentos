@@ -13,10 +13,10 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from agentos_api.config import Settings
-from agentos_api.deps import get_eval_queue, get_session, get_store
-from agentos_api.routers import github as github_router
-from agentos_api.schemas import WebhookResult
+from curie_api.config import Settings
+from curie_api.deps import get_eval_queue, get_session, get_store
+from curie_api.routers import github as github_router
+from curie_api.schemas import WebhookResult
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

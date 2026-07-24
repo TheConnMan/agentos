@@ -1,8 +1,8 @@
-//! Interactive terminal interface for AgentOS.
+//! Interactive terminal interface for Curie.
 //!
 //! This is a ratatui/crossterm surface over the existing clap command grammar:
 //! it does not invent a second implementation path. The TUI helps a human pick
-//! a target and action, previews the exact `agentos ...` command, prompts for
+//! a target and action, previews the exact `curie ...` command, prompts for
 //! any required values, then keeps prompts, command output, and workflow results
 //! inside the alternate-screen interface.
 
@@ -76,7 +76,7 @@ struct App {
 pub async fn run() -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(crate::exit::usage(
-            "agentos interactive requires an interactive terminal; use the regular agentos subcommands in non-interactive sessions",
+            "curie interactive requires an interactive terminal; use the regular curie subcommands in non-interactive sessions",
         ));
     }
     let mut app = App::new();
@@ -255,7 +255,7 @@ fn prompt_tier(
             },
             SelectChoice {
                 label: "cluster (Kubernetes)".to_string(),
-                description: "A deployed Helm release (must already be up); needs AGENTOS_API_URL and AGENTOS_API_KEY set for that release."
+                description: "A deployed Helm release (must already be up); needs CURIE_API_URL and CURIE_API_KEY set for that release."
                     .to_string(),
                 value: Tier::Cluster,
             },
@@ -328,7 +328,7 @@ fn run_recipe_in_tui(
     let run_result = match &recipe.kind {
         RecipeKind::Command => {
             let argv = build_argv(recipe, tier, &values);
-            run_agentos_in_tui(terminal, app, &argv, Path::new("."), &mut view)
+            run_curie_in_tui(terminal, app, &argv, Path::new("."), &mut view)
         }
         RecipeKind::Tui(_) => Ok(()),
         RecipeKind::Workflow(_) => unreachable!("workflows run before the command view"),
@@ -383,12 +383,12 @@ fn run_tui_action(
                 return Ok("Save secret canceled.".to_string());
             };
             crate::secrets::save_value(&name, &value)?;
-            Ok(format!("Saved {name} in AgentOS private storage."))
+            Ok(format!("Saved {name} in Curie private storage."))
         }
         TuiAction::ListSecrets => {
             let count = crate::secrets::list_names()?.len();
             Ok(match count {
-                0 => "No AgentOS secrets saved.".to_string(),
+                0 => "No Curie secrets saved.".to_string(),
                 1 => "Showing 1 saved secret name.".to_string(),
                 n => format!("Showing {n} saved secret names."),
             })
@@ -457,12 +457,12 @@ fn secret_name_choices_for(saved_names: &BTreeSet<String>) -> Vec<SelectChoice<S
             "Claude Code OAuth token for model calls",
         ),
         (
-            "AGENTOS_CREDENTIALS",
-            "Provider credential forwarded as AgentOS credentials",
+            "CURIE_CREDENTIALS",
+            "Provider credential forwarded as Curie credentials",
         ),
         (
             "OPENAI_API_KEY",
-            "OpenAI integrations (not AgentOS runner model auth)",
+            "OpenAI integrations (not Curie runner model auth)",
         ),
         (
             "GITHUB_PERSONAL_ACCESS_TOKEN",
@@ -501,7 +501,7 @@ fn saved_secret_choices() -> Result<Vec<SelectChoice<SecretNameChoice>>> {
         .into_iter()
         .map(|name| SelectChoice {
             label: name.clone(),
-            description: "Saved in AgentOS private storage".to_string(),
+            description: "Saved in Curie private storage".to_string(),
             value: SecretNameChoice::Name(name),
         })
         .collect();
@@ -604,22 +604,22 @@ fn prompt_text(
 }
 
 /// Print-only "parity ladder" explainer: the framing for the whole Platform tab
-/// -- what agentos is (one bundle + one eval suite across skill/local/cluster) and
+/// -- what curie is (one bundle + one eval suite across skill/local/cluster) and
 /// how to climb it. Mirrors the show_run_view pause used by the other workflows.
 fn parity_ladder(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> Result<()> {
     let mut view = RunView::new("The parity ladder");
     for line in [
-        "agentos runs ONE immutable bundle and ONE evals/cases.json identically",
+        "curie runs ONE immutable bundle and ONE evals/cases.json identically",
         "across three tiers, so 'works on my laptop' and 'works deployed' are the",
         "same artifact -- not a hope.",
         "",
         "  skill    runner only, on your Docker. Fastest loop; no platform/queue.",
-        "           -> agentos skill up / skill message / skill eval",
+        "           -> curie skill up / skill message / skill eval",
         "  local    the full platform via docker compose (API, queue, worker,",
         "           sandbox, Langfuse). The real product loop, zero Slack/K8s.",
-        "           -> agentos local up / local deploy / local message",
+        "           -> curie local up / local deploy / local message",
         "  cluster  the same platform on Kubernetes (a Helm release).",
-        "           -> agentos cluster deploy / cluster message",
+        "           -> curie cluster deploy / cluster message",
         "",
         "Climb it: iterate at skill, promote to local, then cluster. Run the SAME",
         "evals at each tier -- a tier-to-tier divergence is the harness catching a",
@@ -667,7 +667,7 @@ fn explore_examples(
 
     let repo_root = find_repo_root(std::env::current_dir().context("reading current directory")?)
         .context(
-        "could not find AgentOS repo root; run this workflow from the source checkout",
+        "could not find Curie repo root; run this workflow from the source checkout",
     )?;
     let example_dir = repo_root.join(example.directory);
     if !example_dir.join(".claude-plugin/plugin.json").is_file() {
@@ -675,7 +675,7 @@ fn explore_examples(
     }
     let starter_prompts = starter_prompts(&example_dir)?;
 
-    let container_name = format!("agentos-example-{}", example.id);
+    let container_name = format!("curie-example-{}", example.id);
     let port = "7247";
     let url = format!("http://localhost:{port}");
     let mut setup = RunView::new(&format!("Starting {}", example.name));
@@ -695,14 +695,14 @@ fn explore_examples(
             argv.push("--secret".to_string());
             argv.push((*name).to_string());
         }
-        run_agentos_in_tui_with_env(terminal, app, &argv, &repo_root, &mut setup, &secret_env)?;
+        run_curie_in_tui_with_env(terminal, app, &argv, &repo_root, &mut setup, &secret_env)?;
         started = true;
         chat_with_runner(terminal, &repo_root, &url, example.name, &starter_prompts)
     })();
 
     if started {
         let mut cleanup = RunView::new(&format!("Stopping {}", example.name));
-        if let Err(err) = run_agentos_in_tui(
+        if let Err(err) = run_curie_in_tui(
             terminal,
             app,
             &["skill".to_string(), "down".to_string()],
@@ -744,10 +744,10 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
         Tier::Cluster => "deployed release: cluster deploy -> cluster comms --slack.",
     };
     intro.push(format!(
-        "This connects an AgentOS agent to a real Slack workspace through the {flow}"
+        "This connects an Curie agent to a real Slack workspace through the {flow}"
     ));
     if tier == Tier::Cluster {
-        intro.push("Requires an installed release (agentos cluster up) with a model credential.");
+        intro.push("Requires an installed release (curie cluster up) with a model credential.");
         intro.push("One Slack app = one Socket Mode owner: do not also run a local dispatcher");
         intro.push("on the same app token.");
     }
@@ -760,7 +760,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
         "     'connections:write' scope. Copy the xapp-... value  (SLACK_APP_TOKEN).",
         "  4. 'Install App' -> 'Install to Workspace'. Copy the 'Bot User OAuth Token'",
         "     (xoxb-...)  (SLACK_BOT_TOKEN).",
-        "  5. In Slack, invite the bot to a channel:  /invite @agentos",
+        "  5. In Slack, invite the bot to a channel:  /invite @curie",
         "  6. Copy that channel's ID: channel name -> 'View channel details' -> the",
         "     C0... id at the very bottom.",
         "",
@@ -786,7 +786,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     //    can be offered instead of a bare text box.
     let cwd = std::env::current_dir().context("reading current directory")?;
     let repo_root = find_repo_root(cwd.clone())
-        .context("could not find AgentOS repo root; run this workflow from the source checkout")?;
+        .context("could not find Curie repo root; run this workflow from the source checkout")?;
 
     let Some(channel) = prompt_text(
         terminal,
@@ -805,7 +805,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
         .unwrap_or_else(|| ".".to_string());
 
     // Cluster targets a specific Helm release; prompt for its namespace/release
-    // so the workflow works for a release not named the default `agentos` (the
+    // so the workflow works for a release not named the default `curie` (the
     // API auto-discovery and `cluster comms` both key off these).
     let (namespace, release) = if tier == Tier::Cluster {
         let ns = prompt_text(
@@ -813,23 +813,23 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
             app,
             "Deploy to Slack",
             "Kubernetes namespace",
-            Some("agentos"),
+            Some("curie"),
             false,
             true,
         )?
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "agentos".to_string());
+        .unwrap_or_else(|| "curie".to_string());
         let rel = prompt_text(
             terminal,
             app,
             "Deploy to Slack",
             "Helm release name",
-            Some("agentos"),
+            Some("curie"),
             false,
             true,
         )?
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "agentos".to_string());
+        .unwrap_or_else(|| "curie".to_string());
         (Some(ns), Some(rel))
     } else {
         (None, None)
@@ -857,7 +857,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
         // Local brings the compose platform up first (idempotent); the cluster
         // release is expected to already be installed.
         if tier == Tier::Local {
-            run_agentos_in_tui_with_env(
+            run_curie_in_tui_with_env(
                 terminal,
                 app,
                 &["local".to_string(), "up".to_string()],
@@ -890,7 +890,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
                 rel.clone(),
             ]);
         }
-        run_agentos_in_tui_with_env(
+        run_curie_in_tui_with_env(
             terminal,
             app,
             &deploy_argv,
@@ -908,7 +908,7 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
                 rel.clone(),
             ]);
         }
-        run_agentos_in_tui_with_env(
+        run_curie_in_tui_with_env(
             terminal,
             app,
             &comms_argv,
@@ -934,10 +934,10 @@ fn deploy_to_slack(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &
     done.push("message -- the dispatcher routes it through the worker to your agent.");
     done.push("");
     done.push(format!(
-        "Disconnect Slack:  agentos {verb} comms --slack --disconnect"
+        "Disconnect Slack:  curie {verb} comms --slack --disconnect"
     ));
     if tier == Tier::Local {
-        done.push("Stop the stack:    agentos local down".to_string());
+        done.push("Stop the stack:    curie local down".to_string());
     }
     show_run_view(terminal, app, &mut done)?;
     Ok(())
@@ -961,7 +961,7 @@ fn env_credential_present(name: &str) -> bool {
 fn slack_secret_env() -> Result<Vec<(String, String)>> {
     let mut env = Vec::new();
     for name in [
-        "AGENTOS_CREDENTIALS",
+        "CURIE_CREDENTIALS",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ] {
@@ -1095,7 +1095,7 @@ fn prompt_bundle_dir(
 fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {
     let mut env = Vec::new();
     if ![
-        "AGENTOS_CREDENTIALS",
+        "CURIE_CREDENTIALS",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ]
@@ -1103,7 +1103,7 @@ fn example_secret_env(extra_secrets: &[&str]) -> Result<Vec<(String, String)>> {
     .any(|name| env_credential_present(name))
     {
         for name in [
-            "AGENTOS_CREDENTIALS",
+            "CURIE_CREDENTIALS",
             "ANTHROPIC_API_KEY",
             "CLAUDE_CODE_OAUTH_TOKEN",
         ] {
@@ -1145,12 +1145,12 @@ fn ensure_secret_available(
         vec![
             SelectChoice {
                 label: "Save it now".to_string(),
-                description: "Store it in AgentOS private storage".to_string(),
+                description: "Store it in Curie private storage".to_string(),
                 value: true,
             },
             SelectChoice {
                 label: "Cancel workflow".to_string(),
-                description: "Return to AgentOS without running".to_string(),
+                description: "Return to Curie without running".to_string(),
                 value: false,
             },
         ],
@@ -1172,7 +1172,7 @@ fn ensure_model_credential_available(
     app: &App,
 ) -> Result<()> {
     const NAMES: &[&str] = &[
-        "AGENTOS_CREDENTIALS",
+        "CURIE_CREDENTIALS",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ];
@@ -1205,7 +1205,7 @@ fn ensure_model_credential_available(
         .iter()
         .map(|name| SelectChoice {
             label: (*name).to_string(),
-            description: "Supported by the AgentOS Claude SDK runner".to_string(),
+            description: "Supported by the Curie Claude SDK runner".to_string(),
             value: (*name).to_string(),
         })
         .collect();
@@ -1239,7 +1239,7 @@ fn model_credential_status(
     legacy_names: &BTreeSet<String>,
 ) -> &'static str {
     for name in [
-        "AGENTOS_CREDENTIALS",
+        "CURIE_CREDENTIALS",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
     ] {
@@ -1664,17 +1664,17 @@ fn is_internal_chat_status(line: &str) -> bool {
     line.trim().starts_with("-- final (")
 }
 
-fn run_agentos_in_tui(
+fn run_curie_in_tui(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
     argv: &[String],
     cwd: &Path,
     view: &mut RunView,
 ) -> Result<()> {
-    run_agentos_in_tui_with_env(terminal, app, argv, cwd, view, &[])
+    run_curie_in_tui_with_env(terminal, app, argv, cwd, view, &[])
 }
 
-fn run_agentos_in_tui_with_env(
+fn run_curie_in_tui_with_env(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &App,
     argv: &[String],
@@ -1696,8 +1696,8 @@ fn run_agentos_in_tui_with_env(
         .with_context(|| format!("running {}", render_command(argv)))?;
 
     let (tx, rx) = mpsc::channel();
-    let stdout = child.stdout.take().context("capturing agentos stdout")?;
-    let stderr = child.stderr.take().context("capturing agentos stderr")?;
+    let stdout = child.stdout.take().context("capturing curie stdout")?;
+    let stderr = child.stderr.take().context("capturing curie stderr")?;
     let readers = [stdout_reader(stdout, tx.clone()), stderr_reader(stderr, tx)];
     let mut canceled = false;
 
@@ -1717,7 +1717,7 @@ fn run_agentos_in_tui_with_env(
                 if let Event::Key(key) = event::read()? {
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            child.kill().context("canceling agentos command")?;
+                            child.kill().context("canceling curie command")?;
                             canceled = true;
                         }
                         (KeyCode::Up | KeyCode::Char('k'), _) => {
@@ -1731,7 +1731,7 @@ fn run_agentos_in_tui_with_env(
                     }
                 }
             }
-            if let Some(status) = child.try_wait().context("waiting for agentos command")? {
+            if let Some(status) = child.try_wait().context("waiting for curie command")? {
                 break Ok(status);
             }
         }
@@ -1836,7 +1836,7 @@ fn show_run_view(
 }
 
 fn render_command(argv: &[String]) -> String {
-    std::iter::once("agentos".to_string())
+    std::iter::once("curie".to_string())
         .chain(argv.iter().map(|arg| crate::ops::shell_quote(arg)))
         .collect::<Vec<_>>()
         .join(" ")
@@ -1860,7 +1860,7 @@ fn draw(frame: &mut Frame<'_>, app: &App) {
 
 fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let title = Line::from(vec![
-        Span::styled("AgentOS", Style::default().fg(Color::Cyan).bold()),
+        Span::styled("Curie", Style::default().fg(Color::Cyan).bold()),
         Span::raw(" interactive  "),
         Span::styled(
             format!("target: {}", app.targets[app.target_idx]),
@@ -1971,7 +1971,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )));
             lines.push(Line::from("1. Choose a common secret name or Custom"));
             lines.push(Line::from("2. Secret value, hidden while typing"));
-            lines.push(Line::from("3. Save to AgentOS private storage"));
+            lines.push(Line::from("3. Save to Curie private storage"));
             lines.push(Line::from(""));
         }
         RecipeKind::Tui(TuiAction::ListSecrets) => {
@@ -1981,7 +1981,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )));
             match crate::secrets::list_names() {
                 Ok(names) if names.is_empty() => {
-                    lines.push(Line::from("No AgentOS secrets saved."));
+                    lines.push(Line::from("No Curie secrets saved."));
                 }
                 Ok(names) => {
                     for name in names {
@@ -2001,7 +2001,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )));
             lines.push(Line::from("1. Choose a saved secret name or Custom"));
             lines.push(Line::from("2. Type the same name to confirm removal"));
-            lines.push(Line::from("3. Remove from AgentOS private storage"));
+            lines.push(Line::from("3. Remove from Curie private storage"));
             lines.push(Line::from(""));
         }
         RecipeKind::Workflow(Workflow::ExploreExamples) => {
@@ -2021,7 +2021,7 @@ fn draw_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 "The parity ladder",
                 Style::default().fg(Color::Yellow).bold(),
             )));
-            lines.push(Line::from("What agentos is: one immutable bundle + one"));
+            lines.push(Line::from("What curie is: one immutable bundle + one"));
             lines.push(Line::from(
                 "evals/cases.json, run identically across tiers.",
             ));
@@ -2167,7 +2167,7 @@ fn draw_chat_view(frame: &mut Frame<'_>, chat: &ChatView) {
         .split(area);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("AgentOS", Style::default().fg(Color::Cyan).bold()),
+            Span::styled("Curie", Style::default().fg(Color::Cyan).bold()),
             Span::raw(format!("  {}", chat.agent_name)),
             if chat.thinking {
                 Span::styled("  thinking...", Style::default().fg(Color::Yellow))
@@ -2460,7 +2460,7 @@ mod tests {
     #[test]
     fn render_command_quotes_shell_specials() {
         let argv = vec!["skill".into(), "message".into(), "hello world".into()];
-        assert_eq!(render_command(&argv), "agentos skill message 'hello world'");
+        assert_eq!(render_command(&argv), "curie skill message 'hello world'");
     }
 
     #[test]
@@ -2469,7 +2469,7 @@ mod tests {
         // all() over an empty iterator). The canonical ops::shell_quote renders it
         // as '' so the copy-pasteable command keeps the empty positional visible.
         let argv = vec!["skill".into(), "message".into(), "".into()];
-        assert_eq!(render_command(&argv), "agentos skill message ''");
+        assert_eq!(render_command(&argv), "curie skill message ''");
     }
 
     #[test]
@@ -2489,7 +2489,7 @@ mod tests {
             .map(|r| r.title)
             .collect();
         for expected in [
-            "Parity ladder (what agentos is)",
+            "Parity ladder (what curie is)",
             "Run evals (parity gate)",
             "Open observability (Console + Langfuse)",
             "List versions",
@@ -2624,7 +2624,7 @@ mod tests {
     fn chat_consumes_semantic_choices_without_printing_the_envelope() {
         let mut chat = ChatView::new("demo", &[]);
         let mut envelope = Vec::new();
-        consume_chat_line(&mut chat, &mut envelope, "```agentos-reply".to_string());
+        consume_chat_line(&mut chat, &mut envelope, "```curie-reply".to_string());
         consume_chat_line(
             &mut chat,
             &mut envelope,
@@ -2634,7 +2634,7 @@ mod tests {
 
         assert!(envelope.is_empty());
         assert!(chat.lines.iter().any(|line| line == "Pick one"));
-        assert!(!chat.lines.iter().any(|line| line.contains("agentos-reply")));
+        assert!(!chat.lines.iter().any(|line| line.contains("curie-reply")));
         assert_eq!(chat.actions[0].label, "First");
         assert_eq!(chat.actions[0].value, "first-value");
         assert!(chat.allow_free_text);
@@ -2647,7 +2647,7 @@ mod tests {
         consume_chat_line(
             &mut chat,
             &mut envelope,
-            "Still useful\n```agentos-reply".to_string(),
+            "Still useful\n```curie-reply".to_string(),
         );
         consume_chat_line(&mut chat, &mut envelope, "{broken".to_string());
         consume_chat_line(&mut chat, &mut envelope, "```".to_string());

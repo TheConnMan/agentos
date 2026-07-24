@@ -7,7 +7,7 @@ provenance round-trip are verified end-to-end over real HTTP without the API.
 
 import anyio
 import pytest
-from agentos_runner.memory import (
+from curie_runner.memory import (
     ConsolidationResult,
     MemoryError,
     MemoryRecord,
@@ -136,9 +136,9 @@ def test_state_store_append_then_load_round_trip() -> None:
 
 
 def test_session_runner_remember_appends_with_provenance() -> None:
-    from agentos_runner import RunTracer, SideEffectClassifier
-    from agentos_runner.fake import FakeModelSession
-    from agentos_runner.session import SessionRunner
+    from curie_runner import RunTracer, SideEffectClassifier
+    from curie_runner.fake import FakeModelSession
+    from curie_runner.session import SessionRunner
 
     class _Recording:
         def __init__(self) -> None:
@@ -314,9 +314,9 @@ def test_state_store_replace_puts_log() -> None:
 
 
 def test_session_runner_consolidate_memory() -> None:
-    from agentos_runner import RunTracer, SideEffectClassifier
-    from agentos_runner.fake import FakeModelSession
-    from agentos_runner.session import SessionRunner
+    from curie_runner import RunTracer, SideEffectClassifier
+    from curie_runner.fake import FakeModelSession
+    from curie_runner.session import SessionRunner
 
     store = _ReplacingStore(
         [MemoryRecord(content="dup"), MemoryRecord(content="dup"), MemoryRecord(content="keep")]

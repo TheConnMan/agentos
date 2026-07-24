@@ -20,7 +20,7 @@ Postgres, so a managed-Postgres target is unaffected by them:
   1. ``sqlalchemy.dialects.postgresql.UUID`` primary/foreign keys land as the native
      Postgres ``uuid`` column type.
   2. The schema-scoped native enum ``Enum(Environment, name="environment",
-     schema=SCHEMA)`` materializes as a ``CREATE TYPE`` in the ``agentos`` schema
+     schema=SCHEMA)`` materializes as a ``CREATE TYPE`` in the ``curie`` schema
      with the expected labels.
 
 Runs against the session's freshly-created, migrated disposable DB (conftest's
@@ -30,9 +30,9 @@ Runs against the session's freshly-created, migrated disposable DB (conftest's
 import asyncio
 from typing import Any
 
-from agentos_api.config import get_settings
-from agentos_api.db import SCHEMA
-from agentos_api.models import Environment
+from curie_api.config import get_settings
+from curie_api.db import SCHEMA
+from curie_api.models import Environment
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -52,7 +52,7 @@ def _query(sql: str, **params: Any) -> list[tuple[Any, ...]]:
     return asyncio.run(run())
 
 
-# The app's UUID-keyed tables (schema-qualified into `agentos`); every primary key
+# The app's UUID-keyed tables (schema-qualified into `curie`); every primary key
 # is a postgresql.UUID column, so each must materialize as native `uuid`.
 _UUID_PK_TABLES = ("agents", "agent_versions", "deployments")
 
@@ -75,7 +75,7 @@ def test_uuid_columns_materialize_as_native_uuid(migrated: None) -> None:
 
 
 def test_environment_enum_is_schema_scoped_native_type(migrated: None) -> None:
-    """Ism #2: the native enum materializes as a CREATE TYPE in the `agentos` schema.
+    """Ism #2: the native enum materializes as a CREATE TYPE in the `curie` schema.
 
     Assert the type exists, is an enum (typtype 'e'), lives in the app schema (not
     public), and carries exactly the Environment labels. A managed Postgres creates
@@ -104,10 +104,10 @@ def test_environment_enum_is_schema_scoped_native_type(migrated: None) -> None:
 
 
 def test_app_tables_are_schema_qualified(migrated: None) -> None:
-    """All app tables land in the `agentos` schema, never public.
+    """All app tables land in the `curie` schema, never public.
 
     Confirms the schema-qualified-tables half of ism #2 end to end: the DSN-only
-    swap places the whole app footprint under `agentos` on the managed target.
+    swap places the whole app footprint under `curie` on the managed target.
     """
 
     public = _query(

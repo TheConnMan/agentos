@@ -1,6 +1,6 @@
 mod support;
 
-use agentos::artifacts::{ensure_cached, Resolved};
+use curie::artifacts::{ensure_cached, Resolved};
 use std::fs;
 use std::path::PathBuf;
 use support::{serve, Response};

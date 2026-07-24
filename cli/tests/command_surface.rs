@@ -1,9 +1,9 @@
 use std::process::Command;
 
-use agentos::retired_hint;
+use curie::retired_hint;
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn run_help(args: &[&str]) -> std::process::Output {
@@ -11,7 +11,7 @@ fn run_help(args: &[&str]) -> std::process::Output {
         .args(args)
         .arg("--help")
         .output()
-        .expect("run agentos --help")
+        .expect("run curie --help")
 }
 
 fn output_text(output: &std::process::Output) -> String {
@@ -150,7 +150,7 @@ fn process_help_top_level_lists_new_surface_and_hides_retired_verbs() {
     }
 }
 
-/// `agentos dev plugin-compat` is the operator-facing name of the outbound
+/// `curie dev plugin-compat` is the operator-facing name of the outbound
 /// Claude-Code-compatibility gate (see the bundle-format seam doc). If the verb
 /// stops being reachable, the gate is still in CI but nobody can run it locally
 /// before pushing.
@@ -169,7 +169,7 @@ fn process_dev_help_lists_the_plugin_compat_gate() {
     );
 }
 
-/// The checked-in manifest must equal what `agentos schema` emits from the live
+/// The checked-in manifest must equal what `curie schema` emits from the live
 /// clap grammar. This is the generated-artifact + CI drift gate (mirroring the
 /// schema-export discipline for `packages/aci-protocol` / `packages/plugin-format`):
 /// any grammar change (new command, flag, default, env var, help text) must be
@@ -179,10 +179,10 @@ fn command_manifest_matches_committed_artifact() {
     let output = Command::new(bin())
         .arg("schema")
         .output()
-        .expect("run agentos schema");
+        .expect("run curie schema");
     assert!(
         output.status.success(),
-        "agentos schema failed\n{}",
+        "curie schema failed\n{}",
         output_text(&output)
     );
     let generated = String::from_utf8(output.stdout).expect("manifest is utf-8");
@@ -204,11 +204,11 @@ fn dump_commands_alias_emits_same_manifest() {
     let schema = Command::new(bin())
         .arg("schema")
         .output()
-        .expect("run agentos schema");
+        .expect("run curie schema");
     let alias = Command::new(bin())
         .arg("dump-commands")
         .output()
-        .expect("run agentos dump-commands");
+        .expect("run curie dump-commands");
     assert!(schema.status.success() && alias.status.success());
     assert_eq!(schema.stdout, alias.stdout);
 }

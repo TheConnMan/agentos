@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
-# AgentOS UI image: static Vite build served by non-root nginx.
+# Curie UI image: static Vite build served by non-root nginx.
 #
 # BUILD FROM THE REPO ROOT, not from apps/ui/, because the UI resolves the frozen
 # ACI TypeScript types through a path alias (@aci -> ../../packages/aci-protocol/
 # generated/ts, in both tsconfig and vite), which lives outside apps/ui. The repo
 # layout is replicated in the build stage so that relative alias resolves:
 #
-#   docker build -f apps/ui/Dockerfile -t agentos-ui .
+#   docker build -f apps/ui/Dockerfile -t curie-ui .
 #
 # apps/ui/Dockerfile.dockerignore (BuildKit honors <dockerfile>.dockerignore over
 # the context-root one) trims the root context to the UI plus that one
@@ -33,9 +33,9 @@ WORKDIR /app/apps/ui
 RUN pnpm build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
-# Only AGENTOS_API_TARGET is substituted; nginx's own $vars are left intact.
-ENV AGENTOS_API_TARGET=http://agentos-api:8000 \
-    NGINX_ENVSUBST_FILTER=AGENTOS_API_TARGET
+# Only CURIE_API_TARGET is substituted; nginx's own $vars are left intact.
+ENV CURIE_API_TARGET=http://curie-api:8000 \
+    NGINX_ENVSUBST_FILTER=CURIE_API_TARGET
 COPY --from=build /app/apps/ui/dist /usr/share/nginx/html
 COPY <<'EOF' /etc/nginx/templates/default.conf.template
 server {
@@ -46,7 +46,7 @@ server {
 
     # Reverse-proxy API calls, stripping the /api prefix.
     location /api/ {
-        proxy_pass ${AGENTOS_API_TARGET}/;
+        proxy_pass ${CURIE_API_TARGET}/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

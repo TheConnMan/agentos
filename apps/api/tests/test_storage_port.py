@@ -7,8 +7,8 @@ satisfies the Protocol, and the existing BundleStore already does.
 
 import anyio
 import pytest
-from agentos_api.config import Settings
-from agentos_api.storage import BundleStore, ObjectStore, build_s3_client
+from curie_api.config import Settings
+from curie_api.storage import BundleStore, ObjectStore, build_s3_client
 
 
 class InMemoryObjectStore:

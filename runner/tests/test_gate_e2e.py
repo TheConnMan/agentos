@@ -21,8 +21,8 @@ import json
 
 import anyio
 from aci_protocol import Event
-from agentos_runner.__main__ import build_runner
-from agentos_runner.config import RunnerConfig
+from curie_runner.__main__ import build_runner
+from curie_runner.config import RunnerConfig
 
 # A budget high enough that default_turn's 8 output tokens never trip the halt
 # (a halt would outrank a pending approval and mask the gate under test).
@@ -31,10 +31,10 @@ _BUDGET = '{"max_output_tokens_per_run": 10000, "max_usd_per_day": 1.0}'
 
 def _base_env(plugin_dir: str) -> dict[str, str]:
     return {
-        "AGENTOS_PLUGIN_DIR": plugin_dir,
-        "AGENTOS_SESSION_ID": "s-e2e",
-        "AGENTOS_SANDBOX_ID": "b-e2e",
-        "AGENTOS_BUDGET": _BUDGET,
+        "CURIE_PLUGIN_DIR": plugin_dir,
+        "CURIE_SESSION_ID": "s-e2e",
+        "CURIE_SANDBOX_ID": "b-e2e",
+        "CURIE_BUDGET": _BUDGET,
     }
 
 
@@ -60,7 +60,7 @@ def test_gate_e2e_ends_awaiting_approval_through_build_runner(tmp_path) -> None:
     # A bundle-declared/env-configured approval-required tool (Bash) must end the
     # turn awaiting-approval on a fake runner built by the real boot path.
     plugin_dir = _write_manifest(tmp_path, {"name": "gated"})
-    env = {**_base_env(plugin_dir), "AGENTOS_APPROVAL_REQUIRED_TOOLS": "Bash"}
+    env = {**_base_env(plugin_dir), "CURIE_APPROVAL_REQUIRED_TOOLS": "Bash"}
     runner = build_runner(RunnerConfig.from_env(env), fake_model=True)
 
     async def go() -> None:

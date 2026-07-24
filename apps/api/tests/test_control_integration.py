@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 import redis
-from agentos_api.config import get_settings
-from agentos_api.killswitch import KILL_CHANNEL, kill_key
+from curie_api.config import get_settings
+from curie_api.killswitch import KILL_CHANNEL, kill_key
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def test_reset_thread_queues_a_pending_request(
     """#713: the endpoint queues the thread for the worker's maintenance tick
     to drain -- it does not (cannot, from the API process) release the
     sandbox itself. Real Valkey, real SADD, no mocking."""
-    from agentos_api.threadreset import THREAD_RESET_SET
+    from curie_api.threadreset import THREAD_RESET_SET
 
     agent_id = _make_agent(client, auth_headers)
     valkey.srem(THREAD_RESET_SET, "t-reset-1")
@@ -123,7 +123,7 @@ def test_thread_reset_state_is_pollable_until_the_worker_drains(
     operator workflow "reset the thread, then message to confirm" can poll to
     completion instead of adopting the still-live pre-reset sandbox and reading a
     stale answer. Real Valkey, real SADD/SREM, no mocking."""
-    from agentos_api.threadreset import THREAD_RESET_SET
+    from curie_api.threadreset import THREAD_RESET_SET
 
     agent_id = _make_agent(client, auth_headers)
     thread = "t-reset-poll-1"
@@ -165,7 +165,7 @@ def test_thread_reset_state_stays_pending_while_release_is_in_progress_or_failed
     .../reset must still report ``requested: True`` (``is_pending`` reads the union
     of both sets), so the CLI does not report a false ``released: true`` before or
     independent of the actual release. Real Valkey, real SADD/SREM, no mocking."""
-    from agentos_api.threadreset import THREAD_RESET_INFLIGHT_SET, THREAD_RESET_SET
+    from curie_api.threadreset import THREAD_RESET_INFLIGHT_SET, THREAD_RESET_SET
 
     agent_id = _make_agent(client, auth_headers)
     thread = "t-reset-inflight-1"
@@ -263,7 +263,7 @@ def test_cost_filters_langfuse_by_the_agent_trace_token(
     # The per-agent cost query must filter Langfuse by the `agent-<id>` trace-name
     # token (a `contains` match), not by the agent's display name -- matching on
     # the name never matched a real runner trace, which read $0 for every agent.
-    from agentos_api.deps import get_langfuse
+    from curie_api.deps import get_langfuse
 
     agent_id = _make_agent(client, auth_headers)
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/check/v1.json",
-  "title": "agentos skill check --json",
-  "description": "The agent-facing payload of `agentos skill check`: the versioned runner MCP-load report (`version` is the frozen report-contract version, currently 1). `registered` is an opaque pass-through of the runner's registered-server list.",
+  "$id": "https://schemas.curie.dev/cli/check/v1.json",
+  "title": "curie skill check --json",
+  "description": "The agent-facing payload of `curie skill check`: the versioned runner MCP-load report (`version` is the frozen report-contract version, currently 1). `registered` is an opaque pass-through of the runner's registered-server list.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

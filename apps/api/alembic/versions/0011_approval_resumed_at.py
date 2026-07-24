@@ -21,7 +21,7 @@ down_revision: str | None = "0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-SCHEMA = "agentos"
+SCHEMA = "curie"
 
 
 def upgrade() -> None:
@@ -46,7 +46,7 @@ def upgrade() -> None:
     # TTL risks re-waking a thread whose marker expired between the window and the
     # true TTL). Both are one-time, deploy-only effects; change the two together.
     op.execute(
-        "UPDATE agentos.approvals SET resumed_at = resolved_at "
+        "UPDATE curie.approvals SET resumed_at = resolved_at "
         "WHERE status IN ('approved','rejected') AND resolved_at IS NOT NULL "
         "AND resolved_at < now() - interval '24 hours'"
     )

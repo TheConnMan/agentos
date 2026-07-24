@@ -1,7 +1,7 @@
-//! AgentOS CLI library: everything behind the `agentos` binary.
+//! Curie CLI library: everything behind the `curie` binary.
 //!
 //! The CLI speaks only the frozen contracts: ACI frames over HTTP/NDJSON to a
-//! local runner container (via the generated `agentos-aci-protocol` crate) and
+//! local runner container (via the generated `curie-aci-protocol` crate) and
 //! the platform API's committed OpenAPI surface. Task I1.
 
 pub mod api;

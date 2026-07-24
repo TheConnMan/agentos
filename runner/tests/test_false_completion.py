@@ -12,10 +12,10 @@ import json
 
 import anyio
 from aci_protocol import Event
-from agentos_runner.fake import FakeModelSession
-from agentos_runner.otel import RunTracer
-from agentos_runner.session import FALSE_COMPLETION_CLASSIFICATION, SessionRunner
-from agentos_runner.side_effects import SideEffectClassifier
+from curie_runner.fake import FakeModelSession
+from curie_runner.otel import RunTracer
+from curie_runner.session import FALSE_COMPLETION_CLASSIFICATION, SessionRunner
+from curie_runner.side_effects import SideEffectClassifier
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 

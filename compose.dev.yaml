@@ -1,4 +1,4 @@
-# AgentOS local dev stack.
+# Curie local dev stack.
 #
 # Postgres + Valkey + Langfuse v3 (web + worker + ClickHouse) + MinIO + OTel
 # Collector, on a single node (~2.3 GB at light load). Every backend integration
@@ -9,16 +9,16 @@
 # Bring up core:  OTEL_EXPORTER_OTLP_ENDPOINT= docker compose --profile core -f compose.dev.yaml up -d
 # otel-collector is full-profile only; a core-only stack must blank the endpoint
 # or every span pays a synchronous DNS retry against an absent collector.
-# core = postgres, valkey, minio, minio-init, agentos-migrate, agentos-api, agentos-worker
-# full = core + clickhouse, langfuse-web, langfuse-worker, otel-collector, agentos-ui
-# The CLI `agentos local up` wraps these compose profile invocations.
+# core = postgres, valkey, minio, minio-init, curie-migrate, curie-api, curie-worker
+# full = core + clickhouse, langfuse-web, langfuse-worker, otel-collector, curie-ui
+# The CLI `curie local up` wraps these compose profile invocations.
 # Tear down:  docker compose -f compose.dev.yaml down        (keeps volumes; fast restart)
 # Wipe:       docker compose -f compose.dev.yaml down -v     (drops volumes; throwaway)
 #
 # Host ports use a distinctive 2xxxx block (host port = "2" + the service's
 # container port) to avoid common service defaults and stay below the OS
 # ephemeral port range (32768+):
-#   AgentOS Console ... http://localhost:28080
+#   Curie Console ... http://localhost:28080
 #   Langfuse UI ....... http://localhost:23000
 #   Postgres .......... localhost:25432
 #   Valkey ............ localhost:26379
@@ -31,7 +31,7 @@
 
 # Pin the Compose project name so `local up`/`down` target the same project
 # regardless of where this file sits (repo checkout or fetched cache dir).
-name: agentos
+name: curie
 
 x-langfuse-env: &langfuse-env
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
@@ -62,9 +62,9 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
 
-# `core` is the minimal stack for `agentos local message`; `full` is the whole
-# dev stack. Core services belong to both profiles. `agentos local up` selects
-# `full`, and `agentos local up --minimal` selects `core`.
+# `core` is the minimal stack for `curie local message`; `full` is the whole
+# dev stack. Core services belong to both profiles. `curie local up` selects
+# `full`, and `curie local up --minimal` selects `core`.
 x-core-profiles: &core_profiles [core, full]
 x-full-profiles: &full_profiles [full]
 
@@ -161,10 +161,10 @@ services:
   ollama:
     image: ollama/ollama:0.24.0
     profiles: [local-model]
-    # Multi-homed onto agentos_runner (#631) so a hardened runner on that
+    # Multi-homed onto curie_runner (#631) so a hardened runner on that
     # isolated network can resolve `ollama` by name for --local-model, while the
     # data tier stays off it.
-    networks: [default, agentos_runner]
+    networks: [default, curie_runner]
     ports:
       - "21434:11434"
     volumes:
@@ -184,8 +184,8 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-      AGENTOS_MODEL: ${AGENTOS_MODEL:-qwen3:4b}
-    entrypoint: ["/bin/sh", "-c", "ollama pull \"$$AGENTOS_MODEL\""]
+      CURIE_MODEL: ${CURIE_MODEL:-qwen3:4b}
+    entrypoint: ["/bin/sh", "-c", "ollama pull \"$$CURIE_MODEL\""]
     restart: "no"
 
   langfuse-worker:
@@ -230,30 +230,30 @@ services:
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-dev-nextauth-secret-change-me}
       # Headless bootstrap so the OTel Collector has known keys to authenticate
       # with on first boot (no manual key-minting step). Dev-only values.
-      LANGFUSE_INIT_ORG_ID: agentos
-      LANGFUSE_INIT_ORG_NAME: AgentOS
-      LANGFUSE_INIT_PROJECT_ID: agentos-dev
-      LANGFUSE_INIT_PROJECT_NAME: agentos-dev
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-agentos-dev
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-agentos-dev
-      LANGFUSE_INIT_USER_EMAIL: dev@agentos.local
-      LANGFUSE_INIT_USER_NAME: AgentOS Dev
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-agentos-dev-password}
+      LANGFUSE_INIT_ORG_ID: curie
+      LANGFUSE_INIT_ORG_NAME: Curie
+      LANGFUSE_INIT_PROJECT_ID: curie-dev
+      LANGFUSE_INIT_PROJECT_NAME: curie-dev
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-curie-dev
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-curie-dev
+      LANGFUSE_INIT_USER_EMAIL: dev@curie.local
+      LANGFUSE_INIT_USER_NAME: Curie Dev
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-curie-dev-password}
     restart: unless-stopped
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
     profiles: *full_profiles
-    # Multi-homed onto agentos_runner (#631): a hardened runner exports OTLP to
+    # Multi-homed onto curie_runner (#631): a hardened runner exports OTLP to
     # `otel-collector:4318` from the isolated runner network, while the collector
     # still reaches langfuse-web on the default network.
-    networks: [default, agentos_runner]
+    networks: [default, curie_runner]
     command: ["--config=/etc/otel/collector-config.yaml"]
     depends_on:
       langfuse-web:
         condition: service_started
     environment:
-      # base64("pk-lf-agentos-dev:sk-lf-agentos-dev"); matches the LANGFUSE_INIT keys above.
+      # base64("pk-lf-curie-dev:sk-lf-curie-dev"); matches the LANGFUSE_INIT keys above.
       LANGFUSE_OTLP_AUTH_HEADER: ${LANGFUSE_OTLP_AUTH_HEADER:-Basic cGstbGYtYWdlbnRvcy1kZXY6c2stbGYtYWdlbnRvcy1kZXY=}
     volumes:
       - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
@@ -262,13 +262,13 @@ services:
       - "24318:4318"
     restart: unless-stopped
 
-  # ---- AgentOS product services (the local product loop) --------------------
+  # ---- Curie product services (the local product loop) --------------------
   #
   # These three services turn the backing stack above into a one-command local
-  # product loop. `agentos local up` brings everything up, then:
-  #   agentos local deploy --plugin-dir <dir> --slack-channel <C...> \
+  # product loop. `curie local up` brings everything up, then:
+  #   curie local deploy --plugin-dir <dir> --slack-channel <C...> \
   #                  --api-url http://localhost:28000
-  #   agentos local message "<question>"
+  #   curie local message "<question>"
   # drives a real queue -> worker -> sandboxed runner -> reply roundtrip, no
   # Slack and no Kubernetes. They use the same published images the chart
   # deploys (only the worker adds a thin local docker-CLI overlay; see below).
@@ -279,18 +279,18 @@ services:
   # One-shot: bring the Postgres schema to head before api/worker boot. The API
   # image ships the Alembic tree but its CMD only runs uvicorn, so migrations
   # run here (mirrors the chart's api migrate init container). Migration 0001
-  # creates the `agentos` schema, so this also gates on Postgres being reachable.
+  # creates the `curie` schema, so this also gates on Postgres being reachable.
   #
-  # AGENTOS_BASE_TAG overrides the tag pulled for the api image (and, below,
+  # CURIE_BASE_TAG overrides the tag pulled for the api image (and, below,
   # the worker-local overlay's FROM base) in one shot. Defaults to `latest`
   # (today's pull-based behavior, unchanged for anyone who doesn't set it). A
   # run with no registry auth -- e.g. CI building images from source -- can set
-  # AGENTOS_BASE_TAG to a tag it built and tagged locally (the `ci-local`
+  # CURIE_BASE_TAG to a tag it built and tagged locally (the `ci-local`
   # convention the `worker-local-image` CI job already uses) so compose
   # resolves that local image instead of pulling, and instead of retagging the
   # build to `:latest` and silently shadowing whatever `:latest` meant before.
-  agentos-migrate:
-    image: ghcr.io/curie-eng/agentos-api:${AGENTOS_BASE_TAG:-latest}
+  curie-migrate:
+    image: ghcr.io/curie-eng/curie-api:${CURIE_BASE_TAG:-latest}
     profiles: *core_profiles
     depends_on:
       postgres:
@@ -298,25 +298,25 @@ services:
     command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
-      DB_SCHEMA: agentos
+      DB_SCHEMA: curie
     restart: "no"
 
   # The platform API. On the compose network, reaching Postgres/Valkey/MinIO by
-  # service name. Published on host 28000 for the CLI (`agentos local deploy`, and the
-  # `agentos local message` channel lookup).
-  agentos-api:
-    # Same AGENTOS_BASE_TAG override as agentos-migrate above (both pull the
+  # service name. Published on host 28000 for the CLI (`curie local deploy`, and the
+  # `curie local message` channel lookup).
+  curie-api:
+    # Same CURIE_BASE_TAG override as curie-migrate above (both pull the
     # same image); kept in sync deliberately, not duplicated by accident.
-    image: ghcr.io/curie-eng/agentos-api:${AGENTOS_BASE_TAG:-latest}
+    image: ghcr.io/curie-eng/curie-api:${CURIE_BASE_TAG:-latest}
     profiles: *core_profiles
-    # Multi-homed onto agentos_runner (#631): the runner's documented `state`
+    # Multi-homed onto curie_runner (#631): the runner's documented `state`
     # dependency is the API's /agents/.../state endpoints, so the API is the one
     # control-plane surface reachable from the isolated runner network. Being a
-    # core-profile always-up service, it also guarantees the agentos_runner
+    # core-profile always-up service, it also guarantees the curie_runner
     # network exists even for a `--minimal` (core-only) stack, so the worker's
-    # `--network agentos_runner` always resolves. The data tier
+    # `--network curie_runner` always resolves. The data tier
     # (postgres/valkey/minio/clickhouse) is deliberately NOT on this network.
-    networks: [default, agentos_runner]
+    networks: [default, curie_runner]
     depends_on:
       postgres:
         condition: service_healthy
@@ -329,22 +329,22 @@ services:
       # rather than a failure when langfuse (the full-profile adopter) is absent.
       minio-init:
         condition: service_completed_successfully
-      agentos-migrate:
+      curie-migrate:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
-      DB_SCHEMA: agentos
-      API_KEY: agentos-dev-key
+      DB_SCHEMA: curie
+      API_KEY: curie-dev-key
       VALKEY_HOST: valkey
       VALKEY_PORT: "6379"
       VALKEY_PASSWORD: ${VALKEY_PASSWORD:-valkeypass}
       S3_ENDPOINT_URL: http://minio:9000
       S3_ACCESS_KEY: minio
       S3_SECRET_KEY: miniosecret
-      BUNDLE_BUCKET: agentos-bundles
+      BUNDLE_BUCKET: curie-bundles
       LANGFUSE_HOST: http://langfuse-web:3000
-      LANGFUSE_PUBLIC_KEY: pk-lf-agentos-dev
-      LANGFUSE_SECRET_KEY: sk-lf-agentos-dev
+      LANGFUSE_PUBLIC_KEY: pk-lf-curie-dev
+      LANGFUSE_SECRET_KEY: sk-lf-curie-dev
       # Approval user-group authorizers (#420) look up Slack usergroup
       # membership from the API itself, so the API reads the same bot token the
       # worker and dispatcher use. Empty by default: the Slack-free local loop
@@ -367,19 +367,19 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # The AgentOS console: nginx serving the static SPA, reverse-proxying `/api/`
-  # to the compose `agentos-api` (single substrate, same wiring the chart's UI
+  # The Curie console: nginx serving the static SPA, reverse-proxying `/api/`
+  # to the compose `curie-api` (single substrate, same wiring the chart's UI
   # uses). Talks to NOTHING else. Published on host 28080 from the 2xxxx block.
   # The image is fixture-by-default, so the CLI advertises the wired
   # `http://localhost:28080/?api=1` URL and `local up` opens it connected to the API.
-  agentos-ui:
-    image: ghcr.io/curie-eng/agentos-ui:latest
+  curie-ui:
+    image: ghcr.io/curie-eng/curie-ui:latest
     profiles: *full_profiles
     depends_on:
-      agentos-api:
+      curie-api:
         condition: service_healthy
     environment:
-      AGENTOS_API_TARGET: http://agentos-api:8000
+      CURIE_API_TARGET: http://curie-api:8000
     ports:
       - "28080:8080"
     healthcheck:
@@ -390,7 +390,7 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # The worker, containerized so `agentos local up` runs the full loop with no
+  # The worker, containerized so `curie local up` runs the full loop with no
   # hand-run host process. It uses the DOCKER sandbox substrate: it spawns runner
   # CONTAINERS on the host's Docker daemon through the mounted socket.
   #
@@ -399,8 +399,8 @@ services:
   # host's docker CLI (i.e. host root). This is a LOCAL DEVELOPER CONVENIENCE and
   # is NOT the Kubernetes security boundary -- it is identical in power to the
   # documented host-process middle mode (a developer running
-  # `python -m agentos_worker` with docker access). Do NOT model production on
-  # this. The hardened path is the Helm deployment (charts/agentos): the worker
+  # `python -m curie_worker` with docker access). Do NOT model production on
+  # this. The hardened path is the Helm deployment (charts/curie): the worker
   # there uses the Kubernetes substrate (no docker socket), and runner sandboxes
   # run under gVisor with a default-deny egress NetworkPolicy. The socket mount
   # and user:0 are confined to THIS service; no other service in this file gets
@@ -410,29 +410,29 @@ services:
   # worker itself is not: each runner boots with a read-only rootfs (+ tmpfs for
   # /tmp and HOME), all Linux capabilities dropped, no-new-privileges, the
   # default seccomp profile, and bounded pids/memory/cpu, and joins the isolated
-  # `agentos_runner` network (no data-tier reach, no docker socket). This is
+  # `curie_runner` network (no data-tier reach, no docker socket). This is
   # practical trusted-bundle defense-in-depth for local mode -- see
-  # apps/worker/src/agentos_worker/sandbox/docker.py (RunnerHardening). Local mode
+  # apps/worker/src/curie_worker/sandbox/docker.py (RunnerHardening). Local mode
   # accepts TRUSTED bundles only; it is not a substitute for the K8s boundary.
   #
   # network_mode: host recreates the exact topology the Docker substrate was
   # written and tested against (the host-process middle mode): the worker reaches
   # the backing stores on their published host ports (localhost 25432/26379/29000),
   # dials each runner on the loopback host port Docker publishes for it, and
-  # reaches the `agentos local message` Slack stub at localhost:8155.
-  agentos-worker:
+  # reaches the `curie local message` Slack stub at localhost:8155.
+  curie-worker:
     build:
       context: compose
       dockerfile: worker-local.Dockerfile
-      # Threads AGENTOS_BASE_TAG through to the overlay's own ARG BASE_TAG
+      # Threads CURIE_BASE_TAG through to the overlay's own ARG BASE_TAG
       # (compose/worker-local.Dockerfile), which pins its `FROM
-      # ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` base. Without this the
+      # ghcr.io/curie-eng/curie-worker:${BASE_TAG}` base. Without this the
       # arg was never wired, so the Dockerfile silently fell back to its own
       # `latest` default regardless of what the api/migrate override above was
       # set to. Same variable, same default, so one override can drive all
       # three services uniformly.
       args:
-        BASE_TAG: ${AGENTOS_BASE_TAG:-latest}
+        BASE_TAG: ${CURIE_BASE_TAG:-latest}
     profiles: *core_profiles
     depends_on:
       postgres:
@@ -441,7 +441,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      agentos-migrate:
+      curie-migrate:
         condition: service_completed_successfully
       # When the local-model profile is on, wait for the one-shot model pull to
       # finish (and treat its clean exit as expected success, so `up --wait`
@@ -459,49 +459,49 @@ services:
       # runner runs on the HOST daemon, that bind source must resolve on the host
       # at the SAME absolute path the worker used. An identical host:container
       # path plus TMPDIR pointed here makes the worker's tempdir host-resolvable.
-      - /tmp/agentos-bundles:/tmp/agentos-bundles
+      - /tmp/curie-bundles:/tmp/curie-bundles
     environment:
-      - AGENTOS_SANDBOX_SUBSTRATE=docker
-      - AGENTOS_RUNNER_IMAGE=ghcr.io/curie-eng/agentos-runner:latest
-      - TMPDIR=/tmp/agentos-bundles
+      - CURIE_SANDBOX_SUBSTRATE=docker
+      - CURIE_RUNNER_IMAGE=ghcr.io/curie-eng/curie-runner:latest
+      - TMPDIR=/tmp/curie-bundles
       - VALKEY_HOST=localhost
       - VALKEY_PORT=26379
       - VALKEY_PASSWORD=${VALKEY_PASSWORD:-valkeypass}
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:25432/postgres
-      - DB_SCHEMA=agentos
+      - DB_SCHEMA=curie
       - S3_ENDPOINT_URL=http://localhost:29000
       - S3_ACCESS_KEY=minio
       - S3_SECRET_KEY=miniosecret
-      - BUNDLE_BUCKET=agentos-bundles
-      - AGENTOS_API_URL=http://localhost:28000
+      - BUNDLE_BUCKET=curie-bundles
+      - CURIE_API_URL=http://localhost:28000
       # The worker runs host-net, so it self-dials the API at the published
       # localhost port above. But the runner containers it spawns join the
-      # bridge runner network (agentos_runner), where that localhost port is
+      # bridge runner network (curie_runner), where that localhost port is
       # unreachable -- they reach the API only by its in-network service name.
-      # AGENTOS_MEMORY_REF/AGENTOS_HISTORY_REF are minted for the runner to
+      # CURIE_MEMORY_REF/CURIE_HISTORY_REF are minted for the runner to
       # dereference, so they must be built from this runner-facing base, not the
-      # worker's self-dial URL (#678). agentos-api joins agentos_runner (via its
+      # worker's self-dial URL (#678). curie-api joins curie_runner (via its
       # network membership), so this name resolves from a spawned runner.
-      - AGENTOS_RUNNER_API_URL=http://agentos-api:8000
+      - CURIE_RUNNER_API_URL=http://curie-api:8000
       - SLACK_API_BASE_URL=${SLACK_API_BASE_URL-http://localhost:8155/api/}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-dev}
-      # Fake model by default (no credential needed). `agentos local up` reaches
+      # Fake model by default (no credential needed). `curie local up` reaches
       # skill-tier parity: when a credential (one of the bare names below) is set
-      # in your SHELL it injects AGENTOS_FAKE_MODEL=0 automatically, so local goes
-      # live like `skill up`. Set AGENTOS_FAKE_MODEL=1 in your shell to force the
+      # in your SHELL it injects CURIE_FAKE_MODEL=0 automatically, so local goes
+      # live like `skill up`. Set CURIE_FAKE_MODEL=1 in your shell to force the
       # fake model even with a credential. Provide credentials in the SHELL only,
       # never in this file: the bare names below forward from your environment.
-      - AGENTOS_FAKE_MODEL=${AGENTOS_FAKE_MODEL:-1}
+      - CURIE_FAKE_MODEL=${CURIE_FAKE_MODEL:-1}
       - ANTHROPIC_API_KEY
       - CLAUDE_CODE_OAUTH_TOKEN
-      - AGENTOS_CREDENTIALS
+      - CURIE_CREDENTIALS
       # By default, the worker joins spawned sandbox containers to the DEDICATED
-      # runner network (AGENTOS_DOCKER_NETWORK=agentos_runner, #631) and points
+      # runner network (CURIE_DOCKER_NETWORK=curie_runner, #631) and points
       # them at the shipped collector (OTEL_EXPORTER_OTLP_ENDPOINT=
-      # http://otel-collector:4318), so a plain `agentos local up` traces with no
-      # manual flags. agentos_runner carries only the runner's documented
+      # http://otel-collector:4318), so a plain `curie local up` traces with no
+      # manual flags. curie_runner carries only the runner's documented
       # dependencies -- otel-collector (telemetry), ollama (--local-model), and
-      # agentos-api (state) -- NOT the data tier (postgres/valkey/minio), so a
+      # curie-api (state) -- NOT the data tier (postgres/valkey/minio), so a
       # trusted-but-buggy bundle cannot reach the stores' embedded credentials.
       # The collector join is also what lets --local-model resolve ollama by name.
       # Both are overridable from the shell.
@@ -509,21 +509,21 @@ services:
       # The endpoint default is what a full-profile `local up` gets. It uses the
       # `${VAR-default}` form (substitute only when UNSET), not `${VAR:-default}`
       # (substitute when unset OR empty), so an explicit empty value means "no
-      # endpoint". That is what lets `agentos local up --minimal` suppress it:
+      # endpoint". That is what lets `curie local up --minimal` suppress it:
       # --minimal selects the `core` profile, which does not start otel-collector,
       # and a runner pointed at a host that never resolves stalls on synchronous
-      # export retries per span. AGENTOS_DOCKER_NETWORK stays on `:-` because the
-      # runner network is created (via agentos-api's membership) under `core` too.
-      - AGENTOS_MODEL_BASE_URL=${AGENTOS_MODEL_BASE_URL:-}
-      - AGENTOS_MODEL_API_BACKEND=${AGENTOS_MODEL_API_BACKEND:-}
-      - AGENTOS_MODEL_ENV_KEY=${AGENTOS_MODEL_ENV_KEY:-}
-      - AGENTOS_MODEL=${AGENTOS_MODEL:-}
+      # export retries per span. CURIE_DOCKER_NETWORK stays on `:-` because the
+      # runner network is created (via curie-api's membership) under `core` too.
+      - CURIE_MODEL_BASE_URL=${CURIE_MODEL_BASE_URL:-}
+      - CURIE_MODEL_API_BACKEND=${CURIE_MODEL_API_BACKEND:-}
+      - CURIE_MODEL_ENV_KEY=${CURIE_MODEL_ENV_KEY:-}
+      - CURIE_MODEL=${CURIE_MODEL:-}
       # Opt-in false-completion check (#517, #669): observe-only, so it defaults
       # off here exactly like local up preserves every other feature's current
-      # behavior. Set AGENTOS_FALSE_COMPLETION_CHECK=1 in your shell to forward
+      # behavior. Set CURIE_FALSE_COMPLETION_CHECK=1 in your shell to forward
       # it to the worker, which forwards it into every claim's boot env.
-      - AGENTOS_FALSE_COMPLETION_CHECK=${AGENTOS_FALSE_COMPLETION_CHECK:-}
-      - AGENTOS_DOCKER_NETWORK=${AGENTOS_DOCKER_NETWORK:-agentos_runner}
+      - CURIE_FALSE_COMPLETION_CHECK=${CURIE_FALSE_COMPLETION_CHECK:-}
+      - CURIE_DOCKER_NETWORK=${CURIE_DOCKER_NETWORK:-curie_runner}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
     restart: unless-stopped
 
@@ -537,19 +537,19 @@ services:
   #   export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
   #   export SLACK_API_BASE_URL=          # empty: un-wire the worker's stub
   #   docker compose --profile full --profile slack -f compose.dev.yaml up -d
-  #   (or: agentos local up --slack)
+  #   (or: curie local up --slack)
   #
   # Caveat: Slack allows exactly one Socket Mode owner per app token at a time.
   # A local dispatcher and a cluster dispatcher on the same Slack app conflict.
   # Use one dispatcher per app. This is why the service is behind the `slack`
   # profile and disabled by default.
-  agentos-dispatcher:
-    image: ghcr.io/curie-eng/agentos-dispatcher:latest
+  curie-dispatcher:
+    image: ghcr.io/curie-eng/curie-dispatcher:latest
     profiles: [slack]
     depends_on:
       valkey:
         condition: service_healthy
-      agentos-api:
+      curie-api:
         condition: service_healthy
     environment:
       VALKEY_HOST: valkey
@@ -558,26 +558,26 @@ services:
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
-      # In-network form, matching the UI's AGENTOS_API_TARGET above. The
+      # In-network form, matching the UI's CURIE_API_TARGET above. The
       # published host port is unreachable from this bridge-network container.
-      AGENTOS_API_URL: http://agentos-api:8000
-      # Mirrors agentos-api's API_KEY so resolve calls authenticate. Wired
+      CURIE_API_URL: http://curie-api:8000
+      # Mirrors curie-api's API_KEY so resolve calls authenticate. Wired
       # explicitly rather than relying on the two defaults happening to match.
-      AGENTOS_API_KEY: agentos-dev-key
+      CURIE_API_KEY: curie-dev-key
     restart: unless-stopped
 
 networks:
   # The dedicated runner network (#631). Spawned runner containers join THIS
-  # (AGENTOS_DOCKER_NETWORK=agentos_runner), never the default network that
+  # (CURIE_DOCKER_NETWORK=curie_runner), never the default network that
   # carries the data tier (postgres/valkey/minio/clickhouse). Only the runner's
   # documented dependencies are multi-homed onto it -- otel-collector
-  # (telemetry), ollama (--local-model), and agentos-api (state) -- so a
+  # (telemetry), ollama (--local-model), and curie-api (state) -- so a
   # trusted-but-buggy bundle cannot reach the stores' embedded credentials, and a
   # real-model run still gets external egress (this is a normal, non-`internal`
   # bridge). `name:` pins the actual network name so the worker's
-  # `--network agentos_runner` resolves regardless of the compose project name.
-  agentos_runner:
-    name: agentos_runner
+  # `--network curie_runner` resolves regardless of the compose project name.
+  curie_runner:
+    name: curie_runner
 
 volumes:
   postgres_data:

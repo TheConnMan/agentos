@@ -181,7 +181,7 @@ export interface ApprovalRequest {
  *
  * ``session`` COMPOSES the frozen ``SessionConfig`` rather than extending it.
  * That nesting is the ACI-vs-platform boundary: a runner token, approval
- * plumbing, and a history port are AgentOS platform operations, not the
+ * plumbing, and a history port are Curie platform operations, not the
  * interface a third-party ACI-conformant runner implements. Inheriting would
  * tell every future implementer otherwise (ADR-0049).
  *
@@ -192,8 +192,8 @@ export interface ApprovalRequest {
  * deliberately no whole-model ``to_env`` on the wire path. ``render_worker`` is
  * the one real render surface; ``to_env`` exists for round-trip checks only.
  *
- * **Authority, not arity, is the invariant.** ``AGENTOS_SANDBOX_ID`` and
- * ``AGENTOS_RUNNER_PORT`` are substrate-authoritative: identity derives from
+ * **Authority, not arity, is the invariant.** ``CURIE_SANDBOX_ID`` and
+ * ``CURIE_RUNNER_PORT`` are substrate-authoritative: identity derives from
  * the pod name (``fieldRef: metadata.name``), and because the chart sets
  * ``envVarsInjectionPolicy: Overrides`` a worker write would REPLACE it and
  * break the "pod name IS the sandbox id" invariant that trace stamping relies
@@ -233,7 +233,7 @@ export interface BootEnv {
 /**
  * The typed session setup contract.
  *
- * ``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);
+ * ``credentials_ref`` is a reference to injected secrets (CURIE_CREDENTIALS);
  * section 0 describes these as per-tool secrets via K8s Secret refs, so the
  * contract carries the reference, not the secret material itself.
  *
@@ -251,7 +251,7 @@ export interface SessionConfig {
   [k: string]: unknown;
 }
 /**
- * Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.
+ * Per-agent budget spec, carried as JSON in CURIE_BUDGET.
  *
  * ``task_budget_hint`` is the optional hint passed through to the model so it
  * self paces (section 6b); it is not a hard ceiling.

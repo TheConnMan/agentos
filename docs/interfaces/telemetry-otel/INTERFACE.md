@@ -10,8 +10,8 @@ order: 7
 ---
 # INTERFACE: Telemetry / OTEL
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 1 &nbsp;·&nbsp; **Swap-readiness grade:** B+
 <!-- END GENERATED: header -->
 
@@ -30,20 +30,20 @@ attributes on it.
 ## Current contract
 
 A second backend must ingest the OTLP-HTTP export produced in
-`runner/src/agentos_runner/otel.py`:
+`runner/src/curie_runner/otel.py`:
 
-- `build_tracer_provider` (`runner/src/agentos_runner/otel.py::build_tracer_provider`) returns a `TracerProvider` wired with an
+- `build_tracer_provider` (`runner/src/curie_runner/otel.py::build_tracer_provider`) returns a `TracerProvider` wired with an
   argument-free `OTLPSpanExporter()` over a `SimpleSpanProcessor`, or
   `None` when unconfigured (so offline runs neither export nor fail).
 - Endpoint/headers come from the standard `OTEL_EXPORTER_OTLP_*` env vars, read by the
   opentelemetry SDK itself inside `build_tracer_provider`; `SessionConfig.otel` is the typed view of
   the same vars.
-- `RunTracer.run_span` (`runner/src/agentos_runner/otel.py::RunTracer.run_span`) opens the root `agent.run` (`SpanKind.SERVER`)
+- `RunTracer.run_span` (`runner/src/curie_runner/otel.py::RunTracer.run_span`) opens the root `agent.run` (`SpanKind.SERVER`)
   and a child `llm.generation` span. `_GenerationSpan.record_model`
-  stamps `gen_ai.request.model` (`runner/src/agentos_runner/otel.py::_GenerationSpan.record_model`), `record_usage` stamps
-  `gen_ai.usage.input_tokens` / `output_tokens` (`runner/src/agentos_runner/otel.py::_GenerationSpan.record_usage`), and `tool_span` emits
+  stamps `gen_ai.request.model` (`runner/src/curie_runner/otel.py::_GenerationSpan.record_model`), `record_usage` stamps
+  `gen_ai.usage.input_tokens` / `output_tokens` (`runner/src/curie_runner/otel.py::_GenerationSpan.record_usage`), and `tool_span` emits
   an `execute_tool` child carrying `gen_ai.tool.name` and `gen_ai.operation.name`
-  (`runner/src/agentos_runner/otel.py::_GenerationSpan.tool_span`).
+  (`runner/src/curie_runner/otel.py::_GenerationSpan.tool_span`).
 
 ## Implementations today
 
@@ -58,7 +58,7 @@ module — and is out of scope for this write-side seam.
 The write path is clean but for three vendor-named attributes, all set at the source on
 the root span rather than mapped in the collector. `RunTracer.run_span` stamps
 `langfuse.trace.name`, `langfuse.session.id`, and `langfuse.user.id`
-(`runner/src/agentos_runner/otel.py::RunTracer.run_span`) so Langfuse maps them to its
+(`runner/src/curie_runner/otel.py::RunTracer.run_span`) so Langfuse maps them to its
 name/Sessions/Users features. A clean seam would emit neutral attributes the collector
 maps to the vendor names; today all three vendor names are set at the source.
 

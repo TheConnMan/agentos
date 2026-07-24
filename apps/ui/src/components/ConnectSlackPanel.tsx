@@ -56,7 +56,7 @@ export function ConnectSlackPanel() {
         </Chip>
       </div>
       <div style={{ fontSize: 13, color: C.muted, marginBottom: 16, maxWidth: 620, lineHeight: 1.5 }}>
-        AgentOS talks to Slack through a Slack app you own. Three one-time steps wire it up; after that every agent you
+        Curie talks to Slack through a Slack app you own. Three one-time steps wire it up; after that every agent you
         deploy is reachable in the channels you invite it to.
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

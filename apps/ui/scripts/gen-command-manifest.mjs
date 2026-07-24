@@ -1,5 +1,5 @@
 // Codegen: transform the CLI's `command-manifest.json` (emitted by
-// `agentos schema`) into a TypeScript module that exports it `as const`, so its
+// `curie schema`) into a TypeScript module that exports it `as const`, so its
 // command names and flags carry *literal* types. `cliCommand()` derives its
 // action-id union and per-action flag keys from those literals, which is what
 // makes a renamed/removed command or flag break `pnpm typecheck` (issue #278).

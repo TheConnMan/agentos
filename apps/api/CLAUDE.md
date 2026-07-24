@@ -40,7 +40,7 @@ worker, Postgres, MinIO/S3, Langfuse, and GitHub.
   be "the exact artifact that passed on dev," not a fresh build.
 - **The plugin bundle validator (`plugin_format.validate_bundle`) is the only
   gate a bundle passes through**, whether it arrives via the CLI's
-  `agentos local deploy` / `agentos cluster deploy`, the UI's create-agent
+  `curie local deploy` / `curie cluster deploy`, the UI's create-agent
   modal, or a git push. Do not
   duplicate validation logic in a new entry point; route through
   `bundles.py`.
@@ -79,7 +79,7 @@ configured, the 503 case above), and `metrics_default_window_hours`.
 ```bash
 cd apps/api && uv run alembic upgrade head   # apply schema once against compose.dev.yaml
 uv run pytest apps/api/tests -q               # from repo root; needs the dev stack up
-uv run python -m agentos_api.export_openapi   # regenerate committed openapi.json; check for drift
+uv run python -m curie_api.export_openapi   # regenerate committed openapi.json; check for drift
 ```
 
 `test_openapi_drift.py` fails if the committed OpenAPI spec is stale --

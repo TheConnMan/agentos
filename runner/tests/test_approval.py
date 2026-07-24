@@ -13,8 +13,8 @@ import json
 import anyio
 import pytest
 from aci_protocol import Event, Final, SessionStatus
-from agentos_runner.adapter import build_options
-from agentos_runner.approval import (
+from curie_runner.adapter import build_options
+from curie_runner.approval import (
     APPROVAL_SUMMARY_PREFIX,
     APPROVAL_TOOL_NAME,
     ApprovalGate,
@@ -28,17 +28,17 @@ from agentos_runner.approval import (
     resolve_approval_policy,
     summarize_tool_call,
 )
-from agentos_runner.config import RunnerConfig
-from agentos_runner.fake import (
+from curie_runner.config import RunnerConfig
+from curie_runner.fake import (
     APPROVAL_MARKER,
     FakeModelSession,
     approval_turn,
     default_turn,
 )
-from agentos_runner.otel import RunTracer
-from agentos_runner.session import SessionRunner, _apply_approval_override
-from agentos_runner.side_effects import SideEffectClassifier
-from agentos_runner.translate import TurnState, translate_message
+from curie_runner.otel import RunTracer
+from curie_runner.session import SessionRunner, _apply_approval_override
+from curie_runner.side_effects import SideEffectClassifier
+from curie_runner.translate import TurnState, translate_message
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 from claude_agent_sdk.types import (
     PermissionResultAllow,
@@ -234,9 +234,9 @@ def test_fake_default_script_reacts_to_marker() -> None:
 def test_approval_server_config_shape() -> None:
     config = build_approval_server()
     assert config["type"] == "sdk"
-    assert config["name"] == "agentos"
+    assert config["name"] == "curie"
     # The qualified tool name translation matches on.
-    assert APPROVAL_TOOL_NAME == "mcp__agentos__request_approval"
+    assert APPROVAL_TOOL_NAME == "mcp__curie__request_approval"
 
 
 # --- the permission gate (#245): canUseTool over approval-required tools --------
@@ -392,13 +392,13 @@ def test_build_options_permission_posture() -> None:
 
 def test_runner_config_parses_approval_required_tools() -> None:
     base = {
-        "AGENTOS_PLUGIN_DIR": "/plugin",
-        "AGENTOS_SESSION_ID": "s",
-        "AGENTOS_SANDBOX_ID": "b",
-        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+        "CURIE_PLUGIN_DIR": "/plugin",
+        "CURIE_SESSION_ID": "s",
+        "CURIE_SANDBOX_ID": "b",
+        "CURIE_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
     }
     config = RunnerConfig.from_env(
-        {**base, "AGENTOS_APPROVAL_REQUIRED_TOOLS": "Bash, mcp__github__create_issue ,"}
+        {**base, "CURIE_APPROVAL_REQUIRED_TOOLS": "Bash, mcp__github__create_issue ,"}
     )
     assert config.approval_required_tools == ["Bash", "mcp__github__create_issue"]
     assert RunnerConfig.from_env(base).approval_required_tools is None
@@ -407,7 +407,7 @@ def test_runner_config_parses_approval_required_tools() -> None:
 # --- the one-shot post-approval allowance (#430, ADR-0035) ----------------------
 #
 # A resume-boot grant lets exactly ONE call to the approved tool through on the
-# boot turn, then re-arms. The worker injects AGENTOS_APPROVAL_GRANT_TOOL from
+# boot turn, then re-arms. The worker injects CURIE_APPROVAL_GRANT_TOOL from
 # durable state; here we exercise the runner half: the gate's grant_tool,
 # consume_grant, the reset() boot-turn semantics, and build_can_use_tool.
 
@@ -556,20 +556,20 @@ def test_consume_grant_only_matches_the_named_tool() -> None:
 
 def test_runner_config_parses_approval_grant_tool() -> None:
     base = {
-        "AGENTOS_PLUGIN_DIR": "/plugin",
-        "AGENTOS_SESSION_ID": "s",
-        "AGENTOS_SANDBOX_ID": "b",
-        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+        "CURIE_PLUGIN_DIR": "/plugin",
+        "CURIE_SESSION_ID": "s",
+        "CURIE_SANDBOX_ID": "b",
+        "CURIE_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
     }
     # A value is stripped down to the bare tool name.
     config = RunnerConfig.from_env(
-        {**base, "AGENTOS_APPROVAL_GRANT_TOOL": " mcp__github__create_issue "}
+        {**base, "CURIE_APPROVAL_GRANT_TOOL": " mcp__github__create_issue "}
     )
     assert config.approval_grant_tool == "mcp__github__create_issue"
     # Absent -> None; empty/whitespace -> None.
     assert RunnerConfig.from_env(base).approval_grant_tool is None
     assert (
-        RunnerConfig.from_env({**base, "AGENTOS_APPROVAL_GRANT_TOOL": "  "}).approval_grant_tool
+        RunnerConfig.from_env({**base, "CURIE_APPROVAL_GRANT_TOOL": "  "}).approval_grant_tool
         is None
     )
 
@@ -580,7 +580,7 @@ def test_runner_config_parses_approval_grant_tool() -> None:
 def test_load_approval_policy_reads_manifest_gates(tmp_path) -> None:
     import json as _json
 
-    from agentos_runner.approval import load_approval_policy
+    from curie_runner.approval import load_approval_policy
 
     plugin = tmp_path / ".claude-plugin"
     plugin.mkdir()
@@ -1044,7 +1044,7 @@ async def _run_container_fake_policy_turn(
     """Drive a policy turn on the CONTAINER fake tier (#561).
 
     Unlike ``_run_policy_turn``, this wires the fake exactly as ``__main__``
-    does for ``AGENTOS_FAKE_MODEL`` -- ``can_use_tool=build_can_use_tool(gate)``
+    does for ``CURIE_FAKE_MODEL`` -- ``can_use_tool=build_can_use_tool(gate)``
     and ``approval_gate=gate`` -- with NO test-only callback that executes the
     approval tool. So it exercises the real production offline path: the fake
     itself must run the route-resolution decision table. Before #561 it did not,
@@ -1701,7 +1701,7 @@ def _warnings(frames: list[dict[str, object]]) -> list[dict[str, object]]:
     frame with it. It must NOT be the terminal final (the final stays clean).
     """
 
-    from agentos_runner.session import APPROVAL_NOT_ACTED_CLASSIFICATION
+    from curie_runner.session import APPROVAL_NOT_ACTED_CLASSIFICATION
 
     return [
         f
@@ -1847,20 +1847,20 @@ def test_resumed_policy_turn_with_a_side_effecting_tool_does_not_warn() -> None:
 def test_resumed_kind_marker_grants_nothing() -> None:
     """(24) The marker is a FACT about the past, not a capability.
 
-    ``AGENTOS_APPROVAL_RESUMED_KIND=policy`` says "the approval you are resuming
+    ``CURIE_APPROVAL_RESUMED_KIND=policy`` says "the approval you are resuming
     from was a policy gate". It confers no authority -- contrast
-    ``AGENTOS_APPROVAL_GRANT_TOOL``, which does. With the marker set and no
+    ``CURIE_APPROVAL_GRANT_TOOL``, which does. With the marker set and no
     grant, a gated tool is still denied. This is what keeps #430 and #410 closed
     while A2 gets its instrumentation.
     """
 
     base = {
-        "AGENTOS_PLUGIN_DIR": "/plugin",
-        "AGENTOS_SESSION_ID": "s",
-        "AGENTOS_SANDBOX_ID": "b",
-        "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
+        "CURIE_PLUGIN_DIR": "/plugin",
+        "CURIE_SESSION_ID": "s",
+        "CURIE_SANDBOX_ID": "b",
+        "CURIE_BUDGET": '{"max_output_tokens_per_run": 1, "max_usd_per_day": 1.0}',
     }
-    config = RunnerConfig.from_env({**base, "AGENTOS_APPROVAL_RESUMED_KIND": "policy"})
+    config = RunnerConfig.from_env({**base, "CURIE_APPROVAL_RESUMED_KIND": "policy"})
     assert config.approval_resumed_kind == "policy"
     assert config.approval_grant_tool is None, (
         "the marker must not be mistaken for, or imply, a grant"
@@ -1980,7 +1980,7 @@ def test_resumed_policy_turn_that_halted_on_budget_does_not_warn() -> None:
 
 # --- #703: operator gate-name normalization + fail-closed ------------------------
 #
-# AGENTOS_APPROVAL_REQUIRED_TOOLS is taken verbatim, but the SDK plugin-prefixes a
+# CURIE_APPROVAL_REQUIRED_TOOLS is taken verbatim, but the SDK plugin-prefixes a
 # bundle MCP tool to mcp__plugin_<bundle>_<server>__<tool>. So an operator who
 # writes the natural shorthand mcp__<server>__<tool> never matches the effective
 # runtime name and the guarded call runs UNAPPROVED (a fail-open). build_approval_gate
@@ -2099,7 +2099,7 @@ def test_bare_non_builtin_operator_gate_warns_it_may_be_a_silent_no_op(caplog) -
     built-in tool is still armed verbatim (unchanged behavior -- we cannot
     fail closed here without an authoritative built-in tool list), but it
     must no longer be SILENT. This is exactly the shape that bit revenue-leak:
-    `AGENTOS_APPROVAL_REQUIRED_TOOLS=resolve_leak` (meant as shorthand for an
+    `CURIE_APPROVAL_REQUIRED_TOOLS=resolve_leak` (meant as shorthand for an
     in-bundle MCP tool) armed a literal name the SDK's `can_use_tool` callback
     can never match, with zero signal anywhere that the gate does nothing.
     """
@@ -2136,7 +2136,7 @@ def test_known_builtin_operator_gate_does_not_warn(caplog) -> None:
 
 
 # Provenance and inclusion criterion for these names (#736): see the comment
-# above `_KNOWN_BUILTIN_TOOLS` in runner/src/agentos_runner/approval.py.
+# above `_KNOWN_BUILTIN_TOOLS` in runner/src/curie_runner/approval.py.
 @pytest.mark.parametrize(
     "builtin",
     [

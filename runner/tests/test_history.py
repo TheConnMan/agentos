@@ -9,7 +9,7 @@ a real turn through the SessionRunner with the fake model.
 
 import anyio
 import pytest
-from agentos_runner.history import (
+from curie_runner.history import (
     HistoryError,
     NullTranscriptStore,
     StateApiTranscriptStore,
@@ -202,9 +202,9 @@ def test_state_store_load_rejects_non_array() -> None:
 
 def _recording_runner(store: TranscriptStore):
     """A SessionRunner wired to the fake model and a recording transcript store."""
-    from agentos_runner import RunTracer, SideEffectClassifier
-    from agentos_runner.fake import FakeModelSession, default_turn
-    from agentos_runner.session import SessionRunner
+    from curie_runner import RunTracer, SideEffectClassifier
+    from curie_runner.fake import FakeModelSession, default_turn
+    from curie_runner.session import SessionRunner
 
     return SessionRunner(
         session_factory=lambda: FakeModelSession(default_turn),
@@ -254,9 +254,9 @@ def test_failed_turn_is_not_appended() -> None:
     # A turn that never produced a successful terminal final (final_text stays
     # None) must not be recorded, so the transcript holds only delivered answers.
     from aci_protocol import Event
-    from agentos_runner import RunTracer, SideEffectClassifier
-    from agentos_runner.session import SessionRunner
-    from agentos_runner.translate import TurnState
+    from curie_runner import RunTracer, SideEffectClassifier
+    from curie_runner.session import SessionRunner
+    from curie_runner.translate import TurnState
 
     store = _RecordingStore()
     runner = SessionRunner(
@@ -285,7 +285,7 @@ def test_failed_turn_is_not_appended() -> None:
 def test_compose_system_prompt_orders_memory_then_conversation_then_base() -> None:
     # Boot delivery (ADR-0029): durable memory leads, then this thread's recovered
     # conversation, then the bundle/env system prompt. Any part may be absent.
-    from agentos_runner.__main__ import _compose_system_prompt
+    from curie_runner.__main__ import _compose_system_prompt
 
     assert _compose_system_prompt("BASE", "MEM", "CONV") == "MEM\n\nCONV\n\nBASE"
     assert _compose_system_prompt("BASE", None, "CONV") == "CONV\n\nBASE"
@@ -296,9 +296,9 @@ def test_compose_system_prompt_orders_memory_then_conversation_then_base() -> No
 def test_record_turn_swallows_store_failure() -> None:
     # A transient store failure must never fail a turn the user already answered.
     from aci_protocol import Event
-    from agentos_runner import RunTracer, SideEffectClassifier
-    from agentos_runner.session import SessionRunner
-    from agentos_runner.translate import TurnState
+    from curie_runner import RunTracer, SideEffectClassifier
+    from curie_runner.session import SessionRunner
+    from curie_runner.translate import TurnState
 
     class _BoomStore:
         async def load(self) -> list[TurnRecord]:

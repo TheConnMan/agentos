@@ -4,7 +4,7 @@ Date: 2026-07-10
 Status: Proposed
 
 Proposes how "triggers beyond chat" (issue
-[#29](https://github.com/curie-eng/agentos/issues/29)) enter the system: which
+[#29](https://github.com/curie-eng/curie/issues/29)) enter the system: which
 service accepts a non-Slack trigger, and how a triggered turn produces output
 when there is no Slack placeholder to edit. This ADR is **Proposed**, not
 Accepted — it exists to get a decision from the worker/kernel owner before any
@@ -16,7 +16,7 @@ code lands, because the mechanism touches the sacred kernel/dispatcher seam
 
 Today the only way to start a turn is a Slack `app_mention`/DM: the dispatcher
 (Socket Mode, no inbound HTTP port) dedupes it, **posts a placeholder reply**,
-and `XADD`s a `QueuedSlackEvent` onto `agentos:runs`; the worker kernel later
+and `XADD`s a `QueuedSlackEvent` onto `curie:runs`; the worker kernel later
 edits that placeholder in place as the reply streams. `QueuedSlackEvent`
 therefore carries a `placeholder_ts` the kernel assumes exists.
 
@@ -31,7 +31,7 @@ guessed in a PR:
    ingress, but it is Socket-Mode-only with no inbound HTTP server. The API
    already owns HTTP ingress, already verifies an HMAC webhook (the GitHub
    git-flow hook, `routers/github.py` `verify_signature`), and already produces
-   to a Valkey stream (`agentos:evals`).
+   to a Valkey stream (`curie:evals`).
 2. **How does a triggered turn produce output?** A webhook has no Slack
    placeholder, but the kernel edits `placeholder_ts`. Either the ingress posts
    a placeholder before enqueuing (keeps the kernel unchanged, but spreads Slack
@@ -43,7 +43,7 @@ guessed in a PR:
 
 1. **The API accepts inbound triggers.** Add `POST /hooks/{agent}/{hook}` to
    `apps/api`, reusing the existing HMAC verification pattern (per-agent hook
-   secret, `x-agentos-signature-256` over the raw body, `hmac.compare_digest`)
+   secret, `x-curie-signature-256` over the raw body, `hmac.compare_digest`)
    and dedupe (`SET NX`) already proven on the GitHub webhook. The dispatcher
    stays Slack-only. Rationale: reuse the API's HTTP + HMAC + Valkey wiring
    instead of giving the Socket-Mode dispatcher a new inbound-server role.

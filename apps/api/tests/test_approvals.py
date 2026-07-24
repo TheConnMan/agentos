@@ -27,18 +27,18 @@ import pytest
 import redis
 import redis.asyncio as aioredis
 from aci_protocol import QueuedTurn
-from agentos_api import crud
-from agentos_api.config import get_settings
-from agentos_api.deps import get_approver_sets
-from agentos_api.main import create_app
-from agentos_api.models import Approval
-from agentos_api.resumequeue import ResumeQueue
-from agentos_api.resumereconciler import ResumeReconciler
-from agentos_api.sandbox_token import mint
-from agentos_api.slack_approvers import SlackApproverSetSelector
-from agentos_api.slack_usergroups import SlackUserGroupClient
-from agentos_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
-from agentos_test_support.valkey import (
+from curie_api import crud
+from curie_api.config import get_settings
+from curie_api.deps import get_approver_sets
+from curie_api.main import create_app
+from curie_api.models import Approval
+from curie_api.resumequeue import ResumeQueue
+from curie_api.resumereconciler import ResumeReconciler
+from curie_api.sandbox_token import mint
+from curie_api.slack_approvers import SlackApproverSetSelector
+from curie_api.slack_usergroups import SlackUserGroupClient
+from curie_api.sweeper import run_expiry_sweeper, sweep_expired_approvals
+from curie_test_support.valkey import (
     connect_or_skip,
 )
 from alembic import command
@@ -56,9 +56,9 @@ ALEMBIC_DIR = Path(__file__).resolve().parents[1] / "alembic"
 @pytest.fixture
 def runs_stream() -> Iterator[str]:
     """A per-test runs stream, so resolutions never feed the shared compose
-    worker's real ``agentos:runs`` consumer group."""
+    worker's real ``curie:runs`` consumer group."""
 
-    name = f"test:agentos:runs:{uuid.uuid4().hex}"
+    name = f"test:curie:runs:{uuid.uuid4().hex}"
     os.environ["RUNS_STREAM"] = name
     get_settings.cache_clear()
     yield name
@@ -109,7 +109,7 @@ def _seed_raw_approval(approval_id: uuid.UUID, summary: str) -> None:
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO agentos.approvals (id, conversation_id, author, "
+                        "INSERT INTO curie.approvals (id, conversation_id, author, "
                         "summary, reply_channel, reply_placeholder, dedupe_key, status) "
                         "VALUES (:id, :conv, :author, :summary, :ch, :ph, :dedupe, "
                         "'pending')"
@@ -139,7 +139,7 @@ def _read_provenance(approval_id: uuid.UUID) -> tuple[str | None, str | None]:
             async with engine.connect() as conn:
                 result = await conn.execute(
                     text(
-                        "SELECT gate_kind, granted_tool FROM agentos.approvals "
+                        "SELECT gate_kind, granted_tool FROM curie.approvals "
                         "WHERE id = :id"
                     ),
                     {"id": approval_id},
@@ -778,7 +778,7 @@ def _isolated_migration_db() -> Iterator[None]:
     """
 
     base = make_url(get_settings().database_url)
-    run_db = f"agentos_test_mig_{secrets.token_hex(4)}"
+    run_db = f"curie_test_mig_{secrets.token_hex(4)}"
 
     async def _admin(sql: str) -> None:
         conn = await asyncpg.connect(
@@ -872,7 +872,7 @@ def test_gate_kind_check_constraint_rejects_unknown_values() -> None:
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO agentos.approvals (id, conversation_id, "
+                        "INSERT INTO curie.approvals (id, conversation_id, "
                         "author, summary, reply_channel, reply_placeholder, "
                         "dedupe_key, status, gate_kind) VALUES (:id, :conv, "
                         ":author, :summary, :ch, :ph, :dedupe, 'pending', :gk)"

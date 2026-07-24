@@ -2,7 +2,7 @@
 
 Mirrors the `/health`-is-open test in test_auth.py: `/config` carries no
 `require_api_key` dependency, so the UI can read the workspace name before the
-user has supplied a key. The org name defaults to "AgentOS" and is overridable
+user has supplied a key. The org name defaults to "Curie" and is overridable
 via the `ORG_NAME` environment variable (the same env-driven Settings mechanism
 conftest uses for DATABASE_URL).
 """
@@ -10,7 +10,7 @@ conftest uses for DATABASE_URL).
 from typing import Any
 
 import pytest
-from agentos_api.config import get_settings
+from curie_api.config import get_settings
 
 
 def test_config_is_open(client: Any) -> None:
@@ -28,9 +28,9 @@ def test_config_ignores_a_bogus_key(client: Any) -> None:
     assert resp.status_code == 200
 
 
-def test_config_defaults_to_agentos(client: Any) -> None:
+def test_config_defaults_to_curie(client: Any) -> None:
     # With no ORG_NAME override the documented default is surfaced.
-    assert client.get("/config").json()["org_name"] == "AgentOS"
+    assert client.get("/config").json()["org_name"] == "Curie"
 
 
 def test_config_reflects_the_configured_org_name(

@@ -1,7 +1,7 @@
 # Connect your own Slack workspace to the local stack
 
-The `local` target (`agentos local up`, the full platform via docker compose)
-is Slack-free by default: `agentos local message` sends a synthetic Slack
+The `local` target (`curie local up`, the full platform via docker compose)
+is Slack-free by default: `curie local message` sends a synthetic Slack
 event and the worker posts replies at a local stub. This runbook wires a real
 Slack app of your own into that same compose stack so you can exercise real
 mentions, threads, and streamed replies without a Kubernetes cluster. Reach for
@@ -10,15 +10,15 @@ placeholder, live edits); stay on the Slack-free default for everyday plugin
 iteration. Prerequisite: a working `local` stack (see the
 [README's local target](../README.md)) and the runner image built once.
 
-The extra piece is an optional `agentos-dispatcher` service in
+The extra piece is an optional `curie-dispatcher` service in
 `compose.release.yaml`, gated behind a `slack` compose profile so it stays off
 until you opt in with real tokens.
 
 ```mermaid
 flowchart LR
   slack[Slack workspace]
-  dispatcher[agentos-dispatcher]
-  valkey[(Valkey stream agentos:runs)]
+  dispatcher[curie-dispatcher]
+  valkey[(Valkey stream curie:runs)]
   worker[worker plus runner]
 
   slack -->|Socket Mode outbound| dispatcher
@@ -50,7 +50,7 @@ subscriptions are correct from the start.
    Bolt app construction); leave it empty.
 
 The `assistant:write` scope in the manifest is only exercised if you enable the
-shimmer status indicator (`AGENTOS_SHIMMER`), which ALSO requires manually
+shimmer status indicator (`CURIE_SHIMMER`), which ALSO requires manually
 toggling **Agents & AI Apps** in the app config. That is a one-click manual step
 with no manifest key. Skip both if you are not using shimmer.
 
@@ -59,7 +59,7 @@ with no manifest key. Skip both if you are not using shimmer.
 Connecting Slack is not enough for the bot to reply. The worker resolves an
 inbound Slack event to an agent by matching the event's channel id against
 `agents.slack_channel` on equality (see
-[`../apps/worker/src/agentos_worker/binding.py`](../apps/worker/src/agentos_worker/binding.py)).
+[`../apps/worker/src/curie_worker/binding.py`](../apps/worker/src/curie_worker/binding.py)).
 So you must both invite the bot to the channel and deploy an agent bound to
 that channel's id.
 
@@ -71,7 +71,7 @@ that channel's id.
    port `28000`):
 
    ```bash
-   agentos local deploy --plugin-dir ./my-agent --slack-channel C0123ABCD \
+   curie local deploy --plugin-dir ./my-agent --slack-channel C0123ABCD \
      --api-url http://localhost:28000
    ```
 
@@ -87,21 +87,21 @@ Export the tokens into your shell and start the profile:
 export SLACK_APP_TOKEN=xapp-...
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_API_BASE_URL=          # empty: un-wire the worker's Slack stub -> real slack.com
-agentos local up --slack
+curie local up --slack
 
 # Raw Docker alternative (the dispatcher depends on valkey, a core service, so
 # pair `slack` with a base profile):
 docker compose --profile full --profile slack -f compose.release.yaml up -d
 ```
 
-`agentos local up --slack` appends the `slack` profile (the `agentos-dispatcher`
+`curie local up --slack` appends the `slack` profile (the `curie-dispatcher`
 service) onto the base `full` profile; `--minimal` pairs it with `core` instead.
 The token exports above are still required either way -- the flag only adds the
 profile, it does not set `SLACK_API_BASE_URL`.
 
 What each export does:
 
-- `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` are read by the `agentos-dispatcher`
+- `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` are read by the `curie-dispatcher`
   service (its `VALKEY_*` connection is already wired to the compose `valkey`
   service). A token-less dispatcher just backoff-reconnects forever, so the
   profile is meaningless without real tokens.
@@ -127,10 +127,10 @@ acks and posts an in-thread placeholder reply, the worker claims the job from
 the Valkey stream, and edits the placeholder in place as the real reply streams.
 
 Sanity-check the queue depth inside the valkey container (the stream key is
-`agentos:runs`):
+`curie:runs`):
 
 ```bash
-docker compose -f compose.release.yaml exec valkey valkey-cli -a valkeypass XLEN agentos:runs
+docker compose -f compose.release.yaml exec valkey valkey-cli -a valkeypass XLEN curie:runs
 ```
 
 `valkeypass` is the `.env.example` default (`VALKEY_PASSWORD`); substitute your
@@ -150,12 +150,12 @@ dispatcher before enabling `dispatcher.deploy=true` in the chart.
 Stop everything, including the dispatcher:
 
 ```bash
-agentos local down
+curie local down
 # or raw: docker compose -f compose.release.yaml down
 ```
 
 Because the `SLACK_*` exports persist in the shell, a later plain
-`agentos local up` in the SAME shell keeps the worker pointed at real Slack
+`curie local up` in the SAME shell keeps the worker pointed at real Slack
 (empty `SLACK_API_BASE_URL`) with no dispatcher feeding it. To fully return to
 the Slack-free stub, open a fresh shell or unset the variables:
 

@@ -7,9 +7,9 @@ Gives the scattered eval work one decision spine. Extends
 [ADR-0004](0004-langfuse-observability-and-eval-backbone.md) (Langfuse as the
 observability + eval backbone) and [ADR-0019](0019-freeze-eval-case-format.md)
 (the frozen eval-case format); it supersedes neither. It is the ordering and
-decision reference for epic [#26](https://github.com/curie-eng/agentos/issues/26)
+decision reference for epic [#26](https://github.com/curie-eng/curie/issues/26)
 and the eval issues under it. Read
-[ADR-0021](0021-agentos-is-a-harness-for-coding-agents.md) first: evals are the
+[ADR-0021](0021-curie-is-a-harness-for-coding-agents.md) first: evals are the
 contract the harness's parity promise is measured against.
 
 [ADR-0055](0055-the-fake-model-is-a-plumbing-fixture.md) **bounds** this ADR
@@ -32,7 +32,7 @@ The parity thesis (ADR-0021) is that **the same bundle plus the same
 contract that proves parity: a tier-to-tier divergence is the harness catching a
 real environment bug, not the agent's skill logic.
 
-**As a parity contract, the eval system does not yet prove what AgentOS advertises
+**As a parity contract, the eval system does not yet prove what Curie advertises
 it proves.** The execution surface is in place — the same suite does run at all
 three tiers — but what a green eval *asserts* is still "a string appeared in the
 final sentence," not "the agent did the work." A cold-start dogfood made this
@@ -46,30 +46,30 @@ Three axes are incomplete. Each is stated below as the code stands today.
 
 **1. Grading sees only the final sentence.** The frozen grader taxonomy is
 `exact | contains | regex`, and all three run against the turn's final answer text
-(`apps/worker/src/agentos_worker/eval/models.py`, `GraderKind`). A grader can
+(`apps/worker/src/curie_worker/eval/models.py`, `GraderKind`). A grader can
 confirm a version-shaped string appears in the reply; it cannot confirm the tool or
 deterministic engine that was *supposed* to produce that string was ever **called**,
 or that it returned a **structured result**. The trajectory is *already on the ACI
 wire* — the runner emits a `tool_note` (carrying the tool name) and a
-`side_effect_flag` for every tool use (`runner/src/agentos_runner/translate.py`) —
+`side_effect_flag` for every tool use (`runner/src/curie_runner/translate.py`) —
 and the eval runner already captures those frames into a `trajectory` list
 (`eval/runner.py`). Nothing in the frozen case format can assert against it. We are
 grading a keyhole view of a run we can already see in full.
 
 **2. A fake-model green is indistinguishable from a real one.** The fake model's
 `default_turn` emits a scripted `ToolUseBlock(name="Bash")`
-(`runner/src/agentos_runner/fake.py`), so on the fake-model CI path a text grader
+(`runner/src/curie_runner/fake.py`), so on the fake-model CI path a text grader
 greens without a model call — and a tool-call grader, once built, would green too.
 The fake is a plumbing fixture, not a subject under test, but nothing in the eval
 system says so. A green there proves the harness works, not the agent.
 
 **3. Promotion captures the input but throws away the behavior.** `POST
-/traces/{trace_id}/eval-case` (`apps/api/src/agentos_api/routers/runs.py`) reads a
+/traces/{trace_id}/eval-case` (`apps/api/src/curie_api/routers/runs.py`) reads a
 Langfuse trace, extracts and anonymizes the conversation, and emits a case in the
 frozen shape. But it grades with
 `GraderOut(kind="contains", expected=_expected_snippet(anon_output))` — a `contains`
 against a capped snippet of the output the run happened to produce
-(`apps/api/src/agentos_api/evalcase.py`). It never looks at the trajectory, so a
+(`apps/api/src/curie_api/evalcase.py`). It never looks at the trajectory, so a
 promoted case asserts the agent says something similar, not that it does the same
 work. There is no CLI verb, and provenance exists only as an `id` naming convention
 (`promoted-<trace_id>`), not a field. The most valuable cases are the ones reality
@@ -78,7 +78,7 @@ writes; today promotion turns them into the weakest grader we have.
 A fourth issue is not a harness gap but sets the standard the harness serves: **the
 committed example suites are unfalsifiable.** `examples/weather/evals/cases.json`
 passes on `contains: "weather"` for an input containing the word "weather"
-([#527](https://github.com/curie-eng/agentos/issues/527)). Because `init` seeds new
+([#527](https://github.com/curie-eng/curie/issues/527)). Because `init` seeds new
 bundles from these examples, a vacuous case is not one bad file; it is the pattern
 every new agent inherits.
 
@@ -91,7 +91,7 @@ decision that says how the pieces fit and in what order they land.
 
 ## Decision
 
-Evals are AgentOS's parity contract. We make that contract complete along three
+Evals are Curie's parity contract. We make that contract complete along three
 axes — **it runs everywhere, it grades the whole run, and it is fed by reality** —
 and we sequence the work so the highest-leverage, lowest-risk pieces land first.
 
@@ -142,7 +142,7 @@ eval needs to protect:
   *name* is on the wire today — and is scoped to a later phase.
 - **Trajectory / turn matcher** — an ordered or unordered set of tool calls
   occurred, and specifically **an approval gate was requested**
-  ([#262](https://github.com/curie-eng/agentos/issues/262)). Gate-exercising evals
+  ([#262](https://github.com/curie-eng/curie/issues/262)). Gate-exercising evals
   are how we prove a human-in-the-loop bundle actually pauses for approval
   ([ADR-0010](0010-approval-gates-and-human-in-the-loop.md)) rather than just
   emitting agreeable text. `side_effect_flag` and the approval-request frames are
@@ -171,7 +171,7 @@ phase that builds it; the two candidates are to refuse to record eval results fr
 fake-model run at all (the fake is a plumbing fixture, and its green belongs to the
 harness's own test suite, not to an agent's eval history), or an evidence check on
 the trajectory's provenance rather than its shape (the family of
-[#517](https://github.com/curie-eng/agentos/issues/517)). The first is cheaper and
+[#517](https://github.com/curie-eng/curie/issues/517)). The first is cheaper and
 is the default unless the phase finds a reason otherwise.
 
 ### 4. Trace to eval promotion: reality writes the best cases
@@ -180,7 +180,7 @@ Promotion must capture **behavior, not just words**. Extend the existing endpoin
 give it a CLI front door:
 
 ```
-agentos eval add-from-trace <trace-id> [--assert tool:<name>] [--assert contains:<text>]
+curie eval add-from-trace <trace-id> [--assert tool:<name>] [--assert contains:<text>]
 ```
 
 It reads the Langfuse trace (ADR-0004's store, addressed by trace id) and captures:
@@ -202,7 +202,7 @@ It reads the Langfuse trace (ADR-0004's store, addressed by trace id) and captur
 Provenance is recorded as a **field** on the promoted case, not inferred from the
 `id` string: the originating trace id is stamped so a case can be traced back to the
 run it came from. A guided, interview-style variant of this flow is
-[#260](https://github.com/curie-eng/agentos/issues/260) and layers on top of the same
+[#260](https://github.com/curie-eng/curie/issues/260) and layers on top of the same
 capture pipeline; per ADR-0021 that interview is agent-conducted, and the CLI stays
 the non-interactive `add-from-trace` mechanism underneath. This promotion pipeline is
 the spine of epic #26.
@@ -211,7 +211,7 @@ the spine of epic #26.
 
 Real model runs are non-deterministic; a single sample is a coin flip reported as a
 fact. Grading gains an optional sample count and a pass rule
-([#332](https://github.com/curie-eng/agentos/issues/332)): run a case *k* times and
+([#332](https://github.com/curie-eng/curie/issues/332)): run a case *k* times and
 pass on a threshold (majority, or pass@k / all-of-k for a flake-intolerant gate).
 The default stays **1** so today's suites and the fake-model CI path are unchanged
 and cheap; multi-sample is opt-in per case or per run, because it multiplies cost and
@@ -232,7 +232,7 @@ one over a trajectory grader.
   `EvalRunner`), and a `TrajectoryScorer` with five match modes is built and
   unit-tested — but **nothing injects it**: no CLI flag and no Job config supplies
   the `case_id -> TrajectorySpec` map it needs, so it cannot be run end to end
-  ([#389](https://github.com/curie-eng/agentos/issues/389)).
+  ([#389](https://github.com/curie-eng/curie/issues/389)).
 
   **Semantic grading is out of scope here and governed by
   [ADR-0042](0042-llm-as-a-verifier-grader-and-progress-signal.md).** This ADR
@@ -254,13 +254,13 @@ one over a trajectory grader.
   (`EvalRunResult.model` -> a Langfuse `model:` tag -> `GET /evals/matrix`), but two
   pieces are missing: `EvalCaseResult.cost_usd` is declared and read by the matrix
   yet **never populated**, so every per-model cost rollup reads `None`
-  ([#390](https://github.com/curie-eng/agentos/issues/390)); and no eval verb accepts
+  ([#390](https://github.com/curie-eng/curie/issues/390)); and no eval verb accepts
   a model, so there is no way to select one at eval time or sweep a suite across
-  several ([#526](https://github.com/curie-eng/agentos/issues/526)). This axis is a
+  several ([#526](https://github.com/curie-eng/curie/issues/526)). This axis is a
   reporting/fan-out concern that composes cleanly once the taxonomy is richer, and it
   feeds the cross-harness parity evals
-  ([#313](https://github.com/curie-eng/agentos/issues/313)) and the harness eval
-  delta ([#326](https://github.com/curie-eng/agentos/issues/326)), both matrix
+  ([#313](https://github.com/curie-eng/curie/issues/313)) and the harness eval
+  delta ([#326](https://github.com/curie-eng/curie/issues/326)), both matrix
   consumers rather than new grading machinery.
 
 ## What is built, and what this ADR asks for
@@ -305,7 +305,7 @@ Phases are sequenced by leverage-over-risk, not by which is most interesting.
   already captures it. Tier parity (#344) is already done, so this is what remains of
   the floor. Settle the grader-source question (axis 1) here, since this is the first
   grader kind that would otherwise be hand-mirrored twice.
-- **Phase 2 — Trace to eval promotion (the headline capability).** `agentos eval
+- **Phase 2 — Trace to eval promotion (the headline capability).** `curie eval
   add-from-trace` capturing input + trajectory + a curated assertion, with trace-id
   provenance as a field, extending the existing endpoint rather than replacing it
   (epic #26). Depends on Phase 1's tool-call grader so a promoted case can assert on

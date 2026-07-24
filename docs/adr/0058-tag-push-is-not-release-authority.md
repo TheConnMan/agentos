@@ -26,7 +26,7 @@ main push and the continuous image tags stopped being published. 0066 guards
 each of those jobs. The gate itself (ancestry, checks, the environment
 reference) is unaffected and stands as decided.
 
-Implements [#628](https://github.com/curie-eng/agentos/issues/628).
+Implements [#628](https://github.com/curie-eng/curie/issues/628).
 
 ## Context
 
@@ -46,7 +46,7 @@ the workflow run that produces those assets should have started at all.
 
 Two things this ADR does not attempt: repository-level tag protection rules
 (Settings -> Tags) and required reviewers on a GitHub Environment are both
-admin-only settings this account does not hold (`gh api repos/curie-eng/agentos
+admin-only settings this account does not hold (`gh api repos/curie-eng/curie
 --jq .permissions` reports `push`-only, no `admin`/`maintain`). The workflow-level
 gate below is enforceable today without that access; the two admin actions
 harden it further and are called out under Consequences as follow-ups, not

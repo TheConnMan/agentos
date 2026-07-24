@@ -1,7 +1,7 @@
 """F3 eval-stream consumer against real Valkey + real MinIO + real Langfuse, with
 only the platform-report HTTP POST mocked (the external-service rule).
 
-The consumer reads ``agentos:evals``, loads the suite from the version's MinIO
+The consumer reads ``curie:evals``, loads the suite from the version's MinIO
 bundle, runs it against either the payload's ``target_url`` (the dev/test shortcut)
 or a runner it provisions via the G1 substrate, records per-case scores to
 Langfuse, POSTs a summary to the platform API, and only then acks. These tests
@@ -28,19 +28,19 @@ import httpx
 import pytest
 import redis
 from aci_protocol import STREAM_PAYLOAD_FIELD
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_HOST as _VH,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PORT as _VP,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PW as _VPW,
 )
-from agentos_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV, MODEL_ENV
-from agentos_worker.bundle_store import BundleStore
-from agentos_worker.config import WorkerConfig
-from agentos_worker.eval import (
+from curie_worker.binding import BUDGET_ENV, BUNDLE_REF_ENV, MODEL_ENV
+from curie_worker.bundle_store import BundleStore
+from curie_worker.config import WorkerConfig
+from curie_worker.eval import (
     EvalCase,
     EvalJob,
     EvalReporter,
@@ -51,9 +51,9 @@ from agentos_worker.eval import (
     LangfuseEvalRecorder,
     load_suite_from_bundle,
 )
-from agentos_worker.eval.models import EvalCaseResult, EvalOutcome, EvalRunResult
-from agentos_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
-from agentos_worker.sandbox.types import ClaimView, SandboxView
+from curie_worker.eval.models import EvalCaseResult, EvalOutcome, EvalRunResult
+from curie_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
+from curie_worker.sandbox.types import ClaimView, SandboxView
 from redis.asyncio import Redis as AsyncRedis
 
 CONTAINS = GraderKind.CONTAINS
@@ -123,7 +123,7 @@ class _FakeK8s:
         self.claims[name] = _FakeClaim(
             name=name,
             sandbox_name=f"sbx-{name}",
-            labels={"agentos.dev/managed-by": "agentos-sandbox-substrate", **(labels or {})},
+            labels={"curie.dev/managed-by": "curie-sandbox-substrate", **(labels or {})},
             env=dict(env or {}),
         )
 
@@ -275,11 +275,11 @@ def test_eval_read_loop_demotes_idle_timeout_to_debug(make_eval_harness, bundles
 
                 consumer._redis.xreadgroup = flaky  # type: ignore[method-assign,assignment]
 
-                with caplog.at_level(logging.DEBUG, logger="agentos_worker.eval.stream"):
+                with caplog.at_level(logging.DEBUG, logger="curie_worker.eval.stream"):
                     await consumer.run()
 
                 assert calls["n"] >= 3  # retried past both injected faults
-                recs = [r for r in caplog.records if r.name == "agentos_worker.eval.stream"]
+                recs = [r for r in caplog.records if r.name == "curie_worker.eval.stream"]
                 timeout_recs = [r for r in recs if "idle eval read timeout" in r.getMessage()]
                 conn_recs = [r for r in recs if "eval connection blip" in r.getMessage()]
                 assert timeout_recs and all(r.levelno == logging.DEBUG for r in timeout_recs)
@@ -657,7 +657,7 @@ def test_provisioned_runner_end_to_end(make_eval_harness, bundles) -> None:
             )
             token = uuid.uuid4().hex[:8]
             cfg = _cfg(f"test:evals:{token}", f"g-{token}")
-            sandbox_prefix = f"test:agentos:sandbox:{token}"
+            sandbox_prefix = f"test:curie:sandbox:{token}"
             sync_client = redis.Redis(
                 host=_VH, port=_VP, password=_VPW or None, decode_responses=False
             )
@@ -789,7 +789,7 @@ def test_pending_entry_from_a_dead_consumer_is_reclaimed(make_eval_harness, bund
 # The env-var name is the cross-package contract with the runner; asserted by its
 # literal string so the module never depends on a constant that only exists after
 # the feature lands.
-RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+RUNNER_TOKEN_ENV = "CURIE_RUNNER_TOKEN"
 
 
 def _suite_bundle(suite: EvalSuite) -> bytes:
@@ -859,7 +859,7 @@ def test_eval_boot_env_mints_runner_token() -> None:
 
 def test_eval_requested_model_boots_and_tags_that_model() -> None:
     """#526: a work item's ``model`` is booted into the provisioned sandbox
-    (AGENTOS_MODEL wins over the worker default) AND becomes the run's model
+    (CURIE_MODEL wins over the worker default) AND becomes the run's model
     dimension, so a sweep row is measured under, and labelled with, the model it
     asked for -- never the worker default and never the unlabelled column."""
     consumer = EvalStreamConsumer(
@@ -908,7 +908,7 @@ def test_eval_requested_model_labels_even_a_target_url_run() -> None:
 def test_eval_fake_model_install_refuses_to_label_a_model_never_called(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """#606: a fake-model install (the sealed default, or AGENTOS_FAKE_MODEL=1) runs
+    """#606: a fake-model install (the sealed default, or CURIE_FAKE_MODEL=1) runs
     the canned FakeModelSession regardless of the requested model. A sweep row must
     NOT be tagged with a model that was never called -- that fabricates a
     cross-model comparison indistinguishable from a real one (ADR-0041). The row is
@@ -1051,7 +1051,7 @@ def _canned_run(monkeypatch, outcomes: list[EvalOutcome]) -> None:
     The report gate is what is under test here; the suite execution is the seam
     being held still, exactly as the token-threading test does.
     """
-    from agentos_worker.eval import stream as stream_module
+    from curie_worker.eval import stream as stream_module
 
     async def _fake_run(suite: EvalSuite, *, version: str, **_kw: Any) -> EvalRunResult:
         return EvalRunResult(
@@ -1192,7 +1192,7 @@ def test_eval_boot_env_drops_reserved_connector_secret() -> None:
     # The legitimate connector secret is injected...
     assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_ok"
     # ...and is the ONLY key marked as a delivered connector secret.
-    assert env.get("AGENTOS_CONNECTOR_SECRET_KEYS") == "GITHUB_PERSONAL_ACCESS_TOKEN"
+    assert env.get("CURIE_CONNECTOR_SECRET_KEYS") == "GITHUB_PERSONAL_ACCESS_TOKEN"
 
 
 def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
@@ -1200,7 +1200,7 @@ def test_eval_threads_claim_token_into_run_eval_suite(monkeypatch) -> None:
     # eval turn driver so a token-enforcing sandbox does not 401 the eval. The
     # only faked boundary is the run_eval_suite seam (captured, not the code
     # under test) and the MinIO bundle fetch.
-    from agentos_worker.eval import stream as stream_module
+    from curie_worker.eval import stream as stream_module
 
     captured: dict[str, Any] = {}
 
@@ -1255,7 +1255,7 @@ def test_eval_threads_the_workers_fake_state_into_run_eval_suite(
     marker), so the consumer must hand its own config down to the grading layer.
     Without this thread the runner would grade a canned reply -- the false green.
     """
-    from agentos_worker.eval import stream as stream_module
+    from curie_worker.eval import stream as stream_module
 
     captured: dict[str, Any] = {}
 
@@ -1315,7 +1315,7 @@ def test_worker_boot_after_an_outage_skips_stale_backlog_but_runs_recent() -> No
     # ids are millisecond timestamps, so the entries are placed at realistic
     # wall-clock ages relative to now (default window is 24h).
     async def go() -> None:
-        stream = f"agentos:evals:maxage:{uuid.uuid4().hex}"
+        stream = f"curie:evals:maxage:{uuid.uuid4().hex}"
         group = f"grp-{uuid.uuid4().hex}"
         cfg = _cfg(stream, group)  # default eval_stream_max_age_hours = 24
         client = AsyncRedis(host=_VH, port=_VP, password=_VPW, decode_responses=True)

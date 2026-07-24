@@ -25,8 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "release" / "integrity.py"
 
 VERSION = "1.2.3"
-BINARIES = ("agentos-x86_64-unknown-linux-gnu", "agentos-aarch64-apple-darwin")
-CHART = f"agentos-{VERSION}.tgz"
+BINARIES = ("curie-x86_64-unknown-linux-gnu", "curie-aarch64-apple-darwin")
+CHART = f"curie-{VERSION}.tgz"
 COMPOSE = "compose.release.yaml"
 ASSETS = (*BINARIES, CHART, COMPOSE)
 
@@ -132,9 +132,9 @@ class TestBuildManifest:
             integrity.build_manifest(dist, VERSION)
 
     def test_rejects_a_chart_packaged_at_the_wrong_version(self, tmp_path):
-        dist = make_dist(tmp_path, assets=(*BINARIES, "agentos-9.9.9.tgz", COMPOSE))
+        dist = make_dist(tmp_path, assets=(*BINARIES, "curie-9.9.9.tgz", COMPOSE))
 
-        # A stale chart tgz would otherwise sail through: it matches agentos-*.tgz.
+        # A stale chart tgz would otherwise sail through: it matches curie-*.tgz.
         with pytest.raises(integrity.IntegrityError, match=CHART):
             integrity.build_manifest(dist, VERSION)
 
@@ -149,17 +149,17 @@ class TestBuildManifest:
         # The closed-world clause: a NEW asset someone adds to the release must be
         # declared here too, or the gate silently stops meaning anything.
         dist = make_dist(tmp_path)
-        (dist / "agentos-installer.sh").write_bytes(b"#!/bin/sh\n")
+        (dist / "curie-installer.sh").write_bytes(b"#!/bin/sh\n")
 
-        with pytest.raises(integrity.IntegrityError, match="agentos-installer.sh"):
+        with pytest.raises(integrity.IntegrityError, match="curie-installer.sh"):
             integrity.build_manifest(dist, VERSION)
 
     def test_refuses_an_undeclared_asset_even_when_it_brings_an_sbom(self, tmp_path):
         # `files: dist/*` publishes whatever is staged, so a stray file must not be
         # able to buy its way into a signed release just by carrying an SBOM.
         dist = make_dist(tmp_path)
-        (dist / "agentos-backdoor").write_bytes(b"pwned")
-        write_sbom(dist / "agentos-backdoor.spdx.json", "agentos-backdoor")
+        (dist / "curie-backdoor").write_bytes(b"pwned")
+        write_sbom(dist / "curie-backdoor.spdx.json", "curie-backdoor")
 
         with pytest.raises(integrity.IntegrityError, match="not declared"):
             integrity.build_manifest(dist, VERSION)

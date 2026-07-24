@@ -30,7 +30,7 @@ extraction by one test: does it shrink second-harness work, or only relocate it?
    session config out). The Claude implementation stays a passthrough; a non-Claude implementation
    is a bundle→native-config compiler and is budgeted as its own workstream, not as interface work.
 4. **History/resume is descoped**, not abstracted. The consumer half exists
-   (`AGENTOS_HISTORY_REF`→SDK resume) but nothing in production produces a history ref, and the
+   (`CURIE_HISTORY_REF`→SDK resume) but nothing in production produces a history ref, and the
    frozen ACI `final` frame carries no session id. Building it starts with an `aci-protocol`
    contract change and its own ADR.
 5. **No options abstraction.** `SessionConfig` (frozen in `aci-protocol`) is already the shared

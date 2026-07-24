@@ -17,9 +17,9 @@ import hmac
 import json
 from pathlib import Path
 
-from agentos_api.sandbox_token import mint, verify
+from curie_api.sandbox_token import mint, verify
 
-KEY = "agentos-dev-key"
+KEY = "curie-dev-key"
 AGENT = "00000000-0000-0000-0000-000000000001"
 EXP = 1893456000  # 2030-01-01, the golden known-answer exp
 FAR_FUTURE = 4102444800  # 2100-01-01, comfortably valid at test time
@@ -143,8 +143,8 @@ def test_the_two_module_copies_are_byte_identical() -> None:
     # MUST agree on the wire format to the byte. Resolve both paths relative to
     # this test file (parents[3] is the worktree root) rather than hardcoding.
     root = Path(__file__).resolve().parents[3]
-    api_src = root / "apps" / "api" / "src" / "agentos_api" / "sandbox_token.py"
+    api_src = root / "apps" / "api" / "src" / "curie_api" / "sandbox_token.py"
     worker_src = (
-        root / "apps" / "worker" / "src" / "agentos_worker" / "sandbox_token.py"
+        root / "apps" / "worker" / "src" / "curie_worker" / "sandbox_token.py"
     )
     assert api_src.read_bytes() == worker_src.read_bytes()

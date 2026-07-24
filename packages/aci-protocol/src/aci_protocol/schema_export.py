@@ -65,7 +65,7 @@ _MODELS = (
     ApprovalRequest,
 )
 
-SCHEMA_ID = "https://curie.tech/agentos/aci-protocol.schema.json"
+SCHEMA_ID = "https://curie.tech/curie/aci-protocol.schema.json"
 
 
 def schema_path() -> Path:

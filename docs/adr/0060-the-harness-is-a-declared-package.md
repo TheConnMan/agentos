@@ -18,12 +18,12 @@ banner against its "at zero cost" claim.
 
 ADR-0005 drew the line: everything inside the runtime boundary is "the harness",
 everything outside is "the platform". The seam it built to hold that line is a
-class. `runner/src/agentos_runner/adapter.py:31-52` declares `ModelSession` as a
+class. `runner/src/curie_runner/adapter.py:31-52` declares `ModelSession` as a
 five method Protocol (`connect`, `query`, `receive_turn`, `interrupt`, `close`)
 whose `receive_turn` returns `AsyncIterator[Any]`, documented as yielding "SDK
 messages".
 
-A harness in AgentOS is not that class. A harness is what that class implies
+A harness in Curie is not that class. A harness is what that class implies
 about the rest of the system, and today those implications are smeared across
 nine or more files in two languages:
 
@@ -32,28 +32,28 @@ nine or more files in two languages:
   records a Claude specific non root constraint that shapes the image.
 - `cli/src/docker.rs:453` hardcodes `RUNNER_IMAGE`, consumed at
   `cli/src/artifacts.rs:132` and `cli/src/commands.rs:462`.
-- `apps/worker/src/agentos_worker/run.py:126` picks the image again on the
+- `apps/worker/src/curie_worker/run.py:126` picks the image again on the
   worker side, defaulting to the same string.
-- `apps/worker/src/agentos_worker/sandbox/docker.py:310-326` builds the spawn
+- `apps/worker/src/curie_worker/sandbox/docker.py:310-326` builds the spawn
   environment, carrying a hand copied mirror of the runner's credential rules.
-  The comment at `apps/worker/src/agentos_worker/sandbox/docker.py:99` admits it:
-  it is "a literal mirror of runner/src/agentos_runner/sdk_auth.py".
-- `runner/src/agentos_runner/sdk_auth.py` is 401 lines of auth plus a hard gate
-  at `runner/src/agentos_runner/sdk_auth.py:377-386` that refuses any non
+  The comment at `apps/worker/src/curie_worker/sandbox/docker.py:99` admits it:
+  it is "a literal mirror of runner/src/curie_runner/sdk_auth.py".
+- `runner/src/curie_runner/sdk_auth.py` is 401 lines of auth plus a hard gate
+  at `runner/src/curie_runner/sdk_auth.py:377-386` that refuses any non
   Anthropic Messages wire because "the runner speaks the Anthropic Messages wire
   format via claude-agent-sdk".
-- `runner/src/agentos_runner/__main__.py` encodes boot ordering,
-  `runner/src/agentos_runner/adapter.py` returns `ClaudeAgentOptions` directly
-  from `build_options`, `runner/src/agentos_runner/translate.py:84-107` is an
-  isinstance chain on SDK types, `runner/src/agentos_runner/side_effects.py:28-40`
+- `runner/src/curie_runner/__main__.py` encodes boot ordering,
+  `runner/src/curie_runner/adapter.py` returns `ClaudeAgentOptions` directly
+  from `build_options`, `runner/src/curie_runner/translate.py:84-107` is an
+  isinstance chain on SDK types, `runner/src/curie_runner/side_effects.py:28-40`
   hardcodes Claude Code's PascalCase read only tool names, and
-  `runner/src/agentos_runner/plugin.py` hands the bundle straight to the SDK.
+  `runner/src/curie_runner/plugin.py` hands the bundle straight to the SDK.
 
 The concrete price of having no declarative install contract is on record. The
 withdrawn OpenCode work needed
-`runner/src/agentos_runner/opencode/installer.py` at 517 lines, plus
-`runner/src/agentos_runner/opencode/auth.py` (35 lines) and
-`runner/src/agentos_runner/opencode/__main__.py` (131 lines), none of which is
+`runner/src/curie_runner/opencode/installer.py` at 517 lines, plus
+`runner/src/curie_runner/opencode/auth.py` (35 lines) and
+`runner/src/curie_runner/opencode/__main__.py` (131 lines), none of which is
 interface work. It is packaging and wiring, reinvented because there was nowhere
 to declare it.
 
@@ -100,7 +100,7 @@ Claude harness is the single worst failure this registry could have.
 **3. Harness selection becomes declarative config.** A `harness:` field plus a
 CLI flag, resolved once and carried, replacing today's baked in image assumption
 in the Rust constants (`cli/src/docker.rs:453`) and the worker's env default
-(`apps/worker/src/agentos_worker/run.py:126`). Selecting a harness stops being a
+(`apps/worker/src/curie_worker/run.py:126`). Selecting a harness stops being a
 matter of which image string three separate call sites happen to agree on.
 
 **4. ADR-0031's decisions become manifest fields, not separate ports.** Its
@@ -145,7 +145,7 @@ preserve the work for mining rather than re implementation:
 - **Keep the nine file scatter and document it.** A `HARNESS.md` listing every
   place a harness identity leaks costs nothing to write and catches nothing. The
   duplicated credential mirror at
-  `apps/worker/src/agentos_worker/sandbox/docker.py:99` is already documented, in
+  `apps/worker/src/curie_worker/sandbox/docker.py:99` is already documented, in
   a comment, at the site of the duplication, and it is still a duplication.
 - **Extract the four ADR-0031 ports individually.** This is the status quo plan
   and it is not wrong so much as insufficient: four ports still leave the

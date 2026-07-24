@@ -12,7 +12,7 @@ export interface AgentOut {
   id: string;
   name: string;
   slack_channel: string;
-  // Per-agent model id, forwarded as AGENTOS_MODEL at boot (#254). null uses the
+  // Per-agent model id, forwarded as CURIE_MODEL at boot (#254). null uses the
   // platform default model.
   model: string | null;
   created_at: string;
@@ -55,7 +55,7 @@ export interface ObservationNode {
 export interface TraceTree {
   trace: Record<string, unknown>;
   tree: ObservationNode[];
-  // The serving sandbox id (agentos.sandbox_id), hoisted server-side from the
+  // The serving sandbox id (curie.sandbox_id), hoisted server-side from the
   // trace/observation resource attributes; null when the trace predates it.
   sandbox_id: string | null;
 }

@@ -9,11 +9,11 @@ import { commandManifest } from "../generated/commandManifest";
 // rendering (the type teeth are exercised by `pnpm typecheck`, not vitest).
 describe("cliCommand", () => {
   it("renders a bare leaf command with no context", () => {
-    expect(cliCommand("skill.up")).toBe("agentos skill up");
+    expect(cliCommand("skill.up")).toBe("curie skill up");
   });
 
   it("renders a nested-group leaf path", () => {
-    expect(cliCommand("dev.contracts")).toBe("agentos dev contracts");
+    expect(cliCommand("dev.contracts")).toBe("curie dev contracts");
   });
 
   it("places a positional arg before flags, in clap order", () => {
@@ -23,21 +23,21 @@ describe("cliCommand", () => {
       text: "ship it",
       user: "U9",
     });
-    expect(cmd).toBe('agentos local message "ship it" --channel C123 --user U9');
+    expect(cmd).toBe('curie local message "ship it" --channel C123 --user U9');
   });
 
   it("renders boolean flags as a bare --flag and omits false ones", () => {
     expect(cliCommand("local.up", { "dry-run": true, slack: false })).toBe(
-      "agentos local up --dry-run",
+      "curie local up --dry-run",
     );
   });
 
   it("quotes only values containing whitespace", () => {
     expect(cliCommand("skill.message", { text: "one", user: "U1" })).toBe(
-      "agentos skill message one --user U1",
+      "curie skill message one --user U1",
     );
     expect(cliCommand("skill.message", { text: "two words" })).toBe(
-      'agentos skill message "two words"',
+      'curie skill message "two words"',
     );
   });
 

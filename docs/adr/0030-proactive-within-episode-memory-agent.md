@@ -13,11 +13,11 @@ inject/steer primitive) and composing with
 interception). Supersedes none. Motivated by *Remember When It Matters: Proactive
 Memory Agent for Long-Horizon Agents* (Wu et al., Meta AI, arXiv:2607.08716),
 whose target workload, long-horizon terminal and coding agents, is exactly
-[ADR-0021](0021-agentos-is-a-harness-for-coding-agents.md)'s.
+[ADR-0021](0021-curie-is-a-harness-for-coding-agents.md)'s.
 
 ## Context
 
-AgentOS has a memory model, and the paper names the precise way it leaves value on
+Curie has a memory model, and the paper names the precise way it leaves value on
 the table for long runs.
 
 **Our memory today is passive, and passive is the weak baseline.** ADR-0025
@@ -44,7 +44,7 @@ the information *is already in context*. The problem is *when* it becomes active
 not whether it is stored.
 
 The mechanism is, crucially, **within one episode** and **plug-and-play with an
-unmodified action agent**, which maps onto seams AgentOS already has frozen. A
+unmodified action agent**, which maps onto seams Curie already has frozen. A
 separate memory agent observes the trajectory, maintains a structured bank, and at
 each step chooses to **inject a targeted reminder or stay silent**. The action
 agent's instructions, tools, and decoding are unchanged; the only integration

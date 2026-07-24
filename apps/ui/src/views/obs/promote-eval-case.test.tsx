@@ -14,7 +14,7 @@ vi.mock("../../api/client", async (importOriginal) => {
 });
 
 const TRACE: TraceTree = {
-  trace: { id: "tr-1", name: "agentos-run:agent-x-thread-1" },
+  trace: { id: "tr-1", name: "curie-run:agent-x-thread-1" },
   tree: [{ id: "root", type: "SPAN", name: "agent.run", model: null, startTime: "1", usageDetails: null, children: [] }],
   sandbox_id: null,
 };

@@ -11,14 +11,14 @@ import uuid
 from collections.abc import Callable
 
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
-from agentos_worker.behaviorpacks import BehaviorPacks
-from agentos_worker.binding import (
+from curie_worker.behaviorpacks import BehaviorPacks
+from curie_worker.binding import (
     BUDGET_ENV,
     BUNDLE_REF_ENV,
     PLUGIN_DIR_ENV,
     ResolvedDeployment,
 )
-from agentos_worker.killswitch import kill_key
+from curie_worker.killswitch import kill_key
 
 DONE = SessionStatus.DONE
 IDLE = SessionStatus.IDLE_AWAITING_INPUT
@@ -253,15 +253,15 @@ def test_shimmer_off_never_sets_a_caption(make_harness) -> None:
 
 # A structured reply with buttons, none of which links to the hub command.
 _REPLY_WITH_BUTTONS = (
-    "```agentos-reply\n"
+    "```curie-reply\n"
     '{"text": "here you go", "buttons": [["Details", "details"]]}\n'
     "```"
 )
 
 
 def test_bound_agent_with_enabled_nav_gets_hub_button_on_final_reply(make_harness) -> None:
-    from agentos_worker.behaviorpacks import NavPack
-    from agentos_worker.blocks import render
+    from curie_worker.behaviorpacks import NavPack
+    from curie_worker.blocks import render
 
     async def go() -> None:
         packs = {"nav": {"enabled": True, "hub_label": "Help", "hub_command": "help"}}
@@ -318,7 +318,7 @@ def test_malformed_packs_blob_still_completes_the_turn(make_harness) -> None:
 
 
 def test_bound_agent_without_nav_gets_no_hub_button(make_harness) -> None:
-    from agentos_worker.blocks import render
+    from curie_worker.blocks import render
 
     async def go() -> None:
         binding = StubBinding({"C-bound": _resolved_with_packs({})})  # nav absent

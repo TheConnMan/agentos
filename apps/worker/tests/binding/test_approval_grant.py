@@ -28,10 +28,10 @@ import uuid
 from typing import Any
 
 import pytest
-from agentos_api.resumequeue import resume_event_id
-from agentos_runner.approval import summarize_tool_call
-from agentos_worker.binding import BindingResolver
-from agentos_worker.config import WorkerConfig
+from curie_api.resumequeue import resume_event_id
+from curie_runner.approval import summarize_tool_call
+from curie_worker.binding import BindingResolver
+from curie_worker.config import WorkerConfig
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 _DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:25432/postgres"
 )
-_SCHEMA = os.environ.get("TEST_DB_SCHEMA", "agentos")
+_SCHEMA = os.environ.get("TEST_DB_SCHEMA", "curie")
 
 
 def _resolver(engine: AsyncEngine) -> BindingResolver:

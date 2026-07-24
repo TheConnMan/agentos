@@ -9,8 +9,8 @@ bug) fails here.
 import asyncio
 
 import httpx
-from agentos_api.config import Settings
-from agentos_api.langfuse import LangfuseClient
+from curie_api.config import Settings
+from curie_api.langfuse import LangfuseClient
 
 
 class _RecordingBackend:
@@ -27,7 +27,7 @@ class _RecordingBackend:
         total_pages = (self._total + limit - 1) // limit if limit else 1
         start = (page - 1) * limit
         data = [
-            {"id": str(i), "name": f"agentos-run:agent-A-thread-{i}"}
+            {"id": str(i), "name": f"curie-run:agent-A-thread-{i}"}
             for i in range(start, min(start + limit, self._total))
         ]
         return httpx.Response(

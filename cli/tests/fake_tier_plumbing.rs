@@ -16,10 +16,10 @@
 //!
 //! On the runner mock: `support::serve` is the established external-seam mock
 //! (the runner is a separate service over HTTP/NDJSON). The frames it serves are
-//! the fake's REAL canned turn -- `runner/src/agentos_runner/fake.py`
+//! the fake's REAL canned turn -- `runner/src/curie_runner/fake.py`
 //! `default_turn()` emits exactly a "Looking into it" text delta, a `Bash` tool
 //! use, and a `final` with text "all done" and status `done`. The eval cases are
-//! the scaffold's REAL seeded `evals/cases.json`, written by the real `agentos
+//! the scaffold's REAL seeded `evals/cases.json`, written by the real `curie
 //! init` binary and never hand-substituted (#612's AC is explicit on this). The
 //! whole defect lives in the collision between those two real artifacts: the
 //! seeded grader requires the bundle name and "all done" does not contain it.
@@ -29,19 +29,19 @@ mod support;
 use std::path::Path;
 use std::process::Command;
 
-use agentos::evals::{
+use curie::evals::{
     load_suite, turn_outcome, CaseOutcome, EvalCase, ExpectedStatus, Grader, GraderKind,
 };
-use agentos::exit::{classify, ExitClass};
-use agentos::message::guard_fake_sweep;
-use agentos::state::{self, RunnerState};
-use agentos_aci_protocol::{OutboundEvent, SessionStatus, PROTOCOL_VERSION};
+use curie::exit::{classify, ExitClass};
+use curie::message::guard_fake_sweep;
+use curie::state::{self, RunnerState};
+use curie_aci_protocol::{OutboundEvent, SessionStatus, PROTOCOL_VERSION};
 use support::{serve, Response};
 
 const BUNDLE: &str = "deal-desk";
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn output_text(output: &std::process::Output) -> String {
@@ -76,7 +76,7 @@ fn on_topic_turn() -> Vec<String> {
     }))]
 }
 
-/// `agentos init <BUNDLE>` into a temp dir via the real binary, so the eval
+/// `curie init <BUNDLE>` into a temp dir via the real binary, so the eval
 /// suite under test is the shipped seed rather than a fixture.
 fn scaffold(dir: &Path) -> std::path::PathBuf {
     let out = dir.join(BUNDLE);
@@ -87,7 +87,7 @@ fn scaffold(dir: &Path) -> std::path::PathBuf {
         .arg(&out)
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos init");
+        .expect("run curie init");
     assert!(
         output.status.success(),
         "init must scaffold\n{}",
@@ -103,8 +103,8 @@ fn record_runner(bundle: &Path, base_url: &str, fake_model: bool) {
         bundle,
         &RunnerState {
             container_id: "c0ffee".into(),
-            container_name: format!("agentos-{BUNDLE}"),
-            image: "agentos-runner".into(),
+            container_name: format!("curie-{BUNDLE}"),
+            image: "curie-runner".into(),
             port: 8080,
             base_url: base_url.to_string(),
             session_id: "s1".into(),
@@ -126,7 +126,7 @@ fn skill_eval(bundle: &Path, json: bool) -> std::process::Output {
     }
     cmd.stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos skill eval")
+        .expect("run curie skill eval")
 }
 
 // --- AC1: the scaffold's own documented loop is not red --------------------
@@ -396,7 +396,7 @@ fn a_model_sweep_on_a_fake_local_stack_is_refused_usage_shaped() {
     );
     let fix = fix.expect("the refusal must carry an actionable fix");
     assert!(
-        fix.contains("AGENTOS_CREDENTIALS"),
+        fix.contains("CURIE_CREDENTIALS"),
         "the local tier's fix is supplying a credential: {fix}"
     );
 }
@@ -433,7 +433,7 @@ fn a_single_model_on_a_fake_stack_is_refused_for_the_reason_that_applies() {
     );
     assert!(
         fix.expect("the refusal must carry an actionable fix")
-            .contains("AGENTOS_CREDENTIALS"),
+            .contains("CURIE_CREDENTIALS"),
         "N=1 keeps the tier's fix hint"
     );
 }
@@ -487,7 +487,7 @@ fn a_dry_run_sweep_does_not_probe_and_is_not_refused() {
         .current_dir(&bundle)
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos cluster eval --dry-run");
+        .expect("run curie cluster eval --dry-run");
     assert!(
         output.status.success(),
         "a dry-run plan must not probe the runtime or refuse\n{}",

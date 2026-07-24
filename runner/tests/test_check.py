@@ -1,4 +1,4 @@
-"""Tests for the offline MCP load check (`agentos_runner.check`, issue #337).
+"""Tests for the offline MCP load check (`curie_runner.check`, issue #337).
 
 Test-first: these pin the frozen runner<->CLI JSON seam (plan Section 3) and the
 verdict rules. Until ``check.py`` exists the module import fails collection --
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import anyio
 import pytest
-from agentos_runner.check import evaluate, extract_declared, run_check
+from curie_runner.check import evaluate, extract_declared, run_check
 
 _HERE = Path(__file__).resolve().parent
 _FIXTURES = _HERE / "fixtures"
@@ -471,11 +471,11 @@ def test_non_authed_server_gets_no_offline_advisory() -> None:
 def _run_module(
     plugin_dir: str, env_extra: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "AGENTOS_PLUGIN_DIR": plugin_dir}
+    env = {**os.environ, "CURIE_PLUGIN_DIR": plugin_dir}
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        [sys.executable, "-m", "agentos_runner.check"],
+        [sys.executable, "-m", "curie_runner.check"],
         capture_output=True,
         text=True,
         env=env,

@@ -99,7 +99,7 @@
       "type": "string"
     }
   },
-  "$id": "https://curie.tech/agentos/eval-cases.schema.json",
+  "$id": "https://curie.tech/curie/eval-cases.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AgentOS Eval Case Format"
+  "title": "Curie Eval Case Format"
 }

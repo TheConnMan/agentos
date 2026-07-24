@@ -9,16 +9,16 @@ from __future__ import annotations
 import json
 
 import pytest
-from agentos_runner import __main__ as boot
-from agentos_runner.__main__ import DEFAULT_HARNESS, _resolve_harness, build_runner
-from agentos_runner.config import RunnerConfig
-from agentos_runner.harness.contribution import (
+from curie_runner import __main__ as boot
+from curie_runner.__main__ import DEFAULT_HARNESS, _resolve_harness, build_runner
+from curie_runner.config import RunnerConfig
+from curie_runner.harness.contribution import (
     AuthSpec,
     BundleCompileResult,
     HarnessContribution,
     InstallSpec,
 )
-from agentos_runner.harness.registry import (
+from curie_runner.harness.registry import (
     MalformedHarnessContributionError,
     UnknownHarnessError,
 )
@@ -32,10 +32,10 @@ def _config(tmp_path) -> RunnerConfig:
     (plugin / "plugin.json").write_text(json.dumps({"name": "wiring"}))
     return RunnerConfig.from_env(
         {
-            "AGENTOS_PLUGIN_DIR": str(tmp_path),
-            "AGENTOS_SESSION_ID": "s-wire",
-            "AGENTOS_SANDBOX_ID": "b-wire",
-            "AGENTOS_BUDGET": _BUDGET,
+            "CURIE_PLUGIN_DIR": str(tmp_path),
+            "CURIE_SESSION_ID": "s-wire",
+            "CURIE_SANDBOX_ID": "b-wire",
+            "CURIE_BUDGET": _BUDGET,
         }
     )
 
@@ -102,11 +102,11 @@ def test_config_selected_unregistered_harness_fails_loud() -> None:
     # fallback for a non-built-in name, so a misconfigured harness fails visibly.
     cfg = RunnerConfig.from_env(
         {
-            "AGENTOS_PLUGIN_DIR": "/b",
-            "AGENTOS_SESSION_ID": "s",
-            "AGENTOS_SANDBOX_ID": "b",
-            "AGENTOS_BUDGET": _BUDGET,
-            "AGENTOS_HARNESS": "no-such-harness",
+            "CURIE_PLUGIN_DIR": "/b",
+            "CURIE_SESSION_ID": "s",
+            "CURIE_SANDBOX_ID": "b",
+            "CURIE_BUDGET": _BUDGET,
+            "CURIE_HARNESS": "no-such-harness",
         }
     )
     assert cfg.harness == "no-such-harness"

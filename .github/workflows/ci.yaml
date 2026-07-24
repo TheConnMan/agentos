@@ -57,7 +57,7 @@ jobs:
       # minio-init that creates the langfuse bucket alongside the long-lived
       # services; the second --waits only on the long-lived ones (minio-init is
       # kept out of the wait set because --wait treats its exit(0) as a failure).
-      # The app services (agentos-api, agentos-migrate) are deliberately NOT
+      # The app services (curie-api, curie-migrate) are deliberately NOT
       # started: the suite runs the app in-process via uv and migrates the shared
       # DB with alembic below, so their image is never needed here -- and it lives
       # in a private registry, so a bare `up` that pulled it failed the job.
@@ -84,7 +84,7 @@ jobs:
           echo "Langfuse did not become ready within 180s"; exit 1
       # The apps/api suite provisions a throwaway migrated DB per run, but the
       # worker binding integration tests dial the shared default database and
-      # assume the agentos schema already exists (as it does on a dev box).
+      # assume the curie schema already exists (as it does on a dev box).
       # Apply the real migrations to it so those tests run against a real
       # schema; this also exercises the alembic upgrade path on virgin Postgres.
       - name: Migrate the shared database
@@ -154,10 +154,10 @@ jobs:
   # longer gate the ladder; a real test/clippy failure still blocks the merge via
   # the required "Rust (fmt + clippy + test)" check). The release-build compile
   # check now lives here; if it should stay merge-blocking, add this job ("Build
-  # the agentos release binary") to the branch ruleset's required checks (today
+  # the curie release binary") to the branch ruleset's required checks (today
   # the required set is Compose/Contracts/Python/Rust/UI). Cached independently.
   rust-build:
-    name: Build the agentos release binary
+    name: Build the curie release binary
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -174,11 +174,11 @@ jobs:
           workspaces: cli
       - name: Release build
         run: cargo build --release --locked
-      - name: Upload agentos binary
+      - name: Upload curie binary
         uses: actions/upload-artifact@v7
         with:
-          name: agentos-x86_64-linux-${{ github.sha }}
-          path: cli/target/release/agentos
+          name: curie-x86_64-linux-${{ github.sha }}
+          path: cli/target/release/curie
           if-no-files-found: error
 
   contracts-ts:
@@ -262,12 +262,12 @@ jobs:
       # parses with the Slack profile off (default: the
       # optional dispatcher is absent) and on (dispatcher rendered), and assert
       # the profile actually gates the service, so the #111 opt-in cannot silently
-      # break the default zero-Slack `agentos local up`.
+      # break the default zero-Slack `curie local up`.
       - name: Default profile parses and omits the dispatcher
         run: |
           docker compose -f compose.release.yaml config -q
-          if docker compose -f compose.release.yaml config --services | grep -qx agentos-dispatcher; then
-            echo "agentos-dispatcher must NOT be present without the slack profile" >&2
+          if docker compose -f compose.release.yaml config --services | grep -qx curie-dispatcher; then
+            echo "curie-dispatcher must NOT be present without the slack profile" >&2
             exit 1
           fi
       - name: Slack profile parses and includes the dispatcher
@@ -277,10 +277,10 @@ jobs:
           # profile is paired with a base profile; the CLI does the same.
           docker compose -f compose.release.yaml --profile full --profile slack config -q
           docker compose -f compose.release.yaml --profile full --profile slack config --services \
-            | grep -qx agentos-dispatcher \
-            || { echo "agentos-dispatcher must be present under the slack profile" >&2; exit 1; }
-      # `agentos local up --minimal` selects the `core` profile and plain
-      # `agentos local up` the `full` profile; assert the release stack renders
+            | grep -qx curie-dispatcher \
+            || { echo "curie-dispatcher must be present under the slack profile" >&2; exit 1; }
+      # `curie local up --minimal` selects the `core` profile and plain
+      # `curie local up` the `full` profile; assert the release stack renders
       # exactly those service counts so a profile regression cannot silently
       # start the wrong set.
       - name: Core profile renders 7 services
@@ -331,7 +331,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # The worker-local overlay is FROM the published agentos-worker image, so it
+  # The worker-local overlay is FROM the published curie-worker image, so it
   # cannot be built purely from the checkout. Build the base worker image
   # locally first and tag it exactly as the overlay's FROM ref, then build the
   # overlay against it. Plain `docker build` uses the default buildx builder
@@ -346,7 +346,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the base worker image locally
-        run: docker build -t ghcr.io/curie-eng/agentos-worker:ci-local -f apps/worker/Dockerfile .
+        run: docker build -t ghcr.io/curie-eng/curie-worker:ci-local -f apps/worker/Dockerfile .
       - name: Build the worker-local overlay (no push)
         run: docker build --build-arg BASE_TAG=ci-local -f compose/worker-local.Dockerfile compose
 
@@ -366,16 +366,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the dispatcher image locally
-        run: docker build -t agentos-dispatcher:ci-smoke -f apps/dispatcher/Dockerfile .
+        run: docker build -t curie-dispatcher:ci-smoke -f apps/dispatcher/Dockerfile .
       - name: Entrypoint imports resolve in the built image
-        run: docker run --rm --entrypoint python agentos-dispatcher:ci-smoke -c "import agentos_dispatcher; import aci_protocol"
+        run: docker run --rm --entrypoint python curie-dispatcher:ci-smoke -c "import curie_dispatcher; import aci_protocol"
 
   # FALSIFIABILITY gate for the committed eval suites (issue #619). This is NOT
   # an E2E test: it never runs a real agent or makes a model call. It boots the
   # runner's scripted FAKE model (offline, no credential, no network) -- a
   # do-nothing agent whose only reply is the canned "all done" -- and runs every
   # committed eval suite (examples/*/evals/cases.json + the init scaffold seed at
-  # apps/worker/schema/eval-cases.example.json) through the real `agentos skill
+  # apps/worker/schema/eval-cases.example.json) through the real `curie skill
   # eval` path, failing if ANY case passes. A case that greens against a
   # responder that calls no tool and ignores the input is unfalsifiable (#527),
   # which is exactly what this gate forbids reaching main. Suites are discovered,
@@ -394,18 +394,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Download the agentos binary built by the Rust job
+      - name: Download the curie binary built by the Rust job
         uses: actions/download-artifact@v8
         with:
-          name: agentos-x86_64-linux-${{ github.sha }}
+          name: curie-x86_64-linux-${{ github.sha }}
           path: cli/target/release
       - name: Make the binary executable
-        run: chmod +x cli/target/release/agentos
+        run: chmod +x cli/target/release/curie
       - name: Build the runner image locally
-        run: docker build -t agentos-runner -f runner/Dockerfile .
+        run: docker build -t curie-runner -f runner/Dockerfile .
       - name: Falsifiability gate (every committed case must go RED against the fake model)
         env:
-          AGENTOS_BIN: cli/target/release/agentos
+          CURIE_BIN: cli/target/release/curie
         run: bash cli/scripts/eval-falsifiability.sh
 
   # COLD-START PARITY LADDER (issue #690), skill + local rungs only. A
@@ -414,7 +414,7 @@ jobs:
   # by unit tests, review, or existing CI -- whole classes of bug had no
   # lower-tier signal at all: compose env wiring (#545), profile asymmetry
   # (#233, #342), deploy-then-message reachability (#352, #359), and
-  # fake/live model defaults (#343). The ladder drives the real `agentos`
+  # fake/live model defaults (#343). The ladder drives the real `curie`
   # verbs end to end (rung 1: the skill-tier `e2e.sh`; rung 2: `local
   # up --minimal` -> `local deploy` -> `local message` with the reply
   # asserted -> `local down`) against a real runner container, sealed with
@@ -424,7 +424,7 @@ jobs:
   # The cluster rung is NOT run by THIS job (it stays skill + local +
   # local-release, credential-free with no cluster). It is now covered by the
   # separate `e2e-ladder-cluster` job below (issue #692), which stands up a
-  # disposable kind cluster, Helm-installs the platform through `agentos cluster
+  # disposable kind cluster, Helm-installs the platform through `curie cluster
   # up`, brings up the runner prewarm DaemonSet, and gates the same
   # deploy-then-message round trip -- with the bidirectional reachability the
   # rung needs (in-cluster worker -> host-bound reply stub). Keep the two jobs
@@ -432,16 +432,16 @@ jobs:
   # never red the skill/local signal.
   #
   # Rung 2 brings up the `core` compose profile for real, unlike the Python
-  # job above (which never starts agentos-api/worker to dodge private-registry
-  # pulls). `agentos-api` and `agentos-migrate` pull
-  # `ghcr.io/curie-eng/agentos-api:${AGENTOS_BASE_TAG:-latest}`, a private GHCR
+  # job above (which never starts curie-api/worker to dodge private-registry
+  # pulls). `curie-api` and `curie-migrate` pull
+  # `ghcr.io/curie-eng/curie-api:${CURIE_BASE_TAG:-latest}`, a private GHCR
   # image this workflow has no credentials for, so it is built locally first and
-  # tagged to match. `agentos-worker` builds from source at `up` time via
+  # tagged to match. `curie-worker` builds from source at `up` time via
   # compose/worker-local.Dockerfile, whose own FROM is
-  # `ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` (default `latest`), another
+  # `ghcr.io/curie-eng/curie-worker:${BASE_TAG}` (default `latest`), another
   # private pull one layer down -- compose.dev.yaml threads the same
-  # AGENTOS_BASE_TAG through as that build stanza's BASE_TAG arg (issue #698),
-  # so one override variable drives all three. This job sets AGENTOS_BASE_TAG=
+  # CURIE_BASE_TAG through as that build stanza's BASE_TAG arg (issue #698),
+  # so one override variable drives all three. This job sets CURIE_BASE_TAG=
   # ci-local (the same convention the `worker-local-image` job above already
   # uses for its own base build) and tags its from-source builds to match,
   # rather than retagging over whatever `:latest` meant in the local image
@@ -450,9 +450,9 @@ jobs:
   # here is ever pushed).
   #
   # Rung 2's worker spawns sibling runner containers through the mounted
-  # Docker socket (network_mode: host, AGENTOS_SANDBOX_SUBSTRATE=docker); the
+  # Docker socket (network_mode: host, CURIE_SANDBOX_SUBSTRATE=docker); the
   # runner image it spawns must already exist on the host daemon, which it
-  # does once the `agentos-runner` build below completes. GitHub-hosted
+  # does once the `curie-runner` build below completes. GitHub-hosted
   # runners support Docker-in-Docker this way, but this is confirmed by the
   # first green live run of this job in CI, not asserted from first
   # principles -- if that first run does not go green, treat the
@@ -460,12 +460,12 @@ jobs:
   # right.
   #
   # A third private-image seam, easy to miss because it is not a compose
-  # `image:` pull: compose.dev.yaml sets AGENTOS_RUNNER_IMAGE=
-  # ghcr.io/curie-eng/agentos-runner:latest on the worker service, and
-  # apps/worker/src/agentos_worker/run.py reads that env var (falling back to
-  # bare `agentos-runner` only when it is unset) to name the image it spawns
+  # `image:` pull: compose.dev.yaml sets CURIE_RUNNER_IMAGE=
+  # ghcr.io/curie-eng/curie-runner:latest on the worker service, and
+  # apps/worker/src/curie_worker/run.py reads that env var (falling back to
+  # bare `curie-runner` only when it is unset) to name the image it spawns
   # per message. Rung 1 (skill) and the CLI's own dev-build default both use
-  # the bare `agentos-runner` tag the build step below produces, but rung 2's
+  # the bare `curie-runner` tag the build step below produces, but rung 2's
   # worker asks for the ghcr.io-qualified tag instead. Retag the same local
   # build under both names rather than building twice, so one rung's image
   # choice cannot silently break the other.
@@ -473,7 +473,7 @@ jobs:
   # Reuses the release binary the Rust job already built and uploaded. The
   # local rung needs a working Docker daemon for `docker compose`;
   # ubuntu-latest ships one, the same assumption the `compose` job above
-  # already relies on. `AGENTOS_E2E_TIERS` and `AGENTOS_E2E_LIVE` are left
+  # already relies on. `CURIE_E2E_TIERS` and `CURIE_E2E_LIVE` are left
   # unset, so the script's own defaults apply: skill + local rungs, fake
   # model, credential-free. Expect this to be the slowest job in the
   # workflow -- three image builds (runner, api, worker base) plus one more
@@ -485,13 +485,13 @@ jobs:
   # Additive on top of the above: a `local-release` rung (issue #695) runs the
   # SAME local round trip again, this time against compose/generate_release_compose.py's
   # OUTPUT (compose.release.yaml) instead of the checked-in compose.dev.yaml --
-  # the artifact a release binary's `agentos local up` actually runs. The
+  # the artifact a release binary's `curie local up` actually runs. The
   # `compose` job elsewhere in this workflow already asserts that generated
   # file parses and renders the right service counts; it never runs a turn
   # through it, which is exactly the gap #545-class compose-env-wiring bugs
-  # hide in. Reuses the SAME agentos-api/agentos-worker local builds above
+  # hide in. Reuses the SAME curie-api/curie-worker local builds above
   # (no second Dockerfile build for those), just tags/builds the two additional
-  # refs the DEFAULT (no --version) generation pins: agentos-api:latest (the
+  # refs the DEFAULT (no --version) generation pins: curie-api:latest (the
   # dev file's own unset-override outcome) and the worker-local overlay image
   # the generator's T1 substitutes for the build directive, both resolved
   # locally so `local up` never attempts a pull against a private GHCR ref.
@@ -515,19 +515,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Download the agentos binary built by the Rust job
+      - name: Download the curie binary built by the Rust job
         uses: actions/download-artifact@v8
         with:
-          name: agentos-x86_64-linux-${{ github.sha }}
+          name: curie-x86_64-linux-${{ github.sha }}
           path: cli/target/release
       - name: Make the binary executable
-        run: chmod +x cli/target/release/agentos
+        run: chmod +x cli/target/release/curie
       # The three from-scratch image builds below are GHA-layer-cached WITHOUT
       # repointing the default buildx builder -- the exact mechanism the pre-#803
-      # revert note asked for. Two of these tags (agentos-worker:ci-local,
-      # agentos-api:ci-local) are consumed as Dockerfile FROM bases by a build
+      # revert note asked for. Two of these tags (curie-worker:ci-local,
+      # curie-api:ci-local) are consumed as Dockerfile FROM bases by a build
       # that `docker compose` triggers itself a few steps down (the worker-local
-      # overlay via compose/worker-local.Dockerfile, inside `agentos local up`),
+      # overlay via compose/worker-local.Dockerfile, inside `curie local up`),
       # so that compose build MUST run on a plain `docker` builder that can see
       # the locally-built `:ci-local` tags in the daemon store.
       #
@@ -557,26 +557,26 @@ jobs:
           context: .
           file: runner/Dockerfile
           builder: ${{ steps.laddercache.outputs.name }}
-          tags: agentos-runner
+          tags: curie-runner
           push: false
           load: true
           cache-from: type=gha,scope=ladder-runner
           cache-to: type=gha,mode=max,scope=ladder-runner
-      - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
-        run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
+      - name: Retag the runner image for the compose worker (CURIE_RUNNER_IMAGE, no registry auth)
+        run: docker tag curie-runner ghcr.io/curie-eng/curie-runner:latest
       # Tagged :ci-local (the worker-local-image job's own convention), not
-      # :latest -- compose.dev.yaml's AGENTOS_BASE_TAG override (set below) points
-      # agentos-api/agentos-migrate's `image:` and the worker-local overlay's
+      # :latest -- compose.dev.yaml's CURIE_BASE_TAG override (set below) points
+      # curie-api/curie-migrate's `image:` and the worker-local overlay's
       # BASE_TAG build arg at this tag directly, so this job no longer needs to
       # retag its from-source builds over whatever `:latest` meant in the local
       # Docker image store before this job ran.
-      - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
+      - name: Build the api image locally (satisfies curie-api + curie-migrate, no registry auth)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: apps/api/Dockerfile
           builder: ${{ steps.laddercache.outputs.name }}
-          tags: ghcr.io/curie-eng/agentos-api:ci-local
+          tags: ghcr.io/curie-eng/curie-api:ci-local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-api
@@ -587,15 +587,15 @@ jobs:
           context: .
           file: apps/worker/Dockerfile
           builder: ${{ steps.laddercache.outputs.name }}
-          tags: ghcr.io/curie-eng/agentos-worker:ci-local
+          tags: ghcr.io/curie-eng/curie-worker:ci-local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-worker
           cache-to: type=gha,mode=max,scope=ladder-worker
       - name: Parity ladder (skill + local rungs, fake model, credential-free)
         env:
-          AGENTOS_BIN: cli/target/release/agentos
-          AGENTOS_BASE_TAG: ci-local
+          CURIE_BIN: cli/target/release/curie
+          CURIE_BASE_TAG: ci-local
         run: bash cli/scripts/e2e-ladder.sh
 
   # LOCAL-RELEASE RUNG -- split into its own job (issue #695 follow-up) so it
@@ -616,13 +616,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Download the agentos binary built by the Rust job
+      - name: Download the curie binary built by the Rust job
         uses: actions/download-artifact@v7
         with:
-          name: agentos-x86_64-linux-${{ github.sha }}
+          name: curie-x86_64-linux-${{ github.sha }}
           path: cli/target/release
       - name: Make the binary executable
-        run: chmod +x cli/target/release/agentos
+        run: chmod +x cli/target/release/curie
       # Cache-only named builder (use: false) so the worker-local overlay's
       # `FROM :ci-local` (a plain `docker build` below) still resolves on the
       # default builder -- the same #803-safe mechanism the e2e-ladder job
@@ -638,20 +638,20 @@ jobs:
           context: .
           file: runner/Dockerfile
           builder: ${{ steps.releasecache.outputs.name }}
-          tags: agentos-runner
+          tags: curie-runner
           push: false
           load: true
           cache-from: type=gha,scope=ladder-runner
           cache-to: type=gha,mode=max,scope=ladder-runner
-      - name: Retag the runner image for the compose worker (AGENTOS_RUNNER_IMAGE, no registry auth)
-        run: docker tag agentos-runner ghcr.io/curie-eng/agentos-runner:latest
-      - name: Build the api image locally (satisfies agentos-api + agentos-migrate, no registry auth)
+      - name: Retag the runner image for the compose worker (CURIE_RUNNER_IMAGE, no registry auth)
+        run: docker tag curie-runner ghcr.io/curie-eng/curie-runner:latest
+      - name: Build the api image locally (satisfies curie-api + curie-migrate, no registry auth)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: apps/api/Dockerfile
           builder: ${{ steps.releasecache.outputs.name }}
-          tags: ghcr.io/curie-eng/agentos-api:ci-local
+          tags: ghcr.io/curie-eng/curie-api:ci-local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-api
@@ -662,19 +662,19 @@ jobs:
           context: .
           file: apps/worker/Dockerfile
           builder: ${{ steps.releasecache.outputs.name }}
-          tags: ghcr.io/curie-eng/agentos-worker:ci-local
+          tags: ghcr.io/curie-eng/curie-worker:ci-local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-worker
           cache-to: type=gha,mode=max,scope=ladder-worker
-      - name: Tag the api image for the generated release compose (ghcr.io/curie-eng/agentos-api:latest, no registry auth)
-        run: docker tag ghcr.io/curie-eng/agentos-api:ci-local ghcr.io/curie-eng/agentos-api:latest
-      - name: Build the worker-local overlay for the generated release compose (ghcr.io/curie-eng/agentos-worker-local:latest, no registry auth)
-        run: docker build --build-arg BASE_TAG=ci-local -t ghcr.io/curie-eng/agentos-worker-local:latest -f compose/worker-local.Dockerfile compose
+      - name: Tag the api image for the generated release compose (ghcr.io/curie-eng/curie-api:latest, no registry auth)
+        run: docker tag ghcr.io/curie-eng/curie-api:ci-local ghcr.io/curie-eng/curie-api:latest
+      - name: Build the worker-local overlay for the generated release compose (ghcr.io/curie-eng/curie-worker-local:latest, no registry auth)
+        run: docker build --build-arg BASE_TAG=ci-local -t ghcr.io/curie-eng/curie-worker-local:latest -f compose/worker-local.Dockerfile compose
       - name: Parity ladder (local-release rung against generated compose.release.yaml, fake model, credential-free)
         env:
-          AGENTOS_BIN: cli/target/release/agentos
-          AGENTOS_E2E_TIERS: local-release
+          CURIE_BIN: cli/target/release/curie
+          CURIE_E2E_TIERS: local-release
         run: bash cli/scripts/e2e-ladder.sh
 
   # COLD-START PARITY LADDER -- CLUSTER RUNG (issue #692). The one rung the
@@ -684,10 +684,10 @@ jobs:
   # classes the ladder exists to catch, and until this job existed it was the
   # only rung CI never gated -- verified by hand against a dev cluster before a
   # release. This stands up a DISPOSABLE kind cluster (thrown away with the
-  # runner at job end), Helm-installs the platform through `agentos cluster up`
+  # runner at job end), Helm-installs the platform through `curie cluster up`
   # (the operator wrapper, so the install path itself is exercised, not a
   # bespoke helm line), brings the runner prewarm DaemonSet up, and runs the
-  # cluster rung of `cli/scripts/e2e-ladder.sh` (AGENTOS_E2E_TIERS=cluster).
+  # cluster rung of `cli/scripts/e2e-ladder.sh` (CURIE_E2E_TIERS=cluster).
   #
   # THE REACHABILITY CRUX (why this rung was cut from #690 and needs its own
   # job): the round trip is bidirectional. Host->cluster is easy -- `cluster
@@ -699,7 +699,7 @@ jobs:
   # but a kind cluster's API server is bound on loopback (127.0.0.1:<port>), so
   # auto-detection yields 127.0.0.1 -- which an in-cluster pod cannot route to.
   # So the ladder is told the pod-reachable host explicitly via
-  # AGENTOS_E2E_LISTEN_HOST (forwarded to `cluster message --listen-host`, the
+  # CURIE_E2E_LISTEN_HOST (forwarded to `cluster message --listen-host`, the
   # documented operator escape hatch every loopback-API cluster needs): the kind
   # Docker network gateway -- the host's own address on the bridge every kind
   # node container sits on, which those containers (and pods egressing through
@@ -711,7 +711,7 @@ jobs:
   # Images: the four the cluster path needs (api, worker, ui, runner) are built
   # locally and `kind load`ed into the node store, then the install overrides
   # each image to the loaded tag with pullPolicy Never (mirroring
-  # charts/agentos/values-dev.yaml's offline posture) so the cluster never
+  # charts/curie/values-dev.yaml's offline posture) so the cluster never
   # reaches for the private GHCR refs it has no credentials for. The dispatcher
   # is NOT deployed -- no Slack ingress is needed, and a `<release>-dispatcher`
   # Deployment would trip `cluster message`'s guard against hijacking a live
@@ -769,13 +769,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Download the agentos binary built by the Rust job
+      - name: Download the curie binary built by the Rust job
         uses: actions/download-artifact@v8
         with:
-          name: agentos-x86_64-linux-${{ github.sha }}
+          name: curie-x86_64-linux-${{ github.sha }}
           path: cli/target/release
       - name: Make the binary executable
-        run: chmod +x cli/target/release/agentos
+        run: chmod +x cli/target/release/curie
       - name: Install Helm
         uses: azure/setup-helm@v5
         with:
@@ -796,7 +796,7 @@ jobs:
           context: .
           file: apps/api/Dockerfile
           builder: ${{ steps.clustercache.outputs.name }}
-          tags: agentos-api:local
+          tags: curie-api:local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-api
@@ -807,7 +807,7 @@ jobs:
           context: .
           file: apps/worker/Dockerfile
           builder: ${{ steps.clustercache.outputs.name }}
-          tags: agentos-worker:local
+          tags: curie-worker:local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-worker
@@ -818,7 +818,7 @@ jobs:
           context: .
           file: apps/ui/Dockerfile
           builder: ${{ steps.clustercache.outputs.name }}
-          tags: agentos-ui:local
+          tags: curie-ui:local
           push: false
           load: true
           cache-from: type=gha,scope=ladder-ui
@@ -829,7 +829,7 @@ jobs:
           context: .
           file: runner/Dockerfile
           builder: ${{ steps.clustercache.outputs.name }}
-          tags: agentos-runner:latest
+          tags: curie-runner:latest
           push: false
           load: true
           cache-from: type=gha,scope=ladder-runner
@@ -859,15 +859,15 @@ jobs:
         with:
           version: v0.24.0
           node_image: kindest/node:v1.31.0
-          cluster_name: agentos-e2e
+          cluster_name: curie-e2e
           config: kind-config.yaml
       # Load the four locally-built images into the node store so the install's
       # pullPolicy Never overrides bind them with no registry pull.
       - name: Load images into the kind cluster
         run: |
           set -euo pipefail
-          for img in agentos-api:local agentos-worker:local agentos-ui:local agentos-runner:latest; do
-            kind load docker-image "$img" --name agentos-e2e
+          for img in curie-api:local curie-worker:local curie-ui:local curie-runner:latest; do
+            kind load docker-image "$img" --name curie-e2e
           done
       # Helm-install the platform through the operator wrapper. --dev pins the
       # chart's deterministic published secrets (so `cluster message` can read
@@ -876,21 +876,21 @@ jobs:
       # with pullPolicy Never (the runner AND its prewarm DaemonSet), force gVisor
       # off (no runsc on kind nodes), and drop the dispatcher (no Slack; its
       # presence would trip the `cluster message` reply-hijack guard).
-      - name: Install the platform (agentos cluster up)
+      - name: Install the platform (curie cluster up)
         env:
-          AGENTOS_BIN: cli/target/release/agentos
+          CURIE_BIN: cli/target/release/curie
         run: |
           set -euo pipefail
-          "$AGENTOS_BIN" cluster up \
-            --chart charts/agentos \
+          "$CURIE_BIN" cluster up \
+            --chart charts/curie \
             --dev \
             --fake-model \
             --set security.gvisor.mode=off \
             --set dispatcher.deploy=false \
-            --set api.image.repository=agentos-api --set api.image.tag=local --set api.image.pullPolicy=Never \
-            --set worker.image.repository=agentos-worker --set worker.image.tag=local --set worker.image.pullPolicy=Never \
-            --set ui.image.repository=agentos-ui --set ui.image.tag=local --set ui.image.pullPolicy=Never \
-            --set agentSandbox.runner.image=agentos-runner --set agentSandbox.runner.tag=latest --set agentSandbox.runner.imagePullPolicy=Never \
+            --set api.image.repository=curie-api --set api.image.tag=local --set api.image.pullPolicy=Never \
+            --set worker.image.repository=curie-worker --set worker.image.tag=local --set worker.image.pullPolicy=Never \
+            --set ui.image.repository=curie-ui --set ui.image.tag=local --set ui.image.pullPolicy=Never \
+            --set agentSandbox.runner.image=curie-runner --set agentSandbox.runner.tag=latest --set agentSandbox.runner.imagePullPolicy=Never \
             --set agentSandbox.runner.prewarm.imagePullPolicy=Never
       # `cluster up` does not `helm --wait` (the argv stays a thin wrapper), so
       # wait for the rollouts the round trip depends on before driving it. The
@@ -901,10 +901,10 @@ jobs:
       - name: Wait for the platform to become ready
         run: |
           set -euo pipefail
-          kubectl rollout status deploy/agentos-api -n agentos --timeout=300s
-          kubectl rollout status deploy/agentos-worker -n agentos --timeout=300s
-          kubectl rollout status deploy/agentos-ui -n agentos --timeout=300s
-          kubectl rollout status daemonset/agentos-runner-prewarm -n agentos --timeout=300s
+          kubectl rollout status deploy/curie-api -n curie --timeout=300s
+          kubectl rollout status deploy/curie-worker -n curie --timeout=300s
+          kubectl rollout status deploy/curie-ui -n curie --timeout=300s
+          kubectl rollout status daemonset/curie-runner-prewarm -n curie --timeout=300s
       # The pod-reachable host for the reply stub: the kind Docker network
       # gateway. Every node container sits on this bridge, so a pod egressing
       # through its node reaches the host here; the stub binds 0.0.0.0 and answers
@@ -921,7 +921,7 @@ jobs:
           # not reliably the IPv4 one, which is why it came back empty. Read the
           # gateway the control-plane node container actually got first, then
           # fall back to ranging the network's IPAM for a dotted-quad gateway.
-          node="agentos-e2e-control-plane"
+          node="curie-e2e-control-plane"
           gw="$(docker inspect "$node" --format '{{ .NetworkSettings.Networks.kind.Gateway }}' 2>/dev/null || true)"
           if [[ ! "$gw" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
             gw="$(docker network inspect kind \
@@ -937,13 +937,13 @@ jobs:
             exit 1
           fi
           echo "kind network gateway (worker->stub reply host): $gw"
-          echo "AGENTOS_E2E_LISTEN_HOST=$gw" >> "$GITHUB_ENV"
+          echo "CURIE_E2E_LISTEN_HOST=$gw" >> "$GITHUB_ENV"
       # The cluster rung only: `cluster status` gate -> `cluster deploy` ->
       # `cluster message` (reply asserted). Fake model, credential-free.
       - name: Parity ladder (cluster rung, fake model, credential-free)
         env:
-          AGENTOS_BIN: cli/target/release/agentos
-          AGENTOS_E2E_TIERS: cluster
+          CURIE_BIN: cli/target/release/curie
+          CURIE_E2E_TIERS: cluster
         run: bash cli/scripts/e2e-ladder.sh
       # Surface why on any failure above: pod states, recent events, and the
       # worker/runner logs are what localize a reachability or scheduling break.
@@ -951,6 +951,6 @@ jobs:
         if: failure()
         run: |
           kubectl get pods -A -o wide || true
-          kubectl get events -n agentos --sort-by=.lastTimestamp | tail -50 || true
-          kubectl describe pods -n agentos -l app.kubernetes.io/component=runner-sandbox || true
-          kubectl logs -n agentos -l app.kubernetes.io/component=worker --tail=100 || true
+          kubectl get events -n curie --sort-by=.lastTimestamp | tail -50 || true
+          kubectl describe pods -n curie -l app.kubernetes.io/component=runner-sandbox || true
+          kubectl logs -n curie -l app.kubernetes.io/component=worker --tail=100 || true

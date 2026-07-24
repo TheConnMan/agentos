@@ -150,7 +150,7 @@ def exclude_current_workflow_run(
     unrelated required check through, which is the opposite of failing closed.
 
     A check-run's `details_url` is its job URL, observed live as
-    `https://github.com/curie-eng/agentos/actions/runs/<run_id>/job/<job_id>`,
+    `https://github.com/curie-eng/curie/actions/runs/<run_id>/job/<job_id>`,
     so the run id embedded in that path is the ownership signal. An entry with
     no `details_url` (an external app's check) can never be ours, so it stays.
     """
@@ -252,7 +252,7 @@ def fetch_check_runs(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("sha", help="the tagged commit to authorize")
-    parser.add_argument("--repo", required=True, help="owner/name, e.g. curie-eng/agentos")
+    parser.add_argument("--repo", required=True, help="owner/name, e.g. curie-eng/curie")
     parser.add_argument("--main-ref", default="origin/main", help="the reviewed-main ref")
     parser.add_argument(
         "--run-id",

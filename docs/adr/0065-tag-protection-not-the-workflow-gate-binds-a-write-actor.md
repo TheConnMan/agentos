@@ -15,8 +15,8 @@ built -- the ancestry check, the required-checks check, and the
 accident-prevention control; only the claim that it constrains a determined
 write actor is corrected here.
 
-Addresses [#738](https://github.com/curie-eng/agentos/issues/738), introduced
-by [#727](https://github.com/curie-eng/agentos/pull/727). Related: #628, #632,
+Addresses [#738](https://github.com/curie-eng/curie/issues/738), introduced
+by [#727](https://github.com/curie-eng/curie/pull/727). Related: #628, #632,
 #732, #733.
 
 ## Context
@@ -97,7 +97,7 @@ commit carries:
   job is allowed to start.
 
 Neither is configured today. Both are admin-only repository settings; this
-account holds `push` only (confirmed via `gh api repos/curie-eng/agentos
+account holds `push` only (confirmed via `gh api repos/curie-eng/curie
 --jq .permissions`), not `admin` or `maintain`, so neither can be turned on
 from this session, the same wall #628 and #632 already recorded hitting.
 That is not a decision being deferred quietly -- it is the actual state of the
@@ -128,7 +128,7 @@ Consequences.
   deleting a matching tag itself requires elevated permission") and #632's
   admin-gated items are queued behind the identical access wall. Both should
   be resolved in one deliberate admin session by whoever holds `admin` or
-  `maintain` on `curie-eng/agentos`, rather than continuing to accumulate as
+  `maintain` on `curie-eng/curie`, rather than continuing to accumulate as
   separately-filed footnotes across issues.
 - **Required reviewers on `release-publish` remain unset.** Until a maintainer
   adds them, the `environment:` line on `authorize-release` is inert, exactly

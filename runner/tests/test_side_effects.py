@@ -1,6 +1,6 @@
 """The side-effect classifier: harness-declared read-only allowlist, deny-by-default."""
 
-from agentos_runner import (
+from curie_runner import (
     CLAUDE_READONLY_TOOLS,
     DEFAULT_IDEMPOTENT_TOOLS,
     PLATFORM_IDEMPOTENT_TOOLS,
@@ -36,7 +36,7 @@ def test_platform_approval_tool_is_idempotent_under_any_harness() -> None:
     -- flagging it would block the no-retry rule for the turns approvals pause.
     """
 
-    approval_tool = "mcp__agentos__request_approval"
+    approval_tool = "mcp__curie__request_approval"
     assert approval_tool in PLATFORM_IDEMPOTENT_TOOLS
     # A harness declaration that omits the approval tool still classifies it safe.
     classifier = SideEffectClassifier(["read"])

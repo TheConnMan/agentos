@@ -14,8 +14,8 @@ DB is up (the previous pin lived inside a Postgres-gated integration test).
 
 from __future__ import annotations
 
-from agentos_runner.approval import APPROVAL_SUMMARY_PREFIX
-from agentos_worker.binding import _PERMISSION_GATE_SUMMARY_PREFIX
+from curie_runner.approval import APPROVAL_SUMMARY_PREFIX
+from curie_worker.binding import _PERMISSION_GATE_SUMMARY_PREFIX
 
 
 def test_worker_prefix_matches_runner_source() -> None:

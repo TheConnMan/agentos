@@ -29,21 +29,21 @@ It is also the entire check. The suite never inspects what crosses
 naming or side effect classification. So a harness passes conformance while
 being wrong in every way the ACI does not look at:
 
-- **Tool identity.** `runner/src/agentos_runner/side_effects.py:28-40` hardcodes
+- **Tool identity.** `runner/src/curie_runner/side_effects.py:28-40` hardcodes
   Claude Code's PascalCase read only tool names. Under an engine with lowercase
   tool names every read only tool misclassifies as side effecting, wrongly
   suppressing the worker's auto retry. Conformance is green throughout.
-- **Credential resolution.** `runner/src/agentos_runner/sdk_auth.py:377-386`
+- **Credential resolution.** `runner/src/curie_runner/sdk_auth.py:377-386`
   refuses any non Anthropic Messages wire outright, and
-  `apps/worker/src/agentos_worker/sandbox/docker.py:99` maintains a hand copied
+  `apps/worker/src/curie_worker/sandbox/docker.py:99` maintains a hand copied
   mirror of the runner's prefix rules. A second harness can get either half
   wrong and still emit a perfect `final` frame.
 - **Bundle compile and telemetry.** Neither is looked at by the suite at all.
 
 **The forgery is the mechanism, and our own fake teaches it.**
-`runner/src/agentos_runner/fake.py:1-8` states the design: it "constructs real
+`runner/src/curie_runner/fake.py:1-8` states the design: it "constructs real
 claude-agent-sdk message dataclasses with canned content, so everything above it
-runs unmodified". `runner/src/agentos_runner/fake.py:38` hand builds a
+runs unmodified". `runner/src/curie_runner/fake.py:38` hand builds a
 `ResultMessage` carrying `duration_ms=1`, `duration_api_ms=1`, `num_turns=1` and
 `session_id="fake-session"`, dummy fields nothing reads. That is exactly the
 synthesis tax ADR-0031 named, shipped as the sanctioned reference
@@ -145,7 +145,7 @@ were the problem.
 
 **The fake rewrite is the highest risk item, and it is not a harness risk.** The
 fake is the default in CI, in the chart's sealed pool, and in compose
-(`${AGENTOS_FAKE_MODEL:-1}`). Changing what it is built out of touches the most
+(`${CURIE_FAKE_MODEL:-1}`). Changing what it is built out of touches the most
 widely exercised path in the repo. ADR-0055's rules are the safety net here: the
 fake tier's one assertion is that the turn completed, so a rewrite that breaks
 plumbing fails loudly and immediately across CI rather than degrading quietly.

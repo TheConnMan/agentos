@@ -1,4 +1,4 @@
-# Contributing to AgentOS
+# Contributing to Curie
 
 Thanks for your interest in contributing. This guide covers how to prepare a
 change that fits this repository's conventions, how to run the checks CI runs,
@@ -39,7 +39,7 @@ a cross-component seam or a frozen contract (see below).
 
 ## Development setup
 
-AgentOS is a multi-language monorepo: a Python
+Curie is a multi-language monorepo: a Python
 [uv](https://docs.astral.sh/uv/) workspace (the platform services and packages),
 a Rust CLI, and a React (Vite + TS) UI, orchestrated over a Docker Compose dev
 stack. See [`README.md`](README.md) and [`QUICKSTART.md`](QUICKSTART.md) for the
@@ -114,7 +114,7 @@ mirror of the CI docs gate) and commit the regenerated files.
 - Assert real outcomes (values, state transitions, emitted events), not
   presence. A change that passes only by weakening assertions is a regression.
 - Every behavior-bearing change must be verified end-to-end through the real
-  product loop (the `agentos` CLI, the compose services, or a real sandbox on a
+  product loop (the `curie` CLI, the compose services, or a real sandbox on a
   local `kind`/`k3s` cluster), not just by unit tests.
 - If you touch one side of a known parity seam (see the registry in AGENTS.md),
   change the sibling in the same PR, route both through a shared helper, or name
@@ -239,4 +239,4 @@ whatever license the project adopts; it is not itself a license grant.
 ## Getting help while contributing
 
 If you get stuck, see [`SUPPORT.md`](SUPPORT.md) for where to ask. Thank you for
-contributing to AgentOS.
+contributing to Curie.

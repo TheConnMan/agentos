@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cold-start parity ladder for the agentos CLI (issue #690).
+# Cold-start parity ladder for the curie CLI (issue #690).
 #
 # This is an E2E test, not a gate: it drives the SAME bundle through each
 # deployment tier with the tier's own real verbs and asserts a turn actually
@@ -8,7 +8,7 @@
 # `local up --minimal` -> `local deploy` -> `local message` -> `local down`,
 # against `compose.dev.yaml`. The `local-release` mode is the same round trip
 # against `compose.release.yaml` instead -- the generated, checkout-free
-# artifact `agentos local up` runs on a release binary (issue #695), one half
+# artifact `curie local up` runs on a release binary (issue #695), one half
 # of the `compose.dev.yaml` / generated-release-compose parity seam named in
 # AGENTS.md. CI validates that generated file today only by `docker compose
 # config` and service-count assertions (the `compose` job), never by running a
@@ -17,9 +17,9 @@
 # installed; the ladder never installs or uninstalls one.
 #
 # What it is NOT: it is not a compose test and not a helm test. Every step goes
-# through an `agentos` verb, because the point is to catch a tier whose verb
+# through an `curie` verb, because the point is to catch a tier whose verb
 # drifted from its sibling. The one raw-docker use is the post-teardown
-# assertion that nothing agentos-related survived.
+# assertion that nothing curie-related survived.
 #
 # Blast radius of the teardown sweep: sandbox containers are matched by the
 # substrate label, which is host-wide and not per-worktree, so the sweep only
@@ -27,7 +27,7 @@
 # belongs to another session, and so do that session's sandboxes.
 #
 # Fake model by default, so a default run is credential-free even on a box that
-# HAS credentials. Under AGENTOS_E2E_LIVE=1 the ladder runs the real model on
+# HAS credentials. Under CURIE_E2E_LIVE=1 the ladder runs the real model on
 # every rung and requires a credential up front. Under fake, the local and
 # cluster rungs assert PLUMBING only -- that a turn finalized and a reply came
 # back -- never reply CONTENT (ADR-0055, #612): an assertion tuned to the
@@ -35,34 +35,34 @@
 # eval graders against whichever model it booted (cli/scripts/e2e.sh), fake or
 # live, since that leg is acceptance evidence for #325, not a plumbing probe.
 #
-# Requirements: docker, a cargo toolchain (or $AGENTOS_BIN), and an
-# agentos-runner image (`agentos build`). Rung 3 additionally needs a reachable
+# Requirements: docker, a cargo toolchain (or $CURIE_BIN), and an
+# curie-runner image (`curie build`). Rung 3 additionally needs a reachable
 # cluster with a release installed. Run from anywhere:
 #
 #   bash cli/scripts/e2e-ladder.sh
 #
 # Env knobs:
-#   AGENTOS_E2E_TIERS        comma list of rungs (default skill,local; `all` =
+#   CURIE_E2E_TIERS        comma list of rungs (default skill,local; `all` =
 #                            skill,local,cluster). A NAMED tier is REQUIRED: if
 #                            cluster is named and no release responds, exit 1.
 #                            `local-release` is a fourth, separately-named rung
 #                            (the same local round trip against the generated
 #                            compose.release.yaml instead of compose.dev.yaml);
 #                            it is NOT folded into `all` because it needs the
-#                            release-pinned images (ghcr.io/curie-eng/agentos-api
+#                            release-pinned images (ghcr.io/curie-eng/curie-api
 #                            and -worker-local) built and tagged locally first,
 #                            a step `all`'s existing skill/local/cluster rungs
 #                            don't require -- name it explicitly, e.g.
-#                            AGENTOS_E2E_TIERS=skill,local,local-release.
-#   AGENTOS_E2E_LIVE         1 = real model on every named rung, including
+#                            CURIE_E2E_TIERS=skill,local,local-release.
+#   CURIE_E2E_LIVE         1 = real model on every named rung, including
 #                            rung 1 (cli/scripts/e2e.sh reads this same var
 #                            itself rather than being told by the ladder).
-#   AGENTOS_BIN              path to a prebuilt agentos binary (skip cargo build)
+#   CURIE_BIN              path to a prebuilt curie binary (skip cargo build)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TIERS="${AGENTOS_E2E_TIERS:-skill,local}"
-LIVE="${AGENTOS_E2E_LIVE:-0}"
+TIERS="${CURIE_E2E_TIERS:-skill,local}"
+LIVE="${CURIE_E2E_LIVE:-0}"
 # Fixed, not an env knob: the ladder asserts PLUMBING, so the bundle it ships is
 # a fixed input of the test rather than something a caller varies.
 BUNDLE_SRC="$REPO_ROOT/examples/weather"
@@ -72,7 +72,7 @@ BUNDLE_SRC="$REPO_ROOT/examples/weather"
 # could green-light an occupied 8155 and then hang on the message timeout.
 STUB_PORT=8155
 PROMPT="What is the weather in Denver right now?"
-# The fake model's only reply (runner/src/agentos_runner/fake.py). It is used
+# The fake model's only reply (runner/src/curie_runner/fake.py). It is used
 # ONLY as a live-mode negative control -- "the reply must not be this" -- never
 # as a pass condition. Matching it to green is the #612 bypass.
 FAKE_SENTINEL="all done"
@@ -84,30 +84,30 @@ LOCAL_STACK_OWNED=0
 
 # The label the sandbox substrate stamps on every runner container it spawns
 # (cli/src/docker.rs SANDBOX_LABEL, apps/worker sandbox/types.py). Container
-# NAMES are per-thread (agentos-thread-<digest>-<nonce>), so a name filter
+# NAMES are per-thread (curie-thread-<digest>-<nonce>), so a name filter
 # matches nothing; the label is the only handle that actually selects them.
-SANDBOX_LABEL="agentos.dev/managed-by=agentos-sandbox-substrate"
+SANDBOX_LABEL="curie.dev/managed-by=curie-sandbox-substrate"
 
 # The leftover-runner case (#747) stands in a container of its own. The name is
-# unique to this run and is NEVER agentos-runner-local: that default belongs to
+# unique to this run and is NEVER curie-runner-local: that default belongs to
 # whatever real `skill up` a developer has going on this box, and this case
 # removes what it names.
-CONFLICT_NAME="agentos-ladder-747-leftover-$$"
+CONFLICT_NAME="curie-ladder-747-leftover-$$"
 CONFLICT_CREATED=0
 # The image that case creates its stand-in from. Already a requirement of the
 # ladder (rung 1 boots a real runner), so this adds no new prerequisite.
-RUNNER_IMAGE="agentos-runner"
+RUNNER_IMAGE="curie-runner"
 
-echo "=== Resolve the agentos binary ==="
-if [[ -n "${AGENTOS_BIN:-}" && -x "${AGENTOS_BIN:-}" ]]; then
+echo "=== Resolve the curie binary ==="
+if [[ -n "${CURIE_BIN:-}" && -x "${CURIE_BIN:-}" ]]; then
     # Absolutize: the ladder invokes the binary from other directories, so a
-    # relative $AGENTOS_BIN (as CI passes) must be pinned here or it stops
+    # relative $CURIE_BIN (as CI passes) must be pinned here or it stops
     # resolving later.
-    BIN="$(cd "$(dirname "$AGENTOS_BIN")" && pwd)/$(basename "$AGENTOS_BIN")"
+    BIN="$(cd "$(dirname "$CURIE_BIN")" && pwd)/$(basename "$CURIE_BIN")"
     echo "using prebuilt binary: $BIN"
 else
     (cd "$REPO_ROOT/cli" && cargo build --release --quiet)
-    BIN="$REPO_ROOT/cli/target/release/agentos"
+    BIN="$REPO_ROOT/cli/target/release/curie"
 fi
 "$BIN" --version
 
@@ -129,7 +129,7 @@ cleanup() {
     # run this one has no business touching.
     if (( LOCAL_STACK_OWNED )); then
         echo
-        echo "=== teardown: agentos local down ==="
+        echo "=== teardown: curie local down ==="
         # Tolerated failure, on top of `set +e`: the stack may never have
         # finished coming up, and a failed `local down` must not skip the
         # sandbox sweep below or change the exit code captured above.
@@ -158,29 +158,29 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # The ONE place the fake/live asymmetry is stated. There is no shared
-# fake-model control across tiers: skill reads AGENTOS_E2E_LIVE itself (see
+# fake-model control across tiers: skill reads CURIE_E2E_LIVE itself (see
 # cli/scripts/e2e.sh) and derives its own `--fake-model` flag from it, local
-# reads AGENTOS_FAKE_MODEL, and cluster bakes it into the install. Keeping the
+# reads CURIE_FAKE_MODEL, and cluster bakes it into the install. Keeping the
 # local/cluster translation here means that seam is written down once; skill
-# is exempt because AGENTOS_E2E_LIVE is already in this process's environment
+# is exempt because CURIE_E2E_LIVE is already in this process's environment
 # by the time `bash e2e.sh` is invoked below, so it needs no translation.
 apply_model_mode() {
     if [[ "$LIVE" == "1" ]]; then
-        if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${AGENTOS_CREDENTIALS:-}" ]]; then
-            echo "error: AGENTOS_E2E_LIVE=1 needs a model credential in the environment, and none is set." >&2
-            echo "fix: export ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS, or drop AGENTOS_E2E_LIVE to run sealed against the fake model." >&2
+        if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${CURIE_CREDENTIALS:-}" ]]; then
+            echo "error: CURIE_E2E_LIVE=1 needs a model credential in the environment, and none is set." >&2
+            echo "fix: export ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or CURIE_CREDENTIALS, or drop CURIE_E2E_LIVE to run sealed against the fake model." >&2
             exit 1
         fi
-        # Live means live: an inherited AGENTOS_FAKE_MODEL=1 would silently seal
+        # Live means live: an inherited CURIE_FAKE_MODEL=1 would silently seal
         # a run the operator asked to be real.
-        unset AGENTOS_FAKE_MODEL
+        unset CURIE_FAKE_MODEL
         echo "model mode: LIVE (real model on the skill, local, and cluster rungs)"
     else
         # Exported, not merely defaulted: a developer shell that happens to carry
         # ANTHROPIC_API_KEY must still get the sealed run. That is what
         # credential-free-by-default means.
-        export AGENTOS_FAKE_MODEL=1
-        echo "model mode: FAKE (sealed; AGENTOS_FAKE_MODEL=1 exported for the local rung)"
+        export CURIE_FAKE_MODEL=1
+        echo "model mode: FAKE (sealed; CURIE_FAKE_MODEL=1 exported for the local rung)"
     fi
     echo "note: the cluster rung's model is a property of the installed release (cluster up --fake-model), not of this run."
 }
@@ -274,7 +274,7 @@ assert_stub_port_free() {
 
 # A leftover runner container of the target name must fail `skill up` with the
 # actionable remedies (exit 2), and `skill down --name` must clear it from a
-# directory holding no `.agentos/runner.json` (#747).
+# directory holding no `.curie/runner.json` (#747).
 #
 # Live-docker, because the reported defect was a WIRING defect: the planners are
 # unit-tested, but nothing proved `skill up` reaches the preflight or that
@@ -285,7 +285,7 @@ case_leftover_runner_container() {
     echo "=== case: a leftover runner container is recoverable from the CLI (#747) ==="
     if ! docker image inspect "$RUNNER_IMAGE" >/dev/null 2>&1; then
         echo "error: image '$RUNNER_IMAGE' is not present, and the #747 case creates its leftover from it." >&2
-        echo "fix: build it with \`agentos build\`, then re-run." >&2
+        echo "fix: build it with \`curie build\`, then re-run." >&2
         return 1
     fi
     # Claim ownership BEFORE creating, so a signal between the two cannot strand
@@ -311,7 +311,7 @@ case_leftover_runner_container() {
     # From $WORKDIR, not the bundle: the reported wedge was a directory with no
     # recorded runner state, which is exactly what `--name` exists to clear.
     (cd "$WORKDIR" && "$BIN" skill down --name "$CONFLICT_NAME")
-    # Exact-name filter, never a substring: `name=agentos` is host-wide and would
+    # Exact-name filter, never a substring: `name=curie` is host-wide and would
     # report another session's runner as this case's failure.
     if [[ -n "$(docker ps -aq --filter "name=^${CONFLICT_NAME}$")" ]]; then
         echo "skill down --name left '$CONFLICT_NAME' behind." >&2
@@ -338,7 +338,7 @@ rung_local() {
 
     assert_stub_port_free
 
-    if [[ -n "$(docker ps -q --filter 'name=agentos-api' 2>/dev/null)" ]]; then
+    if [[ -n "$(docker ps -q --filter 'name=curie-api' 2>/dev/null)" ]]; then
         # Reuse it and do NOT tear it down: the thread that brought a stack up
         # owns tearing it down, in both directions.
         echo "a compose stack is already running; reusing it and leaving teardown to whoever started it"
@@ -346,12 +346,12 @@ rung_local() {
             # Model mode is fixed at `local up` time, so a reused stack may have
             # been started sealed. Warn rather than refuse: the live-only fake
             # sentinel control below catches it for real.
-            echo "warning: AGENTOS_E2E_LIVE=1, but the reused stack's model mode was fixed by whoever ran \`local up\` and is NOT verified here." >&2
+            echo "warning: CURIE_E2E_LIVE=1, but the reused stack's model mode was fixed by whoever ran \`local up\` and is NOT verified here." >&2
             echo "warning: if that stack was started with the fake model, this 'live' rung runs sealed; \`local down\` then re-run to be sure." >&2
         fi
     else
         echo
-        echo "=== agentos local up --minimal ==="
+        echo "=== curie local up --minimal ==="
         # --minimal selects the core profile and blanks the OTel endpoint itself
         # (core has no collector), so the ladder passes no profiles and no OTel env.
         #
@@ -366,14 +366,14 @@ rung_local() {
     fi
 
     echo
-    echo "=== agentos local deploy ==="
+    echo "=== curie local deploy ==="
     # No --api-url: the default IS the cold-start path a real user hits, and
     # exercising the default is the point. First create binds C0LOCALDEV, so the
     # message below can resolve the sole deployed agent with no --channel.
     "$BIN" local deploy --plugin-dir "$WORKDIR/bundle"
 
     echo
-    echo "=== agentos local message --json ==="
+    echo "=== curie local message --json ==="
     # Re-probe: the precheck above ran before `local up` and `local deploy`,
     # potentially minutes ago, and the stub binds the port only now.
     assert_stub_port_free
@@ -386,29 +386,29 @@ rung_local() {
 
     if (( LOCAL_STACK_OWNED )); then
         echo
-        echo "=== agentos local down ==="
+        echo "=== curie local down ==="
         "$BIN" local down
         LOCAL_STACK_OWNED=0
 
         echo
-        echo "=== assert nothing agentos-related survived ==="
-        # Both checks filter by LABEL, never by name. `--filter name=agentos` is
+        echo "=== assert nothing curie-related survived ==="
+        # Both checks filter by LABEL, never by name. `--filter name=curie` is
         # a host-wide SUBSTRING match, so on a shared box it reds on containers
         # belonging to other worktrees and sessions (an unrelated
-        # `agentos-runner-local` from a concurrent `skill up` is enough), and a
+        # `curie-runner-local` from a concurrent `skill up` is enough), and a
         # gate that cries wolf is a gate someone disables. A run may only assert
         # on what it owns.
         local survivors
-        # The compose project name is pinned to `agentos` by the CLI
+        # The compose project name is pinned to `curie` by the CLI
         # (cli/src/local.rs COMPOSE_PROJECT_NAME), so this selects exactly the
         # services `local up` started and nothing else.
-        survivors="$(docker ps --filter 'label=com.docker.compose.project=agentos' --format '{{.Names}}')"
+        survivors="$(docker ps --filter 'label=com.docker.compose.project=curie' --format '{{.Names}}')"
         if [[ -n "$survivors" ]]; then
             echo "local down left compose services running:" >&2
             printf '%s\n' "$survivors" >&2
             return 1
         fi
-        # Sandbox containers are named per thread, so a `name=agentos-runner`
+        # Sandbox containers are named per thread, so a `name=curie-runner`
         # filter matches nothing and the assertion would pass no matter what
         # survived.
         survivors="$(docker ps --filter "label=$SANDBOX_LABEL" --format '{{.Names}}')"
@@ -417,14 +417,14 @@ rung_local() {
             printf '%s\n' "$survivors" >&2
             return 1
         fi
-        echo "no agentos containers running"
+        echo "no curie containers running"
     fi
 }
 
 # local-release mode: the same local round trip as rung_local, but against the
 # GENERATED compose.release.yaml (compose/generate_release_compose.py) instead
 # of the checked-in compose.dev.yaml -- the artifact a release binary's
-# `agentos local up` actually runs, per the compose.dev.yaml / generated
+# `curie local up` actually runs, per the compose.dev.yaml / generated
 # release compose parity seam (issue #695, AGENTS.md). CI's existing `compose`
 # job already asserts this generated file parses and renders the right service
 # counts; this mode is the missing half, that a real turn survives it.
@@ -443,17 +443,17 @@ rung_local_release() {
     (cd "$REPO_ROOT" && python3 compose/generate_release_compose.py) > "$release_compose"
 
     # The generated file has no build directives (generate_release_compose.py's
-    # T1 replaces the agentos-worker build overlay with a pinned
-    # ghcr.io/curie-eng/agentos-worker-local image, and agentos-api/-migrate
-    # were already a pull, never a build) -- every agentos-owned image it needs
+    # T1 replaces the curie-worker build overlay with a pinned
+    # ghcr.io/curie-eng/curie-worker-local image, and curie-api/-migrate
+    # were already a pull, never a build) -- every curie-owned image it needs
     # must already exist locally under the tag the generator pinned, or `local
     # up` will try to pull a private GHCR image with no credentials. Check only
     # the core profile's images (--minimal is what this rung brings up) and
-    # only the agentos-owned ones: postgres/valkey/minio are public and pulled
+    # only the curie-owned ones: postgres/valkey/minio are public and pulled
     # on demand same as rung_local already assumes.
     local missing=0 image
     while IFS= read -r image; do
-        [[ "$image" == ghcr.io/curie-eng/agentos-* ]] || continue
+        [[ "$image" == ghcr.io/curie-eng/curie-* ]] || continue
         if ! docker image inspect "$image" >/dev/null 2>&1; then
             echo "error: image '$image' is required by compose.release.yaml's core profile and is not present locally." >&2
             missing=1
@@ -466,19 +466,19 @@ rung_local_release() {
 
     assert_stub_port_free
 
-    if [[ -n "$(docker ps -q --filter 'name=agentos-api' 2>/dev/null)" ]]; then
+    if [[ -n "$(docker ps -q --filter 'name=curie-api' 2>/dev/null)" ]]; then
         # Reuse it and do NOT tear it down, matching rung_local's rule: the
         # thread that brought a stack up owns tearing it down.
         echo "a compose stack is already running; reusing it and leaving teardown to whoever started it"
         if [[ "$LIVE" == "1" ]]; then
-            echo "warning: AGENTOS_E2E_LIVE=1, but the reused stack's model mode was fixed by whoever ran \`local up\` and is NOT verified here." >&2
+            echo "warning: CURIE_E2E_LIVE=1, but the reused stack's model mode was fixed by whoever ran \`local up\` and is NOT verified here." >&2
             echo "warning: if that stack was started with the fake model, this 'live' rung runs sealed; \`local down\` then re-run to be sure." >&2
         fi
     else
         echo
         echo "=== clear any stale volumes from a prior non-wiped teardown ==="
         # compose.dev.yaml and compose.release.yaml pin the SAME compose
-        # project name (`agentos`), so a prior `local down` (rung_local's, kept
+        # project name (`curie`), so a prior `local down` (rung_local's, kept
         # deliberately non-destructive) can leave this rung's Postgres/Valkey
         # state non-empty. Nothing is running (checked above), so this can only
         # ever touch a stack this run itself would otherwise create -- never a
@@ -488,13 +488,13 @@ rung_local_release() {
         "$BIN" local down --wipe --yes -f "$release_compose" >/dev/null 2>&1 || true
 
         echo
-        echo "=== agentos local up --minimal -f compose.release.yaml ==="
+        echo "=== curie local up --minimal -f compose.release.yaml ==="
         LOCAL_STACK_OWNED=1
         "$BIN" local up --minimal -f "$release_compose"
     fi
 
     echo
-    echo "=== agentos local deploy (release-compose stack) ==="
+    echo "=== curie local deploy (release-compose stack) ==="
     # A separate bundle copy from rung_local's, never the same directory: deploy
     # records state into the bundle dir, and reusing rung_local's copy here
     # would carry over its recorded agent/version ids instead of a fresh
@@ -502,7 +502,7 @@ rung_local_release() {
     "$BIN" local deploy --plugin-dir "$WORKDIR/bundle-release"
 
     echo
-    echo "=== agentos local message --json (release-compose stack) ==="
+    echo "=== curie local message --json (release-compose stack) ==="
     assert_stub_port_free
     local out
     out="$("$BIN" --json local message "$PROMPT" || true)"
@@ -511,14 +511,14 @@ rung_local_release() {
 
     if (( LOCAL_STACK_OWNED )); then
         echo
-        echo "=== agentos local down -f compose.release.yaml ==="
+        echo "=== curie local down -f compose.release.yaml ==="
         "$BIN" local down -f "$release_compose"
         LOCAL_STACK_OWNED=0
 
         echo
-        echo "=== assert nothing agentos-related survived ==="
+        echo "=== assert nothing curie-related survived ==="
         local survivors
-        survivors="$(docker ps --filter 'label=com.docker.compose.project=agentos' --format '{{.Names}}')"
+        survivors="$(docker ps --filter 'label=com.docker.compose.project=curie' --format '{{.Names}}')"
         if [[ -n "$survivors" ]]; then
             echo "local down left compose services running:" >&2
             printf '%s\n' "$survivors" >&2
@@ -530,7 +530,7 @@ rung_local_release() {
             printf '%s\n' "$survivors" >&2
             return 1
         fi
-        echo "no agentos containers running"
+        echo "no curie containers running"
     fi
 }
 
@@ -541,10 +541,10 @@ rung_cluster() {
     echo "########## rung 3/3: cluster ##########"
 
     echo
-    echo "=== agentos cluster status (gate) ==="
+    echo "=== curie cluster status (gate) ==="
     # Gate on the PAYLOAD, not the exit code: `cluster status` is a read-only
     # report verb and exits 0 even when the release is absent (it just prints
-    # "release agentos not found"), so an exit-code gate never fires and the
+    # "release curie not found"), so an exit-code gate never fires and the
     # rung falls through into a confusing `cluster deploy` failure instead.
     # --json puts the object on stdout and human text on stderr.
     local status_json found
@@ -560,24 +560,24 @@ except Exception:
 print("yes" if isinstance(d, dict) and d.get("release_found") is True else "no")
 ' || echo "no")"
     if [[ "$found" != "yes" ]]; then
-        echo "error: AGENTOS_E2E_TIERS named the cluster rung, but no installed release was reported by \`agentos --json cluster status\`." >&2
-        echo "fix: install a release with \`agentos cluster up --fake-model\` (or point kubectl at the right context), or drop cluster from AGENTOS_E2E_TIERS." >&2
+        echo "error: CURIE_E2E_TIERS named the cluster rung, but no installed release was reported by \`curie --json cluster status\`." >&2
+        echo "fix: install a release with \`curie cluster up --fake-model\` (or point kubectl at the right context), or drop cluster from CURIE_E2E_TIERS." >&2
         return 1
     fi
 
     echo
-    echo "=== agentos cluster deploy ==="
+    echo "=== curie cluster deploy ==="
     # No --api-url: deploy auto-discovers the release's UI /api proxy over
     # NodePort. No --secret: it is declined at this tier by design (#440).
     "$BIN" cluster deploy --plugin-dir "$WORKDIR/bundle"
 
     echo
-    echo "=== agentos cluster message --json ==="
+    echo "=== curie cluster message --json ==="
     # No --thread: an existing thread keeps the sandbox and bundle it first
     # booted with, so reusing one could silently test a stale bundle. cluster
     # message manages its own port-forwards and reply stub; never forward by hand.
     #
-    # AGENTOS_E2E_LISTEN_HOST (optional): the host the in-cluster worker uses to
+    # CURIE_E2E_LISTEN_HOST (optional): the host the in-cluster worker uses to
     # reach this run's reply stub, forwarded verbatim as `cluster message
     # --listen-host`. Leave it UNSET for a cluster whose kubeconfig points at a
     # routable API server (k8scratch, a real cloud cluster): `cluster message`
@@ -593,9 +593,9 @@ print("yes" if isinstance(d, dict) and d.get("release_found") is True else "no")
     # `--listen-host` operator escape hatch, not a test-only shortcut: the exact
     # value any loopback-API-server cluster needs.
     local msg_args=(--json cluster message "$PROMPT")
-    if [[ -n "${AGENTOS_E2E_LISTEN_HOST:-}" ]]; then
-        echo "using --listen-host ${AGENTOS_E2E_LISTEN_HOST} (worker->stub reply host)"
-        msg_args+=(--listen-host "$AGENTOS_E2E_LISTEN_HOST")
+    if [[ -n "${CURIE_E2E_LISTEN_HOST:-}" ]]; then
+        echo "using --listen-host ${CURIE_E2E_LISTEN_HOST} (worker->stub reply host)"
+        msg_args+=(--listen-host "$CURIE_E2E_LISTEN_HOST")
     fi
     local out
     out="$("$BIN" "${msg_args[@]}" || true)"
@@ -624,13 +624,13 @@ for tier in "${SELECTED[@]}"; do
         cluster) RUN_CLUSTER=1 ;;
         "") ;;
         *)
-            echo "error: unknown tier '$tier' in AGENTOS_E2E_TIERS." >&2
+            echo "error: unknown tier '$tier' in CURIE_E2E_TIERS." >&2
             echo "fix: use a comma list of skill, local, local-release, cluster, or the shorthand 'all' (skill, local, cluster)." >&2
             exit 1 ;;
     esac
 done
 if (( ! RUN_SKILL && ! RUN_LOCAL && ! RUN_LOCAL_RELEASE && ! RUN_CLUSTER )); then
-    echo "error: AGENTOS_E2E_TIERS selected no rungs." >&2
+    echo "error: CURIE_E2E_TIERS selected no rungs." >&2
     echo "fix: set it to a comma list of skill, local, local-release, cluster, or 'all'." >&2
     exit 1
 fi
@@ -647,28 +647,28 @@ if (( RUN_SKILL )); then
     rung_skill
 else
     echo
-    echo "SKIPPING rung 1 (skill): not named in AGENTOS_E2E_TIERS."
+    echo "SKIPPING rung 1 (skill): not named in CURIE_E2E_TIERS."
 fi
 if (( RUN_LOCAL )); then
     rung_local
 else
     echo
-    echo "SKIPPING rung 2 (local): not named in AGENTOS_E2E_TIERS."
+    echo "SKIPPING rung 2 (local): not named in CURIE_E2E_TIERS."
 fi
 if (( RUN_LOCAL_RELEASE )); then
     rung_local_release
 else
     echo
-    echo "SKIPPING rung (local-release): not named in AGENTOS_E2E_TIERS. Needs the"
+    echo "SKIPPING rung (local-release): not named in CURIE_E2E_TIERS. Needs the"
     echo "release-pinned images built and tagged locally first; name it explicitly,"
-    echo "e.g. AGENTOS_E2E_TIERS=skill,local,local-release."
+    echo "e.g. CURIE_E2E_TIERS=skill,local,local-release."
 fi
 if (( RUN_CLUSTER )); then
     rung_cluster
 else
     echo
-    echo "SKIPPING rung 3 (cluster): not named in AGENTOS_E2E_TIERS. It needs a live"
-    echo "release and host-reachable pods, so it is opt-in: AGENTOS_E2E_TIERS=all."
+    echo "SKIPPING rung 3 (cluster): not named in CURIE_E2E_TIERS. It needs a live"
+    echo "release and host-reachable pods, so it is opt-in: CURIE_E2E_TIERS=all."
 fi
 
 echo

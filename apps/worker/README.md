@@ -2,7 +2,7 @@
 
 The worker is three parts: the concurrency kernel (routing rule, finish-race CAS, steer/interrupt, no-retry-after-side-effects, resume-rehydrate), the Agent Sandbox substrate module (warm pool, thread-to-sandbox affinity, claim/release), and the eval runner module. Reads Valkey Streams via redis-py consumer groups; drives claimed sandboxes running the runner image.
 
-## Deployment binding + kill switch (`agentos_worker.binding` + `agentos_worker.killswitch`)
+## Deployment binding + kill switch (`curie_worker.binding` + `curie_worker.killswitch`)
 
 Wires the kernel to the deployment tables and the kill switch. Both are
 optional on the kernel: absent, it runs a generic sandbox (the kernel's default
@@ -12,26 +12,26 @@ behavior); present, it binds per-channel and gates killed agents.
 deployment -> version` with one read-only SELECT over the API, git-flow, and kill-switch Postgres tables
 (a thin query layer, not the API's ORM, to avoid pulling FastAPI into the worker).
 Prod wins over dev, then most recent. The kernel claims the sandbox with a boot
-env built from the resolution: `AGENTOS_BUDGET` (the agent's
+env built from the resolution: `CURIE_BUDGET` (the agent's
 `max_usd_per_day`/`max_output_tokens_per_run`, platform defaults when NULL),
-`AGENTOS_SESSION_ID`, `AGENTOS_PLUGIN_DIR`, and
-`AGENTOS_BUNDLE_REF` (the MinIO key). An unmapped channel is a polite placeholder
+`CURIE_SESSION_ID`, `CURIE_PLUGIN_DIR`, and
+`CURIE_BUNDLE_REF` (the MinIO key). An unmapped channel is a polite placeholder
 edit and drop, never a crash. The claim env also carries a per-sandbox
-`AGENTOS_RUNNER_TOKEN` (minted with `secrets.token_urlsafe`) that the `RunnerClient`
+`CURIE_RUNNER_TOKEN` (minted with `secrets.token_urlsafe`) that the `RunnerClient`
 sends as an `Authorization: Bearer` header on every ACI call to that sandbox
 (issue #63).
 
-> Handoff: `AGENTOS_BUNDLE_REF` is a MinIO object key; the runner reads
-> `AGENTOS_PLUGIN_DIR` as a local mounted path and does not fetch. Fetching the
+> Handoff: `CURIE_BUNDLE_REF` is a MinIO object key; the runner reads
+> `CURIE_PLUGIN_DIR` as a local mounted path and does not fetch. Fetching the
 > bundle key into the plugin dir is sandbox provisioning (an init container in the
 > sandbox substrate's SandboxTemplate / the chart), owned there, not by the worker. Per-channel
 > dev/prod bot-identity routing (the dispatcher carrying which bot was addressed)
 > is a git-flow/dispatcher refinement.
 
 **Kill switch** (`killswitch.py`): subscribes to the kill-switch Valkey channel
-`agentos:kill-events`; on `kill` for an agent it interrupts that agent's live
+`curie:kill-events`; on `kill` for an agent it interrupts that agent's live
 turns (a run registry maps agent -> active threads). New runs are refused while
-the flag `agentos:kill:<agent_id>` is set - the kernel checks the flag before
+the flag `curie:kill:<agent_id>` is set - the kernel checks the flag before
 opening a turn, which also covers a kill event missed while the subscriber was
 down. `resume` clears the flag (API-side); no worker action needed.
 
@@ -41,7 +41,7 @@ preference, unknown -> None, budget/env); the kill switch against real Valkey
 (flag gate, subscriber dispatch); and kernel-level behaviors (unmapped drop,
 boot-env on claim, killed-agent refusal, kill interrupts a live turn).
 
-## The eval lane (`agentos_worker.eval`)
+## The eval lane (`curie_worker.eval`)
 
 Runs an eval suite against a plugin version and records the grid the eval matrix
 and PR check read.
@@ -58,13 +58,13 @@ EvalSuite (cases: input + grader)
       `version:<sha>` and `suite:<name>`, via the Langfuse ingestion API
 ```
 
-Run a Job with `python -m agentos_worker.eval`; it loads a suite JSON, runs it
+Run a Job with `python -m curie_worker.eval`; it loads a suite JSON, runs it
 against a runner endpoint, records to Langfuse if configured, prints the
 `EvalRunResult` as JSON (for the PR-check reporter), and exits non-zero if any
 case failed (so the Job / GitHub check reflects the result).
 
-Env: `AGENTOS_EVAL_SUITE` (suite JSON path), `AGENTOS_EVAL_TARGET_URL` (runner
-base_url), `AGENTOS_EVAL_VERSION` (version/sha tag, default `local`),
+Env: `CURIE_EVAL_SUITE` (suite JSON path), `CURIE_EVAL_TARGET_URL` (runner
+base_url), `CURIE_EVAL_VERSION` (version/sha tag, default `local`),
 `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (record scores
 when all set).
 
@@ -81,17 +81,17 @@ Tests (`apps/worker/tests/eval`): graders and rollups (unit); `EvalRunner`
 against a scriptable fake runner; `LangfuseEvalRecorder` against the REAL compose
 Langfuse (record + read back by version tag, never mocked).
 
-## The eval-stream consumer (`agentos_worker.eval.stream`)
+## The eval-stream consumer (`curie_worker.eval.stream`)
 
 Where the eval lane is the eval Job entrypoint (run one suite against one endpoint), the eval-stream consumer is the
 long-running worker that turns a queued eval request into a full run. It is a second
-consumer group (`agentos-eval-workers`) on a distinct Valkey stream `agentos:evals`,
+consumer group (`curie-eval-workers`) on a distinct Valkey stream `curie:evals`,
 running on its own connection so its blocking read never stalls the runs consumer.
 The API's git-flow engine is the producer; build against this written contract, not its
 code.
 
 ```
-XREADGROUP agentos:evals            EvalStreamConsumer (own consumer group)
+XREADGROUP curie:evals            EvalStreamConsumer (own consumer group)
    -> payload: EvalJob JSON            one stream field `payload` (dispatcher seam)
    -> BundleStore.get(bundle_ref)      MinIO GET, extract, load evals/cases.json
    -> run_eval_suite(target)           target_url shortcut, else provision a runner
@@ -111,12 +111,12 @@ eval lane's loader reads), never from the stream.
 Runtime rules (each has a provoking integration test in `tests/eval/test_stream.py`):
 
 - **Suite loads from the bundle.** MinIO GET `bundle_ref` from bucket
-  `agentos-bundles`, extract, load `evals/cases.json`; the `suite` field renames it
+  `curie-bundles`, extract, load `evals/cases.json`; the `suite` field renames it
   and tags Langfuse. A missing/corrupt bundle or missing evals dir is a **failed run**
   (0/0) reported and acked, never a crash.
 - **`target_url` present -> eval it directly** (the dev/test shortcut). Absent ->
   **provision a runner via the sandbox substrate** (the same warm-pool `claim` chat runs
-  use, boot env carrying `AGENTOS_BUNDLE_REF` + budget), eval against it, and tear it
+  use, boot env carrying `CURIE_BUNDLE_REF` + budget), eval against it, and tear it
   down in a `finally`. A provisioning failure is a failed run reported and acked.
 - **XACK only after the report POST attempt completes** (success, or terminally failed
   after bounded retries and logged). A worker crash before that leaves the entry
@@ -126,12 +126,12 @@ Runtime rules (each has a provoking integration test in `tests/eval/test_stream.
   and acked (a poison-pill drop). A failing eval case is a failed COUNT in the report,
   not a consumer crash.
 
-Config surface (read by `WorkerConfig`): `AGENTOS_EVAL_STREAM` /
-`AGENTOS_EVAL_CONSUMER_GROUP`; MinIO/S3 `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` /
+Config surface (read by `WorkerConfig`): `CURIE_EVAL_STREAM` /
+`CURIE_EVAL_CONSUMER_GROUP`; MinIO/S3 `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` /
 `S3_SECRET_KEY` / `S3_REGION` / `BUNDLE_BUCKET` (mirroring the API's env names); the
-platform API `AGENTOS_API_URL` (deprecated alias `AGENTOS_API_BASE_URL`) / `AGENTOS_API_KEY` for `POST /evals/report`; and
+platform API `CURIE_API_URL` (deprecated alias `CURIE_API_BASE_URL`) / `CURIE_API_KEY` for `POST /evals/report`; and
 `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` for score recording.
-The consumer is wired into `python -m agentos_worker` alongside the runs consumer and
+The consumer is wired into `python -m curie_worker` alongside the runs consumer and
 the kill switch.
 
 Tests (`apps/worker/tests/eval/test_stream.py`, real Valkey + real MinIO bundle + real
@@ -140,15 +140,15 @@ one consume->eval->report), the poison-pill drop, a missing-bundle failed run,
 ack-after-report even when the report terminally fails, and a provisioned-runner
 end-to-end (no `target_url`) that boots via the substrate and releases in a finally.
 
-## The concurrency kernel (`agentos_worker.kernel` + `agentos_worker.consumer`)
+## The concurrency kernel (`curie_worker.kernel` + `curie_worker.consumer`)
 
 The kernel closes the loop: it consumes `QueuedTurn` entries the dispatcher
-puts on the `agentos:runs` Valkey stream, routes each to a runner turn in a
+puts on the `curie:runs` Valkey stream, routes each to a runner turn in a
 claimed sandbox, streams the NDJSON reply back into the Slack thread by editing
 the placeholder in place, and gets every failure mode right.
 
 ```
-XREADGROUP agentos:runs        Consumer (consumer group; XAUTOCLAIM reclaims a
+XREADGROUP curie:runs        Consumer (consumer group; XAUTOCLAIM reclaims a
    -> QueuedTurn                  dead consumer's pending entries after an idle
    -> Kernel.process_event        timeout, then reprocesses them idempotently)
         -> SlackSink     chat.update placeholder to booting text (best effort)
@@ -186,7 +186,7 @@ Rules (detailed-architecture 2b), each with an integration test that provokes it
   reprocesses them; the markers make that safe.
 - **Bounded delivery + a dead-letter graveyard** (ADR-0039, #505). Reclaim is
   capped, not infinite. An entry already delivered `max_delivery` times
-  (`AGENTOS_MAX_DELIVERY`, default 5, floor 2) and still failing is moved to a
+  (`CURIE_MAX_DELIVERY`, default 5, floor 2) and still failing is moved to a
   dead-letter stream and acked off the group instead of re-dispatched, so it can
   never be reclaimed again. Without the cap one permanently-failing entry -- for
   example a turn whose reply endpoint died with the process that created it --
@@ -209,15 +209,15 @@ Rules (detailed-architecture 2b), each with an integration test that provokes it
 
 ### The dead-letter graveyard
 
-The dead-letter stream is `AGENTOS_DEAD_LETTER_STREAM`, or `<stream>:dead`
-(`agentos:runs:dead`) when that is unset. Setting it **equal to** `AGENTOS_STREAM`
+The dead-letter stream is `CURIE_DEAD_LETTER_STREAM`, or `<stream>:dead`
+(`curie:runs:dead`) when that is unset. Setting it **equal to** `CURIE_STREAM`
 is rejected at startup: the worker XADDs to the graveyard before it XACKs, so a
 self-targeting graveyard would re-queue every failure onto the stream it was
 consumed from and hot-loop on an unparseable one. The derived default can never
 collide, so only an explicit override trips this.
 
-The API-side graveyard watcher now honors the same `AGENTOS_DEAD_LETTER_STREAM` /
-`AGENTOS_STREAM` override via the shared derivation, so the operator and the API
+The API-side graveyard watcher now honors the same `CURIE_DEAD_LETTER_STREAM` /
+`CURIE_STREAM` override via the shared derivation, so the operator and the API
 agree on the graveyard stream name with no manual sync.
 
 The first `XADD` creates the stream; nothing pre-creates it. It is a sink, **not**
@@ -226,7 +226,7 @@ automatically. Replay, if an operator wants it, is `XRANGE` plus a re-`XADD` ont
 the main stream.
 
 **The graveyard is bounded, and its rows are best-effort.** Every `XADD` passes an
-approximate `MAXLEN` of `AGENTOS_DEAD_LETTER_MAXLEN` (default `10000`, minimum
+approximate `MAXLEN` of `CURIE_DEAD_LETTER_MAXLEN` (default `10000`, minimum
 `1`), so under a flood the oldest rows are evicted and those failures are lost.
 That loss is deliberate: the unparseable path dead-letters per **inbound** entry,
 so a wire-format drift would otherwise grow the graveyard at full ingest rate on
@@ -277,7 +277,7 @@ acceptable duplicate.
 **Unparseable entries take the same route** (`dl_reason="unparseable"`) instead of
 being silently acked away, so poison is observable rather than vanishing.
 
-**`AGENTOS_MAX_DELIVERY` is not `AGENTOS_MAX_ATTEMPTS`.** The delivery cap bounds
+**`CURIE_MAX_DELIVERY` is not `CURIE_MAX_ATTEMPTS`.** The delivery cap bounds
 how many times a stream entry may be handed to a handler; `max_attempts` governs
 the kernel's flag-clean per-turn retry classification *inside* a single delivery.
 The floor of 2 is enforced because `max_delivery=1` would dead-letter every
@@ -285,68 +285,68 @@ ordinary worker crash on its first reclaim; values below 3 undermine the crash
 recovery of ADR-0013.
 
 Config surface (`WorkerConfig`): `VALKEY_*`, `SLACK_BOT_TOKEN`,
-`AGENTOS_STREAM` / `AGENTOS_CONSUMER_GROUP` / `AGENTOS_CONSUMER_NAME`,
-`AGENTOS_MAX_ATTEMPTS`, `AGENTOS_MAX_DELIVERY` / `AGENTOS_DEAD_LETTER_STREAM` /
-`AGENTOS_DEAD_LETTER_MAXLEN` (approximate graveyard cap, default `10000`, minimum
-`1`), plus `AGENTOS_NAMESPACE` / `AGENTOS_WARM_POOL` / `AGENTOS_RUNNER_PORT` for
-the substrate. Run with `python -m agentos_worker`.
+`CURIE_STREAM` / `CURIE_CONSUMER_GROUP` / `CURIE_CONSUMER_NAME`,
+`CURIE_MAX_ATTEMPTS`, `CURIE_MAX_DELIVERY` / `CURIE_DEAD_LETTER_STREAM` /
+`CURIE_DEAD_LETTER_MAXLEN` (approximate graveyard cap, default `10000`, minimum
+`1`), plus `CURIE_NAMESPACE` / `CURIE_WARM_POOL` / `CURIE_RUNNER_PORT` for
+the substrate. Run with `python -m curie_worker`.
 
 Tests: `uv run pytest apps/worker/tests/kernel -q` runs against the real Valkey
 from `compose.dev.yaml`, the real sandbox substrate with a fake Kubernetes client whose
 sandboxes resolve to a local in-process fake runner, and a recording Slack sink.
 Only Slack and the model behind the runner are faked.
 
-### Running the worker as a bare process (`agentos_worker.run`, Docker substrate)
+### Running the worker as a bare process (`curie_worker.run`, Docker substrate)
 
-`agentos_worker.run` is the `python -m agentos_worker` entrypoint: it reads
+`curie_worker.run` is the `python -m curie_worker` entrypoint: it reads
 `WorkerConfig`, builds the Valkey clients, the sandbox substrate, the
 `RunnerClient`, and the Slack sink, then drives the consumer until a signal
-stops it. `_sandbox_client` picks the substrate via `AGENTOS_SANDBOX_SUBSTRATE`
+stops it. `_sandbox_client` picks the substrate via `CURIE_SANDBOX_SUBSTRATE`
 (`kubernetes`, the default, claims agent-sandbox CRs; `docker` boots runner
-containers on the host Docker daemon instead -- what `agentos local up` sets
+containers on the host Docker daemon instead -- what `curie local up` sets
 when it runs the worker as a compose service).
 
 To hand-run the worker as a bare host process against an already-running
-`compose.dev.yaml` stack instead of letting `agentos local up` manage it as a
+`compose.dev.yaml` stack instead of letting `curie local up` manage it as a
 compose service -- useful for attaching a debugger or iterating on worker
 source without a container rebuild -- point it at the stack's exposed ports:
 
 ```bash
-export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=... / AGENTOS_CREDENTIALS=...
-env AGENTOS_SANDBOX_SUBSTRATE=docker \
+export CLAUDE_CODE_OAUTH_TOKEN=...        # or ANTHROPIC_API_KEY=... / CURIE_CREDENTIALS=...
+env CURIE_SANDBOX_SUBSTRATE=docker \
     VALKEY_HOST=localhost VALKEY_PORT=26379 VALKEY_PASSWORD=valkeypass \
     SLACK_API_BASE_URL=http://localhost:8155/api/ SLACK_BOT_TOKEN=xoxb-dev \
-    AGENTOS_DOCKER_NETWORK=agentos_default \
+    CURIE_DOCKER_NETWORK=curie_default \
     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-    uv run python -m agentos_worker &
+    uv run python -m curie_worker &
 ```
 
 - With the Docker substrate, `_sandbox_client` requires a model credential
-  (`AGENTOS_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY`),
-  `AGENTOS_MODEL_BASE_URL` (local-model mode), or `AGENTOS_FAKE_MODEL=1`
+  (`CURIE_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY`),
+  `CURIE_MODEL_BASE_URL` (local-model mode), or `CURIE_FAKE_MODEL=1`
   (explicit offline opt-in) -- absent all three it raises `SystemExit` at
   startup rather than booting a runner that fails cryptically.
-- `AGENTOS_DOCKER_NETWORK` joins each spawned runner container to the compose
+- `CURIE_DOCKER_NETWORK` joins each spawned runner container to the compose
   network (`docker.py`'s `--network`); without it a runner is on the default
   bridge network and can't reach the stack's other services (including the
   OTel collector) by hostname.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` is forwarded into each spawned runner; unset,
   runners still boot but just don't export traces (a warning, not a startup
   failure).
-- `AGENTOS_RUNNER_IMAGE` overrides the runner image tag (default
-  `agentos-runner`).
+- `CURIE_RUNNER_IMAGE` overrides the runner image tag (default
+  `curie-runner`).
 - `VALKEY_HOST`/`VALKEY_PORT`/`VALKEY_PASSWORD` and `SLACK_BOT_TOKEN` point at
   the compose stack's exposed ports and dev bot token (see `compose.dev.yaml`);
   `SLACK_API_BASE_URL` points at the stack's Slack stub instead of real
   slack.com.
 
-Drive a turn the normal way once it's up (`agentos local deploy` / `agentos
+Drive a turn the normal way once it's up (`curie local deploy` / `curie
 local message`, pinned at whichever API port you brought up) -- the hand-run
 worker claims runner containers on the same Docker daemon exactly as the
-compose-managed one would. For an offline round-trip, add `AGENTOS_FAKE_MODEL=1`
+compose-managed one would. For an offline round-trip, add `CURIE_FAKE_MODEL=1`
 to the env above and drop the credential.
 
-## The sandbox substrate (`agentos_worker.sandbox`)
+## The sandbox substrate (`curie_worker.sandbox`)
 
 The lifecycle seam between the worker kernel and kubernetes-sigs/agent-sandbox
 v0.5.0 (core `Sandbox` CRD + the extensions `SandboxClaim`/`SandboxWarmPool`/
@@ -354,7 +354,7 @@ v0.5.0 (core `Sandbox` CRD + the extensions `SandboxClaim`/`SandboxWarmPool`/
 `SandboxHandle`; everything Kubernetes-shaped stays behind this module.
 
 ```python
-from agentos_worker.sandbox import (
+from curie_worker.sandbox import (
     AffinityStore, KubernetesSandboxClient, SandboxSubstrate, SubstrateConfig,
 )
 
@@ -367,7 +367,7 @@ substrate = SandboxSubstrate(
 handle = substrate.claim(thread_ts)   # existing live route, or warm-pool claim
 # handle.base_url -> http://<serviceFQDN>:8080  (dial from inside the cluster)
 substrate.suspend(thread_ts, history_ref=sdk_session_id)
-handle = substrate.resume(thread_ts)  # new claim, AGENTOS_HISTORY_REF injected
+handle = substrate.resume(thread_ts)  # new claim, CURIE_HISTORY_REF injected
 substrate.release(thread_ts)          # delete claim -> sandbox+pod reaped
 substrate.reap_orphans()              # periodic tick: claims with no live route
 ```
@@ -376,7 +376,7 @@ Contract notes the kernel must know:
 
 - **One live session per thread.** `claim()` is claim-or-adopt: a lost
   creation race deletes the loser's claim and returns the winner's handle. The
-  route lives in Valkey (`agentos:sandbox:route:<thread_key>`) with a TTL;
+  route lives in Valkey (`curie:sandbox:route:<thread_key>`) with a TTL;
   `claim()`/`touch()` refresh it on activity.
 - **Sub-second claims require a warm pool.** The chart's
   `agentSandbox.deploy=true` installs `<release>-runner` (SandboxTemplate) and
@@ -387,7 +387,7 @@ Contract notes the kernel must know:
 - **Suspend/resume is a cold rehydrate.** `suspend()` flips the Sandbox
   to `Suspended` (the pod is deleted) and records the caller-supplied history
   ref. `resume()` retires the old claim and creates a new one whose per-claim
-  env injects `AGENTOS_HISTORY_REF` (+ the original `AGENTOS_SESSION_ID`); the
+  env injects `CURIE_HISTORY_REF` (+ the original `CURIE_SESSION_ID`); the
   runner resolves that ref to the thread's transcript on the durable state store
   and replays the prior turns as a boot-time system-prompt preamble (ADR-0029),
   not an SDK-native resume id. Never assume process or prompt-cache warmth across
@@ -398,10 +398,10 @@ Contract notes the kernel must know:
   not reintroduce a frame-captured resume id.
 - **Reaping.** `release()` deletes the claim (the claim owns its sandbox and
   pod). Routes that expire in Valkey leave orphaned claims; `reap_orphans()`
-  lists claims labeled `agentos.dev/managed-by=agentos-sandbox-substrate` and
+  lists claims labeled `curie.dev/managed-by=curie-sandbox-substrate` and
   deletes any not referenced by a live route. Run it on a periodic worker tick.
 - The client seam (`SandboxClient` protocol) is sync; wrap calls in a thread if
   the kernel goes async. Unit tests fake only this protocol (the K8s control
   plane); Valkey is never mocked. The env-gated e2e
-  (`tests/sandbox/test_e2e_k8scratch.py`, `AGENTOS_SANDBOX_E2E=1`) drives the
+  (`tests/sandbox/test_e2e_k8scratch.py`, `CURIE_SANDBOX_E2E=1`) drives the
   real cluster.

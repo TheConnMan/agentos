@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from agentos_worker.stream_consumer import ReadLoopSpec, StreamConsumer
+from curie_worker.stream_consumer import ReadLoopSpec, StreamConsumer
 
 
 class _FakeBroker:
@@ -69,7 +69,7 @@ def test_handler_exception_does_not_tear_down_the_consume_loop(caplog) -> None: 
         consumer = StreamConsumer(broker)  # type: ignore[arg-type]
         holder["c"] = consumer
 
-        logger = logging.getLogger("agentos_worker.test_consume")
+        logger = logging.getLogger("curie_worker.test_consume")
         with caplog.at_level(logging.ERROR, logger=logger.name):
             # Must not raise -- the ConnectionError on "2-0" is isolated.
             await asyncio.wait_for(consumer._consume(_spec(logger), handler), timeout=2)

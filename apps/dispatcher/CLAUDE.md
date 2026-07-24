@@ -40,8 +40,8 @@ summary.
 ## Config surface
 
 `DispatcherConfig()` (a `pydantic_settings.BaseSettings`) reads `SLACK_APP_TOKEN`,
-`SLACK_BOT_TOKEN`, `VALKEY_*`, `AGENTOS_STREAM` (must match the worker's
-stream name), `AGENTOS_DEDUPE_PREFIX`/`_TTL_SECONDS`, `AGENTOS_PLACEHOLDER_TEXT`,
+`SLACK_BOT_TOKEN`, `VALKEY_*`, `CURIE_STREAM` (must match the worker's
+stream name), `CURIE_DEDUPE_PREFIX`/`_TTL_SECONDS`, `CURIE_PLACEHOLDER_TEXT`,
 and the backoff tunables. Full table in `apps/dispatcher/README.md`.
 
 ## Verify (Slack-free)

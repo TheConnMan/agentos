@@ -94,7 +94,7 @@ impl crate::ui::CliOutput for ObservabilityOutput {
     }
 }
 
-/// Local AgentOS Console (browsable). Port literal lives once, here;
+/// Local Curie Console (browsable). Port literal lives once, here;
 /// `local.rs::ENDPOINTS` references it.
 pub const LOCAL_CONSOLE_URL: &str = "http://localhost:28080/?api=1";
 /// Local Langfuse UI (browsable).
@@ -107,7 +107,7 @@ pub const LOCAL_API_URL: &str = "http://localhost:28000";
 pub fn local_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
-            name: "AgentOS Console".to_string(),
+            name: "Curie Console".to_string(),
             url: Some(LOCAL_CONSOLE_URL.to_string()),
             note: None,
             browsable: true,
@@ -119,7 +119,7 @@ pub fn local_endpoints() -> Vec<Endpoint> {
             browsable: true,
         },
         Endpoint {
-            name: "AgentOS API".to_string(),
+            name: "Curie API".to_string(),
             url: Some(LOCAL_API_URL.to_string()),
             note: None,
             browsable: false,
@@ -189,7 +189,7 @@ mod tests {
 
         // Console: browsable, exact URL, no note. The name matches the shipped
         // handler's so the local payload stays a superset, not a rename.
-        assert_eq!(eps[0].name, "AgentOS Console");
+        assert_eq!(eps[0].name, "Curie Console");
         assert_eq!(eps[0].url.as_deref(), Some(LOCAL_CONSOLE_URL));
         assert_eq!(eps[0].url.as_deref(), Some("http://localhost:28080/?api=1"));
         assert_eq!(eps[0].note, None);
@@ -203,7 +203,7 @@ mod tests {
         assert!(eps[1].browsable);
 
         // API base: has a URL but is NOT browsable (an agent target).
-        assert_eq!(eps[2].name, "AgentOS API");
+        assert_eq!(eps[2].name, "Curie API");
         assert_eq!(eps[2].url.as_deref(), Some(LOCAL_API_URL));
         assert_eq!(eps[2].url.as_deref(), Some("http://localhost:28000"));
         assert_eq!(eps[2].note, None);
@@ -217,8 +217,8 @@ mod tests {
     /// Exactly one of the eight combinations may open a browser.
     #[test]
     fn should_open_truth_table() {
-        let yes = ep("AgentOS Console", Some(LOCAL_CONSOLE_URL), true);
-        let no = ep("AgentOS API", Some(LOCAL_API_URL), false);
+        let yes = ep("Curie Console", Some(LOCAL_CONSOLE_URL), true);
+        let no = ep("Curie API", Some(LOCAL_API_URL), false);
 
         // browsable = true: only --open without --json opens.
         assert!(should_open(&yes, true, false), "browsable+open+!json opens");

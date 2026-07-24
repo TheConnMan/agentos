@@ -15,8 +15,8 @@ per-agent, but move out of the sandbox), [ADR-0015](0015-credential-plane.md)
 ## Context
 
 This ADR merges two reviews that converged on the same primitive. The first was
-a gap analysis of AgentOS against Anthropic's Slack-native "Claude Tag" agent;
-the second was an audit of AgentOS's own egress and credential surface. Both
+a gap analysis of Curie against Anthropic's Slack-native "Claude Tag" agent;
+the second was an audit of Curie's own egress and credential surface. Both
 landed on the same missing component, so they are recorded here as one decision.
 
 ### What we have today
@@ -27,7 +27,7 @@ expect:
 - **Default-deny egress.** `security.networkPolicy.allowedEgress` is empty on a
   fresh install; the chart renders `runner-default-deny-egress` with narrow
   carve-outs for DNS, the collector, MinIO, and in-cluster inference
-  (`charts/agentos/templates/security-networkpolicy.yaml`).
+  (`charts/curie/templates/security-networkpolicy.yaml`).
 - **Named-provider egress, resolved at install.** `--allow-egress-host anthropic|openrouter`
   resolves hostnames to `/32` host routes at install time (ADR-0032), TLS-only on
   443. `--allow-web-egress <CIDR>` is the raw escape hatch.
@@ -43,7 +43,7 @@ expect:
 ### The three gaps that share one cause
 
 1. **The allowlist is fail-open in practice (#765).** The vendored agent-sandbox
-   controller emits its own `agentos-runner-network-policy` granting
+   controller emits its own `curie-runner-network-policy` granting
    `0.0.0.0/0` minus RFC1918. NetworkPolicy egress rules are a union, so that
    policy negates both our default-deny and the operator's allowlist. This is a
    precondition, tracked separately under #765 and ADR-0067; the proxy decision
@@ -70,7 +70,7 @@ expect:
 
 ### The model both reviews pointed at
 
-Claude Tag separates two lists that AgentOS conflates into one:
+Claude Tag separates two lists that Curie conflates into one:
 
 - **Where traffic may go** (a bundle-level domain allowlist; a `*` entry is
   permitted here but never carries a credential, and `*` still blocks
