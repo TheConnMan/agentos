@@ -438,20 +438,20 @@ wheels = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.2.115"
+version = "0.2.126"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },
     { name = "sniffio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/b8/c1898153ffb0c75cfc5504c18d892d3c57a080073c9ede3df7addb8fc4a0/claude_agent_sdk-0.2.115.tar.gz", hash = "sha256:230017fbba74fb3aa1a1d86b2986277c7fe26dd2e33eea865c90553d93f4e26d", size = 268644, upload-time = "2026-07-09T23:46:43.739Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/33/30d51e1c53bb834fc4d51a39560c2e0cee0627767b2cc3b2001eb3b4ddb4/claude_agent_sdk-0.2.126.tar.gz", hash = "sha256:b0077f8da92f402032ec91b27499eb896aa97a9d78150ccd4a7840d39e70b9de", size = 304715, upload-time = "2026-07-22T21:40:34.678Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl", hash = "sha256:8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80", size = 71306972, upload-time = "2026-07-09T23:46:49.581Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:23fc46eadafbf9315c63a6959a7677c4e2325339e09f6caf820e81ef905b51da", size = 74824573, upload-time = "2026-07-09T23:46:55.73Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/92/0cb1e45004a2f3738c77bb33281ad919beb203e1f49353c120ae75f79e55/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:c662fe2f618aa19e9ea1c161b490b2f67ec0c8e15a75d96b5b14cbb8a7301e86", size = 79850093, upload-time = "2026-07-09T23:47:02.72Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/2c/63c9545875abb4ed1563fcf7bd52277b3556fc894816d42bb2e723f17b6b/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:946f8b3240e9c0e79a7f87bab14eb079d283ab564a0503923aa81648351b8c6f", size = 80878895, upload-time = "2026-07-09T23:47:11.93Z" },
-    { url = "https://files.pythonhosted.org/packages/c0/64/efe0f2ad2e1ae39690c7345d6da651be6af1350ef25bc20209171896a4bf/claude_agent_sdk-0.2.115-py3-none-win_amd64.whl", hash = "sha256:9bff5ef9932747ce41982a7c955fb144220ada80e6931bd5f5ee5da74f454990", size = 80391369, upload-time = "2026-07-09T23:47:19.837Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/27/2624f73d65c24e2f2ebf8f4ef95f98a71bf382f3f622c439f096af8a66e8/claude_agent_sdk-0.2.126-py3-none-macosx_11_0_arm64.whl", hash = "sha256:edac88522b6fca74f1a84aa0d0f29caad4adda8aed04c3f08b86836e06c6c271", size = 74592742, upload-time = "2026-07-22T21:40:38.469Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/38/d774167d45c238f69a49734154236d1632ef7204153eafd13c126add32a3/claude_agent_sdk-0.2.126-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:8dd73c1a193afa133241d7346e89e5b60ebf45f6a8f2cc38c84c8aad794af61e", size = 79619741, upload-time = "2026-07-22T21:40:42.25Z" },
+    { url = "https://files.pythonhosted.org/packages/01/f4/786a8c67b53677af27fdbe3b3a80ee57c38ca18f95d44ec03567f97a7495/claude_agent_sdk-0.2.126-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:239e6073486488ce78fe88681c05e819562f5c5e567f02574492c3be3d35684b", size = 84165405, upload-time = "2026-07-22T21:40:46.331Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/42/76603fcd11ab51713ec0138c21ffbb82f5f1afcab9f73729e7e23a19e055/claude_agent_sdk-0.2.126-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:79caa03c6612e268bee93e95170d6b9ffdfa4bb21373a2e9ba7a439d3fb2e8e8", size = 85204584, upload-time = "2026-07-22T21:40:50.769Z" },
+    { url = "https://files.pythonhosted.org/packages/01/95/2d6685e502a7708473f03710f34f2ad6d7b3968fdd6cc90091e4f341c34d/claude_agent_sdk-0.2.126-py3-none-win_amd64.whl", hash = "sha256:201299609bb045e7ca8c7d3ff5e8d5900da2dcf3faad742990efe659e4c215ae", size = 85114596, upload-time = "2026-07-22T21:40:55.532Z" },
 ]
 
 [[package]]
@@ -556,7 +556,7 @@ requires-dist = [
     { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.43.55" },
     { name = "fastapi", specifier = ">=0.139.2" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "kubernetes", specifier = ">=31" },
+    { name = "kubernetes", specifier = ">=36.0.3" },
     { name = "plugin-format", editable = "packages/plugin-format" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.7" },
@@ -634,7 +634,7 @@ requires-dist = [
     { name = "aci-protocol", editable = "packages/aci-protocol" },
     { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "anyio", specifier = ">=4.6" },
-    { name = "claude-agent-sdk", specifier = ">=0.2.115" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.126" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
     { name = "opentelemetry-sdk", specifier = ">=1.44.0" },
     { name = "plugin-format", editable = "packages/plugin-format" },
@@ -689,7 +689,7 @@ requires-dist = [
     { name = "curie-channel-protocol", editable = "packages/channel-protocol" },
     { name = "curie-dispatcher", editable = "apps/dispatcher" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "kubernetes", specifier = ">=31.0" },
+    { name = "kubernetes", specifier = ">=36.0.3" },
     { name = "plugin-format", editable = "packages/plugin-format" },
     { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "redis", specifier = ">=5.2" },
@@ -1046,7 +1046,7 @@ wheels = [
 
 [[package]]
 name = "kubernetes"
-version = "36.0.2"
+version = "36.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1060,9 +1060,9 @@ dependencies = [
     { name = "urllib3" },
     { name = "websocket-client" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/57/8b538af5076bc3372949d76f70ba3449bdfe52f9e6488170fa5d4f7cbe70/kubernetes-36.0.2.tar.gz", hash = "sha256:03551fcb49cae1f708f63624041e37403545b7aaed10cbf54e2b01a37a5438e3", size = 2336738, upload-time = "2026-06-01T18:20:30.785Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/57/b07b96353f902aa1bdbe00e878e3a12a137977d03a962479785576aa8ec9/kubernetes-36.0.3.tar.gz", hash = "sha256:36993ed25ce59b789c9341473a228fcf268504a2fec7c2b2b1531d73072e5ce7", size = 2337528, upload-time = "2026-07-13T20:38:12.128Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/2c/5c160dbdef7123f8cc97fd8ece7e0198627a426a2a49614845e9086feb8d/kubernetes-36.0.2-py2.py3-none-any.whl", hash = "sha256:faf9b5241b58de0c4a5069f2a0ffc8ac06fece7215156cd3d3ba081a78a858b6", size = 4617568, upload-time = "2026-06-01T18:20:28.737Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/30/a96d47df739689ac0001ade0afefc16e3b477fc2fb426b568515fdc8afce/kubernetes-36.0.3-py2.py3-none-any.whl", hash = "sha256:8fde9241c4b298e6374a069dcf728359b4e72c2fb29489a975ba4e1c047cf10f", size = 4618066, upload-time = "2026-07-13T20:38:10.172Z" },
 ]
 
 [[package]]
