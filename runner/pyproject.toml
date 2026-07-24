@@ -7,7 +7,7 @@ dependencies = [
     "aci-protocol",
     "plugin-format",
     "claude-agent-sdk>=0.2.115",
-    "aiohttp>=3.11",
+    "aiohttp>=3.14.3",
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp-proto-http>=1.30",
     "anyio>=4.6",
