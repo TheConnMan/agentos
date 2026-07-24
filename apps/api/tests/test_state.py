@@ -158,6 +158,36 @@ def test_app_scoped_token_is_refused_on_reserved_namespaces(
         assert client.delete(f"/agents/{aid}/state/{ns}/k", headers=headers).status_code == 403
 
 
+def test_namespace_enumeration_hides_reserved_from_the_app_token(
+    client: Any, auth_headers: dict[str, str], clean_db: None
+) -> None:
+    # #856: the enumeration route (GET .../state) has no namespace path param, so
+    # forbid_reserved_namespace cannot gate it. The narrow state.app token must
+    # still not learn the reserved namespaces exist -- their key counts and write
+    # times are exactly what that scope fences off. The platform key (the UI
+    # inspector) keeps full reach.
+    aid = _agent(client, auth_headers)
+    # Seed both reserved namespaces and a normal one via the unrestricted key.
+    for ns, key in (("memory", "m1"), ("transcript", "t1"), ("workflow", "w1")):
+        put = client.put(
+            f"/agents/{aid}/state/{ns}/{key}", json={"value": {"n": 1}}, headers=auth_headers
+        )
+        assert put.status_code == 200, f"{ns}: {put.text}"
+
+    app = mint(get_settings().api_key, agent=aid, scope="state.app", exp=_FAR_FUTURE)
+    app_names = {
+        row["namespace"]
+        for row in client.get(f"/agents/{aid}/state", headers={"X-API-Key": app}).json()
+    }
+    assert app_names == {"workflow"}, app_names
+
+    platform_names = {
+        row["namespace"]
+        for row in client.get(f"/agents/{aid}/state", headers=auth_headers).json()
+    }
+    assert platform_names == {"memory", "transcript", "workflow"}, platform_names
+
+
 def test_app_scoped_token_works_on_a_non_reserved_namespace(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
