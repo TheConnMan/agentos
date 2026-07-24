@@ -609,6 +609,11 @@ enum MessageOutcomeOutput {
         diagnostics: Option<String>,
         resume_note: Option<String>,
     },
+    /// Connected-transport mode (#770/ADR-0078): the turn was enqueued and its
+    /// reply, approval card, and any resumed reply land in the connected Slack
+    /// workspace, not here. The CLI cannot observe a Slack-side reply, so it
+    /// confirms the enqueue and points the operator at the channel.
+    Enqueued { channel: String, thread: String },
 }
 
 impl crate::ui::CliOutput for MessageOutcomeOutput {
@@ -622,6 +627,11 @@ impl crate::ui::CliOutput for MessageOutcomeOutput {
                 message_awaiting_approval_json(thread, reply.as_deref())
             }
             MessageOutcomeOutput::TimedOut { .. } => message_timeout_json(),
+            MessageOutcomeOutput::Enqueued { channel, thread } => serde_json::json!({
+                "status": "enqueued",
+                "channel": channel,
+                "thread": thread,
+            }),
         }
     }
 
@@ -654,6 +664,13 @@ impl crate::ui::CliOutput for MessageOutcomeOutput {
                         ui.note(diag);
                     }
                 }
+            }
+            MessageOutcomeOutput::Enqueued { channel, thread } => {
+                ui.note(&format!(
+                    "enqueued; the agent is replying in {channel} (thread {thread}). \
+                     Watch Slack for the reply and any approval card -- in connected mode \
+                     the reply lands in the workspace, not here."
+                ));
             }
         }
     }
@@ -1303,6 +1320,117 @@ async fn resume_after_approval(
 }
 
 /// The shared target noun message handler.
+/// Resolve the target channel (and the sole-agent hint for resolve messages) for
+/// a cluster turn: an explicit `--channel`, else the sole deployed agent via a
+/// short-lived API port-forward (dropped once the lookup returns). Shared by the
+/// stub path and the connected-transport path.
+async fn resolve_cluster_channel(opts: &MessageOpts) -> Result<(String, Option<String>)> {
+    match opts.channel.as_deref() {
+        Some(channel) => Ok((channel.to_string(), None)),
+        None => {
+            let _api_pf = start_port_forward(
+                &port_forward_command(
+                    &opts.namespace,
+                    &opts.release,
+                    "api",
+                    opts.api_local_port,
+                    API_REMOTE_PORT,
+                ),
+                opts.api_local_port,
+                "api",
+            )
+            .await?;
+            let api = ApiClient::new(
+                &format!("http://localhost:{}", opts.api_local_port),
+                &opts.api_key,
+            )?;
+            let agents = api
+                .list_agents()
+                .await
+                .context("listing agents through the api port-forward")?;
+            let channel = select_channel(&agents, None)?;
+            Ok((channel, agents.first().map(|a| a.name.clone())))
+        }
+    }
+}
+
+/// The connected-transport `cluster message` path (#770/ADR-0078). A real Slack
+/// workspace is connected, so instead of a throwaway stub we post a real
+/// placeholder to the channel over the workspace bot token and enqueue the turn
+/// against its real ts with no per-turn endpoint. The worker then edits that
+/// message in place and the approval card threads under it -- the card and any
+/// resumed reply ride the connected transport. The CLI cannot observe a reply
+/// that lands in Slack, so it enqueues and points the operator there rather than
+/// waiting on a (nonexistent) stub.
+async fn message_connected(opts: MessageOpts) -> Result<()> {
+    let ui = crate::ui::ui();
+
+    // Valkey port-forward for the enqueue (killed on drop at fn end).
+    let _valkey_pf = start_port_forward(
+        &port_forward_command(
+            &opts.namespace,
+            &opts.release,
+            "valkey",
+            opts.valkey_local_port,
+            VALKEY_REMOTE_PORT,
+        ),
+        opts.valkey_local_port,
+        "valkey",
+    )
+    .await?;
+
+    let (channel, _agent_hint) = resolve_cluster_channel(&opts).await?;
+    ui.note(&format!(
+        "routing to channel {channel} over the connected Slack transport"
+    ));
+
+    // Bot token: explicit AGENTOS_SLACK_BOT_TOKEN override, else the release
+    // Secret. Never printed; used only to post the placeholder.
+    let bot_token = match std::env::var("AGENTOS_SLACK_BOT_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
+        Some(token) => token,
+        None => crate::ops::discover_slack_bot_token(&opts.namespace, &opts.release).await?,
+    };
+
+    let (channel, thread_ts, _synthetic) = resolve_targets(Some(&channel), opts.thread.as_deref());
+
+    // Post the real placeholder the worker edits in place; its ts anchors the
+    // turn (the approval card threads under it). No per-turn endpoint => the turn
+    // rides the worker's default (connected) transport, like a real mention.
+    let placeholder_ts = crate::slack::post_placeholder(&bot_token, &channel, "\u{2026}")
+        .await
+        .context("posting the placeholder to the connected Slack workspace")?;
+
+    let valkey_url = format!(
+        "redis://:{}@localhost:{}",
+        opts.valkey_password, opts.valkey_local_port
+    );
+    let mut conn = connect(&valkey_url).await?;
+    let event = synthetic_turn(
+        &channel,
+        &opts.user,
+        &opts.text,
+        &thread_ts,
+        &placeholder_ts,
+        None,
+    );
+    let stream_id = xadd(&mut conn, &opts.stream, &event).await?;
+    ui.note(&format!(
+        "enqueued {} on {} as {stream_id}",
+        event.event_id, opts.stream
+    ));
+
+    // The reply, approval card, and any resumed reply land in Slack, not here.
+    persist_and_hint(&opts, TurnVerb::Cluster, &channel, &thread_ts);
+    ui.emit(&MessageOutcomeOutput::Enqueued {
+        channel,
+        thread: thread_ts,
+    });
+    Ok(())
+}
+
 pub async fn message(opts: MessageOpts) -> Result<()> {
     if opts.local {
         return message_local(opts).await;
@@ -1324,6 +1452,15 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     }
 
     require_on_path("kubectl")?;
+
+    // Connected-transport path (#770/ADR-0078): when a real workspace is
+    // connected (a running dispatcher), post a real placeholder and enqueue
+    // against its ts with no per-turn endpoint, so the approval card and any
+    // resumed reply ride the connected transport -- no throwaway stub. A kubectl
+    // failure reads as NOT connected, so this falls through to the stub path.
+    if crate::ops::dispatcher_connected(&opts.namespace, &opts.release).await {
+        return message_connected(opts).await;
+    }
 
     // Advertise a host the in-cluster worker can reach, then bind the stub on
     // 0.0.0.0 so it is reachable off-box. Take the URL from the started stub so an
@@ -1349,37 +1486,9 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
     )
     .await?;
 
-    // Channel: explicit --channel, else the sole deployed agent via a short-lived
-    // API port-forward (dropped once the lookup returns). `agent_hint` carries the
-    // sole agent's name for a runnable approval-resolve hint, or `None` for an
-    // explicit --channel (rendered as an `<AGENT>` slot) (#766).
-    let (channel, agent_hint): (String, Option<String>) = match opts.channel.as_deref() {
-        Some(channel) => (channel.to_string(), None),
-        None => {
-            let _api_pf = start_port_forward(
-                &port_forward_command(
-                    &opts.namespace,
-                    &opts.release,
-                    "api",
-                    opts.api_local_port,
-                    API_REMOTE_PORT,
-                ),
-                opts.api_local_port,
-                "api",
-            )
-            .await?;
-            let api = ApiClient::new(
-                &format!("http://localhost:{}", opts.api_local_port),
-                &opts.api_key,
-            )?;
-            let agents = api
-                .list_agents()
-                .await
-                .context("listing agents through the api port-forward")?;
-            let channel = select_channel(&agents, None)?;
-            (channel, agents.first().map(|a| a.name.clone()))
-        }
-    };
+    // Channel: explicit --channel, else the sole deployed agent via a
+    // short-lived API port-forward (#766). Shared with the connected path.
+    let (channel, agent_hint) = resolve_cluster_channel(&opts).await?;
     ui.note(&format!("routing to channel {channel}"));
 
     // Enqueue the exact event the dispatcher would produce and wait for the ack.
