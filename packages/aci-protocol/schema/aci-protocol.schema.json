@@ -1177,8 +1177,8 @@
       "type": "object"
     }
   },
-  "$id": "https://curie.tech/curie/aci-protocol.schema.json",
+  "$id": "https://curietech.ai/schemas/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.2.6",
-  "title": "ACI Protocol v0.2.6"
+  "protocolVersion": "0.2.7",
+  "title": "ACI Protocol v0.2.7"
 }

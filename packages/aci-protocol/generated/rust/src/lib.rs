@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.6";
+pub const PROTOCOL_VERSION: &str = "0.2.7";
 
 pub const RUNS_STREAM_DEFAULT: &str = "curie:runs";
 
@@ -175,6 +175,7 @@ pub struct BootEnv {
 /// The env key is the contract; the Rust CLI and the chart render-assert
 /// pin against these instead of retyping the literals.
 pub mod env_keys {
+    pub const ANTHROPIC_BASE_URL: &str = "ANTHROPIC_BASE_URL";
     pub const CURIE_APPROVAL_DECISION: &str = "CURIE_APPROVAL_DECISION";
     pub const CURIE_APPROVAL_GRANT_TOOL: &str = "CURIE_APPROVAL_GRANT_TOOL";
     pub const CURIE_APPROVAL_REQUIRED_TOOLS: &str = "CURIE_APPROVAL_REQUIRED_TOOLS";
@@ -201,7 +202,6 @@ pub mod env_keys {
     pub const CURIE_SESSION_ID: &str = "CURIE_SESSION_ID";
     pub const CURIE_STATE_TOKEN: &str = "CURIE_STATE_TOKEN";
     pub const CURIE_STATE_URL: &str = "CURIE_STATE_URL";
-    pub const ANTHROPIC_BASE_URL: &str = "ANTHROPIC_BASE_URL";
     pub const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
     pub const OTEL_EXPORTER_OTLP_HEADERS: &str = "OTEL_EXPORTER_OTLP_HEADERS";
     pub const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "OTEL_EXPORTER_OTLP_PROTOCOL";

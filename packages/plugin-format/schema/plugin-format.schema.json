@@ -553,7 +553,7 @@
       "type": "object"
     }
   },
-  "$id": "https://curie.tech/curie/plugin-format.schema.json",
+  "$id": "https://curietech.ai/schemas/plugin-format.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Claude Code Plugin Format"
 }

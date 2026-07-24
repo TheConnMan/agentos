@@ -12,15 +12,15 @@ resolution-markers = [
 [manifest]
 members = [
     "aci-protocol",
-    "agentos-api",
-    "agentos-channel-protocol",
-    "agentos-dispatcher",
-    "agentos-doclint",
-    "agentos-runner",
-    "agentos-test-support",
-    "agentos-wire-tolerance-gate",
-    "agentos-worker",
-    "agentos-workspace",
+    "curie-api",
+    "curie-channel-protocol",
+    "curie-dispatcher",
+    "curie-doclint",
+    "curie-runner",
+    "curie-test-support",
+    "curie-wire-tolerance-gate",
+    "curie-worker",
+    "curie-workspace",
     "plugin-format",
 ]
 
@@ -37,229 +37,6 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.7" },
-]
-
-[[package]]
-name = "agentos-api"
-version = "0.0.0"
-source = { editable = "apps/api" }
-dependencies = [
-    { name = "aci-protocol" },
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "boto3" },
-    { name = "boto3-stubs", extra = ["s3"] },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "kubernetes" },
-    { name = "plugin-format" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-multipart" },
-    { name = "redis" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aci-protocol", editable = "packages/aci-protocol" },
-    { name = "alembic", specifier = ">=1.14" },
-    { name = "asyncpg", specifier = ">=0.30" },
-    { name = "boto3", specifier = ">=1.43.55" },
-    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.43.55" },
-    { name = "fastapi", specifier = ">=0.139.2" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "kubernetes", specifier = ">=31" },
-    { name = "plugin-format", editable = "packages/plugin-format" },
-    { name = "pydantic", specifier = ">=2.9" },
-    { name = "pydantic-settings", specifier = ">=2.7" },
-    { name = "python-multipart", specifier = ">=0.0.18" },
-    { name = "redis", specifier = ">=5.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
-]
-
-[[package]]
-name = "agentos-channel-protocol"
-version = "0.1.0"
-source = { editable = "packages/channel-protocol" }
-dependencies = [
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
-
-[[package]]
-name = "agentos-dispatcher"
-version = "0.0.0"
-source = { editable = "apps/dispatcher" }
-dependencies = [
-    { name = "aci-protocol" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "redis" },
-    { name = "slack-bolt" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aci-protocol", editable = "packages/aci-protocol" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-settings", specifier = ">=2.7" },
-    { name = "redis", specifier = ">=5.2" },
-    { name = "slack-bolt", specifier = ">=1.30.0" },
-]
-
-[[package]]
-name = "agentos-doclint"
-version = "0.0.0"
-source = { editable = "tools/doclint" }
-dependencies = [
-    { name = "markdown-it-py" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "markdown-it-py", specifier = ">=3.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-]
-
-[[package]]
-name = "agentos-runner"
-version = "0.0.0"
-source = { editable = "runner" }
-dependencies = [
-    { name = "aci-protocol" },
-    { name = "aiohttp" },
-    { name = "anyio" },
-    { name = "claude-agent-sdk" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
-    { name = "opentelemetry-sdk" },
-    { name = "plugin-format" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aci-protocol", editable = "packages/aci-protocol" },
-    { name = "aiohttp", specifier = ">=3.14.3" },
-    { name = "anyio", specifier = ">=4.6" },
-    { name = "claude-agent-sdk", specifier = ">=0.2.115" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
-    { name = "opentelemetry-sdk", specifier = ">=1.44.0" },
-    { name = "plugin-format", editable = "packages/plugin-format" },
-]
-
-[[package]]
-name = "agentos-test-support"
-version = "0.0.0"
-source = { editable = "packages/test-support" }
-dependencies = [
-    { name = "pytest" },
-    { name = "redis" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "redis", specifier = ">=5.0" },
-]
-
-[[package]]
-name = "agentos-wire-tolerance-gate"
-version = "0.0.0"
-source = { editable = "tools/wire-tolerance-gate" }
-
-[[package]]
-name = "agentos-worker"
-version = "0.0.0"
-source = { editable = "apps/worker" }
-dependencies = [
-    { name = "aci-protocol" },
-    { name = "agentos-channel-protocol" },
-    { name = "agentos-dispatcher" },
-    { name = "aiohttp" },
-    { name = "asyncpg" },
-    { name = "boto3" },
-    { name = "httpx" },
-    { name = "kubernetes" },
-    { name = "plugin-format" },
-    { name = "pydantic-settings" },
-    { name = "redis" },
-    { name = "slack-sdk" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aci-protocol", editable = "packages/aci-protocol" },
-    { name = "agentos-channel-protocol", editable = "packages/channel-protocol" },
-    { name = "agentos-dispatcher", editable = "apps/dispatcher" },
-    { name = "aiohttp", specifier = ">=3.11" },
-    { name = "asyncpg", specifier = ">=0.30" },
-    { name = "boto3", specifier = ">=1.43.55" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "kubernetes", specifier = ">=31.0" },
-    { name = "plugin-format", editable = "packages/plugin-format" },
-    { name = "pydantic-settings", specifier = ">=2.7" },
-    { name = "redis", specifier = ">=5.2" },
-    { name = "slack-sdk", specifier = ">=3.43" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.51" },
-]
-
-[[package]]
-name = "agentos-workspace"
-version = "0.0.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "aci-protocol" },
-    { name = "agentos-api" },
-    { name = "agentos-channel-protocol" },
-    { name = "agentos-dispatcher" },
-    { name = "agentos-runner" },
-    { name = "agentos-worker" },
-    { name = "plugin-format" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "agentos-doclint" },
-    { name = "agentos-test-support" },
-    { name = "agentos-wire-tolerance-gate" },
-    { name = "mypy" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
-    { name = "opentelemetry-sdk" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "types-pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aci-protocol", editable = "packages/aci-protocol" },
-    { name = "agentos-api", editable = "apps/api" },
-    { name = "agentos-channel-protocol", editable = "packages/channel-protocol" },
-    { name = "agentos-dispatcher", editable = "apps/dispatcher" },
-    { name = "agentos-runner", editable = "runner" },
-    { name = "agentos-worker", editable = "apps/worker" },
-    { name = "plugin-format", editable = "packages/plugin-format" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "agentos-doclint", editable = "tools/doclint" },
-    { name = "agentos-test-support", editable = "packages/test-support" },
-    { name = "agentos-wire-tolerance-gate", editable = "tools/wire-tolerance-gate" },
-    { name = "mypy", specifier = ">=2.3.0" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.29" },
-    { name = "opentelemetry-sdk", specifier = ">=1.44.0" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "ruff", specifier = ">=0.16.0" },
-    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
@@ -746,6 +523,229 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/a0/db537264e234f7273a73ec020873d6d6b39dfd8a53db78b550ca8320440e/cryptography-49.0.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:67e1d20ad9ef3a563c59ef22e7a8a0b8210bd26604369ea4a30a7c66aefe504e", size = 4834820, upload-time = "2026-06-12T20:01:51.847Z" },
     { url = "https://files.pythonhosted.org/packages/93/77/8df9eb486495979bccecd1062e2eaf435250e84437040295b57d09048b0b/cryptography-49.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:42b0684e0e40cf26122427802486f6d93aea593612603a94fbf260c7eb1e9c1b", size = 4967968, upload-time = "2026-06-12T20:02:12.524Z" },
     { url = "https://files.pythonhosted.org/packages/c2/e6/f60198ea8d9dfa15fff9ed4ca02ce362f6eadd9ba757dcc50634c4257b63/cryptography-49.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:026ac7423e6fa66872d3bf889be5974507da3944f866f704fa200eadacd00001", size = 3785547, upload-time = "2026-06-12T20:02:26.847Z" },
+]
+
+[[package]]
+name = "curie-api"
+version = "0.0.0"
+source = { editable = "apps/api" }
+dependencies = [
+    { name = "aci-protocol" },
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "boto3" },
+    { name = "boto3-stubs", extra = ["s3"] },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "kubernetes" },
+    { name = "plugin-format" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-multipart" },
+    { name = "redis" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "alembic", specifier = ">=1.14" },
+    { name = "asyncpg", specifier = ">=0.30" },
+    { name = "boto3", specifier = ">=1.43.55" },
+    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.43.55" },
+    { name = "fastapi", specifier = ">=0.139.2" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "kubernetes", specifier = ">=31" },
+    { name = "plugin-format", editable = "packages/plugin-format" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
+    { name = "python-multipart", specifier = ">=0.0.18" },
+    { name = "redis", specifier = ">=5.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
+]
+
+[[package]]
+name = "curie-channel-protocol"
+version = "0.1.0"
+source = { editable = "packages/channel-protocol" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
+
+[[package]]
+name = "curie-dispatcher"
+version = "0.0.0"
+source = { editable = "apps/dispatcher" }
+dependencies = [
+    { name = "aci-protocol" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "redis" },
+    { name = "slack-bolt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
+    { name = "redis", specifier = ">=5.2" },
+    { name = "slack-bolt", specifier = ">=1.30.0" },
+]
+
+[[package]]
+name = "curie-doclint"
+version = "0.0.0"
+source = { editable = "tools/doclint" }
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "markdown-it-py", specifier = ">=3.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "curie-runner"
+version = "0.0.0"
+source = { editable = "runner" }
+dependencies = [
+    { name = "aci-protocol" },
+    { name = "aiohttp" },
+    { name = "anyio" },
+    { name = "claude-agent-sdk" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
+    { name = "plugin-format" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "aiohttp", specifier = ">=3.14.3" },
+    { name = "anyio", specifier = ">=4.6" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.115" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
+    { name = "opentelemetry-sdk", specifier = ">=1.44.0" },
+    { name = "plugin-format", editable = "packages/plugin-format" },
+]
+
+[[package]]
+name = "curie-test-support"
+version = "0.0.0"
+source = { editable = "packages/test-support" }
+dependencies = [
+    { name = "pytest" },
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "redis", specifier = ">=5.0" },
+]
+
+[[package]]
+name = "curie-wire-tolerance-gate"
+version = "0.0.0"
+source = { editable = "tools/wire-tolerance-gate" }
+
+[[package]]
+name = "curie-worker"
+version = "0.0.0"
+source = { editable = "apps/worker" }
+dependencies = [
+    { name = "aci-protocol" },
+    { name = "aiohttp" },
+    { name = "asyncpg" },
+    { name = "boto3" },
+    { name = "curie-channel-protocol" },
+    { name = "curie-dispatcher" },
+    { name = "httpx" },
+    { name = "kubernetes" },
+    { name = "plugin-format" },
+    { name = "pydantic-settings" },
+    { name = "redis" },
+    { name = "slack-sdk" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "aiohttp", specifier = ">=3.11" },
+    { name = "asyncpg", specifier = ">=0.30" },
+    { name = "boto3", specifier = ">=1.43.55" },
+    { name = "curie-channel-protocol", editable = "packages/channel-protocol" },
+    { name = "curie-dispatcher", editable = "apps/dispatcher" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "kubernetes", specifier = ">=31.0" },
+    { name = "plugin-format", editable = "packages/plugin-format" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
+    { name = "redis", specifier = ">=5.2" },
+    { name = "slack-sdk", specifier = ">=3.43" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.51" },
+]
+
+[[package]]
+name = "curie-workspace"
+version = "0.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "aci-protocol" },
+    { name = "curie-api" },
+    { name = "curie-channel-protocol" },
+    { name = "curie-dispatcher" },
+    { name = "curie-runner" },
+    { name = "curie-worker" },
+    { name = "plugin-format" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "curie-doclint" },
+    { name = "curie-test-support" },
+    { name = "curie-wire-tolerance-gate" },
+    { name = "mypy" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "types-pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aci-protocol", editable = "packages/aci-protocol" },
+    { name = "curie-api", editable = "apps/api" },
+    { name = "curie-channel-protocol", editable = "packages/channel-protocol" },
+    { name = "curie-dispatcher", editable = "apps/dispatcher" },
+    { name = "curie-runner", editable = "runner" },
+    { name = "curie-worker", editable = "apps/worker" },
+    { name = "plugin-format", editable = "packages/plugin-format" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "curie-doclint", editable = "tools/doclint" },
+    { name = "curie-test-support", editable = "packages/test-support" },
+    { name = "curie-wire-tolerance-gate", editable = "tools/wire-tolerance-gate" },
+    { name = "mypy", specifier = ">=2.3.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.29" },
+    { name = "opentelemetry-sdk", specifier = ">=1.44.0" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "ruff", specifier = ">=0.16.0" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
