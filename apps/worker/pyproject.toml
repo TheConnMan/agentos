@@ -6,7 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "redis>=5.2",
     "pydantic-settings>=2.7",
-    "kubernetes>=31.0",
+    "kubernetes>=36.0.3",
     "aci-protocol",
     "curie-channel-protocol",
     "plugin-format",
