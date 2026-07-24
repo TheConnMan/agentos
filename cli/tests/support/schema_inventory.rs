@@ -88,7 +88,7 @@ struct CliOutputImplCollector {
 
 impl<'ast> Visit<'ast> for CliOutputImplCollector {
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
-        if let Some((_, path, _)) = &node.trait_ {
+        if let Some((path, _)) = &node.trait_ {
             let is_cli_output = path
                 .segments
                 .last()

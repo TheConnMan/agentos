@@ -81,7 +81,7 @@ agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
 # serde rename/skip/flatten and derive spellings exactly. `full` parses fn
 # bodies, `visit` recurses into fn/impl-body items (the method-local BundleFiles),
 # `extra-traits` gives the PartialEq the walk relies on.
-syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+syn = { version = "3", features = ["full", "visit", "extra-traits"] }
 # Both already ride in transitively via syn; named directly for the emit-hop
 # gate (#699, `support/emit_parity.rs`), which walks a `json!` macro's raw
 # token stream (a `json!` argument is opaque to syn's AST -- it is never parsed
