@@ -782,10 +782,9 @@ class TestRequiredNamesMatchCiYaml:
     constant as a subset of the concrete check-run names the current ci.yaml
     actually emits, parsed live (never derived from the constant itself).
 
-    Fails today because `REQUIRED_CHECK_NAMES` still carries the pre-rename
-    `"E2E parity ladder (skill + local, fake model)"`, while ci.yaml's
-    `e2e-ladder` job is now named
-    `"E2E parity ladder (skill + local + local-release, fake model)"`.
+    So renaming or splitting a required job in ci.yaml without updating
+    `REQUIRED_CHECK_NAMES` fails here (with the drifted names listed), rather
+    than silently dropping a release gate.
     """
 
     def test_every_required_name_is_a_real_ci_yaml_check_run_name(self):
