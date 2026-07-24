@@ -27,7 +27,11 @@ from .approval import (
 from .config import RunnerConfig
 from .fake import FakeModelSession
 from .harness.contribution import HarnessContribution
-from .harness.registry import DEFAULT_HARNESS, UnknownHarnessError, resolve_harness
+from .harness.registry import (
+    BUILTIN_HARNESS_CANONICAL_PATHS,
+    DEFAULT_HARNESS,
+    resolve_harness,
+)
 from .history import (
     DEFAULT_PREAMBLE_MAX_BYTES,
     DEFAULT_PREAMBLE_MAX_TURNS,
@@ -52,21 +56,30 @@ logger = logging.getLogger(__name__)
 def _resolve_harness(name: str = DEFAULT_HARNESS) -> HarnessContribution:
     """Resolve the active harness's contribution manifest (ADR-0060).
 
-    The built-in Claude harness must always be available, so if entry-point
-    metadata is somehow absent in this environment this falls back to its direct
-    import -- the critical boot path never depends on packaging metadata for the
-    built-in. A non-built-in name that isn't registered still raises, so an
-    operator who selects a harness that isn't installed fails loud, not silent.
+    The built-in Claude harness must always be available, so a built-in name --
+    its declared name or any alias in ``BUILTIN_HARNESS_CANONICAL_PATHS`` -- is
+    resolved from its direct import and never through entry-point discovery.
+    That keeps the critical boot path independent of packaging metadata
+    entirely: a malformed, colliding, or import-crashing *sibling* entry point
+    makes ``discover_contributions`` raise (a guard error such as
+    ``FlatHarnessPackageError``/``HarnessNameCollisionError``/
+    ``MalformedHarnessContributionError``, none of them ``UnknownHarnessError``),
+    and none of that may take down the built-in (#865). The registry already
+    refuses any third party that claims a built-in key, so a built-in name can
+    only ever mean the built-in -- resolving it directly is equivalent for a
+    well-formed registry and strictly safer for a broken one.
+
+    A non-built-in name goes through the registry and still fails loud (an
+    ``UnknownHarnessError`` if unregistered, or a guard error if the registry is
+    malformed), so an operator who selects a harness that isn't installed fails
+    visibly, not silently.
     """
 
-    try:
-        return resolve_harness(name)
-    except UnknownHarnessError:
-        if name == DEFAULT_HARNESS:
-            from .harness.claude import get_contribution
+    if name in BUILTIN_HARNESS_CANONICAL_PATHS:
+        from .harness.claude import get_contribution
 
-            return get_contribution()
-        raise
+        return get_contribution()
+    return resolve_harness(name)
 
 
 def _compose_system_prompt(
