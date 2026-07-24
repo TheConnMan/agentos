@@ -685,8 +685,18 @@ def test_eocd_locator_uses_cpython_fast_path_when_signature_recurs_in_fields() -
     from plugin_format.archive import _reject_zip_over_member_count
 
     data = _fast_path_eocd_with_signature_in_offset_field(total_entries=3)
-    # Premise, by execution: CPython locates the real EOCD via its fast path.
-    assert zipfile.is_zipfile(io.BytesIO(data))
+    # Premise, by execution: CPython's `_EndRecData` fast path LOCATES the real
+    # trailing EOCD. A plain rfind would divert to the in-field signature and
+    # find no valid record. On 3.13 the located record opens cleanly
+    # (is_zipfile True); on 3.14 CPython's changed prepended-data handling raises
+    # ValueError while processing that same located record (issue #937). Both
+    # prove the fast path located it; only is_zipfile returning False -- meaning
+    # no EOCD was found at all -- would void the premise.
+    try:
+        located = zipfile.is_zipfile(io.BytesIO(data))
+    except ValueError:
+        located = True  # 3.14: reached prepended-data handling => record located
+    assert located, "CPython's fast path must locate the trailing EOCD"
     _reject_zip_over_member_count(data, max_members=10)  # must not raise
 
 
